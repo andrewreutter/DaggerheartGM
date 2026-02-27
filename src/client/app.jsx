@@ -35,16 +35,17 @@ function App() {
 
   const [activeElements, setActiveElements] = useState([]);
   const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
+  const [featureCountdowns, setFeatureCountdowns] = useState({});
   const tableStateReadyRef = useRef(false);
   const [libraryFilters, setLibraryFilters] = useState(loadStoredFilters);
 
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed]);
+  }, [activeElements, whiteboardEmbed, featureCountdowns]);
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
@@ -168,6 +169,7 @@ function App() {
           setData(fetched);
           setActiveElements(fetched.table_state?.[0]?.elements || []);
           setWhiteboardEmbed(fetched.table_state?.[0]?.whiteboardEmbed || '');
+          setFeatureCountdowns(fetched.table_state?.[0]?.featureCountdowns || {});
           tableStateReadyRef.current = true;
         } catch (err) {
           console.error('Failed to load data:', err);
@@ -234,6 +236,18 @@ function App() {
     return clone;
   };
 
+  // Runtime fields that must be preserved when base data is updated in-place.
+  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'groupName'];
+
+  const updateActiveElementsBaseData = (predicate, newBaseData) => {
+    setActiveElements(prev => prev.map(el => {
+      if (!predicate(el)) return el;
+      const runtime = {};
+      RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+      return { ...newBaseData, ...runtime };
+    }));
+  };
+
   const addToTable = (item, collectionName) => {
     const newElements = [];
 
@@ -246,20 +260,40 @@ function App() {
     };
 
     const expandScene = (scene) => {
-      scene.environments?.forEach(envId => {
-        const env = data.environments.find(e => e.id === envId);
-        if (env) pushEnvironment(env);
+      const groupOverrides = scene.groupOverrides || [];
+
+      (scene.environments || []).forEach(envEntry => {
+        if (typeof envEntry === 'object' && envEntry.data) {
+          pushEnvironment({ id: envEntry.data.id || generateId(), ...envEntry.data });
+        } else {
+          const env = data.environments.find(e => e.id === envEntry);
+          if (env) pushEnvironment(env);
+        }
       });
-      scene.adversaries?.forEach(advRef => {
-        const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-        if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv);
+
+      (scene.adversaries || []).forEach(advRef => {
+        if (advRef.data) {
+          const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+          for (let i = 0; i < (advRef.count || 1); i++) pushAdversary(adv);
+        } else {
+          const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
+          if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv);
+        }
       });
-      scene.groups?.forEach(groupId => {
+
+      (scene.groups || []).forEach(groupId => {
         const group = data.groups.find(g => g.id === groupId);
         if (group) {
-          group.adversaries?.forEach(advRef => {
-            const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-            if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv, group.name);
+          (group.adversaries || []).forEach(advRef => {
+            const isOverridden = groupOverrides.some(ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId);
+            if (isOverridden) return;
+            if (advRef.data) {
+              const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+              for (let i = 0; i < (advRef.count || 1); i++) pushAdversary(adv, group.name);
+            } else {
+              const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
+              if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv, group.name);
+            }
           });
         }
       });
@@ -273,9 +307,14 @@ function App() {
         pushEnvironment(item);
         break;
       case 'groups':
-        item.adversaries?.forEach(advRef => {
-          const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-          if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv, item.name);
+        (item.adversaries || []).forEach(advRef => {
+          if (advRef.data) {
+            const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+            for (let i = 0; i < (advRef.count || 1); i++) pushAdversary(adv, item.name);
+          } else {
+            const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
+            if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv, item.name);
+          }
         });
         break;
       case 'scenes':
@@ -296,29 +335,50 @@ function App() {
 
   const startScene = (scene) => {
     const newElements = [];
+    const groupOverrides = scene.groupOverrides || [];
 
-    scene.environments?.forEach(envId => {
-      const env = data.environments.find(e => e.id === envId);
-      if (env) newElements.push({ ...env, instanceId: generateId(), elementType: 'environment' });
+    (scene.environments || []).forEach(envEntry => {
+      if (typeof envEntry === 'object' && envEntry.data) {
+        newElements.push({ id: envEntry.data.id || generateId(), ...envEntry.data, instanceId: generateId(), elementType: 'environment' });
+      } else {
+        const env = data.environments.find(e => e.id === envEntry);
+        if (env) newElements.push({ ...env, instanceId: generateId(), elementType: 'environment' });
+      }
     });
 
-    scene.adversaries?.forEach(advRef => {
-      const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-      if (adv) {
-        for (let i = 0; i < advRef.count; i++) {
-          newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max, currentStress: 0, conditions: '' });
+    (scene.adversaries || []).forEach(advRef => {
+      if (advRef.data) {
+        const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+        for (let i = 0; i < (advRef.count || 1); i++) {
+          newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '' });
+        }
+      } else {
+        const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
+        if (adv) {
+          for (let i = 0; i < advRef.count; i++) {
+            newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max, currentStress: 0, conditions: '' });
+          }
         }
       }
     });
 
-    scene.groups?.forEach(groupId => {
+    (scene.groups || []).forEach(groupId => {
       const group = data.groups.find(g => g.id === groupId);
       if (group) {
-        group.adversaries?.forEach(advRef => {
-          const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-          if (adv) {
-            for (let i = 0; i < advRef.count; i++) {
-              newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max, currentStress: 0, conditions: '', groupName: group.name });
+        (group.adversaries || []).forEach(advRef => {
+          const isOverridden = groupOverrides.some(ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId);
+          if (isOverridden) return;
+          if (advRef.data) {
+            const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+            for (let i = 0; i < (advRef.count || 1); i++) {
+              newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', groupName: group.name });
+            }
+          } else {
+            const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
+            if (adv) {
+              for (let i = 0; i < advRef.count; i++) {
+                newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max, currentStress: 0, conditions: '', groupName: group.name });
+              }
             }
           }
         });
@@ -442,13 +502,19 @@ function App() {
             activeElements={activeElements}
             updateActiveElement={updateActiveElement}
             removeActiveElement={removeActiveElement}
+            updateActiveElementsBaseData={updateActiveElementsBaseData}
             data={data}
+            saveItem={saveItem}
             addToTable={addToTable}
             startScene={startScene}
             whiteboardEmbed={whiteboardEmbed}
             setWhiteboardEmbed={setWhiteboardEmbed}
             gmTab={route.gmTab}
             navigate={navigate}
+            featureCountdowns={featureCountdowns}
+            updateCountdown={(cardKey, featureKey, value) =>
+              setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}`]: value }))
+            }
           />
         )}
       </main>

@@ -76,11 +76,13 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
             item.adversaries?.length > 0
               ? (
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {item.adversaries.map(advRef => {
-                    const adv = data?.adversaries?.find(a => a.id === advRef.adversaryId);
-                    return adv ? (
-                      <span key={advRef.adversaryId} className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded-full">
-                        {adv.name}{advRef.count > 1 ? ` ×${advRef.count}` : ''}
+                  {item.adversaries.map((advRef, i) => {
+                    const name = advRef.data ? advRef.data.name : data?.adversaries?.find(a => a.id === advRef.adversaryId)?.name;
+                    const count = advRef.count || 1;
+                    const key = advRef.data ? `owned-${i}` : advRef.adversaryId;
+                    return name ? (
+                      <span key={key} className={`text-xs border px-2 py-0.5 rounded-full ${advRef.data ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
+                        {name}{count > 1 ? ` ×${count}` : ''}
                       </span>
                     ) : null;
                   })}
@@ -90,20 +92,28 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
           )}
           {tab === 'scenes' && (() => {
             const chips = [
-              ...(item.environments || []).map(envId => {
-                const env = data?.environments?.find(e => e.id === envId);
-                return env ? { key: `env-${envId}`, label: env.name } : null;
+              ...(item.environments || []).map((envEntry, i) => {
+                if (typeof envEntry === 'object' && envEntry.data) {
+                  return { key: `env-owned-${i}`, label: envEntry.data.name, owned: true };
+                }
+                const env = data?.environments?.find(e => e.id === envEntry);
+                return env ? { key: `env-${envEntry}`, label: env.name, owned: false } : null;
               }),
-              ...(item.adversaries || []).map(advRef => {
-                const adv = data?.adversaries?.find(a => a.id === advRef.adversaryId);
-                return adv ? { key: `adv-${advRef.adversaryId}`, label: adv.name + (advRef.count > 1 ? ` ×${advRef.count}` : '') } : null;
+              ...(item.adversaries || []).map((advRef, i) => {
+                const name = advRef.data ? advRef.data.name : data?.adversaries?.find(a => a.id === advRef.adversaryId)?.name;
+                const count = advRef.count || 1;
+                const key = advRef.data ? `adv-owned-${i}` : `adv-${advRef.adversaryId}`;
+                return name ? { key, label: name + (count > 1 ? ` ×${count}` : ''), owned: !!advRef.data } : null;
               }),
               ...(item.groups || []).flatMap(gId => {
                 const group = data?.groups?.find(g => g.id === gId);
                 if (!group) return [];
-                return (group.adversaries || []).map(advRef => {
-                  const adv = data?.adversaries?.find(a => a.id === advRef.adversaryId);
-                  return adv ? { key: `grp-${gId}-adv-${advRef.adversaryId}`, label: adv.name + (advRef.count > 1 ? ` ×${advRef.count}` : '') } : null;
+                const overrideIds = new Set((item.groupOverrides || []).filter(ov => ov.groupId === gId).map(ov => ov.adversaryId));
+                return (group.adversaries || []).map((advRef, i) => {
+                  if (overrideIds.has(advRef.adversaryId)) return null;
+                  const name = advRef.data ? advRef.data.name : data?.adversaries?.find(a => a.id === advRef.adversaryId)?.name;
+                  const count = advRef.count || 1;
+                  return name ? { key: `grp-${gId}-adv-${advRef.adversaryId || i}`, label: name + (count > 1 ? ` ×${count}` : ''), owned: !!advRef.data } : null;
                 }).filter(Boolean);
               }),
             ].filter(Boolean);
@@ -111,7 +121,7 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
               ? (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {chips.map(chip => (
-                    <span key={chip.key} className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded-full">
+                    <span key={chip.key} className={`text-xs border px-2 py-0.5 rounded-full ${chip.owned ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
                       {chip.label}
                     </span>
                   ))}

@@ -1,10 +1,10 @@
 /**
  * Renders a feature description with two enhancements:
  *  1. Trailing questions are moved to a new line and italicized.
- *  2. Text matching the Fear Action trigger patterns (spend…fear, mark…fear) is bolded.
+ *  2. Text matching GM trigger patterns (spend…fear, mark…fear, mark…stress) is bolded.
  */
 
-const FEAR_TRIGGER_RE = /(spend.*?fear|mark.*?fear)/gi;
+const FEAR_TRIGGER_RE = /(spend.*?fear|mark.*?fear|mark.*?stress)/gi;
 
 function applyFearBolding(text) {
   if (!text) return text;

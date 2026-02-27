@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { TIERS, ENV_TYPES } from '../../lib/constants.js';
+import { generateId } from '../../lib/helpers.js';
 import { FormRow } from './FormRow.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
 
@@ -8,7 +9,7 @@ export function EnvironmentForm({ initial, onSave, onCancel }) {
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
     difficulty: initial?.difficulty || 10,
     description: initial?.description || '', imageUrl: initial?.imageUrl || '',
-    features: initial?.features || [],
+    features: (initial?.features || []).map(f => f.id ? f : { ...f, id: generateId() }),
     is_public: initial?.is_public || false,
   });
 

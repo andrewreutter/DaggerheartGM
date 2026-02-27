@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ROLES, TIERS, RANGES, DAMAGE_TYPES } from '../../lib/constants.js';
+import { generateId } from '../../lib/helpers.js';
 import { FormRow } from './FormRow.jsx';
 import { ExperiencesInput } from './ExperiencesInput.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
@@ -12,7 +13,8 @@ export function AdversaryForm({ initial, onSave, onCancel }) {
     difficulty: initial?.difficulty || 10, hp_max: initial?.hp_max || 6,
     hp_thresholds: initial?.hp_thresholds || { major: 3, severe: 5 }, stress_max: initial?.stress_max || 4,
     attack: initial?.attack || initial?.attacks?.[0] || { name: '', range: 'Melee', modifier: 0, trait: 'Phy', damage: '' },
-    experiences: initial?.experiences || [], features: initial?.features || [],
+    experiences: (initial?.experiences || []).map(e => e.id ? e : { ...e, id: generateId() }),
+    features: (initial?.features || []).map(f => f.id ? f : { ...f, id: generateId() }),
     is_public: initial?.is_public || false,
   });
 

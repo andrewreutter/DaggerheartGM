@@ -65,6 +65,59 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
     navigate(`/library/${activeTab}/${cloned.id}`);
   };
 
+  /**
+   * Applies an edited copy of an element back into the parent scene/group data structure,
+   * replacing the reference at the given index with an inline owned copy.
+   */
+  const applyEditedCopyToParent = (element, editedData, parentItem, parentTab) => {
+    if (parentTab === 'groups') {
+      const newAdversaries = (parentItem.adversaries || []).map((ref, idx) => {
+        if (idx !== element._originRefIndex) return ref;
+        return { data: editedData, count: ref.count || 1 };
+      });
+      return { ...parentItem, adversaries: newAdversaries };
+    }
+
+    if (parentTab === 'scenes') {
+      if (element._origin === 'direct-adv') {
+        const newAdversaries = (parentItem.adversaries || []).map((ref, idx) => {
+          if (idx !== element._originRefIndex) return ref;
+          return { data: editedData, count: ref.count || 1 };
+        });
+        return { ...parentItem, adversaries: newAdversaries };
+      }
+
+      if (element._origin === 'direct-env') {
+        const newEnvironments = (parentItem.environments || []).map((entry, idx) => {
+          if (idx !== element._originRefIndex) return entry;
+          return { data: editedData };
+        });
+        return { ...parentItem, environments: newEnvironments };
+      }
+
+      if (element._origin === 'group') {
+        // Create a scene-level override: add owned copy to scene.adversaries, suppress from group expansion.
+        const newAdversaries = [...(parentItem.adversaries || []), { data: editedData, count: element._count || 1 }];
+        const newOverrides = [
+          ...(parentItem.groupOverrides || []),
+          { groupId: element._originGroupId, adversaryId: element._originAdvId },
+        ];
+        return { ...parentItem, adversaries: newAdversaries, groupOverrides: newOverrides };
+      }
+    }
+
+    return parentItem;
+  };
+
+  const handleSaveElement = async (element, editedData, mode) => {
+    if (mode === 'original') {
+      await saveItem(element._collection, editedData);
+    } else {
+      const updatedParent = applyEditedCopyToParent(element, editedData, viewingItem, activeTab);
+      await saveItem(activeTab, updatedParent);
+    }
+  };
+
   const toggleFilter = (key) => {
     setLibraryFilters({ ...libraryFilters, [key]: !libraryFilters[key] });
   };
@@ -188,6 +241,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
             onClone={() => handleClone(viewingItem)}
             onClose={() => navigate(`/library/${activeTab}`)}
             onSavePublic={(is_public) => saveItem(activeTab, { ...viewingItem, is_public })}
+            onSaveElement={(activeTab === 'scenes' || activeTab === 'groups') && (!viewingItem._source || viewingItem._source === 'own') ? handleSaveElement : null}
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

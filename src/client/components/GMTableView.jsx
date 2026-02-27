@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Zap, Trash2, LayoutDashboard, Monitor } from 'lucide-react';
-import { parseFeatureCategory } from '../lib/helpers.js';
+import { Zap, Trash2, Pencil, LayoutDashboard, Monitor } from 'lucide-react';
+import { parseFeatureCategory, parseCountdownValue } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
+import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
+import { EditFormModal } from './modals/EditFormModal.jsx';
 
 function extractIframeSrc(embedCode) {
   try {
@@ -60,8 +62,52 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, hidden }) {
   );
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, data, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, gmTab, navigate }) {
+// Strip runtime tracking fields to get the base item data for form editing.
+function getItemData(element) {
+  const { instanceId, elementType, currentHp, currentStress, conditions, groupName, ...rest } = element;
+  return rest;
+}
+
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
+  // editState: null | { step: 'choice', baseElement, instances, collection }
+  //                  | { step: 'form', item, collection, mode, baseElement, instances }
+  const [editState, setEditState] = useState(null);
+
+  const handleEditClick = (instances, baseElement, collection) => {
+    const canEditOriginal = !baseElement._source || baseElement._source === 'own';
+    if (!canEditOriginal) {
+      setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
+    } else {
+      setEditState({ step: 'choice', instances, baseElement, collection });
+    }
+  };
+
+  const handleChoiceEditCopy = () => {
+    const { instances, baseElement, collection } = editState;
+    setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
+  };
+
+  const handleChoiceEditOriginal = () => {
+    const { baseElement, collection } = editState;
+    const libraryItem = data[collection]?.find(i => i.id === baseElement.id) || getItemData(baseElement);
+    setEditState({ ...editState, step: 'form', item: libraryItem, mode: 'original' });
+  };
+
+  const handleEditFormSave = async (editedData) => {
+    const { mode, collection, baseElement } = editState;
+    setEditState(null);
+    const itemWithId = { ...editedData, id: baseElement.id };
+    if (mode === 'copy') {
+      updateActiveElementsBaseData(
+        el => el.id === baseElement.id && (el.groupName || '') === (baseElement.groupName || ''),
+        itemWithId
+      );
+    } else {
+      await saveItem(collection, itemWithId);
+      updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+    }
+  };
   // Group adversaries of the same type (same id + groupName) into consolidated entries.
   // Environments remain as individual entries.
   const consolidatedElements = useMemo(() => {
@@ -150,20 +196,41 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               <div key={category}>
                 <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">{category}</h3>
                 <div className="space-y-2">
-                  {features.map((feature, idx) => (
-                    <div
-                      key={`${feature.id}-${idx}`}
-                      onMouseEnter={() => setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey })}
-                      onMouseLeave={() => setHoveredFeature(null)}
-                      className="w-full text-left bg-slate-800/50 hover:bg-slate-800 p-3 rounded border border-slate-700 hover:border-r-yellow-500 transition-all group cursor-default"
-                    >
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="font-medium text-slate-200 group-hover:text-white text-sm">{feature.name}</span>
-                        <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
+                  {features.map((feature, idx) => {
+                    const countdownInit = parseCountdownValue(feature.description);
+                    const cdKey = `${feature.cardKey}|${feature.featureKey}`;
+                    const countdownVal = featureCountdowns[cdKey] ?? countdownInit;
+                    return (
+                      <div
+                        key={`${feature.id}-${idx}`}
+                        onMouseEnter={() => setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey })}
+                        onMouseLeave={() => setHoveredFeature(null)}
+                        className="w-full text-left bg-slate-800/50 hover:bg-slate-800 p-3 rounded border border-slate-700 hover:border-r-yellow-500 transition-all group cursor-default"
+                      >
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="font-medium text-slate-200 group-hover:text-white text-sm">{feature.name}</span>
+                          <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
+                        </div>
+                        <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
+                        {countdownInit !== null && (
+                          <div className="mt-2 pt-2 border-t border-slate-700 flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                            <span className="text-xs text-slate-400">Countdown</span>
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                onClick={() => updateCountdown(feature.cardKey, feature.featureKey, Math.max(0, countdownVal - 1))}
+                                className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                              >−</button>
+                              <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{countdownVal}</span>
+                              <button
+                                onClick={() => updateCountdown(feature.cardKey, feature.featureKey, countdownVal + 1)}
+                                className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                              >+</button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -273,11 +340,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   )}
 
                   <div className="p-5">
-                    <button onClick={() => removeActiveElement(element.instanceId)} className="absolute top-4 right-4 text-slate-500 hover:text-red-500">
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="absolute top-4 right-4 flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleEditClick([element], element, 'environments')}
+                        className="text-slate-500 hover:text-blue-400"
+                        title="Edit"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button onClick={() => removeActiveElement(element.instanceId)} className="text-slate-500 hover:text-red-500" title="Remove">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
 
-                    <div className="flex items-center gap-2 mb-1 pr-8">
+                    <div className="flex items-center gap-2 mb-1 pr-14">
                       <h3 className="text-xl font-bold text-white">{element.name}</h3>
                     </div>
 
@@ -285,6 +361,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       element={element}
                       hoveredFeature={hoveredFeature}
                       cardKey={envCardKey}
+                      featureCountdowns={featureCountdowns}
+                      updateCountdown={updateCountdown}
                     />
                   </div>
                 </div>
@@ -308,11 +386,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
 
                 <div className="p-5">
-                  <button onClick={() => removeGroup(instances)} className="absolute top-4 right-4 text-slate-500 hover:text-red-500">
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="absolute top-4 right-4 flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleEditClick(instances, el, 'adversaries')}
+                      className="text-slate-500 hover:text-blue-400"
+                      title="Edit"
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button onClick={() => removeGroup(instances)} className="text-slate-500 hover:text-red-500" title="Remove">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
 
-                  <div className="flex items-center gap-2 mb-1 pr-8">
+                  <div className="flex items-center gap-2 mb-1 pr-14">
                     <h3 className="text-xl font-bold text-white">
                       {el.name}
                       {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
@@ -329,6 +416,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     updateFn={updateActiveElement}
                     showInstanceRemove={true}
                     removeInstanceFn={removeActiveElement}
+                    featureCountdowns={featureCountdowns}
+                    updateCountdown={updateCountdown}
                   />
                 </div>
               </div>
@@ -343,6 +432,26 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
       </div>
     </div>
+
+    {editState?.step === 'choice' && (
+      <EditChoiceDialog
+        itemName={editState.baseElement.name}
+        contextLabel="Table"
+        canEditOriginal={!editState.baseElement._source || editState.baseElement._source === 'own'}
+        onEditCopy={handleChoiceEditCopy}
+        onEditOriginal={handleChoiceEditOriginal}
+        onClose={() => setEditState(null)}
+      />
+    )}
+    {editState?.step === 'form' && (
+      <EditFormModal
+        item={editState.item}
+        collection={editState.collection}
+        data={data}
+        onSave={handleEditFormSave}
+        onClose={() => setEditState(null)}
+      />
+    )}
     </div>
   );
 }

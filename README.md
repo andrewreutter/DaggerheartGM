@@ -28,7 +28,7 @@ DaggerheartGM/
 │   │   ├── app.jsx             # React SPA entry point
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
 │   │   │   ├── forms/          # Item creation/edit forms (all include is_public toggle)
-│   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass) + ImportPreviewCard
+│   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass) + inline edit modals (EditChoiceDialog, EditFormModal)
 │   │   └── lib/                # API client, helpers, constants, parsers, router
 │   ├── db.js                   # Postgres pool + migration runner + query helpers
 │   ├── fcg-scraper.js          # Puppeteer scraper for FreshCutGrass.app
@@ -56,7 +56,13 @@ npm run fetch:srd   # downloads from GitHub → data/srd-adversaries.json + data
 npm run seed:srd    # inserts into DB (requires DATABASE_URL in .env)
 ```
 
-Users can then toggle "Include SRD" in the Adversaries/Environments library views to show SRD content alongside their own items. SRD items are read-only; use "Clone to My Library" to make an editable copy.
+Users can then toggle "Include SRD" in the Adversaries/Environments library views to show SRD content alongside their own items. SRD items are read-only; use "Clone to My Library" or the in-context "Edit Copy" flow to make an editable copy.
+
+### Inline Editing
+
+Adversaries and environments can be edited directly from the GM Table, Scene detail, and Group detail views via a pencil button on each card. A dialog asks whether to edit a local copy (leaving the library unchanged) or the library original (propagating changes everywhere). SRD/public items are always edited as local copies.
+
+Scenes and Groups store their elements as either library ID references or inline **owned copies**. Owned copies appear with an amber "local copy" badge and are preserved through normal edit/save operations.
 
 ---
 

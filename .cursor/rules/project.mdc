@@ -13,7 +13,7 @@ A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server th
 - `src/client/app.jsx` — React SPA entry point. Imports from `./lib/api.js`, mounts via `ReactDOM.createRoot`. Manages top-level state (data, activeElements, user). Uses `useRouter()` from `./lib/router.js` to derive the active view from the URL; all navigation calls `navigate()` so the browser back/forward buttons work. The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 - `src/client/components/` — UI components: `LibraryView.jsx`, `GMTableView.jsx`, `NavBtn.jsx`, `ItemCard.jsx`, `ItemDetailView.jsx`.
 - `src/client/components/forms/` — Item creation/edit forms: `AdversaryForm`, `EnvironmentForm`, `GroupForm`, `SceneForm`, `AdventureForm`, plus shared inputs `ExperiencesInput`, `FeaturesInput`, `FormRow`, `MultiSelectRef`.
-- `src/client/components/modals/` — Import modals: `RolzImportModal.jsx`, `FCGImportModal.jsx`. Shared utilities in `ImportModalShell.jsx` (`ImportModalShell` dialog chrome, `ImportSuccessStep`, `ImportPreviewSection`, `ImportPreviewSummary`, `useImportSelection` hook) and `ImportPreviewCard.jsx` (collapsible card with checkbox, collapsed stat summary, expand to full form edit via `AdversaryForm`/`EnvironmentForm`, duplicate name warning).
+- `src/client/components/modals/` — Import modals: `RolzImportModal.jsx`, `FCGImportModal.jsx`. Shared utilities in `ImportModalShell.jsx` and `ImportPreviewCard.jsx`. Inline editing modals: `EditChoiceDialog.jsx` (asks "Edit Copy" vs "Edit Library Original"), `EditFormModal.jsx` (modal wrapper around `AdversaryForm`/`EnvironmentForm`).
 - `src/client/lib/` — Client-side utilities: `api.js` (Firebase init + fetch helpers), `helpers.js` (`generateId`), `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` hook + `parseRoute()`).
 - `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `getSrdItems`, `getPublicItems`, `upsertItem`, `deleteItem`). Exports `SRD_USER_ID = '__SRD__'`.
 - `src/fcg-scraper.js` — Puppeteer-based scraper for FreshCutGrass.app homebrew pages. Exports `validateFCGUrl(url)` and `scrapeFCG(url)`. Launches headless Chrome, clicks each adversary card to open its detail modal, and returns `{ adversaries, environments }` shaped for import.
@@ -74,6 +74,36 @@ npm run seed:srd    # seed data/ into DB with user_id='__SRD__' (requires DATABA
 ```
 
 Server listens on `process.env.PORT` or `3456` by default. Set `PORT` in `.env` to override — both `npm start` and `npm run dev` load `.env` automatically via `node --env-file=.env`.
+
+## Inline Editing (Scenes, Groups, GM Table)
+
+Adversaries and environments can be edited directly from the context where they appear:
+
+- **GM Table**: A pencil button on each card opens `EditChoiceDialog` → then `EditFormModal`. "Edit Table Copy" updates only the active element in memory (preserving HP/stress). "Edit Library Original" saves to the DB and refreshes all matching active elements.
+- **Scene / Group detail view**: Each expanded card in `ExpandedTablePreview` has a pencil button. Same two-choice dialog. "Edit Copy" converts the reference to an inline owned copy stored in the parent scene/group. "Edit Library Original" saves to the DB.
+- SRD and public items are forced into "Edit Copy" mode (no "Edit Library Original" option).
+
+### Polymorphic data model (Scenes and Groups)
+
+Groups and Scenes store adversaries/environments as either ID references or inline owned copies:
+
+```js
+// Group adversaries:
+adversaries: [
+  { adversaryId: "abc", count: 3 },           // reference
+  { data: { name: "Custom Goblin", ... }, count: 2 } // owned copy
+]
+// Scene adversaries — same shape
+// Scene environments:
+environments: [
+  "env-123",                                   // reference (string ID)
+  { data: { name: "Custom Forest", ... } }     // owned copy
+]
+// Scene groupOverrides — suppresses a group adversary so a scene-level copy takes over:
+groupOverrides: [{ groupId: "group-1", adversaryId: "goblin-id" }]
+```
+
+`GroupForm` and `SceneForm` preserve owned copies through edits (they appear in a read-only "Local Copies" section). Owned copies are rendered with an amber "local copy" badge in `ExpandedTablePreview` and with amber chips in `ItemCard`.
 
 ## Conventions
 
