@@ -100,7 +100,10 @@ function ExpandedTablePreview({ item, tab, data }) {
               )}
               <div className="p-4">
                 <h4 className="text-lg font-bold text-white mb-0.5">{el.name}</h4>
-                <div className="text-xs text-slate-400 mb-3 capitalize">Tier {el.tier || 0} {el.type} Environment</div>
+                <div className="text-xs text-slate-400 mb-2 capitalize">Tier {el.tier || 0} {el.type} Environment</div>
+                <div className="inline-flex mb-3 bg-slate-900 px-3 py-1.5 rounded border border-slate-800">
+                  <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase leading-none mb-0.5">Difficulty</span><span className="text-base font-semibold text-white">{el.difficulty || '-'}</span></div>
+                </div>
                 {el.description && <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{el.description}</p>}
                 {el.features && el.features.length > 0 && (
                   <div className="space-y-1">
@@ -324,6 +327,12 @@ export function ItemDetailView({ item, tab, data, onEdit, onClose }) {
             <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">HP</span><span className="text-xl text-white">{item.hp_max || '-'}</span></div>
             <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">Thresholds</span><span className="text-xl text-white">{item.hp_thresholds?.major || '-'}/{item.hp_thresholds?.severe || '-'}</span></div>
             <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">Stress</span><span className="text-xl text-white">{item.stress_max || '-'}</span></div>
+          </div>
+        )}
+
+        {tab === 'environments' && (
+          <div className="inline-flex mb-6 bg-slate-950 p-4 rounded-lg border border-slate-800">
+            <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">Difficulty</span><span className="text-xl text-white">{item.difficulty || '-'}</span></div>
           </div>
         )}
 

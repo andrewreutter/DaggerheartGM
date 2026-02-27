@@ -7,14 +7,16 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
  * Collapsible card for import preview items.
  *
  * Props:
- *   item           - the item object (must have .id and .name)
- *   collection     - 'adversaries' | 'environments' | 'scenes' | 'groups'
- *   existingItems  - items already in the library, used for name-based duplicate detection
- *   selected       - whether this item is checked for import
- *   onToggleSelect - called when the checkbox changes
- *   onUpdate       - called with the full updated item when edited
- *   colorScheme    - 'red' (Rolz) | 'green' (FCG)
- *   summaryContent - optional React node to override the collapsed summary line
+ *   item             - the item object (must have .id and .name)
+ *   collection       - 'adversaries' | 'environments' | 'scenes' | 'groups'
+ *   existingItems    - items already in the library, used for name-based duplicate detection
+ *   selected         - whether this item is checked for import
+ *   onToggleSelect   - called when the checkbox changes
+ *   onUpdate         - called with the full updated item when edited
+ *   colorScheme      - 'red' (Rolz) | 'green' (FCG)
+ *   summaryContent   - optional React node to override the collapsed summary line
+ *   replaceMode      - when true, import will overwrite the existing item instead of creating a new one
+ *   onToggleReplace  - called when the user toggles between "Add as new" and "Replace existing"
  */
 export function ImportPreviewCard({
   item,
@@ -25,6 +27,8 @@ export function ImportPreviewCard({
   onUpdate,
   colorScheme = 'red',
   summaryContent = null,
+  replaceMode = false,
+  onToggleReplace = () => {},
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -62,6 +66,9 @@ export function ImportPreviewCard({
       {collection === 'environments' && (
         <div className="flex flex-wrap gap-x-3 gap-y-0.5">
           <span className="capitalize">Tier {item.tier} {item.type}</span>
+          {item.difficulty != null && (
+            <span>DC <strong className="text-slate-200">{item.difficulty}</strong></span>
+          )}
           {item.features?.length > 0 && <span>{item.features.length} feature(s)</span>}
           {item.description && <span className="italic opacity-75 line-clamp-1">{item.description}</span>}
         </div>
@@ -118,9 +125,38 @@ export function ImportPreviewCard({
             )}
 
             {duplicate && (
-              <span className="flex items-center gap-1 text-[10px] bg-yellow-900/40 border border-yellow-700/60 text-yellow-400 px-2 py-0.5 rounded-full flex-shrink-0">
-                <AlertTriangle size={9} /> Possible duplicate: &quot;{duplicate.name}&quot;
-              </span>
+              <>
+                <span className="flex items-center gap-1 text-[10px] bg-yellow-900/40 border border-yellow-700/60 text-yellow-400 px-2 py-0.5 rounded-full flex-shrink-0">
+                  <AlertTriangle size={9} /> Possible duplicate: &quot;{duplicate.name}&quot;
+                </span>
+                {selected && (
+                  <div
+                    className="flex items-center text-[10px] rounded-full border border-slate-700 overflow-hidden flex-shrink-0"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={() => replaceMode && onToggleReplace()}
+                      className={`px-2 py-0.5 transition-colors ${
+                        !replaceMode
+                          ? 'bg-slate-700 text-slate-200'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      Add as new
+                    </button>
+                    <button
+                      onClick={() => !replaceMode && onToggleReplace()}
+                      className={`px-2 py-0.5 border-l border-slate-700 transition-colors ${
+                        replaceMode
+                          ? 'bg-yellow-900/60 text-yellow-300'
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      Replace existing
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

@@ -6,19 +6,21 @@ import { FeaturesInput } from './FeaturesInput.jsx';
 export function EnvironmentForm({ initial, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
+    difficulty: initial?.difficulty || 10,
     description: initial?.description || '', imageUrl: initial?.imageUrl || '',
     features: initial?.features || []
   });
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="col-span-2"><FormRow label="Name"><input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow></div>
         <FormRow label="Tier">
           <select value={formData.tier} onChange={e => setFormData({ ...formData, tier: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
             {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </FormRow>
+        <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => setFormData({ ...formData, difficulty: parseInt(e.target.value) || 0 })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       </div>
       <FormRow label="Type">
         <select value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white">

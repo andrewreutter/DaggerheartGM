@@ -3,11 +3,12 @@ import { X } from 'lucide-react';
 import { ImportPreviewCard } from './ImportPreviewCard.jsx';
 
 /**
- * Hook for managing the selectedIds Set used by both import modals.
- * Returns { selectedIds, setSelectedIds, toggleId }.
+ * Hook for managing the selectedIds Set and replaceIds Set used by both import modals.
+ * Returns { selectedIds, setSelectedIds, toggleId, replaceIds, toggleReplaceId }.
  */
 export function useImportSelection() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [replaceIds, setReplaceIds] = useState(() => new Set());
 
   const toggleId = (id) => {
     setSelectedIds(prev => {
@@ -18,7 +19,16 @@ export function useImportSelection() {
     });
   };
 
-  return { selectedIds, setSelectedIds, toggleId };
+  const toggleReplaceId = (id) => {
+    setReplaceIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return { selectedIds, setSelectedIds, toggleId, replaceIds, toggleReplaceId };
 }
 
 /**
@@ -47,12 +57,13 @@ export function ImportModalShell({ title, onClose, children, footer }) {
 /**
  * Success step shown after import completes.
  * Props: importedItems, onImportSuccess, onClose, colorScheme ('red' | 'green').
+ * Each item in importedItems may have a `replaced` boolean flag.
  */
 export function ImportSuccessStep({ importedItems, onImportSuccess, onClose, colorScheme = 'red' }) {
   const hoverClass = colorScheme === 'green' ? 'group-hover:text-green-400' : 'group-hover:text-red-400';
   return (
     <div className="space-y-4">
-      <p className="text-green-400 font-medium">Import complete! The following items were created:</p>
+      <p className="text-green-400 font-medium">Import complete! The following items were imported:</p>
       <div className="space-y-2">
         {importedItems.map(item => (
           <button
@@ -61,7 +72,12 @@ export function ImportSuccessStep({ importedItems, onImportSuccess, onClose, col
             className="w-full text-left bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg p-3 flex items-center justify-between group transition-colors"
           >
             <span className={`text-white font-medium text-sm ${hoverClass}`}>{item.name}</span>
-            <span className="text-xs text-slate-500 capitalize">{item.collection.replace(/s$/, '')}</span>
+            <div className="flex items-center gap-2">
+              {item.replaced && (
+                <span className="text-[10px] text-yellow-400 bg-yellow-900/30 border border-yellow-700/50 px-1.5 py-0.5 rounded">replaced</span>
+              )}
+              <span className="text-xs text-slate-500 capitalize">{item.collection.replace(/s$/, '')}</span>
+            </div>
           </button>
         ))}
       </div>
@@ -72,15 +88,17 @@ export function ImportSuccessStep({ importedItems, onImportSuccess, onClose, col
 /**
  * Section heading + list of ImportPreviewCards for one collection.
  * Props:
- *   label        - section heading text (count appended automatically)
- *   items        - array of items to display
- *   collection   - 'adversaries' | 'environments' | 'scenes' | 'groups'
- *   existingItems - library items for duplicate detection
- *   selectedIds  - Set of selected item IDs
- *   onToggleId   - (id) => void
- *   onUpdateItem - (updatedItem) => void — called with full updated item
- *   colorScheme  - 'red' | 'green'
- *   renderCard   - optional (item) => JSX override for custom card rendering
+ *   label          - section heading text (count appended automatically)
+ *   items          - array of items to display
+ *   collection     - 'adversaries' | 'environments' | 'scenes' | 'groups'
+ *   existingItems  - library items for duplicate detection
+ *   selectedIds    - Set of selected item IDs
+ *   onToggleId     - (id) => void
+ *   onUpdateItem   - (updatedItem) => void — called with full updated item
+ *   colorScheme    - 'red' | 'green'
+ *   replaceIds     - Set of import item IDs marked for replace-existing
+ *   onToggleReplaceId - (id) => void
+ *   renderCard     - optional (item) => JSX override for custom card rendering
  */
 export function ImportPreviewSection({
   label,
@@ -91,6 +109,8 @@ export function ImportPreviewSection({
   onToggleId,
   onUpdateItem,
   colorScheme,
+  replaceIds = new Set(),
+  onToggleReplaceId = () => {},
   renderCard = null,
 }) {
   if (items.length === 0) return null;
@@ -111,6 +131,8 @@ export function ImportPreviewSection({
               onToggleSelect={() => onToggleId(item.id)}
               onUpdate={onUpdateItem}
               colorScheme={colorScheme}
+              replaceMode={replaceIds.has(item.id)}
+              onToggleReplace={() => onToggleReplaceId(item.id)}
             />
           )
         )}

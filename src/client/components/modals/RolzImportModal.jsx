@@ -19,7 +19,7 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
   const [groupName, setGroupName] = useState('');
   const [editEnvs, setEditEnvs] = useState([]);
   const [editAdvs, setEditAdvs] = useState([]);
-  const { selectedIds, setSelectedIds, toggleId } = useImportSelection();
+  const { selectedIds, setSelectedIds, toggleId, replaceIds, toggleReplaceId } = useImportSelection();
 
   const [importedItems, setImportedItems] = useState([]);
   const [importing, setImporting] = useState(false);
@@ -63,18 +63,28 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
 
     const savedAdvIds = [];
     for (const adv of selectedAdvs) {
-      const { count, id, ...advData } = adv;
+      const { count, id: importId, ...advData } = adv;
+      const existingDup = (data?.adversaries || []).find(
+        e => e.name.trim().toLowerCase() === adv.name.trim().toLowerCase()
+      );
+      const id = replaceIds.has(importId) && existingDup ? existingDup.id : importId;
+      const replaced = replaceIds.has(importId) && !!existingDup;
       await saveItem('adversaries', { id, ...advData });
       savedAdvIds.push({ id, count: count || 1 });
-      created.push({ collection: 'adversaries', id, name: adv.name });
+      created.push({ collection: 'adversaries', id, name: adv.name, replaced });
     }
 
     const savedEnvIds = [];
     for (const env of selectedEnvs) {
-      const { id, ...envData } = env;
+      const { id: importId, ...envData } = env;
+      const existingDup = (data?.environments || []).find(
+        e => e.name.trim().toLowerCase() === env.name.trim().toLowerCase()
+      );
+      const id = replaceIds.has(importId) && existingDup ? existingDup.id : importId;
+      const replaced = replaceIds.has(importId) && !!existingDup;
       await saveItem('environments', { id, ...envData });
       savedEnvIds.push(id);
-      created.push({ collection: 'environments', id, name: env.name });
+      created.push({ collection: 'environments', id, name: env.name, replaced });
     }
 
     let savedGroupId = null;
@@ -228,6 +238,8 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
             onToggleId={toggleId}
             onUpdateItem={updated => setEditEnvs(prev => prev.map(e => e.id === updated.id ? updated : e))}
             colorScheme="red"
+            replaceIds={replaceIds}
+            onToggleReplaceId={toggleReplaceId}
           />
 
           <ImportPreviewSection
@@ -239,6 +251,8 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
             onToggleId={toggleId}
             onUpdateItem={updated => setEditAdvs(prev => prev.map(a => a.id === updated.id ? updated : a))}
             colorScheme="red"
+            replaceIds={replaceIds}
+            onToggleReplaceId={toggleReplaceId}
           />
 
           <ImportPreviewSummary summaryParts={summaryParts} />

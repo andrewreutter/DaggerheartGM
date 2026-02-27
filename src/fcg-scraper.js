@@ -382,6 +382,7 @@ export async function scrapeFCG(url) {
         environments.push({
           name: item.name,
           description: item.description || '',
+          difficulty: item.difficulty,
           features: item.features.map(f => ({
             name: f.name,
             type: f.type,

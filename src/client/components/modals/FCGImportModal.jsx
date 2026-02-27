@@ -18,7 +18,7 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
   const [editEnvs, setEditEnvs] = useState([]);
   const [editAdvs, setEditAdvs] = useState([]);
   const [editEncounters, setEditEncounters] = useState([]);
-  const { selectedIds, setSelectedIds, toggleId } = useImportSelection();
+  const { selectedIds, setSelectedIds, toggleId, replaceIds, toggleReplaceId } = useImportSelection();
 
   const [importedItems, setImportedItems] = useState([]);
   const [importing, setImporting] = useState(false);
@@ -59,18 +59,28 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
 
     const savedAdvs = [];
     for (const adv of selectedAdvsList) {
-      const { count, id, ...advData } = adv;
+      const { count, id: importId, ...advData } = adv;
+      const existingDup = (data?.adversaries || []).find(
+        e => e.name.trim().toLowerCase() === adv.name.trim().toLowerCase()
+      );
+      const id = replaceIds.has(importId) && existingDup ? existingDup.id : importId;
+      const replaced = replaceIds.has(importId) && !!existingDup;
       await saveItem('adversaries', { id, ...advData });
       savedAdvs.push({ id, name: adv.name, count: count || 1 });
-      created.push({ collection: 'adversaries', id, name: adv.name });
+      created.push({ collection: 'adversaries', id, name: adv.name, replaced });
     }
 
     const savedEnvs = [];
     for (const env of selectedEnvsList) {
-      const { id, ...envData } = env;
+      const { id: importId, ...envData } = env;
+      const existingDup = (data?.environments || []).find(
+        e => e.name.trim().toLowerCase() === env.name.trim().toLowerCase()
+      );
+      const id = replaceIds.has(importId) && existingDup ? existingDup.id : importId;
+      const replaced = replaceIds.has(importId) && !!existingDup;
       await saveItem('environments', { id, ...envData });
       savedEnvs.push({ id, name: env.name });
-      created.push({ collection: 'environments', id, name: env.name });
+      created.push({ collection: 'environments', id, name: env.name, replaced });
     }
 
     for (const enc of selectedEncounters) {
@@ -84,8 +94,14 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
         .filter(e => rawLower.includes(e.name.toLowerCase()))
         .map(e => e.id);
 
+      const existingDup = (data?.scenes || []).find(
+        e => e.name.trim().toLowerCase() === enc.name.trim().toLowerCase()
+      );
+      const sceneId = replaceIds.has(enc.id) && existingDup ? existingDup.id : enc.id;
+      const replaced = replaceIds.has(enc.id) && !!existingDup;
+
       await saveItem('scenes', {
-        id: enc.id,
+        id: sceneId,
         name: enc.name,
         description: enc.description || '',
         imageUrl: '',
@@ -93,7 +109,7 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
         groups: [],
         adversaries: matchedAdvRefs,
       });
-      created.push({ collection: 'scenes', id: enc.id, name: enc.name });
+      created.push({ collection: 'scenes', id: sceneId, name: enc.name, replaced });
     }
 
     setImportedItems(created);
@@ -193,6 +209,8 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
             onToggleId={toggleId}
             onUpdateItem={updated => setEditEnvs(prev => prev.map(e => e.id === updated.id ? updated : e))}
             colorScheme="green"
+            replaceIds={replaceIds}
+            onToggleReplaceId={toggleReplaceId}
           />
 
           <ImportPreviewSection
@@ -204,6 +222,8 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
             onToggleId={toggleId}
             onUpdateItem={updated => setEditAdvs(prev => prev.map(a => a.id === updated.id ? updated : a))}
             colorScheme="green"
+            replaceIds={replaceIds}
+            onToggleReplaceId={toggleReplaceId}
           />
 
           {/* Encounters → Scenes: custom summary content per card showing matched elements */}
@@ -234,6 +254,8 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
                   onToggleSelect={() => toggleId(enc.id)}
                   onUpdate={updated => setEditEncounters(prev => prev.map(e => e.id === enc.id ? updated : e))}
                   colorScheme="green"
+                  replaceMode={replaceIds.has(enc.id)}
+                  onToggleReplace={() => toggleReplaceId(enc.id)}
                   summaryContent={
                     <div className="flex flex-col gap-0.5">
                       {enc.description && (
