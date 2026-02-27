@@ -1,0 +1,22 @@
+{
+  "name": "daggerheart-gm",
+  "version": "1.0.0",
+  "description": "A GM tool for Daggerheart",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file=.env server.js",
+    "dev": "node --env-file=.env --watch server.js & npm run dev:css",
+    "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
+    "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "firebase-admin": "^13.7.0",
+    "pg": "^8.19.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.2.1",
+    "tailwindcss": "^4.2.1"
+  }
+}

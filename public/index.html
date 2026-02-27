@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daggerheart GM</title>
+
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!--
+    Import map: maps bare module specifiers to CDN ESM URLs.
+    Babel standalone (data-type="module") transforms JSX then dynamic-imports
+    the result as an ES module, which inherits this importmap.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react":              "https://esm.sh/react@18",
+      "react/jsx-runtime":  "https://esm.sh/react@18/jsx-runtime",
+      "react-dom/client":   "https://esm.sh/react-dom@18/client",
+      "firebase/app":       "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js",
+      "firebase/auth":      "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js",
+      "lucide-react":       "https://esm.sh/lucide-react@latest?external=react"
+    }
+  }
+  </script>
+</head>
+<body class="bg-slate-950 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module" src="/app.jsx"></script>
+</body>
+</html>

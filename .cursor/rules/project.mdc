@@ -1,0 +1,74 @@
+---
+description: Project overview, architecture, and conventions for DaggerheartGM
+alwaysApply: true
+---
+
+# DaggerheartGM
+
+A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server that serves a self-contained SPA.
+
+## Architecture
+
+- `server.js` — Express server entry point. Serves static files from `public/` and falls back to `public/index.html` for any unmatched route (standard SPA behavior). API routes live here. On startup, runs DB migrations if `DATABASE_URL` is set.
+- `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `upsertItem`, `deleteItem`).
+- `migrations/` — Numbered `.sql` migration files (e.g. `001_create_items_table.sql`). Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema.
+- `public/index.html` — Thin HTML shell. Links to the locally-built `public/styles.css`, loads Babel standalone and an ES importmap (pointing to esm.sh CDN for React 18, Firebase 10, Lucide React). Loads the app via `<script type="text/babel" data-type="module" src="/app.jsx">`.
+- `public/app.jsx` — The React SPA. Written in JSX with ES module imports. Uses top-level `await fetch('/api/config')` for Firebase initialisation. Mounts itself via `ReactDOM.createRoot`. On sign-in, loads all data from `GET /api/data`.
+- `public/styles.css` — Generated Tailwind CSS output. Do **not** edit by hand; rebuild with `npm run build:css`.
+- `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` automatically.
+- `public/` — All static assets (images, fonts, etc.) go here.
+- `package.json` — Uses ES modules (`"type": "module"`). Dependencies: `express`, `pg`, `firebase-admin`. Dev dependencies: `tailwindcss`, `@tailwindcss/cli`.
+
+## Database
+
+Supabase Postgres (or any Postgres). Set `DATABASE_URL` in `.env` to the connection string (URI format). Migrations run automatically on server start.
+
+Schema uses a single `items` table:
+- `(app_id, collection, id)` — composite primary key
+- `user_id` — Firebase UID; all queries are scoped per user
+- `data` — JSONB blob storing the full entity
+- `app_id` — from `APP_ID` env var; namespaces data per deployment
+
+## API Routes
+
+- `GET /api/config` — Returns `{ firebaseConfig }` (no auth required). Consumed by `app.jsx` at startup.
+- `GET /api/data` — Returns `{ adversaries, environments, groups, scenes, adventures }` for the authenticated user.
+- `PUT /api/data/:collection` — Upsert an item (body is the item JSON). Returns the saved item.
+- `DELETE /api/data/:collection/:id` — Delete an item.
+
+All `/api/data` routes require an `Authorization: Bearer <Firebase ID token>` header. The server verifies the token via `firebase-admin` (uses `FIREBASE_PROJECT_ID`; no service account key needed).
+
+## Node / nvm
+
+Node is managed via nvm. The active binary is at:
+
+```
+/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin/node
+```
+
+When running `node`, `npm`, or `nvm` commands in a shell that may not have sourced `.bashrc`/`.zshrc`, use the full path or prepend the bin directory:
+
+```bash
+export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
+```
+
+## Running the App
+
+```bash
+npm install         # first time only
+npm run build:css   # (re)generate public/styles.css from src/input.css
+npm run dev         # development: starts server (--watch) + Tailwind watcher in parallel
+npm start           # production (run npm run build:css first if styles changed)
+```
+
+Server listens on `process.env.PORT` or `3456` by default. Set `PORT` in `.env` to override — both `npm start` and `npm run dev` load `.env` automatically via `node --env-file=.env`.
+
+## Conventions
+
+- API routes: add `app.get/post/...('/api/...')` handlers in `server.js` before the static middleware.
+- Static assets: place in `public/`.
+- ES modules (`import`/`export`) throughout — no `require()`.
+
+## Maintaining This File
+
+When you make structural changes to this project — adding files or directories, introducing new dependencies, establishing new conventions, or adding API routes — update this rule to reflect those changes so future agents have accurate context.
