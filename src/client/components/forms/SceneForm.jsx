@@ -7,7 +7,8 @@ export function SceneForm({ initial, data, onSave, onCancel }) {
     name: initial?.name || '', description: initial?.description || '',
     imageUrl: initial?.imageUrl || '',
     environments: initial?.environments || [], groups: initial?.groups || [],
-    adversaries: initial?.adversaries?.map(a => ({ id: a.adversaryId, count: a.count })) || []
+    adversaries: initial?.adversaries?.map(a => ({ id: a.adversaryId, count: a.count })) || [],
+    is_public: initial?.is_public || false,
   });
 
   return (
@@ -20,9 +21,20 @@ export function SceneForm({ initial, data, onSave, onCancel }) {
         <MultiSelectRef label="Groups" options={data.groups} selectedIds={formData.groups} onChange={grps => setFormData({ ...formData, groups: grps })} />
       </div>
       <MultiSelectRef label="Individual Adversaries" options={data.adversaries} selectedIds={formData.adversaries} onChange={advs => setFormData({ ...formData, adversaries: advs })} isCountable={true} />
-      <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
-        <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
-        <button onClick={() => onSave({ ...formData, adversaries: formData.adversaries.map(a => ({ adversaryId: a.id, count: a.count })) })} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Scene</button>
+      <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
+        <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+          <input
+            type="checkbox"
+            checked={!!formData.is_public}
+            onChange={e => setFormData({ ...formData, is_public: e.target.checked })}
+            className="accent-blue-500"
+          />
+          Make Public
+        </label>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+          <button onClick={() => onSave({ ...formData, adversaries: formData.adversaries.map(a => ({ adversaryId: a.id, count: a.count })) })} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Scene</button>
+        </div>
       </div>
     </div>
   );

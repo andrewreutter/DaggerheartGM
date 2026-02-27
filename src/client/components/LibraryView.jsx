@@ -26,7 +26,9 @@ const TABS = [
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
 ];
 
-export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable, route, navigate }) {
+const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
+
+export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
   const [showFCGImport, setShowFCGImport] = useState(false);
 
@@ -37,8 +39,9 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
   const isEditing = itemId && itemId !== 'new' && action === 'edit';
   const isViewing = itemId && itemId !== 'new' && !action;
 
-  const viewingItem = isViewing ? (data[activeTab]?.find(i => i.id === itemId) || null) : null;
-  const editingItem = isEditing ? (data[activeTab]?.find(i => i.id === itemId) || null) : isCreating ? {} : null;
+  const items = data[activeTab] || [];
+  const viewingItem = isViewing ? (items.find(i => i.id === itemId) || null) : null;
+  const editingItem = isEditing ? (items.find(i => i.id === itemId) || null) : isCreating ? {} : null;
 
   const handleSave = async (item) => {
     const itemToSave = { ...item };
@@ -57,22 +60,37 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
     }
   };
 
+  const handleClone = async (item) => {
+    const cloned = await cloneItem(activeTab, item);
+    navigate(`/library/${activeTab}/${cloned.id}`);
+  };
+
+  const toggleFilter = (key) => {
+    setLibraryFilters({ ...libraryFilters, [key]: !libraryFilters[key] });
+  };
+
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* Sidebar Tabs */}
       <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="p-4 font-semibold text-slate-300 uppercase tracking-wider text-xs">Database</div>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => navigate(`/library/${tab.id}`)}
-            className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
-              activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
-            }`}
-          >
-            <tab.Icon size={18} /> {tab.label} ({(data[tab.id] || []).length})
-          </button>
-        ))}
+        {TABS.map(tab => {
+          const tabItems = data[tab.id] || [];
+          const ownCount = tabItems.filter(i => !i._source || i._source === 'own').length;
+          const totalCount = tabItems.length;
+          const countLabel = totalCount > ownCount ? `${ownCount}+${totalCount - ownCount}` : String(ownCount);
+          return (
+            <button
+              key={tab.id}
+              onClick={() => navigate(`/library/${tab.id}`)}
+              className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
+                activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
+              }`}
+            >
+              <tab.Icon size={18} /> {tab.label} ({countLabel})
+            </button>
+          );
+        })}
       </div>
 
       {showRolzImport && (
@@ -101,10 +119,10 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-6 bg-slate-950">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
           <h2 className="text-2xl font-bold text-white capitalize">{activeTab}</h2>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={() => setShowRolzImport(true)}
               className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
@@ -129,6 +147,29 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
           </div>
         </div>
 
+        {SRD_FILTER_TABS.has(activeTab) && !editingItem && !viewingItem && (
+          <div className="flex items-center gap-4 mb-5 text-xs text-slate-400">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!libraryFilters?.includeSrd}
+                onChange={() => toggleFilter('includeSrd')}
+                className="accent-violet-500"
+              />
+              <span className="text-violet-400 font-medium">Include SRD</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={!!libraryFilters?.includePublic}
+                onChange={() => toggleFilter('includePublic')}
+                className="accent-blue-500"
+              />
+              <span className="text-blue-400 font-medium">Include Public</span>
+            </label>
+          </div>
+        )}
+
         {editingItem !== null ? (
           <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-xl max-w-4xl">
             {activeTab === 'adversaries' && <AdversaryForm initial={editingItem} onSave={handleSave} onCancel={handleCancelEdit} />}
@@ -142,25 +183,29 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
             item={viewingItem}
             tab={activeTab}
             data={data}
-            onEdit={() => navigate(`/library/${activeTab}/${itemId}/edit`)}
+            onEdit={viewingItem._source && viewingItem._source !== 'own' ? null : () => navigate(`/library/${activeTab}/${itemId}/edit`)}
+            onDelete={viewingItem._source && viewingItem._source !== 'own' ? null : () => deleteItem(activeTab, itemId)}
+            onClone={() => handleClone(viewingItem)}
             onClose={() => navigate(`/library/${activeTab}`)}
+            onSavePublic={(is_public) => saveItem(activeTab, { ...viewingItem, is_public })}
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {data[activeTab].map(item => (
+            {items.map(item => (
               <ItemCard
-                key={item.id}
+                key={`${item._source || 'own'}-${item.id}`}
                 item={item}
                 tab={activeTab}
                 data={data}
                 onView={(item) => navigate(`/library/${activeTab}/${item.id}`)}
-                onEdit={(item) => navigate(`/library/${activeTab}/${item.id}/edit`)}
-                onDelete={deleteItem}
+                onEdit={item._source && item._source !== 'own' ? null : (item) => navigate(`/library/${activeTab}/${item.id}/edit`)}
+                onDelete={item._source && item._source !== 'own' ? null : deleteItem}
+                onClone={() => handleClone(item)}
                 onStartScene={startScene}
                 onAddToTable={addToTable}
               />
             ))}
-            {data[activeTab].length === 0 && (
+            {items.length === 0 && (
               <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
                 No {activeTab} found. Click "New" to create one.
               </div>

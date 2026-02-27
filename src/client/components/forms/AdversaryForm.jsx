@@ -12,7 +12,8 @@ export function AdversaryForm({ initial, onSave, onCancel }) {
     difficulty: initial?.difficulty || 10, hp_max: initial?.hp_max || 6,
     hp_thresholds: initial?.hp_thresholds || { major: 3, severe: 5 }, stress_max: initial?.stress_max || 4,
     attack: initial?.attack || initial?.attacks?.[0] || { name: '', range: 'Melee', modifier: 0, trait: 'Phy', damage: '' },
-    experiences: initial?.experiences || [], features: initial?.features || []
+    experiences: initial?.experiences || [], features: initial?.features || [],
+    is_public: initial?.is_public || false,
   });
 
   return (
@@ -77,9 +78,20 @@ export function AdversaryForm({ initial, onSave, onCancel }) {
       <ExperiencesInput experiences={formData.experiences} onChange={experiences => setFormData({ ...formData, experiences })} />
       <FeaturesInput features={formData.features} onChange={features => setFormData({ ...formData, features })} />
 
-      <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
-        <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
-        <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adversary</button>
+      <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
+        <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+          <input
+            type="checkbox"
+            checked={!!formData.is_public}
+            onChange={e => setFormData({ ...formData, is_public: e.target.checked })}
+            className="accent-blue-500"
+          />
+          Make Public
+        </label>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+          <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adversary</button>
+        </div>
       </div>
     </div>
   );

@@ -11,7 +11,9 @@
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
     "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
     "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --outfile=public/app.js",
-    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --outfile=public/app.js --watch"
+    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --outfile=public/app.js --watch",
+    "fetch:srd": "node scripts/fetch-srd.js",
+    "seed:srd": "node --env-file=.env scripts/seed-srd.js"
   },
   "dependencies": {
     "express": "^4.18.2",

@@ -11,20 +11,28 @@ The nav bar user menu (click your name/email) provides Export JSON, Import JSON,
 ```
 DaggerheartGM/
 ├── .cursor/rules/project.mdc   # Cursor agent context (always applied)
+├── data/                       # Generated SRD JSON (not committed — run npm run fetch:srd)
+│   ├── srd-adversaries.json
+│   └── srd-environments.json
+├── migrations/                 # Numbered .sql migration files
+│   ├── 001_create_items_table.sql
+│   └── 002_add_is_public.sql
 ├── public/
 │   ├── index.html              # SPA shell — loads Babel, Tailwind, importmap
 │   └── styles.css              # Generated Tailwind output (do not edit by hand)
+├── scripts/
+│   ├── fetch-srd.js            # Fetch SRD data from GitHub → data/
+│   └── seed-srd.js             # Upsert data/ into DB with user_id='__SRD__'
 ├── src/
 │   ├── client/
 │   │   ├── app.jsx             # React SPA entry point
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
-│   │   │   ├── forms/          # Item creation/edit forms
+│   │   │   ├── forms/          # Item creation/edit forms (all include is_public toggle)
 │   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass) + ImportPreviewCard
 │   │   └── lib/                # API client, helpers, constants, parsers, router
 │   ├── db.js                   # Postgres pool + migration runner + query helpers
 │   ├── fcg-scraper.js          # Puppeteer scraper for FreshCutGrass.app
 │   └── input.css               # Tailwind CSS entry point
-├── migrations/                 # Numbered .sql migration files
 ├── server.js                   # Express server + API routes
 ├── package.json
 ├── .env                        # Local environment variables (never commit)
@@ -38,6 +46,17 @@ npm install
 # fill in .env with credentials from the sections below
 npm run dev    # auto-restarts on file changes, opens at http://localhost:3456
 ```
+
+### Seeding SRD Content (optional)
+
+To include the Daggerheart SRD adversaries and environments in your database:
+
+```bash
+npm run fetch:srd   # downloads from GitHub → data/srd-adversaries.json + data/srd-environments.json
+npm run seed:srd    # inserts into DB (requires DATABASE_URL in .env)
+```
+
+Users can then toggle "Include SRD" in the Adversaries/Environments library views to show SRD content alongside their own items. SRD items are read-only; use "Clone to My Library" to make an editable copy.
 
 ---
 
@@ -114,14 +133,18 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 | `FIREBASE_APP_ID` | Yes | Firebase web app ID |
 | `DATABASE_URL` | Yes | Supabase Postgres connection string |
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
+| `DATABASE_URL` | Yes (seed) | Required for `npm run seed:srd` as well as normal operation |
 
 ---
 
 ## Development
 
 ```bash
-npm run dev    # development — auto-restarts on file changes (Node 18+)
-npm start      # production
+npm run dev        # development — auto-restarts on file changes (Node 18+)
+npm start          # production
+npm run fetch:srd  # re-fetch SRD data from GitHub
+npm run seed:srd   # re-seed SRD data into DB
+npm run build      # rebuild CSS + JS bundles
 ```
 
 ### Adding API Routes

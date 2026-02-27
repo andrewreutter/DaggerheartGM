@@ -21,7 +21,8 @@ export function parseRoute(pathname) {
   }
 
   if (parts[0] === 'gm-table') {
-    return { view: 'gm-table', tab: null, itemId: null, action: null };
+    const gmTab = parts[1] === 'whiteboard' ? 'whiteboard' : 'table';
+    return { view: 'gm-table', tab: null, gmTab, itemId: null, action: null };
   }
 
   if (parts[0] === 'library') {

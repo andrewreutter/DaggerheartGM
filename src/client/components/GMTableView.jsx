@@ -1,8 +1,66 @@
 import { useMemo, useState } from 'react';
-import { Zap, Heart, AlertCircle, Trash2, X } from 'lucide-react';
+import { Zap, Trash2, LayoutDashboard, Monitor } from 'lucide-react';
 import { parseFeatureCategory } from '../lib/helpers.js';
+import { FeatureDescription } from './FeatureDescription.jsx';
+import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, data, addToTable, startScene }) {
+function extractIframeSrc(embedCode) {
+  try {
+    const match = embedCode.match(/\bsrc=["']([^"']+)["']/i);
+    if (match && match[1].startsWith('https://')) return match[1];
+  } catch (_) {}
+  return null;
+}
+
+function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, hidden }) {
+  const [draft, setDraft] = useState(whiteboardEmbed);
+  const iframeSrc = extractIframeSrc(whiteboardEmbed);
+
+  const handleSave = () => {
+    setWhiteboardEmbed(draft.trim());
+  };
+
+  return (
+    <div className={`flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-950 p-6 gap-4${hidden ? ' hidden' : ''}`}>
+      <div className="flex flex-col gap-2 shrink-0">
+        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Zoom Whiteboard Embed Code</label>
+        <div className="flex gap-2 items-start">
+          <textarea
+            className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
+            placeholder='Paste your <iframe ...> embed code here'
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+          />
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors whitespace-nowrap"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      {iframeSrc ? (
+        <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+          <iframe
+            src={iframeSrc}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+            allowFullScreen
+            title="Zoom Whiteboard"
+          />
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2">
+          <Monitor size={32} className="opacity-40" />
+          <p className="text-sm">Paste your Zoom whiteboard embed code above to display it here.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, data, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, gmTab, navigate }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   // Group adversaries of the same type (same id + groupName) into consolidated entries.
   // Environments remain as individual entries.
@@ -71,10 +129,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     instances.forEach(inst => removeActiveElement(inst.instanceId));
   };
 
+  const tabBase = 'flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-colors';
+  const tabActive = 'border-red-500 text-white';
+  const tabInactive = 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600';
+
   return (
     <div className="flex-1 flex overflow-hidden">
-      {/* Left Column: Consolidated Actions */}
-      <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col overflow-y-auto">
+      {/* Left Column: Consolidated Actions (always visible) */}
+      <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
         <div className="p-4 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
           <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2">
             <Zap size={18} className="text-yellow-500" /> Actions Board
@@ -99,7 +161,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         <span className="font-medium text-slate-200 group-hover:text-white text-sm">{feature.name}</span>
                         <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
                       </div>
-                      <p className="text-xs text-slate-400 line-clamp-2">{feature.description}</p>
+                      <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
                     </div>
                   ))}
                 </div>
@@ -114,8 +176,24 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
       </div>
 
-      {/* Right Column: The Table */}
-      <div className="flex-1 bg-slate-950 p-6 overflow-y-auto relative">
+      {/* Right Column: Tab bar + content */}
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="bg-slate-950 border-b border-slate-800 flex items-center px-4 shrink-0">
+          <button
+            className={`${tabBase} ${gmTab === 'table' ? tabActive : tabInactive}`}
+            onClick={() => navigate('/gm-table/table')}
+          >
+            <Monitor size={16} /> Behind the Screen
+          </button>
+          <button
+            className={`${tabBase} ${gmTab === 'whiteboard' ? tabActive : tabInactive}`}
+            onClick={() => navigate('/gm-table/whiteboard')}
+          >
+            <LayoutDashboard size={16} /> Game Table
+          </button>
+        </div>
+        <WhiteboardTab whiteboardEmbed={whiteboardEmbed} setWhiteboardEmbed={setWhiteboardEmbed} hidden={gmTab !== 'whiteboard'} />
+        <div className={`flex-1 bg-slate-950 p-6 overflow-y-auto relative${gmTab === 'whiteboard' ? ' hidden' : ''}`}>
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-white">The Table</h2>
           <div className="flex flex-wrap gap-2">
@@ -203,32 +281,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       <h3 className="text-xl font-bold text-white">{element.name}</h3>
                     </div>
 
-                    <div className="text-sm text-slate-400 mb-2 capitalize">
-                      Tier {element.tier || 0} {element.type} Environment
-                    </div>
-
-                    {element.description && (
-                      <div className="text-sm italic text-slate-300 mb-4 whitespace-pre-wrap">{element.description}</div>
-                    )}
-
-                    {element.features && element.features.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Features</h4>
-                        {element.features.map((feat, featIdx) => (
-                          <div
-                            key={feat.id ?? featIdx}
-                            className={`text-sm pl-2 border-l-2 transition-colors ${
-                              hoveredFeature?.cardKey === envCardKey && hoveredFeature?.featureKey === `feat-${featIdx}`
-                                ? 'border-yellow-500'
-                                : 'border-transparent'
-                            }`}
-                          >
-                            <span className="font-bold text-slate-200 mr-2">{feat.name}</span>
-                            <span className="text-slate-400">{feat.description}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <EnvironmentCardContent
+                      element={element}
+                      hoveredFeature={hoveredFeature}
+                      cardKey={envCardKey}
+                    />
                   </div>
                 </div>
               );
@@ -263,130 +320,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     {el.groupName && <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">{el.groupName}</span>}
                   </div>
 
-                  <div className="text-sm text-slate-400 mb-2 capitalize">
-                    Tier {el.tier || 0} {el.role}
-                  </div>
-
-                  {el.description && (
-                    <div className="text-sm italic text-slate-300 mb-4 whitespace-pre-wrap">{el.description}</div>
-                  )}
-
-                  {(el.motive || (el.experiences && el.experiences.length > 0)) && (
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      {el.motive && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1 mb-2">Motives & Tactics</h4>
-                          <p className="text-sm text-slate-300">{el.motive}</p>
-                        </div>
-                      )}
-                      {el.experiences && el.experiences.length > 0 && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1 mb-2">Experiences</h4>
-                          <div className="flex flex-wrap gap-2">
-                            {el.experiences.map(exp => (
-                              <span key={exp.id} className="text-xs bg-slate-950 border border-slate-800 text-slate-300 px-2 py-1 rounded">
-                                {exp.name} <strong className="text-red-400">+{exp.modifier}</strong>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Stats header + per-instance HP/Stress/Conditions rows */}
-                  <div className="mb-6 bg-slate-950 p-3 rounded-lg border border-slate-800">
-                    <div className="flex gap-6 text-sm font-medium border-b border-slate-800 pb-3 mb-3">
-                      <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">Difficulty</span><span className="text-lg">{el.difficulty || '-'}</span></div>
-                      <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">HP</span><span className="text-lg">{el.hp_max || '-'}</span></div>
-                      <div className="flex flex-col"><span className="text-slate-500 text-xs uppercase">Thresholds</span><span className="text-lg">{el.hp_thresholds?.major || '-'}/{el.hp_thresholds?.severe || '-'}</span></div>
-                    </div>
-
-                    <div className="space-y-2">
-                      {instances.map((inst, idx) => (
-                        <div key={inst.instanceId} className="flex items-center gap-2">
-                          {count > 1 && (
-                            <span className="text-xs text-slate-500 w-4 flex-shrink-0 text-right">{idx + 1}</span>
-                          )}
-
-                          <div className="flex items-center gap-1">
-                            <Heart size={12} className="text-red-500 flex-shrink-0" />
-                            <input
-                              type="number"
-                              value={inst.currentHp}
-                              onChange={(e) => updateActiveElement(inst.instanceId, { currentHp: parseInt(e.target.value) || 0 })}
-                              className="w-14 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center font-bold text-white outline-none focus:border-red-500 text-sm"
-                            />
-                            <span className="text-slate-500 text-xs">/{el.hp_max}</span>
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            <AlertCircle size={12} className="text-purple-500 flex-shrink-0" />
-                            <input
-                              type="number"
-                              value={inst.currentStress}
-                              onChange={(e) => updateActiveElement(inst.instanceId, { currentStress: parseInt(e.target.value) || 0 })}
-                              className="w-14 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center font-bold text-white outline-none focus:border-purple-500 text-sm"
-                            />
-                            <span className="text-slate-500 text-xs">/{el.stress_max}</span>
-                          </div>
-
-                          <input
-                            type="text"
-                            placeholder="Conditions..."
-                            value={inst.conditions || ''}
-                            onChange={(e) => updateActiveElement(inst.instanceId, { conditions: e.target.value })}
-                            className="flex-1 min-w-0 bg-slate-800/50 border border-slate-700 rounded px-2 py-1 text-sm text-white outline-none focus:border-blue-500"
-                          />
-
-                          {count > 1 && (
-                            <button
-                              onClick={() => removeActiveElement(inst.instanceId)}
-                              className="text-slate-600 hover:text-red-500 flex-shrink-0"
-                              title="Remove this copy"
-                            >
-                              <X size={14} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {el.attack && el.attack.name && (
-                    <div className="space-y-2 mb-4">
-                      <h4 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Attack</h4>
-                      <div
-                        className={`text-sm pl-2 border-l-2 transition-colors ${
-                          hoveredFeature?.cardKey === advCardKey && hoveredFeature?.featureKey === 'attack'
-                            ? 'border-yellow-500'
-                            : 'border-transparent'
-                        }`}
-                      >
-                        <span className="font-bold text-slate-200">{el.attack.name}:</span>
-                        <span className="text-slate-300"> {el.attack.modifier >= 0 ? '+' : ''}{el.attack.modifier} {el.attack.range} | {el.attack.damage} {el.attack.trait?.toLowerCase()}</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {el.features && el.features.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Features</h4>
-                      {el.features.map((feat, featIdx) => (
-                        <div
-                          key={feat.id ?? featIdx}
-                          className={`text-sm pl-2 border-l-2 transition-colors ${
-                            hoveredFeature?.cardKey === advCardKey && hoveredFeature?.featureKey === `feat-${featIdx}`
-                              ? 'border-yellow-500'
-                              : 'border-transparent'
-                          }`}
-                        >
-                          <span className="font-bold text-slate-200 mr-2">{feat.name}</span>
-                          <span className="text-slate-400">{feat.description}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <AdversaryCardContent
+                    element={el}
+                    hoveredFeature={hoveredFeature}
+                    cardKey={advCardKey}
+                    count={count}
+                    instances={instances}
+                    updateFn={updateActiveElement}
+                    showInstanceRemove={true}
+                    removeInstanceFn={removeActiveElement}
+                  />
                 </div>
               </div>
             );
@@ -399,6 +342,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 }

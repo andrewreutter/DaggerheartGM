@@ -5,6 +5,16 @@ import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, 
 
 import { auth, loadData, saveItem as apiSaveItem, deleteItem as apiDeleteItem } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
+
+const LIBRARY_FILTERS_KEY = 'dh_libraryFilters';
+
+function loadStoredFilters() {
+  try {
+    const stored = localStorage.getItem(LIBRARY_FILTERS_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return { includeSrd: true, includePublic: false };
+}
 import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
@@ -24,15 +34,17 @@ function App() {
   });
 
   const [activeElements, setActiveElements] = useState([]);
+  const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
   const tableStateReadyRef = useRef(false);
+  const [libraryFilters, setLibraryFilters] = useState(loadStoredFilters);
 
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements]);
+  }, [activeElements, whiteboardEmbed]);
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
@@ -142,16 +154,20 @@ function App() {
     reader.readAsText(file);
   };
 
+  const userRef = useRef(null);
+
   useEffect(() => {
     if (!auth) { setLoading(false); return; }
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      userRef.current = currentUser;
       setUser(currentUser);
       if (currentUser) {
         try {
-          const fetched = await loadData(currentUser);
+          const fetched = await loadData(currentUser, libraryFilters);
           setData(fetched);
           setActiveElements(fetched.table_state?.[0]?.elements || []);
+          setWhiteboardEmbed(fetched.table_state?.[0]?.whiteboardEmbed || '');
           tableStateReadyRef.current = true;
         } catch (err) {
           console.error('Failed to load data:', err);
@@ -164,6 +180,24 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  const handleSetLibraryFilters = (newFilters) => {
+    setLibraryFilters(newFilters);
+    try { localStorage.setItem(LIBRARY_FILTERS_KEY, JSON.stringify(newFilters)); } catch {}
+  };
+
+  useEffect(() => {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+    loadData(currentUser, libraryFilters)
+      .then(fetched => {
+        setData(prev => ({
+          ...fetched,
+          table_state: prev.table_state,
+        }));
+      })
+      .catch(err => console.error('Failed to reload data on filter change:', err));
+  }, [libraryFilters]);
 
   const saveItem = async (collectionName, item) => {
     try {
@@ -191,6 +225,13 @@ function App() {
     } catch (err) {
       console.error(`deleteItem(${collectionName}, ${id}) failed:`, err);
     }
+  };
+
+  const cloneItem = async (collectionName, item) => {
+    const { _source, _owner, id: _id, is_public: _ip, ...rest } = item;
+    const clone = { ...rest, id: generateId(), is_public: false };
+    await saveItem(collectionName, clone);
+    return clone;
   };
 
   const addToTable = (item, collectionName) => {
@@ -384,7 +425,18 @@ function App() {
             </button>
           </div>
         ) : route.view === 'library' ? (
-          <LibraryView data={data} saveItem={saveItem} deleteItem={deleteItem} startScene={startScene} addToTable={addToTable} route={route} navigate={navigate} />
+          <LibraryView
+            data={data}
+            saveItem={saveItem}
+            deleteItem={deleteItem}
+            cloneItem={cloneItem}
+            startScene={startScene}
+            addToTable={addToTable}
+            route={route}
+            navigate={navigate}
+            libraryFilters={libraryFilters}
+            setLibraryFilters={handleSetLibraryFilters}
+          />
         ) : (
           <GMTableView
             activeElements={activeElements}
@@ -393,6 +445,10 @@ function App() {
             data={data}
             addToTable={addToTable}
             startScene={startScene}
+            whiteboardEmbed={whiteboardEmbed}
+            setWhiteboardEmbed={setWhiteboardEmbed}
+            gmTab={route.gmTab}
+            navigate={navigate}
           />
         )}
       </main>
