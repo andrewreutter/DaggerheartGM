@@ -6,7 +6,8 @@ export function AdventureForm({ initial, data, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     name: initial?.name || '', imageUrl: initial?.imageUrl || '',
     scenes: initial?.scenes || [], groups: initial?.groups || [],
-    environments: initial?.environments || [], adversaries: initial?.adversaries || []
+    environments: initial?.environments || [], adversaries: initial?.adversaries || [],
+    is_public: initial?.is_public || false,
   });
 
   return (
@@ -19,9 +20,20 @@ export function AdventureForm({ initial, data, onSave, onCancel }) {
         <MultiSelectRef label="Environments" options={data.environments} selectedIds={formData.environments} onChange={ids => setFormData({ ...formData, environments: ids })} />
         <MultiSelectRef label="Adversaries" options={data.adversaries} selectedIds={formData.adversaries} onChange={ids => setFormData({ ...formData, adversaries: ids })} />
       </div>
-      <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
-        <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
-        <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adventure</button>
+      <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
+        <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+          <input
+            type="checkbox"
+            checked={!!formData.is_public}
+            onChange={e => setFormData({ ...formData, is_public: e.target.checked })}
+            className="accent-blue-500"
+          />
+          Make Public
+        </label>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+          <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adventure</button>
+        </div>
       </div>
     </div>
   );

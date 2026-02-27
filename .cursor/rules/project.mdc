@@ -15,10 +15,13 @@ A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server th
 - `src/client/components/forms/` — Item creation/edit forms: `AdversaryForm`, `EnvironmentForm`, `GroupForm`, `SceneForm`, `AdventureForm`, plus shared inputs `ExperiencesInput`, `FeaturesInput`, `FormRow`, `MultiSelectRef`.
 - `src/client/components/modals/` — Import modals: `RolzImportModal.jsx`, `FCGImportModal.jsx`. Shared utilities in `ImportModalShell.jsx` (`ImportModalShell` dialog chrome, `ImportSuccessStep`, `ImportPreviewSection`, `ImportPreviewSummary`, `useImportSelection` hook) and `ImportPreviewCard.jsx` (collapsible card with checkbox, collapsed stat summary, expand to full form edit via `AdversaryForm`/`EnvironmentForm`, duplicate name warning).
 - `src/client/lib/` — Client-side utilities: `api.js` (Firebase init + fetch helpers), `helpers.js` (`generateId`), `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` hook + `parseRoute()`).
-- `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `upsertItem`, `deleteItem`).
+- `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `getSrdItems`, `getPublicItems`, `upsertItem`, `deleteItem`). Exports `SRD_USER_ID = '__SRD__'`.
 - `src/fcg-scraper.js` — Puppeteer-based scraper for FreshCutGrass.app homebrew pages. Exports `validateFCGUrl(url)` and `scrapeFCG(url)`. Launches headless Chrome, clicks each adversary card to open its detail modal, and returns `{ adversaries, environments }` shaped for import.
 - `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` and `src/client/**/*.jsx` automatically.
-- `migrations/` — Numbered `.sql` migration files (e.g. `001_create_items_table.sql`). Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema.
+- `migrations/` — Numbered `.sql` migration files (e.g. `001_create_items_table.sql`). Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema. `002_add_is_public.sql` adds the `is_public BOOLEAN` column.
+- `scripts/fetch-srd.js` — Fetches pre-built adversary/environment JSON from `seansbox/daggerheart-srd` on GitHub, transforms to app schema, writes to `data/srd-adversaries.json` and `data/srd-environments.json`. Run with `npm run fetch:srd`.
+- `scripts/seed-srd.js` — Reads `data/srd-*.json` and upserts them into the DB with `user_id='__SRD__'` and `is_public=true`. Run with `npm run seed:srd`.
+- `data/` — Generated JSON output from `scripts/fetch-srd.js`. Not committed to git.
 - `public/index.html` — Thin HTML shell. Links to the locally-built `public/styles.css`, loads Babel standalone and an ES importmap (pointing to esm.sh CDN for React 18, Firebase 10, Lucide React). Loads the app via `<script type="module" src="/app.js">`.
 - `public/styles.css` — Generated Tailwind CSS output. Do **not** edit by hand; rebuild with `npm run build:css`.
 - `public/` — All static assets (images, fonts, compiled JS, etc.) go here.
@@ -30,15 +33,16 @@ Supabase Postgres (or any Postgres). Set `DATABASE_URL` in `.env` to the connect
 
 Schema uses a single `items` table:
 - `(app_id, collection, id)` — composite primary key
-- `user_id` — Firebase UID; all queries are scoped per user
+- `user_id` — Firebase UID; all queries are scoped per user. Special value `__SRD__` for SRD content.
 - `data` — JSONB blob storing the full entity
 - `app_id` — from `APP_ID` env var; namespaces data per deployment
+- `is_public` — boolean; when true, item is visible to all authenticated users (always true for SRD items)
 
 ## API Routes
 
 - `GET /api/config` — Returns `{ firebaseConfig }` (no auth required). Consumed by `app.jsx` at startup.
-- `GET /api/data` — Returns `{ adversaries, environments, groups, scenes, adventures }` for the authenticated user.
-- `PUT /api/data/:collection` — Upsert an item (body is the item JSON). Returns the saved item.
+- `GET /api/data?includeSrd=1&includePublic=1` — Returns `{ adversaries, environments, groups, scenes, adventures }` for the authenticated user. Optional query params `includeSrd=1` and `includePublic=1` merge in SRD content and other users' public items respectively. Items include `_source` ('own' | 'srd' | 'public') and `_owner` (user_id for public items).
+- `PUT /api/data/:collection` — Upsert an item (body is the item JSON). Respects `is_public` field. Returns the saved item.
 - `DELETE /api/data/:collection/:id` — Delete an item.
 - `GET /api/fetch-fcg?url=<fcg-url>` — Requires auth. Uses Puppeteer to scrape a FreshCutGrass.app homebrew page and returns `{ adversaries, environments }` ready for import. URL must start with `https://freshcutgrass.app/homebrew/`. Takes 20–40 seconds.
 
@@ -65,6 +69,8 @@ npm install         # first time only
 npm run build:css   # (re)generate public/styles.css from src/input.css
 npm run dev         # development: starts server (--watch) + Tailwind watcher in parallel
 npm start           # production (run npm run build:css first if styles changed)
+npm run fetch:srd   # fetch SRD data from GitHub -> data/srd-adversaries.json + data/srd-environments.json
+npm run seed:srd    # seed data/ into DB with user_id='__SRD__' (requires DATABASE_URL)
 ```
 
 Server listens on `process.env.PORT` or `3456` by default. Set `PORT` in `.env` to override — both `npm start` and `npm run dev` load `.env` automatically via `node --env-file=.env`.

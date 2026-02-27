@@ -8,7 +8,8 @@ export function EnvironmentForm({ initial, onSave, onCancel }) {
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
     difficulty: initial?.difficulty || 10,
     description: initial?.description || '', imageUrl: initial?.imageUrl || '',
-    features: initial?.features || []
+    features: initial?.features || [],
+    is_public: initial?.is_public || false,
   });
 
   return (
@@ -32,9 +33,20 @@ export function EnvironmentForm({ initial, onSave, onCancel }) {
       </FormRow>
       <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({ ...formData, imageUrl: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <FeaturesInput features={formData.features} onChange={features => setFormData({ ...formData, features })} />
-      <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
-        <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
-        <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Environment</button>
+      <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
+        <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+          <input
+            type="checkbox"
+            checked={!!formData.is_public}
+            onChange={e => setFormData({ ...formData, is_public: e.target.checked })}
+            className="accent-blue-500"
+          />
+          Make Public
+        </label>
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+          <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Environment</button>
+        </div>
       </div>
     </div>
   );

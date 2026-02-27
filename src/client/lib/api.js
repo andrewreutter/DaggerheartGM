@@ -26,9 +26,13 @@ export const getAuthToken = async () => {
   return currentUser.getIdToken();
 };
 
-export const loadData = async (currentUser) => {
+export const loadData = async (currentUser, { includeSrd = false, includePublic = false } = {}) => {
   const token = await currentUser.getIdToken();
-  const res = await fetch('/api/data', {
+  const params = new URLSearchParams();
+  if (includeSrd) params.set('includeSrd', '1');
+  if (includePublic) params.set('includePublic', '1');
+  const query = params.toString() ? `?${params}` : '';
+  const res = await fetch(`/api/data${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

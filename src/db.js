@@ -7,6 +7,8 @@ const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
 
+export const SRD_USER_ID = '__SRD__';
+
 let pool;
 
 export function getPool() {
@@ -58,23 +60,45 @@ export async function runMigrations() {
 export async function getItems(appId, userId, collection) {
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT id, data FROM items
+    `SELECT id, data, is_public FROM items
      WHERE app_id = $1 AND user_id = $2 AND collection = $3
      ORDER BY created_at ASC`,
     [appId, userId, collection]
   );
-  return rows.map(r => ({ id: r.id, ...r.data }));
+  return rows.map(r => ({ id: r.id, ...r.data, is_public: r.is_public }));
 }
 
-export async function upsertItem(appId, userId, collection, id, data) {
+export async function getSrdItems(appId, collection) {
   const db = getPool();
   const { rows } = await db.query(
-    `INSERT INTO items (id, app_id, user_id, collection, data)
-     VALUES ($1, $2, $3, $4, $5)
+    `SELECT id, data FROM items
+     WHERE app_id = $1 AND user_id = $2 AND collection = $3
+     ORDER BY created_at ASC`,
+    [appId, SRD_USER_ID, collection]
+  );
+  return rows.map(r => ({ id: r.id, ...r.data, is_public: true, _source: 'srd' }));
+}
+
+export async function getPublicItems(appId, excludeUserId, collection) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, user_id, data FROM items
+     WHERE app_id = $1 AND user_id != $2 AND user_id != $3 AND collection = $4 AND is_public = true
+     ORDER BY created_at ASC`,
+    [appId, excludeUserId, SRD_USER_ID, collection]
+  );
+  return rows.map(r => ({ id: r.id, ...r.data, is_public: true, _source: 'public', _owner: r.user_id }));
+}
+
+export async function upsertItem(appId, userId, collection, id, data, isPublic = false) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `INSERT INTO items (id, app_id, user_id, collection, data, is_public)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (app_id, collection, id)
-     DO UPDATE SET data = $5, updated_at = now()
+     DO UPDATE SET data = $5, is_public = $6, updated_at = now()
      RETURNING id`,
-    [id, appId, userId, collection, data]
+    [id, appId, userId, collection, data, isPublic]
   );
   return rows[0].id;
 }

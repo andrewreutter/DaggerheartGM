@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { runMigrations, getItems, upsertItem, deleteItem } from './src/db.js';
+import { runMigrations, getItems, getSrdItems, getPublicItems, upsertItem, deleteItem } from './src/db.js';
 import { validateFCGUrl, scrapeFCG } from './src/fcg-scraper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -65,11 +65,31 @@ app.get('/api/fetch-fcg', requireAuth, async (req, res) => {
 // --- Data routes ---
 
 app.get('/api/data', requireAuth, async (req, res) => {
+  const includeSrd = req.query.includeSrd === '1';
+  const includePublic = req.query.includePublic === '1';
   try {
     const results = await Promise.all(
       COLLECTIONS.map(col => getItems(APP_ID, req.uid, col))
     );
-    const data = Object.fromEntries(COLLECTIONS.map((col, i) => [col, results[i]]));
+    const data = Object.fromEntries(COLLECTIONS.map((col, i) => [col, results[i].map(item => ({ ...item, _source: 'own' }))]));
+
+    if (includeSrd) {
+      const srdCollections = ['adversaries', 'environments'];
+      const srdResults = await Promise.all(srdCollections.map(col => getSrdItems(APP_ID, col)));
+      srdCollections.forEach((col, i) => {
+        data[col] = [...data[col], ...srdResults[i]];
+      });
+    }
+
+    if (includePublic) {
+      const publicResults = await Promise.all(
+        COLLECTIONS.map(col => getPublicItems(APP_ID, req.uid, col))
+      );
+      COLLECTIONS.forEach((col, i) => {
+        if (data[col]) data[col] = [...data[col], ...publicResults[i]];
+      });
+    }
+
     res.json(data);
   } catch (err) {
     console.error('GET /api/data error:', err);
@@ -87,10 +107,10 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid item body' });
   }
   const id = item.id || crypto.randomUUID();
-  const { id: _id, ...data } = item;
+  const { id: _id, is_public, _source, _owner, ...rest } = item;
   try {
-    await upsertItem(APP_ID, req.uid, collection, id, { ...data });
-    res.json({ id, ...data });
+    await upsertItem(APP_ID, req.uid, collection, id, { ...rest }, Boolean(is_public));
+    res.json({ id, ...rest, is_public: Boolean(is_public), _source: 'own' });
   } catch (err) {
     console.error(`PUT /api/data/${collection} error:`, err);
     res.status(500).json({ error: 'Failed to save item' });

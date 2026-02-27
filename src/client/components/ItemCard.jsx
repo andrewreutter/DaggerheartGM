@@ -1,8 +1,15 @@
 import { useState } from 'react';
-import { Edit, Trash2, Play } from 'lucide-react';
+import { Edit, Trash2, Play, Copy } from 'lucide-react';
 
-export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onStartScene, onAddToTable }) {
+const SOURCE_BADGE = {
+  srd: { label: 'SRD', className: 'bg-violet-900/60 text-violet-300 border border-violet-700' },
+  public: { label: 'Public', className: 'bg-blue-900/60 text-blue-300 border border-blue-700' },
+};
+
+export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onStartScene, onAddToTable }) {
   const [added, setAdded] = useState(false);
+  const isOwn = !item._source || item._source === 'own';
+  const badge = SOURCE_BADGE[item._source];
 
   const handleAddToTable = () => {
     onAddToTable(item, tab);
@@ -27,8 +34,15 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onStartSce
       )}
       <div className="p-4 flex flex-col flex-1">
         <div className="flex justify-between items-start mb-2">
-          <h3 className="font-bold text-lg text-white group-hover:text-red-400 transition-colors">{item.name}</h3>
-          <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+          <div className="flex flex-col gap-1 min-w-0">
+            <h3 className="font-bold text-lg text-white group-hover:text-red-400 transition-colors leading-tight">{item.name}</h3>
+            {badge && (
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded self-start uppercase tracking-wide ${badge.className}`}>
+                {badge.label}
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2 ml-2 shrink-0" onClick={e => e.stopPropagation()}>
             {onAddToTable && (
               <button
                 onClick={handleAddToTable}
@@ -38,8 +52,21 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onStartSce
                 <Play size={16} />
               </button>
             )}
-            <button onClick={() => onEdit(item)} className="text-slate-400 hover:text-blue-400"><Edit size={16} /></button>
-            <button onClick={() => onDelete(tab, item.id)} className="text-slate-400 hover:text-red-400"><Trash2 size={16} /></button>
+            {onClone && (
+              <button onClick={(e) => { e.stopPropagation(); onClone(item); }} className="text-slate-400 hover:text-violet-400" title="Clone to My Library">
+                <Copy size={16} />
+              </button>
+            )}
+            {isOwn && onEdit && (
+              <button onClick={(e) => { e.stopPropagation(); onEdit(item); }} className="text-slate-400 hover:text-blue-400" title="Edit">
+                <Edit size={16} />
+              </button>
+            )}
+            {isOwn && onDelete && (
+              <button onClick={(e) => { e.stopPropagation(); onDelete(tab, item.id); }} className="text-slate-400 hover:text-red-400" title="Delete">
+                <Trash2 size={16} />
+              </button>
+            )}
           </div>
         </div>
         <div className="text-sm text-slate-400 flex-1">
