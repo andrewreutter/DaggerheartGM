@@ -79,6 +79,7 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
         <RolzImportModal
           onClose={() => setShowRolzImport(false)}
           saveItem={saveItem}
+          data={data}
           onImportSuccess={(collection, id) => {
             setShowRolzImport(false);
             navigate(`/library/${collection}/${id}`);
@@ -90,6 +91,7 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
         <FCGImportModal
           onClose={() => setShowFCGImport(false)}
           saveItem={saveItem}
+          data={data}
           onImportSuccess={(collection, id) => {
             setShowFCGImport(false);
             navigate(`/library/${collection}/${id}`);

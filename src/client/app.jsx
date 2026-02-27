@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2 } from 'lucide-react';
 
 import { auth, loadData, saveItem as apiSaveItem, deleteItem as apiDeleteItem } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
@@ -82,6 +82,23 @@ function App() {
     } catch (err) {
       console.error('Sign-Out Error:', err);
     }
+  };
+
+  const handleDeleteAllData = async () => {
+    setUserMenuOpen(false);
+    const collections = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+    const totalItems = collections.reduce((sum, col) => sum + (data[col]?.length || 0), 0);
+    if (!window.confirm(`Delete all ${totalItems} item(s)? This cannot be undone.`)) return;
+    for (const col of collections) {
+      for (const item of [...(data[col] || [])]) {
+        await apiDeleteItem(col, item.id);
+      }
+    }
+    setData({ adversaries: [], environments: [], groups: [], scenes: [], adventures: [] });
+    setActiveElements([]);
+    tableStateReadyRef.current = false;
+    apiDeleteItem('table_state', 'current').catch(() => {});
+    tableStateReadyRef.current = true;
   };
 
   const handleExport = () => {
@@ -332,6 +349,13 @@ function App() {
                     <Upload size={15} /> Import JSON
                     <input type="file" accept=".json" onChange={handleImport} className="hidden" />
                   </label>
+                  <div className="border-t border-slate-700 my-1" />
+                  <button
+                    onClick={handleDeleteAllData}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-orange-400 hover:bg-slate-700 hover:text-orange-300 transition-colors"
+                  >
+                    <Trash2 size={15} /> Delete All Data
+                  </button>
                   <div className="border-t border-slate-700 my-1" />
                   <button
                     onClick={handleSignOut}

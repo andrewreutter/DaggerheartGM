@@ -19,7 +19,7 @@ DaggerheartGM/
 │   │   ├── app.jsx             # React SPA entry point
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
 │   │   │   ├── forms/          # Item creation/edit forms
-│   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass)
+│   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass) + ImportPreviewCard
 │   │   └── lib/                # API client, helpers, constants, parsers, router
 │   ├── db.js                   # Postgres pool + migration runner + query helpers
 │   ├── fcg-scraper.js          # Puppeteer scraper for FreshCutGrass.app
