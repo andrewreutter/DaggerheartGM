@@ -10,14 +10,18 @@ A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server th
 ## Architecture
 
 - `server.js` — Express server entry point. Serves static files from `public/` and falls back to `public/index.html` for any unmatched route (standard SPA behavior). API routes live here. On startup, runs DB migrations if `DATABASE_URL` is set.
+- `src/client/app.jsx` — React SPA entry point. Imports from `./lib/api.js`, mounts via `ReactDOM.createRoot`. Manages top-level state (data, activeElements, user). Uses `useRouter()` from `./lib/router.js` to derive the active view from the URL; all navigation calls `navigate()` so the browser back/forward buttons work. The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
+- `src/client/components/` — UI components: `LibraryView.jsx`, `GMTableView.jsx`, `NavBtn.jsx`, `ItemCard.jsx`, `ItemDetailView.jsx`.
+- `src/client/components/forms/` — Item creation/edit forms: `AdversaryForm`, `EnvironmentForm`, `GroupForm`, `SceneForm`, `AdventureForm`, plus shared inputs `ExperiencesInput`, `FeaturesInput`, `FormRow`, `MultiSelectRef`.
+- `src/client/components/modals/` — Import modals: `RolzImportModal.jsx`, `FCGImportModal.jsx`. Shared utilities in `ImportModalShell.jsx` (`ImportModalShell` dialog chrome, `ImportSuccessStep`, `ImportPreviewSection`, `ImportPreviewSummary`, `useImportSelection` hook) and `ImportPreviewCard.jsx` (collapsible card with checkbox, collapsed stat summary, expand to full form edit via `AdversaryForm`/`EnvironmentForm`, duplicate name warning).
+- `src/client/lib/` — Client-side utilities: `api.js` (Firebase init + fetch helpers), `helpers.js` (`generateId`), `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` hook + `parseRoute()`).
 - `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `upsertItem`, `deleteItem`).
 - `src/fcg-scraper.js` — Puppeteer-based scraper for FreshCutGrass.app homebrew pages. Exports `validateFCGUrl(url)` and `scrapeFCG(url)`. Launches headless Chrome, clicks each adversary card to open its detail modal, and returns `{ adversaries, environments }` shaped for import.
+- `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` and `src/client/**/*.jsx` automatically.
 - `migrations/` — Numbered `.sql` migration files (e.g. `001_create_items_table.sql`). Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema.
-- `public/index.html` — Thin HTML shell. Links to the locally-built `public/styles.css`, loads Babel standalone and an ES importmap (pointing to esm.sh CDN for React 18, Firebase 10, Lucide React). Loads the app via `<script type="text/babel" data-type="module" src="/app.jsx">`.
-- `public/app.jsx` — The React SPA. Written in JSX with ES module imports. Uses top-level `await fetch('/api/config')` for Firebase initialisation. Mounts itself via `ReactDOM.createRoot`. On sign-in, loads all data from `GET /api/data`.
+- `public/index.html` — Thin HTML shell. Links to the locally-built `public/styles.css`, loads Babel standalone and an ES importmap (pointing to esm.sh CDN for React 18, Firebase 10, Lucide React). Loads the app via `<script type="module" src="/app.js">`.
 - `public/styles.css` — Generated Tailwind CSS output. Do **not** edit by hand; rebuild with `npm run build:css`.
-- `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` automatically.
-- `public/` — All static assets (images, fonts, etc.) go here.
+- `public/` — All static assets (images, fonts, compiled JS, etc.) go here.
 - `package.json` — Uses ES modules (`"type": "module"`). Dependencies: `express`, `pg`, `firebase-admin`, `puppeteer`. Dev dependencies: `tailwindcss`, `@tailwindcss/cli`.
 
 ## Database
@@ -70,7 +74,13 @@ Server listens on `process.env.PORT` or `3456` by default. Set `PORT` in `.env` 
 - API routes: add `app.get/post/...('/api/...')` handlers in `server.js` before the static middleware.
 - Static assets: place in `public/`.
 - ES modules (`import`/`export`) throughout — no `require()`.
+- Routing: use `useRouter()` / `navigate()` from `src/client/lib/router.js` for all view transitions. URL scheme: `/` (home/sign-in), `/library/:tab`, `/library/:tab/new`, `/library/:tab/:id`, `/library/:tab/:id/edit`, `/gm-table`.
 
-## Maintaining This File
+## Maintaining Documentation
 
-When you make structural changes to this project — adding files or directories, introducing new dependencies, establishing new conventions, or adding API routes — update this rule to reflect those changes so future agents have accurate context.
+Whenever you make structural changes to this project — adding or removing files/directories, introducing new dependencies, establishing new conventions, changing UI layout, or adding API routes — you **must** update **both** of the following as a mandatory step in every plan:
+
+1. **`.cursor/rules/project.mdc`** (this file) — keep the architecture bullets, API routes, and conventions accurate.
+2. **`README.md`** — keep the directory tree and architecture description in sync.
+
+This is not optional or an afterthought. Every plan that touches project structure must include a dedicated "Update documentation" step covering both files.

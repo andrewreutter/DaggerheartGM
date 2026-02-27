@@ -225,27 +225,26 @@ export async function scrapeFCG(url) {
           if (/Motives\s*(&|and)\s*Tactics/i.test(t)) mFound = true;
         }
 
+        // Shared line list used for attack and feature parsing
+        const lines = (cardContent.innerText || '').split('\n').map(l => l.trim()).filter(Boolean);
+
         // ---- Specific Attacks ("Name: Range | Damage") ----
+        // Parse from innerText lines so we are not sensitive to parent-element boundaries.
+        // A line like "Thundersword: Melee | 1d6+8 mag" will match even when it shares a
+        // container with the "Attack: +2" modifier line.
         const attacks = [];
-        // Look for elements whose text matches "Word(s): Range | Number"
-        for (const el of cardContent.querySelectorAll('*')) {
-          if (el.children.length > 0) continue;
-          const t = el.textContent.trim();
-          // Attack name element (bold/span) followed by sibling text "Range | Damage"
-          // Typical pattern in DOM: <span>Shoot</span> then text node ": Far | 3"
-          // We check the parent's full text
-          if (t.length < 50) {
-            const parent = el.parentElement;
-            if (parent) {
-              const parentText = parent.textContent.trim();
-              const atkMatch = parentText.match(/^([^:]+):\s*(\w[\w\s]*)\s*\|\s*(\d+)/);
-              if (atkMatch && attacks.findIndex(a => a.name === atkMatch[1].trim()) === -1) {
-                attacks.push({
-                  name: atkMatch[1].trim(),
-                  range: atkMatch[2].trim(),
-                  damage: parseInt(atkMatch[3]) || 0,
-                });
-              }
+        const skipAttackLabels = /^(Difficulty|Attack|HP|Stress|Motives|Features|Major|Severe|By\s)/i;
+        for (const line of lines) {
+          if (!line.includes('|')) continue;
+          const atkMatch = line.match(/^([^:]+):\s*(\w[\w\s]*)\s*\|\s*(.+)/);
+          if (atkMatch) {
+            const atkName = atkMatch[1].trim();
+            if (!skipAttackLabels.test(atkName) && attacks.findIndex(a => a.name === atkName) === -1) {
+              attacks.push({
+                name: atkName,
+                range: atkMatch[2].trim(),
+                damage: atkMatch[3].trim(),
+              });
             }
           }
         }
@@ -260,8 +259,6 @@ export async function scrapeFCG(url) {
 
         // Walk the DOM in order looking for feature blocks
         // Features live in a container after the "Features" section header
-        // Use innerText lines for reliable ordered traversal
-        const lines = (cardContent.innerText || '').split('\n').map(l => l.trim()).filter(Boolean);
 
         // Find the "Features" heading line
         let featLineIdx = lines.findIndex(l => /^Features$/i.test(l));
@@ -410,7 +407,7 @@ export async function scrapeFCG(url) {
         const extraAtkFeatures = item.attacks.slice(1).map(a => ({
           name: a.name,
           type: 'action',
-          description: `${item.attackModifier >= 0 ? '+' : ''}${item.attackModifier} ${normalizeRange(a.range)} | ${a.damage} phy`,
+          description: `${item.attackModifier >= 0 ? '+' : ''}${item.attackModifier} ${normalizeRange(a.range)} | ${a.damage}`,
         }));
 
         adversaries.push({

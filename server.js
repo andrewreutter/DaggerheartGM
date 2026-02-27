@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
-const COLLECTIONS = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+const COLLECTIONS = ['adversaries', 'environments', 'groups', 'scenes', 'adventures', 'table_state'];
 
 // --- Firebase Admin (token verification only; no service account key needed) ---
 if (!getApps().length) {
