@@ -23,6 +23,7 @@ const ENV_TYPES = ['traversal', 'exploration', 'social', 'event'];
 const FEATURE_TYPES = ['action', 'reaction', 'passive'];
 const TIERS = [1, 2, 3, 4];
 const DAMAGE_TYPES = ['Phy', 'Mag', 'Dir'];
+const RANGES = ['Melee', 'Very Close', 'Close', 'Far', 'Very Far'];
 
 // --- Helper Functions ---
 const generateId = () => crypto.randomUUID();
@@ -35,6 +36,234 @@ const parseFeatureCategory = (feature) => {
   if (feature.type === 'passive') return 'Passives';
   return 'Actions';
 };
+
+// --- Rolz Markdown Parser ---
+function parseRolzMarkdown(text) {
+  const lines = text.split('\n');
+
+  // Strip BBCode tags for display text
+  const stripBB = (s) => s.replace(/\[\/?\w+[^\]]*\]/g, '').trim();
+
+  // Extract image URL
+  const imgMatch = text.match(/\[img\s+(https?:\/\/[^\]]+)\]/);
+  const imageUrl = imgMatch ? imgMatch[1].trim() : null;
+
+  // Find scene name from first single-= heading (not ==)
+  let sceneName = '';
+  for (const line of lines) {
+    const m = line.match(/^=(?!=)\s*(.+)/);
+    if (m) {
+      // Strip trailing "N BP" budget point annotation
+      sceneName = m[1].replace(/\s+\d+\s+BP\s*$/i, '').trim();
+      break;
+    }
+  }
+
+  // Split into sections on ==heading lines
+  const sectionBlocks = [];
+  let current = null;
+  for (const line of lines) {
+    if (/^==(?!=)/.test(line)) {
+      if (current) sectionBlocks.push(current);
+      current = { header: line.replace(/^==\s*/, '').trim(), bodyLines: [] };
+    } else if (current) {
+      current.bodyLines.push(line);
+    }
+  }
+  if (current) sectionBlocks.push(current);
+
+  const environments = [];
+  const adversaries = [];
+
+  for (const section of sectionBlocks) {
+    const body = section.bodyLines.join('\n');
+    const isAdversary = /\[const\s+HP\b/i.test(body);
+
+    if (!isAdversary) {
+      // --- Environment ---
+      const name = section.header;
+      // Description: text before [b]FEATURES[/b]
+      const featuresMarkerIdx = body.search(/\[b\]FEATURES\[\/b\]/i);
+      const descBlock = featuresMarkerIdx >= 0 ? body.slice(0, featuresMarkerIdx) : body;
+      const description = descBlock.split('\n')
+        .map(l => stripBB(l))
+        .filter(l => l.length > 0)
+        .join('\n')
+        .trim();
+
+      const features = featuresMarkerIdx >= 0
+        ? parseFeatures(body.slice(featuresMarkerIdx))
+        : [];
+
+      environments.push({ name, description, features, tier: 1, type: 'event' });
+    } else {
+      // --- Adversary ---
+      // Name and optional count from header: "Name x2"
+      const countMatch = section.header.match(/^(.+?)\s+x(\d+)\s*$/i);
+      const advName = countMatch ? countMatch[1].trim() : section.header;
+      const count = countMatch ? parseInt(countMatch[2]) : 1;
+
+      // Description: lines before [b]Motives
+      const motivesIdx = body.search(/\[b\]Motives/i);
+      const hrIdx = body.search(/\[hr\]/i);
+      const descEnd = motivesIdx >= 0 ? motivesIdx : (hrIdx >= 0 ? hrIdx : 0);
+      const description = body.slice(0, descEnd).split('\n')
+        .map(l => stripBB(l))
+        .filter(l => l.length > 0)
+        .join('\n')
+        .trim();
+
+      // Motives
+      let motive = '';
+      const motiveMatch = body.match(/\[b\]Motives[^[]*\[\/b\]\s*(.*?)(?:\[hr\]|\[b\]FEATURES|\[button|$)/is);
+      if (motiveMatch) motive = stripBB(motiveMatch[1]).trim();
+
+      // Stats
+      const diffMatch = body.match(/\[const\s+DIFFICULTY\s+(\d+)\]/i);
+      const hpMatch = body.match(/\[const\s+HP\s+(\d+)\]/i);
+      const stressMatch = body.match(/\[const\s+STRESS\s+(\d+)\]/i);
+      const threshMatch = body.match(/\[const\s+THRESHOLDS\s+(\d+)\s*\/\s*(\d+)\]/i);
+
+      const difficulty = diffMatch ? parseInt(diffMatch[1]) : 10;
+      const hp_max = hpMatch ? parseInt(hpMatch[1]) : 6;
+      const stress_max = stressMatch ? parseInt(stressMatch[1]) : 3;
+      const hp_thresholds = threshMatch
+        ? { major: parseInt(threshMatch[1]), severe: parseInt(threshMatch[2]) }
+        : { major: 3, severe: 6 };
+
+      // Experiences: [b]Experiences[/b]: Name +N, Name +N
+      const experiences = [];
+      const expMatch = body.match(/\[b\]Experiences\[\/b\]\s*:?\s*([^\n\[]+)/i);
+      if (expMatch) {
+        const expStr = expMatch[1].trim();
+        const expParts = expStr.split(',').map(s => s.trim()).filter(Boolean);
+        for (const part of expParts) {
+          const em = part.match(/^(.+?)\s*\+(\d+)$/);
+          if (em) experiences.push({ id: generateId(), name: em[1].trim(), modifier: parseInt(em[2]) });
+        }
+      }
+
+      // Attacks: [button Name {d20+N}, {damage trait}] Range
+      // Pattern: [button <label> {d20+N}, {dmg type}] <range>
+      const buttonRe = /\[button\s+(.+?)\s+\{d20([+-]\d+)\},\s*\{([^}]+)\}\]\s*([^\n\[]*)/gi;
+      const buttonMatches = [...body.matchAll(buttonRe)];
+
+      let attack = { name: '', range: 'Melee', modifier: 0, trait: 'Phy', damage: '' };
+      const extraAttackFeatures = [];
+
+      for (let i = 0; i < buttonMatches.length; i++) {
+        const bm = buttonMatches[i];
+        const atkName = bm[1].trim();
+        const mod = parseInt(bm[2]);
+        // damage+trait: e.g. "d8+5 phy" or "d10+4 phy"
+        const dtParts = bm[3].trim().split(/\s+/);
+        const damage = dtParts[0] || '';
+        const rawTrait = dtParts[1] || 'phy';
+        const trait = rawTrait.charAt(0).toUpperCase() + rawTrait.slice(1).toLowerCase();
+        // Normalize trait to Phy/Mag/Dir
+        const traitNorm = ['Mag', 'Dir'].includes(trait) ? trait : 'Phy';
+        const rangeRaw = bm[4].trim();
+        // Map range to RANGES list (case-insensitive prefix match)
+        const rangeNorm = RANGES.find(r => r.toLowerCase() === rangeRaw.toLowerCase()) || 'Melee';
+
+        if (i === 0) {
+          attack = { name: atkName, range: rangeNorm, modifier: mod, trait: traitNorm, damage };
+        } else {
+          extraAttackFeatures.push({
+            id: generateId(),
+            name: atkName,
+            type: 'action',
+            description: `${mod >= 0 ? '+' : ''}${mod} ${rangeNorm} | ${damage} ${traitNorm.toLowerCase()}`
+          });
+        }
+      }
+
+      // Features (after [b]FEATURES[/b])
+      const featuresMarkerIdx = body.search(/\[b\]FEATURES\[\/b\]/i);
+      const parsedFeatures = featuresMarkerIdx >= 0
+        ? parseFeatures(body.slice(featuresMarkerIdx))
+        : [];
+
+      const features = [...extraAttackFeatures, ...parsedFeatures];
+
+      adversaries.push({
+        name: advName,
+        count,
+        description,
+        motive,
+        difficulty,
+        hp_max,
+        stress_max,
+        hp_thresholds,
+        attack,
+        experiences,
+        features,
+        tier: 1,
+        role: 'bruiser'
+      });
+    }
+  }
+
+  return { sceneName, imageUrl, environments, adversaries };
+}
+
+// Parse features from a block starting at [b]FEATURES[/b]
+function parseFeatures(block) {
+  const features = [];
+  // Match bold-tagged feature headers: [b]Name - Type[/b]: or [b]Name - Type: cost.[/b]
+  // We look for [b]...[/b] patterns that aren't just "FEATURES"
+  const featureRe = /\[b\](?!FEATURES\b)([^\]]+?)\[\/b\][:.]?\s*([\s\S]*?)(?=\[b\](?!.*\[\/b\].*\[b\])|\s*$)/gi;
+
+  // Simpler approach: split on [b] to get each feature chunk
+  const parts = block.split(/\[b\]/);
+  for (const part of parts) {
+    if (!part.trim() || /^FEATURES/i.test(part.trim())) continue;
+    // part looks like: "Feature Name - Type[/b]: description..."
+    const closeIdx = part.indexOf('[/b]');
+    if (closeIdx < 0) continue;
+    const header = part.slice(0, closeIdx).trim();
+    const descRaw = part.slice(closeIdx + 4).trim();
+
+    // Strip leading colon/period
+    const descClean = descRaw.replace(/^[:.]?\s*/, '');
+
+    // Infer type from header suffix
+    let featureName = header;
+    let featureType = 'action';
+
+    const typeMatch = header.match(/^(.+?)\s+-\s+(Passive|Action|Reaction)(?:\s*:\s*(.+))?$/i);
+    if (typeMatch) {
+      featureName = typeMatch[1].trim();
+      featureType = typeMatch[2].toLowerCase();
+      // If there's inline cost after "- Action: Cost", prepend it to description
+      const inlineCost = typeMatch[3];
+      const description = inlineCost
+        ? `${inlineCost.trim()} ${stripAllBB(descClean)}`.trim()
+        : stripAllBB(descClean);
+      if (featureName && description) {
+        features.push({ id: generateId(), name: featureName, type: featureType, description });
+      }
+      continue;
+    }
+
+    // Check for "Spend N Fear" or "Spend a Fear" pattern for fear actions
+    const isFear = /spend\s+\w+\s+fear/i.test(header) || /spend\s+\w+\s+fear/i.test(descClean);
+    if (isFear) featureType = 'action';
+
+    const description = stripAllBB(header.replace(/^(.+?)(?:\s*:\s*.+)?$/, (_, n) => '') + ' ' + descClean).trim();
+    // For features without a type suffix, keep the full header as the name
+    const cleanName = stripAllBB(header).trim();
+    if (cleanName) {
+      features.push({ id: generateId(), name: cleanName, type: featureType, description: stripAllBB(descClean) });
+    }
+  }
+
+  return features.filter(f => f.name && f.name.length > 0);
+}
+
+function stripAllBB(s) {
+  return s.replace(/\[\/?\w+[^\]]*\]/g, '').trim();
+}
 
 // --- Main Application Component ---
 export default function App() {
@@ -291,6 +520,20 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
   const [importStatus, setImportStatus] = useState('');
+  const [showRolzImport, setShowRolzImport] = useState(false);
+  const [pendingNav, setPendingNav] = useState(null); // { collection, id }
+
+  // After a Rolz import, navigate to the created item once data updates
+  React.useEffect(() => {
+    if (!pendingNav) return;
+    const item = data[pendingNav.collection]?.find(i => i.id === pendingNav.id);
+    if (item) {
+      setActiveTab(pendingNav.collection);
+      setViewingItem(item);
+      setEditingItem(null);
+      setPendingNav(null);
+    }
+  }, [data, pendingNav]);
 
   const singularNames = { adversaries: 'Adversary', environments: 'Environment', groups: 'Group', scenes: 'Scene', adventures: 'Adventure' };
 
@@ -369,6 +612,18 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
         ))}
       </div>
 
+      {/* Rolz Import Modal */}
+      {showRolzImport && (
+        <RolzImportModal
+          onClose={() => setShowRolzImport(false)}
+          saveItem={saveItem}
+          onImportSuccess={(collection, id) => {
+            setShowRolzImport(false);
+            setPendingNav({ collection, id });
+          }}
+        />
+      )}
+
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-6 bg-slate-950">
         <div className="flex justify-between items-center mb-6">
@@ -383,6 +638,12 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
               Import JSON
               <input type="file" accept=".json" onChange={handleImport} className="hidden" />
             </label>
+            <button
+              onClick={() => setShowRolzImport(true)}
+              className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
+            >
+              Import Rolz Markdown
+            </button>
 
             {!editingItem && !viewingItem && (
               <button 
@@ -413,7 +674,13 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {data[activeTab].map(item => (
-              <div key={item.id} onClick={() => setViewingItem(item)} className="bg-slate-900 border border-slate-800 rounded-lg p-4 hover:border-slate-700 hover:bg-slate-800/50 cursor-pointer transition-colors flex flex-col group">
+              <div key={item.id} onClick={() => setViewingItem(item)} className="bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 cursor-pointer transition-colors flex flex-col group overflow-hidden">
+                {item.imageUrl && (
+                  <div className="w-full h-32 overflow-hidden bg-slate-950">
+                    <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" onError={e => { e.target.parentElement.style.display = 'none'; }} />
+                  </div>
+                )}
+                <div className="p-4 flex flex-col flex-1">
                 <div className="flex justify-between items-start mb-2">
                   <h3 className="font-bold text-lg text-white group-hover:text-red-400 transition-colors">{item.name}</h3>
                   <div className="flex gap-2" onClick={e => e.stopPropagation()}>
@@ -437,6 +704,7 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
                   {item.motive && <p className="mt-2 text-xs italic text-slate-300">"{item.motive}"</p>}
                   {item.description && <p className="mt-1 text-xs opacity-80 line-clamp-2">{item.description}</p>}
                 </div>
+              </div>{/* end p-4 */}
               </div>
             ))}
             {data[activeTab].length === 0 && (
@@ -453,9 +721,16 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
 
 function ItemDetailView({ item, tab, onEdit, onClose }) {
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-xl max-w-3xl relative">
-      <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white"><X size={20}/></button>
-      
+    <div className="bg-slate-900 border border-slate-800 rounded-lg shadow-xl max-w-3xl relative overflow-hidden">
+      <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white z-10"><X size={20}/></button>
+
+      {item.imageUrl && (
+        <div className="w-full h-56 overflow-hidden bg-slate-950">
+          <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover opacity-90" onError={e => { e.target.style.display = 'none'; }} />
+        </div>
+      )}
+
+      <div className="p-6">
       <div className="mb-6 pr-8">
         <h2 className="text-3xl font-bold text-white mb-1">{item.name}</h2>
         <div className="text-slate-400 uppercase tracking-wider text-sm font-medium mb-2">
@@ -534,6 +809,7 @@ function ItemDetailView({ item, tab, onEdit, onClose }) {
           <Edit size={16} /> Edit {item.name}
         </button>
       </div>
+      </div>{/* end p-6 */}
     </div>
   );
 }
@@ -638,10 +914,17 @@ function GMTableView({ activeElements, highlightedInstance, triggerHighlight, up
           {activeElements.map(element => (
             <div 
               key={element.instanceId} 
-              className={`bg-slate-900 border rounded-xl p-5 shadow-lg transition-all duration-300 relative ${
+              className={`bg-slate-900 border rounded-xl shadow-lg transition-all duration-300 relative overflow-hidden ${
                 highlightedInstance === element.instanceId ? 'ring-4 ring-yellow-500 border-yellow-500 scale-[1.02] z-10' : 'border-slate-800 hover:border-slate-700'
               }`}
             >
+              {element.imageUrl && (
+                <div className="w-full h-40 overflow-hidden bg-slate-950">
+                  <img src={element.imageUrl} alt={element.name} className="w-full h-full object-cover opacity-80" onError={e => { e.target.parentElement.style.display = 'none'; }} />
+                </div>
+              )}
+
+              <div className="p-5">
               <button onClick={() => removeActiveElement(element.instanceId)} className="absolute top-4 right-4 text-slate-500 hover:text-red-500">
                 <Trash2 size={16} />
               </button>
@@ -755,6 +1038,7 @@ function GMTableView({ activeElements, highlightedInstance, triggerHighlight, up
                   ))}
                 </div>
               )}
+              </div>{/* end p-5 */}
             </div>
           ))}
           {activeElements.length === 0 && (
@@ -839,6 +1123,7 @@ function AdversaryForm({ initial, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     name: initial?.name || '', tier: initial?.tier || 1, role: initial?.role || 'bruiser',
     motive: initial?.motive || '', description: initial?.description || '',
+    imageUrl: initial?.imageUrl || '',
     difficulty: initial?.difficulty || 10, hp_max: initial?.hp_max || 6,
     hp_thresholds: initial?.hp_thresholds || { major: 3, severe: 5 }, stress_max: initial?.stress_max || 4,
     attack: initial?.attack || initial?.attacks?.[0] || { name: '', range: 'Melee', modifier: 0, trait: 'Phy', damage: '' },
@@ -858,6 +1143,7 @@ function AdversaryForm({ initial, onSave, onCancel }) {
       
       <FormRow label="Motives & Tactics"><input type="text" placeholder="e.g. To add to their bone collection" value={formData.motive} onChange={e => setFormData({...formData, motive: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <FormRow label="Description (Flavor)"><textarea placeholder="Description or flavor text..." value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
+      <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({...formData, imageUrl: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
 
       <div className="grid grid-cols-3 gap-4 mt-6">
         <FormRow label="Tier">
@@ -881,8 +1167,7 @@ function AdversaryForm({ initial, onSave, onCancel }) {
             <div className="col-span-5"><input type="text" placeholder="Attack Name" value={formData.attack.name} onChange={e => setFormData({...formData, attack: {...formData.attack, name: e.target.value}})} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" /></div>
             <div className="col-span-4">
               <select value={formData.attack.range} onChange={e => setFormData({...formData, attack: {...formData.attack, range: e.target.value}})} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white">
-                <option value="Melee">Melee</option>
-                <option value="Ranged">Ranged</option>
+                {RANGES.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <div className="col-span-3">
@@ -918,7 +1203,8 @@ function AdversaryForm({ initial, onSave, onCancel }) {
 function EnvironmentForm({ initial, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
-    description: initial?.description || '', features: initial?.features || []
+    description: initial?.description || '', imageUrl: initial?.imageUrl || '',
+    features: initial?.features || []
   });
 
   return (
@@ -939,6 +1225,7 @@ function EnvironmentForm({ initial, onSave, onCancel }) {
       <FormRow label="Description">
         <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-24 resize-none" />
       </FormRow>
+      <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({...formData, imageUrl: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <FeaturesInput features={formData.features} onChange={features => setFormData({...formData, features})} />
       <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
         <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
@@ -1003,7 +1290,8 @@ function MultiSelectRef({ label, options, selectedIds, onChange, isCountable = f
 
 function GroupForm({ initial, data, onSave, onCancel }) {
   const [formData, setFormData] = useState({
-    name: initial?.name || '', description: initial?.description || '', 
+    name: initial?.name || '', description: initial?.description || '',
+    imageUrl: initial?.imageUrl || '',
     adversaries: initial?.adversaries?.map(a => ({ id: a.adversaryId, count: a.count })) || []
   });
 
@@ -1011,6 +1299,7 @@ function GroupForm({ initial, data, onSave, onCancel }) {
     <div className="space-y-4">
       <FormRow label="Group Name"><input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <FormRow label="Description"><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
+      <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({...formData, imageUrl: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <MultiSelectRef label="Adversaries" options={data.adversaries} selectedIds={formData.adversaries} onChange={advs => setFormData({...formData, adversaries: advs})} isCountable={true} />
       <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
         <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
@@ -1022,7 +1311,8 @@ function GroupForm({ initial, data, onSave, onCancel }) {
 
 function SceneForm({ initial, data, onSave, onCancel }) {
   const [formData, setFormData] = useState({
-    name: initial?.name || '', description: initial?.description || '', 
+    name: initial?.name || '', description: initial?.description || '',
+    imageUrl: initial?.imageUrl || '',
     environments: initial?.environments || [], groups: initial?.groups || [],
     adversaries: initial?.adversaries?.map(a => ({ id: a.adversaryId, count: a.count })) || []
   });
@@ -1031,6 +1321,7 @@ function SceneForm({ initial, data, onSave, onCancel }) {
     <div className="space-y-4">
       <FormRow label="Scene Name"><input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <FormRow label="Description"><textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
+      <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({...formData, imageUrl: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <div className="grid grid-cols-2 gap-4">
         <MultiSelectRef label="Environments" options={data.environments} selectedIds={formData.environments} onChange={envs => setFormData({...formData, environments: envs})} />
         <MultiSelectRef label="Groups" options={data.groups} selectedIds={formData.groups} onChange={grps => setFormData({...formData, groups: grps})} />
@@ -1046,13 +1337,15 @@ function SceneForm({ initial, data, onSave, onCancel }) {
 
 function AdventureForm({ initial, data, onSave, onCancel }) {
   const [formData, setFormData] = useState({
-    name: initial?.name || '', scenes: initial?.scenes || [], groups: initial?.groups || [],
+    name: initial?.name || '', imageUrl: initial?.imageUrl || '',
+    scenes: initial?.scenes || [], groups: initial?.groups || [],
     environments: initial?.environments || [], adversaries: initial?.adversaries || []
   });
 
   return (
     <div className="space-y-4">
       <FormRow label="Adventure Name"><input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full text-lg font-bold" /></FormRow>
+      <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({...formData, imageUrl: e.target.value})} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <div className="grid grid-cols-2 gap-4">
         <MultiSelectRef label="Scenes" options={data.scenes} selectedIds={formData.scenes} onChange={ids => setFormData({...formData, scenes: ids})} />
         <MultiSelectRef label="Groups" options={data.groups} selectedIds={formData.groups} onChange={ids => setFormData({...formData, groups: ids})} />
@@ -1062,6 +1355,303 @@ function AdventureForm({ initial, data, onSave, onCancel }) {
       <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-slate-800">
         <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
         <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adventure</button>
+      </div>
+    </div>
+  );
+}
+
+// --- Rolz Import Modal ---
+function RolzImportModal({ onClose, saveItem, onImportSuccess }) {
+  const [step, setStep] = useState('paste'); // paste | preview | success
+  const [markdown, setMarkdown] = useState('');
+  const [parseError, setParseError] = useState('');
+  const [parsed, setParsed] = useState(null);
+
+  // Editable preview state
+  const [sceneName, setSceneName] = useState('');
+  const [groupName, setGroupName] = useState('');
+  const [editEnvs, setEditEnvs] = useState([]);
+  const [editAdvs, setEditAdvs] = useState([]);
+
+  // Success state
+  const [importedItems, setImportedItems] = useState([]);
+  const [importing, setImporting] = useState(false);
+
+  const handlePreview = () => {
+    setParseError('');
+    try {
+      const result = parseRolzMarkdown(markdown);
+      if (!result.sceneName && result.environments.length === 0 && result.adversaries.length === 0) {
+        setParseError('Nothing recognizable was found. Make sure to paste a valid Rolz scene block starting with =Scene Name.');
+        return;
+      }
+      setParsed(result);
+      setSceneName(result.sceneName || 'Imported Scene');
+      setGroupName(result.sceneName ? `${result.sceneName} - Adversaries` : 'Imported Group');
+      setEditEnvs(result.environments.map(e => ({ ...e, id: generateId() })));
+      setEditAdvs(result.adversaries.map(a => ({ ...a, id: generateId() })));
+      setStep('preview');
+    } catch (err) {
+      setParseError(`Parse error: ${err.message}`);
+    }
+  };
+
+  const handleImport = async () => {
+    setImporting(true);
+    const created = [];
+
+    // 1. Save adversaries
+    const savedAdvIds = [];
+    for (const adv of editAdvs) {
+      const { count, id, ...advData } = adv;
+      const item = { id, ...advData };
+      await saveItem('adversaries', item);
+      savedAdvIds.push({ id, count: count || 1 });
+      created.push({ collection: 'adversaries', id, name: adv.name });
+    }
+
+    // 2. Save environments
+    const savedEnvIds = [];
+    for (const env of editEnvs) {
+      const { id, ...envData } = env;
+      const item = { id, ...envData };
+      await saveItem('environments', item);
+      savedEnvIds.push(id);
+      created.push({ collection: 'environments', id, name: env.name });
+    }
+
+    // 3. Save group (only if there are adversaries)
+    let savedGroupId = null;
+    if (savedAdvIds.length > 0) {
+      savedGroupId = generateId();
+      const group = {
+        id: savedGroupId,
+        name: groupName,
+        description: '',
+        adversaries: savedAdvIds.map(a => ({ adversaryId: a.id, count: a.count }))
+      };
+      await saveItem('groups', group);
+      created.push({ collection: 'groups', id: savedGroupId, name: groupName });
+    }
+
+    // 4. Save scene
+    const sceneId = generateId();
+    const scene = {
+      id: sceneId,
+      name: sceneName,
+      description: '',
+      imageUrl: parsed?.imageUrl || '',
+      environments: savedEnvIds,
+      groups: savedGroupId ? [savedGroupId] : [],
+      adversaries: []
+    };
+    await saveItem('scenes', scene);
+    created.push({ collection: 'scenes', id: sceneId, name: sceneName });
+
+    setImportedItems(created);
+    setImporting(false);
+    setStep('success');
+  };
+
+  const updateAdv = (idx, key, val) => {
+    setEditAdvs(prev => prev.map((a, i) => i === idx ? { ...a, [key]: val } : a));
+  };
+
+  const updateEnv = (idx, key, val) => {
+    setEditEnvs(prev => prev.map((e, i) => i === idx ? { ...e, [key]: val } : e));
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-slate-800">
+          <h2 className="text-xl font-bold text-white">
+            {step === 'paste' && 'Import Rolz Markdown'}
+            {step === 'preview' && 'Preview Import'}
+            {step === 'success' && 'Import Complete'}
+          </h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X size={20} /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5">
+
+          {/* Step 1: Paste */}
+          {step === 'paste' && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-400">
+                Paste your Rolz.org wiki scene block below. The importer will extract the Scene, Environment(s), Adversaries, and create a Group automatically.
+              </p>
+              <textarea
+                className="w-full h-72 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 font-mono resize-none outline-none focus:border-red-500"
+                placeholder="Paste Rolz markdown here..."
+                value={markdown}
+                onChange={e => setMarkdown(e.target.value)}
+              />
+              {parseError && (
+                <div className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded p-3">{parseError}</div>
+              )}
+            </div>
+          )}
+
+          {/* Step 2: Preview */}
+          {step === 'preview' && (
+            <div className="space-y-6">
+              {/* Scene & Group names */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-400 uppercase tracking-wider font-medium">Scene Name</label>
+                  <input
+                    type="text"
+                    value={sceneName}
+                    onChange={e => setSceneName(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm outline-none focus:border-red-500"
+                  />
+                </div>
+                {editAdvs.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-slate-400 uppercase tracking-wider font-medium">Group Name</label>
+                    <input
+                      type="text"
+                      value={groupName}
+                      onChange={e => setGroupName(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm outline-none focus:border-red-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Environments */}
+              {editEnvs.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">
+                    Environments ({editEnvs.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {editEnvs.map((env, idx) => (
+                      <div key={env.id} className="bg-slate-950 border border-slate-800 rounded-lg p-4">
+                        <input
+                          type="text"
+                          value={env.name}
+                          onChange={e => updateEnv(idx, 'name', e.target.value)}
+                          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-sm font-bold w-full mb-2 outline-none focus:border-red-500"
+                        />
+                        {env.description && (
+                          <p className="text-xs text-slate-400 italic mb-2 line-clamp-3">{env.description}</p>
+                        )}
+                        {env.features.length > 0 && (
+                          <div className="text-xs text-slate-500">{env.features.length} feature(s)</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Adversaries */}
+              {editAdvs.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">
+                    Adversaries ({editAdvs.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {editAdvs.map((adv, idx) => (
+                      <div key={adv.id} className="bg-slate-950 border border-slate-800 rounded-lg p-4">
+                        <div className="flex items-center gap-3 mb-2">
+                          <input
+                            type="text"
+                            value={adv.name}
+                            onChange={e => updateAdv(idx, 'name', e.target.value)}
+                            className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-sm font-bold outline-none focus:border-red-500"
+                          />
+                          <div className="flex items-center gap-1 text-xs text-slate-400">
+                            <span>×</span>
+                            <input
+                              type="number"
+                              min="1"
+                              value={adv.count}
+                              onChange={e => updateAdv(idx, 'count', parseInt(e.target.value) || 1)}
+                              className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-white text-center text-sm outline-none"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2 text-xs text-slate-400 mb-2">
+                          <span>DC {adv.difficulty}</span>
+                          <span>HP {adv.hp_max}</span>
+                          <span>Thresholds {adv.hp_thresholds?.major}/{adv.hp_thresholds?.severe}</span>
+                          <span>Stress {adv.stress_max}</span>
+                        </div>
+                        {adv.attack?.name && (
+                          <div className="text-xs text-slate-400 mb-1">
+                            ⚔ <span className="text-slate-300">{adv.attack.name}</span>: {adv.attack.modifier >= 0 ? '+' : ''}{adv.attack.modifier} {adv.attack.range} | {adv.attack.damage} {adv.attack.trait?.toLowerCase()}
+                          </div>
+                        )}
+                        {adv.features.length > 0 && (
+                          <div className="text-xs text-slate-500">{adv.features.length} feature(s) · {adv.experiences.length} experience(s)</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-xs text-slate-500 bg-slate-950 rounded-lg p-3 border border-slate-800">
+                Will create: {editAdvs.length} adversar{editAdvs.length === 1 ? 'y' : 'ies'}{editAdvs.length > 0 ? ` → 1 group` : ''}{editEnvs.length > 0 ? ` · ${editEnvs.length} environment(s)` : ''} → 1 scene
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Success */}
+          {step === 'success' && (
+            <div className="space-y-4">
+              <p className="text-green-400 font-medium">Import complete! The following items were created:</p>
+              <div className="space-y-2">
+                {importedItems.map(item => (
+                  <button
+                    key={`${item.collection}-${item.id}`}
+                    onClick={() => { onImportSuccess(item.collection, item.id); onClose(); }}
+                    className="w-full text-left bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg p-3 flex items-center justify-between group transition-colors"
+                  >
+                    <span className="text-white group-hover:text-red-400 font-medium text-sm">{item.name}</span>
+                    <span className="text-xs text-slate-500 capitalize">{item.collection.replace(/s$/, '')}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-5 border-t border-slate-800 flex justify-end gap-3">
+          {step === 'paste' && (
+            <>
+              <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white text-sm">Cancel</button>
+              <button
+                onClick={handlePreview}
+                disabled={!markdown.trim()}
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded font-medium text-sm"
+              >
+                Preview
+              </button>
+            </>
+          )}
+          {step === 'preview' && (
+            <>
+              <button onClick={() => setStep('paste')} className="px-4 py-2 text-slate-400 hover:text-white text-sm">Back</button>
+              <button
+                onClick={handleImport}
+                disabled={importing}
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded font-medium text-sm flex items-center gap-2"
+              >
+                {importing ? 'Importing...' : 'Import'}
+              </button>
+            </>
+          )}
+          {step === 'success' && (
+            <button onClick={onClose} className="px-5 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-medium text-sm">Close</button>
+          )}
+        </div>
       </div>
     </div>
   );
