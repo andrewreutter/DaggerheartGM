@@ -70,7 +70,7 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
               activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
             }`}
           >
-            <tab.Icon size={18} /> {tab.label}
+            <tab.Icon size={18} /> {tab.label} ({(data[tab.id] || []).length})
           </button>
         ))}
       </div>
