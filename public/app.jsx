@@ -4,7 +4,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { 
   Users, Map, ShieldAlert, Swords, BookOpen, LayoutDashboard, 
-  Plus, Trash2, Edit, Play, Search, Heart, Zap, AlertCircle, X
+  Plus, Trash2, Edit, Play, Search, Heart, Zap, AlertCircle, X, Copy
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
@@ -263,6 +263,208 @@ function parseFeatures(block) {
 
 function stripAllBB(s) {
   return s.replace(/\[\/?\w+[^\]]*\]/g, '').trim();
+}
+
+// --- Rolz Export ---
+
+// Returns { adversaryId -> prefix } with no duplicate prefixes.
+// Filler words are skipped when building initials.  If initials collide,
+// characters are progressively borrowed from each word in order; a numeric
+// suffix is appended as a last resort.
+function generatePrefixes(advEntries) {
+  const FILLER = { of:1, the:1, a:1, an:1, and:1, in:1, at:1, by:1, for:1, to:1 };
+
+  const sigWords = (name) => {
+    const words = name.trim().split(/\s+/).filter(w => !FILLER[w.toLowerCase()]);
+    return words.length > 0 ? words : name.trim().split(/\s+/);
+  };
+
+  const makePrefix = (words, exp) =>
+    words.map((w, i) => w.slice(0, exp[i]).toUpperCase()).join('');
+
+  // Enumerate all possible prefixes for a name: expand chars word-by-word,
+  // then fall back to numeric suffixes.
+  const prefixCandidates = (words) => {
+    const candidates = [];
+    const exp = words.map(() => 1);
+    candidates.push(makePrefix(words, exp.slice()));
+    let advanced = true;
+    while (advanced) {
+      advanced = false;
+      for (let i = 0; i < words.length; i++) {
+        if (exp[i] < words[i].length) {
+          exp[i]++;
+          advanced = true;
+          candidates.push(makePrefix(words, exp.slice()));
+          break;
+        }
+      }
+    }
+    const base = makePrefix(words, exp);
+    for (let n = 2; n <= 30; n++) candidates.push(base + n);
+    return candidates;
+  };
+
+  // Deduplicate by ID using a plain object, then sort by name for determinism
+  const seen = {};
+  const unique = [];
+  for (let i = 0; i < advEntries.length; i++) {
+    const e = advEntries[i];
+    if (!seen[e.id]) { seen[e.id] = true; unique.push(e); }
+  }
+  unique.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
+  const used = {};
+  const result = {};
+
+  for (let i = 0; i < unique.length; i++) {
+    const entry = unique[i];
+    const candidates = prefixCandidates(sigWords(entry.name));
+    let prefix = null;
+    for (let j = 0; j < candidates.length; j++) {
+      if (!used[candidates[j]]) { prefix = candidates[j]; break; }
+    }
+    if (!prefix) prefix = 'A' + (i + 1); // ultimate fallback
+    used[prefix] = true;
+    result[entry.id] = prefix;
+  }
+
+  return result;
+}
+
+// Render a single feature as a Rolz line.
+// If the description matches the compact attack format produced by the parser
+// ("+N Range | damage trait"), re-emit it as a clickable [button].
+const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
+
+function featureToRolzLine(f) {
+  const m = f.description && ATTACK_DESC_RE.exec(f.description);
+  if (m && f.type === 'action') {
+    const mod = parseInt(m[1]);
+    const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+    return `[button ${f.name} {d20${modStr}}, {${m[3]} ${m[4].toLowerCase()}}] ${m[2]}`;
+  }
+  const typeCap = f.type ? f.type.charAt(0).toUpperCase() + f.type.slice(1) : 'Action';
+  return `[b]${f.name} - ${typeCap}[/b]: ${f.description || ''}`;
+}
+
+function adversaryToRolz(adv, count, prefix) {
+  count = count || 1;
+  const lines = [];
+
+  lines.push(count > 1 ? `==${adv.name} x${count}` : `==${adv.name}`);
+  if (adv.description) lines.push(adv.description);
+  if (adv.motive) lines.push(`[b]Motives & Tactics:[/b] ${adv.motive}`);
+
+  lines.push('[hr]');
+  lines.push(`[const DIFFICULTY ${adv.difficulty || 10}] [const THRESHOLDS ${adv.hp_thresholds?.major || 0} / ${adv.hp_thresholds?.severe || 0}]`);
+
+  if (count === 1) {
+    lines.push(`[field ${prefix}_HP] of [const HP ${adv.hp_max || 0}] [field ${prefix}_STRESS] of [const STRESS ${adv.stress_max || 0}]`);
+  } else {
+    lines.push(Array.from({ length: count }, (_, i) => `[field ${prefix}${i + 1}_HP]`).join('') + ` of [const HP ${adv.hp_max || 0}]`);
+    lines.push(Array.from({ length: count }, (_, i) => `[field ${prefix}${i + 1}_STRESS]`).join('') + ` of [const STRESS ${adv.stress_max || 0}]`);
+  }
+
+  if (adv.attack?.name) {
+    const mod = adv.attack.modifier || 0;
+    const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+    const trait = (adv.attack.trait || 'phy').toLowerCase();
+    lines.push(`[button ${adv.attack.name} {d20${modStr}}, {${adv.attack.damage} ${trait}}] ${adv.attack.range || 'Melee'}`);
+  }
+
+  if (adv.experiences?.length > 0) {
+    lines.push(`[b]Experiences[/b]: ${adv.experiences.map(e => `${e.name} +${e.modifier}`).join(', ')}`);
+  }
+
+  if (adv.features?.length > 0) {
+    lines.push('[hr]');
+    lines.push('[b]FEATURES[/b]');
+    for (const f of adv.features) lines.push(featureToRolzLine(f));
+  }
+
+  return lines.join('\n');
+}
+
+function environmentToRolz(env) {
+  const lines = [];
+  lines.push(`==${env.name}`);
+  if (env.description) lines.push(env.description);
+  if (env.features?.length > 0) {
+    lines.push('[b]FEATURES[/b]');
+    for (const f of env.features) lines.push(featureToRolzLine(f));
+  }
+  return lines.join('\n');
+}
+
+function generateRolzExport(item, tab, data) {
+  const sections = ['[type note]'];
+
+  if (tab === 'adversaries') {
+    const prefix = generatePrefixes([{ id: item.id, name: item.name }])[item.id];
+    sections.push(adversaryToRolz(item, 1, prefix));
+
+  } else if (tab === 'environments') {
+    sections.push(environmentToRolz(item));
+
+  } else if (tab === 'groups') {
+    // Deduplicate adversary references by ID, summing counts
+    const advRefObj = {};
+    const advRefOrder = [];
+    for (let ri = 0; ri < (item.adversaries || []).length; ri++) {
+      const ref = item.adversaries[ri];
+      const adv = (data.adversaries || []).filter(a => a.id === ref.adversaryId)[0];
+      if (!adv) continue;
+      if (advRefObj[adv.id]) { advRefObj[adv.id].count += ref.count || 1; }
+      else { advRefObj[adv.id] = { adv: adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
+    }
+    const groupAdvEntries = advRefOrder.map(id => ({ id: id, name: advRefObj[id].adv.name }));
+    const prefixes = generatePrefixes(groupAdvEntries);
+    for (let ri = 0; ri < advRefOrder.length; ri++) {
+      const entry = advRefObj[advRefOrder[ri]];
+      sections.push(adversaryToRolz(entry.adv, entry.count, prefixes[entry.adv.id]));
+    }
+
+  } else if (tab === 'scenes') {
+    sections.push('=' + item.name);
+    if (item.imageUrl) sections.push('[img ' + item.imageUrl + ']');
+
+    for (let ei = 0; ei < (item.environments || []).length; ei++) {
+      const env = (data.environments || []).filter(e => e.id === item.environments[ei])[0];
+      if (env) sections.push(environmentToRolz(env));
+    }
+
+    // Collect adversary refs from groups then direct, deduplicating by ID
+    const advRefObj = {};
+    const advRefOrder = [];
+    for (let gi = 0; gi < (item.groups || []).length; gi++) {
+      const group = (data.groups || []).filter(g => g.id === item.groups[gi])[0];
+      if (!group) continue;
+      for (let ri = 0; ri < (group.adversaries || []).length; ri++) {
+        const ref = group.adversaries[ri];
+        const adv = (data.adversaries || []).filter(a => a.id === ref.adversaryId)[0];
+        if (!adv) continue;
+        if (advRefObj[adv.id]) { advRefObj[adv.id].count += ref.count || 1; }
+        else { advRefObj[adv.id] = { adv: adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
+      }
+    }
+    for (let ri = 0; ri < (item.adversaries || []).length; ri++) {
+      const ref = item.adversaries[ri];
+      const adv = (data.adversaries || []).filter(a => a.id === ref.adversaryId)[0];
+      if (!adv) continue;
+      if (advRefObj[adv.id]) { advRefObj[adv.id].count += ref.count || 1; }
+      else { advRefObj[adv.id] = { adv: adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
+    }
+
+    const sceneAdvEntries = advRefOrder.map(id => ({ id: id, name: advRefObj[id].adv.name }));
+    const prefixes = generatePrefixes(sceneAdvEntries);
+    for (let ri = 0; ri < advRefOrder.length; ri++) {
+      const entry = advRefObj[advRefOrder[ri]];
+      sections.push(adversaryToRolz(entry.adv, entry.count, prefixes[entry.adv.id]));
+    }
+  }
+
+  return sections.join('\n\n');
 }
 
 // --- Main Application Component ---
@@ -684,11 +886,12 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
             {activeTab === 'adventures' && <AdventureForm initial={editingItem} data={data} onSave={handleSave} onCancel={() => setEditingItem(null)} />}
           </div>
         ) : viewingItem ? (
-          <ItemDetailView 
-            item={viewingItem} 
-            tab={activeTab} 
-            onEdit={() => { setEditingItem(viewingItem); setViewingItem(null); }} 
-            onClose={() => setViewingItem(null)} 
+          <ItemDetailView
+            item={viewingItem}
+            tab={activeTab}
+            data={data}
+            onEdit={() => { setEditingItem(viewingItem); setViewingItem(null); }}
+            onClose={() => setViewingItem(null)}
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -738,7 +941,29 @@ function LibraryView({ data, saveItem, deleteItem, startScene }) {
   );
 }
 
-function ItemDetailView({ item, tab, onEdit, onClose }) {
+function ItemDetailView({ item, tab, data, onEdit, onClose }) {
+  const [copied, setCopied] = React.useState(false);
+
+  const handleCopyRolz = async () => {
+    try {
+      const markdown = generateRolzExport(item, tab, data || {});
+      try {
+        await navigator.clipboard.writeText(markdown);
+      } catch (clipErr) {
+        const ta = document.createElement('textarea');
+        ta.value = markdown;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Rolz export failed:', err);
+    }
+  };
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-lg shadow-xl max-w-3xl relative overflow-hidden">
       <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white z-10"><X size={20}/></button>
@@ -823,7 +1048,13 @@ function ItemDetailView({ item, tab, onEdit, onClose }) {
         </div>
       )}
 
-      <div className="flex justify-end pt-4 border-t border-slate-800">
+      <div className="flex justify-between items-center pt-4 border-t border-slate-800">
+        <button
+          onClick={handleCopyRolz}
+          className={`px-4 py-2 rounded font-medium flex items-center gap-2 text-sm transition-colors ${copied ? 'bg-green-700 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
+        >
+          <Copy size={15} /> {copied ? 'Copied!' : 'Copy Rolz'}
+        </button>
         <button onClick={onEdit} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium flex items-center gap-2">
           <Edit size={16} /> Edit {item.name}
         </button>
