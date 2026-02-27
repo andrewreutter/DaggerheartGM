@@ -4,14 +4,27 @@ A GM tool for the Daggerheart tabletop RPG.
 
 ## Architecture
 
-Express.js server serving a self-contained React SPA from `public/app.jsx`. Authentication is handled by Firebase (Google sign-in). Data persistence is backed by Postgres via Supabase.
+Express.js server serving a React SPA built from `src/client/`. Authentication is handled by Firebase (Google sign-in). Data persistence is backed by Postgres via Supabase. Client-side routing uses the History API (`src/client/lib/router.js`) so the browser back/forward buttons work across all views.
+
+The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 
 ```
 DaggerheartGM/
 ├── .cursor/rules/project.mdc   # Cursor agent context (always applied)
 ├── public/
 │   ├── index.html              # SPA shell — loads Babel, Tailwind, importmap
-│   └── app.jsx                 # React SPA
+│   └── styles.css              # Generated Tailwind output (do not edit by hand)
+├── src/
+│   ├── client/
+│   │   ├── app.jsx             # React SPA entry point
+│   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
+│   │   │   ├── forms/          # Item creation/edit forms
+│   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass)
+│   │   └── lib/                # API client, helpers, constants, parsers, router
+│   ├── db.js                   # Postgres pool + migration runner + query helpers
+│   ├── fcg-scraper.js          # Puppeteer scraper for FreshCutGrass.app
+│   └── input.css               # Tailwind CSS entry point
+├── migrations/                 # Numbered .sql migration files
 ├── server.js                   # Express server + API routes
 ├── package.json
 ├── .env                        # Local environment variables (never commit)

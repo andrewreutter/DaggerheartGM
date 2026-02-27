@@ -6,12 +6,11 @@
   <title>Daggerheart GM</title>
 
   <link rel="stylesheet" href="/styles.css" />
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <!--
     Import map: maps bare module specifiers to CDN ESM URLs.
-    Babel standalone (data-type="module") transforms JSX then dynamic-imports
-    the result as an ES module, which inherits this importmap.
+    esbuild bundles our code with these marked external, so they
+    resolve to the CDN at runtime via this map.
   -->
   <script type="importmap">
   {
@@ -30,6 +29,6 @@
 <body class="bg-slate-950 min-h-screen">
   <div id="root"></div>
 
-  <script type="text/babel" data-type="module" src="/app.jsx"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

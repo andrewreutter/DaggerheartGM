@@ -6,9 +6,12 @@
   "main": "server.js",
   "scripts": {
     "start": "node --env-file=.env server.js",
-    "dev": "node --env-file=.env --watch server.js & npm run dev:css",
+    "dev": "node --env-file=.env --watch server.js & npm run dev:css & npm run dev:js",
+    "build": "npm run build:css && npm run build:js",
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
-    "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch"
+    "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
+    "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --outfile=public/app.js",
+    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --outfile=public/app.js --watch"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -18,6 +21,7 @@
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.1",
+    "esbuild": "^0.27.3",
     "tailwindcss": "^4.2.1"
   }
 }
