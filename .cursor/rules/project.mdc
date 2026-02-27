@@ -11,13 +11,14 @@ A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server th
 
 - `server.js` — Express server entry point. Serves static files from `public/` and falls back to `public/index.html` for any unmatched route (standard SPA behavior). API routes live here. On startup, runs DB migrations if `DATABASE_URL` is set.
 - `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `upsertItem`, `deleteItem`).
+- `src/fcg-scraper.js` — Puppeteer-based scraper for FreshCutGrass.app homebrew pages. Exports `validateFCGUrl(url)` and `scrapeFCG(url)`. Launches headless Chrome, clicks each adversary card to open its detail modal, and returns `{ adversaries, environments }` shaped for import.
 - `migrations/` — Numbered `.sql` migration files (e.g. `001_create_items_table.sql`). Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema.
 - `public/index.html` — Thin HTML shell. Links to the locally-built `public/styles.css`, loads Babel standalone and an ES importmap (pointing to esm.sh CDN for React 18, Firebase 10, Lucide React). Loads the app via `<script type="text/babel" data-type="module" src="/app.jsx">`.
 - `public/app.jsx` — The React SPA. Written in JSX with ES module imports. Uses top-level `await fetch('/api/config')` for Firebase initialisation. Mounts itself via `ReactDOM.createRoot`. On sign-in, loads all data from `GET /api/data`.
 - `public/styles.css` — Generated Tailwind CSS output. Do **not** edit by hand; rebuild with `npm run build:css`.
 - `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` automatically.
 - `public/` — All static assets (images, fonts, etc.) go here.
-- `package.json` — Uses ES modules (`"type": "module"`). Dependencies: `express`, `pg`, `firebase-admin`. Dev dependencies: `tailwindcss`, `@tailwindcss/cli`.
+- `package.json` — Uses ES modules (`"type": "module"`). Dependencies: `express`, `pg`, `firebase-admin`, `puppeteer`. Dev dependencies: `tailwindcss`, `@tailwindcss/cli`.
 
 ## Database
 
@@ -35,6 +36,7 @@ Schema uses a single `items` table:
 - `GET /api/data` — Returns `{ adversaries, environments, groups, scenes, adventures }` for the authenticated user.
 - `PUT /api/data/:collection` — Upsert an item (body is the item JSON). Returns the saved item.
 - `DELETE /api/data/:collection/:id` — Delete an item.
+- `GET /api/fetch-fcg?url=<fcg-url>` — Requires auth. Uses Puppeteer to scrape a FreshCutGrass.app homebrew page and returns `{ adversaries, environments }` ready for import. URL must start with `https://freshcutgrass.app/homebrew/`. Takes 20–40 seconds.
 
 All `/api/data` routes require an `Authorization: Bearer <Firebase ID token>` header. The server verifies the token via `firebase-admin` (uses `FIREBASE_PROJECT_ID`; no service account key needed).
 

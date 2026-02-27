@@ -4,6 +4,7 @@ import { dirname, join } from 'path';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { runMigrations, getItems, upsertItem, deleteItem } from './src/db.js';
+import { validateFCGUrl, scrapeFCG } from './src/fcg-scraper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -43,6 +44,22 @@ app.get('/api/config', (req, res) => {
       appId:      process.env.FIREBASE_APP_ID      || '',
     },
   });
+});
+
+// --- FreshCutGrass.app scrape route ---
+
+app.get('/api/fetch-fcg', requireAuth, async (req, res) => {
+  const { url } = req.query;
+  if (!url || !validateFCGUrl(url)) {
+    return res.status(400).json({ error: 'Invalid URL. Must be https://freshcutgrass.app/homebrew/<username>' });
+  }
+  try {
+    const result = await scrapeFCG(url);
+    res.json(result);
+  } catch (err) {
+    console.error('FCG scrape error:', err);
+    res.status(500).json({ error: `Failed to fetch from FreshCutGrass.app: ${err.message}` });
+  }
 });
 
 // --- Data routes ---
