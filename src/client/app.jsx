@@ -24,7 +24,16 @@ function App() {
   });
 
   const [activeElements, setActiveElements] = useState([]);
-  const [highlightedInstance, setHighlightedInstance] = useState(null);
+  const tableStateReadyRef = useRef(false);
+
+  useEffect(() => {
+    if (!tableStateReadyRef.current) return;
+    const timer = setTimeout(() => {
+      apiSaveItem('table_state', { id: 'current', elements: activeElements });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [activeElements]);
+
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [tableFlash, setTableFlash] = useState(false);
@@ -64,6 +73,9 @@ function App() {
 
   const handleSignOut = async () => {
     setUserMenuOpen(false);
+    tableStateReadyRef.current = false;
+    setActiveElements([]);
+    apiDeleteItem('table_state', 'current').catch(() => {});
     try {
       await signOut(auth);
       navigate('/');
@@ -122,6 +134,8 @@ function App() {
         try {
           const fetched = await loadData(currentUser);
           setData(fetched);
+          setActiveElements(fetched.table_state?.[0]?.elements || []);
+          tableStateReadyRef.current = true;
         } catch (err) {
           console.error('Failed to load data:', err);
         }
@@ -160,11 +174,6 @@ function App() {
     } catch (err) {
       console.error(`deleteItem(${collectionName}, ${id}) failed:`, err);
     }
-  };
-
-  const triggerHighlight = (instanceId) => {
-    setHighlightedInstance(instanceId);
-    setTimeout(() => setHighlightedInstance(null), 1500);
   };
 
   const addToTable = (item, collectionName) => {
@@ -355,8 +364,6 @@ function App() {
         ) : (
           <GMTableView
             activeElements={activeElements}
-            highlightedInstance={highlightedInstance}
-            triggerHighlight={triggerHighlight}
             updateActiveElement={updateActiveElement}
             removeActiveElement={removeActiveElement}
             data={data}

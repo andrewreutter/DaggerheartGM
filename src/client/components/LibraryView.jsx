@@ -150,6 +150,7 @@ export function LibraryView({ data, saveItem, deleteItem, startScene, addToTable
                 key={item.id}
                 item={item}
                 tab={activeTab}
+                data={data}
                 onView={(item) => navigate(`/library/${activeTab}/${item.id}`)}
                 onEdit={(item) => navigate(`/library/${activeTab}/${item.id}/edit`)}
                 onDelete={deleteItem}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Edit, Trash2, Play } from 'lucide-react';
 
-export function ItemCard({ item, tab, onView, onEdit, onDelete, onStartScene, onAddToTable }) {
+export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onStartScene, onAddToTable }) {
   const [added, setAdded] = useState(false);
 
   const handleAddToTable = () => {
@@ -45,8 +45,53 @@ export function ItemCard({ item, tab, onView, onEdit, onDelete, onStartScene, on
         <div className="text-sm text-slate-400 flex-1">
           {tab === 'adversaries' && `Tier ${item.tier || 0} ${item.role}`}
           {tab === 'environments' && `Tier ${item.tier || 0} ${item.type}`}
-          {tab === 'groups' && `${item.adversaries?.length || 0} adversary types`}
-          {tab === 'scenes' && `${(item.environments?.length || 0) + (item.groups?.length || 0) + (item.adversaries?.length || 0)} elements`}
+          {tab === 'groups' && (
+            item.adversaries?.length > 0
+              ? (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {item.adversaries.map(advRef => {
+                    const adv = data?.adversaries?.find(a => a.id === advRef.adversaryId);
+                    return adv ? (
+                      <span key={advRef.adversaryId} className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded-full">
+                        {adv.name}{advRef.count > 1 ? ` ×${advRef.count}` : ''}
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              )
+              : <span className="text-xs italic text-slate-500">No adversaries</span>
+          )}
+          {tab === 'scenes' && (() => {
+            const chips = [
+              ...(item.environments || []).map(envId => {
+                const env = data?.environments?.find(e => e.id === envId);
+                return env ? { key: `env-${envId}`, label: env.name } : null;
+              }),
+              ...(item.adversaries || []).map(advRef => {
+                const adv = data?.adversaries?.find(a => a.id === advRef.adversaryId);
+                return adv ? { key: `adv-${advRef.adversaryId}`, label: adv.name + (advRef.count > 1 ? ` ×${advRef.count}` : '') } : null;
+              }),
+              ...(item.groups || []).flatMap(gId => {
+                const group = data?.groups?.find(g => g.id === gId);
+                if (!group) return [];
+                return (group.adversaries || []).map(advRef => {
+                  const adv = data?.adversaries?.find(a => a.id === advRef.adversaryId);
+                  return adv ? { key: `grp-${gId}-adv-${advRef.adversaryId}`, label: adv.name + (advRef.count > 1 ? ` ×${advRef.count}` : '') } : null;
+                }).filter(Boolean);
+              }),
+            ].filter(Boolean);
+            return chips.length > 0
+              ? (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {chips.map(chip => (
+                    <span key={chip.key} className="text-xs bg-slate-800 border border-slate-700 text-slate-300 px-2 py-0.5 rounded-full">
+                      {chip.label}
+                    </span>
+                  ))}
+                </div>
+              )
+              : <span className="text-xs italic text-slate-500">Empty scene</span>;
+          })()}
           {tab === 'adventures' && `${item.scenes?.length || 0} scenes`}
 
           {item.motive && <p className="mt-2 text-xs italic text-slate-300">"{item.motive}"</p>}
