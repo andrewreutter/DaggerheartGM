@@ -64,6 +64,37 @@ export const deleteItem = async (collectionName, id) => {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 };
 
+export const fetchRolzRoomLog = async (roomName) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/rolz-roomlog?room=${encodeURIComponent(roomName)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+export const postRolzRoll = async (room, text, rolzUsername, rolzPassword, from = 'DaggerheartGM') => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/rolz-post', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ room, text, from, rolzUsername, rolzPassword }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 export const fetchFCG = async (url) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');

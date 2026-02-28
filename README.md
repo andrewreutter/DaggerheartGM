@@ -58,6 +58,22 @@ npm run seed:srd    # inserts into DB (requires DATABASE_URL in .env)
 
 Users can then toggle "Include SRD" in the Adversaries/Environments library views to show SRD content alongside their own items. SRD items are read-only; use "Clone to My Library" or the in-context "Edit Copy" flow to make an editable copy.
 
+### Rolz.org Dice Room Integration
+
+The **Game Table** tab has two side-by-side panels (70/30 split):
+- **Zoom Whiteboard** (left) — paste an `<iframe>` embed code to display a Zoom whiteboard
+- **Rolz Room Log** (right) — a live chat-style view of your Rolz dice room that polls for new messages every 5 seconds. Shows text messages, dice rolls (highlighted), server messages, and time separators. Includes a header with refresh and "open in new tab" links.
+
+A collapsible **Configure Embeds** bar at the top contains inputs for both. It collapses automatically once configured, giving the embeds maximum vertical space.
+
+When a **room name and Rolz credentials** are configured, adversary attack actions become clickable throughout the GM Table:
+- Clicking an action in the **Actions Board** sidebar posts the roll to the Rolz room (briefly flashes green on success)
+- The **attack line** and **action-type attack features** on each adversary card also show a dice icon and post a roll when clicked
+
+**To enable posting:** enter your Rolz dice room and type `/room api=on`. Then fill in your Rolz username and password in the Configure Embeds panel and click Save. The server logs in on your behalf and caches the session for 30 minutes.
+
+Room name and credentials are persisted in your session state automatically.
+
 ### Inline Editing
 
 Adversaries and environments can be edited directly from the GM Table, Scene detail, and Group detail views via a pencil button on each card. A dialog asks whether to edit a local copy (leaving the library unchanged) or the library original (propagating changes everywhere). SRD/public items are always edited as local copies.

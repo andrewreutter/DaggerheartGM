@@ -1,6 +1,8 @@
-import { Heart, AlertCircle, X } from 'lucide-react';
+import { Heart, AlertCircle, X, Dices } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { parseCountdownValue } from '../lib/helpers.js';
+
+const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 
 function CountdownCounter({ value, onChange }) {
   return (
@@ -123,6 +125,7 @@ export function AdversaryCardContent({
   removeInstanceFn,
   featureCountdowns,
   updateCountdown,
+  onRollAttack,
 }) {
   return (
     <>
@@ -255,14 +258,17 @@ export function AdversaryCardContent({
         <div className="space-y-1 mb-4">
           <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Attack</h5>
           <div
-            className={`text-sm pl-2 border-l-2 transition-colors ${
+            className={`text-sm pl-2 border-l-2 transition-colors rounded-r ${
               hoveredFeature?.cardKey === cardKey && hoveredFeature?.featureKey === 'attack'
                 ? 'border-yellow-500'
                 : 'border-transparent'
-            }`}
+            } ${onRollAttack ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/atk' : ''}`}
+            onClick={onRollAttack ? () => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: el.attack.damage, trait: el.attack.trait }) : undefined}
+            title={onRollAttack ? 'Roll to dice room' : undefined}
           >
             <span className="font-bold text-slate-200">{el.attack.name}:</span>
             <span className="text-slate-300"> {el.attack.modifier >= 0 ? '+' : ''}{el.attack.modifier} {el.attack.range} | {el.attack.damage} {el.attack.trait?.toLowerCase()}</span>
+            {onRollAttack && <Dices size={11} className="inline ml-1.5 text-slate-600 group-hover/atk:text-red-400 transition-colors" />}
           </div>
         </div>
       )}
@@ -274,14 +280,17 @@ export function AdversaryCardContent({
             const countdownInit = parseCountdownValue(feat.description);
             const fKey = `feat-${featIdx}`;
             const countdownVal = featureCountdowns?.[(cardKey + '|' + fKey)] ?? countdownInit;
+            const attackMatch = onRollAttack && feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
             return (
               <div
                 key={feat.id ?? featIdx}
-                className={`text-sm pl-2 border-l-2 transition-colors ${
+                className={`text-sm pl-2 border-l-2 transition-colors rounded-r ${
                   hoveredFeature?.cardKey === cardKey && hoveredFeature?.featureKey === fKey
                     ? 'border-yellow-500'
                     : 'border-transparent'
-                }`}
+                } ${attackMatch ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/feat' : ''}`}
+                onClick={attackMatch ? () => onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: attackMatch[3], trait: attackMatch[4] }) : undefined}
+                title={attackMatch ? 'Roll to dice room' : undefined}
               >
                 <span className="font-bold text-slate-200 mr-2">
                   {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
@@ -293,6 +302,7 @@ export function AdversaryCardContent({
                   />
                 )}
                 <span className="text-slate-400"><FeatureDescription description={feat.description} /></span>
+                {attackMatch && <Dices size={11} className="inline ml-1.5 text-slate-600 group-hover/feat:text-red-400 transition-colors" />}
               </div>
             );
           })}

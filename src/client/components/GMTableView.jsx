@@ -1,10 +1,19 @@
-import { useMemo, useState } from 'react';
-import { Zap, Trash2, Pencil, LayoutDashboard, Monitor } from 'lucide-react';
+import { useMemo, useState, useEffect } from 'react';
+import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight } from 'lucide-react';
+import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseCountdownValue } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { EditFormModal } from './modals/EditFormModal.jsx';
+import { postRolzRoll } from '../lib/api.js';
+
+const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
+
+function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
+  const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
+  return `${sourceName} ${name} [d20${modStr}] damage [${damage} ${(trait || 'phy').toLowerCase()}] ${range}`;
+}
 
 function extractIframeSrc(embedCode) {
   try {
@@ -14,50 +23,153 @@ function extractIframeSrc(embedCode) {
   return null;
 }
 
-function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, hidden }) {
-  const [draft, setDraft] = useState(whiteboardEmbed);
+function ConfigSummary({ iframeSrc, rolzRoomName, rolzUsername }) {
+  const parts = [];
+  if (iframeSrc) parts.push('Zoom');
+  if (rolzRoomName) parts.push(rolzUsername ? `Rolz: ${rolzRoomName} (${rolzUsername})` : `Rolz: ${rolzRoomName}`);
+  return parts.length > 0
+    ? <span className="text-slate-500 text-xs ml-2">{parts.join(' · ')}</span>
+    : <span className="text-slate-600 text-xs ml-2 italic">Not configured</span>;
+}
+
+function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, lastRollTime, hidden, nudge }) {
+  const [embedDraft, setEmbedDraft] = useState(whiteboardEmbed);
+  const [roomNameDraft, setRoomNameDraft] = useState(rolzRoomName);
+  const [usernameDraft, setUsernameDraft] = useState(rolzUsername);
+  const [passwordDraft, setPasswordDraft] = useState(rolzPassword);
+  const [configOpen, setConfigOpen] = useState(!whiteboardEmbed && !rolzRoomName);
+  const [nudgeHint, setNudgeHint] = useState(false);
+
+  useEffect(() => {
+    if (!nudge) return;
+    setConfigOpen(true);
+    setNudgeHint(true);
+    const t = setTimeout(() => setNudgeHint(false), 6000);
+    return () => clearTimeout(t);
+  }, [nudge]);
+
   const iframeSrc = extractIframeSrc(whiteboardEmbed);
 
-  const handleSave = () => {
-    setWhiteboardEmbed(draft.trim());
+  const handleSaveAll = () => {
+    setWhiteboardEmbed(embedDraft.trim());
+    setRolzRoomName(roomNameDraft.trim());
+    setRolzUsername(usernameDraft.trim());
+    setRolzPassword(passwordDraft);
+    if (embedDraft.trim() || roomNameDraft.trim()) setConfigOpen(false);
   };
 
   return (
-    <div className={`flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-950 p-6 gap-4${hidden ? ' hidden' : ''}`}>
-      <div className="flex flex-col gap-2 shrink-0">
-        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Zoom Whiteboard Embed Code</label>
-        <div className="flex gap-2 items-start">
-          <textarea
-            className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
-            placeholder='Paste your <iframe ...> embed code here'
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={false}
-          />
-          <button
-            onClick={handleSave}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors whitespace-nowrap"
-          >
-            Save
-          </button>
-        </div>
+    <div className={`flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-950${hidden ? ' hidden' : ''}`}>
+      {/* Collapsible config panel */}
+      <div className="shrink-0 border-b border-slate-800">
+        <button
+          onClick={() => setConfigOpen(o => !o)}
+          className="w-full flex items-center gap-2 px-5 py-2.5 text-left hover:bg-slate-900/50 transition-colors"
+        >
+          {configOpen
+            ? <ChevronDown size={14} className="text-slate-500" />
+            : <ChevronRight size={14} className="text-slate-500" />
+          }
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Configure Embeds</span>
+          {!configOpen && <ConfigSummary iframeSrc={iframeSrc} rolzRoomName={rolzRoomName} rolzUsername={rolzUsername} />}
+        </button>
+
+        {configOpen && (
+          <div className="px-5 pb-4 pt-1 grid grid-cols-[1fr,auto] gap-x-6 gap-y-3">
+            {/* Zoom Whiteboard config */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Monitor size={12} /> Zoom Whiteboard
+              </label>
+              <textarea
+                className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-16"
+                placeholder='Paste your <iframe ...> embed code here'
+                value={embedDraft}
+                onChange={(e) => setEmbedDraft(e.target.value)}
+                spellCheck={false}
+              />
+            </div>
+
+            {/* Rolz config */}
+            <div className="flex flex-col gap-1.5 min-w-[20rem]">
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Dices size={12} className="text-red-400" /> Rolz Dice Room
+              </label>
+              <input
+                className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                placeholder="Room name"
+                value={roomNameDraft}
+                onChange={(e) => setRoomNameDraft(e.target.value)}
+              />
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                  placeholder="Rolz username"
+                  value={usernameDraft}
+                  onChange={(e) => setUsernameDraft(e.target.value)}
+                  autoComplete="username"
+                />
+                <input
+                  type="password"
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                  placeholder="Rolz password"
+                  value={passwordDraft}
+                  onChange={(e) => setPasswordDraft(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </div>
+              <p className="text-[10px] text-slate-500 leading-snug">
+                Enter your <a href="https://rolz.org/table/login" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">Rolz.org</a> credentials. In your dice room, type <code className="text-slate-400 bg-slate-800 px-1 rounded">/room api=on</code> to enable posting.
+              </p>
+            </div>
+
+            {/* Nudge hint */}
+            {nudgeHint && (
+              <div className="col-span-2 flex items-start gap-2 bg-amber-900/30 border border-amber-600/50 rounded-lg px-3 py-2 text-amber-300 text-xs">
+                <Dices size={13} className="text-amber-400 shrink-0 mt-0.5" />
+                <span>Enter your <strong>Rolz username and password</strong> and click <strong>Save</strong> to enable dice rolling from the Actions Board. Make sure to type <code className="bg-amber-900/50 px-1 rounded">/room api=on</code> in your Rolz room first.</span>
+              </div>
+            )}
+
+            {/* Save button spanning full width */}
+            <div className="col-span-2 flex justify-end">
+              <button
+                onClick={handleSaveAll}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {iframeSrc ? (
-        <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
-          <iframe
-            src={iframeSrc}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-            allowFullScreen
-            title="Zoom Whiteboard"
-          />
+      {/* Embeds row */}
+      <div className="flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
+        {/* Zoom Whiteboard — 70% */}
+        <div className="min-w-0 min-h-0 flex flex-col overflow-hidden" style={{ flex: '7 1 0%' }}>
+          {iframeSrc ? (
+            <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+              <iframe
+                src={iframeSrc}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+                allowFullScreen
+                title="Zoom Whiteboard"
+              />
+            </div>
+          ) : (
+            <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2">
+              <Monitor size={32} className="opacity-40" />
+              <p className="text-sm">Configure a Zoom whiteboard embed above.</p>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2">
-          <Monitor size={32} className="opacity-40" />
-          <p className="text-sm">Paste your Zoom whiteboard embed code above to display it here.</p>
+
+        {/* Rolz Dice Room Log — 30% */}
+        <div className="min-w-0 min-h-0 flex flex-col overflow-hidden" style={{ flex: '3 1 0%' }}>
+          <RolzRoomLog roomName={rolzRoomName} lastRollTime={lastRollTime} />
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -68,8 +180,10 @@ function getItemData(element) {
   return rest;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
+  const [rolledKey, setRolledKey] = useState(null);
+  const [configNudge, setConfigNudge] = useState(0);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
   const [editState, setEditState] = useState(null);
@@ -108,6 +222,43 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
     }
   };
+
+  const [lastRollTime, setLastRollTime] = useState(null);
+
+  const rolzConfigured = !!(rolzRoomName && rolzUsername && rolzPassword);
+
+  const handleRoll = async (feature) => {
+    if (!feature._rollData) return;
+    if (!rolzConfigured) {
+      navigate('/gm-table/whiteboard');
+      setConfigNudge(n => n + 1);
+      return;
+    }
+    const { modifier, range, damage, trait } = feature._rollData;
+    const rollText = buildAttackRollText(feature.name, modifier, range, damage, trait, feature.sourceName);
+    const key = `${feature.cardKey}|${feature.featureKey}`;
+    try {
+      await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+      setRolledKey(key);
+      setLastRollTime(Date.now());
+      setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
+    } catch (err) {
+      console.error('Rolz roll failed:', err);
+    }
+  };
+
+  const handleCardRoll = async (attackData, sourceName) => {
+    if (!rolzConfigured) return;
+    const { name, modifier, range, damage, trait } = attackData;
+    const rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
+    try {
+      await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+      setLastRollTime(Date.now());
+    } catch (err) {
+      console.error('Rolz roll failed:', err);
+    }
+  };
+
   // Group adversaries of the same type (same id + groupName) into consolidated entries.
   // Environments remain as individual entries.
   const consolidatedElements = useMemo(() => {
@@ -155,16 +306,29 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           sourceName: element.name,
           cardKey,
           featureKey: 'attack',
+          _rollData: {
+            modifier: element.attack.modifier || 0,
+            range: element.attack.range || 'Melee',
+            damage: element.attack.damage || 'd6',
+            trait: element.attack.trait || 'phy',
+          },
         });
       }
 
       element.features?.forEach((feature, featureIdx) => {
         const category = parseFeatureCategory(feature);
+        const m = feature.type === 'action' && feature.description ? ATTACK_DESC_RE.exec(feature.description) : null;
         menu[category].push({
           ...feature,
           sourceName: element.name,
           cardKey,
           featureKey: `feat-${featureIdx}`,
+          _rollData: m ? {
+            modifier: parseInt(m[1]),
+            range: m[2],
+            damage: m[3],
+            trait: m[4],
+          } : null,
         });
       });
     });
@@ -200,15 +364,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     const countdownInit = parseCountdownValue(feature.description);
                     const cdKey = `${feature.cardKey}|${feature.featureKey}`;
                     const countdownVal = featureCountdowns[cdKey] ?? countdownInit;
+                    const canRoll = !!feature._rollData;
+                    const justRolled = rolledKey === cdKey;
                     return (
                       <div
                         key={`${feature.id}-${idx}`}
                         onMouseEnter={() => setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey })}
                         onMouseLeave={() => setHoveredFeature(null)}
-                        className="w-full text-left bg-slate-800/50 hover:bg-slate-800 p-3 rounded border border-slate-700 hover:border-r-yellow-500 transition-all group cursor-default"
+                        onClick={canRoll ? () => handleRoll(feature) : undefined}
+                        className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 p-3 rounded border transition-all group ${canRoll ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
                       >
                         <div className="flex justify-between items-start mb-1">
-                          <span className="font-medium text-slate-200 group-hover:text-white text-sm">{feature.name}</span>
+                          <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5">
+                            {feature.name}
+                            {canRoll && (
+                              <Dices size={12} className={justRolled ? 'text-green-400' : rolzConfigured ? 'text-slate-500 group-hover:text-red-400 transition-colors' : 'text-slate-600 group-hover:text-amber-400 transition-colors'} />
+                            )}
+                          </span>
                           <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
                         </div>
                         <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
@@ -259,7 +431,19 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             <LayoutDashboard size={16} /> Game Table
           </button>
         </div>
-        <WhiteboardTab whiteboardEmbed={whiteboardEmbed} setWhiteboardEmbed={setWhiteboardEmbed} hidden={gmTab !== 'whiteboard'} />
+        <WhiteboardTab
+          whiteboardEmbed={whiteboardEmbed}
+          setWhiteboardEmbed={setWhiteboardEmbed}
+          rolzRoomName={rolzRoomName}
+          setRolzRoomName={setRolzRoomName}
+          rolzUsername={rolzUsername}
+          setRolzUsername={setRolzUsername}
+          rolzPassword={rolzPassword}
+          setRolzPassword={setRolzPassword}
+          lastRollTime={lastRollTime}
+          hidden={gmTab !== 'whiteboard'}
+          nudge={configNudge}
+        />
         <div className={`flex-1 bg-slate-950 p-6 overflow-y-auto relative${gmTab === 'whiteboard' ? ' hidden' : ''}`}>
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-white">The Table</h2>
@@ -418,6 +602,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     removeInstanceFn={removeActiveElement}
                     featureCountdowns={featureCountdowns}
                     updateCountdown={updateCountdown}
+                    onRollAttack={rolzConfigured ? (attackData) => handleCardRoll(attackData, el.name) : null}
                   />
                 </div>
               </div>
