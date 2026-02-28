@@ -35,6 +35,9 @@ function App() {
 
   const [activeElements, setActiveElements] = useState([]);
   const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
+  const [rolzRoomName, setRolzRoomName] = useState('');
+  const [rolzUsername, setRolzUsername] = useState('');
+  const [rolzPassword, setRolzPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const tableStateReadyRef = useRef(false);
   const [libraryFilters, setLibraryFilters] = useState(loadStoredFilters);
@@ -42,10 +45,10 @@ function App() {
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, featureCountdowns]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns]);
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
@@ -169,6 +172,9 @@ function App() {
           setData(fetched);
           setActiveElements(fetched.table_state?.[0]?.elements || []);
           setWhiteboardEmbed(fetched.table_state?.[0]?.whiteboardEmbed || '');
+          setRolzRoomName(fetched.table_state?.[0]?.rolzRoomName || '');
+          setRolzUsername(fetched.table_state?.[0]?.rolzUsername || '');
+          setRolzPassword(fetched.table_state?.[0]?.rolzPassword || '');
           setFeatureCountdowns(fetched.table_state?.[0]?.featureCountdowns || {});
           tableStateReadyRef.current = true;
         } catch (err) {
@@ -400,7 +406,7 @@ function App() {
   if (loading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Loading...</div>;
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-200 font-sans flex flex-col">
+    <div className="h-screen bg-slate-900 text-slate-200 font-sans flex flex-col overflow-hidden">
       {user && (
         <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-10">
           <div className="flex items-center gap-6">
@@ -509,6 +515,12 @@ function App() {
             startScene={startScene}
             whiteboardEmbed={whiteboardEmbed}
             setWhiteboardEmbed={setWhiteboardEmbed}
+            rolzRoomName={rolzRoomName}
+            setRolzRoomName={setRolzRoomName}
+            rolzUsername={rolzUsername}
+            setRolzUsername={setRolzUsername}
+            rolzPassword={rolzPassword}
+            setRolzPassword={setRolzPassword}
             gmTab={route.gmTab}
             navigate={navigate}
             featureCountdowns={featureCountdowns}

@@ -4,7 +4,7 @@
  *  2. Text matching GM trigger patterns (spend…fear, mark…fear, mark…stress) is bolded.
  */
 
-const FEAR_TRIGGER_RE = /(spend.*?fear|mark.*?fear|mark.*?stress)/gi;
+const FEAR_TRIGGER_RE = /(\bspend\b[^.!?]*?\bfear\b|\bmark\b[^.!?]*?\bfear\b|\bmark\b[^.!?]*?\bstress\b)/gi;
 
 function applyFearBolding(text) {
   if (!text) return text;

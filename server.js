@@ -62,6 +62,93 @@ app.get('/api/fetch-fcg', requireAuth, async (req, res) => {
   }
 });
 
+// --- Rolz session management ---
+
+// In-memory cache: uid -> { cookie, expiresAt }
+const rolzSessions = new Map();
+const ROLZ_SESSION_TTL = 30 * 60 * 1000; // 30 minutes
+
+async function rolzLogin(username, password) {
+  // Form field is "nick", hidden field "action" is required
+  const body = new URLSearchParams({ action: 'signin', nick: username, password, whence: '', t: '' });
+  const res = await fetch('https://rolz.org/join/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+    redirect: 'manual',
+  });
+  const setCookie = res.headers.get('set-cookie');
+  if (!setCookie) throw new Error('Rolz login failed — no session cookie returned');
+  // Take only the first name=value pair; avoid splitting on commas inside expires dates
+  const cookie = setCookie.split(';')[0].trim();
+  return cookie;
+}
+
+async function getRolzSession(uid, username, password) {
+  const cached = rolzSessions.get(uid);
+  if (cached && Date.now() < cached.expiresAt) return cached.cookie;
+  const cookie = await rolzLogin(username, password);
+  rolzSessions.set(uid, { cookie, expiresAt: Date.now() + ROLZ_SESSION_TTL });
+  return cookie;
+}
+
+// --- Rolz API proxies ---
+
+app.get('/api/rolz-roomlog', requireAuth, async (req, res) => {
+  const { room } = req.query;
+  if (!room) {
+    return res.status(400).json({ error: 'room parameter is required' });
+  }
+  try {
+    const rolzRes = await fetch(`https://rolz.org/api/roomlog?room=${encodeURIComponent(room)}`);
+    const body = await rolzRes.text();
+    try {
+      const parsed = JSON.parse(body);
+      res.json(parsed);
+    } catch {
+      res.json({ raw: body });
+    }
+  } catch (err) {
+    console.error('Rolz roomlog proxy error:', err);
+    res.status(500).json({ error: `Failed to reach Rolz.org: ${err.message}` });
+  }
+});
+
+app.post('/api/rolz-post', requireAuth, async (req, res) => {
+  const { room, text, from, rolzUsername, rolzPassword } = req.body;
+  if (!room || !text) {
+    return res.status(400).json({ error: 'room and text are required' });
+  }
+  if (!rolzUsername || !rolzPassword) {
+    return res.status(400).json({ error: 'rolzUsername and rolzPassword are required' });
+  }
+  const postToRolz = async (cookie) => {
+    const params = new URLSearchParams({ room, text });
+    if (from) params.set('from', from);
+    return fetch(`https://rolz.org/api/post?${params}`, { headers: { Cookie: cookie } });
+  };
+  try {
+    let cookie = await getRolzSession(req.uid, rolzUsername, rolzPassword);
+    let rolzRes = await postToRolz(cookie);
+    let body = await rolzRes.text();
+    // If session expired, invalidate cache and retry once with a fresh login
+    if (body.includes('Invalid account name')) {
+      rolzSessions.delete(req.uid);
+      cookie = await getRolzSession(req.uid, rolzUsername, rolzPassword);
+      rolzRes = await postToRolz(cookie);
+      body = await rolzRes.text();
+    }
+    try {
+      res.json(JSON.parse(body));
+    } catch {
+      res.json({ raw: body });
+    }
+  } catch (err) {
+    console.error('Rolz proxy error:', err);
+    res.status(500).json({ error: `Failed to reach Rolz.org: ${err.message}` });
+  }
+});
+
 // --- Data routes ---
 
 app.get('/api/data', requireAuth, async (req, res) => {

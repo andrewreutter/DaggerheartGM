@@ -10,11 +10,11 @@ A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server th
 ## Architecture
 
 - `server.js` — Express server entry point. Serves static files from `public/` and falls back to `public/index.html` for any unmatched route (standard SPA behavior). API routes live here. On startup, runs DB migrations if `DATABASE_URL` is set.
-- `src/client/app.jsx` — React SPA entry point. Imports from `./lib/api.js`, mounts via `ReactDOM.createRoot`. Manages top-level state (data, activeElements, user). Uses `useRouter()` from `./lib/router.js` to derive the active view from the URL; all navigation calls `navigate()` so the browser back/forward buttons work. The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
-- `src/client/components/` — UI components: `LibraryView.jsx`, `GMTableView.jsx`, `NavBtn.jsx`, `ItemCard.jsx`, `ItemDetailView.jsx`.
+- `src/client/app.jsx` — React SPA entry point. Imports from `./lib/api.js`, mounts via `ReactDOM.createRoot`. Manages top-level state (data, activeElements, user). Uses `useRouter()` from `./lib/router.js` to derive the active view from the URL; all navigation calls `navigate()` so the browser back/forward buttons work. The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out. Persists `whiteboardEmbed`, `rolzRoomName`, `rolzUsername`, and `rolzPassword` in the `table_state` collection alongside `activeElements`.
+- `src/client/components/` — UI components: `LibraryView.jsx`, `GMTableView.jsx`, `NavBtn.jsx`, `ItemCard.jsx`, `ItemDetailView.jsx`, `RolzRoomLog.jsx`.
 - `src/client/components/forms/` — Item creation/edit forms: `AdversaryForm`, `EnvironmentForm`, `GroupForm`, `SceneForm`, `AdventureForm`, plus shared inputs `ExperiencesInput`, `FeaturesInput`, `FormRow`, `MultiSelectRef`.
 - `src/client/components/modals/` — Import modals: `RolzImportModal.jsx`, `FCGImportModal.jsx`. Shared utilities in `ImportModalShell.jsx` and `ImportPreviewCard.jsx`. Inline editing modals: `EditChoiceDialog.jsx` (asks "Edit Copy" vs "Edit Library Original"), `EditFormModal.jsx` (modal wrapper around `AdversaryForm`/`EnvironmentForm`).
-- `src/client/lib/` — Client-side utilities: `api.js` (Firebase init + fetch helpers), `helpers.js` (`generateId`), `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` hook + `parseRoute()`).
+- `src/client/lib/` — Client-side utilities: `api.js` (Firebase init + fetch helpers + `postRolzRoll` + `fetchRolzRoomLog`), `helpers.js` (`generateId`), `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` hook + `parseRoute()`).
 - `src/db.js` — Postgres connection pool, migration runner, and query helpers (`getItems`, `getSrdItems`, `getPublicItems`, `upsertItem`, `deleteItem`). Exports `SRD_USER_ID = '__SRD__'`.
 - `src/fcg-scraper.js` — Puppeteer-based scraper for FreshCutGrass.app homebrew pages. Exports `validateFCGUrl(url)` and `scrapeFCG(url)`. Launches headless Chrome, clicks each adversary card to open its detail modal, and returns `{ adversaries, environments }` shaped for import.
 - `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` and `src/client/**/*.jsx` automatically.
@@ -45,6 +45,8 @@ Schema uses a single `items` table:
 - `PUT /api/data/:collection` — Upsert an item (body is the item JSON). Respects `is_public` field. Returns the saved item.
 - `DELETE /api/data/:collection/:id` — Delete an item.
 - `GET /api/fetch-fcg?url=<fcg-url>` — Requires auth. Uses Puppeteer to scrape a FreshCutGrass.app homebrew page and returns `{ adversaries, environments }` ready for import. URL must start with `https://freshcutgrass.app/homebrew/`. Takes 20–40 seconds.
+- `GET /api/rolz-roomlog?room=NAME` — Requires auth. Proxies the Rolz room log feed (`https://rolz.org/api/roomlog`). Returns `{ room, items }` with message history. Polled by `RolzRoomLog` component every 5 seconds.
+- `POST /api/rolz-post` — Requires auth. Body: `{ room, text, from, rolzUsername, rolzPassword }`. Logs into Rolz.org with the provided credentials (server-side session cache keyed by Firebase UID, TTL 30 min), then proxies the roll post to `https://rolz.org/api/post` with the session cookie forwarded. On "Invalid account name" response, invalidates the cache and retries once with a fresh login. Returns the Rolz JSON response.
 
 All `/api/data` routes require an `Authorization: Bearer <Firebase ID token>` header. The server verifies the token via `firebase-admin` (uses `FIREBASE_PROJECT_ID`; no service account key needed).
 
@@ -74,6 +76,25 @@ npm run seed:srd    # seed data/ into DB with user_id='__SRD__' (requires DATABA
 ```
 
 Server listens on `process.env.PORT` or `3456` by default. Set `PORT` in `.env` to override — both `npm start` and `npm run dev` load `.env` automatically via `node --env-file=.env`.
+
+## Rolz.org Dice Room Integration
+
+The "Game Table" tab shows two side-by-side panels (70/30 split): the Zoom whiteboard (iframe embed) on the left, and a **Rolz room log** panel on the right. A collapsible "Configure Embeds" bar at the top contains inputs for both.
+
+**Room Log** (`RolzRoomLog.jsx`): A custom chat-style display of the dice room log, replacing the Rolz iframe (which cannot maintain login due to third-party cookie restrictions). Polls `GET /api/rolz-roomlog` every 5 seconds. Renders four message types (`txtmsg`, `dicemsg`, `srvmsg`, `timeinfo`) with distinct styling. Dice messages highlight roll expressions in yellow and results in green. Auto-scrolls to bottom on new messages (preserves scroll position if user has scrolled up). Header includes a refresh button and an "open in new tab" link to the full Rolz dice room.
+
+**Configuration** (persisted in `table_state`):
+- `rolzRoomName` — drives the room log feed, the "open in new tab" link, and is used as the `room` parameter when posting rolls
+- `rolzUsername` / `rolzPassword` — Rolz.org credentials used by the server to obtain a session cookie for API posting
+
+**Clickable dice rolls**: When room name + Rolz credentials are all configured, attack actions become clickable:
+- **Actions Board** (left sidebar): clicking an attack card posts the roll to the Rolz room via `POST /api/rolz-post` and briefly flashes green
+- **GM Table adversary cards**: the Attack line and action-type features with attack patterns show a dice icon and post a roll when clicked
+- Rolls are formatted as: `{sourceName} {attackName} [d20+{modifier}] damage [{damage} {trait}] {range}`
+- Only primary attacks and action-type features matching the attack description pattern (`+N Range | Xd6 trait`) are made rollable
+- Clicking an attack when not fully configured navigates to the Game Table tab and opens the config panel with a hint
+
+To enable posting: in the Rolz dice room, type `/room api=on`. Enter your Rolz username and password in the Configure Embeds panel. The server caches the session cookie in memory (30-minute TTL) to avoid repeated logins.
 
 ## Inline Editing (Scenes, Groups, GM Table)
 
