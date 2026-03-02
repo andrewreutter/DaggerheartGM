@@ -16,6 +16,10 @@ const DATA_DIR = join(__dirname, '..', 'data');
 
 const BASE_URL = 'https://raw.githubusercontent.com/seansbox/daggerheart-srd/main/.build/03_json';
 
+function slugId(prefix, name) {
+  return `${prefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+}
+
 const VALID_ROLES = ['minion', 'social', 'support', 'horde', 'ranged', 'skulk', 'standard', 'leader', 'bruiser'];
 
 const ENV_TYPE_MAP = {
@@ -114,7 +118,7 @@ function transformAdversary(raw) {
   const { damage, trait } = parseDamageAndTrait(raw.damage);
 
   return {
-    id: randomUUID(),
+    id: slugId('srd-adv', raw.name || ''),
     name: raw.name || '',
     tier: parseInt(raw.tier) || 1,
     role,
@@ -142,7 +146,7 @@ function transformEnvironment(raw) {
   const type = ENV_TYPE_MAP[typeKey] || 'exploration';
 
   return {
-    id: randomUUID(),
+    id: slugId('srd-env', raw.name || ''),
     name: raw.name || '',
     tier: parseInt(raw.tier) || 1,
     type,

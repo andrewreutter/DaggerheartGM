@@ -13,7 +13,7 @@ import { readFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import pg from 'pg';
-import { runMigrations, upsertItem, SRD_USER_ID } from '../src/db.js';
+import { runMigrations, upsertItem, getPool, SRD_USER_ID } from '../src/db.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +36,14 @@ async function main() {
 
   console.log(`Connecting to database (APP_ID="${APP_ID}")...`);
   await runMigrations();
+
+  // Purge all existing SRD items so re-seeding is always idempotent regardless of ID changes.
+  const db = getPool();
+  const { rowCount } = await db.query(
+    `DELETE FROM items WHERE app_id = $1 AND user_id = $2`,
+    [APP_ID, SRD_USER_ID]
+  );
+  console.log(`Purged ${rowCount} existing SRD items.`);
 
   const [adversaries, environments] = await Promise.all([
     readFile(join(DATA_DIR, 'srd-adversaries.json'), 'utf8').then(JSON.parse),
