@@ -1,24 +1,8 @@
 import { Heart, AlertCircle, X, Dices } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
-import { parseCountdownValue } from '../lib/helpers.js';
+import { parseAllCountdownValues } from '../lib/helpers.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
-
-function CountdownCounter({ value, onChange }) {
-  return (
-    <span className="inline-flex items-center gap-1 ml-2 align-middle" onClick={e => e.stopPropagation()}>
-      <button
-        onClick={() => onChange(Math.max(0, value - 1))}
-        className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-      >−</button>
-      <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{value}</span>
-      <button
-        onClick={() => onChange(value + 1)}
-        className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-      >+</button>
-    </span>
-  );
-}
 
 function CheckboxTrack({ total, filled, onSetFilled, fillColor, thresholds }) {
   if (!total || total <= 0) return <span className="text-slate-500 text-xs">-</span>;
@@ -69,9 +53,11 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
         <div className="space-y-1">
           <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Features</h5>
           {element.features.map((feat, idx) => {
-            const countdownInit = parseCountdownValue(feat.description);
+            const allCds = parseAllCountdownValues(feat.description);
             const fKey = `feat-${idx}`;
-            const countdownVal = featureCountdowns?.[(cardKey + '|' + fKey)] ?? countdownInit;
+            const cdVals = allCds.map((cd, cdIdx) =>
+              featureCountdowns?.[(cardKey + '|' + fKey + '|' + cdIdx)] ?? cd.value
+            );
             return (
               <div
                 key={feat.id ?? idx}
@@ -85,13 +71,15 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
                 <span className="font-bold text-slate-200 mr-2">
                   {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
                 </span>
-                {countdownInit !== null && updateCountdown && (
-                  <CountdownCounter
-                    value={countdownVal}
-                    onChange={v => updateCountdown(cardKey, fKey, v)}
+                <span className="text-slate-400">
+                  <FeatureDescription
+                    description={feat.description}
+                    countdownValues={updateCountdown && allCds.length > 0 ? cdVals : undefined}
+                    onCountdownChange={updateCountdown && allCds.length > 0
+                      ? (cdIdx, v) => updateCountdown(cardKey, fKey, cdIdx, v)
+                      : undefined}
                   />
-                )}
-                <span className="text-slate-400"><FeatureDescription description={feat.description} /></span>
+                </span>
               </div>
             );
           })}
@@ -279,9 +267,11 @@ export function AdversaryCardContent({
         <div className="space-y-1">
           <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Features</h5>
           {el.features.map((feat, featIdx) => {
-            const countdownInit = parseCountdownValue(feat.description);
+            const allCds = parseAllCountdownValues(feat.description);
             const fKey = `feat-${featIdx}`;
-            const countdownVal = featureCountdowns?.[(cardKey + '|' + fKey)] ?? countdownInit;
+            const cdVals = allCds.map((cd, cdIdx) =>
+              featureCountdowns?.[(cardKey + '|' + fKey + '|' + cdIdx)] ?? cd.value
+            );
             const attackMatch = onRollAttack && feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
             const forceAttack = !attackMatch && onRollAttack && /\bmakes?\b.*?\battack\b/i.test(feat.description || '');
             const isRollable = !!(attackMatch || forceAttack);
@@ -306,13 +296,15 @@ export function AdversaryCardContent({
                 <span className="font-bold text-slate-200 mr-2">
                   {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
                 </span>
-                {countdownInit !== null && updateCountdown && (
-                  <CountdownCounter
-                    value={countdownVal}
-                    onChange={v => updateCountdown(cardKey, fKey, v)}
+                <span className="text-slate-400">
+                  <FeatureDescription
+                    description={feat.description}
+                    countdownValues={updateCountdown && allCds.length > 0 ? cdVals : undefined}
+                    onCountdownChange={updateCountdown && allCds.length > 0
+                      ? (cdIdx, v) => updateCountdown(cardKey, fKey, cdIdx, v)
+                      : undefined}
                   />
-                )}
-                <span className="text-slate-400"><FeatureDescription description={feat.description} /></span>
+                </span>
                 {isRollable && <Dices size={11} className="inline ml-1.5 text-slate-600 group-hover/feat:text-red-400 transition-colors" />}
               </div>
             );

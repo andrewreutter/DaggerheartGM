@@ -33,6 +33,9 @@ function App() {
     adventures: []
   });
 
+  // Always includes SRD + public items regardless of library filters — used by the Feature Library panel.
+  const [allItemsData, setAllItemsData] = useState({ adversaries: [], environments: [] });
+
   const [activeElements, setActiveElements] = useState([]);
   const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
   const [rolzRoomName, setRolzRoomName] = useState('');
@@ -168,8 +171,12 @@ function App() {
       setUser(currentUser);
       if (currentUser) {
         try {
-          const fetched = await loadData(currentUser, libraryFilters);
+          const [fetched, allFetched] = await Promise.all([
+            loadData(currentUser, libraryFilters),
+            loadData(currentUser, { includeSrd: true, includePublic: true }),
+          ]);
           setData(fetched);
+          setAllItemsData({ adversaries: allFetched.adversaries || [], environments: allFetched.environments || [] });
           setActiveElements(fetched.table_state?.[0]?.elements || []);
           setWhiteboardEmbed(fetched.table_state?.[0]?.whiteboardEmbed || '');
           setRolzRoomName(fetched.table_state?.[0]?.rolzRoomName || '');
@@ -218,6 +225,16 @@ function App() {
           : [...prev[collectionName], saved];
         return { ...prev, [collectionName]: updated };
       });
+      if (collectionName === 'adversaries' || collectionName === 'environments') {
+        setAllItemsData(prev => {
+          const list = prev[collectionName] || [];
+          const existing = list.findIndex(i => i.id === saved.id);
+          const updated = existing >= 0
+            ? list.map(i => i.id === saved.id ? saved : i)
+            : [...list, saved];
+          return { ...prev, [collectionName]: updated };
+        });
+      }
     } catch (err) {
       console.error(`saveItem(${collectionName}) failed:`, err);
     }
@@ -230,6 +247,12 @@ function App() {
         ...prev,
         [collectionName]: prev[collectionName].filter(i => i.id !== id),
       }));
+      if (collectionName === 'adversaries' || collectionName === 'environments') {
+        setAllItemsData(prev => ({
+          ...prev,
+          [collectionName]: (prev[collectionName] || []).filter(i => i.id !== id),
+        }));
+      }
     } catch (err) {
       console.error(`deleteItem(${collectionName}, ${id}) failed:`, err);
     }
@@ -493,6 +516,7 @@ function App() {
         ) : route.view === 'library' ? (
           <LibraryView
             data={data}
+            allItemsData={allItemsData}
             saveItem={saveItem}
             deleteItem={deleteItem}
             cloneItem={cloneItem}
@@ -510,6 +534,7 @@ function App() {
             removeActiveElement={removeActiveElement}
             updateActiveElementsBaseData={updateActiveElementsBaseData}
             data={data}
+            allItemsData={allItemsData}
             saveItem={saveItem}
             addToTable={addToTable}
             startScene={startScene}
@@ -524,8 +549,8 @@ function App() {
             gmTab={route.gmTab}
             navigate={navigate}
             featureCountdowns={featureCountdowns}
-            updateCountdown={(cardKey, featureKey, value) =>
-              setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}`]: value }))
+            updateCountdown={(cardKey, featureKey, cdIdx, value) =>
+              setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
             }
           />
         )}
