@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
-import { parseFeatureCategory, parseCountdownValue } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
@@ -173,7 +173,7 @@ function getItemData(element) {
   return rest;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, allItemsData, saveItem, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
@@ -403,9 +403,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">{category}</h3>
                 <div className="space-y-2">
                   {features.map((feature, idx) => {
-                    const countdownInit = parseCountdownValue(feature.description);
+                    const allCds = parseAllCountdownValues(feature.description);
                     const cdKey = `${feature.cardKey}|${feature.featureKey}`;
-                    const countdownVal = featureCountdowns[cdKey] ?? countdownInit;
+                    const cdVals = allCds.map((cd, cdIdx) =>
+                      featureCountdowns[`${cdKey}|${cdIdx}`] ?? cd.value
+                    );
                     const canRoll = !!(feature._rollData || feature._diceRoll);
                     const justRolled = rolledKey === cdKey;
                     return (
@@ -426,20 +428,24 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                           <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
                         </div>
                         <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
-                        {countdownInit !== null && (
-                          <div className="mt-2 pt-2 border-t border-slate-700 flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                            <span className="text-xs text-slate-400">Countdown</span>
-                            <div className="inline-flex items-center gap-1">
-                              <button
-                                onClick={() => updateCountdown(feature.cardKey, feature.featureKey, Math.max(0, countdownVal - 1))}
-                                className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-                              >−</button>
-                              <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{countdownVal}</span>
-                              <button
-                                onClick={() => updateCountdown(feature.cardKey, feature.featureKey, countdownVal + 1)}
-                                className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-                              >+</button>
-                            </div>
+                        {allCds.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-slate-700 flex flex-wrap items-center gap-3" onClick={e => e.stopPropagation()}>
+                            {allCds.map((cd, cdIdx) => (
+                              <div key={cdIdx} className="flex items-center gap-1.5">
+                                <span className="text-xs text-slate-400">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
+                                    className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                                  >−</button>
+                                  <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{cdVals[cdIdx]}</span>
+                                  <button
+                                    onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
+                                    className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                                  >+</button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -680,7 +686,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <EditFormModal
         item={editState.item}
         collection={editState.collection}
-        data={data}
+        data={allItemsData || data}
         onSave={handleEditFormSave}
         onClose={() => setEditState(null)}
       />

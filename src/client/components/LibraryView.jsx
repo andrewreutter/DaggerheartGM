@@ -29,7 +29,54 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters }) {
+/**
+ * Renders the form card + Feature Library portal target side-by-side.
+ * The callback ref pattern (ref={setLibraryPortal}) triggers a re-render once the
+ * DOM element mounts, allowing createPortal inside the form to find its target.
+ */
+function LibraryEditingLayout({ activeTab, editingItem, data, allItemsData, handleSave, handleCancelEdit }) {
+  const [libraryPortal, setLibraryPortal] = useState(null);
+  const showLibrary = activeTab === 'adversaries' || activeTab === 'environments';
+
+  return (
+    <div className="flex gap-4 items-start">
+      {/* Form card — scrolls independently, bounded to viewport */}
+      <div className="flex-1 min-w-0 bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-xl overflow-y-auto max-h-[calc(100vh-12rem)]">
+        {activeTab === 'adversaries' && (
+          <AdversaryForm
+            initial={editingItem}
+            onSave={handleSave}
+            onCancel={handleCancelEdit}
+            allItems={allItemsData?.adversaries}
+            featureLibraryPortal={libraryPortal}
+          />
+        )}
+        {activeTab === 'environments' && (
+          <EnvironmentForm
+            initial={editingItem}
+            onSave={handleSave}
+            onCancel={handleCancelEdit}
+            allItems={allItemsData?.environments}
+            featureLibraryPortal={libraryPortal}
+          />
+        )}
+        {activeTab === 'groups' && <GroupForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
+        {activeTab === 'scenes' && <SceneForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
+        {activeTab === 'adventures' && <AdventureForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
+      </div>
+
+      {/* Feature Library portal target — to the right of the card, same max-h */}
+      {showLibrary && (
+        <div
+          ref={setLibraryPortal}
+          className="w-72 shrink-0 h-[calc(100vh-12rem)] overflow-hidden rounded-xl"
+        />
+      )}
+    </div>
+  );
+}
+
+export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
   const [showFCGImport, setShowFCGImport] = useState(false);
   const [tierFilter, setTierFilter] = useState(new Set());
@@ -297,18 +344,20 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
         )}
 
         {editingItem !== null ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-xl max-w-4xl">
-            {activeTab === 'adversaries' && <AdversaryForm initial={editingItem} onSave={handleSave} onCancel={handleCancelEdit} />}
-            {activeTab === 'environments' && <EnvironmentForm initial={editingItem} onSave={handleSave} onCancel={handleCancelEdit} />}
-            {activeTab === 'groups' && <GroupForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
-            {activeTab === 'scenes' && <SceneForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
-            {activeTab === 'adventures' && <AdventureForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
-          </div>
+          <LibraryEditingLayout
+            activeTab={activeTab}
+            editingItem={editingItem}
+            data={data}
+            allItemsData={allItemsData}
+            handleSave={handleSave}
+            handleCancelEdit={handleCancelEdit}
+          />
         ) : viewingItem ? (
           <ItemDetailView
             item={viewingItem}
             tab={activeTab}
             data={data}
+            allItemsData={allItemsData}
             onEdit={viewingItem._source && viewingItem._source !== 'own' ? null : () => navigate(`/library/${activeTab}/${itemId}/edit`)}
             onDelete={viewingItem._source && viewingItem._source !== 'own' ? null : () => deleteItem(activeTab, itemId)}
             onClone={() => handleClone(viewingItem)}

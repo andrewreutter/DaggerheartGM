@@ -154,7 +154,7 @@ function getElementItemData(element) {
   return rest;
 }
 
-function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) {
+function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, isOwn }) {
   const [elements, setElements] = useState(() => buildElements(item, tab, data));
   const [hoveredFeature, setHoveredFeature] = useState(null);
   // editState: null | { step: 'choice', element } | { step: 'form', item, collection, mode, element }
@@ -325,7 +325,7 @@ function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) {
         <EditFormModal
           item={editState.item}
           collection={editState.collection}
-          data={data}
+          data={allItemsData || data}
           onSave={handleFormSave}
           onClose={() => setEditState(null)}
         />
@@ -334,7 +334,7 @@ function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) {
   );
 }
 
-export function ItemDetailView({ item, tab, data, onEdit, onDelete, onClone, onClose, onSavePublic, onSaveElement }) {
+export function ItemDetailView({ item, tab, data, allItemsData, onEdit, onDelete, onClone, onClose, onSavePublic, onSaveElement }) {
   const [copied, setCopied] = useState(false);
   const [cloningStatus, setCloningStatus] = useState('');
   const [publicSaving, setPublicSaving] = useState(false);
@@ -422,7 +422,7 @@ export function ItemDetailView({ item, tab, data, onEdit, onDelete, onClone, onC
         </div>
 
         {(tab === 'groups' || tab === 'scenes') && data && (
-          <ExpandedTablePreview item={item} tab={tab} data={data} onSaveElement={onSaveElement} isOwn={isOwn} />
+          <ExpandedTablePreview item={item} tab={tab} data={data} allItemsData={allItemsData} onSaveElement={onSaveElement} isOwn={isOwn} />
         )}
 
         {tab === 'adversaries' && (

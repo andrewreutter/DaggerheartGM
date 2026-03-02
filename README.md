@@ -27,7 +27,7 @@ DaggerheartGM/
 │   ├── client/
 │   │   ├── app.jsx             # React SPA entry point
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
-│   │   │   ├── forms/          # Item creation/edit forms (all include is_public toggle)
+│   │   │   ├── forms/          # Item creation/edit forms (all include is_public toggle); FeatureLibrary.jsx sidebar for feature discovery
 │   │   │   └── modals/         # Import modals (Rolz, FreshCutGrass) + inline edit modals (EditChoiceDialog, EditFormModal)
 │   │   └── lib/                # API client, helpers, constants, parsers, router
 │   ├── db.js                   # Postgres pool + migration runner + query helpers
