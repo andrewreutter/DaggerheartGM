@@ -6,26 +6,8 @@ import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, 
 import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 
-const LIBRARY_FILTERS_KEY = 'dh_libraryFilters';
-const PAGE_LIMIT = 20;
-const NON_PAGINATED_COLLECTIONS = ['groups', 'scenes', 'adventures'];
+const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures'];
 
-const FILTER_DEFAULTS = { includeByTab: {}, search: '', tierByTab: {}, typeByTab: {} };
-
-function loadStoredFilters() {
-  try {
-    const stored = localStorage.getItem(LIBRARY_FILTERS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Migrate old flat fields to per-tab maps
-      if ('type' in parsed && !('typeByTab' in parsed)) { parsed.typeByTab = {}; delete parsed.type; }
-      if ('include' in parsed && !('includeByTab' in parsed)) { parsed.includeByTab = {}; delete parsed.include; }
-      if ('tier' in parsed && !('tierByTab' in parsed)) { parsed.tierByTab = {}; delete parsed.tier; }
-      return { ...FILTER_DEFAULTS, ...parsed };
-    }
-  } catch {}
-  return { ...FILTER_DEFAULTS };
-}
 import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
@@ -39,25 +21,12 @@ function App() {
   const [data, setData] = useState({
     adversaries: [],
     environments: [],
-    groups: [],
     scenes: [],
     adventures: []
   });
 
-  // Pagination metadata per collection: { totalCount, dbCount }
-  const [collectionMeta, setCollectionMeta] = useState({
-    adversaries: { totalCount: 0, dbCount: 0, loading: true },
-    environments: { totalCount: 0, dbCount: 0, loading: true },
-    groups: { totalCount: 0, dbCount: 0, loading: true },
-    scenes: { totalCount: 0, dbCount: 0, loading: true },
-    adventures: { totalCount: 0, dbCount: 0, loading: true },
-  });
-
-  // Current page offset for the active library tab (adversaries/environments only)
-  const [paginationOffset, setPaginationOffset] = useState(0);
-
-  // Own + SRD + public items for adversaries/environments — used by Feature Library panel
-  const [allItemsData, setAllItemsData] = useState({ adversaries: [], environments: [] });
+  // Incremented to force LibraryView to remount (e.g. after bulk delete).
+  const [libraryKey, setLibraryKey] = useState(0);
 
   const [activeElements, setActiveElements] = useState([]);
   const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
@@ -66,8 +35,6 @@ function App() {
   const [rolzPassword, setRolzPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const tableStateReadyRef = useRef(false);
-  const [libraryFilters, setLibraryFilters] = useState(loadStoredFilters);
-
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
@@ -128,7 +95,7 @@ function App() {
 
   const handleDeleteAllData = async () => {
     setUserMenuOpen(false);
-    const collections = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+    const collections = ['adversaries', 'environments', 'scenes', 'adventures'];
     // Fetch all own items across all collections to count and delete
     const allOwn = await Promise.all(collections.map(col =>
       loadCollection(col, { limit: 10000 }).then(r => ({ col, items: r.items.filter(i => !i._source || i._source === 'own') }))
@@ -140,23 +107,18 @@ function App() {
         await apiDeleteItem(col, item.id);
       }
     }
-    setData({ adversaries: [], environments: [], groups: [], scenes: [], adventures: [] });
-    setCollectionMeta({
-      adversaries: { totalCount: 0, dbCount: 0, loading: false },
-      environments: { totalCount: 0, dbCount: 0, loading: false },
-      groups: { totalCount: 0, dbCount: 0, loading: false },
-      scenes: { totalCount: 0, dbCount: 0, loading: false },
-      adventures: { totalCount: 0, dbCount: 0, loading: false },
-    });
+    setData({ adversaries: [], environments: [], scenes: [], adventures: [] });
     setActiveElements([]);
     tableStateReadyRef.current = false;
     apiDeleteItem('table_state', 'current').catch(() => {});
     tableStateReadyRef.current = true;
+    // Force LibraryView to remount so its hook refetches (now returning empty results).
+    setLibraryKey(k => k + 1);
   };
 
   const handleExport = async () => {
     setUserMenuOpen(false);
-    const collections = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+    const collections = ['adversaries', 'environments', 'scenes', 'adventures'];
     const allData = await Promise.all(collections.map(col =>
       loadCollection(col, { limit: 10000 }).then(r => [col, r.items.filter(i => !i._source || i._source === 'own')])
     ));
@@ -182,7 +144,7 @@ function App() {
     reader.onload = async (event) => {
       try {
         const importedData = JSON.parse(event.target.result);
-        const collections = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+        const collections = ['adversaries', 'environments', 'scenes', 'adventures'];
         for (const colName of collections) {
           if (importedData[colName]) {
             for (const item of importedData[colName]) {
@@ -202,60 +164,48 @@ function App() {
 
   const userRef = useRef(null);
   const routeRef = useRef(null);
-  const libraryFiltersRef = useRef(libraryFilters);
-  const paginationOffsetRef = useRef(0);
 
-  // Keep refs in sync for use inside async callbacks
-  useEffect(() => { libraryFiltersRef.current = libraryFilters; }, [libraryFilters]);
-  useEffect(() => { paginationOffsetRef.current = paginationOffset; }, [paginationOffset]);
-
-  // Load a single collection into data state, respecting pagination for adversaries/environments
-  const fetchCollection = async (collection, opts = {}) => {
-    const isPaginated = !NON_PAGINATED_COLLECTIONS.includes(collection);
-    const filters = opts.filters || libraryFiltersRef.current;
-    const offset = opts.offset !== undefined ? opts.offset : (isPaginated ? paginationOffsetRef.current : 0);
-    const limit = isPaginated ? PAGE_LIMIT : 1000;
-
-    setCollectionMeta(prev => ({
-      ...prev,
-      [collection]: { ...prev[collection], loading: true },
-    }));
-
-    const include = filters.includeByTab?.[collection] ?? null;
-    const result = await loadCollection(collection, {
-      includeMine: include === null || include === 'mine',
-      includeSrd: include === null || include === 'srd',
-      includePublic: include === null || include === 'public',
-      includeFcg: (include === null || include === 'fcg') && isPaginated,
-      search: filters.search || '',
-      tier: filters.tierByTab?.[collection] ?? null,
-      type: filters.typeByTab?.[collection] ?? null,
-      offset,
-      limit,
-    });
-
-    setData(prev => ({ ...prev, [collection]: result.items }));
-    setCollectionMeta(prev => ({
-      ...prev,
-      [collection]: { totalCount: result.totalCount, dbCount: result.dbCount, nextOffset: result.nextOffset, loading: false },
-    }));
-  };
-
-  // Load all non-paginated collections (groups, scenes, adventures) — no filter/search
+  // Load all non-paginated collections (scenes, adventures) — no filter/search.
+  // After loading, batch-resolve any adversary/environment IDs referenced by scenes
+  // so that ItemCard chips can display names without waiting for the user to browse
+  // those library tabs.
   const fetchAllCollections = async () => {
-    await Promise.all(NON_PAGINATED_COLLECTIONS.map(col => fetchCollection(col, { filters: {} })));
-  };
+    const results = await Promise.all(NON_PAGINATED_COLLECTIONS.map(async (col) => {
+      const result = await loadCollection(col, { limit: 1000 });
+      return [col, result.items];
+    }));
+    const loaded = Object.fromEntries(results);
 
-  // Load allItemsData (own + SRD + public, no FCG) for the Feature Library panel
-  const fetchAllItemsData = async () => {
-    const [advResult, envResult] = await Promise.all([
-      loadCollection('adversaries', { includeSrd: true, includePublic: true, includeFcg: false, limit: 1000 }),
-      loadCollection('environments', { includeSrd: true, includePublic: true, includeFcg: false, limit: 1000 }),
-    ]);
-    setAllItemsData({
-      adversaries: advResult.items || [],
-      environments: envResult.items || [],
-    });
+    const advIds = new Set();
+    const envIds = new Set();
+    for (const scene of (loaded.scenes || [])) {
+      for (const envEntry of (scene.environments || [])) {
+        if (typeof envEntry === 'string') envIds.add(envEntry);
+      }
+      for (const ref of (scene.adversaries || [])) {
+        if (!ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
+      }
+    }
+
+    let resolvedAdvs = [];
+    let resolvedEnvs = [];
+    if (advIds.size || envIds.size) {
+      try {
+        const resolved = await resolveItems({
+          ...(advIds.size ? { adversaries: [...advIds] } : {}),
+          ...(envIds.size ? { environments: [...envIds] } : {}),
+        });
+        resolvedAdvs = resolved.adversaries || [];
+        resolvedEnvs = resolved.environments || [];
+      } catch { /* best-effort */ }
+    }
+
+    setData(prev => ({
+      ...prev,
+      ...loaded,
+      adversaries: resolvedAdvs,
+      environments: resolvedEnvs,
+    }));
   };
 
   useEffect(() => {
@@ -280,13 +230,6 @@ function App() {
           setFeatureCountdowns(tableState?.featureCountdowns || {});
           tableStateReadyRef.current = true;
 
-          // Load the initial tab's collection
-          const initialTab = routeRef.current?.tab || 'adversaries';
-          if (!NON_PAGINATED_COLLECTIONS.includes(initialTab)) {
-            await fetchCollection(initialTab);
-          }
-          // Load allItemsData for Feature Library
-          fetchAllItemsData().catch(() => {});
         } catch (err) {
           console.error('Failed to load data:', err);
         }
@@ -302,43 +245,29 @@ function App() {
   // Keep routeRef current
   useEffect(() => { routeRef.current = route; }, [route]);
 
-  // Reload current paginated collection when tab, filters, or pagination offset changes
-  const activeTab = route.tab || 'adversaries';
-  useEffect(() => {
-    if (!userRef.current) return;
-    if (NON_PAGINATED_COLLECTIONS.includes(activeTab)) return;
-    fetchCollection(activeTab).catch(err => console.error('Failed to reload collection:', err));
-  }, [activeTab, libraryFilters, paginationOffset]);
-
-  const handleSetLibraryFilters = (newFilters) => {
-    setLibraryFilters(newFilters);
-    setPaginationOffset(0);
-    try { localStorage.setItem(LIBRARY_FILTERS_KEY, JSON.stringify(newFilters)); } catch {}
-  };
-
-  const handleSetPaginationOffset = (offset) => {
-    setPaginationOffset(offset);
+  /** Called by LibraryView whenever its hook fetches a new page of adversaries/environments.
+   *  Merges with previously resolved items (from fetchAllCollections) so scene
+   *  reference resolution in ItemCard and ItemDetailView keeps working. */
+  const syncDataToApp = (collection, items) => {
+    setData(prev => {
+      const newIds = new Set(items.map(i => i.id));
+      const extras = (prev[collection] || []).filter(i => !newIds.has(i.id));
+      return { ...prev, [collection]: [...items, ...extras] };
+    });
   };
 
   const saveItem = async (collectionName, item) => {
     try {
       const saved = await apiSaveItem(collectionName, item);
       if (!saved) return;
-      // Update in-place in current data (optimistic)
-      setData(prev => {
-        const existing = prev[collectionName].findIndex(i => i.id === saved.id);
-        const updated = existing >= 0
-          ? prev[collectionName].map(i => i.id === saved.id ? saved : i)
-          : [...prev[collectionName], saved];
-        return { ...prev, [collectionName]: updated };
-      });
-      if (collectionName === 'adversaries' || collectionName === 'environments') {
-        setAllItemsData(prev => {
-          const list = prev[collectionName] || [];
-          const existing = list.findIndex(i => i.id === saved.id);
+      // Optimistically update non-paginated collections in local data state.
+      // Paginated collections (adversaries/environments) are refreshed by LibraryView's hook.
+      if (NON_PAGINATED_COLLECTIONS.includes(collectionName)) {
+        setData(prev => {
+          const existing = prev[collectionName].findIndex(i => i.id === saved.id);
           const updated = existing >= 0
-            ? list.map(i => i.id === saved.id ? saved : i)
-            : [...list, saved];
+            ? prev[collectionName].map(i => i.id === saved.id ? saved : i)
+            : [...prev[collectionName], saved];
           return { ...prev, [collectionName]: updated };
         });
       }
@@ -350,22 +279,11 @@ function App() {
   const deleteItem = async (collectionName, id) => {
     try {
       await apiDeleteItem(collectionName, id);
-      setData(prev => ({
-        ...prev,
-        [collectionName]: prev[collectionName].filter(i => i.id !== id),
-      }));
-      setCollectionMeta(prev => ({
-        ...prev,
-        [collectionName]: {
-          ...prev[collectionName],
-          totalCount: Math.max(0, (prev[collectionName]?.totalCount || 1) - 1),
-          dbCount: Math.max(0, (prev[collectionName]?.dbCount || 1) - 1),
-        },
-      }));
-      if (collectionName === 'adversaries' || collectionName === 'environments') {
-        setAllItemsData(prev => ({
+      // Remove from non-paginated collections immediately; paginated ones refresh via hook.
+      if (NON_PAGINATED_COLLECTIONS.includes(collectionName)) {
+        setData(prev => ({
           ...prev,
-          [collectionName]: (prev[collectionName] || []).filter(i => i.id !== id),
+          [collectionName]: prev[collectionName].filter(i => i.id !== id),
         }));
       }
     } catch (err) {
@@ -374,22 +292,12 @@ function App() {
   };
 
   const cloneItem = async (collectionName, item) => {
-    const clone = await cloneItemToLibrary(collectionName, item, { play: false });
-    // Add to local state so the clone is immediately visible in the library
-    if (clone) {
-      setData(prev => {
-        const existing = prev[collectionName].findIndex(i => i.id === clone.id);
-        const updated = existing >= 0
-          ? prev[collectionName].map(i => i.id === clone.id ? clone : i)
-          : [...prev[collectionName], clone];
-        return { ...prev, [collectionName]: updated };
-      });
-    }
-    return clone;
+    // LibraryView's hook will refresh after clone via handleClone → search.refresh().
+    return cloneItemToLibrary(collectionName, item, { play: false });
   };
 
   // Runtime fields that must be preserved when base data is updated in-place.
-  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'groupName'];
+  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions'];
 
   const updateActiveElementsBaseData = (predicate, newBaseData) => {
     setActiveElements(prev => prev.map(el => {
@@ -400,34 +308,36 @@ function App() {
     }));
   };
 
-  // Collect all DB-referenced IDs from a scene/group for batch resolution
-  function collectSceneIds(scene, groupsById) {
+  // Collect all DB-referenced IDs from a scene (and nested scenes) for batch resolution.
+  // visited prevents infinite recursion from circular scene references.
+  function collectSceneIds(scene, scenesById, visited = new Set()) {
+    if (visited.has(scene.id)) return { adversaryIds: [], environmentIds: [] };
+    visited.add(scene.id);
+
     const adversaryIds = new Set();
     const environmentIds = new Set();
 
-    const envEntries = scene.environments || [];
-    envEntries.forEach(e => { if (typeof e === 'string') environmentIds.add(e); });
+    (scene.environments || []).forEach(e => { if (typeof e === 'string') environmentIds.add(e); });
+    (scene.adversaries || []).forEach(ref => { if (!ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId); });
 
-    const advRefs = scene.adversaries || [];
-    advRefs.forEach(ref => { if (!ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId); });
-
-    const groupIds = scene.groups || [];
-    groupIds.forEach(groupId => {
-      const group = groupsById[groupId];
-      if (group) {
-        (group.adversaries || []).forEach(ref => {
-          if (!ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId);
-        });
-      }
+    (scene.scenes || []).forEach(nestedId => {
+      const nested = scenesById[nestedId];
+      if (!nested) return;
+      const { adversaryIds: a, environmentIds: e } = collectSceneIds(nested, scenesById, visited);
+      a.forEach(id => adversaryIds.add(id));
+      e.forEach(id => environmentIds.add(id));
     });
 
     return { adversaryIds: [...adversaryIds], environmentIds: [...environmentIds] };
   }
 
-  // Expand a scene into table elements using pre-resolved data maps
-  function expandSceneWithResolved(scene, groupsById, adversariesById, environmentsById) {
+  // Expand a scene into table elements using pre-resolved data maps.
+  // visited prevents infinite recursion from circular scene references.
+  function expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById, visited = new Set(), depth = 0) {
+    if (visited.has(scene.id) || depth > 10) return [];
+    visited.add(scene.id);
+
     const elements = [];
-    const groupOverrides = scene.groupOverrides || [];
 
     (scene.environments || []).forEach(envEntry => {
       if (typeof envEntry === 'object' && envEntry.data) {
@@ -447,19 +357,9 @@ function App() {
       }
     });
 
-    (scene.groups || []).forEach(groupId => {
-      const group = groupsById[groupId];
-      if (!group) return;
-      (group.adversaries || []).forEach(advRef => {
-        const isOverridden = groupOverrides.some(ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId);
-        if (isOverridden) return;
-        const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
-        if (adv) {
-          for (let i = 0; i < (advRef.count || 1); i++) {
-            elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', groupName: group.name });
-          }
-        }
-      });
+    (scene.scenes || []).forEach(nestedId => {
+      const nested = scenesById[nestedId];
+      if (nested) elements.push(...expandSceneWithResolved(nested, scenesById, adversariesById, environmentsById, visited, depth + 1));
     });
 
     return elements;
@@ -498,36 +398,23 @@ function App() {
       } else {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
       }
-    } else if (collectionName === 'groups') {
-      const advIds = (item.adversaries || []).filter(r => !r.data && r.adversaryId).map(r => r.adversaryId);
-      const resolved = advIds.length ? await resolveItems({ adversaries: advIds }, { adopt: true }) : { adversaries: [] };
-      const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
-      (item.adversaries || []).forEach(advRef => {
-        const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
-        if (adv) {
-          for (let i = 0; i < (advRef.count || 1); i++) {
-            newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', groupName: item.name });
-          }
-        }
-      });
     } else if (collectionName === 'scenes') {
-      const groupsById = Object.fromEntries(data.groups.map(g => [g.id, g]));
-      const { adversaryIds, environmentIds } = collectSceneIds(item, groupsById);
+      const scenesById = Object.fromEntries(data.scenes.map(s => [s.id, s]));
+      const { adversaryIds, environmentIds } = collectSceneIds(item, scenesById);
       const resolved = (adversaryIds.length || environmentIds.length)
         ? await resolveItems({ adversaries: adversaryIds, environments: environmentIds }, { adopt: true })
         : { adversaries: [], environments: [] };
       const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
-      newElements.push(...expandSceneWithResolved(item, groupsById, adversariesById, environmentsById));
+      newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
     } else if (collectionName === 'adventures') {
       const scenesById = Object.fromEntries(data.scenes.map(s => [s.id, s]));
-      const groupsById = Object.fromEntries(data.groups.map(g => [g.id, g]));
       const allAdvIds = new Set();
       const allEnvIds = new Set();
       (item.scenes || []).forEach(sceneId => {
         const scene = scenesById[sceneId];
         if (scene) {
-          const { adversaryIds, environmentIds } = collectSceneIds(scene, groupsById);
+          const { adversaryIds, environmentIds } = collectSceneIds(scene, scenesById);
           adversaryIds.forEach(id => allAdvIds.add(id));
           environmentIds.forEach(id => allEnvIds.add(id));
         }
@@ -539,24 +426,11 @@ function App() {
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
       (item.scenes || []).forEach(sceneId => {
         const scene = scenesById[sceneId];
-        if (scene) newElements.push(...expandSceneWithResolved(scene, groupsById, adversariesById, environmentsById));
+        if (scene) newElements.push(...expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById));
       });
     }
 
     setActiveElements(prev => [...prev, ...newElements]);
-  };
-
-  const startScene = async (scene) => {
-    const groupsById = Object.fromEntries(data.groups.map(g => [g.id, g]));
-    const { adversaryIds, environmentIds } = collectSceneIds(scene, groupsById);
-    const resolved = (adversaryIds.length || environmentIds.length)
-      ? await resolveItems({ adversaries: adversaryIds, environments: environmentIds }, { adopt: true })
-      : { adversaries: [], environments: [] };
-    const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
-    const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
-    const newElements = expandSceneWithResolved(scene, groupsById, adversariesById, environmentsById);
-    setActiveElements(newElements);
-    navigate('/gm-table');
   };
 
   const updateActiveElement = (instanceId, updates) => {
@@ -663,21 +537,15 @@ function App() {
           </div>
         ) : route.view === 'library' ? (
           <LibraryView
+            key={libraryKey}
             data={data}
-            collectionMeta={collectionMeta}
-            allItemsData={allItemsData}
             saveItem={saveItem}
             deleteItem={deleteItem}
             cloneItem={cloneItem}
-            startScene={startScene}
             addToTable={addToTable}
             route={route}
             navigate={navigate}
-            libraryFilters={libraryFilters}
-            setLibraryFilters={handleSetLibraryFilters}
-            paginationOffset={paginationOffset}
-            setPaginationOffset={handleSetPaginationOffset}
-            pageLimit={PAGE_LIMIT}
+            onItemsChange={syncDataToApp}
           />
         ) : (
           <GMTableView
@@ -686,10 +554,8 @@ function App() {
             removeActiveElement={removeActiveElement}
             updateActiveElementsBaseData={updateActiveElementsBaseData}
             data={data}
-            allItemsData={allItemsData}
             saveItem={saveItem}
             addToTable={addToTable}
-            startScene={startScene}
             whiteboardEmbed={whiteboardEmbed}
             setWhiteboardEmbed={setWhiteboardEmbed}
             rolzRoomName={rolzRoomName}

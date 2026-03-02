@@ -8,7 +8,7 @@ const SOURCE_BADGE = {
   fcg: { label: 'FCG', className: 'bg-green-900/60 text-green-300 border border-green-700' },
 };
 
-export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onStartScene, onAddToTable }) {
+export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable }) {
   const [added, setAdded] = useState(false);
   const isOwn = !item._source || item._source === 'own';
   const badge = SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own;
@@ -81,56 +81,31 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
         <div className="text-[11px] text-slate-400 flex-1 capitalize">
           {tab === 'adversaries' && `Tier ${item.tier || 0} ${item.role}`}
           {tab === 'environments' && `Tier ${item.tier || 0} ${item.type}`}
-          {tab === 'groups' && (
-            item.adversaries?.length > 0
-              ? (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {item.adversaries.map((advRef, i) => {
-                    const name = advRef.data ? advRef.data.name : data?.adversaries?.find(a => a.id === advRef.adversaryId)?.name;
-                    const count = advRef.count || 1;
-                    const key = advRef.data ? `owned-${i}` : advRef.adversaryId;
-                    return name ? (
-                      <span key={key} className={`text-xs border px-2 py-0.5 rounded-full ${advRef.data ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
-                        {name}{count > 1 ? ` ×${count}` : ''}
-                      </span>
-                    ) : null;
-                  })}
-                </div>
-              )
-              : <span className="text-xs italic text-slate-500">No adversaries</span>
-          )}
           {tab === 'scenes' && (() => {
             const chips = [
               ...(item.environments || []).map((envEntry, i) => {
                 if (typeof envEntry === 'object' && envEntry.data) {
-                  return { key: `env-owned-${i}`, label: envEntry.data.name, owned: true };
+                  return { key: `env-owned-${i}`, label: envEntry.data.name, owned: true, nested: false };
                 }
                 const env = data?.environments?.find(e => e.id === envEntry);
-                return env ? { key: `env-${envEntry}`, label: env.name, owned: false } : null;
+                return env ? { key: `env-${envEntry}`, label: env.name, owned: false, nested: false } : null;
               }),
               ...(item.adversaries || []).map((advRef, i) => {
                 const name = advRef.data ? advRef.data.name : data?.adversaries?.find(a => a.id === advRef.adversaryId)?.name;
                 const count = advRef.count || 1;
                 const key = advRef.data ? `adv-owned-${i}` : `adv-${advRef.adversaryId}`;
-                return name ? { key, label: name + (count > 1 ? ` ×${count}` : ''), owned: !!advRef.data } : null;
+                return name ? { key, label: name + (count > 1 ? ` ×${count}` : ''), owned: !!advRef.data, nested: false } : null;
               }),
-              ...(item.groups || []).flatMap(gId => {
-                const group = data?.groups?.find(g => g.id === gId);
-                if (!group) return [];
-                const overrideIds = new Set((item.groupOverrides || []).filter(ov => ov.groupId === gId).map(ov => ov.adversaryId));
-                return (group.adversaries || []).map((advRef, i) => {
-                  if (overrideIds.has(advRef.adversaryId)) return null;
-                  const name = advRef.data ? advRef.data.name : data?.adversaries?.find(a => a.id === advRef.adversaryId)?.name;
-                  const count = advRef.count || 1;
-                  return name ? { key: `grp-${gId}-adv-${advRef.adversaryId || i}`, label: name + (count > 1 ? ` ×${count}` : ''), owned: !!advRef.data } : null;
-                }).filter(Boolean);
+              ...(item.scenes || []).map(sceneId => {
+                const scene = data?.scenes?.find(s => s.id === sceneId);
+                return scene ? { key: `scene-${sceneId}`, label: scene.name, owned: false, nested: true } : null;
               }),
             ].filter(Boolean);
             return chips.length > 0
               ? (
                 <div className="flex flex-wrap gap-1 mt-1">
                   {chips.map(chip => (
-                    <span key={chip.key} className={`text-xs border px-2 py-0.5 rounded-full ${chip.owned ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
+                    <span key={chip.key} className={`text-xs border px-2 py-0.5 rounded-full ${chip.owned ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' : chip.nested ? 'bg-blue-900/30 border-blue-700/50 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
                       {chip.label}
                     </span>
                   ))}

@@ -8,7 +8,7 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
  *
  * Props:
  *   item             - the item object (must have .id and .name)
- *   collection       - 'adversaries' | 'environments' | 'scenes' | 'groups'
+   *   collection       - 'adversaries' | 'environments' | 'scenes'
  *   existingItems    - items already in the library, used for name-based duplicate detection
  *   selected         - whether this item is checked for import
  *   onToggleSelect   - called when the checkbox changes
@@ -73,7 +73,7 @@ export function ImportPreviewCard({
           {item.description && <span className="italic opacity-75 line-clamp-1">{item.description}</span>}
         </div>
       )}
-      {(collection === 'scenes' || collection === 'groups') && (
+      {collection === 'scenes' && (
         <span className="italic opacity-75">{item.description || 'Auto-generated'}</span>
       )}
     </>
@@ -194,7 +194,7 @@ export function ImportPreviewCard({
               onCancel={() => setExpanded(false)}
             />
           )}
-          {(collection === 'scenes' || collection === 'groups') && (
+          {collection === 'scenes' && (
             <div className="space-y-3">
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">

@@ -1,25 +1,25 @@
-import { useState, useMemo, useEffect } from 'react';
-import { X, Copy, Edit, Pencil, Trash2, BookCopy, Globe, Lock } from 'lucide-react';
-import { generateRolzExport } from '../lib/rolz-export.js';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Pencil } from 'lucide-react';
 import { generateId } from '../lib/helpers.js';
+import { resolveItems } from '../lib/api.js';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
-import { EditFormModal } from './modals/EditFormModal.jsx';
-
-const SOURCE_BADGE = {
-  srd: { label: 'SRD', className: 'bg-violet-900/60 text-violet-300 border border-violet-700' },
-  public: { label: 'Public', className: 'bg-blue-900/60 text-blue-300 border border-blue-700' },
-};
+import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 
 /**
- * Builds the flat list of adversary/environment elements from a scene or group item.
+ * Builds the flat list of adversary/environment elements from a scene item.
  * Each element has origin metadata so the edit-copy flow can update the right entry.
  * Handles both ID references and inline owned copies (ref.data).
+ * visited prevents infinite recursion from circular scene references.
  */
-function buildElements(item, tab, data) {
+function buildElements(item, tab, data, visited = new Set(), depth = 0) {
+  if (tab !== 'scenes') return [];
+  if (visited.has(item.id) || depth > 10) return [];
+  visited.add(item.id);
+
   const elements = [];
 
-  const pushAdversary = (adv, groupName, originMeta) => {
+  const pushAdversary = (adv, originMeta) => {
     elements.push({
       ...adv,
       instanceId: generateId(),
@@ -27,7 +27,6 @@ function buildElements(item, tab, data) {
       currentHp: adv.hp_max || 0,
       currentStress: 0,
       conditions: '',
-      ...(groupName ? { groupName } : {}),
       ...originMeta,
     });
   };
@@ -36,109 +35,54 @@ function buildElements(item, tab, data) {
     elements.push({ ...env, instanceId: generateId(), elementType: 'environment', ...originMeta });
   };
 
-  if (tab === 'groups') {
-    (item.adversaries || []).forEach((advRef, refIdx) => {
-      if (advRef.data) {
-        const adv = { id: advRef.data.id || generateId(), ...advRef.data };
-        for (let i = 0; i < (advRef.count || 1); i++) {
-          pushAdversary(adv, null, {
-            _origin: 'direct-adv', _originRefIndex: refIdx,
-            _count: advRef.count || 1, _isOwnedCopy: true, _collection: 'adversaries',
-          });
-        }
-      } else {
-        const adv = data.adversaries?.find(a => a.id === advRef.adversaryId);
-        if (adv) {
-          for (let i = 0; i < (advRef.count || 1); i++) {
-            pushAdversary(adv, null, {
-              _origin: 'direct-adv', _originRefIndex: refIdx,
-              _originAdvId: advRef.adversaryId, _count: advRef.count || 1,
-              _isOwnedCopy: false, _collection: 'adversaries', _source: adv._source,
-            });
-          }
-        }
-      }
-    });
-  } else if (tab === 'scenes') {
-    const groupOverrides = item.groupOverrides || [];
-
-    (item.environments || []).forEach((envEntry, refIdx) => {
-      if (typeof envEntry === 'object' && envEntry.data) {
-        const env = { id: envEntry.data.id || generateId(), ...envEntry.data };
+  (item.environments || []).forEach((envEntry, refIdx) => {
+    if (typeof envEntry === 'object' && envEntry.data) {
+      const env = { id: envEntry.data.id || generateId(), ...envEntry.data };
+      pushEnvironment(env, {
+        _origin: 'direct-env', _originRefIndex: refIdx,
+        _isOwnedCopy: true, _collection: 'environments',
+      });
+    } else {
+      const env = data.environments?.find(e => e.id === envEntry);
+      if (env) {
         pushEnvironment(env, {
           _origin: 'direct-env', _originRefIndex: refIdx,
-          _isOwnedCopy: true, _collection: 'environments',
+          _originEnvId: envEntry, _isOwnedCopy: false,
+          _collection: 'environments', _source: env._source,
         });
-      } else {
-        const env = data.environments?.find(e => e.id === envEntry);
-        if (env) {
-          pushEnvironment(env, {
-            _origin: 'direct-env', _originRefIndex: refIdx,
-            _originEnvId: envEntry, _isOwnedCopy: false,
-            _collection: 'environments', _source: env._source,
-          });
-        }
       }
-    });
+    }
+  });
 
-    (item.adversaries || []).forEach((advRef, refIdx) => {
-      if (advRef.data) {
-        const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+  (item.adversaries || []).forEach((advRef, refIdx) => {
+    if (advRef.data) {
+      const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+      for (let i = 0; i < (advRef.count || 1); i++) {
+        pushAdversary(adv, {
+          _origin: 'direct-adv', _originRefIndex: refIdx,
+          _count: advRef.count || 1, _isOwnedCopy: true, _collection: 'adversaries',
+        });
+      }
+    } else {
+      const adv = data.adversaries?.find(a => a.id === advRef.adversaryId);
+      if (adv) {
         for (let i = 0; i < (advRef.count || 1); i++) {
-          pushAdversary(adv, null, {
+          pushAdversary(adv, {
             _origin: 'direct-adv', _originRefIndex: refIdx,
-            _count: advRef.count || 1, _isOwnedCopy: true, _collection: 'adversaries',
+            _originAdvId: advRef.adversaryId, _count: advRef.count || 1,
+            _isOwnedCopy: false, _collection: 'adversaries', _source: adv._source,
           });
         }
-      } else {
-        const adv = data.adversaries?.find(a => a.id === advRef.adversaryId);
-        if (adv) {
-          for (let i = 0; i < (advRef.count || 1); i++) {
-            pushAdversary(adv, null, {
-              _origin: 'direct-adv', _originRefIndex: refIdx,
-              _originAdvId: advRef.adversaryId, _count: advRef.count || 1,
-              _isOwnedCopy: false, _collection: 'adversaries', _source: adv._source,
-            });
-          }
-        }
       }
-    });
+    }
+  });
 
-    (item.groups || []).forEach(groupId => {
-      const group = data.groups?.find(g => g.id === groupId);
-      if (group) {
-        (group.adversaries || []).forEach((advRef, refIdx) => {
-          const isOverridden = groupOverrides.some(
-            ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId
-          );
-          if (isOverridden) return;
-          if (advRef.data) {
-            const adv = { id: advRef.data.id || generateId(), ...advRef.data };
-            for (let i = 0; i < (advRef.count || 1); i++) {
-              // Group-owned copy: can only edit via the group, not as a scene override
-              pushAdversary(adv, group.name, {
-                _origin: 'group', _originGroupId: groupId,
-                _originRefIndex: refIdx, _count: advRef.count || 1,
-                _isOwnedCopy: true, _isGroupOwnedCopy: true, _collection: 'adversaries',
-              });
-            }
-          } else {
-            const adv = data.adversaries?.find(a => a.id === advRef.adversaryId);
-            if (adv) {
-              for (let i = 0; i < (advRef.count || 1); i++) {
-                pushAdversary(adv, group.name, {
-                  _origin: 'group', _originGroupId: groupId,
-                  _originAdvId: advRef.adversaryId, _originRefIndex: refIdx,
-                  _count: advRef.count || 1, _isOwnedCopy: false,
-                  _collection: 'adversaries', _source: adv._source,
-                });
-              }
-            }
-          }
-        });
-      }
-    });
-  }
+  (item.scenes || []).forEach(nestedId => {
+    const nested = data.scenes?.find(s => s.id === nestedId);
+    if (nested) {
+      elements.push(...buildElements(nested, 'scenes', data, visited, depth + 1));
+    }
+  });
 
   return elements;
 }
@@ -146,24 +90,111 @@ function buildElements(item, tab, data) {
 // Strip origin/runtime metadata before passing element data to a form.
 function getElementItemData(element) {
   const {
-    instanceId, elementType, currentHp, currentStress, conditions, groupName,
-    _origin, _originRefIndex, _originGroupId, _originAdvId, _originEnvId,
-    _count, _isOwnedCopy, _isGroupOwnedCopy, _collection, _source, _owner,
+    instanceId, elementType, currentHp, currentStress, conditions,
+    _origin, _originRefIndex, _originAdvId, _originEnvId,
+    _count, _isOwnedCopy, _collection, _source, _owner,
     ...rest
   } = element;
   return rest;
 }
 
-function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, isOwn }) {
+/**
+ * Collect adversary/environment IDs referenced by a scene (and nested scenes)
+ * that are missing from the current `data` object so they can be resolved from the API.
+ * visited prevents infinite recursion from circular scene references.
+ */
+function collectMissingRefs(item, tab, data, visited = new Set()) {
+  if (tab !== 'scenes') return null;
+  if (visited.has(item.id)) return null;
+  visited.add(item.id);
+
+  const missingAdv = [];
+  const missingEnv = [];
+  const advSet = new Set((data.adversaries || []).map(a => a.id));
+  const envSet = new Set((data.environments || []).map(e => e.id));
+
+  for (const envEntry of (item.environments || [])) {
+    if (typeof envEntry === 'string' && !envSet.has(envEntry)) missingEnv.push(envEntry);
+  }
+  for (const ref of (item.adversaries || [])) {
+    if (!ref.data && ref.adversaryId && !advSet.has(ref.adversaryId)) missingAdv.push(ref.adversaryId);
+  }
+  for (const nestedId of (item.scenes || [])) {
+    const nested = data.scenes?.find(s => s.id === nestedId);
+    if (nested) {
+      const sub = collectMissingRefs(nested, 'scenes', data, visited);
+      if (sub) {
+        (sub.adversaries || []).forEach(id => missingAdv.push(id));
+        (sub.environments || []).forEach(id => missingEnv.push(id));
+      }
+    }
+  }
+
+  const toResolve = {};
+  if (missingAdv.length) toResolve.adversaries = [...new Set(missingAdv)];
+  if (missingEnv.length) toResolve.environments = [...new Set(missingEnv)];
+  return Object.keys(toResolve).length ? toResolve : null;
+}
+
+export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) {
+  const [resolvedData, setResolvedData] = useState(data);
   const [elements, setElements] = useState(() => buildElements(item, tab, data));
   const [hoveredFeature, setHoveredFeature] = useState(null);
-  // editState: null | { step: 'choice', element } | { step: 'form', item, collection, mode, element }
   const [editState, setEditState] = useState(null);
+  const resolvedIdsRef = useRef(new Set());
+  const resolvedDataRef = useRef(resolvedData);
+  resolvedDataRef.current = resolvedData;
 
-  // Reset elements when item or data changes (e.g. after saving a library original).
+  // When data changes from parent, merge with any previously resolved items.
   useEffect(() => {
-    setElements(buildElements(item, tab, data));
-  }, [item, data]);
+    setResolvedData(prev => {
+      const merged = { ...data };
+      for (const col of ['adversaries', 'environments']) {
+        const existing = new Set((data[col] || []).map(i => i.id));
+        const extras = (prev[col] || []).filter(i => !existing.has(i.id));
+        if (extras.length) merged[col] = [...(data[col] || []), ...extras];
+      }
+      return merged;
+    });
+  }, [data]);
+
+  // Resolve missing references from the API on mount / when item changes.
+  // Uses resolvedDataRef (not resolvedData) to avoid the data-merge effect
+  // cancelling in-flight API calls via the cleanup function.
+  useEffect(() => {
+    const currentResolved = resolvedDataRef.current;
+    const missing = collectMissingRefs(item, tab, currentResolved);
+    if (!missing) return;
+    // Don't re-fetch IDs we already tried.
+    const toFetch = {};
+    for (const [col, ids] of Object.entries(missing)) {
+      const newIds = ids.filter(id => !resolvedIdsRef.current.has(id));
+      if (newIds.length) toFetch[col] = newIds;
+    }
+    if (!Object.keys(toFetch).length) return;
+    for (const ids of Object.values(toFetch)) ids.forEach(id => resolvedIdsRef.current.add(id));
+
+    let cancelled = false;
+    resolveItems(toFetch).then(resolved => {
+      if (cancelled) return;
+      setResolvedData(prev => {
+        const next = { ...prev };
+        for (const [col, items] of Object.entries(resolved)) {
+          if (!Array.isArray(items) || !items.length) continue;
+          const existing = new Set((prev[col] || []).map(i => i.id));
+          const newItems = items.filter(i => !existing.has(i.id));
+          if (newItems.length) next[col] = [...(prev[col] || []), ...newItems];
+        }
+        return next;
+      });
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [item, tab]);
+
+  // Rebuild elements whenever item or resolved data changes.
+  useEffect(() => {
+    setElements(buildElements(item, tab, resolvedData));
+  }, [item, resolvedData]);
 
   const consolidated = useMemo(() => {
     const result = [];
@@ -172,7 +203,7 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
       if (el.elementType !== 'adversary') {
         result.push({ kind: 'environment', element: el });
       } else {
-        const key = `${el.id}|${el.groupName || ''}`;
+        const key = el.id;
         if (seenAdvKeys[key] === undefined) {
           seenAdvKeys[key] = result.length;
           result.push({ kind: 'adversary-group', baseElement: el, instances: [el] });
@@ -190,8 +221,6 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
 
   const handleEditClick = (element) => {
     if (!onSaveElement) return;
-    // Group-owned copies can only be edited in the group, not from the scene view.
-    if (element._isGroupOwnedCopy) return;
     if (element._isOwnedCopy) {
       // Already a local copy — go straight to the form.
       setEditState({ step: 'form', item: getElementItemData(element), collection: element._collection, mode: 'copy', element });
@@ -210,7 +239,7 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
 
   const handleChoiceEditOriginal = () => {
     const { element } = editState;
-    const libraryItem = data[element._collection]?.find(i => i.id === element.id) || getElementItemData(element);
+    const libraryItem = resolvedData[element._collection]?.find(i => i.id === element.id) || getElementItemData(element);
     setEditState({ ...editState, step: 'form', item: libraryItem, mode: 'original' });
   };
 
@@ -223,7 +252,7 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
   if (elements.length === 0) {
     return (
       <div className="text-center text-slate-500 text-sm py-6 border border-dashed border-slate-800 rounded-lg mt-4">
-        No elements in this {tab === 'groups' ? 'group' : 'scene'}.
+        No elements in this scene.
       </div>
     );
   }
@@ -266,8 +295,8 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
 
           const { baseElement: el, instances } = entry;
           const count = instances.length;
-          const advCardKey = `${el.id}|${el.groupName || ''}`;
-          const canEditEl = showEditBtn && !el._isGroupOwnedCopy;
+          const advCardKey = el.id;
+          const canEditEl = showEditBtn;
 
           return (
             <div key={advCardKey} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden relative">
@@ -291,7 +320,6 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
                     {el.name}
                     {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
                   </h4>
-                  {el.groupName && <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">{el.groupName}</span>}
                 </div>
                 {el._isOwnedCopy && (
                   <span className="text-[10px] text-amber-400 bg-amber-900/30 border border-amber-700/50 px-1.5 py-0.5 rounded mb-1 inline-block">local copy</span>
@@ -314,7 +342,7 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
       {editState?.step === 'choice' && (
         <EditChoiceDialog
           itemName={editState.element.name}
-          contextLabel={tab === 'groups' ? 'Group' : 'Scene'}
+          contextLabel="Scene"
           canEditOriginal={!editState.element._source || editState.element._source === 'own'}
           onEditCopy={handleChoiceEditCopy}
           onEditOriginal={handleChoiceEditOriginal}
@@ -322,11 +350,16 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
         />
       )}
       {editState?.step === 'form' && (
-        <EditFormModal
+        <ItemDetailModal
           item={editState.item}
           collection={editState.collection}
-          data={allItemsData || data}
-          onSave={handleFormSave}
+          data={resolvedData}
+          editable={true}
+          onSave={async (editedData) => {
+            if (onSaveElement) {
+              await onSaveElement(editState.element, { ...editedData, id: editState.element.id }, editState.mode);
+            }
+          }}
           onClose={() => setEditState(null)}
         />
       )}
@@ -334,159 +367,3 @@ function ExpandedTablePreview({ item, tab, data, allItemsData, onSaveElement, is
   );
 }
 
-export function ItemDetailView({ item, tab, data, allItemsData, onEdit, onDelete, onClone, onClose, onSavePublic, onSaveElement }) {
-  const [copied, setCopied] = useState(false);
-  const [cloningStatus, setCloningStatus] = useState('');
-  const [publicSaving, setPublicSaving] = useState(false);
-
-  const isOwn = !item._source || item._source === 'own';
-  const badge = SOURCE_BADGE[item._source];
-
-  const handleCopyRolz = async () => {
-    try {
-      const markdown = generateRolzExport(item, tab, data || {});
-      try {
-        await navigator.clipboard.writeText(markdown);
-      } catch (clipErr) {
-        const ta = document.createElement('textarea');
-        ta.value = markdown;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Rolz export failed:', err);
-    }
-  };
-
-  const handleClone = async () => {
-    setCloningStatus('Cloning...');
-    try {
-      await onClone();
-      setCloningStatus('Cloned!');
-      setTimeout(() => setCloningStatus(''), 2000);
-    } catch (err) {
-      console.error('Clone failed:', err);
-      setCloningStatus('Error');
-      setTimeout(() => setCloningStatus(''), 2000);
-    }
-  };
-
-  const handleTogglePublic = async () => {
-    if (!onSavePublic) return;
-    setPublicSaving(true);
-    try {
-      await onSavePublic(!item.is_public);
-    } catch (err) {
-      console.error('Toggle public failed:', err);
-    } finally {
-      setPublicSaving(false);
-    }
-  };
-
-  return (
-    <div className={`bg-slate-900 border border-slate-800 rounded-lg shadow-xl relative overflow-hidden ${(tab === 'groups' || tab === 'scenes') ? 'max-w-5xl' : 'max-w-3xl'}`}>
-      <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white z-10"><X size={20} /></button>
-
-      {item.imageUrl && (
-        <div className="w-full h-56 overflow-hidden bg-slate-950">
-          <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover opacity-90" onError={e => { e.target.style.display = 'none'; }} />
-        </div>
-      )}
-
-      <div className="p-6">
-        <div className="mb-4 pr-8">
-          <div className="flex items-center gap-3 flex-wrap mb-1">
-            <h2 className="text-3xl font-bold text-white">{item.name}</h2>
-            {badge && (
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${badge.className}`}>
-                {badge.label}
-              </span>
-            )}
-          </div>
-          {(tab === 'groups' || tab === 'scenes' || tab === 'adventures') && (
-            <>
-              <div className="text-slate-400 uppercase tracking-wider text-sm font-medium mb-2">
-                {tab === 'groups' && 'Group'}
-                {tab === 'scenes' && 'Scene'}
-                {tab === 'adventures' && 'Adventure'}
-              </div>
-              {item.description && (
-                <div className="text-slate-300 italic whitespace-pre-wrap text-sm">{item.description}</div>
-              )}
-            </>
-          )}
-        </div>
-
-        {(tab === 'groups' || tab === 'scenes') && data && (
-          <ExpandedTablePreview item={item} tab={tab} data={data} allItemsData={allItemsData} onSaveElement={onSaveElement} isOwn={isOwn} />
-        )}
-
-        {tab === 'adversaries' && (
-          <AdversaryCardContent element={item} hoveredFeature={null} cardKey={item.id} />
-        )}
-
-        {tab === 'environments' && (
-          <EnvironmentCardContent element={item} hoveredFeature={null} cardKey={item.id} />
-        )}
-
-        <div className="flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-800">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={handleCopyRolz}
-              className={`px-4 py-2 rounded font-medium flex items-center gap-2 text-sm transition-colors ${copied ? 'bg-green-700 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
-            >
-              <Copy size={15} /> {copied ? 'Copied!' : 'Copy Rolz'}
-            </button>
-
-            {onClone && (
-              <button
-                onClick={handleClone}
-                disabled={!!cloningStatus}
-                className="px-4 py-2 rounded font-medium flex items-center gap-2 text-sm bg-violet-700 hover:bg-violet-600 text-white transition-colors disabled:opacity-60"
-              >
-                <BookCopy size={15} /> {cloningStatus || 'Clone to My Library'}
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            {isOwn && onSavePublic && (
-              <button
-                onClick={handleTogglePublic}
-                disabled={publicSaving}
-                title={item.is_public ? 'Make private' : 'Make public'}
-                className={`px-3 py-2 rounded font-medium flex items-center gap-2 text-sm transition-colors disabled:opacity-60 ${
-                  item.is_public
-                    ? 'bg-blue-800 hover:bg-blue-700 text-blue-200'
-                    : 'bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {item.is_public ? <Globe size={15} /> : <Lock size={15} />}
-                {item.is_public ? 'Public' : 'Private'}
-              </button>
-            )}
-
-            {isOwn && onDelete && (
-              <button
-                onClick={onDelete}
-                className="px-4 py-2 bg-slate-700 hover:bg-red-800 text-slate-300 hover:text-white rounded font-medium flex items-center gap-2 text-sm transition-colors"
-              >
-                <Trash2 size={16} /> Delete
-              </button>
-            )}
-
-            {isOwn && onEdit && (
-              <button onClick={onEdit} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium flex items-center gap-2">
-                <Edit size={16} /> Edit
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

@@ -1,38 +1,40 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const VALID_TABS = new Set(['adversaries', 'environments', 'groups', 'scenes', 'adventures']);
+const VALID_TABS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
 
 /**
  * Parses a pathname into a structured route descriptor.
  *
  * Supported patterns:
  *   /                        -> { view: 'home' }
- *   /library/:tab            -> { view: 'library', tab, itemId: null, action: null }
- *   /library/:tab/new        -> { view: 'library', tab, itemId: 'new', action: null }
- *   /library/:tab/:id        -> { view: 'library', tab, itemId, action: null }
- *   /library/:tab/:id/edit   -> { view: 'library', tab, itemId, action: 'edit' }
+ *   /library/:tab            -> { view: 'library', tab, itemId: null }
+ *   /library/:tab/new        -> { view: 'library', tab, itemId: 'new' }
+ *   /library/:tab/:id        -> { view: 'library', tab, itemId }
  *   /gm-table                -> { view: 'gm-table' }
+ *
+ * Note: /library/:tab/:id/edit is no longer a route — item editing is now
+ * handled entirely within the ItemDetailModal overlay.
  */
 export function parseRoute(pathname) {
   const parts = pathname.replace(/^\//, '').split('/').filter(Boolean);
 
   if (parts.length === 0 || parts[0] === '') {
-    return { view: 'home', tab: null, itemId: null, action: null };
+    return { view: 'home', tab: null, itemId: null };
   }
 
   if (parts[0] === 'gm-table') {
     const gmTab = parts[1] === 'whiteboard' ? 'whiteboard' : 'table';
-    return { view: 'gm-table', tab: null, gmTab, itemId: null, action: null };
+    return { view: 'gm-table', tab: null, gmTab, itemId: null };
   }
 
   if (parts[0] === 'library') {
     const tab = VALID_TABS.has(parts[1]) ? parts[1] : 'adversaries';
+    // Accept /library/:tab/:id or /library/:tab/:id/edit (redirect edit → modal)
     const itemId = parts[2] || null;
-    const action = parts[3] === 'edit' ? 'edit' : null;
-    return { view: 'library', tab, itemId, action };
+    return { view: 'library', tab, itemId };
   }
 
-  return { view: 'home', tab: null, itemId: null, action: null };
+  return { view: 'home', tab: null, itemId: null };
 }
 
 /**

@@ -90,7 +90,7 @@ export function ImportSuccessStep({ importedItems, onImportSuccess, onClose, col
  * Props:
  *   label          - section heading text (count appended automatically)
  *   items          - array of items to display
- *   collection     - 'adversaries' | 'environments' | 'scenes' | 'groups'
+   *   collection     - 'adversaries' | 'environments' | 'scenes'
  *   existingItems  - library items for duplicate detection
  *   selectedIds    - Set of selected item IDs
  *   onToggleId     - (id) => void
