@@ -7,8 +7,7 @@ const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
 
-export const SRD_USER_ID = '__SRD__';
-/** Stores canonical copies of external (FCG, etc.) items for local-first search and popularity tracking. */
+/** Stores canonical copies of external (SRD played/cloned, FCG, etc.) items for local-first search and popularity tracking. */
 export const MIRROR_USER_ID = '__MIRROR__';
 
 let pool;
@@ -70,24 +69,13 @@ export async function getItems(appId, userId, collection) {
   return rows.map(r => ({ id: r.id, ...r.data, is_public: r.is_public }));
 }
 
-export async function getSrdItems(appId, collection) {
-  const db = getPool();
-  const { rows } = await db.query(
-    `SELECT id, data, clone_count, play_count FROM items
-     WHERE app_id = $1 AND user_id = $2 AND collection = $3
-     ORDER BY created_at ASC`,
-    [appId, SRD_USER_ID, collection]
-  );
-  return rows.map(r => ({ id: r.id, ...r.data, is_public: true, clone_count: r.clone_count, play_count: r.play_count, _source: 'srd' }));
-}
-
 export async function getPublicItems(appId, excludeUserId, collection) {
   const db = getPool();
   const { rows } = await db.query(
     `SELECT id, user_id, data, clone_count, play_count FROM items
-     WHERE app_id = $1 AND user_id != $2 AND user_id != $3 AND collection = $4 AND is_public = true
+     WHERE app_id = $1 AND user_id != $2 AND collection = $3 AND is_public = true
      ORDER BY created_at ASC`,
-    [appId, excludeUserId, SRD_USER_ID, collection]
+    [appId, excludeUserId, collection]
   );
   return rows.map(r => ({ id: r.id, ...r.data, is_public: true, clone_count: r.clone_count, play_count: r.play_count, _source: 'public', _owner: r.user_id }));
 }
@@ -123,7 +111,7 @@ function buildFilterSQL(baseParamCount, { search = '', tier = null, typeField = 
 }
 
 /**
- * Builds WHERE clauses that restrict to the community sources (SRD, public, mirrors)
+ * Builds WHERE clauses that restrict to the community sources (public, mirrors)
  * while applying standard search filters.
  *
  * The base query must already bind app_id ($1) and collection ($2).
@@ -132,7 +120,6 @@ function buildFilterSQL(baseParamCount, { search = '', tier = null, typeField = 
  * Returns { sql, params } where params does NOT include the fixed app_id/collection values.
  */
 function buildCommunitySQL(baseParamCount, {
-  includeSrd = true,
   includePublic = true,
   includeMirrors = true,
   excludeUserId = null,
@@ -145,11 +132,8 @@ function buildCommunitySQL(baseParamCount, {
   const sourceClauses = [];
   let idx = baseParamCount + 1;
 
-  if (includeSrd) {
-    sourceClauses.push(`user_id = '${SRD_USER_ID}'`);
-  }
   if (includePublic && excludeUserId != null) {
-    sourceClauses.push(`(is_public = true AND user_id != $${idx} AND user_id != '${SRD_USER_ID}' AND user_id != '${MIRROR_USER_ID}')`);
+    sourceClauses.push(`(is_public = true AND user_id != $${idx} AND user_id != '${MIRROR_USER_ID}')`);
     extraParams.push(excludeUserId);
     idx++;
   }
@@ -199,7 +183,6 @@ export async function getItemsPaginated(appId, userId, collection, { search = ''
 
 export async function countCommunityItems(appId, collection, {
   excludeUserId = null,
-  includeSrd = true,
   includePublic = true,
   includeMirrors = true,
   search = '',
@@ -209,7 +192,7 @@ export async function countCommunityItems(appId, collection, {
 } = {}) {
   const db = getPool();
   const base = [appId, collection];
-  const { sql, params: cp } = buildCommunitySQL(base.length, { includeSrd, includePublic, includeMirrors, excludeUserId, search, tier, typeField, typeValue });
+  const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, typeField, typeValue });
   const { rows } = await db.query(
     `SELECT COUNT(*) FROM items WHERE app_id = $1 AND collection = $2 ${sql}`,
     [...base, ...cp]
@@ -219,7 +202,6 @@ export async function countCommunityItems(appId, collection, {
 
 export async function getCommunityItemsPaginated(appId, collection, {
   excludeUserId = null,
-  includeSrd = true,
   includePublic = true,
   includeMirrors = true,
   search = '',
@@ -231,7 +213,7 @@ export async function getCommunityItemsPaginated(appId, collection, {
 } = {}) {
   const db = getPool();
   const base = [appId, collection];
-  const { sql, params: cp } = buildCommunitySQL(base.length, { includeSrd, includePublic, includeMirrors, excludeUserId, search, tier, typeField, typeValue });
+  const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, typeField, typeValue });
   const offsetIdx = base.length + cp.length + 1;
   const limitIdx = offsetIdx + 1;
   const { rows } = await db.query(
@@ -242,9 +224,7 @@ export async function getCommunityItemsPaginated(appId, collection, {
     [...base, ...cp, offset, limit]
   );
   return rows.map(r => {
-    const source = r.user_id === SRD_USER_ID ? 'srd'
-      : r.user_id === MIRROR_USER_ID ? (r.data._source || 'mirror')
-      : 'public';
+    const source = r.user_id === MIRROR_USER_ID ? (r.data._source || 'mirror') : 'public';
     const owner = source === 'public' ? r.user_id : undefined;
     return {
       id: r.id,
@@ -349,8 +329,7 @@ export async function getItemsByIds(appId, collection, ids) {
     [appId, collection, ids]
   );
   return rows.map(r => {
-    const source = r.user_id === SRD_USER_ID ? 'srd'
-      : r.user_id === MIRROR_USER_ID ? (r.data._source || 'mirror')
+    const source = r.user_id === MIRROR_USER_ID ? (r.data._source || 'mirror')
       : r.is_public ? 'public'
       : 'own';
     return {

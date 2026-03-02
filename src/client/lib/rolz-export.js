@@ -128,52 +128,35 @@ export function generateRolzExport(item, tab, data) {
   } else if (tab === 'environments') {
     sections.push(environmentToRolz(item));
 
-  } else if (tab === 'groups') {
-    const advRefObj = {};
-    const advRefOrder = [];
-    for (let ri = 0; ri < (item.adversaries || []).length; ri++) {
-      const ref = item.adversaries[ri];
-      const adv = (data.adversaries || []).filter(a => a.id === ref.adversaryId)[0];
-      if (!adv) continue;
-      if (advRefObj[adv.id]) { advRefObj[adv.id].count += ref.count || 1; }
-      else { advRefObj[adv.id] = { adv: adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
-    }
-    const groupAdvEntries = advRefOrder.map(id => ({ id: id, name: advRefObj[id].adv.name }));
-    const prefixes = generatePrefixes(groupAdvEntries);
-    for (let ri = 0; ri < advRefOrder.length; ri++) {
-      const entry = advRefObj[advRefOrder[ri]];
-      sections.push(adversaryToRolz(entry.adv, entry.count, prefixes[entry.adv.id]));
-    }
-
   } else if (tab === 'scenes') {
     sections.push('=' + item.name);
     if (item.imageUrl) sections.push('[img ' + item.imageUrl + ']');
 
     for (let ei = 0; ei < (item.environments || []).length; ei++) {
-      const env = (data.environments || []).filter(e => e.id === item.environments[ei])[0];
+      const envEntry = item.environments[ei];
+      const envId = typeof envEntry === 'string' ? envEntry : envEntry?.data?.id;
+      const env = envId ? (data.environments || []).find(e => e.id === envId) : null;
       if (env) sections.push(environmentToRolz(env));
     }
 
+    // Collect adversary refs from this scene and nested scenes (cycle-safe).
     const advRefObj = {};
     const advRefOrder = [];
-    for (let gi = 0; gi < (item.groups || []).length; gi++) {
-      const group = (data.groups || []).filter(g => g.id === item.groups[gi])[0];
-      if (!group) continue;
-      for (let ri = 0; ri < (group.adversaries || []).length; ri++) {
-        const ref = group.adversaries[ri];
-        const adv = (data.adversaries || []).filter(a => a.id === ref.adversaryId)[0];
+    const collectSceneAdvs = (scene, visited = new Set()) => {
+      if (visited.has(scene.id)) return;
+      visited.add(scene.id);
+      for (const ref of (scene.adversaries || [])) {
+        const adv = (data.adversaries || []).find(a => a.id === ref.adversaryId);
         if (!adv) continue;
         if (advRefObj[adv.id]) { advRefObj[adv.id].count += ref.count || 1; }
-        else { advRefObj[adv.id] = { adv: adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
+        else { advRefObj[adv.id] = { adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
       }
-    }
-    for (let ri = 0; ri < (item.adversaries || []).length; ri++) {
-      const ref = item.adversaries[ri];
-      const adv = (data.adversaries || []).filter(a => a.id === ref.adversaryId)[0];
-      if (!adv) continue;
-      if (advRefObj[adv.id]) { advRefObj[adv.id].count += ref.count || 1; }
-      else { advRefObj[adv.id] = { adv: adv, count: ref.count || 1 }; advRefOrder.push(adv.id); }
-    }
+      for (const nestedId of (scene.scenes || [])) {
+        const nested = (data.scenes || []).find(s => s.id === nestedId);
+        if (nested) collectSceneAdvs(nested, visited);
+      }
+    };
+    collectSceneAdvs(item);
 
     const sceneAdvEntries = advRefOrder.map(id => ({ id: id, name: advRefObj[id].adv.name }));
     const prefixes = generatePrefixes(sceneAdvEntries);

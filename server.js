@@ -4,14 +4,16 @@ import { dirname, join } from 'path';
 import { watchFile } from 'fs';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { runMigrations, getItems, getSrdItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
+import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
+import { EXTERNAL_SOURCES } from './src/external-sources.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
-const COLLECTIONS = ['adversaries', 'environments', 'groups', 'scenes', 'adventures', 'table_state'];
+const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'table_state'];
 
 // --- Firebase Admin (token verification only; no service account key needed) ---
 if (!getApps().length) {
@@ -74,6 +76,21 @@ watchFile('./public/styles.css', { interval: 200 }, broadcastReload);
 // In-memory cache: uid -> { cookie, expiresAt }
 const rolzSessions = new Map();
 const ROLZ_SESSION_TTL = 30 * 60 * 1000; // 30 minutes
+
+// Debug log relay — forwards client-side log payloads to a localhost debug server.
+// Only active in development (NODE_ENV != production). Used by Cursor debug mode to
+// collect browser-side instrumentation logs via /api/debug-log, bypassing CORS.
+// Client sends: { _debugUrl: "http://127.0.0.1:PORT/ingest/UUID", _debugSessionId: "ID", ...payload }
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/api/debug-log', express.json(), (req, res) => {
+    const { _debugUrl, _debugSessionId, ...payload } = req.body || {};
+    if (!_debugUrl || !_debugUrl.startsWith('http://127.0.0.1:')) return res.status(400).json({ error: 'Invalid debug URL' });
+    const headers = { 'Content-Type': 'application/json' };
+    if (_debugSessionId) headers['X-Debug-Session-Id'] = _debugSessionId;
+    fetch(_debugUrl, { method: 'POST', headers, body: JSON.stringify(payload) }).catch(() => {});
+    res.json({ ok: true });
+  });
+}
 
 async function rolzLogin(username, password) {
   // Form field is "nick", hidden field "action" is required
@@ -169,7 +186,9 @@ app.get('/api/data', requireAuth, async (req, res) => {
 
     if (includeSrd) {
       const srdCollections = ['adversaries', 'environments'];
-      const srdResults = await Promise.all(srdCollections.map(col => getSrdItems(APP_ID, col)));
+      const srdResults = await Promise.all(
+        srdCollections.map(col => searchSrdCollection(col, { limit: 500, offset: 0 }).then(r => r.items.map(i => ({ ...i, _source: 'srd' }))))
+      );
       srdCollections.forEach((col, i) => {
         data[col] = [...data[col], ...srdResults[i]];
       });
@@ -209,24 +228,23 @@ app.get('/api/fcg-search', requireAuth, async (req, res) => {
 
 // --- Per-collection paginated route ---
 
-const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures'];
 
 /**
  * Fetch a page of DB items.
  * Tier 1: own items (sorted by popularity desc).
- * Tier 2: community items — SRD + public + mirrors — sorted by popularity desc.
+ * Tier 2: community items — public + mirrors — sorted by popularity desc.
  * Returns { items, ownCount, communityCount, dbCount }
  */
-async function fetchDbPage(appId, uid, collection, { includeMine = true, includeSrd, includePublic, includeMirrors = true, search, tier, typeField, typeValue, offset, limit }) {
+async function fetchDbPage(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, typeField, typeValue, offset, limit }) {
   const opts = { search, tier, typeField, typeValue };
-  const hasCommunity = includeSrd || includePublic || includeMirrors;
+  const hasCommunity = includePublic || includeMirrors;
 
   const [ownCount, communityCount] = await Promise.all([
     includeMine ? countItems(appId, uid, collection, opts) : Promise.resolve(0),
     hasCommunity
       ? countCommunityItems(appId, collection, {
           excludeUserId: uid,
-          includeSrd: Boolean(includeSrd),
           includePublic: Boolean(includePublic),
           includeMirrors: Boolean(includeMirrors),
           ...opts,
@@ -253,7 +271,6 @@ async function fetchDbPage(appId, uid, collection, { includeMine = true, include
     const communityOffset = pos - ownCount;
     const slice = await getCommunityItemsPaginated(appId, collection, {
       excludeUserId: uid,
-      includeSrd: Boolean(includeSrd),
       includePublic: Boolean(includePublic),
       includeMirrors: Boolean(includeMirrors),
       ...opts,
@@ -285,108 +302,87 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   }
 
   const includeMine = req.query.includeMine !== '0';
-  const includeSrd = req.query.includeSrd === '1';
   const includePublic = req.query.includePublic === '1';
-  const includeFcg = req.query.includeFcg === '1';
   const search = req.query.search || '';
   const tier = req.query.tier || null;
   const typeValue = req.query.type || null;
   const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-  const isFcgCollection = collection === 'adversaries' || collection === 'environments';
   // Always include mirrors in community so previously-played external items surface locally
-  const includeMirrors = isFcgCollection;
+  const includeMirrors = collection === 'adversaries' || collection === 'environments';
 
   try {
+    // Determine which external sources are active for this collection
+    const activeExternalSources = EXTERNAL_SOURCES.filter(s =>
+      req.query[s.enabledParam] === '1' &&
+      (s.collections === null || s.collections.includes(collection))
+    );
+
+    // Fetch mirror IDs for dedup against external source results.
+    // Only relevant for adversaries/environments where mirrors are stored.
+    let mirrorIds = new Set();
+    if (activeExternalSources.length > 0 && includeMirrors) {
+      mirrorIds = new Set(await getMirrorIds(APP_ID, collection, { search, tier, typeField, typeValue }));
+    }
+
     const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
-      includeMine, includeSrd, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
+      includeMine, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
     });
 
-    // Attach computed popularity to all DB items
     const dbItemsWithPopularity = dbItems.map(item => ({
       ...item,
       popularity: (item.clone_count || 0) + (item.play_count || 0),
     }));
 
-    let fcgItems = [];
-    let fcgTotal = 0;
-    let fcgNextOffset = null; // FCG-space cursor after this page (for needsEnvSubtraction pages)
+    // Walk external sources in priority order, filling remaining page slots.
+    // Global offset space: [0, dbCount) = DB items, [dbCount, ...) = external sources in order.
+    const externalOffset = Math.max(0, offset - dbCount);
+    let remaining = limit - dbItemsWithPopularity.length;
+    const externalItems = [];
+    let externalTotalCount = 0;
+    let priorSourceTotal = 0;
+    let lastActiveNextLocalOffset = null;
+    let lastActivePriorSourceTotal = 0;
 
-    if (includeFcg && isFcgCollection) {
-      const fcgOffset = Math.max(0, offset - dbCount);
-      const fcgLimit = limit - dbItemsWithPopularity.length;
-      const fcgTier = tier ? Number(tier) : undefined;
+    for (const source of activeExternalSources) {
+      const sourceLocalOffset = Math.max(0, externalOffset - priorSourceTotal);
+      // Always call with at least limit=1 so we get totalCount even when the page is full.
+      const searchLimit = remaining > 0 ? remaining : 1;
 
-      // Build FCG-native role/category params (single values — always exact counts)
-      let fcgRole;
-      let fcgCategory;
-      if (collection === 'environments') {
-        fcgCategory = 'Environments';
-        if (typeValue) {
-          fcgRole = 'Environment' + typeValue.charAt(0).toUpperCase() + typeValue.slice(1);
+      const result = await source.search({
+        collection, search, tier,
+        type: typeValue,
+        typeField,
+        limit: searchLimit,
+        offset: sourceLocalOffset,
+        mirrorIds,
+      });
+
+      if (remaining > 0) {
+        externalItems.push(...result.items);
+        remaining -= result.items.length;
+        if (result.nextLocalOffset !== undefined) {
+          lastActiveNextLocalOffset = result.nextLocalOffset;
+          lastActivePriorSourceTotal = priorSourceTotal;
         }
-      } else if (collection === 'adversaries' && typeValue) {
-        fcgRole = typeValue.charAt(0).toUpperCase() + typeValue.slice(1);
       }
 
-      // For adversaries without a role filter, subtract the environment count for accuracy
-      const needsEnvSubtraction = collection === 'adversaries' && !fcgRole;
-
-      // Mirror IDs are already shown as community DB results — exclude from FCG live results
-      const filterOpts = { search, tier, typeField, typeValue };
-      const mirrorIdSet = new Set(await getMirrorIds(APP_ID, collection, filterOpts));
-      const mirrorCount = mirrorIdSet.size;
-
-      if (needsEnvSubtraction) {
-        // FCG mixes adversaries and environments in the same result set. Probe totals first
-        // (in parallel) so we can inflate the request limit and scale the offset proportionally,
-        // ensuring each page fills with adversaries and pages don't overlap.
-        const [allProbe, envProbe] = await Promise.all([
-          searchFCG({ search, tier: fcgTier, collection, limit: 1, offset: 0 }),
-          searchFCG({ search, tier: fcgTier, category: 'Environments', limit: 1, offset: 0 }),
-        ]);
-        const allTotal = allProbe.fcgTotal;
-        const envTotal = envProbe.fcgTotal;
-        const advTotal = Math.max(0, allTotal - envTotal);
-        const advRatio = advTotal / Math.max(1, allTotal);
-        fcgTotal = Math.max(0, advTotal - mirrorCount);
-
-        if (fcgLimit > 0) {
-          // Use fcgOffset directly as adjOffset — the client advances the offset by nextOffset
-          // (returned below) so each page starts exactly where the previous one ended.
-          // adjLimit inflates the request to compensate for environments that will be filtered out.
-          const adjLimit = Math.min(Math.ceil(fcgLimit / Math.max(0.01, advRatio)), 100);
-          const adjOffset = fcgOffset;
-          const fcgResult = await searchFCG({ search, tier: fcgTier, role: fcgRole, category: fcgCategory, collection, limit: adjLimit, offset: adjOffset });
-          fcgItems = fcgResult[collection].filter(item => !mirrorIdSet.has(item.id)).slice(0, fcgLimit);
-          fcgNextOffset = fcgOffset + adjLimit; // FCG cursor position for the next page
-        }
-      } else if (fcgLimit > 0) {
-        const fcgResult = await searchFCG({ search, tier: fcgTier, role: fcgRole, category: fcgCategory, collection, limit: fcgLimit, offset: fcgOffset });
-        fcgItems = fcgResult[collection].filter(item => !mirrorIdSet.has(item.id));
-        fcgTotal = Math.max(0, fcgResult.fcgTotal - mirrorCount);
-      } else {
-        // Page is full of DB items — probe FCG total with LIMIT 1 so totalCount includes
-        // FCG pages, making them reachable via pagination.
-        const fcgProbe = await searchFCG({ search, tier: fcgTier, role: fcgRole, category: fcgCategory, collection, limit: 1, offset: 0 });
-        fcgTotal = Math.max(0, fcgProbe.fcgTotal - mirrorCount);
-      }
-
-      fcgTotal = Math.max(0, fcgTotal);
+      externalTotalCount += result.totalCount;
+      priorSourceTotal += result.totalCount;
     }
 
-    const allItems = [...dbItemsWithPopularity, ...fcgItems];
-    // nextOffset tells the client where to start the next page so FCG pages are non-overlapping.
-    // For needsEnvSubtraction pages: advance past all FCG items consumed (including filtered envs).
-    // For all other pages: simple offset + actual items returned.
-    const nextOffset = fcgNextOffset !== null
-      ? dbCount + fcgNextOffset
+    const allItems = [...dbItemsWithPopularity, ...externalItems];
+    // nextOffset tells the client where to start the next page.
+    // When a source provides nextLocalOffset (FCG env-subtraction case), use it so the
+    // next page starts exactly past all rows consumed (including filtered-out environments).
+    const nextOffset = lastActiveNextLocalOffset !== null
+      ? dbCount + lastActivePriorSourceTotal + lastActiveNextLocalOffset
       : offset + allItems.length;
 
     res.json({
       items: allItems,
-      totalCount: dbCount + fcgTotal,
+      totalCount: dbCount + externalTotalCount,
       dbCount,
       nextOffset,
     });
@@ -396,7 +392,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   }
 });
 
-// --- Batch resolve route (for scene/group expansion) ---
+// --- Batch resolve route (for scene expansion) ---
 
 /**
  * Adopt a single adversary/environment item into the current user's library.
@@ -410,7 +406,9 @@ async function adoptItem(appId, uid, collection, item) {
   }
 
   const sourceId = item.id;
-  const isExternal = !['srd', 'public'].includes(item._source);
+  // SRD items are now treated as external (creates a __MIRROR__ row) rather than
+  // incrementing counts on __SRD__ DB rows (which no longer exist after migration).
+  const isExternal = !['public'].includes(item._source);
 
   let clone = await findAutoClone(appId, uid, collection, sourceId);
   const isNewClone = !clone;
@@ -446,13 +444,21 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
   try {
     const resolveCollection = async (col, ids) => {
       if (!ids || ids.length === 0) return [];
-      return getItemsByIds(APP_ID, col, ids);
+      const dbItems = await getItemsByIds(APP_ID, col, ids);
+      const foundIds = new Set(dbItems.map(i => i.id));
+      const missing = ids.filter(id => !foundIds.has(id));
+      if (!missing.length) return dbItems;
+
+      const srdFills = await Promise.all(
+        missing.filter(id => id.startsWith('srd-')).map(id => getSrdItem(col, id))
+      );
+      const extras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
+      return [...dbItems, ...extras];
     };
 
-    const [adversaries, environments, groups, scenes] = await Promise.all([
+    const [adversaries, environments, scenes] = await Promise.all([
       resolveCollection('adversaries', body.adversaries || []),
       resolveCollection('environments', body.environments || []),
-      resolveCollection('groups', body.groups || []),
       resolveCollection('scenes', body.scenes || []),
     ]);
 
@@ -461,10 +467,10 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
         Promise.all(adversaries.map(item => adoptItem(APP_ID, req.uid, 'adversaries', item))),
         Promise.all(environments.map(item => adoptItem(APP_ID, req.uid, 'environments', item))),
       ]);
-      return res.json({ adversaries: adoptedAdvs, environments: adoptedEnvs, groups, scenes });
+      return res.json({ adversaries: adoptedAdvs, environments: adoptedEnvs, scenes });
     }
 
-    res.json({ adversaries, environments, groups, scenes });
+    res.json({ adversaries, environments, scenes });
   } catch (err) {
     console.error('POST /api/data/resolve error:', err);
     res.status(500).json({ error: 'Failed to resolve items' });
@@ -486,7 +492,8 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   }
 
   const sourceId = source.id;
-  const isExternal = source._source && !['own', 'srd', 'public'].includes(source._source);
+  // SRD items are treated as external (creates a __MIRROR__ row) alongside FCG and other sources.
+  const isExternal = source._source && !['own', 'public'].includes(source._source);
 
   try {
     let clone = null;
@@ -545,6 +552,25 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/data/:collection/mirror', requireAuth, async (req, res) => {
+  const { collection } = req.params;
+  if (!CLONE_COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection for mirror' });
+  }
+  const { item } = req.body;
+  if (!item || typeof item !== 'object' || !item.id) {
+    return res.status(400).json({ error: 'Invalid item' });
+  }
+  try {
+    const { id, _source, _owner, clone_count, play_count, popularity, ...data } = item;
+    await upsertMirror(APP_ID, collection, id, { ...data, _source: _source || 'fcg' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`POST /api/data/${collection}/mirror error:`, err);
+    res.status(500).json({ error: 'Failed to create mirror' });
+  }
+});
+
 app.put('/api/data/:collection', requireAuth, async (req, res) => {
   const { collection } = req.params;
   if (!COLLECTIONS.includes(collection)) {
@@ -579,6 +605,8 @@ app.delete('/api/data/:collection/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.use('/api/srd', srdRouter);
+
 app.use(express.static(join(__dirname, 'public')));
 
 // SPA fallback — serve index.html for any unmatched route
@@ -587,16 +615,17 @@ app.get('*', (req, res) => {
 });
 
 // --- Startup ---
-if (process.env.DATABASE_URL) {
-  runMigrations()
-    .then(() => {
-      app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
-    })
-    .catch(err => {
-      console.error('Migration failed, aborting startup:', err);
-      process.exit(1);
-    });
-} else {
-  console.warn('[db] DATABASE_URL not set — running without database');
+async function startServer() {
+  await warmCache();
+  if (process.env.DATABASE_URL) {
+    await runMigrations();
+  } else {
+    console.warn('[db] DATABASE_URL not set — running without database');
+  }
   app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
 }
+
+startServer().catch(err => {
+  console.error('Startup failed:', err);
+  process.exit(1);
+});

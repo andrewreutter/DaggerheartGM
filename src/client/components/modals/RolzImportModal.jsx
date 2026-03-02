@@ -16,7 +16,6 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
   const [parsed, setParsed] = useState(null);
 
   const [sceneName, setSceneName] = useState('');
-  const [groupName, setGroupName] = useState('');
   const [editEnvs, setEditEnvs] = useState([]);
   const [editAdvs, setEditAdvs] = useState([]);
   const { selectedIds, setSelectedIds, toggleId, replaceIds, toggleReplaceId } = useImportSelection();
@@ -34,7 +33,6 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
       }
       setParsed(result);
       setSceneName(result.sceneName || 'Imported Scene');
-      setGroupName(result.sceneName ? `${result.sceneName} - Adversaries` : 'Imported Group');
 
       const envs = result.environments.map(e => ({ ...e, id: generateId() }));
       const advs = result.adversaries.map(a => ({ ...a, id: generateId() }));
@@ -44,7 +42,6 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
         ...envs.map(e => e.id),
         ...advs.map(a => a.id),
         '__scene__',
-        ...(advs.length > 0 ? ['__group__'] : []),
       ]));
       setStep('preview');
     } catch (err) {
@@ -58,7 +55,6 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
 
     const selectedAdvs = editAdvs.filter(a => selectedIds.has(a.id));
     const selectedEnvs = editEnvs.filter(e => selectedIds.has(e.id));
-    const shouldCreateGroup = selectedIds.has('__group__') && selectedAdvs.length > 0;
     const shouldCreateScene = selectedIds.has('__scene__');
 
     const savedAdvIds = [];
@@ -87,19 +83,6 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
       created.push({ collection: 'environments', id, name: env.name, replaced });
     }
 
-    let savedGroupId = null;
-    if (shouldCreateGroup) {
-      savedGroupId = generateId();
-      const group = {
-        id: savedGroupId,
-        name: groupName,
-        description: '',
-        adversaries: savedAdvIds.map(a => ({ adversaryId: a.id, count: a.count })),
-      };
-      await saveItem('groups', group);
-      created.push({ collection: 'groups', id: savedGroupId, name: groupName });
-    }
-
     if (shouldCreateScene) {
       const sceneId = generateId();
       const scene = {
@@ -108,8 +91,8 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
         description: '',
         imageUrl: parsed?.imageUrl || '',
         environments: savedEnvIds,
-        groups: savedGroupId ? [savedGroupId] : [],
-        adversaries: [],
+        adversaries: savedAdvIds.map(a => ({ adversaryId: a.id, count: a.count })),
+        scenes: [],
       };
       await saveItem('scenes', scene);
       created.push({ collection: 'scenes', id: sceneId, name: sceneName });
@@ -122,16 +105,14 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
 
   const selAdvCount = editAdvs.filter(a => selectedIds.has(a.id)).length;
   const selEnvCount = editEnvs.filter(e => selectedIds.has(e.id)).length;
-  const willCreateGroup = selectedIds.has('__group__') && selAdvCount > 0;
   const willCreateScene = selectedIds.has('__scene__');
   const summaryParts = [
     selAdvCount ? `${selAdvCount} adversar${selAdvCount === 1 ? 'y' : 'ies'}` : '',
-    willCreateGroup ? '→ 1 group' : '',
     selEnvCount ? `${selEnvCount} environment${selEnvCount === 1 ? '' : 's'}` : '',
     willCreateScene ? '→ 1 scene' : '',
   ].filter(Boolean).join(' · ');
 
-  const hasAnythingToImport = selAdvCount > 0 || selEnvCount > 0 || willCreateGroup || willCreateScene;
+  const hasAnythingToImport = selAdvCount > 0 || selEnvCount > 0 || willCreateScene;
 
   const titles = { paste: 'Import Rolz Markdown', preview: 'Preview Import', success: 'Import Complete' };
 
@@ -166,7 +147,7 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
       {step === 'paste' && (
         <div className="space-y-4">
           <p className="text-sm text-slate-400">
-            Paste your Rolz.org wiki scene block below. The importer will extract the Scene, Environment(s), Adversaries, and create a Group automatically.
+            Paste your Rolz.org wiki scene block below. The importer will extract the Scene, Environment(s), and Adversaries.
           </p>
           <textarea
             className="w-full h-72 bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 font-mono resize-none outline-none focus:border-red-500"
@@ -205,28 +186,6 @@ export function RolzImportModal({ onClose, saveItem, onImportSuccess, data }) {
               />
             </div>
 
-            {editAdvs.length > 0 && (
-              <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  id="create-group"
-                  checked={selectedIds.has('__group__')}
-                  onChange={() => toggleId('__group__')}
-                  style={{ accentColor: '#ef4444' }}
-                  className="cursor-pointer flex-shrink-0"
-                />
-                <label htmlFor="create-group" className="text-xs text-slate-400 uppercase tracking-wider font-medium flex-shrink-0 cursor-pointer">
-                  Create Group
-                </label>
-                <input
-                  type="text"
-                  value={groupName}
-                  onChange={e => setGroupName(e.target.value)}
-                  disabled={!selectedIds.has('__group__')}
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-white text-sm outline-none focus:border-red-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                />
-              </div>
-            )}
           </div>
 
           <ImportPreviewSection

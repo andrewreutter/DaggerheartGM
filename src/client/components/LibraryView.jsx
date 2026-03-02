@@ -1,19 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { ShieldAlert, Map, Users, Play, BookOpen, Plus, ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
+import { ShieldAlert, Map, Play, BookOpen, Plus } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
-import { ItemDetailView } from './ItemDetailView.jsx';
 import { RolzImportModal } from './modals/RolzImportModal.jsx';
-import { AdversaryForm } from './forms/AdversaryForm.jsx';
-import { EnvironmentForm } from './forms/EnvironmentForm.jsx';
-import { GroupForm } from './forms/GroupForm.jsx';
-import { SceneForm } from './forms/SceneForm.jsx';
-import { AdventureForm } from './forms/AdventureForm.jsx';
+import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
+import { CollectionFilters } from './CollectionFilters.jsx';
+import { useCollectionSearch } from '../lib/useCollectionSearch.js';
+
+const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
 const SINGULAR_NAMES = {
   adversaries: 'Adversary',
   environments: 'Environment',
-  groups: 'Group',
   scenes: 'Scene',
   adventures: 'Adventure',
 };
@@ -21,112 +18,109 @@ const SINGULAR_NAMES = {
 const TABS = [
   { id: 'adversaries', label: 'Adversaries', Icon: ShieldAlert },
   { id: 'environments', label: 'Environments', Icon: Map },
-  { id: 'groups', label: 'Groups', Icon: Users },
   { id: 'scenes', label: 'Scenes', Icon: Play },
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
 ];
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-/**
- * Renders the form card + Feature Library portal target side-by-side.
- * The callback ref pattern (ref={setLibraryPortal}) triggers a re-render once the
- * DOM element mounts, allowing createPortal inside the form to find its target.
- */
-function LibraryEditingLayout({ activeTab, editingItem, data, allItemsData, handleSave, handleCancelEdit }) {
-  const [libraryPortal, setLibraryPortal] = useState(null);
-  const showLibrary = activeTab === 'adversaries' || activeTab === 'environments';
-
-  return (
-    <div className="flex gap-4 items-start">
-      {/* Form card — scrolls independently, bounded to viewport */}
-      <div className="flex-1 min-w-0 bg-slate-900 border border-slate-800 rounded-lg p-6 shadow-xl overflow-y-auto max-h-[calc(100vh-12rem)]">
-        {activeTab === 'adversaries' && (
-          <AdversaryForm
-            initial={editingItem}
-            onSave={handleSave}
-            onCancel={handleCancelEdit}
-            allItems={allItemsData?.adversaries}
-            featureLibraryPortal={libraryPortal}
-          />
-        )}
-        {activeTab === 'environments' && (
-          <EnvironmentForm
-            initial={editingItem}
-            onSave={handleSave}
-            onCancel={handleCancelEdit}
-            allItems={allItemsData?.environments}
-            featureLibraryPortal={libraryPortal}
-          />
-        )}
-        {activeTab === 'groups' && <GroupForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
-        {activeTab === 'scenes' && <SceneForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
-        {activeTab === 'adventures' && <AdventureForm initial={editingItem} data={data} onSave={handleSave} onCancel={handleCancelEdit} />}
-      </div>
-
-      {/* Feature Library portal target — to the right of the card, same max-h */}
-      {showLibrary && (
-        <div
-          ref={setLibraryPortal}
-          className="w-72 shrink-0 h-[calc(100vh-12rem)] overflow-hidden rounded-xl"
-        />
-      )}
-    </div>
-  );
-}
-
-export function LibraryView({ data, collectionMeta, allItemsData, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters, paginationOffset, setPaginationOffset, pageLimit }) {
+export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
-  // Stack of {offset, itemCount} for pages navigated forward through.
-  // Enables accurate cumulative display ("12–31 of 3,405") and correct Prev navigation.
-  const [prevHistory, setPrevHistory] = useState([]);
-  // Local search input — debounced before updating libraryFilters.search
-  const [searchInput, setSearchInput] = useState(libraryFilters?.search || '');
-  const searchDebounceRef = useRef(null);
+  // modalState: null | { item: object, isNew: boolean }
+  const [modalState, setModalState] = useState(null);
+
   const activeTab = route.tab || 'adversaries';
+  const isPaginatedTab = SRD_FILTER_TABS.has(activeTab);
 
-  const activeInclude = libraryFilters?.includeByTab?.[activeTab] ?? null;
-  const activeTier = libraryFilters?.tierByTab?.[activeTab] ?? null;
-  const activeType = libraryFilters?.typeByTab?.[activeTab] ?? null;
+  const search = useCollectionSearch(activeTab, {
+    limit: 20,
+    debounceMs: 400,
+    persistKey: isPaginatedTab ? LIBRARY_FILTERS_PERSIST_KEY : null,
+    enabled: isPaginatedTab,
+    infinite: true,
+    maxItems: 500,
+  });
 
+  // Sync paginated items to app-level data.
   useEffect(() => {
-    setSearchInput(libraryFilters?.search || '');
-    setPrevHistory([]);
-  }, [activeTab]);
-
-  // Reset history whenever the offset is reset to 0 (e.g. on filter change)
-  useEffect(() => {
-    if ((paginationOffset ?? 0) === 0) setPrevHistory([]);
-  }, [paginationOffset]);
-  const { itemId, action } = route;
-
-  const isCreating = itemId === 'new';
-  const isEditing = itemId && itemId !== 'new' && action === 'edit';
-  const isViewing = itemId && itemId !== 'new' && !action;
-
-  const items = data[activeTab] || [];
-  const viewingItem = isViewing ? (items.find(i => i.id === itemId) || null) : null;
-  const editingItem = isEditing ? (items.find(i => i.id === itemId) || null) : isCreating ? {} : null;
-
-  const handleSave = async (item) => {
-    const itemToSave = { ...item };
-    if (isEditing && itemId && !itemToSave.id) {
-      itemToSave.id = itemId;
+    if (isPaginatedTab && onItemsChange) {
+      onItemsChange(activeTab, search.items);
     }
-    await saveItem(activeTab, itemToSave);
-    navigate(`/library/${activeTab}`);
+  }, [search.items, activeTab, isPaginatedTab]);
+
+  // For paginated tabs, items come from the hook; for non-paginated, from app data.
+  const items = isPaginatedTab ? search.items : (data[activeTab] || []);
+
+  // Handle deep-link routes: /library/:tab/:id opens the modal.
+  const { itemId, action } = route;
+  const deepLinkProcessedRef = useRef(false);
+
+  useEffect(() => {
+    if (deepLinkProcessedRef.current) return;
+    if (!itemId) return;
+
+    if (itemId === 'new') {
+      deepLinkProcessedRef.current = true;
+      setModalState({ item: {}, isNew: true });
+      navigate(`/library/${activeTab}`, { replace: true });
+      return;
+    }
+
+    // Wait for items to load before resolving the deep link.
+    const found = items.find(i => i.id === itemId);
+    if (!found && isPaginatedTab && search.loading) return; // still loading
+    if (!found && !isPaginatedTab && items.length === 0) return; // not ready yet
+
+    deepLinkProcessedRef.current = true;
+    if (found) {
+      setModalState({ item: found, isNew: false });
+    }
+    navigate(`/library/${activeTab}`, { replace: true });
+  }, [itemId, items, isPaginatedTab, search.loading, activeTab, navigate, action]);
+
+  // Reset deep-link flag when tab or route changes.
+  useEffect(() => {
+    deepLinkProcessedRef.current = false;
+  }, [activeTab, itemId]);
+
+  const openModal = (item) => {
+    navigate(`/library/${activeTab}/${item.id || 'new'}`);
+    setModalState({ item, isNew: !item.id });
   };
 
-  const handleCancelEdit = () => {
-    if (isEditing && itemId) {
-      navigate(`/library/${activeTab}/${itemId}`);
-    } else {
-      navigate(`/library/${activeTab}`);
+  const openNew = () => {
+    navigate(`/library/${activeTab}/new`);
+    setModalState({ item: {}, isNew: true });
+  };
+
+  const closeModal = () => {
+    navigate(`/library/${activeTab}`, { replace: true });
+    setModalState(null);
+  };
+
+  const handleSave = async (formData) => {
+    const itemToSave = { ...formData };
+    if (modalState?.isNew && !itemToSave.id) {
+      // Let the server assign an ID on first save; we don't need to set one here
+      // because the server upserts and returns the item.
     }
+    await saveItem(activeTab, itemToSave);
+    if (isPaginatedTab) search.refresh();
+    // Keep modal open after save (auto-save pattern — no explicit "done" step).
+  };
+
+  const handleDelete = async (collectionName, id) => {
+    await deleteItem(collectionName, id);
+    if (isPaginatedTab) search.refresh();
+    closeModal();
   };
 
   const handleClone = async (item) => {
     const cloned = await cloneItem(activeTab, item);
+    if (isPaginatedTab) search.refresh();
+    closeModal();
+    // Open the clone immediately.
+    setModalState({ item: cloned, isNew: false });
     navigate(`/library/${activeTab}/${cloned.id}`);
   };
 
@@ -135,14 +129,6 @@ export function LibraryView({ data, collectionMeta, allItemsData, saveItem, dele
    * replacing the reference at the given index with an inline owned copy.
    */
   const applyEditedCopyToParent = (element, editedData, parentItem, parentTab) => {
-    if (parentTab === 'groups') {
-      const newAdversaries = (parentItem.adversaries || []).map((ref, idx) => {
-        if (idx !== element._originRefIndex) return ref;
-        return { data: editedData, count: ref.count || 1 };
-      });
-      return { ...parentItem, adversaries: newAdversaries };
-    }
-
     if (parentTab === 'scenes') {
       if (element._origin === 'direct-adv') {
         const newAdversaries = (parentItem.adversaries || []).map((ref, idx) => {
@@ -151,23 +137,12 @@ export function LibraryView({ data, collectionMeta, allItemsData, saveItem, dele
         });
         return { ...parentItem, adversaries: newAdversaries };
       }
-
       if (element._origin === 'direct-env') {
         const newEnvironments = (parentItem.environments || []).map((entry, idx) => {
           if (idx !== element._originRefIndex) return entry;
           return { data: editedData };
         });
         return { ...parentItem, environments: newEnvironments };
-      }
-
-      if (element._origin === 'group') {
-        // Create a scene-level override: add owned copy to scene.adversaries, suppress from group expansion.
-        const newAdversaries = [...(parentItem.adversaries || []), { data: editedData, count: element._count || 1 }];
-        const newOverrides = [
-          ...(parentItem.groupOverrides || []),
-          { groupId: element._originGroupId, adversaryId: element._originAdvId },
-        ];
-        return { ...parentItem, adversaries: newAdversaries, groupOverrides: newOverrides };
       }
     }
 
@@ -178,78 +153,42 @@ export function LibraryView({ data, collectionMeta, allItemsData, saveItem, dele
     if (mode === 'original') {
       await saveItem(element._collection, editedData);
     } else {
-      const updatedParent = applyEditedCopyToParent(element, editedData, viewingItem, activeTab);
+      const updatedParent = applyEditedCopyToParent(element, editedData, modalState?.item, activeTab);
       await saveItem(activeTab, updatedParent);
+      // Refresh modal item with updated parent.
+      setModalState(prev => prev ? { ...prev, item: updatedParent } : null);
     }
   };
 
-  const handleSearchChange = (value) => {
-    setSearchInput(value);
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => {
-      setLibraryFilters({ ...libraryFilters, search: value });
-    }, 500);
-  };
+  // Instant client-side name filter before the debounced API search fires.
+  const filteredItems = isPaginatedTab
+    ? items.filter(item => !search.filters.search || item.name?.toLowerCase().includes(search.filters.search.toLowerCase()))
+    : items;
 
-  const selectTier = (tier) => {
-    setLibraryFilters({ ...libraryFilters, tierByTab: { ...(libraryFilters?.tierByTab || {}), [activeTab]: activeTier === tier ? null : tier } });
-  };
+  // Infinite scroll refs
+  const scrollContainerRef = useRef(null);
+  const sentinelRef = useRef(null);
 
-  const selectInclude = (val) => {
-    setLibraryFilters({ ...libraryFilters, includeByTab: { ...(libraryFilters?.includeByTab || {}), [activeTab]: activeInclude === val ? null : val } });
-  };
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const container = scrollContainerRef.current;
+    if (!sentinel || !container || !search.hasMore || search.isLoadingMore) return;
+    const io = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) search.loadMore(); },
+      { root: container, rootMargin: '200px' }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [search.hasMore, search.isLoadingMore, search.loadMore]);
 
-  const selectType = (val) => {
-    setLibraryFilters({ ...libraryFilters, typeByTab: { ...(libraryFilters?.typeByTab || {}), [activeTab]: activeType === val ? null : val } });
-  };
+  const showingCount = search.items.length + search.trimmedCount;
 
-  const typeOptions = activeTab === 'adversaries' ? ROLES : activeTab === 'environments' ? ENV_TYPES : [];
+  // Resolve modal item: for own items use the latest from items list so edits are fresh.
+  const resolvedModalItem = modalState && !modalState.isNew
+    ? (items.find(i => i.id === modalState.item?.id) || modalState.item)
+    : modalState?.item;
 
-  const filteredItems = items.filter(item => {
-    // Instant local name filter — mirrors the server-side search before the debounce fires
-    if (searchInput && SRD_FILTER_TABS.has(activeTab)) {
-      if (!item.name?.toLowerCase().includes(searchInput.toLowerCase())) return false;
-    }
-    return true;
-  });
-
-  const paginationMeta = collectionMeta?.[activeTab];
-  const paginationTotal = paginationMeta?.totalCount ?? 0;
-  const paginationLimit = pageLimit ?? 20;
-  // Cumulative item count across all pages seen so far in this browsing session.
-  const cumulativeBase = prevHistory.reduce((s, h) => s + h.itemCount, 0);
-  const paginationStart = cumulativeBase + 1;
-  const paginationEnd = cumulativeBase + items.length;
-  const paginationHasPrev = prevHistory.length > 0;
-  const paginationHasNext = paginationEnd < paginationTotal;
-  const showPagination = SRD_FILTER_TABS.has(activeTab) && !editingItem && !viewingItem && filteredItems.length > 0 && paginationTotal > paginationLimit;
-  const paginationBar = (extraClass) => (
-    <div className={`flex items-center justify-center gap-4 text-xs text-slate-400 ${extraClass}`}>
-      <button
-        disabled={!paginationHasPrev}
-        onClick={() => {
-          const lastEntry = prevHistory[prevHistory.length - 1];
-          setPrevHistory(h => h.slice(0, -1));
-          setPaginationOffset(lastEntry?.offset ?? 0);
-        }}
-        className="flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:bg-slate-700 hover:enabled:text-slate-200 transition-colors"
-      >
-        <ChevronLeft size={13} /> Prev
-      </button>
-        <span className="text-slate-500">{paginationStart}–{paginationEnd} of {paginationTotal.toLocaleString()}</span>
-      <button
-        disabled={!paginationHasNext}
-        onClick={() => {
-          const nextPageOffset = paginationMeta?.nextOffset ?? (paginationOffset ?? 0) + paginationLimit;
-          setPrevHistory(h => [...h, { offset: paginationOffset ?? 0, itemCount: items.length }]);
-          setPaginationOffset(nextPageOffset);
-        }}
-        className="flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:bg-slate-700 hover:enabled:text-slate-200 transition-colors"
-      >
-        Next <ChevronRight size={13} />
-      </button>
-    </div>
-  );
+  const modalItemIsOwn = resolvedModalItem && (!resolvedModalItem._source || resolvedModalItem._source === 'own');
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -257,15 +196,15 @@ export function LibraryView({ data, collectionMeta, allItemsData, saveItem, dele
       <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="p-4 font-semibold text-slate-300 uppercase tracking-wider text-xs">Database</div>
         {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => navigate(`/library/${tab.id}`)}
-              className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
-                activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
-              }`}
-            >
-              <tab.Icon size={18} /> {tab.label}
-            </button>
+          <button
+            key={tab.id}
+            onClick={() => navigate(`/library/${tab.id}`)}
+            className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
+              activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
+            }`}
+          >
+            <tab.Icon size={18} /> {tab.label}
+          </button>
         ))}
       </div>
 
@@ -276,189 +215,114 @@ export function LibraryView({ data, collectionMeta, allItemsData, saveItem, dele
           data={data}
           onImportSuccess={(collection, id) => {
             setShowRolzImport(false);
-            navigate(`/library/${collection}/${id}`);
+            search.refresh();
           }}
         />
       )}
 
-      {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-6 bg-slate-950">
-        <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-          <h2 className="text-2xl font-bold text-white capitalize">{activeTab}</h2>
+      {/* Item Detail / Edit Modal */}
+      {modalState && resolvedModalItem !== undefined && (
+        <ItemDetailModal
+          item={resolvedModalItem}
+          collection={activeTab}
+          data={data}
+          editable={modalState.isNew || modalItemIsOwn}
+          onSave={handleSave}
+          onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
+          onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
+          onClone={!modalItemIsOwn ? () => handleClone(resolvedModalItem) : null}
+          onClose={closeModal}
+        />
+      )}
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <button
-              onClick={() => setShowRolzImport(true)}
-              className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
-            >
-              Import Rolz Markdown
-            </button>
-            {!editingItem && !viewingItem && (
+      {/* Content Area */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+
+        {/* Sticky header */}
+        <div className="shrink-0 px-6 pt-6 pb-3 border-b border-slate-800/50 bg-slate-950">
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
+            <h2 className="text-2xl font-bold text-white capitalize">{activeTab}</h2>
+
+            <div className="flex items-center gap-3 flex-wrap">
               <button
-                onClick={() => navigate(`/library/${activeTab}/new`)}
+                onClick={() => setShowRolzImport(true)}
+                className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
+              >
+                Import Rolz Markdown
+              </button>
+              <button
+                onClick={openNew}
                 className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center gap-2 text-sm font-medium ml-2"
               >
                 <Plus size={16} /> New {SINGULAR_NAMES[activeTab]}
               </button>
-            )}
+            </div>
           </div>
+
+          {/* Filter bar — only for adversaries / environments */}
+          {isPaginatedTab && (
+            <>
+              <CollectionFilters
+                collection={activeTab}
+                filters={search.filters}
+                onFilterChange={search.setFilter}
+                variant="bar"
+              />
+              <div className="text-xs text-slate-500 -mt-3">
+                {search.loading && !search.isLoadingMore
+                  ? <span className="animate-pulse">Loading {activeTab}…</span>
+                  : search.totalCount > 0
+                    ? `Showing ${showingCount.toLocaleString()} of ${search.totalCount.toLocaleString()}`
+                    : null
+                }
+              </div>
+            </>
+          )}
         </div>
 
-        {SRD_FILTER_TABS.has(activeTab) && !editingItem && !viewingItem && (
-          <div className="mb-5 space-y-2">
-            {/* Search bar */}
-            <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-              <input
-                type="text"
-                value={searchInput}
-                onChange={e => handleSearchChange(e.target.value)}
-                placeholder={`Search ${activeTab}…`}
-                className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
+        {/* Scrollable grid */}
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="flex flex-wrap gap-2">
+            {filteredItems.map(item => (
+              <ItemCard
+                key={`${item._source || 'own'}-${item.id}`}
+                item={item}
+                tab={activeTab}
+                data={data}
+                onView={(item) => openModal(item)}
+                onEdit={item._source && item._source !== 'own' ? null : (item) => openModal(item)}
+                onDelete={item._source && item._source !== 'own' ? null : handleDelete}
+                onClone={() => handleClone(item)}
+                onAddToTable={addToTable}
               />
-            </div>
-
-            {/* Source + tier + type filters */}
-            <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
-              <span className="text-slate-500 font-medium uppercase tracking-wider">Include</span>
-              <button
-                onClick={() => setLibraryFilters({ ...libraryFilters, includeByTab: { ...(libraryFilters?.includeByTab || {}), [activeTab]: null } })}
-                className={`px-2 py-0.5 rounded font-medium border transition-colors ${
-                  activeInclude === null
-                    ? 'bg-cyan-800 border-cyan-500 text-cyan-100'
-                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                }`}
-              >
-                All
-              </button>
-              {[
-                { value: 'mine', label: 'Mine' },
-                { value: 'srd', label: 'SRD' },
-                { value: 'public', label: 'Public' },
-                { value: 'fcg', label: 'FCG' },
-              ].map(({ value, label }) => (
-                <button
-                  key={value}
-                  onClick={() => selectInclude(value)}
-                  className={`px-2 py-0.5 rounded font-medium border transition-colors ${
-                    activeInclude === value
-                      ? 'bg-cyan-800 border-cyan-500 text-cyan-100'
-                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-              <span className="text-slate-700 select-none">|</span>
-              <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
-              <button
-                onClick={() => setLibraryFilters({ ...libraryFilters, tierByTab: { ...(libraryFilters?.tierByTab || {}), [activeTab]: null } })}
-                className={`px-2 py-0.5 rounded font-medium border transition-colors ${
-                  activeTier === null
-                    ? 'bg-amber-700 border-amber-500 text-amber-100'
-                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                }`}
-              >
-                All
-              </button>
-              {TIERS.map(t => (
-                <button
-                  key={t}
-                  onClick={() => selectTier(t)}
-                  className={`px-2 py-0.5 rounded font-medium border transition-colors ${
-                    activeTier === t
-                      ? 'bg-amber-700 border-amber-500 text-amber-100'
-                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-              <span className="text-slate-700 select-none">|</span>
-              <span className="text-slate-500 font-medium uppercase tracking-wider">Type</span>
-              <button
-                onClick={() => setLibraryFilters({ ...libraryFilters, typeByTab: { ...(libraryFilters?.typeByTab || {}), [activeTab]: null } })}
-                className={`px-2 py-0.5 rounded font-medium border transition-colors ${
-                  activeType === null
-                    ? 'bg-red-800 border-red-500 text-red-100'
-                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                }`}
-              >
-                All
-              </button>
-              {typeOptions.map(val => (
-                <button
-                  key={val}
-                  onClick={() => selectType(val)}
-                  className={`px-2 py-0.5 rounded font-medium border transition-colors capitalize ${
-                    activeType === val
-                      ? 'bg-red-800 border-red-500 text-red-100'
-                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-                  }`}
-                >
-                  {val}
-                </button>
-              ))}
-            </div>
+            ))}
+            {filteredItems.length === 0 && (
+              <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg w-full">
+                {search.loading && !search.isLoadingMore
+                  ? <span className="animate-pulse">Loading {activeTab}…</span>
+                  : items.length === 0
+                    ? `No ${activeTab} found. Click "New" to create one.`
+                    : 'No items match the selected filters.'
+                }
+              </div>
+            )}
           </div>
-        )}
 
-        {editingItem !== null ? (
-          <LibraryEditingLayout
-            activeTab={activeTab}
-            editingItem={editingItem}
-            data={data}
-            allItemsData={allItemsData}
-            handleSave={handleSave}
-            handleCancelEdit={handleCancelEdit}
-          />
-        ) : viewingItem ? (
-          <ItemDetailView
-            item={viewingItem}
-            tab={activeTab}
-            data={data}
-            allItemsData={allItemsData}
-            onEdit={viewingItem._source && viewingItem._source !== 'own' ? null : () => navigate(`/library/${activeTab}/${itemId}/edit`)}
-            onDelete={viewingItem._source && viewingItem._source !== 'own' ? null : () => deleteItem(activeTab, itemId)}
-            onClone={() => handleClone(viewingItem)}
-            onClose={() => navigate(`/library/${activeTab}`)}
-            onSavePublic={(is_public) => saveItem(activeTab, { ...viewingItem, is_public })}
-            onSaveElement={(activeTab === 'scenes' || activeTab === 'groups') && (!viewingItem._source || viewingItem._source === 'own') ? handleSaveElement : null}
-          />
-        ) : (
-          <>
-            {showPagination && paginationBar('mb-4')}
-
-            <div className="flex flex-wrap gap-2">
-              {filteredItems.map(item => (
-                <ItemCard
-                  key={`${item._source || 'own'}-${item.id}`}
-                  item={item}
-                  tab={activeTab}
-                  data={data}
-                  onView={(item) => navigate(`/library/${activeTab}/${item.id}`)}
-                  onEdit={item._source && item._source !== 'own' ? null : (item) => navigate(`/library/${activeTab}/${item.id}/edit`)}
-                  onDelete={item._source && item._source !== 'own' ? null : deleteItem}
-                  onClone={() => handleClone(item)}
-                  onStartScene={startScene}
-                  onAddToTable={addToTable}
-                />
-              ))}
-              {filteredItems.length === 0 && (
-                <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                  {paginationMeta?.loading
-                    ? <span className="animate-pulse">Loading {activeTab}…</span>
-                    : items.length === 0
-                      ? `No ${activeTab} found. Click "New" to create one.`
-                      : 'No items match the selected filters.'
-                  }
-                </div>
-              )}
+          {search.isLoadingMore && (
+            <div className="text-center text-slate-500 text-sm py-4 animate-pulse">
+              Loading more of the {search.totalCount.toLocaleString()} entries…
             </div>
-
-            {showPagination && paginationBar('mt-6')}
-          </>
-        )}
+          )}
+          {!search.hasMore && !search.loading && search.totalCount > 0 && (
+            <div className="text-center text-slate-500 text-sm py-4">
+              Loaded last of {search.totalCount.toLocaleString()} entries
+            </div>
+          )}
+          {search.hasMore && !search.isLoadingMore && (
+            <div style={{ height: 400 }} />
+          )}
+          <div ref={sentinelRef} className="h-1" />
+        </div>
       </div>
     </div>
   );
