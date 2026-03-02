@@ -4,12 +4,13 @@ import { generateId } from '../../lib/helpers.js';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 
-const SOURCE_ORDER = { own: 0, srd: 1, public: 2, fcg: 3 };
+const SOURCE_ORDER = { own: 0, srd: 1, public: 2, hod: 3, fcg: 4 };
 
 const SOURCE_BADGE = {
   own: 'bg-blue-900/60 text-blue-300',
   srd: 'bg-purple-900/60 text-purple-300',
   public: 'bg-slate-700 text-slate-300',
+  hod: 'bg-rose-900/60 text-rose-300',
   fcg: 'bg-green-900/60 text-green-300',
 };
 

@@ -28,6 +28,7 @@
 
 import { searchCollection, COLLECTION_NAMES as SRD_COLLECTIONS } from './srd/index.js';
 import { searchFCG } from './fcg-search.js';
+import { searchHoD } from './hod-search.js';
 
 export const EXTERNAL_SOURCES = [
   // --- SRD: in-memory, covers all 13 SRD collections ---
@@ -44,6 +45,23 @@ export const EXTERNAL_SOURCES = [
       // Subtract mirror count from total so pagination math stays correct.
       // This is an approximation (mirrors may not all match the current filter), but
       // it keeps the totalCount conservative rather than inflated.
+      return {
+        items,
+        totalCount: Math.max(0, result.totalCount - mirrorSet.size),
+      };
+    },
+  },
+
+  // --- HoD (Heart of Daggers): live API, adversaries + environments only ---
+  // HoD is placed before FCG because its content tends to be higher quality.
+  {
+    name: 'hod',
+    enabledParam: 'includeHod',
+    collections: ['adversaries', 'environments'],
+    async search({ collection, search, tier, type, limit, offset, mirrorIds }) {
+      const mirrorSet = mirrorIds instanceof Set ? mirrorIds : new Set(mirrorIds || []);
+      const result = await searchHoD({ search, tier, type, collection, limit, offset });
+      const items = result.items.filter(i => !mirrorSet.has(i.id));
       return {
         items,
         totalCount: Math.max(0, result.totalCount - mirrorSet.size),

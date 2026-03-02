@@ -96,6 +96,7 @@ export function useCollectionSearch(collection, {
           includeMine: include === null || include === 'mine',
           includeSrd: include === null || include === 'srd',
           includePublic: include === null || include === 'public',
+          includeHod: include === null || include === 'hod',
           includeFcg: include === null || include === 'fcg',
           search: search || '',
           tier,

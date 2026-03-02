@@ -8,6 +8,7 @@ import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countI
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
 import { EXTERNAL_SOURCES } from './src/external-sources.js';
+import { fetchHoDFoundryDetail } from './src/hod-search.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -309,8 +310,12 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-  // Always include mirrors in community so previously-played external items surface locally
-  const includeMirrors = collection === 'adversaries' || collection === 'environments';
+  // Include mirrors in community results only when showing a broad view (both own and public
+  // items are requested — i.e. "All" mode). When the user filters to a specific source
+  // (HoD, FCG, SRD, Mine, Public), mirrors should not appear as visible results; they are
+  // still used for deduplication via getMirrorIds when active external sources are present.
+  const includeMirrors = (collection === 'adversaries' || collection === 'environments')
+    && includeMine && includePublic;
 
   try {
     // Determine which external sources are active for this collection
@@ -422,7 +427,9 @@ async function adoptItem(appId, uid, collection, item) {
   }
 
   if (isExternal) {
-    const { _source: _s, _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = item;
+    // Preserve _source in mirror data so items show the correct source badge when displayed
+    // as community items in "All" mode (stripping it causes them to render as "Mine").
+    const { _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = item;
     await upsertMirror(appId, collection, sourceId, mirrorData, {
       cloneDelta: isNewClone ? 1 : 0,
       playDelta: 1,
@@ -452,8 +459,29 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       const srdFills = await Promise.all(
         missing.filter(id => id.startsWith('srd-')).map(id => getSrdItem(col, id))
       );
-      const extras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
-      return [...dbItems, ...extras];
+      const srdExtras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
+
+      // For HoD items not in DB, fetch full Foundry JSON detail on demand.
+      // These items carry _hodLink on them; if no link is available we skip.
+      const hodMissing = missing.filter(id => id.startsWith('hod-'));
+      const hodFills = await Promise.all(
+        hodMissing.map(async id => {
+          const postId = id.replace(/^hod-/, '');
+          // We don't have the detail URL here — fall back gracefully.
+          // Full detail is only available when the item was previously seen in a search
+          // result and mirrored, or when coming through the clone flow.
+          try {
+            const detailUrl = `https://heartofdaggers.com/?p=${postId}`;
+            return await fetchHoDFoundryDetail(postId, detailUrl, col);
+          } catch (err) {
+            console.warn(`[hod] Could not resolve ${id}:`, err.message);
+            return null;
+          }
+        })
+      );
+      const hodExtras = hodFills.filter(Boolean);
+
+      return [...dbItems, ...srdExtras, ...hodExtras];
     };
 
     const [adversaries, environments, scenes] = await Promise.all([
@@ -496,6 +524,21 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const isExternal = source._source && !['own', 'public'].includes(source._source);
 
   try {
+    // For HoD items, fetch full Foundry JSON detail so we store a rich mirror.
+    // List-search items only have summary data; the detail fetch gives us features,
+    // attacks, thresholds, experiences, etc.
+    let effectiveSource = source;
+    if (source._source === 'hod' && source._hodPostId) {
+      try {
+        const detailUrl = source._hodLink || `https://heartofdaggers.com/?p=${source._hodPostId}`;
+        const full = await fetchHoDFoundryDetail(source._hodPostId, detailUrl, collection);
+        // Preserve the link metadata from the list-search item
+        effectiveSource = { ...full, _hodLink: source._hodLink || detailUrl };
+      } catch (err) {
+        console.warn(`[hod] Could not fetch full detail for ${sourceId}, using summary data:`, err.message);
+      }
+    }
+
     let clone = null;
     let isNewClone = true;
 
@@ -506,7 +549,7 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
     }
 
     if (!clone) {
-      const { _source: _s, _owner: _o, id: _id, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = source;
+      const { _source: _s, _owner: _o, id: _id, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = effectiveSource;
       const newId = crypto.randomUUID();
       const cloneData = { ...rest, _clonedFrom: sourceId };
       await upsertItem(APP_ID, req.uid, collection, newId, cloneData, false);
@@ -515,7 +558,8 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
 
     // Increment counts on source
     if (isExternal) {
-      const { _source: _s, _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = source;
+      // Preserve _source in mirror data so items show the correct source badge.
+      const { _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = effectiveSource;
       await upsertMirror(APP_ID, collection, sourceId, mirrorData, {
         cloneDelta: isNewClone ? 1 : 0,
         playDelta: play ? 1 : 0,

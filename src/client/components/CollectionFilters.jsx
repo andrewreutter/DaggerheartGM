@@ -6,6 +6,7 @@ const SOURCE_OPTIONS = [
   { val: 'mine', label: 'Mine' },
   { val: 'srd', label: 'SRD' },
   { val: 'public', label: 'Public' },
+  { val: 'hod', label: 'HoD' },
   { val: 'fcg', label: 'FCG' },
 ];
 

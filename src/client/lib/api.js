@@ -30,13 +30,14 @@ export const getAuthToken = async () => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeFcg = false, search = '', tier = null, type = null, offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, search = '', tier = null, type = null, offset = 0, limit = 20 } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   if (!includeMine) params.set('includeMine', '0');
   if (includeSrd) params.set('includeSrd', '1');
   if (includePublic) params.set('includePublic', '1');
+  if (includeHod) params.set('includeHod', '1');
   if (includeFcg) params.set('includeFcg', '1');
   if (search) params.set('search', search);
   if (tier != null) params.set('tier', String(tier));
