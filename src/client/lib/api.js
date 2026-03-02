@@ -66,9 +66,9 @@ export const loadTableState = async () => {
  * Resolve items by IDs across collections (for scene/group expansion).
  * Pass adopt: true to auto-clone any non-own adversaries/environments into the user's library
  * and increment popularity counts on their sources.
- * @param {{ adversaries?, environments?, groups?, scenes? }} idMap
+ * @param {{ adversaries?, environments?, scenes? }} idMap
  * @param {{ adopt?: boolean }} opts
- * @returns {{ adversaries, environments, groups, scenes }}
+ * @returns {{ adversaries, environments, scenes }}
  */
 export const resolveItems = async (idMap, { adopt = false } = {}) => {
   const token = await getAuthToken();
@@ -80,6 +80,22 @@ export const resolveItems = async (idMap, { adopt = false } = {}) => {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+};
+
+/**
+ * Ensure a mirror row exists for an external item so it can be resolved by ID later.
+ * Fire-and-forget — callers don't need to await.
+ */
+export const ensureMirror = async (collection, item) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    await fetch(`/api/data/${collection}/mirror`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item }),
+    });
+  } catch { /* best-effort */ }
 };
 
 /**

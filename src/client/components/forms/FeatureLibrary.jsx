@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BookOpen, Plus } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
-import { loadFcgSearch } from '../../lib/api.js';
-import { TIERS, ROLES, ENV_TYPES } from '../../lib/constants.js';
+import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
+import { CollectionFilters } from '../CollectionFilters.jsx';
 
 const SOURCE_ORDER = { own: 0, srd: 1, public: 2, fcg: 3 };
 
@@ -19,180 +19,190 @@ const TYPE_BADGE = {
   passive: 'bg-slate-700/80 text-slate-300',
 };
 
-const SUBTYPE_OPTIONS = { role: ROLES, type: ENV_TYPES };
-
 function buildKey(feature) {
   return `${(feature.name || '').trim().toLowerCase()}|${feature.type}|${(feature.description || '').trim()}`;
 }
 
-export function FeatureLibrary({ items, tier, subtype, subtypeKey, currentFeatures, onAdd }) {
-  const [hovered, setHovered] = useState(null); // { key, top }
+/**
+ * Feature Library sidebar panel.
+ * Self-fetches its own items via useCollectionSearch — no `items` prop needed.
+ *
+ * Props:
+ *   tier            - current form tier (synced into filter as a default)
+ *   subtype         - current form role/type value
+ *   subtypeKey      - 'role' | 'type'
+ *   currentFeatures - features already on the form (excluded from suggestions)
+ *   onAdd           - callback(feature) when user clicks a feature to add
+ */
+export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onAdd }) {
+  const collection = subtypeKey === 'role' ? 'adversaries' : 'environments';
 
-  // Local filter state — tracks the form by default, user can override
-  const [localTier, setLocalTier] = useState(tier ?? 'all');
-  const [localSubtype, setLocalSubtype] = useState(subtype ?? 'all');
+  const search = useCollectionSearch(collection, {
+    limit: 500,
+    debounceMs: 400,
+    infinite: true,
+  });
 
-  // FCG toggle and fetched data
-  const [includeFcg, setIncludeFcg] = useState(false);
-  const [fcgItems, setFcgItems] = useState([]);
-  const [fcgLoading, setFcgLoading] = useState(false);
+  const listRef = useRef(null);
+  const sentinelRef = useRef(null);
 
-  // Follow form changes unless user has already moved to a different value
-  useEffect(() => { setLocalTier(tier ?? 'all'); }, [tier]);
-  useEffect(() => { setLocalSubtype(subtype ?? 'all'); }, [subtype]);
+  // Follow form changes — sync tier and subtype into the hook's filter state.
+  useEffect(() => { search.setFilter('tier', tier ?? null); }, [tier]);
+  useEffect(() => { search.setFilter('type', subtype ?? null); }, [subtype]);
 
-  // Fetch FCG items when toggled on or tier changes
+  // IntersectionObserver to trigger loadMore when sentinel enters view
   useEffect(() => {
-    if (!includeFcg) { setFcgItems([]); return; }
-    setFcgLoading(true);
-    const tierParam = localTier !== 'all' ? localTier : undefined;
-    loadFcgSearch({ tier: tierParam })
-      .then(result => {
-        const collection = subtypeKey === 'role' ? 'adversaries' : 'environments';
-        setFcgItems(result[collection] || []);
-      })
-      .catch(() => setFcgItems([]))
-      .finally(() => setFcgLoading(false));
-  }, [includeFcg, localTier, subtypeKey]);
+    const sentinel = sentinelRef.current;
+    const container = listRef.current;
+    if (!sentinel || !container || !search.hasMore || search.isLoadingMore) return;
+    const io = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) search.loadMore(); },
+      { root: container, rootMargin: '150px' }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [search.hasMore, search.isLoadingMore, search.loadMore]);
 
-  const subtypeOptions = SUBTYPE_OPTIONS[subtypeKey] || [];
-
+  // Extract, deduplicate, and prioritise features from the current page of items.
   const currentKeys = new Set((currentFeatures || []).map(buildKey));
+  const candidateMap = new Map();
 
-  const candidateMap = new Map(); // key -> { feature, source, sourceName }
-  const allItems = [...(items || []), ...fcgItems];
-  allItems
-    .filter(item =>
-      (localTier === 'all' || item.tier === localTier) &&
-      (localSubtype === 'all' || item[subtypeKey] === localSubtype)
-    )
-    .forEach(item => {
-      (item.features || []).forEach(feat => {
-        const key = buildKey(feat);
-        if (currentKeys.has(key)) return;
-        const existing = candidateMap.get(key);
-        const src = item._source || 'own';
-        if (!existing || (SOURCE_ORDER[src] ?? 99) < (SOURCE_ORDER[existing.source] ?? 99)) {
-          candidateMap.set(key, { feature: feat, source: src, sourceName: item.name });
-        }
-      });
+  (search.items || []).forEach(item => {
+    (item.features || []).forEach(feat => {
+      const key = buildKey(feat);
+      if (currentKeys.has(key)) return;
+      const existing = candidateMap.get(key);
+      const src = item._source || 'own';
+      if (!existing || (SOURCE_ORDER[src] ?? 99) < (SOURCE_ORDER[existing.source] ?? 99)) {
+        candidateMap.set(key, { feature: feat, source: src, sourceName: item.name });
+      }
     });
+  });
 
   const candidates = Array.from(candidateMap.entries())
     .sort(([, a], [, b]) => SOURCE_ORDER[a.source] - SOURCE_ORDER[b.source])
     .map(([key, val]) => ({ key, ...val }));
 
-  const selectClass = 'bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-200 cursor-pointer hover:border-slate-500 focus:outline-none focus:border-blue-500 transition-colors';
-
   return (
     <div className="h-full bg-slate-900 border border-slate-700 rounded-xl flex flex-col overflow-hidden">
-      {/* Header with filter dropdowns */}
+      {/* Header with filters */}
       <div className="p-3 bg-slate-950 border-b border-slate-800 shrink-0">
-        <h4 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2 mb-2">
+        <h4 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2 mb-3">
           <BookOpen size={15} className="text-blue-400" /> Feature Library
+          {search.totalCount > 0 && (
+            <span className="text-[10px] text-slate-500 font-normal ml-1 normal-case tracking-normal">
+              {search.items.length} of {search.totalCount} items
+            </span>
+          )}
         </h4>
-        <div className="flex items-center gap-2 flex-wrap">
-          <select
-            value={localTier}
-            onChange={e => setLocalTier(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
-            className={selectClass}
-          >
-            <option value="all">All Tiers</option>
-            {TIERS.map(t => <option key={t} value={t}>Tier {t}</option>)}
-          </select>
-          <select
-            value={localSubtype}
-            onChange={e => setLocalSubtype(e.target.value)}
-            className={selectClass}
-          >
-            <option value="all">All {subtypeKey === 'role' ? 'Roles' : 'Types'}</option>
-            {subtypeOptions.map(s => (
-              <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-            ))}
-          </select>
-        </div>
-        <label className="flex items-center gap-1.5 cursor-pointer select-none mt-1.5">
-          <input
-            type="checkbox"
-            checked={includeFcg}
-            onChange={e => setIncludeFcg(e.target.checked)}
-            className="accent-green-500"
-          />
-          <span className="text-[11px] text-green-400 font-medium">
-            {fcgLoading ? 'Loading FCG…' : 'Include Fresh Cut Grass'}
-          </span>
-        </label>
+        <CollectionFilters
+          collection={collection}
+          filters={search.filters}
+          onFilterChange={search.setFilter}
+          variant="panel"
+        />
+        {search.loading && !search.isLoadingMore && (
+          <p className="text-[10px] text-slate-500 mt-2 animate-pulse">Loading…</p>
+        )}
       </div>
 
       {/* Scrollable feature list */}
-      <div className="p-3 space-y-2 overflow-y-auto flex-1">
-        {candidates.length === 0 && (
+      <div ref={listRef} className="p-3 space-y-2 overflow-y-auto flex-1">
+        {!search.loading && candidates.length === 0 && (
           <p className="text-xs text-slate-500 italic mt-2">
             No features found for the selected filter.
           </p>
         )}
 
         {candidates.map(({ key, feature, source, sourceName }) => (
-          <div key={key} className="relative group">
-            <button
-              type="button"
-              onClick={() => onAdd({ ...feature, id: generateId() })}
-              onMouseEnter={e => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                setHovered({ key, top: Math.max(8, Math.min(rect.top, window.innerHeight - 300)) });
-              }}
-              onMouseLeave={() => setHovered(null)}
-              className="w-full text-left bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 p-2.5 rounded transition-colors"
-            >
-              <div className="flex items-start justify-between gap-1 mb-1">
-                <span className="font-medium text-slate-200 text-xs leading-tight">{feature.name || '(unnamed)'}</span>
-                <Plus size={12} className="text-slate-500 group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
-              </div>
-              <div className="flex flex-wrap gap-1 mb-1.5">
+          <FeatureCard
+            key={key}
+            feature={feature}
+            source={source}
+            sourceName={sourceName}
+            onAdd={onAdd}
+          />
+        ))}
+
+        {search.isLoadingMore && (
+          <div className="text-center text-slate-500 text-[10px] py-2 animate-pulse">
+            Loading more of the {search.totalCount.toLocaleString()} items…
+          </div>
+        )}
+        {!search.hasMore && !search.loading && search.totalCount > 0 && (
+          <div className="text-center text-slate-500 text-[10px] py-2">
+            Loaded last of {search.totalCount.toLocaleString()} items
+          </div>
+        )}
+        {/* One-page spacer + sentinel for infinite scroll trigger */}
+        {search.hasMore && !search.isLoadingMore && <div style={{ height: 200 }} />}
+        <div ref={sentinelRef} className="h-1" />
+      </div>
+    </div>
+  );
+}
+
+function FeatureCard({ feature, source, sourceName, onAdd }) {
+  const [hoverTop, setHoverTop] = useState(null);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => onAdd({ ...feature, id: generateId() })}
+        onMouseEnter={e => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setHoverTop(Math.max(8, Math.min(rect.top, window.innerHeight - 300)));
+        }}
+        onMouseLeave={() => setHoverTop(null)}
+        className="w-full text-left bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 p-2.5 rounded transition-colors"
+      >
+        <div className="flex items-start justify-between gap-1 mb-1">
+          <span className="font-medium text-slate-200 text-xs leading-tight">{feature.name || '(unnamed)'}</span>
+          <Plus size={12} className="text-slate-500 group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
+        </div>
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {feature.type && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || 'bg-slate-700 text-slate-300'}`}>
+              {feature.type}
+            </span>
+          )}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source] || 'bg-slate-700 text-slate-300'}`}>
+            {source}
+          </span>
+        </div>
+        <p className="text-xs text-slate-400 line-clamp-2 leading-snug">{feature.description}</p>
+      </button>
+
+      {/* Fixed-position popover to avoid overflow clipping */}
+      {hoverTop !== null && (
+        <div
+          className="fixed z-[60] pointer-events-none"
+          style={{ right: 'calc(18rem + 12px)', top: hoverTop, width: '22rem' }}
+        >
+          <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-4 max-h-72 overflow-y-auto">
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <span className="font-bold text-white text-sm leading-tight">{feature.name || '(unnamed)'}</span>
+              <div className="flex flex-wrap gap-1 shrink-0">
                 {feature.type && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || 'bg-slate-700 text-slate-300'}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || ''}`}>
                     {feature.type}
                   </span>
                 )}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source] || 'bg-slate-700 text-slate-300'}`}>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source] || ''}`}>
                   {source}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 line-clamp-2 leading-snug">{feature.description}</p>
-            </button>
-
-            {/* Hover popover to the left */}
-            {hovered?.key === key && (
-              <div
-                className="fixed z-[60] pointer-events-none"
-                style={{ right: 'calc(18rem + 12px)', top: hovered.top, width: '22rem' }}
-              >
-                <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-4 max-h-72 overflow-y-auto">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="font-bold text-white text-sm leading-tight">{feature.name || '(unnamed)'}</span>
-                    <div className="flex flex-wrap gap-1 shrink-0">
-                      {feature.type && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || ''}`}>
-                          {feature.type}
-                        </span>
-                      )}
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source] || ''}`}>
-                        {source}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{feature.description}</p>
-                  {sourceName && (
-                    <p className="text-[10px] text-slate-500 mt-2 border-t border-slate-700 pt-2">
-                      From: {sourceName}
-                    </p>
-                  )}
-                </div>
-              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{feature.description}</p>
+            {sourceName && (
+              <p className="text-[10px] text-slate-500 mt-2 border-t border-slate-700 pt-2">
+                From: {sourceName}
+              </p>
             )}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

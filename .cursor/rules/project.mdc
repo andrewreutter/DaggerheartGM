@@ -10,18 +10,18 @@ A GM tool for the Daggerheart tabletop RPG. Built as a Node.js/Express server th
 ## Architecture
 
 - `server.js` — Express server entry point. Serves static files from `public/` and falls back to `public/index.html` for any unmatched route (standard SPA behavior). API routes live here. On startup, runs DB migrations if `DATABASE_URL` is set. Includes a `GET /livereload` SSE endpoint that watches `public/` via `fs.watch` and broadcasts a `reload` event to all connected browsers when files change (used for dev hot-reload).
-- `src/client/app.jsx` — React SPA entry point. Imports from `./lib/api.js`, mounts via `ReactDOM.createRoot`. Manages top-level state (data, collectionMeta, activeElements, user). Uses `useRouter()` from `./lib/router.js` to derive the active view from the URL; all navigation calls `navigate()` so the browser back/forward buttons work. The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out. Persists `whiteboardEmbed`, `rolzRoomName`, `rolzUsername`, and `rolzPassword` in the `table_state` collection alongside `activeElements`. Data loading is lazy and per-collection: on auth only `table_state` and non-paginated collections (groups/scenes/adventures) load; adversaries/environments load on demand per active tab with pagination. `addToTable`/`startScene` use `POST /api/data/resolve` with `adopt: true` for scene/group/adventure expansion (auto-cloning all referenced adversaries/environments into the user's library). Direct adversary/environment Add to Table calls `cloneItemToLibrary(..., { play: true })` for non-own items or `recordPlay` for own items.
-- `src/client/components/` — UI components: `LibraryView.jsx`, `GMTableView.jsx`, `NavBtn.jsx`, `ItemCard.jsx`, `ItemDetailView.jsx`, `RolzRoomLog.jsx`. `LibraryView` has a compact/spacious view toggle (persisted to `localStorage` under `libraryViewMode`); compact mode uses a 7-column grid, smaller text/padding, hides the banner image, and shows a small bottom-right thumbnail that expands on hover. `ItemCard` accepts a `compact` boolean prop to switch between the two layouts. `GMTableView` has "Add Adversary / Environment / Group / Start Scene" buttons that open an `AddToTableModal` — a vertical modal with its own independent filter state (source, tier, role/type, search) that fetches directly from the API; results display as text rows (Name, Tier, Role/Type). This modal state is fully isolated from the library tab filters.
-- `src/client/components/forms/` — Item creation/edit forms: `AdversaryForm`, `EnvironmentForm`, `GroupForm`, `SceneForm`, `AdventureForm`, plus shared inputs `ExperiencesInput`, `FeaturesInput`, `FormRow`, `MultiSelectRef`. Also `FeatureLibrary.jsx` — a sidebar panel rendered inside `AdversaryForm`/`EnvironmentForm` (when `allItems` prop is provided) that shows deduplicated features from same-tier, same-subtype items sorted by source (own/srd/public/fcg), with hover-to-detail and click-to-add. Has an "Include Fresh Cut Grass" checkbox (default off) that self-fetches from `GET /api/fcg-search`.
-- `src/client/components/modals/` — Import modals: `RolzImportModal.jsx`. Shared utilities in `ImportModalShell.jsx` and `ImportPreviewCard.jsx`. Inline editing modals: `EditChoiceDialog.jsx` (asks "Edit Copy" vs "Edit Library Original"), `EditFormModal.jsx` (modal wrapper around `AdversaryForm`/`EnvironmentForm`).
-- `src/client/lib/` — Client-side utilities: `api.js` (Firebase init + fetch helpers + `loadCollection`, `loadTableState`, `resolveItems`, `cloneItemToLibrary`, `recordPlay`, `loadFcgSearch`, `postRolzRoll`, `fetchRolzRoomLog`), `helpers.js` (`generateId`), `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` hook + `parseRoute()`).
-- `src/db.js` — Postgres connection pool, migration runner, and query helpers. Exports `SRD_USER_ID = '__SRD__'` and `MIRROR_USER_ID = '__MIRROR__'`. Own-item helpers: `getItems`, `getItemsPaginated`, `countItems`. Unified community helpers (SRD + public + mirrors sorted by popularity): `countCommunityItems`, `getCommunityItemsPaginated`. Legacy unpaginated helpers: `getSrdItems`, `getPublicItems`. Popularity helpers: `incrementCloneCount`, `incrementPlayCount`, `upsertMirror`, `findAutoClone`. Mirror lookup: `getMirrorIds`. Other: `upsertItem`, `deleteItem`, `getItemsByIds`.
+- `src/client/app.jsx` — React SPA entry point. Imports from `./lib/api.js`, mounts via `ReactDOM.createRoot`. Manages top-level state (data for non-paginated collections + activeElements + user). Uses `useRouter()` from `./lib/router.js` to derive the active view from the URL; all navigation calls `navigate()` so the browser back/forward buttons work. The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out. Persists `whiteboardEmbed`, `rolzRoomName`, `rolzUsername`, and `rolzPassword` in the `table_state` collection alongside `activeElements`. On auth, loads `table_state` and non-paginated collections (scenes/adventures) via `fetchAllCollections`, which also batch-resolves all adversary/environment IDs referenced by scenes so `ItemCard` chips display names immediately. `syncDataToApp` (passed as `onItemsChange`) merges the library view's current page with previously resolved items rather than replacing, preventing loss of startup-resolved data. `addToTable` uses `POST /api/data/resolve` with `adopt: true` for scene/adventure expansion (appends to the table — scenes never clear the board). `collectSceneIds` and `expandSceneWithResolved` both accept a `visited: Set` to prevent infinite recursion from circular nested scene references (also capped at depth 10). Direct adversary/environment Add to Table calls `cloneItemToLibrary(..., { play: true })` for non-own items or `recordPlay` for own items.
+- `src/client/components/` — UI components: `LibraryView.jsx`, `GMTableView.jsx`, `NavBtn.jsx`, `ItemCard.jsx`, `ItemDetailView.jsx`, `RolzRoomLog.jsx`, `CollectionFilters.jsx`. `LibraryView` has four tabs: Adversaries, Environments, Scenes, Adventures (Groups removed). Uses `useCollectionSearch` in infinite-scroll mode (limit 20, maxItems 500); the filter bar and result count ("Showing X of Y") are sticky above the scrollable card grid. Clicking any item (or "New") opens `ItemDetailModal` as an overlay — there is no separate view or edit page. `ItemDetailView.jsx` only exports `ExpandedTablePreview` (used inside `ItemDetailModal`'s display pane for scene sub-item preview and inline edits, including recursive nested scene expansion with cycle detection) and supporting helpers; it no longer exports a standalone page component. `ItemCard` accepts a `compact` boolean prop; nested scene chips display in blue in the Scenes tab. `GMTableView` has "Add Adversary / Environment / Add Scene" buttons plus a "Capture Table" button (always saves as a Scene). `CollectionFilters.jsx` — shared filter UI: `bar` variant (LibraryView) and `panel` variant (modals/FeatureLibrary).
+- `src/client/components/forms/` — Item creation/edit forms: `AdversaryForm`, `EnvironmentForm`, `SceneForm`, `AdventureForm`, plus `ExperiencesInput`, `FeaturesInput`, `FormRow`, `MultiSelectRef`, `CollectionRefPicker`, `FeatureLibrary`. `GroupForm` has been removed. All four collection forms support **controlled mode**: pass `value` (full item data) + `onChange(newData)` props; the form renders from `value` and calls `onChange` on every edit — no internal state, no Save/Cancel buttons. In uncontrolled mode (legacy), pass `initial`, `onSave`, `onCancel`. Controlled mode is used by `ItemDetailModal`. `SceneForm` includes save-time circular reference validation: when `initial?.id` is set, it walks the `data.scenes` graph to ensure none of the selected nested scene IDs would form a cycle back to the current scene. `CollectionRefPicker` is a button-bank + unified-list widget used by `SceneForm`, `AdventureForm`. `FeatureLibrary` is a portal sidebar for adversary/environment forms.
+- `src/client/components/modals/` — `ItemDetailModal.jsx` — the unified item detail + edit modal used everywhere (Library, GM Table, Scene/Group inline edits). Shows a split layout for editable items: left pane = live display preview (reads `formData` in real-time), right pane = edit form (controlled), plus a narrow Feature Library column for adversaries/environments. Non-editable items (SRD/public/FCG) show display only with Clone/Copy Rolz actions. Uses `useAutoSaveUndo` for auto-save on every change (debounced 800ms), infinite undo/redo (Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z), and Escape to close. `EditChoiceDialog.jsx` — asks "Edit Copy" vs "Edit Library Original" before opening `ItemDetailModal`. Import modals: `RolzImportModal.jsx`. Shared picker: `ItemPickerModal.jsx`.
+- `src/client/lib/` — Client-side utilities: `api.js`, `helpers.js`, `constants.js`, `rolz-parser.js`, `rolz-export.js`, `router.js` (History API router: `useRouter()` + `parseRoute()`; routes: `/`, `/library/:tab`, `/library/:tab/new`, `/library/:tab/:id`, `/gm-table`), `useCollectionSearch.js` (paginated/infinite-scroll collection hook), `useAutoSaveUndo.js` (undo/redo stack + debounced auto-save hook; returns `formData`, `setFormData`, `undo`, `redo`, `canUndo`, `canRedo`, `isSaving`, `savedOnce`).
+- `src/db.js` — Postgres connection pool, migration runner, and query helpers. Exports `MIRROR_USER_ID = '__MIRROR__'`. Own-item helpers: `getItems`, `getItemsPaginated`, `countItems`. Community helpers (public + mirrors sorted by popularity): `countCommunityItems`, `getCommunityItemsPaginated`. Unpaginated helper: `getPublicItems`. Popularity helpers: `incrementCloneCount`, `incrementPlayCount`, `upsertMirror`, `findAutoClone`. Mirror lookup: `getMirrorIds`. Other: `upsertItem`, `deleteItem`, `getItemsByIds`.
 - `src/fcg-search.js` — FreshCutGrass.app public search API integration. Exports `searchFCG({ search, tier, collection, limit, offset })`. Calls `https://freshcutgrass.app/api/adversaries/public/search`, classifies items by `type.startsWith("Environment")` (not tags), and translates to native format. Tagged `_source: 'fcg'` with `id` prefixed `fcg-`.
+- `src/srd/` — **SRD sub-application**. A fully isolated module with no DB dependency — reads the pre-built JSON from the `daggerheart-srd` git submodule and serves all 13 SRD collections as a REST API. `parser.js` lazily loads `daggerheart-srd/.build/03_json/*.json` on first access, normalizes each collection into a typed schema, and caches everything in memory. Adversary/environment schemas match the main app's existing format so GM Table, ItemCard, and forms work without modification. Exports `getCollectionNames()`, `getCollection(name)`, `getItem(collection, id)`, `searchCollection(collection, opts)`, `COLLECTION_NAMES`, and `warmCache()`. `router.js` is an Express Router (no auth required) mounted at `/api/srd`. `index.js` re-exports `srdRouter`, `warmCache`, `getItem`, `searchCollection`, and `COLLECTION_NAMES`.
+- `src/external-sources.js` — Defines `EXTERNAL_SOURCES`, an ordered array of external data source descriptors used by the paginated `GET /api/data/:collection` endpoint. Each source implements a common contract: `{ name, enabledParam, collections, search(opts) }`. `search()` receives `{ collection, search, tier, type, typeField, limit, offset, mirrorIds }` and returns `{ items, totalCount, nextLocalOffset? }`. Items must be tagged with `_source`. Current entries: **SRD** (in-memory, all 13 collections, `includeSrd=1`) and **FCG** (live API, adversaries + environments only, `includeFcg=1`). Adding a new source is simply appending a new entry to the array.
+- `daggerheart-srd/` — Git submodule pointing at `https://github.com/seansbox/daggerheart-srd`. Contains all 13 SRD content directories (abilities, adversaries, ancestries, armor, beastforms, classes, communities, consumables, domains, environments, items, subclasses, weapons) as markdown files plus pre-built JSON in `.build/03_json/`. Initialize with `git submodule update --init`. Update SRD content with `cd daggerheart-srd && git pull` then commit the updated submodule ref.
 - `src/input.css` — Tailwind CSS entry point (`@import "tailwindcss"`). Tailwind v4 scans `public/**/*.{html,jsx}` and `src/client/**/*.jsx` automatically.
-- `migrations/` — Numbered `.sql` migration files (e.g. `001_create_items_table.sql`). Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema. `002_add_is_public.sql` adds the `is_public BOOLEAN` column. `003_add_popularity.sql` adds `clone_count` and `play_count` INTEGER columns and a `_clonedFrom` expression index.
-- `scripts/fetch-srd.js` — Fetches pre-built adversary/environment JSON from `seansbox/daggerheart-srd` on GitHub, transforms to app schema, writes to `data/srd-adversaries.json` and `data/srd-environments.json`. Run with `npm run fetch:srd`.
-- `scripts/seed-srd.js` — Reads `data/srd-*.json` and upserts them into the DB with `user_id='__SRD__'` and `is_public=true`. Run with `npm run seed:srd`.
-- `data/` — Generated JSON output from `scripts/fetch-srd.js`. Not committed to git.
+- `migrations/` — Numbered `.sql` migration files. Applied automatically at startup via `src/db.js`. Add new files here to evolve the schema. `002_add_is_public.sql` adds `is_public BOOLEAN`. `003_add_popularity.sql` adds `clone_count`, `play_count`, and a `_clonedFrom` expression index. `004_remove_srd_rows.sql` deletes legacy `__SRD__` rows (SRD content now served from the in-memory sub-application).
 - `public/index.html` — Thin HTML shell. Links to the locally-built `public/styles.css`, loads Babel standalone and an ES importmap (pointing to esm.sh CDN for React 18, Firebase 10, Lucide React). Loads the app via `<script type="module" src="/app.js">`. Contains an inline `EventSource` script that connects to `/livereload` and calls `location.reload()` on `reload` events or on reconnect after the server restarts.
 - `public/styles.css` — Generated Tailwind CSS output. Do **not** edit by hand; rebuild with `npm run build:css`.
 - `public/` — All static assets (images, fonts, compiled JS, etc.) go here.
@@ -33,25 +33,30 @@ Supabase Postgres (or any Postgres). Set `DATABASE_URL` in `.env` to the connect
 
 Schema uses a single `items` table:
 - `(app_id, collection, id)` — composite primary key
-- `user_id` — Firebase UID; all queries are scoped per user. Special values: `__SRD__` for SRD content, `__MIRROR__` for cached copies of external (FCG, etc.) items used for local-first search and popularity tracking.
+- `user_id` — Firebase UID; all queries are scoped per user. Special value: `__MIRROR__` for cached copies of external (SRD played/cloned, FCG, etc.) items used for local-first search and popularity tracking.
 - `data` — JSONB blob storing the full entity. Auto-clones carry a `_clonedFrom` field pointing to the source item ID.
 - `app_id` — from `APP_ID` env var; namespaces data per deployment
-- `is_public` — boolean; when true, item is visible to all authenticated users (always true for SRD items)
+- `is_public` — boolean; when true, item is visible to all authenticated users
 - `clone_count` — integer; incremented each time a new user clone is created from this item
 - `play_count` — integer; incremented each time this item (or a clone of it) is added to the GM Table
 - `popularity` — virtual/computed field returned by API: `clone_count + play_count` (formula is server-side to allow future reweighting)
 
 ## API Routes
 
+- `GET /api/srd/collections` — No auth. Returns `{ collections: ["abilities", "adversaries", ...] }` (all 13 SRD collection names).
+- `GET /api/srd/:collection` — No auth. Paginated list of SRD items. Params: `search`, `tier`, `type`, `limit` (default 20, max 500), `offset`. Returns `{ items, totalCount }`. Items tagged `_source: 'srd'` (implied; set by consumer). Adversary/environment schemas match the main app's native format.
+- `GET /api/srd/:collection/:id` — No auth. Returns a single SRD item by its deterministic slug ID (e.g. `srd-adv-weaponmaster`, `srd-env-abandoned-grove`).
 - `GET /api/config` — Returns `{ firebaseConfig }` (no auth required). Consumed by `app.jsx` at startup.
-- `GET /api/data` — Legacy bulk endpoint. Returns `{ adversaries, environments, groups, scenes, adventures, table_state }` for the authenticated user. Supports `includeSrd=1` and `includePublic=1`. Kept for backwards compatibility.
-- `GET /api/data/:collection` — **Primary read endpoint.** Paginated per-collection fetch. Params: `offset` (default 0), `limit` (default 20, max 100), `includeSrd=1`, `includePublic=1`, `includeFcg=1`, `search`. Returns `{ items, totalCount, dbCount }`. Source priority: own (by popularity) → community/SRD/public/mirrors (by popularity) → FCG live results (deduped against mirrors). Each item includes `clone_count`, `play_count`, and `popularity`. `table_state` returns the single record without pagination. FCG items tagged `_source: 'fcg'`.
-- `POST /api/data/resolve` — Batch resolve items by ID across collections. Body: `{ adversaries?, environments?, groups?, scenes?, adopt?: boolean }`. Returns matching items from DB. When `adopt: true`, non-own adversaries/environments are auto-cloned into the caller's library (find-or-create via `_clonedFrom`) and popularity counts are incremented; returns clones in place of originals.
-- `POST /api/data/:collection/clone` — Clone an item into the user's library. Body: `{ source, play: boolean }`. `play=false`: always creates a new copy (explicit Clone button), increments `clone_count` on source. `play=true`: finds an existing auto-clone (matched by `_clonedFrom`) and reuses it, or creates one; increments `clone_count` (new clone only) and `play_count` on source. For external sources (FCG etc.), upserts a `__MIRROR__` row. Returns `{ item }` — the user's owned clone.
+- `GET /api/data` — Legacy bulk endpoint. Returns `{ adversaries, environments, scenes, adventures, table_state }` for the authenticated user. Supports `includeSrd=1` (calls `searchCollection()` for adversaries/environments) and `includePublic=1`. Kept for backwards compatibility.
+- `GET /api/data/:collection` — **Primary read endpoint.** Paginated per-collection fetch. Params: `offset` (default 0), `limit` (default 20, max 100), `includePublic=1`, `includeSrd=1`, `includeFcg=1`, `search`. Returns `{ items, totalCount, dbCount, nextOffset }`. Source priority: own (by popularity) → public + mirrors (by popularity) → external sources in order (SRD in-memory → FCG live). Each item includes `clone_count`, `play_count`, and `popularity`. `table_state` returns the single record without pagination. External sources are deduped against mirror rows. Items tagged with `_source` matching the source name (`srd`, `fcg`). The loop over `EXTERNAL_SOURCES` in `server.js` makes adding a third source trivial.
+- `POST /api/data/resolve` — Batch resolve items by ID across collections. Body: `{ adversaries?, environments?, scenes?, adopt?: boolean }`. Returns matching items from DB; for any `srd-*` IDs not found in the DB, falls back to the SRD sub-application (`getSrdItem`). Called at startup by `fetchAllCollections` in `app.jsx` to pre-resolve all adversary/environment IDs referenced by scenes, so `ItemCard` chips can display names immediately. When `adopt: true`, non-own adversaries/environments are auto-cloned into the caller's library (find-or-create via `_clonedFrom`) and popularity counts are incremented; returns clones in place of originals.
+- `POST /api/data/:collection/clone` — Clone an item into the user's library. Body: `{ source, play: boolean }`. `play=false`: always creates a new copy (explicit Clone button), increments `clone_count` on source. `play=true`: finds an existing auto-clone (matched by `_clonedFrom`) and reuses it, or creates one; increments `clone_count` (new clone only) and `play_count` on source. For external sources (SRD, FCG, etc.), upserts a `__MIRROR__` row. Returns `{ item }` — the user's owned clone.
+- `POST /api/data/:collection/mirror` — Ensure a `__MIRROR__` row exists for an external item so it can be resolved by ID later. Body: `{ item }`. Used by `CollectionRefPicker` when an FCG/external item is picked as a scene/group reference.
 - `POST /api/data/:collection/play` — Record a play of an own item. Body: `{ itemId }`. Increments `play_count`. Returns `{ ok: true }`.
 - `PUT /api/data/:collection` — Upsert an item (body is the item JSON). Respects `is_public` field. Returns the saved item.
 - `DELETE /api/data/:collection/:id` — Delete an item.
-- `GET /api/fcg-search?search=&tier=` — Requires auth. Lightweight endpoint for the Feature Library FCG toggle. Calls the FCG public search API and returns `{ adversaries, environments }` with no DB queries.
+- `GET /api/fcg-search?search=&tier=` — Requires auth. Lightweight pass-through to the FCG public search API; returns `{ adversaries, environments }` with no DB queries. Previously used for the Feature Library FCG toggle; FCG is now included via the standard `includeFcg=1` param on `GET /api/data/:collection`.
+- `POST /api/debug-log` — Dev-only (disabled when `NODE_ENV=production`). No auth. Relays client-side debug log payloads to a localhost debug server, bypassing browser CORS restrictions. Body: `{ _debugUrl: "http://127.0.0.1:PORT/ingest/UUID", _debugSessionId?: "ID", ...payload }`. The `_debugUrl` must start with `http://127.0.0.1:`. Used by Cursor debug mode for browser-side instrumentation; client code sends logs here instead of directly to the debug server.
 - `GET /livereload` — SSE endpoint (no auth). Watches `public/` for changes via `fs.watch` (debounced 150 ms) and sends `data: reload` to all connected browsers. The browser client reconnects automatically after a server restart and reloads on reconnect. Used exclusively for dev live-reload.
 - `GET /api/rolz-roomlog?room=NAME` — Requires auth. Proxies the Rolz room log feed (`https://rolz.org/api/roomlog`). Returns `{ room, items }` with message history. Polled by `RolzRoomLog` component every 5 seconds.
 - `POST /api/rolz-post` — Requires auth. Body: `{ room, text, from, rolzUsername, rolzPassword }`. Logs into Rolz.org with the provided credentials (server-side session cache keyed by Firebase UID, TTL 30 min), then proxies the roll post to `https://rolz.org/api/post` with the session cookie forwarded. On "Invalid account name" response, invalidates the cache and retries once with a fresh login. Returns the Rolz JSON response.
@@ -75,12 +80,11 @@ export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
 ## Running the App
 
 ```bash
-npm install         # first time only
-npm run build:css   # (re)generate public/styles.css from src/input.css
-npm run dev         # development: starts server (--watch) + Tailwind watcher in parallel
-npm start           # production (run npm run build:css first if styles changed)
-npm run fetch:srd   # fetch SRD data from GitHub -> data/srd-adversaries.json + data/srd-environments.json
-npm run seed:srd    # seed data/ into DB with user_id='__SRD__' (requires DATABASE_URL)
+git submodule update --init  # initialize daggerheart-srd submodule (first time after clone)
+npm install                  # install Node dependencies
+npm run build:css            # (re)generate public/styles.css from src/input.css
+npm run dev                  # development: starts server (--watch) + Tailwind watcher in parallel
+npm start                    # production (run npm run build:css first if styles changed)
 ```
 
 Server listens on `process.env.PORT` or `3456` by default. Set `PORT` in `.env` to override — both `npm start` and `npm run dev` load `.env` automatically via `node --env-file=.env`.
@@ -96,7 +100,7 @@ The "Game Table" tab shows two side-by-side panels (70/30 split): the Zoom white
 - `rolzUsername` / `rolzPassword` — Rolz.org credentials used by the server to obtain a session cookie for API posting
 
 **Clickable dice rolls**: When room name + Rolz credentials are all configured, attack actions become clickable:
-- **Actions Board** (left sidebar): clicking an attack card posts the roll to the Rolz room via `POST /api/rolz-post` and briefly flashes green
+- **GM Moves** (left sidebar): clicking an attack card posts the roll to the Rolz room via `POST /api/rolz-post` and briefly flashes green
 - **GM Table adversary cards**: the Attack line and action-type features with attack patterns show a dice icon and post a roll when clicked
 - Rolls are formatted as: `{sourceName} {attackName} [d20+{modifier}] damage [{damage} {trait}] {range}`
 - Only primary attacks and action-type features matching the attack description pattern (`+N Range | Xd6 trait`) are made rollable
@@ -104,42 +108,48 @@ The "Game Table" tab shows two side-by-side panels (70/30 split): the Zoom white
 
 To enable posting: in the Rolz dice room, type `/room api=on`. Enter your Rolz username and password in the Configure Embeds panel. The server caches the session cookie in memory (30-minute TTL) to avoid repeated logins.
 
-## Inline Editing (Scenes, Groups, GM Table)
+## Item Detail and Editing
 
-Adversaries and environments can be edited directly from the context where they appear:
+All item detail views and editors open as an `ItemDetailModal` overlay. There are no separate "view" or "edit" pages.
 
-- **GM Table**: A pencil button on each card opens `EditChoiceDialog` → then `EditFormModal`. "Edit Table Copy" updates only the active element in memory (preserving HP/stress). "Edit Library Original" saves to the DB and refreshes all matching active elements.
-- **Scene / Group detail view**: Each expanded card in `ExpandedTablePreview` has a pencil button. Same two-choice dialog. "Edit Copy" converts the reference to an inline owned copy stored in the parent scene/group. "Edit Library Original" saves to the DB.
-- SRD and public items are forced into "Edit Copy" mode (no "Edit Library Original" option).
+- **Library**: Clicking a card (or "New") opens `ItemDetailModal`. Own items show a split pane: live display preview on the left, edit form on the right. Adversaries and environments also show a narrow Feature Library panel. Changes auto-save (debounced 800ms). Infinite undo/redo is available within the session via Ctrl/Cmd+Z. SRD/public/FCG items open display-only with Clone/Copy Rolz actions.
+- **GM Table**: Pencil button on each card opens `EditChoiceDialog` → "Edit Table Copy" or "Edit Library Original" → `ItemDetailModal`. "Edit Table Copy" mode auto-saves only to `activeElements` (no DB). "Edit Library Original" auto-saves to the DB and updates all matching table elements.
+- **Scene detail**: Pencil button on each expanded sub-item opens the same `EditChoiceDialog` → `ItemDetailModal` flow. "Edit Copy" converts the reference to an inline owned copy in the parent scene. "Edit Library Original" saves to the DB.
+- SRD and public items are forced into copy mode everywhere.
 
-### Polymorphic data model (Scenes and Groups)
+### Polymorphic data model (Scenes)
 
-Groups and Scenes store adversaries/environments as either ID references or inline owned copies:
+Scenes store adversaries/environments as either ID references or inline owned copies, and can reference other Scenes by ID:
 
 ```js
-// Group adversaries:
+// Scene adversaries:
 adversaries: [
-  { adversaryId: "abc", count: 3 },           // reference
-  { data: { name: "Custom Goblin", ... }, count: 2 } // owned copy
+  { adversaryId: "abc", count: 3 },                    // reference
+  { data: { name: "Custom Goblin", ... }, count: 2 }   // owned copy
 ]
-// Scene adversaries — same shape
 // Scene environments:
 environments: [
-  "env-123",                                   // reference (string ID)
-  { data: { name: "Custom Forest", ... } }     // owned copy
+  "env-123",                                            // reference (string ID)
+  { data: { name: "Custom Forest", ... } }              // owned copy
 ]
-// Scene groupOverrides — suppresses a group adversary so a scene-level copy takes over:
-groupOverrides: [{ groupId: "group-1", adversaryId: "goblin-id" }]
+// Nested scene references:
+scenes: ["scene-456", "scene-789"]  // IDs of other scenes to include
 ```
 
-`GroupForm` and `SceneForm` preserve owned copies through edits (they appear in a read-only "Local Copies" section). Owned copies are rendered with an amber "local copy" badge in `ExpandedTablePreview` and with amber chips in `ItemCard`.
+`SceneForm` preserves owned copies through edits (they appear in a read-only "Local Copies" section) and validates against circular references at save time. Owned copies are rendered with an amber "local copy" badge in `ExpandedTablePreview` and with amber chips in `ItemCard`. Nested scene chips display in blue.
+
+### Circular reference prevention
+
+Scenes can reference other Scenes, forming a DAG. To prevent infinite loops:
+- **Save-time (SceneForm)**: Before saving, walks the `data.scenes` graph to check if any selected nested scene ID is reachable back to the current scene. Blocks save with an inline error if a cycle is detected.
+- **Expansion-time (app.jsx `collectSceneIds`/`expandSceneWithResolved`, `ItemDetailView` `buildElements`/`collectMissingRefs`)**: All recursive functions accept a `visited: Set` and skip any scene already in the set. Recursion is also capped at depth 10 as an additional safety net.
 
 ## Conventions
 
 - API routes: add `app.get/post/...('/api/...')` handlers in `server.js` before the static middleware.
 - Static assets: place in `public/`.
 - ES modules (`import`/`export`) throughout — no `require()`.
-- Routing: use `useRouter()` / `navigate()` from `src/client/lib/router.js` for all view transitions. URL scheme: `/` (home/sign-in), `/library/:tab`, `/library/:tab/new`, `/library/:tab/:id`, `/library/:tab/:id/edit`, `/gm-table`.
+- Routing: use `useRouter()` / `navigate()` from `src/client/lib/router.js` for all view transitions. URL scheme: `/` (home/sign-in), `/library/:tab`, `/library/:tab/new`, `/library/:tab/:id` (opens `ItemDetailModal` as overlay), `/gm-table`. The `/library/:tab/:id/edit` route no longer exists — editing is handled entirely within the modal.
 
 ## Maintaining Documentation
 

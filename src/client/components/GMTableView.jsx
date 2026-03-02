@@ -1,13 +1,13 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Search, Plus } from 'lucide-react';
+import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
-import { EditFormModal } from './modals/EditFormModal.jsx';
-import { postRolzRoll, loadCollection } from '../lib/api.js';
-import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
+import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
+import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
+import { postRolzRoll } from '../lib/api.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
@@ -129,7 +129,7 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
             {nudgeHint && (
               <div className="col-span-2 flex items-start gap-2 bg-amber-900/30 border border-amber-600/50 rounded-lg px-3 py-2 text-amber-300 text-xs">
                 <Dices size={13} className="text-amber-400 shrink-0 mt-0.5" />
-                <span>Enter your <strong>Rolz username and password</strong> and click <strong>Save</strong> to enable dice rolling from the Actions Board. Make sure to type <code className="bg-amber-900/50 px-1 rounded">/room api=on</code> in your Rolz room first.</span>
+                <span>Enter your <strong>Rolz username and password</strong> and click <strong>Save</strong> to enable dice rolling from the GM Moves. Make sure to type <code className="bg-amber-900/50 px-1 rounded">/room api=on</code> in your Rolz room first.</span>
               </div>
             )}
 
@@ -168,184 +168,86 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
   );
 }
 
-const MODAL_SINGULAR = { adversaries: 'Adversary', environments: 'Environment', groups: 'Group', scenes: 'Scene' };
+function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
 
-function AddToTableModal({ collection, data, onClose, onSelect }) {
-  const isPaginated = collection === 'adversaries' || collection === 'environments';
-  const hasTierType = collection === 'adversaries' || collection === 'environments';
-  const typeOptions = collection === 'adversaries' ? ROLES : ENV_TYPES;
-  const typeLabel = collection === 'adversaries' ? 'Role' : 'Type';
-  const actionLabel = collection === 'scenes' ? 'Start Scene' : `Add ${MODAL_SINGULAR[collection]}`;
+  const handleSave = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
 
-  const [search, setSearch] = useState('');
-  const [include, setInclude] = useState(null);
-  const [tier, setTier] = useState(null);
-  const [type, setType] = useState(null);
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const searchDebounceRef = useRef(null);
+    const adversaries = activeElements.filter(el => el.elementType === 'adversary');
+    const environments = activeElements.filter(el => el.elementType === 'environment');
 
-  const fetchItems = async (currentSearch, currentInclude, currentTier, currentType) => {
-    setLoading(true);
-    try {
-      const result = await loadCollection(collection, {
-        includeMine: currentInclude === null || currentInclude === 'mine',
-        includeSrd: currentInclude === null || currentInclude === 'srd',
-        includePublic: currentInclude === null || currentInclude === 'public',
-        includeFcg: currentInclude === null || currentInclude === 'fcg',
-        search: currentSearch || '',
-        tier: currentTier,
-        type: currentType,
-        offset: 0,
-        limit: 100,
-      });
-      setItems(result.items || []);
-    } catch (err) {
-      console.error('AddToTableModal fetch failed:', err);
-    }
-    setLoading(false);
+    // Collapse duplicate adversaries into { adversaryId, count }.
+    const advMap = new Map();
+    adversaries.forEach(el => {
+      if (advMap.has(el.id)) {
+        advMap.get(el.id).count += 1;
+      } else {
+        advMap.set(el.id, { adversaryId: el.id, count: 1 });
+      }
+    });
+    const adversaryRefs = [...advMap.values()];
+    const environmentRefs = environments.map(el => el.id);
+
+    const item = { id: generateId(), name: name.trim(), adversaries: adversaryRefs, environments: environmentRefs, scenes: [] };
+    await saveItem('scenes', item);
+
+    setSaving(false);
+    onClose();
+    navigate(`/library/scenes/${item.id}`);
   };
 
-  const clientItems = useMemo(() => {
-    if (isPaginated) return items;
-    const list = data[collection] || [];
-    const lowerSearch = search.trim().toLowerCase();
-    return lowerSearch ? list.filter(item => item.name?.toLowerCase().includes(lowerSearch)) : list;
-  }, [isPaginated, items, data, collection, search]);
-
-  useEffect(() => {
-    if (!isPaginated) return;
-    clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => fetchItems(search, include, tier, type), search ? 300 : 0);
-    return () => clearTimeout(searchDebounceRef.current);
-  }, [search, include, tier, type, isPaginated]);
-
-  useEffect(() => {
-    const handleKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose]);
-
-  const btnBase = 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors border';
-  const btnActive = 'bg-red-700 border-red-600 text-white';
-  const btnInactive = 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600 hover:text-white';
-
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-16 p-4" onClick={onClose}>
-      <div
-        className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[75vh]"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 shrink-0">
-          <h2 className="font-bold text-white text-lg">{actionLabel}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
-            <X size={18} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2"><Camera size={18} /> Capture Table as Scene</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
+        </div>
+
+        <p className="text-sm text-slate-400 mb-5">Save the current table contents as a reusable Scene, including all adversaries and environments.</p>
+
+        <label className="block text-sm font-medium text-slate-300 mb-1">Scene Name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onClose(); }}
+          placeholder="e.g. Bandit Ambush"
+          autoFocus
+          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-red-500 mb-5"
+        />
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white bg-slate-800 border border-slate-700 hover:border-slate-500 transition-colors">Cancel</button>
+          <button
+            onClick={handleSave}
+            disabled={!name.trim() || saving}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save as Scene'}
           </button>
-        </div>
-
-        {/* Filters */}
-        <div className="px-5 py-4 border-b border-slate-800 flex flex-col gap-3 shrink-0">
-          {/* Search */}
-          <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
-            <Search size={14} className="text-slate-400 shrink-0" />
-            <input
-              autoFocus
-              className="flex-1 bg-transparent text-sm text-white outline-none placeholder-slate-500"
-              placeholder="Search by name..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-
-          {/* Source */}
-          {isPaginated && (
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Source</div>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { val: null, label: 'All' },
-                  { val: 'mine', label: 'Mine' },
-                  { val: 'srd', label: 'SRD' },
-                  { val: 'public', label: 'Public' },
-                  { val: 'fcg', label: 'FCG' },
-                ].map(({ val, label }) => (
-                  <button
-                    key={String(val)}
-                    onClick={() => setInclude(val)}
-                    className={`${btnBase} ${include === val ? btnActive : btnInactive}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Tier */}
-          {hasTierType && (
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Tier</div>
-              <div className="flex flex-wrap gap-1.5">
-                <button onClick={() => setTier(null)} className={`${btnBase} ${tier === null ? btnActive : btnInactive}`}>All</button>
-                {TIERS.map(t => (
-                  <button key={t} onClick={() => setTier(tier === t ? null : t)} className={`${btnBase} ${tier === t ? btnActive : btnInactive}`}>{t}</button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Type / Role */}
-          {hasTierType && (
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">{typeLabel}</div>
-              <div className="flex flex-wrap gap-1.5">
-                <button onClick={() => setType(null)} className={`${btnBase} ${type === null ? btnActive : btnInactive}`}>All</button>
-                {typeOptions.map(t => (
-                  <button key={t} onClick={() => setType(type === t ? null : t)} className={`${btnBase} ${type === t ? btnActive : btnInactive}`}>
-                    <span className="capitalize">{t}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Results */}
-        <div className="flex-1 overflow-y-auto min-h-0">
-          {loading && <div className="text-center text-slate-500 text-sm py-10">Loading…</div>}
-          {!loading && clientItems.length === 0 && <div className="text-center text-slate-500 text-sm py-10">No results</div>}
-          {!loading && clientItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => { onSelect(item); onClose(); }}
-              className="w-full text-left px-5 py-3 hover:bg-slate-800 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4"
-            >
-              <span className="text-white font-medium text-sm truncate">{item.name}</span>
-              <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1.5">
-                {item.tier != null && <span>Tier {item.tier}</span>}
-                {item.tier != null && (item.role || item.type) && <span>·</span>}
-                {(item.role || item.type) && <span className="capitalize">{item.role || item.type}</span>}
-              </span>
-            </button>
-          ))}
         </div>
       </div>
     </div>
   );
 }
 
+
 // Strip runtime tracking fields to get the base item data for form editing.
 function getItemData(element) {
-  const { instanceId, elementType, currentHp, currentStress, conditions, groupName, ...rest } = element;
+  const { instanceId, elementType, currentHp, currentStress, conditions, ...rest } = element;
   return rest;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, allItemsData, saveItem, addToTable, startScene, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
-  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'groups' | 'scenes'
+  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
+  const [captureOpen, setCaptureOpen] = useState(false);
   const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
@@ -377,7 +279,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const itemWithId = { ...editedData, id: baseElement.id };
     if (mode === 'copy') {
       updateActiveElementsBaseData(
-        el => el.id === baseElement.id && (el.groupName || '') === (baseElement.groupName || ''),
+        el => el.id === baseElement.id,
         itemWithId
       );
     } else {
@@ -462,7 +364,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
-  // Group adversaries of the same type (same id + groupName) into consolidated entries.
+  // Group adversaries of the same type (same id) into consolidated entries.
   // Environments remain as individual entries.
   const consolidatedElements = useMemo(() => {
     const result = [];
@@ -472,7 +374,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (el.elementType !== 'adversary') {
         result.push({ kind: 'environment', element: el });
       } else {
-        const key = `${el.id}|${el.groupName || ''}`;
+        const key = el.id;
         if (seenAdvKeys[key] === undefined) {
           seenAdvKeys[key] = result.length;
           result.push({ kind: 'adversary-group', baseElement: el, instances: [el] });
@@ -490,7 +392,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (!hoveredFeature) return null;
     for (const item of consolidatedElements) {
       if (item.kind === 'adversary-group') {
-        const key = `${item.baseElement.id}|${item.baseElement.groupName || ''}`;
+        const key = item.baseElement.id;
         if (key === hoveredFeature.cardKey) return item;
       } else {
         if (item.element.instanceId === hoveredFeature.cardKey) return item;
@@ -517,7 +419,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
 
       const cardKey = element.elementType === 'adversary'
-        ? `${element.id}|${element.groupName || ''}`
+        ? element.id
         : element.instanceId;
 
       if (element.attack && element.attack.name) {
@@ -584,7 +486,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
         <div className="p-4 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
           <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2">
-            <Zap size={18} className="text-yellow-500" /> Actions Board
+            <Zap size={18} className="text-yellow-500" /> GM Moves
           </h2>
         </div>
 
@@ -650,7 +552,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           })}
           {activeElements.length === 0 && (
             <div className="text-center text-slate-500 text-sm py-8">
-              No active elements.<br />Start a scene to populate actions.
+              No active elements.<br />Add adversaries, environments, or scenes to populate the table.
             </div>
           )}
         </div>
@@ -691,8 +593,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             {[
               { col: 'adversaries', label: 'Add Adversary' },
               { col: 'environments', label: 'Add Environment' },
-              { col: 'groups', label: 'Add Group' },
-              { col: 'scenes', label: 'Start Scene' },
+              { col: 'scenes', label: 'Add Scene' },
             ].map(({ col, label }) => (
               <button
                 key={col}
@@ -702,6 +603,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 <Plus size={14} /> {label}
               </button>
             ))}
+            <button
+              onClick={() => setCaptureOpen(true)}
+              disabled={activeElements.length === 0}
+              title="Save current table as a Scene or Group"
+              className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Camera size={14} /> Capture Table
+            </button>
           </div>
         </div>
 
@@ -754,7 +663,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             // adversary-group
             const { baseElement: el, instances } = item;
             const count = instances.length;
-            const advCardKey = `${el.id}|${el.groupName || ''}`;
+            const advCardKey = el.id;
 
             return (
               <div
@@ -786,7 +695,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       {el.name}
                       {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
                     </h3>
-                    {el.groupName && <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">{el.groupName}</span>}
                   </div>
 
                   <AdversaryCardContent
@@ -824,14 +732,22 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       )}
 
     {modalOpen && (
-      <AddToTableModal
+      <ItemPickerModal
         collection={modalOpen}
         data={data}
         onClose={() => setModalOpen(null)}
         onSelect={(item) => {
-          if (modalOpen === 'scenes') startScene(item);
-          else addToTable(item, modalOpen);
+          addToTable(item, modalOpen);
         }}
+      />
+    )}
+
+    {captureOpen && (
+      <CaptureTableModal
+        activeElements={activeElements}
+        saveItem={saveItem}
+        navigate={navigate}
+        onClose={() => setCaptureOpen(false)}
       />
     )}
 
@@ -846,16 +762,28 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       />
     )}
     {editState?.step === 'form' && (
-      <EditFormModal
+      <ItemDetailModal
         item={editState.item}
         collection={editState.collection}
-        data={allItemsData || data}
-        onSave={handleEditFormSave}
+        data={data}
+        editable={true}
+        onSave={async (editedData) => {
+          const itemWithId = { ...editedData, id: editState.baseElement.id };
+          if (editState.mode === 'copy') {
+            updateActiveElementsBaseData(
+              el => el.id === editState.baseElement.id,
+              itemWithId
+            );
+          } else {
+            await saveItem(editState.collection, itemWithId);
+            updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+          }
+        }}
         onClose={() => setEditState(null)}
       />
     )}
 
-    {/* Hover overlay: shown when Behind the Screen is hidden and an Actions Board item is hovered */}
+    {/* Hover overlay: shown when Behind the Screen is hidden and an GM Moves item is hovered */}
     {gmTab !== 'table' && hoveredElement && (
       <div
         className="fixed z-50 pointer-events-none"
@@ -890,14 +818,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 {hoveredElement.instances.length > 1 && (
                   <span className="text-slate-400 font-normal ml-1.5">×{hoveredElement.instances.length}</span>
                 )}
-                {hoveredElement.baseElement.groupName && (
-                  <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full ml-2">{hoveredElement.baseElement.groupName}</span>
-                )}
               </h3>
               <AdversaryCardContent
                 element={hoveredElement.baseElement}
                 hoveredFeature={hoveredFeature}
-                cardKey={`${hoveredElement.baseElement.id}|${hoveredElement.baseElement.groupName || ''}`}
+                cardKey={hoveredElement.baseElement.id}
                 count={hoveredElement.instances.length}
                 instances={hoveredElement.instances}
                 updateFn={() => {}}
