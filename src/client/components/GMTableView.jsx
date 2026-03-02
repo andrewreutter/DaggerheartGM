@@ -1,12 +1,13 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight } from 'lucide-react';
+import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Search, Plus } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { EditFormModal } from './modals/EditFormModal.jsx';
-import { postRolzRoll } from '../lib/api.js';
+import { postRolzRoll, loadCollection } from '../lib/api.js';
+import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
@@ -167,6 +168,173 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
   );
 }
 
+const MODAL_SINGULAR = { adversaries: 'Adversary', environments: 'Environment', groups: 'Group', scenes: 'Scene' };
+
+function AddToTableModal({ collection, data, onClose, onSelect }) {
+  const isPaginated = collection === 'adversaries' || collection === 'environments';
+  const hasTierType = collection === 'adversaries' || collection === 'environments';
+  const typeOptions = collection === 'adversaries' ? ROLES : ENV_TYPES;
+  const typeLabel = collection === 'adversaries' ? 'Role' : 'Type';
+  const actionLabel = collection === 'scenes' ? 'Start Scene' : `Add ${MODAL_SINGULAR[collection]}`;
+
+  const [search, setSearch] = useState('');
+  const [include, setInclude] = useState(null);
+  const [tier, setTier] = useState(null);
+  const [type, setType] = useState(null);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const searchDebounceRef = useRef(null);
+
+  const fetchItems = async (currentSearch, currentInclude, currentTier, currentType) => {
+    setLoading(true);
+    try {
+      const result = await loadCollection(collection, {
+        includeMine: currentInclude === null || currentInclude === 'mine',
+        includeSrd: currentInclude === null || currentInclude === 'srd',
+        includePublic: currentInclude === null || currentInclude === 'public',
+        includeFcg: currentInclude === null || currentInclude === 'fcg',
+        search: currentSearch || '',
+        tier: currentTier,
+        type: currentType,
+        offset: 0,
+        limit: 100,
+      });
+      setItems(result.items || []);
+    } catch (err) {
+      console.error('AddToTableModal fetch failed:', err);
+    }
+    setLoading(false);
+  };
+
+  const clientItems = useMemo(() => {
+    if (isPaginated) return items;
+    const list = data[collection] || [];
+    const lowerSearch = search.trim().toLowerCase();
+    return lowerSearch ? list.filter(item => item.name?.toLowerCase().includes(lowerSearch)) : list;
+  }, [isPaginated, items, data, collection, search]);
+
+  useEffect(() => {
+    if (!isPaginated) return;
+    clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => fetchItems(search, include, tier, type), search ? 300 : 0);
+    return () => clearTimeout(searchDebounceRef.current);
+  }, [search, include, tier, type, isPaginated]);
+
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  const btnBase = 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors border';
+  const btnActive = 'bg-red-700 border-red-600 text-white';
+  const btnInactive = 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600 hover:text-white';
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center pt-16 p-4" onClick={onClose}>
+      <div
+        className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[75vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 shrink-0">
+          <h2 className="font-bold text-white text-lg">{actionLabel}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Filters */}
+        <div className="px-5 py-4 border-b border-slate-800 flex flex-col gap-3 shrink-0">
+          {/* Search */}
+          <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
+            <Search size={14} className="text-slate-400 shrink-0" />
+            <input
+              autoFocus
+              className="flex-1 bg-transparent text-sm text-white outline-none placeholder-slate-500"
+              placeholder="Search by name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {/* Source */}
+          {isPaginated && (
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Source</div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { val: null, label: 'All' },
+                  { val: 'mine', label: 'Mine' },
+                  { val: 'srd', label: 'SRD' },
+                  { val: 'public', label: 'Public' },
+                  { val: 'fcg', label: 'FCG' },
+                ].map(({ val, label }) => (
+                  <button
+                    key={String(val)}
+                    onClick={() => setInclude(val)}
+                    className={`${btnBase} ${include === val ? btnActive : btnInactive}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tier */}
+          {hasTierType && (
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Tier</div>
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => setTier(null)} className={`${btnBase} ${tier === null ? btnActive : btnInactive}`}>All</button>
+                {TIERS.map(t => (
+                  <button key={t} onClick={() => setTier(tier === t ? null : t)} className={`${btnBase} ${tier === t ? btnActive : btnInactive}`}>{t}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Type / Role */}
+          {hasTierType && (
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">{typeLabel}</div>
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => setType(null)} className={`${btnBase} ${type === null ? btnActive : btnInactive}`}>All</button>
+                {typeOptions.map(t => (
+                  <button key={t} onClick={() => setType(type === t ? null : t)} className={`${btnBase} ${type === t ? btnActive : btnInactive}`}>
+                    <span className="capitalize">{t}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Results */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {loading && <div className="text-center text-slate-500 text-sm py-10">Loading…</div>}
+          {!loading && clientItems.length === 0 && <div className="text-center text-slate-500 text-sm py-10">No results</div>}
+          {!loading && clientItems.map(item => (
+            <button
+              key={item.id}
+              onClick={() => { onSelect(item); onClose(); }}
+              className="w-full text-left px-5 py-3 hover:bg-slate-800 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4"
+            >
+              <span className="text-white font-medium text-sm truncate">{item.name}</span>
+              <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1.5">
+                {item.tier != null && <span>Tier {item.tier}</span>}
+                {item.tier != null && (item.role || item.type) && <span>·</span>}
+                {(item.role || item.type) && <span className="capitalize">{item.role || item.type}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Strip runtime tracking fields to get the base item data for form editing.
 function getItemData(element) {
   const { instanceId, elementType, currentHp, currentStress, conditions, groupName, ...rest } = element;
@@ -177,6 +345,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
+  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'groups' | 'scenes'
   const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
@@ -217,9 +386,24 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
-  const [lastRollTime, setLastRollTime] = useState(null);
+  const [pendingRolls, setPendingRolls] = useState([]);
 
   const rolzConfigured = !!(rolzRoomName && rolzUsername && rolzPassword);
+
+  const addPendingRoll = (displayName, rollText) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const addedAt = Date.now();
+    setPendingRolls(prev => [...prev, { id, displayName, rollText, addedAt }]);
+    // Auto-expire after eager window + buffer
+    const t = setTimeout(() => {
+      setPendingRolls(prev => prev.filter(p => p.id !== id));
+    }, 17000);
+    return { id, cleanup: () => clearTimeout(t) };
+  };
+
+  const removePendingRoll = (id) => {
+    setPendingRolls(prev => prev.filter(p => p.id !== id));
+  };
 
   const handleRoll = async (feature) => {
     if (!feature._rollData && !feature._diceRoll) return;
@@ -246,13 +430,19 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       patterns.forEach(p => parts.push(`[${p}]`));
       rollText = parts.join(' ');
     }
+    const displayName = `${feature.sourceName} ${feature.name}`;
     const key = `${feature.cardKey}|${feature.featureKey}`;
+    const { id: pendingId, cleanup } = addPendingRoll(displayName, rollText);
+    // #region agent log
+    console.log('[dbg handleRoll] pending roll added', { pendingId, displayName, rollText });
+    // #endregion
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
       setRolledKey(key);
-      setLastRollTime(Date.now());
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     } catch (err) {
+      cleanup();
+      removePendingRoll(pendingId);
       console.error('Rolz roll failed:', err);
     }
   };
@@ -261,10 +451,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (!rolzConfigured) return;
     const { name, modifier, range, damage, trait } = attackData;
     const rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
+    const displayName = `${sourceName} ${name}`;
+    const { id: pendingId, cleanup } = addPendingRoll(displayName, rollText);
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
-      setLastRollTime(Date.now());
     } catch (err) {
+      cleanup();
+      removePendingRoll(pendingId);
       console.error('Rolz roll failed:', err);
     }
   };
@@ -495,62 +688,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-white">The Table</h2>
           <div className="flex flex-wrap gap-2">
-            <select
-              className="bg-slate-900 border border-slate-700 text-sm rounded px-3 py-2 text-white outline-none"
-              onChange={(e) => {
-                if (e.target.value) {
-                  const adv = data.adversaries.find(a => a.id === e.target.value);
-                  if (adv) addToTable(adv, 'adversaries');
-                  e.target.value = '';
-                }
-              }}
-              defaultValue=""
-            >
-              <option value="" disabled>Add Adversary...</option>
-              {data.adversaries.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <select
-              className="bg-slate-900 border border-slate-700 text-sm rounded px-3 py-2 text-white outline-none"
-              onChange={(e) => {
-                if (e.target.value) {
-                  const env = data.environments.find(e2 => e2.id === e.target.value);
-                  if (env) addToTable(env, 'environments');
-                  e.target.value = '';
-                }
-              }}
-              defaultValue=""
-            >
-              <option value="" disabled>Add Environment...</option>
-              {data.environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
-            <select
-              className="bg-slate-900 border border-slate-700 text-sm rounded px-3 py-2 text-white outline-none"
-              onChange={(e) => {
-                if (e.target.value) {
-                  const group = data.groups.find(g => g.id === e.target.value);
-                  if (group) addToTable(group, 'groups');
-                  e.target.value = '';
-                }
-              }}
-              defaultValue=""
-            >
-              <option value="" disabled>Add Group...</option>
-              {data.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
-            <select
-              className="bg-slate-900 border border-slate-700 text-sm rounded px-3 py-2 text-white outline-none"
-              onChange={(e) => {
-                if (e.target.value) {
-                  const scene = data.scenes.find(s => s.id === e.target.value);
-                  if (scene) startScene(scene);
-                  e.target.value = '';
-                }
-              }}
-              defaultValue=""
-            >
-              <option value="" disabled>Start Scene...</option>
-              {data.scenes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            {[
+              { col: 'adversaries', label: 'Add Adversary' },
+              { col: 'environments', label: 'Add Environment' },
+              { col: 'groups', label: 'Add Group' },
+              { col: 'scenes', label: 'Start Scene' },
+            ].map(({ col, label }) => (
+              <button
+                key={col}
+                onClick={() => setModalOpen(col)}
+                className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors"
+              >
+                <Plus size={14} /> {label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -668,9 +819,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       {/* Persistent Dice Room Log — always visible when configured */}
       {rolzRoomName && (
         <div className="w-80 border-l border-slate-800 flex flex-col overflow-hidden shrink-0">
-          <RolzRoomLog roomName={rolzRoomName} lastRollTime={lastRollTime} />
+          <RolzRoomLog roomName={rolzRoomName} pendingRolls={pendingRolls} />
         </div>
       )}
+
+    {modalOpen && (
+      <AddToTableModal
+        collection={modalOpen}
+        data={data}
+        onClose={() => setModalOpen(null)}
+        onSelect={(item) => {
+          if (modalOpen === 'scenes') startScene(item);
+          else addToTable(item, modalOpen);
+        }}
+      />
+    )}
 
     {editState?.step === 'choice' && (
       <EditChoiceDialog

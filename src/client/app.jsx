@@ -3,17 +3,28 @@ import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2 } from 'lucide-react';
 
-import { auth, loadData, saveItem as apiSaveItem, deleteItem as apiDeleteItem } from './lib/api.js';
+import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 
 const LIBRARY_FILTERS_KEY = 'dh_libraryFilters';
+const PAGE_LIMIT = 20;
+const NON_PAGINATED_COLLECTIONS = ['groups', 'scenes', 'adventures'];
+
+const FILTER_DEFAULTS = { includeByTab: {}, search: '', tierByTab: {}, typeByTab: {} };
 
 function loadStoredFilters() {
   try {
     const stored = localStorage.getItem(LIBRARY_FILTERS_KEY);
-    if (stored) return JSON.parse(stored);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Migrate old flat fields to per-tab maps
+      if ('type' in parsed && !('typeByTab' in parsed)) { parsed.typeByTab = {}; delete parsed.type; }
+      if ('include' in parsed && !('includeByTab' in parsed)) { parsed.includeByTab = {}; delete parsed.include; }
+      if ('tier' in parsed && !('tierByTab' in parsed)) { parsed.tierByTab = {}; delete parsed.tier; }
+      return { ...FILTER_DEFAULTS, ...parsed };
+    }
   } catch {}
-  return { includeSrd: true, includePublic: false };
+  return { ...FILTER_DEFAULTS };
 }
 import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
@@ -33,7 +44,19 @@ function App() {
     adventures: []
   });
 
-  // Always includes SRD + public items regardless of library filters — used by the Feature Library panel.
+  // Pagination metadata per collection: { totalCount, dbCount }
+  const [collectionMeta, setCollectionMeta] = useState({
+    adversaries: { totalCount: 0, dbCount: 0, loading: true },
+    environments: { totalCount: 0, dbCount: 0, loading: true },
+    groups: { totalCount: 0, dbCount: 0, loading: true },
+    scenes: { totalCount: 0, dbCount: 0, loading: true },
+    adventures: { totalCount: 0, dbCount: 0, loading: true },
+  });
+
+  // Current page offset for the active library tab (adversaries/environments only)
+  const [paginationOffset, setPaginationOffset] = useState(0);
+
+  // Own + SRD + public items for adversaries/environments — used by Feature Library panel
   const [allItemsData, setAllItemsData] = useState({ adversaries: [], environments: [] });
 
   const [activeElements, setActiveElements] = useState([]);
@@ -106,23 +129,39 @@ function App() {
   const handleDeleteAllData = async () => {
     setUserMenuOpen(false);
     const collections = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
-    const totalItems = collections.reduce((sum, col) => sum + (data[col]?.length || 0), 0);
+    // Fetch all own items across all collections to count and delete
+    const allOwn = await Promise.all(collections.map(col =>
+      loadCollection(col, { limit: 10000 }).then(r => ({ col, items: r.items.filter(i => !i._source || i._source === 'own') }))
+    ));
+    const totalItems = allOwn.reduce((sum, { items }) => sum + items.length, 0);
     if (!window.confirm(`Delete all ${totalItems} item(s)? This cannot be undone.`)) return;
-    for (const col of collections) {
-      for (const item of [...(data[col] || [])]) {
+    for (const { col, items } of allOwn) {
+      for (const item of items) {
         await apiDeleteItem(col, item.id);
       }
     }
     setData({ adversaries: [], environments: [], groups: [], scenes: [], adventures: [] });
+    setCollectionMeta({
+      adversaries: { totalCount: 0, dbCount: 0, loading: false },
+      environments: { totalCount: 0, dbCount: 0, loading: false },
+      groups: { totalCount: 0, dbCount: 0, loading: false },
+      scenes: { totalCount: 0, dbCount: 0, loading: false },
+      adventures: { totalCount: 0, dbCount: 0, loading: false },
+    });
     setActiveElements([]);
     tableStateReadyRef.current = false;
     apiDeleteItem('table_state', 'current').catch(() => {});
     tableStateReadyRef.current = true;
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     setUserMenuOpen(false);
-    const jsonStr = JSON.stringify(data, null, 2);
+    const collections = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+    const allData = await Promise.all(collections.map(col =>
+      loadCollection(col, { limit: 10000 }).then(r => [col, r.items.filter(i => !i._source || i._source === 'own')])
+    ));
+    const exportObj = Object.fromEntries(allData);
+    const jsonStr = JSON.stringify(exportObj, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -162,6 +201,62 @@ function App() {
   };
 
   const userRef = useRef(null);
+  const routeRef = useRef(null);
+  const libraryFiltersRef = useRef(libraryFilters);
+  const paginationOffsetRef = useRef(0);
+
+  // Keep refs in sync for use inside async callbacks
+  useEffect(() => { libraryFiltersRef.current = libraryFilters; }, [libraryFilters]);
+  useEffect(() => { paginationOffsetRef.current = paginationOffset; }, [paginationOffset]);
+
+  // Load a single collection into data state, respecting pagination for adversaries/environments
+  const fetchCollection = async (collection, opts = {}) => {
+    const isPaginated = !NON_PAGINATED_COLLECTIONS.includes(collection);
+    const filters = opts.filters || libraryFiltersRef.current;
+    const offset = opts.offset !== undefined ? opts.offset : (isPaginated ? paginationOffsetRef.current : 0);
+    const limit = isPaginated ? PAGE_LIMIT : 1000;
+
+    setCollectionMeta(prev => ({
+      ...prev,
+      [collection]: { ...prev[collection], loading: true },
+    }));
+
+    const include = filters.includeByTab?.[collection] ?? null;
+    const result = await loadCollection(collection, {
+      includeMine: include === null || include === 'mine',
+      includeSrd: include === null || include === 'srd',
+      includePublic: include === null || include === 'public',
+      includeFcg: (include === null || include === 'fcg') && isPaginated,
+      search: filters.search || '',
+      tier: filters.tierByTab?.[collection] ?? null,
+      type: filters.typeByTab?.[collection] ?? null,
+      offset,
+      limit,
+    });
+
+    setData(prev => ({ ...prev, [collection]: result.items }));
+    setCollectionMeta(prev => ({
+      ...prev,
+      [collection]: { totalCount: result.totalCount, dbCount: result.dbCount, nextOffset: result.nextOffset, loading: false },
+    }));
+  };
+
+  // Load all non-paginated collections (groups, scenes, adventures) — no filter/search
+  const fetchAllCollections = async () => {
+    await Promise.all(NON_PAGINATED_COLLECTIONS.map(col => fetchCollection(col, { filters: {} })));
+  };
+
+  // Load allItemsData (own + SRD + public, no FCG) for the Feature Library panel
+  const fetchAllItemsData = async () => {
+    const [advResult, envResult] = await Promise.all([
+      loadCollection('adversaries', { includeSrd: true, includePublic: true, includeFcg: false, limit: 1000 }),
+      loadCollection('environments', { includeSrd: true, includePublic: true, includeFcg: false, limit: 1000 }),
+    ]);
+    setAllItemsData({
+      adversaries: advResult.items || [],
+      environments: envResult.items || [],
+    });
+  };
 
   useEffect(() => {
     if (!auth) { setLoading(false); return; }
@@ -171,19 +266,27 @@ function App() {
       setUser(currentUser);
       if (currentUser) {
         try {
-          const [fetched, allFetched] = await Promise.all([
-            loadData(currentUser, libraryFilters),
-            loadData(currentUser, { includeSrd: true, includePublic: true }),
+          // Load table_state and non-paginated collections in parallel
+          const [tableStateItems] = await Promise.all([
+            loadTableState(),
+            fetchAllCollections(),
           ]);
-          setData(fetched);
-          setAllItemsData({ adversaries: allFetched.adversaries || [], environments: allFetched.environments || [] });
-          setActiveElements(fetched.table_state?.[0]?.elements || []);
-          setWhiteboardEmbed(fetched.table_state?.[0]?.whiteboardEmbed || '');
-          setRolzRoomName(fetched.table_state?.[0]?.rolzRoomName || '');
-          setRolzUsername(fetched.table_state?.[0]?.rolzUsername || '');
-          setRolzPassword(fetched.table_state?.[0]?.rolzPassword || '');
-          setFeatureCountdowns(fetched.table_state?.[0]?.featureCountdowns || {});
+          const tableState = tableStateItems[0];
+          setActiveElements(tableState?.elements || []);
+          setWhiteboardEmbed(tableState?.whiteboardEmbed || '');
+          setRolzRoomName(tableState?.rolzRoomName || '');
+          setRolzUsername(tableState?.rolzUsername || '');
+          setRolzPassword(tableState?.rolzPassword || '');
+          setFeatureCountdowns(tableState?.featureCountdowns || {});
           tableStateReadyRef.current = true;
+
+          // Load the initial tab's collection
+          const initialTab = routeRef.current?.tab || 'adversaries';
+          if (!NON_PAGINATED_COLLECTIONS.includes(initialTab)) {
+            await fetchCollection(initialTab);
+          }
+          // Load allItemsData for Feature Library
+          fetchAllItemsData().catch(() => {});
         } catch (err) {
           console.error('Failed to load data:', err);
         }
@@ -196,28 +299,32 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // Keep routeRef current
+  useEffect(() => { routeRef.current = route; }, [route]);
+
+  // Reload current paginated collection when tab, filters, or pagination offset changes
+  const activeTab = route.tab || 'adversaries';
+  useEffect(() => {
+    if (!userRef.current) return;
+    if (NON_PAGINATED_COLLECTIONS.includes(activeTab)) return;
+    fetchCollection(activeTab).catch(err => console.error('Failed to reload collection:', err));
+  }, [activeTab, libraryFilters, paginationOffset]);
+
   const handleSetLibraryFilters = (newFilters) => {
     setLibraryFilters(newFilters);
+    setPaginationOffset(0);
     try { localStorage.setItem(LIBRARY_FILTERS_KEY, JSON.stringify(newFilters)); } catch {}
   };
 
-  useEffect(() => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
-    loadData(currentUser, libraryFilters)
-      .then(fetched => {
-        setData(prev => ({
-          ...fetched,
-          table_state: prev.table_state,
-        }));
-      })
-      .catch(err => console.error('Failed to reload data on filter change:', err));
-  }, [libraryFilters]);
+  const handleSetPaginationOffset = (offset) => {
+    setPaginationOffset(offset);
+  };
 
   const saveItem = async (collectionName, item) => {
     try {
       const saved = await apiSaveItem(collectionName, item);
       if (!saved) return;
+      // Update in-place in current data (optimistic)
       setData(prev => {
         const existing = prev[collectionName].findIndex(i => i.id === saved.id);
         const updated = existing >= 0
@@ -247,6 +354,14 @@ function App() {
         ...prev,
         [collectionName]: prev[collectionName].filter(i => i.id !== id),
       }));
+      setCollectionMeta(prev => ({
+        ...prev,
+        [collectionName]: {
+          ...prev[collectionName],
+          totalCount: Math.max(0, (prev[collectionName]?.totalCount || 1) - 1),
+          dbCount: Math.max(0, (prev[collectionName]?.dbCount || 1) - 1),
+        },
+      }));
       if (collectionName === 'adversaries' || collectionName === 'environments') {
         setAllItemsData(prev => ({
           ...prev,
@@ -259,9 +374,17 @@ function App() {
   };
 
   const cloneItem = async (collectionName, item) => {
-    const { _source, _owner, id: _id, is_public: _ip, ...rest } = item;
-    const clone = { ...rest, id: generateId(), is_public: false };
-    await saveItem(collectionName, clone);
+    const clone = await cloneItemToLibrary(collectionName, item, { play: false });
+    // Add to local state so the clone is immediately visible in the library
+    if (clone) {
+      setData(prev => {
+        const existing = prev[collectionName].findIndex(i => i.id === clone.id);
+        const updated = existing >= 0
+          ? prev[collectionName].map(i => i.id === clone.id ? clone : i)
+          : [...prev[collectionName], clone];
+        return { ...prev, [collectionName]: updated };
+      });
+    }
     return clone;
   };
 
@@ -277,143 +400,161 @@ function App() {
     }));
   };
 
-  const addToTable = (item, collectionName) => {
-    const newElements = [];
+  // Collect all DB-referenced IDs from a scene/group for batch resolution
+  function collectSceneIds(scene, groupsById) {
+    const adversaryIds = new Set();
+    const environmentIds = new Set();
 
-    const pushAdversary = (adv, groupName) => {
-      newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', ...(groupName ? { groupName } : {}) });
-    };
+    const envEntries = scene.environments || [];
+    envEntries.forEach(e => { if (typeof e === 'string') environmentIds.add(e); });
 
-    const pushEnvironment = (env) => {
-      newElements.push({ ...env, instanceId: generateId(), elementType: 'environment' });
-    };
+    const advRefs = scene.adversaries || [];
+    advRefs.forEach(ref => { if (!ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId); });
 
-    const expandScene = (scene) => {
-      const groupOverrides = scene.groupOverrides || [];
-
-      (scene.environments || []).forEach(envEntry => {
-        if (typeof envEntry === 'object' && envEntry.data) {
-          pushEnvironment({ id: envEntry.data.id || generateId(), ...envEntry.data });
-        } else {
-          const env = data.environments.find(e => e.id === envEntry);
-          if (env) pushEnvironment(env);
-        }
-      });
-
-      (scene.adversaries || []).forEach(advRef => {
-        if (advRef.data) {
-          const adv = { id: advRef.data.id || generateId(), ...advRef.data };
-          for (let i = 0; i < (advRef.count || 1); i++) pushAdversary(adv);
-        } else {
-          const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-          if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv);
-        }
-      });
-
-      (scene.groups || []).forEach(groupId => {
-        const group = data.groups.find(g => g.id === groupId);
-        if (group) {
-          (group.adversaries || []).forEach(advRef => {
-            const isOverridden = groupOverrides.some(ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId);
-            if (isOverridden) return;
-            if (advRef.data) {
-              const adv = { id: advRef.data.id || generateId(), ...advRef.data };
-              for (let i = 0; i < (advRef.count || 1); i++) pushAdversary(adv, group.name);
-            } else {
-              const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-              if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv, group.name);
-            }
-          });
-        }
-      });
-    };
-
-    switch (collectionName) {
-      case 'adversaries':
-        pushAdversary(item);
-        break;
-      case 'environments':
-        pushEnvironment(item);
-        break;
-      case 'groups':
-        (item.adversaries || []).forEach(advRef => {
-          if (advRef.data) {
-            const adv = { id: advRef.data.id || generateId(), ...advRef.data };
-            for (let i = 0; i < (advRef.count || 1); i++) pushAdversary(adv, item.name);
-          } else {
-            const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-            if (adv) for (let i = 0; i < advRef.count; i++) pushAdversary(adv, item.name);
-          }
+    const groupIds = scene.groups || [];
+    groupIds.forEach(groupId => {
+      const group = groupsById[groupId];
+      if (group) {
+        (group.adversaries || []).forEach(ref => {
+          if (!ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId);
         });
-        break;
-      case 'scenes':
-        expandScene(item);
-        break;
-      case 'adventures':
-        item.scenes?.forEach(sceneId => {
-          const scene = data.scenes.find(s => s.id === sceneId);
-          if (scene) expandScene(scene);
-        });
-        break;
-      default:
-        break;
-    }
+      }
+    });
 
-    setActiveElements(prev => [...prev, ...newElements]);
-  };
+    return { adversaryIds: [...adversaryIds], environmentIds: [...environmentIds] };
+  }
 
-  const startScene = (scene) => {
-    const newElements = [];
+  // Expand a scene into table elements using pre-resolved data maps
+  function expandSceneWithResolved(scene, groupsById, adversariesById, environmentsById) {
+    const elements = [];
     const groupOverrides = scene.groupOverrides || [];
 
     (scene.environments || []).forEach(envEntry => {
       if (typeof envEntry === 'object' && envEntry.data) {
-        newElements.push({ id: envEntry.data.id || generateId(), ...envEntry.data, instanceId: generateId(), elementType: 'environment' });
+        elements.push({ id: envEntry.data.id || generateId(), ...envEntry.data, instanceId: generateId(), elementType: 'environment' });
       } else {
-        const env = data.environments.find(e => e.id === envEntry);
-        if (env) newElements.push({ ...env, instanceId: generateId(), elementType: 'environment' });
+        const env = environmentsById[envEntry];
+        if (env) elements.push({ ...env, instanceId: generateId(), elementType: 'environment' });
       }
     });
 
     (scene.adversaries || []).forEach(advRef => {
-      if (advRef.data) {
-        const adv = { id: advRef.data.id || generateId(), ...advRef.data };
+      const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
+      if (adv) {
         for (let i = 0; i < (advRef.count || 1); i++) {
-          newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '' });
-        }
-      } else {
-        const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-        if (adv) {
-          for (let i = 0; i < advRef.count; i++) {
-            newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max, currentStress: 0, conditions: '' });
-          }
+          elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '' });
         }
       }
     });
 
     (scene.groups || []).forEach(groupId => {
-      const group = data.groups.find(g => g.id === groupId);
-      if (group) {
-        (group.adversaries || []).forEach(advRef => {
-          const isOverridden = groupOverrides.some(ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId);
-          if (isOverridden) return;
-          if (advRef.data) {
-            const adv = { id: advRef.data.id || generateId(), ...advRef.data };
-            for (let i = 0; i < (advRef.count || 1); i++) {
-              newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', groupName: group.name });
-            }
-          } else {
-            const adv = data.adversaries.find(a => a.id === advRef.adversaryId);
-            if (adv) {
-              for (let i = 0; i < advRef.count; i++) {
-                newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max, currentStress: 0, conditions: '', groupName: group.name });
-              }
-            }
+      const group = groupsById[groupId];
+      if (!group) return;
+      (group.adversaries || []).forEach(advRef => {
+        const isOverridden = groupOverrides.some(ov => ov.groupId === groupId && ov.adversaryId === advRef.adversaryId);
+        if (isOverridden) return;
+        const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
+        if (adv) {
+          for (let i = 0; i < (advRef.count || 1); i++) {
+            elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', groupName: group.name });
           }
-        });
-      }
+        }
+      });
     });
 
+    return elements;
+  }
+
+  const addToTable = async (item, collectionName) => {
+    const newElements = [];
+
+    if (collectionName === 'adversaries' || collectionName === 'environments') {
+      let tableItem = item;
+      if (!item._source || item._source === 'own') {
+        // Own item: just record the play
+        recordPlay(collectionName, item.id).catch(err => console.warn('recordPlay failed:', err));
+      } else {
+        // Non-own item: auto-clone into library (find-or-create) and record play
+        try {
+          tableItem = await cloneItemToLibrary(collectionName, item, { play: true });
+        } catch (err) {
+          console.warn('Auto-clone failed, using original:', err);
+          tableItem = item;
+        }
+        // Add/update clone in local state so library reflects it immediately
+        if (tableItem && tableItem.id !== item.id) {
+          setData(prev => {
+            const list = prev[collectionName] || [];
+            const existing = list.findIndex(i => i.id === tableItem.id);
+            const updated = existing >= 0
+              ? list.map(i => i.id === tableItem.id ? tableItem : i)
+              : [...list, tableItem];
+            return { ...prev, [collectionName]: updated };
+          });
+        }
+      }
+      if (collectionName === 'adversaries') {
+        newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'adversary', currentHp: tableItem.hp_max || 0, currentStress: 0, conditions: '' });
+      } else {
+        newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
+      }
+    } else if (collectionName === 'groups') {
+      const advIds = (item.adversaries || []).filter(r => !r.data && r.adversaryId).map(r => r.adversaryId);
+      const resolved = advIds.length ? await resolveItems({ adversaries: advIds }, { adopt: true }) : { adversaries: [] };
+      const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
+      (item.adversaries || []).forEach(advRef => {
+        const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
+        if (adv) {
+          for (let i = 0; i < (advRef.count || 1); i++) {
+            newElements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', groupName: item.name });
+          }
+        }
+      });
+    } else if (collectionName === 'scenes') {
+      const groupsById = Object.fromEntries(data.groups.map(g => [g.id, g]));
+      const { adversaryIds, environmentIds } = collectSceneIds(item, groupsById);
+      const resolved = (adversaryIds.length || environmentIds.length)
+        ? await resolveItems({ adversaries: adversaryIds, environments: environmentIds }, { adopt: true })
+        : { adversaries: [], environments: [] };
+      const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
+      const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
+      newElements.push(...expandSceneWithResolved(item, groupsById, adversariesById, environmentsById));
+    } else if (collectionName === 'adventures') {
+      const scenesById = Object.fromEntries(data.scenes.map(s => [s.id, s]));
+      const groupsById = Object.fromEntries(data.groups.map(g => [g.id, g]));
+      const allAdvIds = new Set();
+      const allEnvIds = new Set();
+      (item.scenes || []).forEach(sceneId => {
+        const scene = scenesById[sceneId];
+        if (scene) {
+          const { adversaryIds, environmentIds } = collectSceneIds(scene, groupsById);
+          adversaryIds.forEach(id => allAdvIds.add(id));
+          environmentIds.forEach(id => allEnvIds.add(id));
+        }
+      });
+      const resolved = (allAdvIds.size || allEnvIds.size)
+        ? await resolveItems({ adversaries: [...allAdvIds], environments: [...allEnvIds] }, { adopt: true })
+        : { adversaries: [], environments: [] };
+      const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
+      const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
+      (item.scenes || []).forEach(sceneId => {
+        const scene = scenesById[sceneId];
+        if (scene) newElements.push(...expandSceneWithResolved(scene, groupsById, adversariesById, environmentsById));
+      });
+    }
+
+    setActiveElements(prev => [...prev, ...newElements]);
+  };
+
+  const startScene = async (scene) => {
+    const groupsById = Object.fromEntries(data.groups.map(g => [g.id, g]));
+    const { adversaryIds, environmentIds } = collectSceneIds(scene, groupsById);
+    const resolved = (adversaryIds.length || environmentIds.length)
+      ? await resolveItems({ adversaries: adversaryIds, environments: environmentIds }, { adopt: true })
+      : { adversaries: [], environments: [] };
+    const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
+    const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
+    const newElements = expandSceneWithResolved(scene, groupsById, adversariesById, environmentsById);
     setActiveElements(newElements);
     navigate('/gm-table');
   };
@@ -436,21 +577,28 @@ function App() {
             <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
               <Swords size={24} /> DAGGERHEART GM
             </h1>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate('/library/adversaries')} />
               <NavBtn
                 icon={<LayoutDashboard />}
                 label="GM Table"
                 active={route.view === 'gm-table'}
                 onClick={() => navigate('/gm-table')}
-                badge={(() => {
-                  const envCount = activeElements.filter(e => e.elementType === 'environment').length;
-                  const advTypeCount = new Set(activeElements.filter(e => e.elementType === 'adversary').map(e => e.id)).size;
-                  const total = envCount + advTypeCount;
-                  return total > 0 ? `(${total})` : null;
-                })()}
                 pulse={tableFlash}
               />
+              {(() => {
+                const advCount = activeElements.filter(e => e.elementType === 'adversary').length;
+                const envCount = activeElements.filter(e => e.elementType === 'environment').length;
+                if (!advCount && !envCount) return null;
+                const parts = [];
+                if (envCount) parts.push(`${envCount} environment${envCount !== 1 ? 's' : ''}`);
+                if (advCount) parts.push(`${advCount} adversar${advCount !== 1 ? 'ies' : 'y'}`);
+                return (
+                  <span className={`text-xs font-mono transition-colors duration-300 ${tableFlash ? 'text-yellow-400' : 'text-slate-500'}`}>
+                    {parts.join(' · ')}
+                  </span>
+                );
+              })()}
             </div>
           </div>
           <div className="flex items-center gap-4 text-sm text-slate-400">
@@ -516,6 +664,7 @@ function App() {
         ) : route.view === 'library' ? (
           <LibraryView
             data={data}
+            collectionMeta={collectionMeta}
             allItemsData={allItemsData}
             saveItem={saveItem}
             deleteItem={deleteItem}
@@ -526,6 +675,9 @@ function App() {
             navigate={navigate}
             libraryFilters={libraryFilters}
             setLibraryFilters={handleSetLibraryFilters}
+            paginationOffset={paginationOffset}
+            setPaginationOffset={handleSetPaginationOffset}
+            pageLimit={PAGE_LIMIT}
           />
         ) : (
           <GMTableView

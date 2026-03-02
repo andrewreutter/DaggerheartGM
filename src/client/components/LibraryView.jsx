@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
-import { ShieldAlert, Map, Users, Play, BookOpen, Plus } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { ShieldAlert, Map, Users, Play, BookOpen, Plus, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
 import { ItemCard } from './ItemCard.jsx';
 import { ItemDetailView } from './ItemDetailView.jsx';
 import { RolzImportModal } from './modals/RolzImportModal.jsx';
-import { FCGImportModal } from './modals/FCGImportModal.jsx';
 import { AdversaryForm } from './forms/AdversaryForm.jsx';
 import { EnvironmentForm } from './forms/EnvironmentForm.jsx';
 import { GroupForm } from './forms/GroupForm.jsx';
@@ -76,18 +75,29 @@ function LibraryEditingLayout({ activeTab, editingItem, data, allItemsData, hand
   );
 }
 
-export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters }) {
+export function LibraryView({ data, collectionMeta, allItemsData, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters, paginationOffset, setPaginationOffset, pageLimit }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
-  const [showFCGImport, setShowFCGImport] = useState(false);
-  const [tierFilter, setTierFilter] = useState(new Set());
-  const [typeFilter, setTypeFilter] = useState(new Set());
-
+  // Stack of {offset, itemCount} for pages navigated forward through.
+  // Enables accurate cumulative display ("12–31 of 3,405") and correct Prev navigation.
+  const [prevHistory, setPrevHistory] = useState([]);
+  // Local search input — debounced before updating libraryFilters.search
+  const [searchInput, setSearchInput] = useState(libraryFilters?.search || '');
+  const searchDebounceRef = useRef(null);
   const activeTab = route.tab || 'adversaries';
 
+  const activeInclude = libraryFilters?.includeByTab?.[activeTab] ?? null;
+  const activeTier = libraryFilters?.tierByTab?.[activeTab] ?? null;
+  const activeType = libraryFilters?.typeByTab?.[activeTab] ?? null;
+
   useEffect(() => {
-    setTierFilter(new Set());
-    setTypeFilter(new Set());
+    setSearchInput(libraryFilters?.search || '');
+    setPrevHistory([]);
   }, [activeTab]);
+
+  // Reset history whenever the offset is reset to 0 (e.g. on filter change)
+  useEffect(() => {
+    if ((paginationOffset ?? 0) === 0) setPrevHistory([]);
+  }, [paginationOffset]);
   const { itemId, action } = route;
 
   const isCreating = itemId === 'new';
@@ -173,48 +183,80 @@ export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneIte
     }
   };
 
-  const toggleFilter = (key) => {
-    setLibraryFilters({ ...libraryFilters, [key]: !libraryFilters[key] });
+  const handleSearchChange = (value) => {
+    setSearchInput(value);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      setLibraryFilters({ ...libraryFilters, search: value });
+    }, 500);
   };
 
-  const toggleTier = (tier) => {
-    setTierFilter(prev => {
-      const next = new Set(prev);
-      next.has(tier) ? next.delete(tier) : next.add(tier);
-      return next;
-    });
+  const selectTier = (tier) => {
+    setLibraryFilters({ ...libraryFilters, tierByTab: { ...(libraryFilters?.tierByTab || {}), [activeTab]: activeTier === tier ? null : tier } });
   };
 
-  const toggleType = (val) => {
-    setTypeFilter(prev => {
-      const next = new Set(prev);
-      next.has(val) ? next.delete(val) : next.add(val);
-      return next;
-    });
+  const selectInclude = (val) => {
+    setLibraryFilters({ ...libraryFilters, includeByTab: { ...(libraryFilters?.includeByTab || {}), [activeTab]: activeInclude === val ? null : val } });
+  };
+
+  const selectType = (val) => {
+    setLibraryFilters({ ...libraryFilters, typeByTab: { ...(libraryFilters?.typeByTab || {}), [activeTab]: activeType === val ? null : val } });
   };
 
   const typeOptions = activeTab === 'adversaries' ? ROLES : activeTab === 'environments' ? ENV_TYPES : [];
 
   const filteredItems = items.filter(item => {
-    if (tierFilter.size > 0 && !tierFilter.has(item.tier)) return false;
-    if (typeFilter.size > 0) {
-      const typeVal = activeTab === 'adversaries' ? item.role : item.type;
-      if (!typeFilter.has(typeVal)) return false;
+    // Instant local name filter — mirrors the server-side search before the debounce fires
+    if (searchInput && SRD_FILTER_TABS.has(activeTab)) {
+      if (!item.name?.toLowerCase().includes(searchInput.toLowerCase())) return false;
     }
     return true;
   });
+
+  const paginationMeta = collectionMeta?.[activeTab];
+  const paginationTotal = paginationMeta?.totalCount ?? 0;
+  const paginationLimit = pageLimit ?? 20;
+  // Cumulative item count across all pages seen so far in this browsing session.
+  const cumulativeBase = prevHistory.reduce((s, h) => s + h.itemCount, 0);
+  const paginationStart = cumulativeBase + 1;
+  const paginationEnd = cumulativeBase + items.length;
+  const paginationHasPrev = prevHistory.length > 0;
+  const paginationHasNext = paginationEnd < paginationTotal;
+  const showPagination = SRD_FILTER_TABS.has(activeTab) && !editingItem && !viewingItem && filteredItems.length > 0 && paginationTotal > paginationLimit;
+  const paginationBar = (extraClass) => (
+    <div className={`flex items-center justify-center gap-4 text-xs text-slate-400 ${extraClass}`}>
+      <button
+        disabled={!paginationHasPrev}
+        onClick={() => {
+          const lastEntry = prevHistory[prevHistory.length - 1];
+          setPrevHistory(h => h.slice(0, -1));
+          setPaginationOffset(lastEntry?.offset ?? 0);
+        }}
+        className="flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:bg-slate-700 hover:enabled:text-slate-200 transition-colors"
+      >
+        <ChevronLeft size={13} /> Prev
+      </button>
+        <span className="text-slate-500">{paginationStart}–{paginationEnd} of {paginationTotal.toLocaleString()}</span>
+      <button
+        disabled={!paginationHasNext}
+        onClick={() => {
+          const nextPageOffset = paginationMeta?.nextOffset ?? (paginationOffset ?? 0) + paginationLimit;
+          setPrevHistory(h => [...h, { offset: paginationOffset ?? 0, itemCount: items.length }]);
+          setPaginationOffset(nextPageOffset);
+        }}
+        className="flex items-center gap-1 px-3 py-1.5 rounded bg-slate-800 border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:enabled:bg-slate-700 hover:enabled:text-slate-200 transition-colors"
+      >
+        Next <ChevronRight size={13} />
+      </button>
+    </div>
+  );
 
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* Sidebar Tabs */}
       <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="p-4 font-semibold text-slate-300 uppercase tracking-wider text-xs">Database</div>
-        {TABS.map(tab => {
-          const tabItems = data[tab.id] || [];
-          const ownCount = tabItems.filter(i => !i._source || i._source === 'own').length;
-          const totalCount = tabItems.length;
-          const countLabel = totalCount > ownCount ? `${ownCount}+${totalCount - ownCount}` : String(ownCount);
-          return (
+        {TABS.map(tab => (
             <button
               key={tab.id}
               onClick={() => navigate(`/library/${tab.id}`)}
@@ -222,10 +264,9 @@ export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneIte
                 activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
               }`}
             >
-              <tab.Icon size={18} /> {tab.label} ({countLabel})
+              <tab.Icon size={18} /> {tab.label}
             </button>
-          );
-        })}
+        ))}
       </div>
 
       {showRolzImport && (
@@ -235,18 +276,6 @@ export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneIte
           data={data}
           onImportSuccess={(collection, id) => {
             setShowRolzImport(false);
-            navigate(`/library/${collection}/${id}`);
-          }}
-        />
-      )}
-
-      {showFCGImport && (
-        <FCGImportModal
-          onClose={() => setShowFCGImport(false)}
-          saveItem={saveItem}
-          data={data}
-          onImportSuccess={(collection, id) => {
-            setShowFCGImport(false);
             navigate(`/library/${collection}/${id}`);
           }}
         />
@@ -264,13 +293,6 @@ export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneIte
             >
               Import Rolz Markdown
             </button>
-            <button
-              onClick={() => setShowFCGImport(true)}
-              className="text-xs bg-slate-800 hover:bg-slate-700 text-green-400 hover:text-green-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-green-800"
-            >
-              Import FreshCutGrass
-            </button>
-
             {!editingItem && !viewingItem && (
               <button
                 onClick={() => navigate(`/library/${activeTab}/new`)}
@@ -283,63 +305,101 @@ export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneIte
         </div>
 
         {SRD_FILTER_TABS.has(activeTab) && !editingItem && !viewingItem && (
-          <div className="flex items-center gap-3 mb-5 text-xs text-slate-400 flex-wrap">
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+          <div className="mb-5 space-y-2">
+            {/* Search bar */}
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
               <input
-                type="checkbox"
-                checked={!!libraryFilters?.includeSrd}
-                onChange={() => toggleFilter('includeSrd')}
-                className="accent-violet-500"
+                type="text"
+                value={searchInput}
+                onChange={e => handleSearchChange(e.target.value)}
+                placeholder={`Search ${activeTab}…`}
+                className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
               />
-              <span className="text-violet-400 font-medium">Include SRD</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={!!libraryFilters?.includePublic}
-                onChange={() => toggleFilter('includePublic')}
-                className="accent-blue-500"
-              />
-              <span className="text-blue-400 font-medium">Include Public</span>
-            </label>
-            <span className="text-slate-700 select-none">|</span>
-            <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
-            {TIERS.map(t => (
+            </div>
+
+            {/* Source + tier + type filters */}
+            <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
+              <span className="text-slate-500 font-medium uppercase tracking-wider">Include</span>
               <button
-                key={t}
-                onClick={() => toggleTier(t)}
+                onClick={() => setLibraryFilters({ ...libraryFilters, includeByTab: { ...(libraryFilters?.includeByTab || {}), [activeTab]: null } })}
                 className={`px-2 py-0.5 rounded font-medium border transition-colors ${
-                  tierFilter.has(t)
+                  activeInclude === null
+                    ? 'bg-cyan-800 border-cyan-500 text-cyan-100'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                }`}
+              >
+                All
+              </button>
+              {[
+                { value: 'mine', label: 'Mine' },
+                { value: 'srd', label: 'SRD' },
+                { value: 'public', label: 'Public' },
+                { value: 'fcg', label: 'FCG' },
+              ].map(({ value, label }) => (
+                <button
+                  key={value}
+                  onClick={() => selectInclude(value)}
+                  className={`px-2 py-0.5 rounded font-medium border transition-colors ${
+                    activeInclude === value
+                      ? 'bg-cyan-800 border-cyan-500 text-cyan-100'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              <span className="text-slate-700 select-none">|</span>
+              <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
+              <button
+                onClick={() => setLibraryFilters({ ...libraryFilters, tierByTab: { ...(libraryFilters?.tierByTab || {}), [activeTab]: null } })}
+                className={`px-2 py-0.5 rounded font-medium border transition-colors ${
+                  activeTier === null
                     ? 'bg-amber-700 border-amber-500 text-amber-100'
                     : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
                 }`}
               >
-                {t}
+                All
               </button>
-            ))}
-            <span className="text-slate-700 select-none">|</span>
-            <span className="text-slate-500 font-medium uppercase tracking-wider">Type</span>
-            {typeOptions.map(val => (
+              {TIERS.map(t => (
+                <button
+                  key={t}
+                  onClick={() => selectTier(t)}
+                  className={`px-2 py-0.5 rounded font-medium border transition-colors ${
+                    activeTier === t
+                      ? 'bg-amber-700 border-amber-500 text-amber-100'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+              <span className="text-slate-700 select-none">|</span>
+              <span className="text-slate-500 font-medium uppercase tracking-wider">Type</span>
               <button
-                key={val}
-                onClick={() => toggleType(val)}
-                className={`px-2 py-0.5 rounded font-medium border transition-colors capitalize ${
-                  typeFilter.has(val)
+                onClick={() => setLibraryFilters({ ...libraryFilters, typeByTab: { ...(libraryFilters?.typeByTab || {}), [activeTab]: null } })}
+                className={`px-2 py-0.5 rounded font-medium border transition-colors ${
+                  activeType === null
                     ? 'bg-red-800 border-red-500 text-red-100'
                     : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
                 }`}
               >
-                {val}
+                All
               </button>
-            ))}
-            {(tierFilter.size > 0 || typeFilter.size > 0) && (
-              <button
-                onClick={() => { setTierFilter(new Set()); setTypeFilter(new Set()); }}
-                className="text-slate-500 hover:text-slate-300 underline transition-colors"
-              >
-                Clear
-              </button>
-            )}
+              {typeOptions.map(val => (
+                <button
+                  key={val}
+                  onClick={() => selectType(val)}
+                  className={`px-2 py-0.5 rounded font-medium border transition-colors capitalize ${
+                    activeType === val
+                      ? 'bg-red-800 border-red-500 text-red-100'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {val}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -366,27 +426,38 @@ export function LibraryView({ data, allItemsData, saveItem, deleteItem, cloneIte
             onSaveElement={(activeTab === 'scenes' || activeTab === 'groups') && (!viewingItem._source || viewingItem._source === 'own') ? handleSaveElement : null}
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredItems.map(item => (
-              <ItemCard
-                key={`${item._source || 'own'}-${item.id}`}
-                item={item}
-                tab={activeTab}
-                data={data}
-                onView={(item) => navigate(`/library/${activeTab}/${item.id}`)}
-                onEdit={item._source && item._source !== 'own' ? null : (item) => navigate(`/library/${activeTab}/${item.id}/edit`)}
-                onDelete={item._source && item._source !== 'own' ? null : deleteItem}
-                onClone={() => handleClone(item)}
-                onStartScene={startScene}
-                onAddToTable={addToTable}
-              />
-            ))}
-            {filteredItems.length === 0 && (
-              <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                {items.length === 0 ? `No ${activeTab} found. Click "New" to create one.` : 'No items match the selected filters.'}
-              </div>
-            )}
-          </div>
+          <>
+            {showPagination && paginationBar('mb-4')}
+
+            <div className="flex flex-wrap gap-2">
+              {filteredItems.map(item => (
+                <ItemCard
+                  key={`${item._source || 'own'}-${item.id}`}
+                  item={item}
+                  tab={activeTab}
+                  data={data}
+                  onView={(item) => navigate(`/library/${activeTab}/${item.id}`)}
+                  onEdit={item._source && item._source !== 'own' ? null : (item) => navigate(`/library/${activeTab}/${item.id}/edit`)}
+                  onDelete={item._source && item._source !== 'own' ? null : deleteItem}
+                  onClone={() => handleClone(item)}
+                  onStartScene={startScene}
+                  onAddToTable={addToTable}
+                />
+              ))}
+              {filteredItems.length === 0 && (
+                <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
+                  {paginationMeta?.loading
+                    ? <span className="animate-pulse">Loading {activeTab}…</span>
+                    : items.length === 0
+                      ? `No ${activeTab} found. Click "New" to create one.`
+                      : 'No items match the selected filters.'
+                  }
+                </div>
+              )}
+            </div>
+
+            {showPagination && paginationBar('mt-6')}
+          </>
         )}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Dices, ExternalLink, RefreshCw } from 'lucide-react';
 import { fetchRolzRoomLog } from '../lib/api.js';
 
@@ -114,6 +114,33 @@ function SimpleRoll({ item }) {
   );
 }
 
+// Check whether a real Rolz dicemsg matches a pending roll's displayName.
+// The displayName is the leading plain text before the first dice expression.
+function matchesPendingRoll(item, displayName) {
+  const dn = displayName.toLowerCase();
+  if (Array.isArray(item.items) && item.items.length > 0) {
+    const pre = (item.items[0]?.pre || '').toLowerCase().trimEnd();
+    if (pre.startsWith(dn)) return true;
+    // Fallback: full text reconstruction
+    const full = item.items.map(s => [s.pre, s.input, s.post].filter(Boolean).join('')).join('').toLowerCase();
+    if (full.startsWith(dn)) return true;
+  }
+  if (item.text) return item.text.toLowerCase().startsWith(dn);
+  return false;
+}
+
+function PendingRollPlaceholder({ roll }) {
+  return (
+    <div className="px-2 py-1.5 rounded bg-slate-800/40 border border-slate-700/40 animate-pulse">
+      <div className="flex items-baseline gap-1.5">
+        <span className="font-semibold text-xs text-red-400/60">{roll.displayName}</span>
+        <span className="text-[10px] text-slate-600 italic ml-auto tabular-nums">rolling…</span>
+      </div>
+      <div className="mt-0.5 font-mono text-xs text-slate-600 truncate">{roll.rollText}</div>
+    </div>
+  );
+}
+
 function RolzMessage({ item }) {
   const time = formatTime(item.time);
   const characterName = extractCharacterName(item.from_html);
@@ -164,15 +191,38 @@ function RolzMessage({ item }) {
   );
 }
 
-export function RolzRoomLog({ roomName, lastRollTime }) {
+export function RolzRoomLog({ roomName, pendingRolls = [] }) {
   const [items, setItems] = useState([]);
   const [motd, setMotd] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [resolvedIds, setResolvedIds] = useState(new Set());
   const lastKeyRef = useRef(null);
   const eagerUntilRef = useRef(0);
   const pollTimeoutRef = useRef(null);
   const isMountedRef = useRef(false);
+
+  // Derive the timestamp of the most-recently added pending roll to trigger eager polling.
+  const latestAddedAt = useMemo(
+    () => pendingRolls.reduce((max, p) => Math.max(max, p.addedAt), 0),
+    [pendingRolls]
+  );
+
+  // Placeholders: pending rolls that haven't been resolved yet.
+  const activePending = useMemo(
+    () => pendingRolls.filter(p => !resolvedIds.has(p.id)),
+    [pendingRolls, resolvedIds]
+  );
+
+  // Prune resolvedIds to only IDs still in pendingRolls (prevents unbounded growth).
+  useEffect(() => {
+    if (resolvedIds.size === 0) return;
+    const currentIds = new Set(pendingRolls.map(p => p.id));
+    setResolvedIds(prev => {
+      const pruned = new Set([...prev].filter(id => currentIds.has(id)));
+      return pruned.size === prev.size ? prev : pruned;
+    });
+  }, [pendingRolls]);
 
   const fetchLog = async (isInitial = false) => {
     try {
@@ -228,11 +278,10 @@ export function RolzRoomLog({ roomName, lastRollTime }) {
     };
   }, [roomName]);
 
-  // Activate eager polling when a roll is posted.
+  // Activate eager polling when a new pending roll is added.
   useEffect(() => {
-    if (!lastRollTime || !roomName) return;
+    if (!latestAddedAt || !roomName) return;
     eagerUntilRef.current = Date.now() + EAGER_TIMEOUT;
-    // Kick off an immediate poll so we don't wait for the next scheduled one.
     clearTimeout(pollTimeoutRef.current);
     const run = async () => {
       if (!isMountedRef.current) return;
@@ -241,7 +290,41 @@ export function RolzRoomLog({ roomName, lastRollTime }) {
       scheduleNext();
     };
     run();
-  }, [lastRollTime]);
+  }, [latestAddedAt]);
+
+  // Match newly-arrived Rolz items against unresolved pending rolls by displayName.
+  // Each dicemsg can only resolve one pending roll (handles same-name duplicates in flight).
+  useEffect(() => {
+    // #region agent log
+    console.log('[dbg matchEffect]', JSON.stringify({ itemCount: items.length, pendingCount: pendingRolls.length, resolvedCount: resolvedIds.size, allTypes: items.map(i=>i.type), newest3: items.slice(0,3).map(i=>({ type:i.type, key:i.key, text:i.text?.slice?.(0,80), input:i.input, pre0:i.items?.[0]?.pre, input0:i.items?.[0]?.input, itemsLen:i.items?.length })) }));
+    // #endregion
+    if (!items.length || !pendingRolls.length) return;
+    const unresolved = pendingRolls.filter(p => !resolvedIds.has(p.id));
+    if (!unresolved.length) return;
+    const newlyResolved = new Set();
+    const consumedItemKeys = new Set();
+    const recentDice = items.filter(i => (Array.isArray(i.items) && i.items.length > 0) || (i.type === 'dicemsg' && i.input));
+    for (const pending of unresolved) {
+      for (const item of recentDice) {
+        const itemKey = item.key || item.time;
+        if (consumedItemKeys.has(itemKey)) continue;
+        // #region agent log
+        console.log('[dbg matchEffect] comparing', { pendingDisplayName: pending.displayName, pre0: item.items?.[0]?.pre, text: item.text, input0: item.items?.[0]?.input, itemsLen: item.items?.length });
+        // #endregion
+        if (matchesPendingRoll(item, pending.displayName)) {
+          newlyResolved.add(pending.id);
+          consumedItemKeys.add(itemKey);
+          // #region agent log
+          console.log('[dbg matchEffect] MATCHED', { pendingId: pending.id, displayName: pending.displayName });
+          // #endregion
+          break;
+        }
+      }
+    }
+    if (newlyResolved.size > 0) {
+      setResolvedIds(prev => new Set([...prev, ...newlyResolved]));
+    }
+  }, [items]);
 
   const handleRefresh = () => {
     clearTimeout(pollTimeoutRef.current);
@@ -292,7 +375,7 @@ export function RolzRoomLog({ roomName, lastRollTime }) {
         </div>
       )}
 
-      {/* Messages — newest first */}
+      {/* Messages — pending placeholders first (newest), then real items newest-first */}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
         {loading && (
           <div className="flex items-center justify-center py-8 text-slate-500 text-sm gap-2">
@@ -304,11 +387,14 @@ export function RolzRoomLog({ roomName, lastRollTime }) {
             Failed to load: {error}
           </div>
         )}
-        {!loading && !error && items.length === 0 && (
+        {!loading && !error && items.length === 0 && activePending.length === 0 && (
           <div className="text-center py-8 text-slate-600 text-sm">
             No messages yet.
           </div>
         )}
+        {activePending.slice().reverse().map(p => (
+          <PendingRollPlaceholder key={p.id} roll={p} />
+        ))}
         {items.map(item => (
           <RolzMessage key={item.key || item.time} item={item} />
         ))}
