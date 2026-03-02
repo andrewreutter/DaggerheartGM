@@ -166,6 +166,9 @@ app.get('/api/data', requireAuth, async (req, res) => {
       srdCollections.forEach((col, i) => {
         data[col] = [...data[col], ...srdResults[i]];
       });
+      // #region agent log
+      fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3a11cc'},body:JSON.stringify({sessionId:'3a11cc',location:'server.js:/api/data',message:'After SRD merge',data:{adversaryCount:data.adversaries.length,environmentCount:data.environments.length,ownAdversaries:data.adversaries.filter(a=>a._source==='own').length,srdAdversaries:data.adversaries.filter(a=>a._source==='srd').length},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
     }
 
     if (includePublic) {

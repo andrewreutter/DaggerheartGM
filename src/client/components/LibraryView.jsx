@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ShieldAlert, Map, Users, Play, BookOpen, Plus } from 'lucide-react';
+import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
 import { ItemCard } from './ItemCard.jsx';
 import { ItemDetailView } from './ItemDetailView.jsx';
 import { RolzImportModal } from './modals/RolzImportModal.jsx';
@@ -31,8 +32,15 @@ const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene, addToTable, route, navigate, libraryFilters, setLibraryFilters }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
   const [showFCGImport, setShowFCGImport] = useState(false);
+  const [tierFilter, setTierFilter] = useState(new Set());
+  const [typeFilter, setTypeFilter] = useState(new Set());
 
   const activeTab = route.tab || 'adversaries';
+
+  useEffect(() => {
+    setTierFilter(new Set());
+    setTypeFilter(new Set());
+  }, [activeTab]);
   const { itemId, action } = route;
 
   const isCreating = itemId === 'new';
@@ -122,6 +130,33 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
     setLibraryFilters({ ...libraryFilters, [key]: !libraryFilters[key] });
   };
 
+  const toggleTier = (tier) => {
+    setTierFilter(prev => {
+      const next = new Set(prev);
+      next.has(tier) ? next.delete(tier) : next.add(tier);
+      return next;
+    });
+  };
+
+  const toggleType = (val) => {
+    setTypeFilter(prev => {
+      const next = new Set(prev);
+      next.has(val) ? next.delete(val) : next.add(val);
+      return next;
+    });
+  };
+
+  const typeOptions = activeTab === 'adversaries' ? ROLES : activeTab === 'environments' ? ENV_TYPES : [];
+
+  const filteredItems = items.filter(item => {
+    if (tierFilter.size > 0 && !tierFilter.has(item.tier)) return false;
+    if (typeFilter.size > 0) {
+      const typeVal = activeTab === 'adversaries' ? item.role : item.type;
+      if (!typeFilter.has(typeVal)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* Sidebar Tabs */}
@@ -201,7 +236,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
         </div>
 
         {SRD_FILTER_TABS.has(activeTab) && !editingItem && !viewingItem && (
-          <div className="flex items-center gap-4 mb-5 text-xs text-slate-400">
+          <div className="flex items-center gap-3 mb-5 text-xs text-slate-400 flex-wrap">
             <label className="flex items-center gap-1.5 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -220,6 +255,44 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
               />
               <span className="text-blue-400 font-medium">Include Public</span>
             </label>
+            <span className="text-slate-700 select-none">|</span>
+            <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
+            {TIERS.map(t => (
+              <button
+                key={t}
+                onClick={() => toggleTier(t)}
+                className={`px-2 py-0.5 rounded font-medium border transition-colors ${
+                  tierFilter.has(t)
+                    ? 'bg-amber-700 border-amber-500 text-amber-100'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+            <span className="text-slate-700 select-none">|</span>
+            <span className="text-slate-500 font-medium uppercase tracking-wider">Type</span>
+            {typeOptions.map(val => (
+              <button
+                key={val}
+                onClick={() => toggleType(val)}
+                className={`px-2 py-0.5 rounded font-medium border transition-colors capitalize ${
+                  typeFilter.has(val)
+                    ? 'bg-red-800 border-red-500 text-red-100'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {val}
+              </button>
+            ))}
+            {(tierFilter.size > 0 || typeFilter.size > 0) && (
+              <button
+                onClick={() => { setTierFilter(new Set()); setTypeFilter(new Set()); }}
+                className="text-slate-500 hover:text-slate-300 underline transition-colors"
+              >
+                Clear
+              </button>
+            )}
           </div>
         )}
 
@@ -245,7 +318,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {items.map(item => (
+            {filteredItems.map(item => (
               <ItemCard
                 key={`${item._source || 'own'}-${item.id}`}
                 item={item}
@@ -259,9 +332,9 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, startScene,
                 onAddToTable={addToTable}
               />
             ))}
-            {items.length === 0 && (
+            {filteredItems.length === 0 && (
               <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                No {activeTab} found. Click "New" to create one.
+                {items.length === 0 ? `No ${activeTab} found. Click "New" to create one.` : 'No items match the selected filters.'}
               </div>
             )}
           </div>

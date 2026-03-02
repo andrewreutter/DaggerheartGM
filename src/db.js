@@ -76,6 +76,12 @@ export async function getSrdItems(appId, collection) {
      ORDER BY created_at ASC`,
     [appId, SRD_USER_ID, collection]
   );
+  // #region agent log
+  const names = rows.map(r => r.data?.name);
+  const nameCounts = names.reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc; }, {});
+  const duplicates = Object.entries(nameCounts).filter(([, c]) => c > 1).map(([n, c]) => `${n}(x${c})`);
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3a11cc'},body:JSON.stringify({sessionId:'3a11cc',location:'db.js:getSrdItems',message:'SRD items fetched',data:{appId,collection,totalRows:rows.length,duplicateNames:duplicates,sampleIds:rows.slice(0,3).map(r=>r.id)},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   return rows.map(r => ({ id: r.id, ...r.data, is_public: true, _source: 'srd' }));
 }
 
