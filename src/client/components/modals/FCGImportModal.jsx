@@ -169,14 +169,15 @@ export function FCGImportModal({ onClose, saveItem, onImportSuccess, data }) {
       {step === 'url' && (
         <div className="space-y-4">
           <p className="text-sm text-slate-400">
-            Paste a FreshCutGrass.app homebrew sharing URL (e.g.{' '}
-            <code className="text-green-400 text-xs">https://freshcutgrass.app/homebrew/username</code>).
+            Paste any FreshCutGrass.app URL that lists adversaries or environments — a homebrew page, search results, or any filtered view (e.g.{' '}
+            <code className="text-green-400 text-xs">https://freshcutgrass.app/homebrew?search=grand+feast&tier=1</code>).
+            The page must be publicly accessible (no sign-in required).
             Adversaries, environments, and encounters will be imported; encounters become scenes.
           </p>
           <input
             type="url"
             className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 outline-none focus:border-green-600"
-            placeholder="https://freshcutgrass.app/homebrew/username"
+            placeholder="https://freshcutgrass.app/homebrew/..."
             value={url}
             onChange={e => setUrl(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && url.trim() && handleFetch()}
