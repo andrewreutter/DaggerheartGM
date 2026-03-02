@@ -16,18 +16,7 @@ const DATA_DIR = join(__dirname, '..', 'data');
 
 const BASE_URL = 'https://raw.githubusercontent.com/seansbox/daggerheart-srd/main/.build/03_json';
 
-const ROLE_MAP = {
-  bruiser: 'bruiser',
-  horde: 'horde',
-  leader: 'leader',
-  minion: 'minion',
-  ranged: 'artillery',
-  skulk: 'skirmisher',
-  social: 'minion',
-  solo: 'solo',
-  standard: 'bruiser',
-  support: 'leader',
-};
+const VALID_ROLES = ['minion', 'social', 'support', 'horde', 'ranged', 'skulk', 'standard', 'leader', 'bruiser'];
 
 const ENV_TYPE_MAP = {
   exploration: 'exploration',
@@ -121,7 +110,7 @@ function parseDifficulty(diffStr) {
 
 function transformAdversary(raw) {
   const roleKey = (raw.type || '').toLowerCase();
-  const role = ROLE_MAP[roleKey] || 'bruiser';
+  const role = VALID_ROLES.includes(roleKey) ? roleKey : 'standard';
   const { damage, trait } = parseDamageAndTrait(raw.damage);
 
   return {

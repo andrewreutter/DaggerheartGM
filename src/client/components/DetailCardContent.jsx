@@ -75,6 +75,7 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
             return (
               <div
                 key={feat.id ?? idx}
+                data-feature-key={fKey}
                 className={`text-sm pl-2 border-l-2 transition-colors ${
                   hoveredFeature?.cardKey === cardKey && hoveredFeature?.featureKey === fKey
                     ? 'border-yellow-500'
@@ -258,6 +259,7 @@ export function AdversaryCardContent({
         <div className="space-y-1 mb-4">
           <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Attack</h5>
           <div
+            data-feature-key="attack"
             className={`text-sm pl-2 border-l-2 transition-colors rounded-r ${
               hoveredFeature?.cardKey === cardKey && hoveredFeature?.featureKey === 'attack'
                 ? 'border-yellow-500'
@@ -281,16 +283,25 @@ export function AdversaryCardContent({
             const fKey = `feat-${featIdx}`;
             const countdownVal = featureCountdowns?.[(cardKey + '|' + fKey)] ?? countdownInit;
             const attackMatch = onRollAttack && feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
+            const forceAttack = !attackMatch && onRollAttack && /\bmakes?\b.*?\battack\b/i.test(feat.description || '');
+            const isRollable = !!(attackMatch || forceAttack);
             return (
               <div
                 key={feat.id ?? featIdx}
+                data-feature-key={fKey}
                 className={`text-sm pl-2 border-l-2 transition-colors rounded-r ${
                   hoveredFeature?.cardKey === cardKey && hoveredFeature?.featureKey === fKey
                     ? 'border-yellow-500'
                     : 'border-transparent'
-                } ${attackMatch ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/feat' : ''}`}
-                onClick={attackMatch ? () => onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: attackMatch[3], trait: attackMatch[4] }) : undefined}
-                title={attackMatch ? 'Roll to dice room' : undefined}
+                } ${isRollable ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/feat' : ''}`}
+                onClick={isRollable ? () => {
+                  if (attackMatch) {
+                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: attackMatch[3], trait: attackMatch[4] });
+                  } else {
+                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: el.attack?.damage, trait: el.attack?.trait });
+                  }
+                } : undefined}
+                title={isRollable ? 'Roll to dice room' : undefined}
               >
                 <span className="font-bold text-slate-200 mr-2">
                   {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
@@ -302,7 +313,7 @@ export function AdversaryCardContent({
                   />
                 )}
                 <span className="text-slate-400"><FeatureDescription description={feat.description} /></span>
-                {attackMatch && <Dices size={11} className="inline ml-1.5 text-slate-600 group-hover/feat:text-red-400 transition-colors" />}
+                {isRollable && <Dices size={11} className="inline ml-1.5 text-slate-600 group-hover/feat:text-red-400 transition-colors" />}
               </div>
             );
           })}

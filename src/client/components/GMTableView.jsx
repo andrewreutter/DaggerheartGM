@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseCountdownValue } from '../lib/helpers.js';
@@ -9,6 +9,7 @@ import { EditFormModal } from './modals/EditFormModal.jsx';
 import { postRolzRoll } from '../lib/api.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
+const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
 
 function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
   const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
@@ -32,7 +33,7 @@ function ConfigSummary({ iframeSrc, rolzRoomName, rolzUsername }) {
     : <span className="text-slate-600 text-xs ml-2 italic">Not configured</span>;
 }
 
-function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, lastRollTime, hidden, nudge }) {
+function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, hidden, nudge }) {
   const [embedDraft, setEmbedDraft] = useState(whiteboardEmbed);
   const [roomNameDraft, setRoomNameDraft] = useState(rolzRoomName);
   const [usernameDraft, setUsernameDraft] = useState(rolzUsername);
@@ -144,31 +145,23 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
         )}
       </div>
 
-      {/* Embeds row */}
-      <div className="flex-1 min-h-0 flex gap-4 p-4 overflow-hidden">
-        {/* Zoom Whiteboard — 70% */}
-        <div className="min-w-0 min-h-0 flex flex-col overflow-hidden" style={{ flex: '7 1 0%' }}>
-          {iframeSrc ? (
-            <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
-              <iframe
-                src={iframeSrc}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-                allowFullScreen
-                title="Zoom Whiteboard"
-              />
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2">
-              <Monitor size={32} className="opacity-40" />
-              <p className="text-sm">Configure a Zoom whiteboard embed above.</p>
-            </div>
-          )}
-        </div>
-
-        {/* Rolz Dice Room Log — 30% */}
-        <div className="min-w-0 min-h-0 flex flex-col overflow-hidden" style={{ flex: '3 1 0%' }}>
-          <RolzRoomLog roomName={rolzRoomName} lastRollTime={lastRollTime} />
-        </div>
+      {/* Whiteboard embed — full width */}
+      <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col">
+        {iframeSrc ? (
+          <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
+            <iframe
+              src={iframeSrc}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+              allowFullScreen
+              title="Zoom Whiteboard"
+            />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2">
+            <Monitor size={32} className="opacity-40" />
+            <p className="text-sm">Configure a Zoom whiteboard embed above.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -184,6 +177,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
+  const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
   const [editState, setEditState] = useState(null);
@@ -228,14 +222,30 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const rolzConfigured = !!(rolzRoomName && rolzUsername && rolzPassword);
 
   const handleRoll = async (feature) => {
-    if (!feature._rollData) return;
+    if (!feature._rollData && !feature._diceRoll) return;
     if (!rolzConfigured) {
       navigate('/gm-table/whiteboard');
       setConfigNudge(n => n + 1);
       return;
     }
-    const { modifier, range, damage, trait } = feature._rollData;
-    const rollText = buildAttackRollText(feature.name, modifier, range, damage, trait, feature.sourceName);
+    let rollText;
+    if (feature._rollData) {
+      const { modifier, range, damage, trait } = feature._rollData;
+      rollText = buildAttackRollText(feature.name, modifier, range, damage, trait, feature.sourceName);
+    } else {
+      const { patterns, includeAttack, attackModifier, attackDamage, attackTrait, attackRange } = feature._diceRoll;
+      const parts = [`${feature.sourceName} ${feature.name}`];
+      if (includeAttack) {
+        const modStr = attackModifier >= 0 ? `+${attackModifier}` : `${attackModifier}`;
+        parts.push(`Attack [1d20${modStr}]`);
+      }
+      if (attackDamage) {
+        parts.push(`damage [${attackDamage} ${(attackTrait || '').toLowerCase()}]`);
+        if (attackRange) parts.push(attackRange);
+      }
+      patterns.forEach(p => parts.push(`[${p}]`));
+      rollText = parts.join(' ');
+    }
     const key = `${feature.cardKey}|${feature.featureKey}`;
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
@@ -282,6 +292,26 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     return result;
   }, [activeElements]);
 
+  // Find the consolidated element whose cardKey matches the hovered feature (for overlay).
+  const hoveredElement = useMemo(() => {
+    if (!hoveredFeature) return null;
+    for (const item of consolidatedElements) {
+      if (item.kind === 'adversary-group') {
+        const key = `${item.baseElement.id}|${item.baseElement.groupName || ''}`;
+        if (key === hoveredFeature.cardKey) return item;
+      } else {
+        if (item.element.instanceId === hoveredFeature.cardKey) return item;
+      }
+    }
+    return null;
+  }, [hoveredFeature, consolidatedElements]);
+
+  useEffect(() => {
+    if (!hoveredFeature || !overlayScrollRef.current) return;
+    const el = overlayScrollRef.current.querySelector(`[data-feature-key="${hoveredFeature.featureKey}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }, [hoveredFeature]);
+
   // Deduplicate actions by adversary id — same type only appears once in the board.
   const consolidatedMenu = useMemo(() => {
     const menu = { 'Passives': [], 'Reactions': [], 'Fear Actions': [], 'Actions': [] };
@@ -318,6 +348,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       element.features?.forEach((feature, featureIdx) => {
         const category = parseFeatureCategory(feature);
         const m = feature.type === 'action' && feature.description ? ATTACK_DESC_RE.exec(feature.description) : null;
+        const dicePatterns = feature.description
+          ? [...feature.description.matchAll(DICE_PATTERN_RE)].map(dm => dm[0])
+          : [];
+        const includeAttack = /\bmakes?\b.*?\battack\b/i.test(feature.description || '');
         menu[category].push({
           ...feature,
           sourceName: element.name,
@@ -328,6 +362,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             range: m[2],
             damage: m[3],
             trait: m[4],
+          } : null,
+          _diceRoll: !m && (dicePatterns.length > 0 || includeAttack) ? {
+            patterns: dicePatterns,
+            includeAttack,
+            attackModifier: includeAttack ? (element.attack?.modifier ?? 0) : null,
+            attackDamage: includeAttack && dicePatterns.length === 0 ? (element.attack?.damage || null) : null,
+            attackTrait: includeAttack && dicePatterns.length === 0 ? (element.attack?.trait || null) : null,
+            attackRange: includeAttack && dicePatterns.length === 0 ? (element.attack?.range || 'Melee') : null,
           } : null,
         });
       });
@@ -364,7 +406,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     const countdownInit = parseCountdownValue(feature.description);
                     const cdKey = `${feature.cardKey}|${feature.featureKey}`;
                     const countdownVal = featureCountdowns[cdKey] ?? countdownInit;
-                    const canRoll = !!feature._rollData;
+                    const canRoll = !!(feature._rollData || feature._diceRoll);
                     const justRolled = rolledKey === cdKey;
                     return (
                       <div
@@ -415,7 +457,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
       </div>
 
-      {/* Right Column: Tab bar + content */}
+      {/* Center Column: Tab bar + content */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         <div className="bg-slate-950 border-b border-slate-800 flex items-center px-4 shrink-0">
           <button
@@ -440,7 +482,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           setRolzUsername={setRolzUsername}
           rolzPassword={rolzPassword}
           setRolzPassword={setRolzPassword}
-          lastRollTime={lastRollTime}
           hidden={gmTab !== 'whiteboard'}
           nudge={configNudge}
         />
@@ -615,8 +656,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </div>
           )}
         </div>
+        </div>
       </div>
-    </div>
+
+      {/* Persistent Dice Room Log — always visible when configured */}
+      {rolzRoomName && (
+        <div className="w-80 border-l border-slate-800 flex flex-col overflow-hidden shrink-0">
+          <RolzRoomLog roomName={rolzRoomName} lastRollTime={lastRollTime} />
+        </div>
+      )}
 
     {editState?.step === 'choice' && (
       <EditChoiceDialog
@@ -636,6 +684,63 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         onSave={handleEditFormSave}
         onClose={() => setEditState(null)}
       />
+    )}
+
+    {/* Hover overlay: shown when Behind the Screen is hidden and an Actions Board item is hovered */}
+    {gmTab !== 'table' && hoveredElement && (
+      <div
+        className="fixed z-50 pointer-events-none"
+        style={{ left: 'calc(20rem + 12px)', top: '50%', transform: 'translateY(-50%)', width: '26rem', maxHeight: '80vh' }}
+      >
+        <div ref={overlayScrollRef} className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
+          {hoveredElement.kind === 'environment' ? (
+            <div className="p-5">
+              {hoveredElement.element.imageUrl && (
+                <div className="w-full h-32 overflow-hidden bg-slate-950 rounded-lg mb-4">
+                  <img src={hoveredElement.element.imageUrl} alt={hoveredElement.element.name} className="w-full h-full object-cover opacity-80" />
+                </div>
+              )}
+              <h3 className="text-xl font-bold text-white mb-1">{hoveredElement.element.name}</h3>
+              <EnvironmentCardContent
+                element={hoveredElement.element}
+                hoveredFeature={hoveredFeature}
+                cardKey={hoveredElement.element.instanceId}
+                featureCountdowns={featureCountdowns}
+                updateCountdown={null}
+              />
+            </div>
+          ) : (
+            <div className="p-5">
+              {hoveredElement.baseElement.imageUrl && (
+                <div className="w-full h-32 overflow-hidden bg-slate-950 rounded-lg mb-4">
+                  <img src={hoveredElement.baseElement.imageUrl} alt={hoveredElement.baseElement.name} className="w-full h-full object-cover opacity-80" />
+                </div>
+              )}
+              <h3 className="text-xl font-bold text-white mb-1">
+                {hoveredElement.baseElement.name}
+                {hoveredElement.instances.length > 1 && (
+                  <span className="text-slate-400 font-normal ml-1.5">×{hoveredElement.instances.length}</span>
+                )}
+                {hoveredElement.baseElement.groupName && (
+                  <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full ml-2">{hoveredElement.baseElement.groupName}</span>
+                )}
+              </h3>
+              <AdversaryCardContent
+                element={hoveredElement.baseElement}
+                hoveredFeature={hoveredFeature}
+                cardKey={`${hoveredElement.baseElement.id}|${hoveredElement.baseElement.groupName || ''}`}
+                count={hoveredElement.instances.length}
+                instances={hoveredElement.instances}
+                updateFn={() => {}}
+                showInstanceRemove={false}
+                featureCountdowns={featureCountdowns}
+                updateCountdown={null}
+                onRollAttack={null}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     )}
     </div>
   );

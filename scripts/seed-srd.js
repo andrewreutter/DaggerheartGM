@@ -21,6 +21,13 @@ const DATA_DIR = join(__dirname, '..', 'data');
 
 const APP_ID = process.env.APP_ID || 'default';
 
+// Maps legacy SRD role names to current role names.
+const ROLE_MAP = {
+  artillery: 'ranged',
+  skirmisher: 'skulk',
+  solo: 'standard',
+};
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     console.error('DATABASE_URL is not set. Create a .env file or set it in your environment.');
@@ -35,10 +42,11 @@ async function main() {
     readFile(join(DATA_DIR, 'srd-environments.json'), 'utf8').then(JSON.parse),
   ]);
 
-  console.log(`Seeding ${adversaries.length} adversaries...`);
+  console.log(`Seeding ${adversaries.length} adversaries (with role normalization)...`);
   for (const adv of adversaries) {
     const { id, ...data } = adv;
-    await upsertItem(APP_ID, SRD_USER_ID, 'adversaries', id, data, true);
+    const normalizedData = { ...data, role: ROLE_MAP[data.role] || data.role };
+    await upsertItem(APP_ID, SRD_USER_ID, 'adversaries', id, normalizedData, true);
   }
 
   console.log(`Seeding ${environments.length} environments...`);
