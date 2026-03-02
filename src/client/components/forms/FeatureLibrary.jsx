@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { BookOpen, Plus } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
+import { loadFcgSearch } from '../../lib/api.js';
 import { TIERS, ROLES, ENV_TYPES } from '../../lib/constants.js';
 
-const SOURCE_ORDER = { own: 0, srd: 1, public: 2 };
+const SOURCE_ORDER = { own: 0, srd: 1, public: 2, fcg: 3 };
 
 const SOURCE_BADGE = {
   own: 'bg-blue-900/60 text-blue-300',
   srd: 'bg-purple-900/60 text-purple-300',
   public: 'bg-slate-700 text-slate-300',
+  fcg: 'bg-green-900/60 text-green-300',
 };
 
 const TYPE_BADGE = {
@@ -30,16 +32,36 @@ export function FeatureLibrary({ items, tier, subtype, subtypeKey, currentFeatur
   const [localTier, setLocalTier] = useState(tier ?? 'all');
   const [localSubtype, setLocalSubtype] = useState(subtype ?? 'all');
 
+  // FCG toggle and fetched data
+  const [includeFcg, setIncludeFcg] = useState(false);
+  const [fcgItems, setFcgItems] = useState([]);
+  const [fcgLoading, setFcgLoading] = useState(false);
+
   // Follow form changes unless user has already moved to a different value
   useEffect(() => { setLocalTier(tier ?? 'all'); }, [tier]);
   useEffect(() => { setLocalSubtype(subtype ?? 'all'); }, [subtype]);
+
+  // Fetch FCG items when toggled on or tier changes
+  useEffect(() => {
+    if (!includeFcg) { setFcgItems([]); return; }
+    setFcgLoading(true);
+    const tierParam = localTier !== 'all' ? localTier : undefined;
+    loadFcgSearch({ tier: tierParam })
+      .then(result => {
+        const collection = subtypeKey === 'role' ? 'adversaries' : 'environments';
+        setFcgItems(result[collection] || []);
+      })
+      .catch(() => setFcgItems([]))
+      .finally(() => setFcgLoading(false));
+  }, [includeFcg, localTier, subtypeKey]);
 
   const subtypeOptions = SUBTYPE_OPTIONS[subtypeKey] || [];
 
   const currentKeys = new Set((currentFeatures || []).map(buildKey));
 
   const candidateMap = new Map(); // key -> { feature, source, sourceName }
-  (items || [])
+  const allItems = [...(items || []), ...fcgItems];
+  allItems
     .filter(item =>
       (localTier === 'all' || item.tier === localTier) &&
       (localSubtype === 'all' || item[subtypeKey] === localSubtype)
@@ -50,7 +72,7 @@ export function FeatureLibrary({ items, tier, subtype, subtypeKey, currentFeatur
         if (currentKeys.has(key)) return;
         const existing = candidateMap.get(key);
         const src = item._source || 'own';
-        if (!existing || SOURCE_ORDER[src] < SOURCE_ORDER[existing.source]) {
+        if (!existing || (SOURCE_ORDER[src] ?? 99) < (SOURCE_ORDER[existing.source] ?? 99)) {
           candidateMap.set(key, { feature: feat, source: src, sourceName: item.name });
         }
       });
@@ -89,6 +111,17 @@ export function FeatureLibrary({ items, tier, subtype, subtypeKey, currentFeatur
             ))}
           </select>
         </div>
+        <label className="flex items-center gap-1.5 cursor-pointer select-none mt-1.5">
+          <input
+            type="checkbox"
+            checked={includeFcg}
+            onChange={e => setIncludeFcg(e.target.checked)}
+            className="accent-green-500"
+          />
+          <span className="text-[11px] text-green-400 font-medium">
+            {fcgLoading ? 'Loading FCG…' : 'Include Fresh Cut Grass'}
+          </span>
+        </label>
       </div>
 
       {/* Scrollable feature list */}

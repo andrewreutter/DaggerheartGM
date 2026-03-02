@@ -36,10 +36,16 @@ export function AdversaryForm({ initial, onSave, onCancel, allItems, featureLibr
   return (
     <>
       <div className="space-y-4">
+        <FormRow label="Name"><input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+
         <div className="grid grid-cols-2 gap-4">
-          <FormRow label="Name"><input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
+          <FormRow label="Tier">
+            <select value={formData.tier} onChange={e => setFormData({ ...formData, tier: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
+              {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </FormRow>
           <FormRow label="Role">
-            <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white">
+            <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
               {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
             </select>
           </FormRow>
@@ -49,19 +55,12 @@ export function AdversaryForm({ initial, onSave, onCancel, allItems, featureLibr
         <FormRow label="Description (Flavor)"><textarea placeholder="Description or flavor text..." value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
         <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => setFormData({ ...formData, imageUrl: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
 
-        <div className="grid grid-cols-3 gap-4 mt-6">
-          <FormRow label="Tier">
-            <select value={formData.tier} onChange={e => setFormData({ ...formData, tier: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
-              {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </FormRow>
-          <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => setFormData({ ...formData, difficulty: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
-          <FormRow label="Stress"><input type="number" value={formData.stress_max} onChange={e => setFormData({ ...formData, stress_max: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
-        </div>
-        <div className="grid grid-cols-3 gap-4">
-          <FormRow label="HP"><input type="number" value={formData.hp_max} onChange={e => setFormData({ ...formData, hp_max: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
-          <FormRow label="Major Threshold"><input type="number" value={formData.hp_thresholds.major} onChange={e => setFormData({ ...formData, hp_thresholds: { ...formData.hp_thresholds, major: parseInt(e.target.value) } })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
-          <FormRow label="Severe Threshold"><input type="number" value={formData.hp_thresholds.severe} onChange={e => setFormData({ ...formData, hp_thresholds: { ...formData.hp_thresholds, severe: parseInt(e.target.value) } })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
+        <div className="grid grid-cols-5 gap-4 mt-6">
+          <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => setFormData({ ...formData, difficulty: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+          <FormRow label="Stress"><input type="number" value={formData.stress_max} onChange={e => setFormData({ ...formData, stress_max: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+          <FormRow label="HP"><input type="number" value={formData.hp_max} onChange={e => setFormData({ ...formData, hp_max: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+          <FormRow label="Major Threshold"><input type="number" value={formData.hp_thresholds.major} onChange={e => setFormData({ ...formData, hp_thresholds: { ...formData.hp_thresholds, major: parseInt(e.target.value) } })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+          <FormRow label="Severe Threshold"><input type="number" value={formData.hp_thresholds.severe} onChange={e => setFormData({ ...formData, hp_thresholds: { ...formData.hp_thresholds, severe: parseInt(e.target.value) } })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
         </div>
 
         <div className="mt-6 border-t border-slate-800 pt-4">

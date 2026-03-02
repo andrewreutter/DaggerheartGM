@@ -1,10 +1,11 @@
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { watchFile } from 'fs';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { runMigrations, getItems, getSrdItems, getPublicItems, upsertItem, deleteItem } from './src/db.js';
-import { validateFCGUrl, scrapeFCG } from './src/fcg-scraper.js';
+import { runMigrations, getItems, getSrdItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone } from './src/db.js';
+import { searchFCG } from './src/fcg-search.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -46,21 +47,27 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-// --- FreshCutGrass.app scrape route ---
-
-app.get('/api/fetch-fcg', requireAuth, async (req, res) => {
-  const { url } = req.query;
-  if (!url || !validateFCGUrl(url)) {
-    return res.status(400).json({ error: 'Invalid URL. Must be a freshcutgrass.app URL.' });
-  }
-  try {
-    const result = await scrapeFCG(url);
-    res.json(result);
-  } catch (err) {
-    console.error('FCG scrape error:', err);
-    res.status(500).json({ error: `Failed to fetch from FreshCutGrass.app: ${err.message}` });
-  }
+// --- Dev live reload (SSE) ---
+const liveReloadClients = new Set();
+app.get('/livereload', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write('data: connected\n\n');
+  liveReloadClients.add(res);
+  req.on('close', () => liveReloadClients.delete(res));
 });
+let reloadTimer = null;
+const broadcastReload = () => {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => {
+    for (const client of liveReloadClients) client.write('data: reload\n\n');
+  }, 150);
+};
+// Poll the two build output files; fires only when mtime changes (actual write), not on reads
+watchFile('./public/app.js', { interval: 200 }, broadcastReload);
+watchFile('./public/styles.css', { interval: 200 }, broadcastReload);
 
 // --- Rolz session management ---
 
@@ -166,9 +173,6 @@ app.get('/api/data', requireAuth, async (req, res) => {
       srdCollections.forEach((col, i) => {
         data[col] = [...data[col], ...srdResults[i]];
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3a11cc'},body:JSON.stringify({sessionId:'3a11cc',location:'server.js:/api/data',message:'After SRD merge',data:{adversaryCount:data.adversaries.length,environmentCount:data.environments.length,ownAdversaries:data.adversaries.filter(a=>a._source==='own').length,srdAdversaries:data.adversaries.filter(a=>a._source==='srd').length},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
     }
 
     if (includePublic) {
@@ -184,6 +188,360 @@ app.get('/api/data', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('GET /api/data error:', err);
     res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
+// --- FCG search route (Feature Library independent toggle) ---
+
+app.get('/api/fcg-search', requireAuth, async (req, res) => {
+  const { search, tier } = req.query;
+  try {
+    const result = await searchFCG({
+      search: search || '',
+      tier: tier ? parseInt(tier, 10) : undefined,
+    });
+    res.json({ adversaries: result.adversaries, environments: result.environments });
+  } catch (err) {
+    console.error('GET /api/fcg-search error:', err);
+    res.status(500).json({ error: `FCG search failed: ${err.message}` });
+  }
+});
+
+// --- Per-collection paginated route ---
+
+const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'groups', 'scenes', 'adventures'];
+
+/**
+ * Fetch a page of DB items.
+ * Tier 1: own items (sorted by popularity desc).
+ * Tier 2: community items — SRD + public + mirrors — sorted by popularity desc.
+ * Returns { items, ownCount, communityCount, dbCount }
+ */
+async function fetchDbPage(appId, uid, collection, { includeMine = true, includeSrd, includePublic, includeMirrors = true, search, tier, typeField, typeValue, offset, limit }) {
+  const opts = { search, tier, typeField, typeValue };
+  const hasCommunity = includeSrd || includePublic || includeMirrors;
+
+  const [ownCount, communityCount] = await Promise.all([
+    includeMine ? countItems(appId, uid, collection, opts) : Promise.resolve(0),
+    hasCommunity
+      ? countCommunityItems(appId, collection, {
+          excludeUserId: uid,
+          includeSrd: Boolean(includeSrd),
+          includePublic: Boolean(includePublic),
+          includeMirrors: Boolean(includeMirrors),
+          ...opts,
+        })
+      : Promise.resolve(0),
+  ]);
+  const dbCount = ownCount + communityCount;
+
+  const items = [];
+  let remaining = limit;
+  let pos = offset;
+
+  // Own items span [0, ownCount)
+  if (includeMine && remaining > 0 && pos < ownCount) {
+    const slice = await getItemsPaginated(appId, uid, collection, { ...opts, offset: pos, limit: remaining });
+    items.push(...slice);
+    remaining -= slice.length;
+    pos += slice.length;
+  }
+  pos = Math.max(pos, ownCount);
+
+  // Community items span [ownCount, dbCount)
+  if (hasCommunity && remaining > 0 && pos < dbCount) {
+    const communityOffset = pos - ownCount;
+    const slice = await getCommunityItemsPaginated(appId, collection, {
+      excludeUserId: uid,
+      includeSrd: Boolean(includeSrd),
+      includePublic: Boolean(includePublic),
+      includeMirrors: Boolean(includeMirrors),
+      ...opts,
+      offset: communityOffset,
+      limit: remaining,
+    });
+    items.push(...slice);
+  }
+
+  return { items, ownCount, communityCount, dbCount };
+}
+
+app.get('/api/data/:collection', requireAuth, async (req, res) => {
+  const { collection } = req.params;
+
+  // table_state: return the single record without pagination
+  if (collection === 'table_state') {
+    try {
+      const rows = await getItems(APP_ID, req.uid, 'table_state');
+      return res.json({ items: rows.map(r => ({ ...r, _source: 'own' })), totalCount: rows.length, dbCount: rows.length });
+    } catch (err) {
+      console.error('GET /api/data/table_state error:', err);
+      return res.status(500).json({ error: 'Failed to fetch table_state' });
+    }
+  }
+
+  if (!PAGINATED_COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection' });
+  }
+
+  const includeMine = req.query.includeMine !== '0';
+  const includeSrd = req.query.includeSrd === '1';
+  const includePublic = req.query.includePublic === '1';
+  const includeFcg = req.query.includeFcg === '1';
+  const search = req.query.search || '';
+  const tier = req.query.tier || null;
+  const typeValue = req.query.type || null;
+  const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const isFcgCollection = collection === 'adversaries' || collection === 'environments';
+  // Always include mirrors in community so previously-played external items surface locally
+  const includeMirrors = isFcgCollection;
+
+  try {
+    const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
+      includeMine, includeSrd, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
+    });
+
+    // Attach computed popularity to all DB items
+    const dbItemsWithPopularity = dbItems.map(item => ({
+      ...item,
+      popularity: (item.clone_count || 0) + (item.play_count || 0),
+    }));
+
+    let fcgItems = [];
+    let fcgTotal = 0;
+    let fcgNextOffset = null; // FCG-space cursor after this page (for needsEnvSubtraction pages)
+
+    if (includeFcg && isFcgCollection) {
+      const fcgOffset = Math.max(0, offset - dbCount);
+      const fcgLimit = limit - dbItemsWithPopularity.length;
+      const fcgTier = tier ? Number(tier) : undefined;
+
+      // Build FCG-native role/category params (single values — always exact counts)
+      let fcgRole;
+      let fcgCategory;
+      if (collection === 'environments') {
+        fcgCategory = 'Environments';
+        if (typeValue) {
+          fcgRole = 'Environment' + typeValue.charAt(0).toUpperCase() + typeValue.slice(1);
+        }
+      } else if (collection === 'adversaries' && typeValue) {
+        fcgRole = typeValue.charAt(0).toUpperCase() + typeValue.slice(1);
+      }
+
+      // For adversaries without a role filter, subtract the environment count for accuracy
+      const needsEnvSubtraction = collection === 'adversaries' && !fcgRole;
+
+      // Mirror IDs are already shown as community DB results — exclude from FCG live results
+      const filterOpts = { search, tier, typeField, typeValue };
+      const mirrorIdSet = new Set(await getMirrorIds(APP_ID, collection, filterOpts));
+      const mirrorCount = mirrorIdSet.size;
+
+      if (needsEnvSubtraction) {
+        // FCG mixes adversaries and environments in the same result set. Probe totals first
+        // (in parallel) so we can inflate the request limit and scale the offset proportionally,
+        // ensuring each page fills with adversaries and pages don't overlap.
+        const [allProbe, envProbe] = await Promise.all([
+          searchFCG({ search, tier: fcgTier, collection, limit: 1, offset: 0 }),
+          searchFCG({ search, tier: fcgTier, category: 'Environments', limit: 1, offset: 0 }),
+        ]);
+        const allTotal = allProbe.fcgTotal;
+        const envTotal = envProbe.fcgTotal;
+        const advTotal = Math.max(0, allTotal - envTotal);
+        const advRatio = advTotal / Math.max(1, allTotal);
+        fcgTotal = Math.max(0, advTotal - mirrorCount);
+
+        if (fcgLimit > 0) {
+          // Use fcgOffset directly as adjOffset — the client advances the offset by nextOffset
+          // (returned below) so each page starts exactly where the previous one ended.
+          // adjLimit inflates the request to compensate for environments that will be filtered out.
+          const adjLimit = Math.min(Math.ceil(fcgLimit / Math.max(0.01, advRatio)), 100);
+          const adjOffset = fcgOffset;
+          const fcgResult = await searchFCG({ search, tier: fcgTier, role: fcgRole, category: fcgCategory, collection, limit: adjLimit, offset: adjOffset });
+          fcgItems = fcgResult[collection].filter(item => !mirrorIdSet.has(item.id)).slice(0, fcgLimit);
+          fcgNextOffset = fcgOffset + adjLimit; // FCG cursor position for the next page
+        }
+      } else if (fcgLimit > 0) {
+        const fcgResult = await searchFCG({ search, tier: fcgTier, role: fcgRole, category: fcgCategory, collection, limit: fcgLimit, offset: fcgOffset });
+        fcgItems = fcgResult[collection].filter(item => !mirrorIdSet.has(item.id));
+        fcgTotal = Math.max(0, fcgResult.fcgTotal - mirrorCount);
+      } else {
+        // Page is full of DB items — probe FCG total with LIMIT 1 so totalCount includes
+        // FCG pages, making them reachable via pagination.
+        const fcgProbe = await searchFCG({ search, tier: fcgTier, role: fcgRole, category: fcgCategory, collection, limit: 1, offset: 0 });
+        fcgTotal = Math.max(0, fcgProbe.fcgTotal - mirrorCount);
+      }
+
+      fcgTotal = Math.max(0, fcgTotal);
+    }
+
+    const allItems = [...dbItemsWithPopularity, ...fcgItems];
+    // nextOffset tells the client where to start the next page so FCG pages are non-overlapping.
+    // For needsEnvSubtraction pages: advance past all FCG items consumed (including filtered envs).
+    // For all other pages: simple offset + actual items returned.
+    const nextOffset = fcgNextOffset !== null
+      ? dbCount + fcgNextOffset
+      : offset + allItems.length;
+
+    res.json({
+      items: allItems,
+      totalCount: dbCount + fcgTotal,
+      dbCount,
+      nextOffset,
+    });
+  } catch (err) {
+    console.error(`GET /api/data/${collection} error:`, err);
+    res.status(500).json({ error: 'Failed to fetch collection' });
+  }
+});
+
+// --- Batch resolve route (for scene/group expansion) ---
+
+/**
+ * Adopt a single adversary/environment item into the current user's library.
+ * Finds an existing auto-clone or creates one, increments popularity counts on the source.
+ * Returns the user's owned clone (or the item itself if already owned).
+ */
+async function adoptItem(appId, uid, collection, item) {
+  if (item._source === 'own') {
+    await incrementPlayCount(appId, collection, item.id);
+    return item;
+  }
+
+  const sourceId = item.id;
+  const isExternal = !['srd', 'public'].includes(item._source);
+
+  let clone = await findAutoClone(appId, uid, collection, sourceId);
+  const isNewClone = !clone;
+
+  if (!clone) {
+    const { _source: _s, _owner: _o, id: _id, is_public: _ip, clone_count: _cc, play_count: _pc, ...rest } = item;
+    const newId = crypto.randomUUID();
+    const cloneData = { ...rest, _clonedFrom: sourceId };
+    await upsertItem(appId, uid, collection, newId, cloneData, false);
+    clone = { id: newId, ...cloneData, is_public: false, clone_count: 0, play_count: 0, popularity: 0, _source: 'own' };
+  }
+
+  if (isExternal) {
+    const { _source: _s, _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = item;
+    await upsertMirror(appId, collection, sourceId, mirrorData, {
+      cloneDelta: isNewClone ? 1 : 0,
+      playDelta: 1,
+    });
+  } else {
+    if (isNewClone) await incrementCloneCount(appId, collection, sourceId);
+    await incrementPlayCount(appId, collection, sourceId);
+  }
+
+  return clone;
+}
+
+app.post('/api/data/resolve', requireAuth, async (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ error: 'Invalid body' });
+  }
+  const adopt = Boolean(body.adopt);
+  try {
+    const resolveCollection = async (col, ids) => {
+      if (!ids || ids.length === 0) return [];
+      return getItemsByIds(APP_ID, col, ids);
+    };
+
+    const [adversaries, environments, groups, scenes] = await Promise.all([
+      resolveCollection('adversaries', body.adversaries || []),
+      resolveCollection('environments', body.environments || []),
+      resolveCollection('groups', body.groups || []),
+      resolveCollection('scenes', body.scenes || []),
+    ]);
+
+    if (adopt) {
+      const [adoptedAdvs, adoptedEnvs] = await Promise.all([
+        Promise.all(adversaries.map(item => adoptItem(APP_ID, req.uid, 'adversaries', item))),
+        Promise.all(environments.map(item => adoptItem(APP_ID, req.uid, 'environments', item))),
+      ]);
+      return res.json({ adversaries: adoptedAdvs, environments: adoptedEnvs, groups, scenes });
+    }
+
+    res.json({ adversaries, environments, groups, scenes });
+  } catch (err) {
+    console.error('POST /api/data/resolve error:', err);
+    res.status(500).json({ error: 'Failed to resolve items' });
+  }
+});
+
+// --- Clone endpoint (explicit clone + auto-clone-on-play) ---
+
+const CLONE_COLLECTIONS = ['adversaries', 'environments'];
+
+app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
+  const { collection } = req.params;
+  if (!CLONE_COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection for clone' });
+  }
+  const { source, play = false } = req.body;
+  if (!source || typeof source !== 'object') {
+    return res.status(400).json({ error: 'Invalid source item' });
+  }
+
+  const sourceId = source.id;
+  const isExternal = source._source && !['own', 'srd', 'public'].includes(source._source);
+
+  try {
+    let clone = null;
+    let isNewClone = true;
+
+    if (play) {
+      // Reuse existing auto-clone if present
+      clone = await findAutoClone(APP_ID, req.uid, collection, sourceId);
+      if (clone) isNewClone = false;
+    }
+
+    if (!clone) {
+      const { _source: _s, _owner: _o, id: _id, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = source;
+      const newId = crypto.randomUUID();
+      const cloneData = { ...rest, _clonedFrom: sourceId };
+      await upsertItem(APP_ID, req.uid, collection, newId, cloneData, false);
+      clone = { id: newId, ...cloneData, is_public: false, clone_count: 0, play_count: 0, popularity: 0, _source: 'own' };
+    }
+
+    // Increment counts on source
+    if (isExternal) {
+      const { _source: _s, _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = source;
+      await upsertMirror(APP_ID, collection, sourceId, mirrorData, {
+        cloneDelta: isNewClone ? 1 : 0,
+        playDelta: play ? 1 : 0,
+      });
+    } else if (source._source !== 'own') {
+      if (isNewClone) await incrementCloneCount(APP_ID, collection, sourceId);
+      if (play) await incrementPlayCount(APP_ID, collection, sourceId);
+    }
+
+    res.json({ item: clone });
+  } catch (err) {
+    console.error(`POST /api/data/${collection}/clone error:`, err);
+    res.status(500).json({ error: 'Failed to clone item' });
+  }
+});
+
+// --- Play endpoint (own items added to GM Table) ---
+
+app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
+  const { collection } = req.params;
+  if (!CLONE_COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection for play' });
+  }
+  const { itemId } = req.body;
+  if (!itemId) {
+    return res.status(400).json({ error: 'itemId is required' });
+  }
+  try {
+    await incrementPlayCount(APP_ID, collection, itemId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`POST /api/data/${collection}/play error:`, err);
+    res.status(500).json({ error: 'Failed to record play' });
   }
 });
 

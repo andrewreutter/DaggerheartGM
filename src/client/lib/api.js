@@ -26,13 +26,107 @@ export const getAuthToken = async () => {
   return currentUser.getIdToken();
 };
 
-export const loadData = async (currentUser, { includeSrd = false, includePublic = false } = {}) => {
-  const token = await currentUser.getIdToken();
-  const params = new URLSearchParams();
+/**
+ * Load a paginated page of items for a single collection.
+ * Returns { items, totalCount, dbCount }
+ */
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeFcg = false, search = '', tier = null, type = null, offset = 0, limit = 20 } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (!includeMine) params.set('includeMine', '0');
   if (includeSrd) params.set('includeSrd', '1');
   if (includePublic) params.set('includePublic', '1');
-  const query = params.toString() ? `?${params}` : '';
-  const res = await fetch(`/api/data${query}`, {
+  if (includeFcg) params.set('includeFcg', '1');
+  if (search) params.set('search', search);
+  if (tier != null) params.set('tier', String(tier));
+  if (type) params.set('type', type);
+  const res = await fetch(`/api/data/${collection}?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Load the table_state collection (single record, no pagination).
+ */
+export const loadTableState = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/data/table_state', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.items || [];
+};
+
+/**
+ * Resolve items by IDs across collections (for scene/group expansion).
+ * Pass adopt: true to auto-clone any non-own adversaries/environments into the user's library
+ * and increment popularity counts on their sources.
+ * @param {{ adversaries?, environments?, groups?, scenes? }} idMap
+ * @param {{ adopt?: boolean }} opts
+ * @returns {{ adversaries, environments, groups, scenes }}
+ */
+export const resolveItems = async (idMap, { adopt = false } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/data/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ...idMap, adopt }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Clone an item into the user's library.
+ * play=false: always create a new copy (explicit Clone button).
+ * play=true: find-or-reuse an existing auto-clone (Add to Table on non-own item).
+ * Returns the user's owned clone.
+ */
+export const cloneItemToLibrary = async (collectionName, source, { play = false } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/data/${collectionName}/clone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ source, play }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.item;
+};
+
+/**
+ * Record a play of an own item (adds it to the GM Table).
+ * Increments play_count on the item.
+ */
+export const recordPlay = async (collectionName, itemId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  const res = await fetch(`/api/data/${collectionName}/play`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ itemId }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+};
+
+/**
+ * Search FCG for items (used by Feature Library independent toggle).
+ * @returns {{ adversaries, environments }}
+ */
+export const loadFcgSearch = async ({ search = '', tier } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (tier) params.set('tier', String(tier));
+  const res = await fetch(`/api/fcg-search?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -87,19 +181,6 @@ export const postRolzRoll = async (room, text, rolzUsername, rolzPassword, from 
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ room, text, from, rolzUsername, rolzPassword }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-};
-
-export const fetchFCG = async (url) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const res = await fetch(`/api/fetch-fcg?url=${encodeURIComponent(url)}`, {
-    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

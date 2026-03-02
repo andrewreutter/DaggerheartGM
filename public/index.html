@@ -31,5 +31,16 @@
   <div id="root"></div>
 
   <script type="module" src="/app.js"></script>
+  <script>
+    (function() {
+      var src = new EventSource('/livereload');
+      var wasConnected = false;
+      src.onopen = function() { if (wasConnected) location.reload(); };
+      src.onmessage = function(e) {
+        wasConnected = true;
+        if (e.data === 'reload') location.reload();
+      };
+    })();
+  </script>
 </body>
 </html>
