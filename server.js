@@ -51,7 +51,7 @@ app.get('/api/config', (req, res) => {
 app.get('/api/fetch-fcg', requireAuth, async (req, res) => {
   const { url } = req.query;
   if (!url || !validateFCGUrl(url)) {
-    return res.status(400).json({ error: 'Invalid URL. Must be https://freshcutgrass.app/homebrew/<username>' });
+    return res.status(400).json({ error: 'Invalid URL. Must be a freshcutgrass.app URL.' });
   }
   try {
     const result = await scrapeFCG(url);

@@ -1,15 +1,11 @@
 import puppeteer from 'puppeteer';
 
 const FCG_ORIGIN = 'https://freshcutgrass.app';
-const ALLOWED_PATH_PREFIX = '/homebrew/';
 
 export function validateFCGUrl(url) {
   try {
     const parsed = new URL(url);
-    if (parsed.origin !== FCG_ORIGIN) return false;
-    if (!parsed.pathname.startsWith(ALLOWED_PATH_PREFIX)) return false;
-    const username = parsed.pathname.slice(ALLOWED_PATH_PREFIX.length).split('/')[0];
-    return username.length > 0;
+    return parsed.origin === FCG_ORIGIN;
   } catch {
     return false;
   }
