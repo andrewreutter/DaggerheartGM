@@ -7,7 +7,7 @@ import { FeaturesInput } from './FeaturesInput.jsx';
 
 export function AdversaryForm({ initial, onSave, onCancel }) {
   const [formData, setFormData] = useState({
-    name: initial?.name || '', tier: initial?.tier || 1, role: initial?.role || 'bruiser',
+    name: initial?.name || '', tier: initial?.tier || 1, role: initial?.role || 'standard',
     motive: initial?.motive || '', description: initial?.description || '',
     imageUrl: initial?.imageUrl || '',
     difficulty: initial?.difficulty || 10, hp_max: initial?.hp_max || 6,
@@ -24,7 +24,7 @@ export function AdversaryForm({ initial, onSave, onCancel }) {
         <FormRow label="Name"><input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white" /></FormRow>
         <FormRow label="Role">
           <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white">
-            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
           </select>
         </FormRow>
       </div>

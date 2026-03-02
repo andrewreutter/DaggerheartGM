@@ -1,4 +1,4 @@
-export const ROLES = ['bruiser', 'skirmisher', 'minion', 'leader', 'artillery', 'horde', 'solo'];
+export const ROLES = ['minion', 'social', 'support', 'horde', 'ranged', 'skulk', 'standard', 'leader', 'bruiser'];
 export const ENV_TYPES = ['traversal', 'exploration', 'social', 'event'];
 export const FEATURE_TYPES = ['action', 'reaction', 'passive'];
 export const TIERS = [1, 2, 3, 4];

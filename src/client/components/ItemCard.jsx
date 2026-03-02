@@ -69,7 +69,7 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
             )}
           </div>
         </div>
-        <div className="text-sm text-slate-400 flex-1">
+        <div className="text-sm text-slate-400 flex-1 capitalize">
           {tab === 'adversaries' && `Tier ${item.tier || 0} ${item.role}`}
           {tab === 'environments' && `Tier ${item.tier || 0} ${item.type}`}
           {tab === 'groups' && (

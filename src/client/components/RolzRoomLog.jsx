@@ -64,7 +64,10 @@ function CompoundRoll({ subItems }) {
     <span>
       {subItems.map((sub, i) => (
         <span key={i}>
-          {sub.pre && <span className="text-slate-300">{sub.pre}</span>}
+          {sub.pre
+            ? <span className="text-slate-300">{sub.pre}</span>
+            : (i > 0 && sub.input ? ' ' : null)
+          }
           {sub.input && (
             <>
               <span className="text-yellow-400 font-bold">[</span>
