@@ -18,6 +18,32 @@ const USER_MOD_OPTIONS = [
   { key: 'moreDangerous',     label: 'More dangerous / longer fight',   value: +2 },
 ];
 
+// Strip boundaries (1-indexed in the spec, 0-indexed here):
+// Amber (Failure w/ Hope): items 1–6, Violet (Success w/ Fear): items 6–13,
+// Navy (Failure w/ Fear): items 12–16. Ranges overlap intentionally.
+const HOPE_END = 6;
+const FEAR_SUCCESS_START = 5;
+const FEAR_SUCCESS_END = 13;
+const FEAR_FAILURE_START = 11;
+const DEFAULT_GM_MOVES = [
+  { name: 'Show how the world reacts.', example: '\u201cThe kick shatters the door. Light spills in from the barracks as a half-dozen sleepy soldiers stumble to their feet, looking worried.\u201d' },
+  { name: 'Ask a question and build on the answer.', example: '\u201cHow is it that you notice the assassin lurking in the treetops?\u201d' },
+  { name: 'Make an NPC act in accordance with their motive.', example: '\u201cThe Jagged Knife Bandit snips the gold purse off the merchant\u2019s hip and attempts to escape.\u201d' },
+  { name: 'Lean on the character\u2019s goals to drive them to action.', example: '\u201cThe relic you\u2019ve been trying to recover for your people floats ominously in the center of the altar, surrounded by cultists preparing to drain its power.\u201d' },
+  { name: 'Signal an imminent off-screen threat.', example: '\u201cYou hear the crashing of falling trees and shattered branches as thundering steps approach. What do you do?\u201d' },
+  { name: 'Reveal an unwelcome truth or unexpected danger.', example: '\u201cHe reaches into his cloak and produces the Orb of Vengeance as you realize that he was the necromancer the entire time.\u201d' },
+  { name: 'Force the group to split up.', example: '\u201cThe elementals are scattering\u2014two heading for the town, three bearing down on the mill. What do you do?\u201d' },
+  { name: 'Make a PC mark Stress as a consequence for their actions.', example: '\u201cYou can pull the baron to safety if you mark a Stress. Otherwise you can only get yourself out of the way. What do you do?\u201d' },
+  { name: 'Make a move the characters don\u2019t see.', example: '\u201cYou brace for the alarm\u2026 but the door clicks open and everything seems fine\u2026 for now.\u201d' },
+  { name: 'Show the collateral damage.', example: '\u201cThe Minotaur Wrecker barrels into the street, shattering a vegetable cart, sending cabbages flying and knocking the merchant into the wall.\u201d' },
+  { name: 'Clear a temporary condition or effect.', example: '\u201cThe guard cuts through the vines that are holding her legs in place. She looks around to find her next target and raises her sword.\u201d' },
+  { name: 'Shift the environment.', example: '\u201cAs soon as you cross, the ancient rope bridge snaps, leaving you stranded.\u201d' },
+  { name: 'Spotlight an adversary.', example: '\u201cAs the Skeleton Dredge shambles forward to strike you, you see the two others on their flank turn their attention toward you as well.\u201d' },
+  { name: 'Capture someone or something important.', example: '\u201cThe thief slides past you and jumps into the cart, grabbing the idol from the seat and stuffing it into their pouch.\u201d' },
+  { name: 'Use a PC\u2019s backstory against them.', example: '\u201cYour mentor sighs, drawing their blade. \u2018I wish it didn\u2019t come to this, child. But you still don\u2019t understand what sacrifices are required to maintain the peace.\u2019\u201d' },
+  { name: 'Take away an opportunity permanently.', example: '\u201cThe door slams shut, cutting you off from the vault as the temple continues to collapse. You\u2019ll need to find another exit if you want to make it out alive.\u201d' },
+];
+
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
 
@@ -253,6 +279,8 @@ function getItemData(element) {
 
 export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
+  const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
+  const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
@@ -597,6 +625,58 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               No active elements.<br />Add adversaries, environments, or scenes to populate the table.
             </div>
           )}
+
+          {/* Default GM Moves — always shown */}
+          <div>
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">Defaults</h3>
+            <div className="flex">
+              {/* Three color strips indicating which dice results use each move */}
+              <div
+                className="relative w-4 shrink-0 mr-2 cursor-default"
+                onMouseEnter={() => setShowStripLegend(true)}
+                onMouseLeave={() => setShowStripLegend(false)}
+              >
+                <div className="absolute left-0 w-1 rounded-full bg-amber-500/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                <div className="absolute left-[5px] w-1 rounded-full bg-violet-400/80" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                <div className="absolute left-[10px] w-1 rounded-full bg-blue-900" style={{ top: `${(FEAR_FAILURE_START / DEFAULT_GM_MOVES.length) * 100}%`, bottom: 0 }} />
+                {showStripLegend && (
+                  <div className="absolute left-6 top-0 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-3 w-48 pointer-events-none">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">When to use</p>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-sm bg-amber-500 shrink-0" />
+                        <span className="text-xs text-slate-300">Failure with Hope</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-sm bg-violet-400 shrink-0" />
+                        <span className="text-xs text-slate-300">Success with Fear</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-sm bg-blue-900 shrink-0" />
+                        <span className="text-xs text-slate-300">Failure with Fear</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Move cards */}
+              <div className="flex-1 space-y-1.5">
+                {DEFAULT_GM_MOVES.map((move, idx) => (
+                  <div
+                    key={idx}
+                    onMouseEnter={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setHoveredDefaultMove({ ...move, top: rect.top, bottom: rect.bottom });
+                    }}
+                    onMouseLeave={() => setHoveredDefaultMove(null)}
+                    className="w-full text-left bg-slate-800/30 hover:bg-slate-800 px-3 py-2 rounded border border-slate-700/50 hover:border-r-yellow-500 transition-all cursor-default"
+                  >
+                    <span className="font-medium text-slate-300 text-sm">{move.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -941,6 +1021,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         }}
         onClose={() => setEditState(null)}
       />
+    )}
+
+    {/* Hover overlay for default GM Moves — shown regardless of tab */}
+    {hoveredDefaultMove && (
+      <div
+        className="fixed z-50 pointer-events-none"
+        style={{ left: 'calc(20rem + 12px)', top: (hoveredDefaultMove.top + hoveredDefaultMove.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
+      >
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
+          <p className="text-sm text-slate-300 italic leading-relaxed">{hoveredDefaultMove.example}</p>
+        </div>
+      </div>
     )}
 
     {/* Hover overlay: shown when Behind the Screen is hidden and an GM Moves item is hovered */}
