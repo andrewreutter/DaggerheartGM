@@ -134,7 +134,7 @@ Nested scene chips display in **blue** on `ItemCard` in the Scenes library tab.
 
 ### Image Import
 
-The **"Import"** button in the Library header opens an `ImageImportModal` for importing adversaries and environments directly from stat block images or pasted text.
+The **"Import"** button in the Library header opens an `ImageImportModal` — a single-page import flow for stat block images or pasted text.
 
 **Three input methods** are supported:
 - **Drag and drop** — drop image files onto the drop zone
@@ -143,11 +143,11 @@ The **"Import"** button in the Library header opens an `ImageImportModal` for im
 
 **Optional text input** — paste one or more stat blocks as plain text (separate multiple blocks with blank lines).
 
-**How it works**: images are sent to `POST /api/import/parse` (multipart), where the server runs Tesseract.js OCR on each buffer via `ocrBuffer()`, then calls `detectCollection()` to auto-detect whether each stat block is an adversary or environment using keyword heuristics (HP/Attack/Thresholds → adversary; Impulses/Potential Adversaries → environment) with confidence-score fallback. No LLM is used.
+**Auto-parse**: images are parsed automatically as they're added or removed (debounced 600ms). Each image thumbnail has a role toggle — **"Stat block"** (default, sent to `POST /api/import/parse` for OCR + regex detection) or **"Scene img"** (excluded from parsing, used as scene artwork). Toggling an image to "Scene img" automatically enables the Scene builder. The server runs Tesseract.js OCR on each buffer via `ocrBuffer()`, then calls `detectCollection()` to auto-detect adversary vs environment using keyword heuristics. No LLM is used.
 
-**Preview step**: each parsed item is shown in a collapsible card. A confidence badge (%) indicates parse quality. An `⇄` button lets you override the auto-detected type if needed. All cards are editable inline via `AdversaryForm` / `EnvironmentForm` before importing. Duplicate detection warns when an item's name matches an existing library entry, with "Add as new" / "Replace existing" choice.
+**Inline preview**: parsed items appear below the input area in collapsible cards. A confidence badge (%) indicates parse quality. An `⇄` button lets you override the auto-detected type. All cards are editable inline via `AdversaryForm` / `EnvironmentForm` before importing. Duplicate detection warns when an item's name matches an existing library entry, with "Add as new" / "Replace existing" choice.
 
-**Success step**: lists all imported items with links to open each one in the library.
+**Scene builder**: a "Create a Scene" checkbox at the bottom of the modal assembles a scene from imported items. Parsed adversaries/environments are saved first, then a scene is created with references to them. Images marked as "Scene img" become the scene's `imageUrl` (converted to data URL). The import button reflects what will be created (e.g. "Import Scene + 3 Items").
 
 ### Markdown Support
 

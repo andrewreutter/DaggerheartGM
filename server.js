@@ -908,7 +908,7 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
     const availableArtwork = [...pureArtworkUrls, ...allCroppedArtwork];
     let artworkIdx = 0;
 
-    for (const { text } of ocrResults) {
+    for (const { text, fileIndex } of ocrResults) {
       const detected = detectCollection(text);
       const { collection, item, confidence, missing } = detected;
 
@@ -923,7 +923,7 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
         item._additionalImages = additional;
       }
 
-      results.push({ collection, item, confidence, missing, artworkUrl });
+      results.push({ collection, item, confidence, missing, artworkUrl, sourceIndex: fileIndex });
     }
 
     // Phase 3: Parse optional pasted text blocks
@@ -932,7 +932,7 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
       for (const block of blocks) {
         const detected = detectCollection(block);
         const { collection, item, confidence, missing } = detected;
-        results.push({ collection, item, confidence, missing, artworkUrl: null });
+        results.push({ collection, item, confidence, missing, artworkUrl: null, sourceIndex: -1 });
       }
     }
 
