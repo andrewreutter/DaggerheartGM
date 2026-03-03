@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { loadCollection } from './api.js';
 
-const DEFAULT_FILTERS = { include: null, tier: null, type: null, search: '' };
+const DEFAULT_FILTERS = { include: 'own', tier: null, type: null, search: '' };
 
 function loadPersistedFilters(persistKey, collection) {
   if (!persistKey) return { ...DEFAULT_FILTERS };

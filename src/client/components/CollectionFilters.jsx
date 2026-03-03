@@ -2,8 +2,8 @@ import { Search } from 'lucide-react';
 import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
 
 const SOURCE_OPTIONS = [
-  { val: null,      label: 'All' },
   { val: 'own',     label: 'Mine' },
+  { val: null,      label: 'All' },
   { val: 'srd',     label: 'SRD' },
   { val: 'public',  label: 'Public' },
   { val: 'hod',     label: 'HoD' },
