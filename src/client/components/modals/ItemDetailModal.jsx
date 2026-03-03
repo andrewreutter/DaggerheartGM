@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Undo2, Redo2, Trash2, BookCopy, Copy } from 'lucide-react';
+import { X, Undo2, Redo2, Trash2, BookCopy, Copy, Sparkles, ExternalLink } from 'lucide-react';
 import { generateRolzExport } from '../../lib/rolz-export.js';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
@@ -8,7 +8,7 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
 import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { ExpandedTablePreview } from '../ItemDetailView.jsx';
-import { SOURCE_BADGE, isOwnItem } from '../../lib/constants.js';
+import { SOURCE_BADGE, isOwnItem, needsRedditParse } from '../../lib/constants.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -26,7 +26,7 @@ const COLLECTION_LABELS = {
  * Non-editable items (SRD/public/FCG) show only the display pane with Clone/Copy Rolz actions.
  *
  * Auto-saves on every change (debounced 800ms). Provides infinite undo/redo within the session.
- * Keyboard: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo, Escape = close.
+ * Keyboard: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo, Escape = close lightbox (if open) or close modal.
  *
  * Props:
  *   item          – item to view/edit (pass `{}` for new)
@@ -49,6 +49,7 @@ export function ItemDetailModal({
   onSaveElement,
   onDelete,
   onClone,
+  onParseReddit,
   onClose,
 }) {
   const isNew = !item?.id;
@@ -57,6 +58,7 @@ export function ItemDetailModal({
   const [libraryPortal, setLibraryPortal] = useState(null);
   const [copied, setCopied] = useState(false);
   const [cloningStatus, setCloningStatus] = useState('');
+  const [lightboxUrl, setLightboxUrl] = useState(null);
   const overlayRef = useRef(null);
 
   // Build a stable initial value for useAutoSaveUndo.
@@ -88,11 +90,11 @@ export function ItemDetailModal({
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (mod && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
-      else if (e.key === 'Escape') { onClose(); }
+      else if (e.key === 'Escape') { if (lightboxUrl) { setLightboxUrl(null); } else { onClose(); } }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [undo, redo, onClose]);
+  }, [undo, redo, onClose, lightboxUrl, setLightboxUrl]);
 
   const handleCopyRolz = async () => {
     try {
@@ -162,10 +164,117 @@ export function ItemDetailModal({
           )}
         </div>
 
-        {enriching && (
+        {enriching && item?._source === 'reddit' ? (
+          <div className="mb-3">
+            <div className="px-3 py-2 rounded-lg bg-orange-950/40 border border-orange-800/50 mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full border-2 border-orange-400 border-t-transparent animate-spin shrink-0" />
+                <span className="text-sm text-orange-300">Parsing post with AI…</span>
+              </div>
+              {item._redditAuthor && (
+                <p className="text-xs text-slate-500 mt-1">by u/{item._redditAuthor} · r/{item._redditSubreddit}</p>
+              )}
+            </div>
+            {item._redditSelftext && (
+              <p className="text-xs text-slate-400 whitespace-pre-wrap leading-relaxed">
+                {item._redditSelftext.slice(0, 1200)}{item._redditSelftext.length > 1200 ? '…' : ''}
+              </p>
+            )}
+            {(item._redditImages || []).filter(url => url !== item.imageUrl).length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {(item._redditImages || []).filter(url => url !== item.imageUrl).map((url, i) => (
+                  <img
+                    key={i}
+                    src={url}
+                    alt={`Post image ${i + 1}`}
+                    className="max-h-48 rounded border border-slate-700 object-contain opacity-60 cursor-zoom-in"
+                    onClick={() => setLightboxUrl(url)}
+                    onError={e => { e.target.style.display = 'none'; }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ) : enriching ? (
           <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-rose-950/40 border border-rose-800/50">
             <div className="w-3 h-3 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
             <span className="text-sm text-rose-300">Loading full details…</span>
+          </div>
+        ) : null}
+
+        {item?._redditParseError && (
+          <div className="mb-3 px-3 py-2 rounded-lg bg-red-950/40 border border-red-800/50 text-xs text-red-300">
+            Could not parse post: {item._redditParseError}.{' '}
+            {item._redditPermalink && (
+              <a
+                href={`https://reddit.com${item._redditPermalink}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-red-200"
+              >
+                View on Reddit
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Reddit post preview — shown for unparsed stubs that are not currently being parsed */}
+        {needsRedditParse(item) && !enriching && !item?._redditParseError && (
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-3 text-xs text-slate-500">
+              {item._redditAuthor && <span>by u/{item._redditAuthor}</span>}
+              {item._redditSubreddit && <span>· r/{item._redditSubreddit}</span>}
+              {item._redditFlair && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400">{item._redditFlair}</span>
+              )}
+              {item._redditPermalink && (
+                <a
+                  href={`https://reddit.com${item._redditPermalink}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto flex items-center gap-1 text-orange-400 hover:text-orange-300"
+                >
+                  <ExternalLink size={12} /> Reddit
+                </a>
+              )}
+            </div>
+
+            {item._redditSelftext && (
+              <div className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed mb-3 max-h-64 overflow-y-auto pr-1">
+                {item._redditSelftext}
+              </div>
+            )}
+
+            {(() => {
+              const extraImages = (item._redditImages || []).filter(url => url !== item.imageUrl);
+              return extraImages.length > 0 ? (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {extraImages.map((url, i) => (
+                    <img
+                      key={i}
+                      src={url}
+                      alt={`Post image ${i + 1}`}
+                      className="max-h-64 rounded border border-slate-700 object-contain cursor-zoom-in"
+                      onClick={() => setLightboxUrl(url)}
+                      onError={e => { e.target.style.display = 'none'; }}
+                    />
+                  ))}
+                </div>
+              ) : null;
+            })()}
+
+            {!item._redditSelftext && (!item._redditImages || item._redditImages.length === 0) && (
+              <p className="text-sm text-slate-500 italic mb-3">No post text or images available.</p>
+            )}
+
+            {onParseReddit && (
+              <button
+                onClick={onParseReddit}
+                className="px-4 py-2 rounded font-medium flex items-center gap-2 text-sm bg-orange-700 hover:bg-orange-600 text-white transition-colors"
+              >
+                <Sparkles size={14} /> Parse with AI
+              </button>
+            )}
           </div>
         )}
 
@@ -332,6 +441,27 @@ export function ItemDetailModal({
           />
         )}
       </div>
+
+      {/* Lightbox overlay for Reddit images */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="Enlarged image"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

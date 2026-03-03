@@ -9,6 +9,8 @@ import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
 import { EXTERNAL_SOURCES } from './src/external-sources.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
+import { getRedditPost } from './src/reddit-search.js';
+import { parseRedditPost } from './src/llm-parse.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -372,17 +374,27 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       priorSourceTotal += result.totalCount;
     }
 
-    // Substitute HoD stubs with enriched mirror data when available.
-    const hodStubIds = externalItems.filter(i => i._source === 'hod' && (i.features || []).length === 0).map(i => i.id);
+    // Substitute HoD and Reddit stubs with enriched mirror data when available.
+    // HoD stubs are enriched in the background; Reddit stubs are enriched on detail click.
+    // In both cases, if a mirror row exists (from a prior enrichment), use it here so the
+    // grid shows the richer data immediately.
+    const stubIds = externalItems
+      .filter(i =>
+        (i._source === 'hod' && (i.features || []).length === 0) ||
+        (i._source === 'reddit' && (i.features || []).length === 0)
+      )
+      .map(i => i.id);
     let mirrorMap = {};
-    if (hodStubIds.length > 0) {
+    if (stubIds.length > 0) {
       try {
-        const mirrorRows = await getItemsByIds(APP_ID, collection, hodStubIds);
+        const mirrorRows = await getItemsByIds(APP_ID, collection, stubIds);
         for (const row of mirrorRows) {
           const hasFeatures = (row.features || []).length > 0;
-          const isEnrichedAdv = collection === 'adversaries' && typeof row.attack?.damage === 'string';
-          const isEnrichedEnv = collection === 'environments';
-          if (row._source === 'hod' && hasFeatures && (isEnrichedAdv || isEnrichedEnv)) {
+          if (row._source === 'hod') {
+            const isEnrichedAdv = collection === 'adversaries' && typeof row.attack?.damage === 'string';
+            const isEnrichedEnv = collection === 'environments';
+            if (hasFeatures && (isEnrichedAdv || isEnrichedEnv)) mirrorMap[row.id] = row;
+          } else if (row._source === 'reddit' && hasFeatures) {
             mirrorMap[row.id] = row;
           }
         }
@@ -496,6 +508,12 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       );
       const hodExtras = hodFills.filter(Boolean);
 
+      // For Reddit items not in DB: they can only be fully resolved if previously parsed
+      // (mirror row). Stubs without a mirror are returned as-is (empty features) — they
+      // need an explicit click to trigger LLM parsing.
+      // reddit-* IDs not found in dbItems are simply absent from the result; the caller
+      // should have mirrored them via clone/parse before referencing them in scenes.
+
       return [...dbItems, ...srdExtras, ...hodExtras];
     };
 
@@ -551,6 +569,36 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
         effectiveSource = { ...full, _hodLink: source._hodLink || detailUrl };
       } catch (err) {
         console.warn(`[hod] Could not fetch full detail for ${sourceId}, using summary data:`, err.message);
+      }
+    }
+
+    // For Reddit stubs, LLM-parse the post before cloning so the clone has full game data.
+    // Check for a previously parsed mirror first to avoid redundant OpenAI calls.
+    if (source._source === 'reddit' && source._redditPostId && (source.features || []).length === 0) {
+      try {
+        const existingMirrors = await getItemsByIds(APP_ID, collection, [sourceId]);
+        const existingMirror = existingMirrors.find(r => r.id === sourceId && (r.features || []).length > 0);
+        if (existingMirror) {
+          effectiveSource = existingMirror;
+        } else {
+          const postDetail = await getRedditPost(source._redditPostId);
+          const { item: parsed, artworkUrl } = await parseRedditPost({
+            title: source.name || postDetail._redditTitle || '',
+            text: postDetail._redditSelftext,
+            imageUrls: postDetail._redditImages,
+            collection,
+          });
+          effectiveSource = {
+            ...source,
+            ...parsed,
+            id: sourceId,
+            imageUrl: artworkUrl || source.imageUrl || '',
+            _redditPostId: source._redditPostId,
+            _redditPermalink: source._redditPermalink,
+          };
+        }
+      } catch (err) {
+        console.warn(`[reddit] Could not parse post for ${sourceId}, using stub data:`, err.message);
       }
     }
 
@@ -647,6 +695,72 @@ app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
   fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:response',message:'Enrich response',data:{collection,enrichedCount:Object.keys(enriched).length,enrichedIds:Object.keys(enriched)},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
   // #endregion
   res.json({ enriched });
+});
+
+// --- Reddit LLM parse endpoint ---
+
+app.post('/api/reddit/parse', requireAuth, async (req, res) => {
+  const { collection, redditPostId, name, selftext, images } = req.body || {};
+  if (!collection || !['adversaries', 'environments'].includes(collection)) {
+    return res.status(400).json({ error: 'collection must be adversaries or environments' });
+  }
+  if (!redditPostId) {
+    return res.status(400).json({ error: 'redditPostId is required' });
+  }
+
+  try {
+    // Check if we already have a parsed mirror to avoid redundant LLM calls
+    const itemId = `reddit-${redditPostId}`;
+    const existing = await getItemsByIds(APP_ID, collection, [itemId]);
+    const existingParsed = existing.find(r => r.id === itemId && (r.features || []).length > 0);
+    if (existingParsed) {
+      return res.json({ item: existingParsed, artworkUrl: existingParsed.imageUrl || null });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(503).json({ error: 'OPENAI_API_KEY not configured on this server' });
+    }
+
+    // Fetch full post from Reddit (client may have passed text/images already, but
+    // fetching fresh ensures we have the complete selftext and all gallery images)
+    let postText = selftext || '';
+    let postImages = Array.isArray(images) ? images : [];
+    let postTitle = name || '';
+
+    try {
+      const postDetail = await getRedditPost(redditPostId);
+      postText = postDetail._redditSelftext || postText;
+      postImages = postDetail._redditImages?.length ? postDetail._redditImages : postImages;
+      postTitle = postDetail._redditTitle || postTitle;
+    } catch (fetchErr) {
+      console.warn(`[reddit] Could not fetch post ${redditPostId}, using client-provided data:`, fetchErr.message);
+    }
+
+    const { item: parsed, artworkUrl } = await parseRedditPost({
+      title: postTitle,
+      text: postText,
+      imageUrls: postImages,
+      collection,
+    });
+
+    // Merge parsed data with stub metadata so the item ID is stable
+    const fullItem = {
+      ...parsed,
+      id: itemId,
+      imageUrl: artworkUrl || '',
+      _source: 'reddit',
+      _redditPostId: redditPostId,
+    };
+
+    // Upsert a mirror row so future list fetches show enriched data
+    const { id: _id, _source: _s, _owner: _o, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = fullItem;
+    upsertMirror(APP_ID, collection, itemId, { ...mirrorData, _source: 'reddit' }).catch(() => {});
+
+    res.json({ item: fullItem, artworkUrl });
+  } catch (err) {
+    console.error('POST /api/reddit/parse error:', err);
+    res.status(500).json({ error: err.message || 'Failed to parse Reddit post' });
+  }
 });
 
 app.post('/api/data/:collection/mirror', requireAuth, async (req, res) => {

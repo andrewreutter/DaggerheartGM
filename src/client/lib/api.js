@@ -30,7 +30,7 @@ export const getAuthToken = async () => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, search = '', tier = null, type = null, offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, includeReddit = false, search = '', tier = null, type = null, offset = 0, limit = 20 } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -39,6 +39,7 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (includePublic) params.set('includePublic', '1');
   if (includeHod) params.set('includeHod', '1');
   if (includeFcg) params.set('includeFcg', '1');
+  if (includeReddit) params.set('includeReddit', '1');
   if (search) params.set('search', search);
   if (tier != null) params.set('tier', String(tier));
   if (type) params.set('type', type);
@@ -114,6 +115,36 @@ export const enrichItems = async (collection, items) => {
 export const enrichSingleItem = async (collection, item) => {
   const enriched = await enrichItems(collection, [item]);
   return enriched[item.id] || item;
+};
+
+/**
+ * LLM-parse a Reddit stub into a fully structured adversary or environment.
+ * Calls POST /api/reddit/parse on the server (which fetches the full post and runs GPT-4o).
+ * Returns the parsed item on success, or throws on failure.
+ * @param {string} collection - 'adversaries' | 'environments'
+ * @param {object} item       - Reddit stub item with _redditPostId set
+ * @returns {object} Fully structured item with game data populated
+ */
+export const parseRedditItem = async (collection, item) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/reddit/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      collection,
+      redditPostId: item._redditPostId,
+      name: item.name,
+      selftext: item._redditSelftext,
+      images: item._redditImages,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.item;
 };
 
 /**

@@ -16,6 +16,8 @@ Data loading is **lazy and per-collection**: on sign-in only `table_state` and n
 
 **Fresh Cut Grass integration**: adversaries and environments tabs have an "FCG" source filter that merges results from the FreshCutGrass.app public search API directly into the infinite-scroll list. Played/cloned FCG items are stored as `__MIRROR__` rows in the DB so they surface in local search (with their accumulated popularity) and are deduped from live FCG results. When an FCG item is picked as a scene reference (via `CollectionRefPicker`), a mirror is automatically created so the item can be resolved by ID later. The Feature Library panel (shown when editing adversaries/environments) uses the same source filter — selecting FCG includes live FCG features in the suggestion list. FCG environment `potential_adversaries` is stored as name-only placeholder objects from the FCG `potentialAdversaries` array.
 
+**Reddit integration**: adversaries and environments tabs have a **"Reddit"** source filter (explicitly selected — not included in "All") that searches r/daggerbrew and r/daggerheart for homebrew content. r/daggerbrew is filtered by `Adversaries` or `Environments` flair depending on the active collection tab. r/daggerheart is always filtered to the `Homebrew` flair. Results appear as stub cards (post title as name, `Tier ?`, no game stats). Clicking a Reddit card triggers **LLM-powered parsing** via GPT-4o: the server fetches the full post (text + images), sends everything to GPT-4o with the Daggerheart adversary/environment schema as a prompt, and returns a fully structured item. Images are classified as stat blocks (extract data), artwork (use as card image), or combined (extract stats and use as image). The parsed result is stored as a `__MIRROR__` row so subsequent views show the enriched card immediately. Requires `OPENAI_API_KEY` env vars. Cards display "Click to parse with AI" until parsed; parsed items can be cloned to your library.
+
 The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 
 ```
@@ -46,9 +48,11 @@ DaggerheartGM/
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
 │   │   └── index.js            # Re-exports srdRouter, warmCache, getItem, searchCollection, COLLECTION_NAMES
 │      ├── db.js                   # Postgres pool + migration runner + query helpers (own, community, popularity, mirrors)
-    │   ├── external-sources.js     # EXTERNAL_SOURCES array — SRD + HoD + FCG sharing a common search contract
+    │   ├── external-sources.js     # EXTERNAL_SOURCES array — SRD + HoD + FCG + Reddit sharing a common search contract
     │   ├── fcg-search.js           # FreshCutGrass public search API integration
     │   ├── hod-search.js           # Heart of Daggers Vault integration (list search + Foundry JSON detail)
+    │   ├── reddit-search.js        # Reddit OAuth2 client — r/daggerbrew + r/daggerheart flair-filtered search
+    │   ├── llm-parse.js            # GPT-4o vision parse — Reddit posts → structured adversary/environment data
 │   └── input.css               # Tailwind CSS entry point
 ├── server.js                   # Express server + API routes
 ├── package.json
@@ -211,6 +215,7 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 | `FIREBASE_APP_ID` | Yes | Firebase web app ID |
 | `DATABASE_URL` | Yes | Supabase Postgres connection string |
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
+| `OPENAI_API_KEY` | No | OpenAI API key — required for LLM parsing of Reddit posts |
 
 ---
 

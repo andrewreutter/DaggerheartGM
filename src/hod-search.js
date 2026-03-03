@@ -111,7 +111,7 @@ function parseExperience(str) {
 // Foundry VTT JSON translation
 // ---------------------------------------------------------------------------
 
-function translateFoundryAdversary(json, postId) {
+function translateFoundryAdversary(json, postId, detailUrl) {
   const sys = json.system || {};
   const resources = sys.resources || {};
   const hp = resources.hitPoints || {};
@@ -204,6 +204,7 @@ function translateFoundryAdversary(json, postId) {
     imageUrl: json.img || '',
     _source: 'hod',
     _hodPostId: postId,
+    _hodLink: detailUrl || '',
   };
 }
 
@@ -216,7 +217,7 @@ function parseHodPotentialAdversaries(raw) {
   return [];
 }
 
-function translateFoundryEnvironment(json, postId) {
+function translateFoundryEnvironment(json, postId, detailUrl) {
   const sys = json.system || {};
 
   const features = (json.items || [])
