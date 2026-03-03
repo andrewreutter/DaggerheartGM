@@ -1,0 +1,33 @@
+---
+description: Debug mode instrumentation rules for DaggerheartGM
+alwaysApply: true
+---
+
+# Debug Mode: Browser-Side Instrumentation
+
+This project runs in a browser that **blocks direct `127.0.0.1` fetches** (CORS/mixed-content). Always route debug logs through the server proxy instead.
+
+## REQUIRED: Use `/api/debug-log` for all browser-side fetch instrumentation
+
+```js
+// ✅ CORRECT — routes through Express proxy, works in browser
+fetch('/api/debug-log', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    _debugUrl: 'http://127.0.0.1:PORT/ingest/UUID',
+    _debugSessionId: 'SESSION_ID',
+    sessionId: 'SESSION_ID',
+    location: 'file.js:LINE',
+    message: 'desc',
+    data: { k: v },
+    timestamp: Date.now(),
+    hypothesisId: 'H-A',
+  }),
+}).catch(() => {});
+
+// ❌ WRONG — blocked by browser security policy
+fetch('http://127.0.0.1:7456/ingest/...', { ... });
+```
+
+The `_debugUrl` must start with `http://127.0.0.1:` and the server's `POST /api/debug-log` handler will forward it. The `X-Debug-Session-Id` header is **not** needed on the `/api/debug-log` call — put `_debugSessionId` in the body instead.
