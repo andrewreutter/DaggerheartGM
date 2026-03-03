@@ -35,3 +35,20 @@ export const parseFeatureCategory = (feature) => {
 };
 
 export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'none'; };
+
+export const stripHtml = (raw) => {
+  if (!raw || !/<[a-z][\s\S]*>/i.test(raw)) return raw || '';
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};

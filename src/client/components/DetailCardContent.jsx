@@ -1,6 +1,7 @@
-import { Heart, AlertCircle, X, Dices } from 'lucide-react';
+import { Heart, AlertCircle, X, Dices, Link2 } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
-import { parseAllCountdownValues } from '../lib/helpers.js';
+import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
+import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 
@@ -46,7 +47,7 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
       </div>
 
       {element.description && (
-        <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{element.description}</p>
+        <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{stripHtml(element.description)}</p>
       )}
 
       {element.features && element.features.length > 0 && (
@@ -85,6 +86,34 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
           })}
         </div>
       )}
+
+      {(() => {
+        const potAdv = normalizePotentialAdversaries(element.potential_adversaries);
+        if (!potAdv.length) return null;
+        return (
+          <div className="space-y-1 mt-3">
+            <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Potential Adversaries</h5>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {potAdv.map((entry, idx) => {
+                const isLinked = !!entry.adversaryId;
+                return (
+                  <span
+                    key={idx}
+                    className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+                      isLinked
+                        ? 'bg-slate-800 border border-slate-700 text-slate-300'
+                        : 'bg-slate-900 border border-dashed border-slate-600 text-slate-400 italic'
+                    }`}
+                  >
+                    {isLinked && <Link2 size={10} className="text-blue-400 shrink-0" />}
+                    {entry.name}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }
@@ -123,7 +152,7 @@ export function AdversaryCardContent({
       </div>
 
       {el.description && (
-        <div className="text-sm italic text-slate-300 mb-4 whitespace-pre-wrap">{el.description}</div>
+        <div className="text-sm italic text-slate-300 mb-4 whitespace-pre-wrap">{stripHtml(el.description)}</div>
       )}
 
       {(el.motive || (el.experiences && el.experiences.length > 0)) && (
@@ -133,7 +162,7 @@ export function AdversaryCardContent({
               <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1 mb-2">
                 Motives & Tactics
               </h5>
-              <p className="text-sm text-slate-300">{el.motive}</p>
+              <p className="text-sm text-slate-300">{stripHtml(el.motive)}</p>
             </div>
           )}
           {el.experiences && el.experiences.length > 0 && (

@@ -84,6 +84,39 @@ export const resolveItems = async (idMap, { adopt = false } = {}) => {
 };
 
 /**
+ * Fetch full HoD Foundry detail for items with missing tier data, warming the mirror cache.
+ * Fire-and-forget friendly — returns {} on any failure.
+ * @param {string} collection - 'adversaries' | 'environments'
+ * @param {object[]} items - list items with _source='hod' and _hodPostId set
+ * @returns {Record<string, object>} map of id -> enriched item data
+ */
+export const enrichItems = async (collection, items) => {
+  const token = await getAuthToken();
+  if (!token) return {};
+  const stubs = items.map(i => ({ id: i.id, _source: i._source, _hodPostId: i._hodPostId, _hodLink: i._hodLink }));
+  try {
+    const res = await fetch(`/api/data/${collection}/enrich`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items: stubs }),
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data.enriched || {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Enrich a single HoD item, returning the full detail or the original item on failure.
+ */
+export const enrichSingleItem = async (collection, item) => {
+  const enriched = await enrichItems(collection, [item]);
+  return enriched[item.id] || item;
+};
+
+/**
  * Ensure a mirror row exists for an external item so it can be resolved by ID later.
  * Fire-and-forget — callers don't need to await.
  */

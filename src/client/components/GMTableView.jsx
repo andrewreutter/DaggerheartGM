@@ -8,6 +8,7 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { postRolzRoll } from '../lib/api.js';
+import { isOwnItem } from '../lib/constants.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
@@ -254,7 +255,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [editState, setEditState] = useState(null);
 
   const handleEditClick = (instances, baseElement, collection) => {
-    const canEditOriginal = !baseElement._source || baseElement._source === 'own';
+    const canEditOriginal = isOwnItem(baseElement);
     if (!canEditOriginal) {
       setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
     } else {
@@ -755,7 +756,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <EditChoiceDialog
         itemName={editState.baseElement.name}
         contextLabel="Table"
-        canEditOriginal={!editState.baseElement._source || editState.baseElement._source === 'own'}
+        canEditOriginal={isOwnItem(editState.baseElement)}
         onEditCopy={handleChoiceEditCopy}
         onEditOriginal={handleChoiceEditOriginal}
         onClose={() => setEditState(null)}

@@ -310,12 +310,10 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-  // Include mirrors in community results only when showing a broad view (both own and public
-  // items are requested — i.e. "All" mode). When the user filters to a specific source
-  // (HoD, FCG, SRD, Mine, Public), mirrors should not appear as visible results; they are
-  // still used for deduplication via getMirrorIds when active external sources are present.
-  const includeMirrors = (collection === 'adversaries' || collection === 'environments')
-    && includeMine && includePublic;
+  // Mirrors are never shown as visible DB results — they exist only for ID resolution
+  // (clone/resolve flows). Showing them in DB results would break source priority
+  // ordering (SRD before HoD before FCG).
+  const includeMirrors = false;
 
   try {
     // Determine which external sources are active for this collection
@@ -324,12 +322,9 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       (s.collections === null || s.collections.includes(collection))
     );
 
-    // Fetch mirror IDs for dedup against external source results.
-    // Only relevant for adversaries/environments where mirrors are stored.
-    let mirrorIds = new Set();
-    if (activeExternalSources.length > 0 && includeMirrors) {
-      mirrorIds = new Set(await getMirrorIds(APP_ID, collection, { search, tier, typeField, typeValue }));
-    }
+    // Mirrors are no longer shown in DB results, so there is nothing to dedup
+    // external source results against. Pass an empty set.
+    const mirrorIds = new Set();
 
     const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
       includeMine, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
@@ -377,7 +372,27 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       priorSourceTotal += result.totalCount;
     }
 
-    const allItems = [...dbItemsWithPopularity, ...externalItems];
+    // Substitute HoD stubs with enriched mirror data when available.
+    const hodStubIds = externalItems.filter(i => i._source === 'hod' && (i.features || []).length === 0).map(i => i.id);
+    let mirrorMap = {};
+    if (hodStubIds.length > 0) {
+      try {
+        const mirrorRows = await getItemsByIds(APP_ID, collection, hodStubIds);
+        for (const row of mirrorRows) {
+          const hasFeatures = (row.features || []).length > 0;
+          const isEnrichedAdv = collection === 'adversaries' && typeof row.attack?.damage === 'string';
+          const isEnrichedEnv = collection === 'environments';
+          if (row._source === 'hod' && hasFeatures && (isEnrichedAdv || isEnrichedEnv)) {
+            mirrorMap[row.id] = row;
+          }
+        }
+      } catch {}
+    }
+    const enrichedExternal = Object.keys(mirrorMap).length > 0
+      ? externalItems.map(i => mirrorMap[i.id] || i)
+      : externalItems;
+
+    const allItems = [...dbItemsWithPopularity, ...enrichedExternal];
     // nextOffset tells the client where to start the next page.
     // When a source provides nextLocalOffset (FCG env-subtraction case), use it so the
     // next page starts exactly past all rows consumed (including filtered-out environments).
@@ -594,6 +609,44 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
     console.error(`POST /api/data/${collection}/play error:`, err);
     res.status(500).json({ error: 'Failed to record play' });
   }
+});
+
+app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
+  const { collection } = req.params;
+  if (!CLONE_COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection for enrich' });
+  }
+  const { items } = req.body;
+  const hodItems = (Array.isArray(items) ? items : []).filter(i => i._source === 'hod' && i._hodPostId);
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:entry',message:'Enrich endpoint called',data:{collection,totalItems:(items||[]).length,hodItemCount:hodItems.length,hodItemIds:hodItems.map(i=>i.id)},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+  const enriched = {};
+  const CONCURRENCY = 5;
+  for (let i = 0; i < hodItems.length; i += CONCURRENCY) {
+    const batch = hodItems.slice(i, i + CONCURRENCY);
+    await Promise.allSettled(batch.map(async (item) => {
+      try {
+        const detailUrl = item._hodLink || `https://heartofdaggers.com/?p=${item._hodPostId}`;
+        const full = await fetchHoDFoundryDetail(item._hodPostId, detailUrl, collection);
+        enriched[item.id] = full;
+        // #region agent log
+        fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:success',message:'Enrich succeeded for item',data:{collection,itemId:item.id,fullName:full.name,featuresCount:(full.features||[]).length},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        const { id, _source, _owner, clone_count, play_count, popularity, ...mirrorData } = full;
+        upsertMirror(APP_ID, collection, full.id, { ...mirrorData, _source: 'hod' }).catch(() => {});
+      } catch (err) {
+        // #region agent log
+        fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:error',message:'Enrich FAILED for item',data:{collection,itemId:item.id,error:err.message},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        console.warn(`[enrich] Could not enrich ${item.id}:`, err.message);
+      }
+    }));
+  }
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:response',message:'Enrich response',data:{collection,enrichedCount:Object.keys(enriched).length,enrichedIds:Object.keys(enriched)},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+  res.json({ enriched });
 });
 
 app.post('/api/data/:collection/mirror', requireAuth, async (req, res) => {

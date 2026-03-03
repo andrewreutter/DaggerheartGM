@@ -46,6 +46,23 @@ async function getVaultNonce() {
 // Normalisation helpers
 // ---------------------------------------------------------------------------
 
+function stripHtml(raw) {
+  if (!raw) return '';
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function normRole(raw) {
   const lower = (raw || '').toLowerCase().trim();
   return VALID_ROLES.has(lower) ? lower : 'standard';
@@ -58,7 +75,8 @@ function normEnvType(raw) {
 
 function normRange(raw) {
   if (!raw) return 'Melee';
-  const lower = raw.toLowerCase().trim();
+  // Expand camelCase Foundry VTT values (e.g. "veryClose" -> "very close")
+  const lower = raw.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().trim();
   return VALID_RANGES.find(r => r.toLowerCase() === lower) || 'Melee';
 }
 
@@ -102,18 +120,30 @@ function translateFoundryAdversary(json, postId) {
   const atkSys = sys.attack || {};
   const roll = atkSys.roll || {};
 
-  // Damage: Foundry stores parts as [["1d20", "Physical"]] or similar
+  // Damage: Foundry stores parts in two possible formats:
+  //   Old format: [["1d20", "Physical"], ...]  (array of [formula, type] tuples)
+  //   New format: [{value:{flatMultiplier,dice,bonus}, type:["physical"], ...}, ...]
   let damage = '';
   let trait = 'Phy';
   const parts = atkSys.damage?.parts || [];
   if (parts.length > 0) {
     const part = parts[0];
-    // parts[0] may be [formula, type] or just a string
-    const formula = Array.isArray(part) ? part[0] : part;
-    const typeStr = Array.isArray(part) ? (part[1] || '') : '';
-    damage = formula || '';
-    const { trait: t } = parseDamageString(`${damage} ${typeStr}`);
-    trait = t;
+    if (Array.isArray(part)) {
+      // Old format: [formula_string, type_string]
+      damage = part[0] || '';
+      const { trait: t } = parseDamageString(`${damage} ${part[1] || ''}`);
+      trait = t;
+    } else if (part && typeof part === 'object') {
+      // New format: { value: { flatMultiplier, dice, bonus }, type: ["physical"], ... }
+      const v = part.value || {};
+      const multiplier = v.flatMultiplier ?? 1;
+      const dice = v.dice || '';
+      const bonus = v.bonus ?? 0;
+      damage = `${multiplier}${dice}${bonus > 0 ? '+' + bonus : bonus < 0 ? bonus : ''}`;
+      const typeArr = Array.isArray(part.type) ? part.type : [];
+      const { trait: t } = parseDamageString(`${damage} ${typeArr[0] || ''}`);
+      trait = t;
+    }
   }
 
   // Range: may be in attack.range or attack.properties
@@ -142,18 +172,18 @@ function translateFoundryAdversary(json, postId) {
         id: crypto.randomUUID(),
         name: f.name || '',
         type: normType,
-        description: fsys.description || fsys.effect || '',
+        description: stripHtml(fsys.description || fsys.effect || ''),
       };
     });
 
-  const motives = sys.motivesAndTactics || '';
+  const motives = stripHtml(sys.motivesAndTactics || '');
 
   return {
     id: `hod-${postId}`,
     name: json.name || '',
     tier: sys.tier || 1,
     role: normRole(sys.type),
-    description: sys.description || '',
+    description: stripHtml(sys.description || ''),
     motive: motives,
     difficulty: sys.difficulty || 10,
     hp_max: hp.max || 6,
@@ -177,6 +207,15 @@ function translateFoundryAdversary(json, postId) {
   };
 }
 
+function parseHodPotentialAdversaries(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter(Boolean).map(n => ({ name: String(n).trim() })).filter(e => e.name);
+  if (typeof raw === 'string') {
+    return raw.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name }));
+  }
+  return [];
+}
+
 function translateFoundryEnvironment(json, postId) {
   const sys = json.system || {};
 
@@ -190,18 +229,20 @@ function translateFoundryEnvironment(json, postId) {
         id: crypto.randomUUID(),
         name: f.name || '',
         type: normType,
-        description: fsys.description || fsys.effect || '',
+        description: stripHtml(fsys.description || fsys.effect || ''),
       };
     });
+
+  const potAdv = sys.potentialAdversaries ?? sys.potential_adversaries ?? sys.adversaries ?? null;
 
   return {
     id: `hod-${postId}`,
     name: json.name || '',
     tier: sys.tier || 1,
     type: normEnvType(sys.type),
-    description: sys.description || '',
+    description: stripHtml(sys.description || ''),
     difficulty: sys.difficulty || 10,
-    potential_adversaries: '',
+    potential_adversaries: parseHodPotentialAdversaries(potAdv),
     features,
     imageUrl: json.img || '',
     _source: 'hod',
@@ -244,14 +285,13 @@ function parseHodRows(html) {
 
 function rowToAdversary(row, tierFilter) {
   const postId = row.id;
-  // Tier not present per-item in adversary rows — use the filter param when active
-  const tier = tierFilter ? Number(tierFilter) : null;
+  const tier = row.advTier ? parseInt(row.advTier, 10) : (tierFilter ? Number(tierFilter) : null);
   return {
     id: `hod-${postId}`,
     name: row.title || '',
     tier,
     role: normRole(row.advType),
-    description: row.desc || '',
+    description: stripHtml(row.desc || ''),
     motive: '',
     difficulty: row.advDifficulty ? parseInt(row.advDifficulty, 10) : 10,
     hp_max: row.advHp ? parseInt(row.advHp, 10) : 6,
@@ -275,9 +315,9 @@ function rowToEnvironment(row, tierFilter) {
     name: row.title || '',
     tier,
     type: normEnvType(row.envType),
-    description: row.desc || '',
+    description: stripHtml(row.desc || ''),
     difficulty: row.envDifficulty ? parseInt(row.envDifficulty, 10) : 10,
-    potential_adversaries: '',
+    potential_adversaries: parseHodPotentialAdversaries(row.envPad || null),
     features: [],
     imageUrl: '',
     _source: 'hod',
@@ -388,23 +428,45 @@ export async function fetchHoDFoundryDetail(postId, detailUrl, collection) {
   if (!pageRes.ok) throw new Error(`HoD detail page returned ${pageRes.status} for ${detailUrl}`);
   const pageHtml = await pageRes.text();
 
-  // window.HB_EXPORT_JSON = { ajaxUrl: "...", postId: 35892, nonce: "d54cadf1be" }
-  const nonceMatch = pageHtml.match(/window\.HB_EXPORT_JSON\s*=\s*\{[^}]*"nonce"\s*:\s*"([^"]+)"/);
+  // Adversary pages: window.HB_EXPORT_JSON = { nonce: "..." }
+  // Environment pages: window.HB_ENV_EXPORT_JSON = { nonce: "..." }
+  const isEnv = collection === 'environments';
+  const nonceVarRe = isEnv
+    ? /window\.HB_ENV_EXPORT_JSON\s*=\s*\{[^}]*(?:"nonce"|nonce)\s*:\s*"([^"]+)"/
+    : /window\.HB_EXPORT_JSON\s*=\s*\{[^}]*(?:"nonce"|nonce)\s*:\s*"([^"]+)"/;
+  const nonceMatch = pageHtml.match(nonceVarRe);
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:nonceStep',message:'Nonce extraction result',data:{postId,collection,detailUrl,nonceFound:!!nonceMatch,exportNonce:nonceMatch?.[1]||null},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+  // #endregion
   if (!nonceMatch) throw new Error(`Could not find Foundry export nonce on HoD detail page: ${detailUrl}`);
   const exportNonce = nonceMatch[1];
 
   // Step 2: fetch Foundry JSON
-  const exportUrl = `${HOD_AJAX_URL}?action=hb_export_adversary_json&post_id=${postId}&nonce=${exportNonce}`;
+  const exportAction = isEnv ? 'hb_export_environment_json' : 'hb_export_adversary_json';
+  const exportUrl = `${HOD_AJAX_URL}?action=${exportAction}&post_id=${postId}&nonce=${exportNonce}`;
   const exportRes = await fetch(exportUrl, {
     headers: { 'User-Agent': 'DaggerheartGM/1.0' },
   });
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:exportStep',message:'Foundry export response',data:{postId,collection,exportUrl,exportStatus:exportRes.status,exportOk:exportRes.ok},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   if (!exportRes.ok) throw new Error(`HoD Foundry export returned ${exportRes.status}`);
 
   const foundryJson = await exportRes.json();
 
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:foundryJson',message:'Foundry JSON structure',data:{postId,collection,topLevelKeys:Object.keys(foundryJson),name:foundryJson.name,itemsCount:(foundryJson.items||[]).length,itemTypes:(foundryJson.items||[]).map(i=>i.type),sysKeys:Object.keys(foundryJson.system||{}),featureItems:(foundryJson.items||[]).filter(i=>i.type==='feature').map(f=>({name:f.name,sysKeys:Object.keys(f.system||{})}))},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
+
   // Translate to native schema
-  const isEnv = collection === 'environments';
-  return isEnv
+  const result = isEnv
     ? translateFoundryEnvironment(foundryJson, postId)
     : translateFoundryAdversary(foundryJson, postId);
+
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:translated',message:'Translated result',data:{postId,collection,resultName:result.name,resultFeaturesCount:(result.features||[]).length,resultFeatures:(result.features||[]).map(f=>({name:f.name,type:f.type,descLen:(f.description||'').length}))},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
+
+  return result;
 }
+

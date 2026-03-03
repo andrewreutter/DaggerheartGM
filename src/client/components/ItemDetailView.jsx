@@ -5,6 +5,7 @@ import { resolveItems } from '../lib/api.js';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
+import { isOwnItem } from '../lib/constants.js';
 
 /**
  * Builds the flat list of adversary/environment elements from a scene item.
@@ -224,7 +225,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) 
     if (element._isOwnedCopy) {
       // Already a local copy — go straight to the form.
       setEditState({ step: 'form', item: getElementItemData(element), collection: element._collection, mode: 'copy', element });
-    } else if (!element._source || element._source === 'own') {
+    } else if (isOwnItem(element)) {
       setEditState({ step: 'choice', element });
     } else {
       // SRD or public — forced copy.
@@ -343,7 +344,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) 
         <EditChoiceDialog
           itemName={editState.element.name}
           contextLabel="Scene"
-          canEditOriginal={!editState.element._source || editState.element._source === 'own'}
+          canEditOriginal={isOwnItem(editState.element)}
           onEditCopy={handleChoiceEditCopy}
           onEditOriginal={handleChoiceEditOriginal}
           onClose={() => setEditState(null)}

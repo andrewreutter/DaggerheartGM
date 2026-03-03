@@ -93,7 +93,7 @@ export function useCollectionSearch(collection, {
       try {
         const { include, tier, type, search } = filters;
         const result = await loadCollection(collection, {
-          includeMine: include === null || include === 'mine',
+          includeMine: include === null || include === 'own',
           includeSrd: include === null || include === 'srd',
           includePublic: include === null || include === 'public',
           includeHod: include === null || include === 'hod',
@@ -149,6 +149,10 @@ export function useCollectionSearch(collection, {
     setIsLoadingMore(false);
     isLoadingMoreRef.current = false;
     setTrimmedCount(0);
+    if (key !== 'search') {
+      setItems([]);
+      setLoading(true);
+    }
   };
 
   /** Jump to an explicit page offset. */
@@ -156,6 +160,11 @@ export function useCollectionSearch(collection, {
 
   /** Force an immediate refetch with the current filters and offset. */
   const refresh = () => setRefreshKey(k => k + 1);
+
+  /** Merge partial item data by ID into the displayed list (e.g. after lazy-loading enrichment). */
+  const patchItems = (patchMap) => {
+    setItems(prev => prev.map(item => patchMap[item.id] ? { ...item, ...patchMap[item.id] } : item));
+  };
 
   const hasMore = infinite ? (items.length + trimmedCount < totalCount) : false;
 
@@ -170,7 +179,7 @@ export function useCollectionSearch(collection, {
 
   return {
     items, totalCount, nextOffset, loading, filters, setFilter,
-    offset, setOffset, refresh,
+    offset, setOffset, refresh, patchItems,
     hasMore, isLoadingMore, loadMore, trimmedCount,
   };
 }

@@ -12,9 +12,9 @@ Data loading is **lazy and per-collection**: on sign-in only `table_state` and n
 
 **Popularity tracking**: every item carries `clone_count`, `play_count`, and a computed `popularity` score. Adding any item to the GM Table increments `play_count` on its source and auto-clones non-own items into the user's library (find-or-reuse via `_clonedFrom`). Cloning increments `clone_count`. Community items (SRD, public, mirrors) are sorted by popularity descending. A flame badge appears on cards with popularity > 0.
 
-**Heart of Daggers (HoD) integration**: adversaries and environments tabs have an "HoD" source filter that fetches results from the [Heart of Daggers Homebrew Vault](https://heartofdaggers.com/vault/) via its WordPress AJAX API. HoD list results carry summary data (name, tier for environments, role, HP, stress, difficulty, description). When an HoD item is cloned or added to the GM Table, the server fetches the full Foundry VTT JSON export for that item (two-step: scrape per-item nonce from the detail page, then call the export endpoint) and stores a rich `__MIRROR__` row including features, attacks, thresholds, experiences, and motives. Items are tagged `_source: 'hod'` and show a rose-coloured "HoD" badge. The vault-page nonce used for list queries is cached in memory for 30 minutes.
+**Heart of Daggers (HoD) integration**: adversaries and environments tabs have an "HoD" source filter that fetches results from the [Heart of Daggers Homebrew Vault](https://heartofdaggers.com/vault/) via its WordPress AJAX API. HoD list results carry summary data (name, tier for environments, role, HP, stress, difficulty, description). When an HoD item is cloned or added to the GM Table, the server fetches the full Foundry VTT JSON export for that item (two-step: scrape per-item nonce from the detail page, then call the export endpoint) and stores a rich `__MIRROR__` row including features, attacks, thresholds, experiences, and motives. Items are tagged `_source: 'hod'` and show a rose-coloured "HoD" badge. The vault-page nonce used for list queries is cached in memory for 30 minutes. HoD environment `potential_adversaries` is extracted from `data-env-pad` (list rows) and `sys.potentialAdversaries` (Foundry JSON) as name-only placeholder objects.
 
-**Fresh Cut Grass integration**: adversaries and environments tabs have an "FCG" source filter that merges results from the FreshCutGrass.app public search API directly into the infinite-scroll list. Played/cloned FCG items are stored as `__MIRROR__` rows in the DB so they surface in local search (with their accumulated popularity) and are deduped from live FCG results. When an FCG item is picked as a scene reference (via `CollectionRefPicker`), a mirror is automatically created so the item can be resolved by ID later. The Feature Library panel (shown when editing adversaries/environments) uses the same source filter — selecting FCG includes live FCG features in the suggestion list.
+**Fresh Cut Grass integration**: adversaries and environments tabs have an "FCG" source filter that merges results from the FreshCutGrass.app public search API directly into the infinite-scroll list. Played/cloned FCG items are stored as `__MIRROR__` rows in the DB so they surface in local search (with their accumulated popularity) and are deduped from live FCG results. When an FCG item is picked as a scene reference (via `CollectionRefPicker`), a mirror is automatically created so the item can be resolved by ID later. The Feature Library panel (shown when editing adversaries/environments) uses the same source filter — selecting FCG includes live FCG features in the suggestion list. FCG environment `potential_adversaries` is stored as name-only placeholder objects from the FCG `potentialAdversaries` array.
 
 The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 
@@ -101,6 +101,21 @@ Room name and credentials are persisted in your session state automatically.
 The "Behind the Screen" view has three buttons — **Add Adversary**, **Add Environment**, and **Add Scene** — each of which opens an **`ItemPickerModal`** and **appends** the selection to the current table (never clears the board). For adversaries and environments the modal uses `useCollectionSearch` + `CollectionFilters` (panel variant) providing Source, Tier, Role/Type, and a search box with infinite scroll. For scenes a simple client-side search is shown. Results appear as text rows. Clicking a result adds it to the table and closes the modal.
 
 A **Capture Table** button (camera icon, disabled when the table is empty) opens a small dialog where you name and save the current table contents as a new **Scene** (capturing all adversaries and environments). After saving, the new scene is opened in the library.
+
+### Environment — Potential Adversaries
+
+Environments carry a structured `potential_adversaries` field: an array of `{ adversaryId?, name }` objects.
+
+- **Linked reference** (`{ adversaryId, name }`): points to a real adversary in the library or SRD. Displays with a chain-link icon.
+- **Placeholder** (`{ name }`): a named-only entry with no linked adversary yet. Displays with a dashed border.
+
+In the environment edit form (`EnvironmentForm`), a **"Potential Adversaries"** section lets you:
+- **Find & link**: opens the adversary picker (searches own, SRD, HoD, FCG adversaries).
+- **Enter a placeholder**: type a name and press Add/Enter.
+- **Link a placeholder later**: click the search icon on any placeholder to open the picker pre-filtered to that name.
+- **Create from placeholder**: click the plus icon to instantly create a new adversary stub (inheriting the environment's tier), which replaces the placeholder with a linked reference.
+
+SRD environments auto-populate linked references using deterministic SRD adversary IDs (`srd-adv-<slug>`). FCG and HoD produce name-only placeholders. The `normalizePotentialAdversaries(raw)` helper (exported from `EnvironmentForm.jsx`) coerces any legacy string or empty value to the array format and is used throughout the display layer.
 
 ### Scene / Adventure Forms
 

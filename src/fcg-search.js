@@ -125,7 +125,7 @@ function translateEnvironment(item) {
     type: normEnvType(item.type),
     description: descParts.join('\n\n'),
     difficulty: item.difficulty || 10,
-    potential_adversaries: (item.potentialAdversaries || []).filter(Boolean).join(', '),
+    potential_adversaries: (item.potentialAdversaries || []).filter(Boolean).map(name => ({ name: name.trim() })),
     features,
     imageUrl: item.image ? `https://freshcutgrass.app${item.image}` : '',
     _source: 'fcg',

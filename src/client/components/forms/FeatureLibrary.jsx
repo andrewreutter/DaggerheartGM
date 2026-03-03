@@ -3,16 +3,7 @@ import { BookOpen, Plus } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { CollectionFilters } from '../CollectionFilters.jsx';
-
-const SOURCE_ORDER = { own: 0, srd: 1, public: 2, hod: 3, fcg: 4 };
-
-const SOURCE_BADGE = {
-  own: 'bg-blue-900/60 text-blue-300',
-  srd: 'bg-purple-900/60 text-purple-300',
-  public: 'bg-slate-700 text-slate-300',
-  hod: 'bg-rose-900/60 text-rose-300',
-  fcg: 'bg-green-900/60 text-green-300',
-};
+import { SOURCE_BADGE, SOURCE_ORDER } from '../../lib/constants.js';
 
 const TYPE_BADGE = {
   action: 'bg-amber-900/60 text-amber-300',
@@ -168,8 +159,8 @@ function FeatureCard({ feature, source, sourceName, onAdd }) {
               {feature.type}
             </span>
           )}
-          <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source] || 'bg-slate-700 text-slate-300'}`}>
-            {source}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || 'bg-slate-700 text-slate-300'}`}>
+            {SOURCE_BADGE[source]?.label ?? source}
           </span>
         </div>
         <p className="text-xs text-slate-400 line-clamp-2 leading-snug">{feature.description}</p>
@@ -190,8 +181,8 @@ function FeatureCard({ feature, source, sourceName, onAdd }) {
                     {feature.type}
                   </span>
                 )}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source] || ''}`}>
-                  {source}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || ''}`}>
+                  {SOURCE_BADGE[source]?.label ?? source}
                 </span>
               </div>
             </div>
