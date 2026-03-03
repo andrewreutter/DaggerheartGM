@@ -98,6 +98,9 @@ export function useCollectionSearch(collection, {
           includePublic: include === null || include === 'public',
           includeHod: include === null || include === 'hod',
           includeFcg: include === null || include === 'fcg',
+          // Reddit is intentionally excluded from "All" (include === null) to avoid
+          // surfacing unstructured stubs in default results. Only shown on explicit selection.
+          includeReddit: include === 'reddit',
           search: search || '',
           tier,
           type,

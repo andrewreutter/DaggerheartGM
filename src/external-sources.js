@@ -29,6 +29,7 @@
 import { searchCollection, COLLECTION_NAMES as SRD_COLLECTIONS } from './srd/index.js';
 import { searchFCG } from './fcg-search.js';
 import { searchHoD } from './hod-search.js';
+import { searchReddit } from './reddit-search.js';
 
 export const EXTERNAL_SOURCES = [
   // --- SRD: in-memory, covers all 13 SRD collections ---
@@ -141,6 +142,21 @@ export const EXTERNAL_SOURCES = [
         items: fcgResult[collection].filter(i => !mirrorSet.has(i.id)),
         totalCount: Math.max(0, fcgResult.fcgTotal - mirrorCount),
       };
+    },
+  },
+
+  // --- Reddit (r/daggerbrew + r/daggerheart): live API, adversaries + environments only ---
+  // Listed LAST: stubs have the least structured data; full detail requires LLM parse on click.
+  // Not included in "All" source results — only shown when explicitly selected (see useCollectionSearch).
+  {
+    name: 'reddit',
+    enabledParam: 'includeReddit',
+    collections: ['adversaries', 'environments'],
+    async search({ collection, search, limit, offset, mirrorIds }) {
+      const mirrorSet = mirrorIds instanceof Set ? mirrorIds : new Set(mirrorIds || []);
+      const result = await searchReddit({ collection, search, limit, offset });
+      const items = result.items.filter(i => !mirrorSet.has(i.id));
+      return { items, totalCount: Math.max(0, result.totalCount - mirrorSet.size) };
     },
   },
 ];

@@ -5,8 +5,8 @@ import { RolzImportModal } from './modals/RolzImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
-import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem } from '../lib/api.js';
+import { isOwnItem, needsHodEnrich, needsRedditParse } from '../lib/constants.js';
+import { enrichItems, enrichSingleItem, parseRedditItem } from '../lib/api.js';
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
@@ -110,6 +110,19 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       setModalState({ item: enriched, isNew: false, enriching: false });
     } else {
       setModalState({ item, isNew: !item.id });
+    }
+  };
+
+  const handleParseReddit = async (item) => {
+    setModalState(prev => prev ? { ...prev, enriching: true } : prev);
+    try {
+      const parsed = await parseRedditItem(activeTab, item);
+      const merged = { ...item, ...parsed };
+      search.patchItems({ [merged.id]: merged });
+      setModalState({ item: merged, isNew: false, enriching: false });
+    } catch (err) {
+      console.error('[reddit] Parse failed:', err);
+      setModalState({ item: { ...item, _redditParseError: err.message }, isNew: false, enriching: false });
     }
   };
 
@@ -257,6 +270,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
           onClone={!modalItemIsOwn ? () => handleClone(resolvedModalItem) : null}
+          onParseReddit={needsRedditParse(resolvedModalItem) ? () => handleParseReddit(resolvedModalItem) : null}
           onClose={closeModal}
         />
       )}
