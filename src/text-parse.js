@@ -12,15 +12,13 @@
  */
 
 import crypto from 'crypto';
+import { ROLES } from './game-constants.js';
 
 // ---------------------------------------------------------------------------
-// Constants (mirrored from client constants.js for server-side use)
+// Constants (shared via src/game-constants.js)
 // ---------------------------------------------------------------------------
 
-const VALID_ROLES = new Set([
-  'bruiser', 'horde', 'leader', 'minion', 'ranged',
-  'skulk', 'social', 'solo', 'standard', 'support',
-]);
+const VALID_ROLES = new Set(ROLES);
 
 const ENV_TYPES = new Set(['traversal', 'exploration', 'social', 'event']);
 

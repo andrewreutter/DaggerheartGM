@@ -1,6 +1,8 @@
+import { ROLES } from './game-constants.js';
+
 const FCG_SEARCH_URL = 'https://freshcutgrass.app/api/adversaries/public/search';
 
-const VALID_ROLES = new Set(['bruiser', 'horde', 'leader', 'minion', 'ranged', 'skulk', 'social', 'solo', 'standard', 'support']);
+const VALID_ROLES = new Set(ROLES);
 const VALID_ENV_TYPES = new Set(['traversal', 'exploration', 'social', 'event']);
 const VALID_RANGES = ['Melee', 'Very Close', 'Close', 'Far', 'Very Far'];
 const VALID_TRAITS = new Set(['phy', 'mag', 'dir']);

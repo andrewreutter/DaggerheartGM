@@ -13,6 +13,7 @@ import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
+import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -35,14 +36,18 @@ function App() {
   const [rolzUsername, setRolzUsername] = useState('');
   const [rolzPassword, setRolzPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
+  const [partySize, setPartySize] = useState(4);
+  const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
+  const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
+  const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   const tableStateReadyRef = useRef(false);
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -232,6 +237,8 @@ function App() {
           setRolzUsername(tableState?.rolzUsername || '');
           setRolzPassword(tableState?.rolzPassword || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
+          if (tableState?.partySize != null) setPartySize(tableState.partySize);
+          if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           tableStateReadyRef.current = true;
 
         } catch (err) {
@@ -337,9 +344,15 @@ function App() {
 
   // Expand a scene into table elements using pre-resolved data maps.
   // visited prevents infinite recursion from circular scene references.
-  function expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById, visited = new Set(), depth = 0) {
+  // rootDamageBoost is inherited from the root scene's battleMods (only top-level scene sets it).
+  function expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById, visited = new Set(), depth = 0, rootDamageBoost = null) {
     if (visited.has(scene.id) || depth > 10) return [];
     visited.add(scene.id);
+
+    // Only the root scene (depth 0) sets the damage boost; nested scenes inherit it.
+    const damageBoost = depth === 0
+      ? (scene.battleMods?.damageBoostD4 ? 'd4' : scene.battleMods?.damageBoostStatic ? 'static' : null)
+      : rootDamageBoost;
 
     const elements = [];
 
@@ -356,20 +369,20 @@ function App() {
       const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
       if (adv) {
         for (let i = 0; i < (advRef.count || 1); i++) {
-          elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '' });
+          elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', ...(damageBoost ? { _damageBoost: damageBoost } : {}) });
         }
       }
     });
 
     (scene.scenes || []).forEach(nestedId => {
       const nested = scenesById[nestedId];
-      if (nested) elements.push(...expandSceneWithResolved(nested, scenesById, adversariesById, environmentsById, visited, depth + 1));
+      if (nested) elements.push(...expandSceneWithResolved(nested, scenesById, adversariesById, environmentsById, visited, depth + 1, damageBoost));
     });
 
     return elements;
   }
 
-  const addToTable = async (item, collectionName) => {
+  const doAddToTable = async (item, collectionName) => {
     const newElements = [];
 
     if (collectionName === 'adversaries' || collectionName === 'environments') {
@@ -435,6 +448,20 @@ function App() {
     }
 
     setActiveElements(prev => [...prev, ...newElements]);
+  };
+
+  const addToTable = (item, collectionName) => {
+    // Intercept scene adds: if the scene has active user-controlled budget factors,
+    // ask the user whether to apply them to the table before proceeding.
+    if (collectionName === 'scenes') {
+      const mods = item?.battleMods;
+      const hasActiveMods = mods && (mods.lessDifficult || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
+      if (hasActiveMods) {
+        setPendingSceneAdd({ scene: item });
+        return;
+      }
+    }
+    return doAddToTable(item, collectionName);
   };
 
   const updateActiveElement = (instanceId, updates) => {
@@ -551,6 +578,8 @@ function App() {
             navigate={navigate}
             onItemsChange={syncDataToApp}
             isAdmin={isAdmin}
+            partySize={partySize}
+            setPartySize={setPartySize}
           />
         ) : (
           <GMTableView
@@ -575,9 +604,29 @@ function App() {
             updateCountdown={(cardKey, featureKey, cdIdx, value) =>
               setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
             }
+            partySize={partySize}
+            setPartySize={setPartySize}
+            tableBattleMods={tableBattleMods}
+            setTableBattleMods={setTableBattleMods}
           />
         )}
       </main>
+      {pendingSceneAdd && (
+        <SceneAdoptDialog
+          scene={pendingSceneAdd.scene}
+          currentTableMods={tableBattleMods}
+          onApply={() => {
+            setTableBattleMods({ ...pendingSceneAdd.scene.battleMods });
+            doAddToTable(pendingSceneAdd.scene, 'scenes');
+            setPendingSceneAdd(null);
+          }}
+          onKeep={() => {
+            doAddToTable(pendingSceneAdd.scene, 'scenes');
+            setPendingSceneAdd(null);
+          }}
+          onCancel={() => setPendingSceneAdd(null)}
+        />
+      )}
     </div>
   );
 }

@@ -137,7 +137,7 @@ function collectMissingRefs(item, tab, data, visited = new Set()) {
   return Object.keys(toResolve).length ? toResolve : null;
 }
 
-export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) {
+export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, damageBoost }) {
   const [resolvedData, setResolvedData] = useState(data);
   const [elements, setElements] = useState(() => buildElements(item, tab, data));
   const [hoveredFeature, setHoveredFeature] = useState(null);
@@ -333,6 +333,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn }) 
                   instances={instances}
                   updateFn={updateElement}
                   showInstanceRemove={false}
+                  damageBoost={damageBoost}
                 />
               </div>
             </div>
