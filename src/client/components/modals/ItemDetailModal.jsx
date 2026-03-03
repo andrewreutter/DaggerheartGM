@@ -10,6 +10,8 @@ import { ExpandedTablePreview } from '../ItemDetailView.jsx';
 import { SOURCE_BADGE, isOwnItem, needsRedditParse } from '../../lib/constants.js';
 import { RedditMarkdown } from '../../lib/reddit-markdown.js';
 import { MarkdownText } from '../../lib/markdown.js';
+import { computeSceneBudget } from '../../lib/battle-points.js';
+import { generateId } from '../../lib/helpers.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -17,6 +19,76 @@ const COLLECTION_LABELS = {
   scenes: 'Scene',
   adventures: 'Adventure',
 };
+
+/**
+ * Compact battle budget summary bar for scene detail view.
+ */
+function SceneBudgetBar({ item, data, partySize = 4 }) {
+  const { tier, bp, budget, autoMods, userMods, totalMod, adjustedBudget } = computeSceneBudget(item, data, partySize);
+
+  const hasAdversaries = bp > 0 || tier != null;
+  if (!hasAdversaries) return null;
+
+  const diff = bp - adjustedBudget;
+  const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-slate-400';
+
+  const activeMods = [
+    autoMods.twoOrMoreSolos.active && { label: '2+ Solos', value: -2, auto: true },
+    autoMods.lowerTierAdversary.active && { label: 'Lower-tier adversary', value: +1, auto: true },
+    autoMods.noHeavyRoles.active && { label: 'No heavy roles', value: +1, auto: true },
+    userMods.lessDifficult && { label: 'Less difficult', value: -1, auto: false },
+    userMods.damageBoostD4 && { label: '+1d4 damage', value: -2, auto: false },
+    userMods.damageBoostStatic && { label: '+2 damage', value: -2, auto: false },
+    userMods.moreDangerous && { label: 'More dangerous', value: +2, auto: false },
+  ].filter(Boolean);
+
+  return (
+    <div className="mb-3 p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg">
+      <div className="flex items-center gap-3 flex-wrap">
+        {tier != null && (
+          <span className="relative inline-flex items-center justify-center w-6 h-6 shrink-0" title={`Tier ${tier}`}>
+            <svg viewBox="0 0 20 22" className="absolute inset-0 w-full h-full" fill="none">
+              <path d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z" fill="#0f2040" stroke="#3b82f6" strokeWidth="1.5" />
+            </svg>
+            <span className="relative text-[11px] font-bold text-blue-200 leading-none mt-0.5">{tier}</span>
+          </span>
+        )}
+        <span className="text-sm text-slate-300">
+          <span className="font-bold text-white">{bp}</span>
+          <span className="text-slate-500"> BP</span>
+        </span>
+        <span className="text-slate-600">·</span>
+        <span className="text-sm text-slate-300">
+          Budget <span className="font-bold text-white">{adjustedBudget}</span>
+          {totalMod !== 0 && (
+            <span className={`ml-1 text-xs ${totalMod > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              ({totalMod > 0 ? '+' : ''}{totalMod})
+            </span>
+          )}
+        </span>
+        <span className={`text-xs font-semibold ml-auto ${diffColor}`}>
+          {diff === 0 ? 'On budget' : diff > 0 ? `+${diff} over budget` : `${Math.abs(diff)} under budget`}
+        </span>
+      </div>
+      {activeMods.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {activeMods.map((m, i) => (
+            <span
+              key={i}
+              className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                m.value > 0
+                  ? 'bg-emerald-900/40 border-emerald-700/50 text-emerald-300'
+                  : 'bg-red-900/40 border-red-700/50 text-red-300'
+              } ${m.auto ? '' : 'border-dashed'}`}
+            >
+              {m.label} {m.value > 0 ? '+' : ''}{m.value}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Unified item detail + edit modal.
@@ -55,6 +127,8 @@ export function ItemDetailModal({
   isAdmin = false,
   onBlockReddit,
   onClose,
+  partySize = 4,
+  onPartySizeChange,
 }) {
   const isNew = !item?.id;
   const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments');
@@ -66,10 +140,16 @@ export function ItemDetailModal({
   const overlayRef = useRef(null);
 
   // Build a stable initial value for useAutoSaveUndo.
-  // For non-editable items this formData is unused, but the hook still needs to init.
+  // Ensure features/experiences have unique IDs so list editors can key and update by ID.
   const initialRef = useRef(null);
   if (!initialRef.current) {
-    initialRef.current = item || {};
+    const raw = item || {};
+    const ensureIds = (arr) => (arr || []).map(entry => entry.id ? entry : { ...entry, id: generateId() });
+    initialRef.current = {
+      ...raw,
+      features: ensureIds(raw.features),
+      experiences: ensureIds(raw.experiences),
+    };
   }
 
   const { formData, setFormData, undo, redo, canUndo, canRedo, isSaving } = useAutoSaveUndo({
@@ -356,12 +436,18 @@ export function ItemDetailModal({
             {displayItem.description && (
               <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300 mb-3" />
             )}
+            <SceneBudgetBar item={displayItem} data={data} partySize={partySize} />
             <ExpandedTablePreview
               item={displayItem}
               tab={collection}
               data={data}
               onSaveElement={onSaveElement}
               isOwn={isOwn}
+              damageBoost={
+                displayItem.battleMods?.damageBoostD4 ? 'd4'
+                : displayItem.battleMods?.damageBoostStatic ? 'static'
+                : null
+              }
             />
           </>
         )}
@@ -423,6 +509,8 @@ export function ItemDetailModal({
       onChange: setFormData,
       data,
       featureLibraryPortal: libraryPortal,
+      partySize,
+      onPartySizeChange,
     };
 
     return (

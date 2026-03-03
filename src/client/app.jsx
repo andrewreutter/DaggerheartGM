@@ -35,14 +35,15 @@ function App() {
   const [rolzUsername, setRolzUsername] = useState('');
   const [rolzPassword, setRolzPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
+  const [partySize, setPartySize] = useState(4);
   const tableStateReadyRef = useRef(false);
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -232,6 +233,7 @@ function App() {
           setRolzUsername(tableState?.rolzUsername || '');
           setRolzPassword(tableState?.rolzPassword || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
+          if (tableState?.partySize != null) setPartySize(tableState.partySize);
           tableStateReadyRef.current = true;
 
         } catch (err) {
@@ -337,9 +339,15 @@ function App() {
 
   // Expand a scene into table elements using pre-resolved data maps.
   // visited prevents infinite recursion from circular scene references.
-  function expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById, visited = new Set(), depth = 0) {
+  // rootDamageBoost is inherited from the root scene's battleMods (only top-level scene sets it).
+  function expandSceneWithResolved(scene, scenesById, adversariesById, environmentsById, visited = new Set(), depth = 0, rootDamageBoost = null) {
     if (visited.has(scene.id) || depth > 10) return [];
     visited.add(scene.id);
+
+    // Only the root scene (depth 0) sets the damage boost; nested scenes inherit it.
+    const damageBoost = depth === 0
+      ? (scene.battleMods?.damageBoostD4 ? 'd4' : scene.battleMods?.damageBoostStatic ? 'static' : null)
+      : rootDamageBoost;
 
     const elements = [];
 
@@ -356,14 +364,14 @@ function App() {
       const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
       if (adv) {
         for (let i = 0; i < (advRef.count || 1); i++) {
-          elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '' });
+          elements.push({ ...adv, instanceId: generateId(), elementType: 'adversary', currentHp: adv.hp_max || 0, currentStress: 0, conditions: '', ...(damageBoost ? { _damageBoost: damageBoost } : {}) });
         }
       }
     });
 
     (scene.scenes || []).forEach(nestedId => {
       const nested = scenesById[nestedId];
-      if (nested) elements.push(...expandSceneWithResolved(nested, scenesById, adversariesById, environmentsById, visited, depth + 1));
+      if (nested) elements.push(...expandSceneWithResolved(nested, scenesById, adversariesById, environmentsById, visited, depth + 1, damageBoost));
     });
 
     return elements;
@@ -551,6 +559,8 @@ function App() {
             navigate={navigate}
             onItemsChange={syncDataToApp}
             isAdmin={isAdmin}
+            partySize={partySize}
+            setPartySize={setPartySize}
           />
         ) : (
           <GMTableView

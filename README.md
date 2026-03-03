@@ -37,13 +37,14 @@ DaggerheartGM/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked)
 │   └── styles.css              # Generated Tailwind output (do not edit by hand)
 ├── src/
+│   ├── game-constants.js       # Single source of truth: ROLES, ROLE_BP_COST, ENV_TYPES, TIERS
 │   ├── client/
-│   │   ├── app.jsx             # React SPA entry point
+│   │   ├── app.jsx             # React SPA entry point (partySize in table_state)
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
-│   │   │   ├── forms/          # Item forms (controlled+uncontrolled); CollectionRefPicker; FeatureLibrary.jsx sidebar
-    │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay); ItemPickerModal; EditChoiceDialog; import modals
-    │   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo, markdown.js + reddit-markdown.js (marked)
+│   │   │   ├── forms/          # Item forms (controlled+uncontrolled); SceneForm has Battle Budget section
+│   │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay; SceneBudgetBar for scenes)
+│   │   └── lib/                # API client, helpers, constants, battle-points.js, router, hooks, markdown
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id

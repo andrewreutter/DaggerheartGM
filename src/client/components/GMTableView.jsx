@@ -710,6 +710,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     featureCountdowns={featureCountdowns}
                     updateCountdown={updateCountdown}
                     onRollAttack={rolzConfigured ? (attackData) => handleCardRoll(attackData, el.name) : null}
+                    damageBoost={el._damageBoost || null}
                   />
                 </div>
               </div>
