@@ -152,11 +152,13 @@ export const EXTERNAL_SOURCES = [
     name: 'reddit',
     enabledParam: 'includeReddit',
     collections: ['adversaries', 'environments'],
-    async search({ collection, search, limit, offset, mirrorIds }) {
+    async search({ collection, search, limit, offset, mirrorIds, blockedRedditPostIds }) {
       const mirrorSet = mirrorIds instanceof Set ? mirrorIds : new Set(mirrorIds || []);
+      const blockedSet = blockedRedditPostIds instanceof Set ? blockedRedditPostIds : new Set(blockedRedditPostIds || []);
       const result = await searchReddit({ collection, search, limit, offset });
-      const items = result.items.filter(i => !mirrorSet.has(i.id));
-      return { items, totalCount: Math.max(0, result.totalCount - mirrorSet.size) };
+      const blockedInPage = result.items.filter(i => blockedSet.has(i._redditPostId)).length;
+      const items = result.items.filter(i => !mirrorSet.has(i.id) && !blockedSet.has(i._redditPostId));
+      return { items, totalCount: Math.max(0, result.totalCount - mirrorSet.size - blockedInPage) };
     },
   },
 ];

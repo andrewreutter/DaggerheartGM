@@ -34,7 +34,7 @@ const ADVERSARY_SCHEMA = `{
     "damage": "string (e.g. '2d8', '1d12+2')"
   },
   "experiences": [ { "id": "uuid-string", "name": "string", "modifier": number } ],
-  "features": [ { "id": "uuid-string", "name": "string", "type": "passive" | "action" | "reaction", "description": "string" } ],
+  "features": [ { "id": "uuid-string", "name": "string", "type": "passive" | "action" | "reaction", "description": "string — supports markdown (bold, italic, bullet/numbered lists)" } ],
   "imageUrl": "string | null — URL of an artwork image (not the stat block itself)"
 }`;
 
@@ -45,7 +45,7 @@ const ENVIRONMENT_SCHEMA = `{
   "description": "string — background/flavour text",
   "difficulty": number (default 10),
   "potential_adversaries": [ { "name": "string" } ],
-  "features": [ { "id": "uuid-string", "name": "string", "type": "passive" | "action" | "reaction", "description": "string" } ],
+  "features": [ { "id": "uuid-string", "name": "string", "type": "passive" | "action" | "reaction", "description": "string — supports markdown (bold, italic, bullet/numbered lists)" } ],
   "imageUrl": "string | null — URL of an artwork image (not the stat block itself)"
 }`;
 
@@ -78,7 +78,8 @@ DATA RULES:
 - "motive" should be a concise summary of the creature's goals and tactics (1–3 sentences).
 - For environments, "type" can be inferred: traversal = movement/navigation challenges, exploration = discovery/investigation, social = NPCs/interaction, event = time-pressure scenario.
 - Return null for "imageUrl" if no artwork image is found.
-- For numbers that appear as text (e.g. "six"), convert to digits.`;
+- For numbers that appear as text (e.g. "six"), convert to digits.
+- For feature descriptions that contain lists, tables, or numbered items (e.g. a d12 ingredients table like "1-2: Sugar Shrub, 3-4: Gravel..."), use markdown formatting: bullet lists (- item) or numbered lists (1. item). Preserve the structure of roll tables using bullet items like "- **1-2:** Sugar Shrub (Sweet).".`;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,18 @@
+{
+  "_comment": "Expected parse output for test/fixtures/environments/the-webs-below.png. NOTE: 'name' is NOT extractable via OCR — Tesseract cannot read the large display-font title. Name will come from Reddit post title (fallback) or LLM parse. Only the LLM path reliably recovers 'The Webs Below'.",
+  "collection": "environments",
+  "name": "The Webs Below",
+  "tier": 2,
+  "type": "exploration",
+  "description": "a cave littered with oversized beasts and reeking of things far more nefarious...",
+  "impulses": "crawling critters, deceptive flora, far off noises",
+  "difficulty": 14,
+  "potential_adversaries": [{ "name": "Spiders" }],
+  "features": [
+    { "name": "Beasts and Blooms", "type": "passive" },
+    { "name": "Spider Den", "type": "passive" },
+    { "name": "Webs Abound", "type": "action" },
+    { "name": "Scavengers", "type": "action" },
+    { "name": "Paternal Instincts", "type": "reaction" }
+  ]
+}
