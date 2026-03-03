@@ -50,6 +50,34 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
         <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{stripHtml(element.description)}</p>
       )}
 
+      {(() => {
+        const potAdv = normalizePotentialAdversaries(element.potential_adversaries);
+        if (!potAdv.length) return null;
+        return (
+          <div className="space-y-1 mb-3">
+            <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Potential Adversaries</h5>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {potAdv.map((entry, idx) => {
+                const isLinked = !!entry.adversaryId;
+                return (
+                  <span
+                    key={idx}
+                    className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+                      isLinked
+                        ? 'bg-slate-800 border border-slate-700 text-slate-300'
+                        : 'bg-slate-900 border border-dashed border-slate-600 text-slate-400 italic'
+                    }`}
+                  >
+                    {isLinked && <Link2 size={10} className="text-blue-400 shrink-0" />}
+                    {entry.name}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {element.features && element.features.length > 0 && (
         <div className="space-y-1">
           <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Features</h5>
@@ -86,34 +114,6 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
           })}
         </div>
       )}
-
-      {(() => {
-        const potAdv = normalizePotentialAdversaries(element.potential_adversaries);
-        if (!potAdv.length) return null;
-        return (
-          <div className="space-y-1 mt-3">
-            <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Potential Adversaries</h5>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {potAdv.map((entry, idx) => {
-                const isLinked = !!entry.adversaryId;
-                return (
-                  <span
-                    key={idx}
-                    className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
-                      isLinked
-                        ? 'bg-slate-800 border border-slate-700 text-slate-300'
-                        : 'bg-slate-900 border border-dashed border-slate-600 text-slate-400 italic'
-                    }`}
-                  >
-                    {isLinked && <Link2 size={10} className="text-blue-400 shrink-0" />}
-                    {entry.name}
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
     </>
   );
 }
