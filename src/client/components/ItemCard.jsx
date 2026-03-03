@@ -107,7 +107,7 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
           {tab === 'scenes' && (() => {
             const chips = [
               ...(item.environments || []).map((envEntry, i) => {
-                if (typeof envEntry === 'object' && envEntry.data) {
+                if (envEntry !== null && typeof envEntry === 'object' && envEntry.data) {
                   return { key: `env-owned-${i}`, label: envEntry.data.name, owned: true, nested: false };
                 }
                 const env = data?.environments?.find(e => e.id === envEntry);

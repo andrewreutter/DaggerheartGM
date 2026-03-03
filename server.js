@@ -88,40 +88,21 @@ app.get('/livereload', (req, res) => {
   res.write('data: connected\n\n');
   liveReloadClients.add(res);
   const heartbeat = setInterval(() => res.write(':heartbeat\n\n'), 30000);
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:SSE-connect',message:'SSE client connected',data:{totalClients:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
-  // #endregion
   req.on('close', () => {
     clearInterval(heartbeat);
     liveReloadClients.delete(res);
-    // #region agent log
-    fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:SSE-close',message:'SSE client disconnected',data:{totalClients:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
-    // #endregion
   });
 });
 let reloadTimer = null;
 const broadcastReload = () => {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:broadcast',message:'Broadcasting reload to clients',data:{clientCount:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
-    // #endregion
     for (const client of liveReloadClients) client.write('data: reload\n\n');
   }, 150);
 };
 // Poll the two build output files; fires only when mtime changes (actual write), not on reads
-watchFile('./public/app.js', { interval: 200 }, (curr, prev) => {
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:watchFile-appjs',message:'watchFile fired for app.js',data:{currMtime:curr.mtimeMs,prevMtime:prev.mtimeMs,currSize:curr.size,prevSize:prev.size},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
-  // #endregion
-  broadcastReload();
-});
-watchFile('./public/styles.css', { interval: 200 }, (curr, prev) => {
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:watchFile-css',message:'watchFile fired for styles.css',data:{currMtime:curr.mtimeMs,prevMtime:prev.mtimeMs,currSize:curr.size,prevSize:prev.size},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
-  // #endregion
-  broadcastReload();
-});
+watchFile('./public/app.js', { interval: 200 }, broadcastReload);
+watchFile('./public/styles.css', { interval: 200 }, broadcastReload);
 
 // --- Rolz session management ---
 
