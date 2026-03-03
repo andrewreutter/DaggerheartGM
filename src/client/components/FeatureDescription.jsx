@@ -4,7 +4,7 @@
  *  2. Text matching GM trigger patterns (spend…fear, mark…fear, mark…stress) bolded.
  *  3. Optional inline countdown widgets placed right after each "Countdown (N)" occurrence.
  */
-import { parseAllCountdownValues } from '../lib/helpers.js';
+import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
 
 const FEAR_TRIGGER_RE = /(\bspend\b[^.!?]*?\bfear\b|\bmark\b[^.!?]*?\bfear\b|\bmark\b[^.!?]*?\bstress\b)/gi;
 
@@ -78,7 +78,8 @@ export function CountdownCounter({ value, onChange }) {
  *   onCountdownChange – optional (cdIdx, newValue) => void; required when countdownValues
  *                       is provided. If null, no countdown widgets are rendered.
  */
-export function FeatureDescription({ description, countdownValues, onCountdownChange }) {
+export function FeatureDescription({ description: rawDescription, countdownValues, onCountdownChange }) {
+  const description = stripHtml(rawDescription);
   if (!description) return null;
 
   const allCds = (countdownValues && onCountdownChange) ? parseAllCountdownValues(description) : [];

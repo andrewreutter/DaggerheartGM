@@ -5,6 +5,8 @@ import { RolzImportModal } from './modals/RolzImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
+import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
+import { enrichItems, enrichSingleItem } from '../lib/api.js';
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
@@ -48,6 +50,22 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     }
   }, [search.items, activeTab, isPaginatedTab]);
 
+  // Lazy-load tier (and full detail) for HoD adversaries/environments that came back
+  // from the list search with tier=null. Fires background Foundry detail fetches,
+  // patches the displayed items in place, and warms the mirror cache.
+  const enrichAttemptedRef = useRef(new Set());
+  useEffect(() => {
+    if (!isPaginatedTab) return;
+    const needsEnrich = search.items.filter(i =>
+      i._source === 'hod' && (i.tier == null || (i.features || []).length === 0) && !enrichAttemptedRef.current.has(i.id)
+    );
+    if (needsEnrich.length === 0) return;
+    needsEnrich.forEach(i => enrichAttemptedRef.current.add(i.id));
+    enrichItems(activeTab, needsEnrich).then(enriched => {
+      if (Object.keys(enriched).length > 0) search.patchItems(enriched);
+    }).catch(() => {});
+  }, [search.items, activeTab, isPaginatedTab]);
+
   // For paginated tabs, items come from the hook; for non-paginated, from app data.
   const items = isPaginatedTab ? search.items : (data[activeTab] || []);
 
@@ -83,9 +101,16 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     deepLinkProcessedRef.current = false;
   }, [activeTab, itemId]);
 
-  const openModal = (item) => {
+  const openModal = async (item) => {
     navigate(`/library/${activeTab}/${item.id || 'new'}`);
-    setModalState({ item, isNew: !item.id });
+    if (needsHodEnrich(item)) {
+      setModalState({ item, isNew: false, enriching: true });
+      const enriched = await enrichSingleItem(activeTab, item);
+      search.patchItems({ [enriched.id]: enriched });
+      setModalState({ item: enriched, isNew: false, enriching: false });
+    } else {
+      setModalState({ item, isNew: !item.id });
+    }
   };
 
   const openNew = () => {
@@ -188,7 +213,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     ? (items.find(i => i.id === modalState.item?.id) || modalState.item)
     : modalState?.item;
 
-  const modalItemIsOwn = resolvedModalItem && (!resolvedModalItem._source || resolvedModalItem._source === 'own');
+  const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -227,6 +252,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           collection={activeTab}
           data={data}
           editable={modalState.isNew || modalItemIsOwn}
+          enriching={!!modalState.enriching}
           onSave={handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
@@ -290,8 +316,8 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
                 tab={activeTab}
                 data={data}
                 onView={(item) => openModal(item)}
-                onEdit={item._source && item._source !== 'own' ? null : (item) => openModal(item)}
-                onDelete={item._source && item._source !== 'own' ? null : handleDelete}
+                onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
+                onDelete={isOwnItem(item) ? handleDelete : null}
                 onClone={() => handleClone(item)}
                 onAddToTable={addToTable}
               />
