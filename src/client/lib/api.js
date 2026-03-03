@@ -2,10 +2,12 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
 let firebaseConfig;
+export let imageGenEnabled = false;
 try {
   const res = await fetch('/api/config');
   const json = await res.json();
   firebaseConfig = json.firebaseConfig;
+  imageGenEnabled = !!json.imageGenEnabled;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);
 }
@@ -297,6 +299,51 @@ export const fetchMe = async () => {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Generate an image from a text prompt via the Hugging Face Inference API.
+ * Returns { imageUrl } where imageUrl is a base64 data URL.
+ */
+export const generateImage = async (prompt) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/generate-image', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * Edit an existing image using a natural language instruction.
+ * image — base64 data URL of the current image
+ * Returns { imageUrl } where imageUrl is a base64 data URL.
+ */
+export const editImage = async (image, prompt) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/edit-image', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ image, prompt }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
   return res.json();
 };
 

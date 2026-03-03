@@ -14,6 +14,7 @@ import { parseRedditPost } from './src/llm-parse.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
 import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
+import { generateImage as hfGenerateImage, editImage as hfEditImage, isConfigured as hfIsConfigured } from './src/huggingface-image.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -56,7 +57,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // --- Config route (no auth required) ---
 app.get('/api/config', (req, res) => {
@@ -67,6 +68,7 @@ app.get('/api/config', (req, res) => {
       projectId:  process.env.FIREBASE_PROJECT_ID  || '',
       appId:      process.env.FIREBASE_APP_ID      || '',
     },
+    imageGenEnabled: hfIsConfigured(),
   });
 });
 
@@ -84,18 +86,39 @@ app.get('/livereload', (req, res) => {
   res.flushHeaders();
   res.write('data: connected\n\n');
   liveReloadClients.add(res);
-  req.on('close', () => liveReloadClients.delete(res));
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:SSE-connect',message:'SSE client connected',data:{totalClients:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
+  // #endregion
+  req.on('close', () => {
+    liveReloadClients.delete(res);
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:SSE-close',message:'SSE client disconnected',data:{totalClients:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
+    // #endregion
+  });
 });
 let reloadTimer = null;
 const broadcastReload = () => {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:broadcast',message:'Broadcasting reload to clients',data:{clientCount:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
+    // #endregion
     for (const client of liveReloadClients) client.write('data: reload\n\n');
   }, 150);
 };
 // Poll the two build output files; fires only when mtime changes (actual write), not on reads
-watchFile('./public/app.js', { interval: 200 }, broadcastReload);
-watchFile('./public/styles.css', { interval: 200 }, broadcastReload);
+watchFile('./public/app.js', { interval: 200 }, (curr, prev) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:watchFile-appjs',message:'watchFile fired for app.js',data:{currMtime:curr.mtimeMs,prevMtime:prev.mtimeMs,currSize:curr.size,prevSize:prev.size},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
+  // #endregion
+  broadcastReload();
+});
+watchFile('./public/styles.css', { interval: 200 }, (curr, prev) => {
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:watchFile-css',message:'watchFile fired for styles.css',data:{currMtime:curr.mtimeMs,prevMtime:prev.mtimeMs,currSize:curr.size,prevSize:prev.size},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
+  // #endregion
+  broadcastReload();
+});
 
 // --- Rolz session management ---
 
@@ -874,6 +897,45 @@ const importUpload = multer({
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   },
+});
+
+// --- Hugging Face image generation ---
+
+app.post('/api/generate-image', requireAuth, async (req, res) => {
+  const { prompt } = req.body || {};
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+  if (!hfIsConfigured()) {
+    return res.status(503).json({ error: 'Image generation is not configured (HF_TOKEN missing)' });
+  }
+  try {
+    const result = await hfGenerateImage(prompt.trim());
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/generate-image error:', err);
+    res.status(500).json({ error: err.message || 'Image generation failed' });
+  }
+});
+
+app.post('/api/edit-image', requireAuth, async (req, res) => {
+  const { image, prompt } = req.body || {};
+  if (!image || typeof image !== 'string' || !image.startsWith('data:')) {
+    return res.status(400).json({ error: 'image (base64 data URL) is required' });
+  }
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+  if (!hfIsConfigured()) {
+    return res.status(503).json({ error: 'Image generation is not configured (HF_TOKEN missing)' });
+  }
+  try {
+    const result = await hfEditImage(image, prompt.trim());
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/edit-image error:', err);
+    res.status(500).json({ error: err.message || 'Image editing failed' });
+  }
 });
 
 app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), async (req, res) => {

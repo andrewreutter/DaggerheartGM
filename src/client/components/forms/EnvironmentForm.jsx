@@ -9,6 +9,7 @@ import { FeaturesInput } from './FeaturesInput.jsx';
 import { FeatureLibrary } from './FeatureLibrary.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
+import { ImageGenerator } from '../ImageGenerator.jsx';
 
 /**
  * Normalize the potential_adversaries field from any legacy or current format
@@ -270,6 +271,7 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
         />
 
         <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+        <ImageGenerator formData={formData} collection="environments" onImageGenerated={url => update({ ...formData, imageUrl: url })} />
         <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} />
 
         {!isControlled && (
