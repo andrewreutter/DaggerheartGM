@@ -36,10 +36,18 @@
     (function() {
       var src = new EventSource('/livereload');
       var wasConnected = false;
-      src.onopen = function() { if (wasConnected) location.reload(); };
+      var _dl=function(msg,data){fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'31f1f7',sessionId:'31f1f7',location:'index.html:livereload',message:msg,data:data,timestamp:Date.now()})}).catch(function(){});};
+      src.onopen = function() {
+        _dl('SSE onopen',{wasConnected:wasConnected,hypothesisId:'H-A'});
+        if (wasConnected) { _dl('SSE reconnect-reload',{hypothesisId:'H-A'}); location.reload(); }
+      };
       src.onmessage = function(e) {
+        _dl('SSE onmessage',{data:e.data,wasConnected:wasConnected,hypothesisId:'H-C'});
         wasConnected = true;
-        if (e.data === 'reload') location.reload();
+        if (e.data === 'reload') { _dl('SSE reload-triggered',{hypothesisId:'H-B'}); location.reload(); }
+      };
+      src.onerror = function(e) {
+        _dl('SSE onerror',{readyState:src.readyState,hypothesisId:'H-D'});
       };
     })();
   </script>
