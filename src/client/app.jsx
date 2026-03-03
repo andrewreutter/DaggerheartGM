@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2 } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Inbox } from 'lucide-react';
 
-import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe } from './lib/api.js';
+import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchRedditQueueCounts } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 
@@ -13,6 +13,7 @@ import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
+import { RedditQueueView } from './components/RedditQueueView.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -45,6 +46,7 @@ function App() {
   }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns]);
 
   const [isAdmin, setIsAdmin] = useState(false);
+  const [queueCount, setQueueCount] = useState(0);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [tableFlash, setTableFlash] = useState(false);
@@ -223,7 +225,17 @@ function App() {
           const [tableStateItems] = await Promise.all([
             loadTableState(),
             fetchAllCollections(),
-            fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {}),
+            fetchMe().then(({ isAdmin: admin }) => {
+              setIsAdmin(admin);
+              if (admin) {
+                fetchRedditQueueCounts().then(counts => {
+                  const total = Object.entries(counts)
+                    .filter(([k]) => k === 'needs_review' || k === 'failed')
+                    .reduce((sum, [, v]) => sum + v, 0);
+                  setQueueCount(total);
+                }).catch(() => {});
+              }
+            }).catch(() => {}),
           ]);
           const tableState = tableStateItems[0];
           setActiveElements(tableState?.elements || []);
@@ -457,6 +469,14 @@ function App() {
             </h1>
             <div className="flex items-center gap-2">
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate('/library/adversaries')} />
+              {isAdmin && (
+                <NavBtn
+                  icon={<Inbox />}
+                  label={queueCount > 0 ? `Queue (${queueCount})` : 'Queue'}
+                  active={route.view === 'reddit-queue'}
+                  onClick={() => navigate('/reddit-queue')}
+                />
+              )}
               <NavBtn
                 icon={<LayoutDashboard />}
                 label="GM Table"
@@ -551,6 +571,10 @@ function App() {
             navigate={navigate}
             onItemsChange={syncDataToApp}
             isAdmin={isAdmin}
+          />
+        ) : route.view === 'reddit-queue' && isAdmin ? (
+          <RedditQueueView
+            onQueueCountChange={setQueueCount}
           />
         ) : (
           <GMTableView

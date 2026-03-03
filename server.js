@@ -4,16 +4,17 @@ import { dirname, join } from 'path';
 import { watchFile } from 'fs';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone, blockRedditPost, getBlockedRedditPostIds } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone, blockRedditPost, unblockRedditPost, getBlockedRedditPostIds, getRedditMirrorsPaginated, getRedditQueuePaginated, getRedditStatusCounts, setRedditMirrorStatus } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
 import { EXTERNAL_SOURCES } from './src/external-sources.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { getRedditPost } from './src/reddit-search.js';
-import { parseRedditPost } from './src/llm-parse.js';
 import multer from 'multer';
-import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
+import { parseStatBlock, mergeResults, detectCollection, detectCollections } from './src/text-parse.js';
 import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
+import { runParseCascade } from './src/reddit-parse-cascade.js';
+import { startRedditScanner, stopRedditScanner, triggerScanNow } from './src/reddit-scanner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -347,13 +348,8 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       (s.collections === null || s.collections.includes(collection))
     );
 
-    // Mirrors are no longer shown in DB results, so there is nothing to dedup
-    // external source results against. Pass an empty set.
+    // Mirrors are no longer shown as visible DB results — pass empty set for dedup.
     const mirrorIds = new Set();
-
-    // Load blocked Reddit post IDs when Reddit is active, to filter them out of results.
-    const redditActive = activeExternalSources.some(s => s.name === 'reddit');
-    const blockedRedditPostIds = redditActive ? await getBlockedRedditPostIds(APP_ID) : new Set();
 
     const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
       includeMine, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
@@ -386,7 +382,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         limit: searchLimit,
         offset: sourceLocalOffset,
         mirrorIds,
-        blockedRedditPostIds,
+        appId: APP_ID,
       });
 
       if (remaining > 0) {
@@ -402,28 +398,22 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       priorSourceTotal += result.totalCount;
     }
 
-    // Substitute HoD and Reddit stubs with enriched mirror data when available.
-    // HoD stubs are enriched in the background; Reddit stubs are enriched on detail click.
-    // In both cases, if a mirror row exists (from a prior enrichment), use it here so the
+    // Substitute HoD stubs with enriched mirror data when available.
+    // HoD stubs are enriched in the background; if a mirror row exists, use it here so the
     // grid shows the richer data immediately.
-    const stubIds = externalItems
-      .filter(i =>
-        (i._source === 'hod' && (i.features || []).length === 0) ||
-        (i._source === 'reddit' && (i.features || []).length === 0)
-      )
+    const hodStubIds = externalItems
+      .filter(i => i._source === 'hod' && (i.features || []).length === 0)
       .map(i => i.id);
     let mirrorMap = {};
-    if (stubIds.length > 0) {
+    if (hodStubIds.length > 0) {
       try {
-        const mirrorRows = await getItemsByIds(APP_ID, collection, stubIds);
+        const mirrorRows = await getItemsByIds(APP_ID, collection, hodStubIds);
         for (const row of mirrorRows) {
           const hasFeatures = (row.features || []).length > 0;
           if (row._source === 'hod') {
             const isEnrichedAdv = collection === 'adversaries' && typeof row.attack?.damage === 'string';
             const isEnrichedEnv = collection === 'environments';
             if (hasFeatures && (isEnrichedAdv || isEnrichedEnv)) mirrorMap[row.id] = row;
-          } else if (row._source === 'reddit' && hasFeatures) {
-            mirrorMap[row.id] = row;
           }
         }
       } catch {}
@@ -734,6 +724,11 @@ app.put('/api/admin/mirror/:collection', requireAuth, requireAdmin, async (req, 
   }
 });
 
+app.post('/api/admin/reddit/scan', requireAuth, requireAdmin, (req, res) => {
+  triggerScanNow(APP_ID);
+  res.json({ ok: true, message: 'Scan cycle triggered' });
+});
+
 app.post('/api/admin/reddit/block', requireAuth, requireAdmin, async (req, res) => {
   const { redditPostId } = req.body || {};
   if (!redditPostId) return res.status(400).json({ error: 'redditPostId is required' });
@@ -760,7 +755,7 @@ app.post('/api/reddit/parse', requireAuth, requireAdmin, async (req, res) => {
   try {
     const itemId = `reddit-${redditPostId}`;
 
-    // Check for an existing parsed mirror (skip if re-parsing)
+    // Return cached mirror if already parsed (skip when re-parsing)
     if (!reparse) {
       const existing = await getItemsByIds(APP_ID, collection, [itemId]);
       const existingParsed = existing.find(r => r.id === itemId && (r.features || []).length > 0);
@@ -769,97 +764,18 @@ app.post('/api/reddit/parse', requireAuth, requireAdmin, async (req, res) => {
       }
     }
 
-    // Fetch full post from Reddit
-    let postText = selftext || '';
-    let postImages = Array.isArray(images) ? images : [];
-    let postTitle = name || '';
-    let redditMeta = {};
+    const results = await runParseCascade({ collection, redditPostId, selftext, images, name, forceLlm });
 
-    try {
-      const postDetail = await getRedditPost(redditPostId);
-      postText = postDetail._redditSelftext || postText;
-      postImages = postDetail._redditImages?.length ? postDetail._redditImages : postImages;
-      postTitle = postDetail._redditTitle || postTitle;
-      // Preserve Reddit metadata so the mirror and returned item retain the original post link
-      const { _redditPermalink, _redditAuthor, _redditSubreddit, _redditFlair, _redditScore, _redditCreatedUtc } = postDetail;
-      redditMeta = { _redditPermalink, _redditAuthor, _redditSubreddit, _redditFlair, _redditScore, _redditCreatedUtc };
-    } catch (fetchErr) {
-      console.warn(`[reddit] Could not fetch post ${redditPostId}, using client-provided data:`, fetchErr.message);
+    // Persist all detected stat blocks as mirror rows (fire-and-forget)
+    for (const result of results) {
+      const { id: _id, _source: _s, _owner: _o, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = result.item;
+      upsertMirror(APP_ID, result.collection, result.item.id, { ...mirrorData, _source: 'reddit' }).catch(() => {});
     }
 
-    // hasStatBlockImages: when true, all post images were classified as stat blocks so we
-    // must NOT fall back to item.imageUrl (which would be the same stat block image).
-    const respond = (item, artworkUrl, parseMethod, additionalImages = [], hasStatBlockImages = false) => {
-      const fullItem = {
-        ...item,
-        ...redditMeta,
-        id: itemId,
-        imageUrl: artworkUrl || (hasStatBlockImages ? '' : item.imageUrl) || '',
-        _source: 'reddit',
-        _redditPostId: redditPostId,
-      };
-      if (additionalImages.length > 0) {
-        fullItem._additionalImages = additionalImages;
-      }
-      // Upsert mirror so future fetches show enriched data
-      const { id: _id, _source: _s, _owner: _o, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = fullItem;
-      upsertMirror(APP_ID, collection, itemId, { ...mirrorData, _source: 'reddit' }).catch(() => {});
-      return res.json({ item: fullItem, artworkUrl: artworkUrl || null, _parseMethod: parseMethod });
-    };
+    // Return the first result matching the requested collection (or the first overall)
+    const primary = results.find(r => r.collection === collection) || results[0];
 
-    // --- Stage 1: Regex parse selftext ---
-    if (!forceLlm) {
-      const textResult = parseStatBlock(postText, collection, postTitle);
-      console.log(`[reddit] Text parse confidence=${textResult.confidence.toFixed(2)}, missing=[${textResult.missing.join(', ')}]`);
-
-      if (textResult.confidence >= 0.7) {
-        return respond(textResult.item, null, 'text');
-      }
-
-      // --- Stage 2: OCR images + merge ---
-      if (postImages.length > 0) {
-        try {
-          const { texts: ocrTexts, artworkUrl, additionalImages, hasStatBlockImages } = await ocrImages(postImages);
-          if (ocrTexts.length > 0) {
-            const ocrResult = parseStatBlock(ocrTexts.join('\n\n'), collection, postTitle);
-            console.log(`[reddit] OCR parse confidence=${ocrResult.confidence.toFixed(2)}, missing=[${ocrResult.missing.join(', ')}]`);
-
-            const merged = mergeResults(textResult, ocrResult);
-            if (merged.confidence >= 0.5) {
-              return respond(merged.item, artworkUrl, 'ocr', additionalImages, hasStatBlockImages);
-            }
-          }
-          // Even if OCR didn't help with parsing, preserve artwork URL for later stages
-          if (textResult.confidence >= 0.5) {
-            return respond(textResult.item, artworkUrl, 'text', additionalImages, hasStatBlockImages);
-          }
-        } catch (ocrErr) {
-          console.warn(`[reddit] OCR failed for ${redditPostId}:`, ocrErr.message);
-        }
-      }
-
-      // Accept a lower-confidence text parse if it got features
-      if (textResult.item.features?.length > 0) {
-        return respond(textResult.item, null, 'partial');
-      }
-    }
-
-    // --- Stage 3: LLM fallback ---
-    if (!process.env.OPENAI_API_KEY) {
-      // No LLM available — return best partial result
-      const fallback = parseStatBlock(postText, collection, postTitle);
-      return respond(fallback.item, null, 'partial');
-    }
-
-    const { item: parsed, artworkUrl } = await parseRedditPost({
-      title: postTitle,
-      text: postText,
-      imageUrls: postImages,
-      collection,
-    });
-    // Store any remaining images beyond the primary artwork
-    const llmAdditional = postImages.filter(u => u !== artworkUrl);
-    return respond(parsed, artworkUrl, 'llm', llmAdditional);
+    return res.json({ item: primary.item, artworkUrl: primary.artworkUrl, _parseMethod: primary.parseMethod });
   } catch (err) {
     console.error('POST /api/reddit/parse error:', err);
     res.status(500).json({ error: err.message || 'Failed to parse Reddit post' });
@@ -880,17 +796,35 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
   try {
     const files = req.files || [];
     const pastedText = (req.body.text || '').trim();
+    console.log(`[import] Parsing ${files.length} image(s) + ${pastedText ? 'text' : 'no text'}`);
 
     // Phase 1: OCR all images, classify each as stat-block or artwork.
-    // Mirrors the approach in ocrImages() / the Reddit parse path.
-    const ocrResults = [];  // { text, artworkRegions, fileIndex }
+    // ocrBuffer() now clusters Tesseract blocks into discrete text regions so
+    // a single image with N stat blocks produces N textRegions.
+    const ocrResults = [];  // { textRegions, artworkRegions, allClusters, imageWidth, imageHeight, fileIndex }
     const pureArtworkUrls = [];  // data-URL thumbnails for non-stat-block images
+    const imageRegions = {};     // fileIndex → { textRegions, allClusters, imageWidth, imageHeight } for debug overlay
 
     for (let i = 0; i < files.length; i++) {
       try {
-        const { text, isStatBlock: isStat, artworkRegions } = await ocrBuffer(files[i].buffer);
-        if (isStat && text) {
-          ocrResults.push({ text, artworkRegions, fileIndex: i });
+        const ocrStart = Date.now();
+        const { isStatBlock: isStat, textRegions, artworkRegions, allClusters, imageWidth, imageHeight } = await ocrBuffer(files[i].buffer);
+        console.log(`[import] OCR image ${i}: ${imageWidth}x${imageHeight}, ${allClusters?.length || 0} clusters, ${textRegions.length} stat regions, ${Date.now() - ocrStart}ms`);
+        // Record debug regions so the lightbox can show cluster bounding boxes
+        if (allClusters?.length > 0 && imageWidth && imageHeight) {
+          const statBboxSet = new Set(textRegions.map(r => r.bbox ? `${r.bbox.x0},${r.bbox.y0},${r.bbox.x1},${r.bbox.y1}` : ''));
+          imageRegions[i] = {
+            clusters: allClusters.map(c => ({
+              bbox: c.bbox,
+              isStatBlock: statBboxSet.has(`${c.bbox.x0},${c.bbox.y0},${c.bbox.x1},${c.bbox.y1}`),
+              textPreview: c.text.slice(0, 80),
+            })),
+            imageWidth,
+            imageHeight,
+          };
+        }
+        if (isStat && textRegions.length > 0) {
+          ocrResults.push({ textRegions, artworkRegions, fileIndex: i });
         } else {
           // Non-stat-block image → convert to data URL for use as artwork
           const mime = files[i].mimetype || 'image/jpeg';
@@ -901,29 +835,29 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
       }
     }
 
-    // Phase 2: Parse each stat-block text and assign artwork.
-    // Same logic as the Reddit path: prefer pure artwork, fall back to cropped regions.
+    // Phase 2: Parse each text region independently.
+    // All regions from the same image share the same artwork pool.
+    // Within each region, splitStatBlocks() handles stacked same-column stat blocks.
     const results = [];
-    const allCroppedArtwork = ocrResults.flatMap(r => r.artworkRegions);
-    const availableArtwork = [...pureArtworkUrls, ...allCroppedArtwork];
-    let artworkIdx = 0;
 
-    for (const { text, fileIndex } of ocrResults) {
-      const detected = detectCollection(text);
-      const { collection, item, confidence, missing } = detected;
+    for (const { textRegions, artworkRegions, fileIndex } of ocrResults) {
+      // Build this image's artwork pool: its own cropped regions + pure artwork images
+      const imageArtwork = [...artworkRegions, ...pureArtworkUrls];
+      const artworkUrl = imageArtwork[0] || null;
+      const additionalArtwork = imageArtwork.slice(1);
 
-      // Assign primary artwork URL — take from the shared pool
-      const artworkUrl = availableArtwork[artworkIdx] || null;
-      if (artworkUrl) artworkIdx++;
-      item.imageUrl = artworkUrl || '';
+      for (const region of textRegions) {
+        // Fallback: split region text on repeated stat-block headers (same-column stacking)
+        const segments = detectCollections(region.text);
 
-      // Additional images: remaining available artwork beyond the primary
-      const additional = availableArtwork.slice(artworkIdx);
-      if (additional.length > 0) {
-        item._additionalImages = additional;
+        for (const { collection, item, confidence, missing } of segments) {
+          item.imageUrl = artworkUrl || '';
+          if (additionalArtwork.length > 0) {
+            item._additionalImages = additionalArtwork;
+          }
+          results.push({ collection, item, confidence, missing, artworkUrl, sourceIndex: fileIndex });
+        }
       }
-
-      results.push({ collection, item, confidence, missing, artworkUrl, sourceIndex: fileIndex });
     }
 
     // Phase 3: Parse optional pasted text blocks
@@ -936,7 +870,8 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
       }
     }
 
-    res.json({ results });
+    console.log(`[import] Done — ${results.length} item(s) from ${Object.keys(imageRegions).length} image(s)`);
+    res.json({ results, imageRegions });
   } catch (err) {
     console.error('POST /api/import/parse error:', err);
     res.status(500).json({ error: err.message || 'Failed to parse import' });
@@ -996,6 +931,69 @@ app.delete('/api/data/:collection/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Admin: Reddit queue endpoints ---
+
+// GET /api/admin/reddit/counts
+// Returns { [status]: count } for all non-parsed statuses (queue badge + sub-nav)
+app.get('/api/admin/reddit/counts', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const counts = await getRedditStatusCounts(APP_ID);
+    res.json(counts);
+  } catch (err) {
+    console.error('GET /api/admin/reddit/counts error:', err);
+    res.status(500).json({ error: 'Failed to fetch counts' });
+  }
+});
+
+// GET /api/admin/reddit/queue?status=needs_review&collection=adversaries&offset=0&limit=20
+app.get('/api/admin/reddit/queue', requireAuth, requireAdmin, async (req, res) => {
+  const { status, collection, offset: rawOffset, limit: rawLimit } = req.query;
+  if (!status) return res.status(400).json({ error: 'status is required' });
+  const offset = Math.max(0, parseInt(rawOffset, 10) || 0);
+  const limit = Math.min(20, Math.max(1, parseInt(rawLimit, 10) || 10));
+  try {
+    const result = await getRedditQueuePaginated(APP_ID, { status, collection: collection || null, offset, limit });
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/admin/reddit/queue error:', err);
+    res.status(500).json({ error: 'Failed to fetch queue' });
+  }
+});
+
+// POST /api/admin/reddit/:collection/:id/status
+// Body: { status: "any string" }
+// Sets _redditStatus on the mirror; manages blocked_reddit_posts for custom tags.
+app.post('/api/admin/reddit/:collection/:id/status', requireAuth, requireAdmin, async (req, res) => {
+  const { collection, id } = req.params;
+  const { status } = req.body || {};
+  if (!collection || !['adversaries', 'environments'].includes(collection)) {
+    return res.status(400).json({ error: 'Invalid collection' });
+  }
+  if (!status || typeof status !== 'string') {
+    return res.status(400).json({ error: 'status is required' });
+  }
+  try {
+    const RESERVED = new Set(['needs_review', 'parsed', 'failed']);
+    const updated = await setRedditMirrorStatus(APP_ID, collection, id, status);
+    if (!updated) return res.status(404).json({ error: 'Mirror not found' });
+
+    // Extract the Reddit post ID from item id (format: reddit-XXXX)
+    const redditPostId = id.replace(/^reddit-/, '');
+
+    // Custom tag → block so scanner doesn't re-discover; back to needs_review → unblock
+    if (!RESERVED.has(status)) {
+      await blockRedditPost(APP_ID, redditPostId, req.email).catch(() => {});
+    } else if (status === 'needs_review') {
+      await unblockRedditPost(APP_ID, redditPostId).catch(() => {});
+    }
+
+    res.json({ ok: true, item: updated });
+  } catch (err) {
+    console.error(`POST /api/admin/reddit/${collection}/${id}/status error:`, err);
+    res.status(500).json({ error: 'Failed to update status' });
+  }
+});
+
 app.use('/api/srd', srdRouter);
 
 app.use(express.static(join(__dirname, 'public')));
@@ -1010,6 +1008,7 @@ async function startServer() {
   await warmCache();
   if (process.env.DATABASE_URL) {
     await runMigrations();
+    startRedditScanner(APP_ID);
   } else {
     console.warn('[db] DATABASE_URL not set — running without database');
   }
@@ -1020,3 +1019,7 @@ startServer().catch(err => {
   console.error('Startup failed:', err);
   process.exit(1);
 });
+
+// Graceful shutdown
+process.on('SIGTERM', () => { stopRedditScanner(); process.exit(0); });
+process.on('SIGINT', () => { stopRedditScanner(); process.exit(0); });

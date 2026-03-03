@@ -18,7 +18,7 @@ const USER_AGENT = 'DaggerheartGM/1.0';
 
 // Per subreddit: flair mapping and sort priority (lower = higher priority).
 // daggerbrew first — its flairs classify adversaries vs environments directly.
-const SUBREDDIT_CONFIG = {
+export const SUBREDDIT_CONFIG = {
   daggerbrew:  { flairs: { adversaries: 'Adversaries', environments: 'Environments' }, priority: 0 },
   daggerheart: { flairs: { adversaries: 'Homebrew',    environments: 'Homebrew' },     priority: 1 },
 };
@@ -56,7 +56,7 @@ function getCache(key) {
 // Fetch one page from a subreddit with flair filtering
 // ---------------------------------------------------------------------------
 
-async function fetchPage(subreddit, flair, search, after) {
+export async function fetchPage(subreddit, flair, search, after) {
   const flairFilter = `flair_name:"${flair}"`;
   const q = search ? `${search} ${flairFilter}` : flairFilter;
 
@@ -122,7 +122,7 @@ function extractImages(post) {
   return [...seen.values()];
 }
 
-function normalizePost(post, subreddit) {
+export function normalizePost(post, subreddit) {
   const images = extractImages(post);
   const thumbnail =
     post.thumbnail && post.thumbnail.startsWith('http') ? post.thumbnail : images[0] || null;

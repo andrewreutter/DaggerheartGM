@@ -5,7 +5,7 @@ import { ImageImportModal } from './modals/ImageImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
-import { isOwnItem, needsHodEnrich, needsRedditParse } from '../lib/constants.js';
+import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { enrichItems, enrichSingleItem, parseRedditItem, blockRedditPost, saveMirrorItem } from '../lib/api.js';
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
@@ -108,9 +108,6 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       const enriched = await enrichSingleItem(activeTab, item);
       search.patchItems({ [enriched.id]: enriched });
       setModalState({ item: enriched, isNew: false, enriching: false });
-    } else if (isAdmin && needsRedditParse(item)) {
-      setModalState({ item, isNew: false, enriching: true });
-      handleParseReddit(item);
     } else {
       setModalState({ item, isNew: !item.id });
     }
@@ -249,7 +246,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     : modalState?.item;
 
   const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
-  const modalItemIsRedditParsed = resolvedModalItem?._source === 'reddit' && !needsRedditParse(resolvedModalItem);
+  const modalItemIsRedditParsed = resolvedModalItem?._source === 'reddit' && (resolvedModalItem?.features || []).length > 0;
 
   return (
     <div className="flex-1 flex overflow-hidden">

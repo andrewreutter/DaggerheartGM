@@ -29,7 +29,7 @@
 import { searchCollection, COLLECTION_NAMES as SRD_COLLECTIONS } from './srd/index.js';
 import { searchFCG } from './fcg-search.js';
 import { searchHoD } from './hod-search.js';
-import { searchReddit } from './reddit-search.js';
+import { getRedditMirrorsPaginated } from './db.js';
 
 export const EXTERNAL_SOURCES = [
   // --- SRD: in-memory, covers all 13 SRD collections ---
@@ -145,20 +145,17 @@ export const EXTERNAL_SOURCES = [
     },
   },
 
-  // --- Reddit (r/daggerbrew + r/daggerheart): live API, adversaries + environments only ---
-  // Listed LAST: stubs have the least structured data; full detail requires LLM parse on click.
-  // Not included in "All" source results — only shown when explicitly selected (see useCollectionSearch).
+  // --- Reddit: DB-backed admin-approved mirrors only ---
+  // Items are discovered by the background scanner, auto-parsed, and must be approved
+  // by an admin (_redditStatus='parsed') before appearing here. Included in "All" results.
   {
     name: 'reddit',
     enabledParam: 'includeReddit',
     collections: ['adversaries', 'environments'],
-    async search({ collection, search, limit, offset, mirrorIds, blockedRedditPostIds }) {
-      const mirrorSet = mirrorIds instanceof Set ? mirrorIds : new Set(mirrorIds || []);
-      const blockedSet = blockedRedditPostIds instanceof Set ? blockedRedditPostIds : new Set(blockedRedditPostIds || []);
-      const result = await searchReddit({ collection, search, limit, offset });
-      const blockedInPage = result.items.filter(i => blockedSet.has(i._redditPostId)).length;
-      const items = result.items.filter(i => !mirrorSet.has(i.id) && !blockedSet.has(i._redditPostId));
-      return { items, totalCount: Math.max(0, result.totalCount - mirrorSet.size - blockedInPage) };
+    async search({ collection, search, tier, typeField, type, limit, offset, appId }) {
+      return getRedditMirrorsPaginated(appId, collection, {
+        search, tier, typeField, typeValue: type, offset, limit,
+      });
     },
   },
 ];

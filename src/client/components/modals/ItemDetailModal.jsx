@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Undo2, Redo2, Trash2, BookCopy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink, ShieldOff } from 'lucide-react';
+import { X, Undo2, Redo2, Trash2, BookCopy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink, ShieldOff, CheckCircle, RotateCcw, Tag, Loader2 } from 'lucide-react';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
 import { AdversaryForm } from '../forms/AdversaryForm.jsx';
@@ -17,6 +17,131 @@ const COLLECTION_LABELS = {
   scenes: 'Scene',
   adventures: 'Adventure',
 };
+
+const RESERVED_REDDIT_STATUSES = new Set(['needs_review', 'parsed', 'failed']);
+
+function RedditTriageFooter({ triage }) {
+  const { activeTab, existingTags = [], onApprove, onAssign, onReparse } = triage;
+  const [approving, setApproving] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
+  const [tagValue, setTagValue] = useState('');
+
+  const doApprove = async () => {
+    setApproving(true);
+    try { await onApprove(); } finally { setApproving(false); }
+  };
+
+  const doAssign = async (tag) => {
+    const t = tag.trim();
+    if (!t) return;
+    setAssigning(true);
+    setTagValue('');
+    try { await onAssign(t); } finally { setAssigning(false); }
+  };
+
+  const doReparse = async (forceLlm) => {
+    setReparsing(true);
+    try { await onReparse(forceLlm); } finally { setReparsing(false); }
+  };
+
+  const busy = approving || assigning || reparsing;
+
+  return (
+    <div className="shrink-0 border-t border-slate-800 bg-slate-950/60 px-4 py-3 flex items-start gap-4 flex-wrap">
+      {/* Primary actions */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {activeTab === 'needs_review' && (
+          <button
+            onClick={doApprove}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-40 transition-colors"
+          >
+            {approving ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
+            Approve &amp; publish
+          </button>
+        )}
+        {activeTab === 'failed' && (
+          <>
+            <button
+              onClick={() => doReparse(false)}
+              disabled={busy}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-40 transition-colors"
+            >
+              {reparsing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+              Re-parse
+            </button>
+            <button
+              onClick={() => doReparse(true)}
+              disabled={busy}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-orange-300 disabled:opacity-40 transition-colors"
+            >
+              {reparsing ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+              Re-parse with AI
+            </button>
+          </>
+        )}
+        {!RESERVED_REDDIT_STATUSES.has(activeTab) && (
+          <button
+            onClick={() => doAssign('needs_review')}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-40 transition-colors"
+          >
+            {assigning ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
+            Back to Review
+          </button>
+        )}
+      </div>
+
+      {/* Skip with reason */}
+      <div className="flex-1 min-w-48 space-y-1.5">
+        <p className="text-[10px] text-slate-500 uppercase tracking-wider">Skip with reason</p>
+        {existingTags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {existingTags.map(tag => (
+              <button
+                key={tag}
+                onClick={() => doAssign(tag)}
+                disabled={busy}
+                className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-colors"
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-1.5">
+          <div className="relative flex-1">
+            <Tag size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              value={tagValue}
+              onChange={e => setTagValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); doAssign(tagValue); } }}
+              disabled={busy}
+              placeholder="Tag reason and press Enter…"
+              className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 pl-6 text-xs text-white placeholder:text-slate-600 outline-none focus:border-slate-500 disabled:opacity-40"
+            />
+            {tagValue && (
+              <button onClick={() => setTagValue('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                <X size={10} />
+              </button>
+            )}
+          </div>
+          {tagValue.trim() && (
+            <button
+              onClick={() => doAssign(tagValue)}
+              disabled={busy}
+              className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded border border-slate-600 transition-colors disabled:opacity-40"
+            >
+              Tag
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Unified item detail + edit modal.
@@ -55,9 +180,23 @@ export function ItemDetailModal({
   isAdmin = false,
   onBlockReddit,
   onClose,
+  // When true, show a "Make Public" checkbox in the header (defaults checked).
+  showPublicToggle = false,
+  // Controlled value for the public toggle; undefined = use formData.is_public
+  isPublic,
+  onPublicChange,
+  // z-index override for stacked modal pattern (default z-50)
+  zIndex = 50,
+  // When true: replaces the Feature Library panel with the original Reddit post,
+  // and suppresses the "Make Public" checkbox (is_public is always true in this mode).
+  redditMode = false,
+  // When provided (reddit mode only): renders a triage footer with approve/tag/reparse actions.
+  // Shape: { activeTab, existingTags, onApprove, onAssign, onReparse }
+  redditTriage = null,
 }) {
   const isNew = !item?.id;
-  const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments');
+  const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments') && !redditMode;
+  const showRedditPanel = redditMode && editable && (collection === 'adversaries' || collection === 'environments');
 
   const [libraryPortal, setLibraryPortal] = useState(null);
   const [cloningStatus, setCloningStatus] = useState('');
@@ -435,15 +574,62 @@ export function ItemDetailModal({
     );
   };
 
-  const maxWidth = showFeatureLibrary ? 'max-w-[110rem]' : editable ? 'max-w-[88rem]' : 'max-w-3xl';
+  const maxWidth = (showFeatureLibrary || showRedditPanel) ? 'max-w-[110rem]' : editable ? 'max-w-[88rem]' : 'max-w-3xl';
 
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 overflow-hidden"
+      className={`fixed inset-0 flex items-center justify-center bg-black/70 p-4 overflow-hidden`}
+      style={{ zIndex }}
       onClick={handleOverlayClick}
     >
       <div className={`flex gap-3 items-start w-full ${maxWidth}`}>
+        {/* Reddit post panel — left of the card so it sits beside the preview pane */}
+        {showRedditPanel && (
+          <div
+            className="w-80 shrink-0 rounded-xl bg-slate-900 border border-slate-700 flex flex-col overflow-hidden"
+            style={{ height: 'calc(100vh - 2rem)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="shrink-0 px-3 pt-3 pb-2 border-b border-slate-800 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Original Post</span>
+              {item._redditPermalink && (
+                <a
+                  href={`https://reddit.com${item._redditPermalink}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-[10px] text-orange-400 hover:text-orange-300"
+                >
+                  <ExternalLink size={10} /> Reddit
+                </a>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+              {/* Selftext */}
+              {item._redditSelftext ? (
+                <RedditMarkdown text={item._redditSelftext} className="text-xs" />
+              ) : (
+                <p className="text-xs text-slate-600 italic">No post text.</p>
+              )}
+              {/* Images */}
+              {(item._redditImages || []).length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {(item._redditImages || []).map((url, i) => (
+                    <img
+                      key={i}
+                      src={url}
+                      alt=""
+                      className="w-full rounded cursor-zoom-in"
+                      onClick={() => setLightboxUrl(url)}
+                      onError={e => { e.target.style.display = 'none'; }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Main modal card */}
         <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 2rem)' }}>
 
@@ -482,7 +668,18 @@ export function ItemDetailModal({
               )}
               {isSaving && <span className="text-xs text-slate-500 ml-2 shrink-0">Saving…</span>}
             </div>
-            <div className="flex items-center gap-1 shrink-0 ml-3">
+            <div className="flex items-center gap-2 shrink-0 ml-3">
+              {showPublicToggle && !redditMode && (
+                <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isPublic !== undefined ? isPublic : (formData.is_public !== false)}
+                    onChange={e => onPublicChange?.(e.target.checked)}
+                    className="accent-blue-500"
+                  />
+                  <span>Public</span>
+                </label>
+              )}
               {onDelete && isOwn && (
                 <button
                   onClick={onDelete}
@@ -520,6 +717,11 @@ export function ItemDetailModal({
               </div>
             )}
           </div>
+
+          {/* Reddit triage footer — approve / tag / reparse actions */}
+          {redditMode && redditTriage && (
+            <RedditTriageFooter triage={redditTriage} />
+          )}
         </div>
 
         {/* Feature Library portal target — narrow column to the right of the card.
@@ -532,6 +734,7 @@ export function ItemDetailModal({
             style={{ height: 'calc(100vh - 2rem)' }}
           />
         )}
+
       </div>
 
       {/* Lightbox overlay for Reddit images */}

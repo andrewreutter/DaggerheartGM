@@ -793,3 +793,71 @@ export function detectCollection(text, title = '') {
   if (envResult.confidence > advResult.confidence) return { collection: 'environments', ...envResult };
   return { collection: 'adversaries', ...advResult };
 }
+
+// ---------------------------------------------------------------------------
+// Multi-stat-block splitting (fallback for same-column stacking)
+// ---------------------------------------------------------------------------
+
+/**
+ * A stat block boundary is an all-caps or bold/heading name line immediately
+ * followed (with optional whitespace) by a "Tier N" line.  This pattern
+ * reliably marks the start of a new Daggerheart stat block.
+ *
+ * Matches:
+ *   MONKEY RINGLEADER\nTier 2 Leader
+ *   **Goblin Scout**\nTier 1 Standard
+ *   # Sporenado\nTier 3 Leader
+ */
+const BLOCK_BOUNDARY_RE =
+  /^(?:[A-Z][A-Z\s\u2019'\-]{2,}[A-Z]|#{1,3}\s+.+|\*\*[^*\n]+\*\*)\s*\n[\s]*Tier\s+\d/gm;
+
+/**
+ * Split concatenated stat block text into individual stat block segments.
+ *
+ * This is a lightweight fallback for cases where OCR spatial clustering puts
+ * two stacked stat blocks (same column, minimal gap) into the same text region.
+ * The text-header pattern (ALL-CAPS name + "Tier N") reliably marks boundaries.
+ *
+ * Returns an array of one or more text segments.  When only one boundary is
+ * found (or none), the original text is returned as a single-element array.
+ *
+ * @param {string} text - Raw OCR or markdown text, possibly containing multiple stat blocks
+ * @returns {string[]}
+ */
+export function splitStatBlocks(text) {
+  if (!text || !text.trim()) return [text];
+
+  const matches = [...text.matchAll(BLOCK_BOUNDARY_RE)];
+
+  // 0 or 1 boundaries → single stat block
+  if (matches.length <= 1) return [text];
+
+  // Split at each boundary start; keep any leading text before the first boundary
+  const segments = [];
+  let cursor = 0;
+  for (const match of matches) {
+    if (match.index > cursor) {
+      const prior = text.slice(cursor, match.index).trim();
+      if (prior) segments.push(prior);
+    }
+    cursor = match.index;
+  }
+  // Remaining text from last boundary to end
+  segments.push(text.slice(cursor).trim());
+
+  return segments.filter(Boolean);
+}
+
+/**
+ * Split text into multiple stat block segments (via splitStatBlocks), then
+ * detect the collection and parse each segment independently.
+ *
+ * @param {string} text    - Raw text possibly containing multiple stat blocks
+ * @param {string} [title] - Optional title hint (used only when exactly one segment)
+ * @returns {Array<{ collection: string, item: object, confidence: number, missing: string[] }>}
+ */
+export function detectCollections(text, title = '') {
+  const segments = splitStatBlocks(text);
+  // Pass title only for single-segment texts (where the title belongs to that block)
+  return segments.map((seg, i) => detectCollection(seg, segments.length === 1 && i === 0 ? title : ''));
+}

@@ -27,6 +27,10 @@ export function parseRoute(pathname) {
     return { view: 'gm-table', tab: null, gmTab, itemId: null };
   }
 
+  if (parts[0] === 'reddit-queue') {
+    return { view: 'reddit-queue', tab: null, itemId: null };
+  }
+
   if (parts[0] === 'library') {
     const tab = VALID_TABS.has(parts[1]) ? parts[1] : 'adversaries';
     // Accept /library/:tab/:id or /library/:tab/:id/edit (redirect edit → modal)

@@ -366,6 +366,237 @@ export async function deleteItem(appId, userId, collection, id) {
   );
 }
 
+// --- Reddit mirror helpers (queue + library source) ---
+
+const REDDIT_RESERVED_STATUSES = new Set(['needs_review', 'parsed', 'failed']);
+
+/**
+ * Count Reddit mirror rows with a given _redditStatus.
+ * If status is null, counts ALL non-parsed statuses (for queue badge).
+ */
+export async function countRedditMirrors(appId, collection, {
+  status = null,
+  search = '',
+  tier = null,
+  typeField = null,
+  typeValue = null,
+} = {}) {
+  const db = getPool();
+  const params = [appId, MIRROR_USER_ID];
+  let idx = params.length + 1;
+  const clauses = [`app_id = $1`, `user_id = $2`, `(data->>'_source') = 'reddit'`];
+
+  if (collection) {
+    clauses.push(`collection = $${idx++}`);
+    params.push(collection);
+  }
+  if (status !== null) {
+    clauses.push(`(data->>'_redditStatus') = $${idx++}`);
+    params.push(status);
+  }
+  if (search) {
+    clauses.push(`data->>'name' ILIKE '%' || $${idx++} || '%'`);
+    params.push(search);
+  }
+  if (tier != null) {
+    clauses.push(`data->>'tier' = $${idx++}`);
+    params.push(String(tier));
+  }
+  if (typeField && typeValue) {
+    clauses.push(`data->>'${typeField}' = $${idx++}`);
+    params.push(typeValue);
+  }
+
+  const { rows } = await db.query(
+    `SELECT COUNT(*) FROM items WHERE ${clauses.join(' AND ')}`,
+    params
+  );
+  return parseInt(rows[0].count, 10);
+}
+
+/**
+ * Paginated fetch of Reddit mirrors for the Library (status = 'parsed').
+ * Returns { items, totalCount }.
+ */
+export async function getRedditMirrorsPaginated(appId, collection, {
+  search = '',
+  tier = null,
+  typeField = null,
+  typeValue = null,
+  offset = 0,
+  limit = 20,
+} = {}) {
+  const db = getPool();
+  const params = [appId, MIRROR_USER_ID, collection];
+  let idx = params.length + 1;
+  const filterClauses = [
+    `app_id = $1`,
+    `user_id = $2`,
+    `collection = $3`,
+    `(data->>'_source') = 'reddit'`,
+    `(data->>'_redditStatus') = 'parsed'`,
+  ];
+
+  if (search) {
+    filterClauses.push(`data->>'name' ILIKE '%' || $${idx++} || '%'`);
+    params.push(search);
+  }
+  if (tier != null) {
+    filterClauses.push(`data->>'tier' = $${idx++}`);
+    params.push(String(tier));
+  }
+  if (typeField && typeValue) {
+    filterClauses.push(`data->>'${typeField}' = $${idx++}`);
+    params.push(typeValue);
+  }
+
+  const where = filterClauses.join(' AND ');
+  const countRow = await db.query(`SELECT COUNT(*) FROM items WHERE ${where}`, params);
+  const totalCount = parseInt(countRow.rows[0].count, 10);
+
+  const offsetIdx = idx++;
+  const limitIdx = idx++;
+  const { rows } = await db.query(
+    `SELECT id, data, clone_count, play_count FROM items
+     WHERE ${where}
+     ORDER BY (clone_count + play_count) DESC, data->>'name' ASC
+     OFFSET $${offsetIdx} LIMIT $${limitIdx}`,
+    [...params, offset, limit]
+  );
+
+  const items = rows.map(r => ({
+    id: r.id,
+    ...r.data,
+    clone_count: r.clone_count,
+    play_count: r.play_count,
+    _source: 'reddit',
+  }));
+
+  return { items, totalCount };
+}
+
+/**
+ * Paginated fetch of Reddit mirrors for the admin queue.
+ * collection may be null to query across both adversaries + environments.
+ */
+export async function getRedditQueuePaginated(appId, {
+  status,
+  collection = null,
+  search = '',
+  offset = 0,
+  limit = 20,
+} = {}) {
+  const db = getPool();
+  const params = [appId, MIRROR_USER_ID];
+  let idx = params.length + 1;
+  const clauses = [
+    `app_id = $1`,
+    `user_id = $2`,
+    `(data->>'_source') = 'reddit'`,
+    `(data->>'_redditStatus') = $${idx++}`,
+  ];
+  params.push(status);
+
+  if (collection) {
+    clauses.push(`collection = $${idx++}`);
+    params.push(collection);
+  }
+  if (search) {
+    clauses.push(`data->>'name' ILIKE '%' || $${idx++} || '%'`);
+    params.push(search);
+  }
+
+  const where = clauses.join(' AND ');
+  const offsetIdx = idx++;
+  const limitIdx = idx++;
+  const { rows } = await db.query(
+    `SELECT id, collection, data, clone_count, play_count, COUNT(*) OVER() AS total_count FROM items
+     WHERE ${where}
+     ORDER BY created_at DESC
+     OFFSET $${offsetIdx} LIMIT $${limitIdx}`,
+    [...params, offset, limit]
+  );
+
+  const totalCount = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;
+
+  const items = rows.map(r => ({
+    id: r.id,
+    collection: r.collection,
+    ...r.data,
+    clone_count: r.clone_count,
+    play_count: r.play_count,
+    _source: 'reddit',
+  }));
+
+  return { items, totalCount };
+}
+
+/**
+ * Returns counts for ALL non-parsed _redditStatus values across both collections.
+ * Used to populate the queue sub-nav tabs.
+ * Returns an object like { needs_review: 47, failed: 3, "Not Daggerheart": 12 }.
+ */
+export async function getRedditStatusCounts(appId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT data->>'_redditStatus' AS status, COUNT(*) AS count
+     FROM items
+     WHERE app_id = $1
+       AND user_id = $2
+       AND (data->>'_source') = 'reddit'
+       AND (data->>'_redditStatus') != 'parsed'
+       AND (data->>'_redditStatus') IS NOT NULL
+     GROUP BY data->>'_redditStatus'`,
+    [appId, MIRROR_USER_ID]
+  );
+  const result = {};
+  for (const row of rows) {
+    result[row.status] = parseInt(row.count, 10);
+  }
+  return result;
+}
+
+/**
+ * Set _redditStatus on a Reddit mirror item (for admin triage).
+ * Also updates _redditTag when the status is a custom tag.
+ * Returns the updated mirror data.
+ */
+export async function setRedditMirrorStatus(appId, collection, id, status) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `UPDATE items
+     SET data = jsonb_set(jsonb_set(data, '{_redditStatus}', $4::jsonb), '{_redditTag}', $5::jsonb),
+         updated_at = now()
+     WHERE app_id = $1 AND collection = $2 AND id = $3 AND user_id = $6
+     RETURNING id, data`,
+    [
+      appId,
+      collection,
+      id,
+      JSON.stringify(status),
+      JSON.stringify(REDDIT_RESERVED_STATUSES.has(status) ? null : status),
+      MIRROR_USER_ID,
+    ]
+  );
+  if (!rows.length) return null;
+  return { id: rows[0].id, ...rows[0].data, _source: 'reddit' };
+}
+
+/**
+ * Check which Reddit post IDs (format: reddit-XXXX) already have a mirror row.
+ * Returns a Set of existing IDs.
+ */
+export async function getExistingRedditMirrorIds(appId, ids) {
+  if (!ids || ids.length === 0) return new Set();
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id FROM items
+     WHERE app_id = $1 AND user_id = $2 AND id = ANY($3)`,
+    [appId, MIRROR_USER_ID, ids]
+  );
+  return new Set(rows.map(r => r.id));
+}
+
 // --- Admin: blocked Reddit posts ---
 
 /**
@@ -379,6 +610,17 @@ export async function blockRedditPost(appId, redditPostId, blockedBy) {
      VALUES ($1, $2, $3)
      ON CONFLICT (app_id, reddit_post_id) DO NOTHING`,
     [appId, redditPostId, blockedBy]
+  );
+}
+
+/**
+ * Remove a Reddit post from the blocked list (used when re-queuing a tagged item).
+ */
+export async function unblockRedditPost(appId, redditPostId) {
+  const db = getPool();
+  await db.query(
+    `DELETE FROM blocked_reddit_posts WHERE app_id = $1 AND reddit_post_id = $2`,
+    [appId, redditPostId]
   );
 }
 

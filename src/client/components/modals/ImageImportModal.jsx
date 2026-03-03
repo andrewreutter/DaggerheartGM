@@ -9,6 +9,7 @@ import {
   useImportSelection,
 } from './ImportModalShell.jsx';
 import { ImportPreviewCard } from './ImportPreviewCard.jsx';
+import { ItemDetailModal } from './ItemDetailModal.jsx';
 
 function fileToDataUrl(file) {
   return new Promise((resolve) => {
@@ -48,8 +49,14 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
 
   const [importing, setImporting] = useState(false);
 
+  // Stacked ItemDetailModal state: { item, collection } or null
+  const [detailModal, setDetailModal] = useState(null);
+  const [detailIsPublic, setDetailIsPublic] = useState(true);
+
   // Lightbox: key of the image to display full-size, or null
   const [lightboxKey, setLightboxKey] = useState(null);
+  // Debug overlay: fileIndex → { clusters, imageWidth, imageHeight } from API
+  const [imageRegions, setImageRegions] = useState({});
 
   const { selectedIds, setSelectedIds, toggleId, replaceIds, toggleReplaceId } = useImportSelection();
 
@@ -176,8 +183,23 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || `Server error ${res.status}`);
         }
-        const { results } = await res.json();
+        const responseData = await res.json();
+        const { results, imageRegions: regions } = responseData;
         if (gen !== parseGenRef.current) return;
+
+        // Store debug region data keyed by file key (mapped from fileIndex)
+        if (regions && typeof regions === 'object') {
+          const byKey = {};
+          for (const [idxStr, data] of Object.entries(regions)) {
+            const idx = parseInt(idxStr, 10);
+            if (idx >= 0 && idx < statBlockFiles.length) {
+              byKey[statBlockFiles[idx].key] = data;
+            }
+          }
+          setImageRegions(byKey);
+        } else {
+          setImageRegions({});
+        }
 
         if (!results || results.length === 0) {
           setParsedItems([]);
@@ -319,6 +341,11 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
   // Card renderer (wraps ImportPreviewCard with confidence + collection toggle)
   // ---------------------------------------------------------------------------
 
+  const openDetailModal = (item, collection) => {
+    setDetailIsPublic(true);
+    setDetailModal({ item, collection });
+  };
+
   const makeCardRenderer = (collection) => (item) => {
     const parsed = parsedItems.find(r => r.item.id === item.id);
     return (
@@ -335,6 +362,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
         onToggleReplace={() => toggleReplaceId(item.id)}
         confidence={parsed?.confidence}
         onToggleCollection={() => toggleItemCollection(item.id)}
+        onEditDetail={(itm) => openDetailModal(itm, collection)}
       />
     );
   };
@@ -606,27 +634,143 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
         )}
       </div>
 
-      {/* Lightbox overlay */}
+      {/* Stacked item detail modal */}
+      {detailModal && (
+        <ItemDetailModal
+          item={detailModal.item}
+          collection={detailModal.collection}
+          data={null}
+          editable
+          onSave={(formData) => {
+            updateItem({ ...detailModal.item, ...formData, is_public: detailIsPublic });
+            setDetailModal(null);
+          }}
+          onClose={() => setDetailModal(null)}
+          showPublicToggle
+          isPublic={detailIsPublic}
+          onPublicChange={setDetailIsPublic}
+          zIndex={60}
+        />
+      )}
+
+      {/* Lightbox overlay with debug region boxes */}
       {lightboxFile && (
-        <div
-          className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center cursor-pointer"
-          onClick={() => setLightboxKey(null)}
-        >
-          <img
-            src={lightboxFile.previewUrl}
-            alt=""
-            className="max-w-[90vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <button
-            onClick={() => setLightboxKey(null)}
-            className="absolute top-4 right-4 text-white/70 hover:text-white bg-black/50 rounded-full p-2 transition-colors"
-          >
-            <X size={20} />
-          </button>
-        </div>
+        <RegionLightbox
+          file={lightboxFile}
+          regionData={imageRegions[lightboxFile.key]}
+          onClose={() => setLightboxKey(null)}
+        />
       )}
     </ImportModalShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RegionLightbox — enlarged image with OCR cluster bounding box overlays
+// ---------------------------------------------------------------------------
+
+function RegionLightbox({ file, regionData, onClose }) {
+  const [showBoxes, setShowBoxes] = useState(true);
+  const clusters = regionData?.clusters || [];
+  const imgW = regionData?.imageWidth || 0;
+  const imgH = regionData?.imageHeight || 0;
+  const hasRegions = clusters.length > 0 && imgW > 0 && imgH > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center cursor-pointer"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-w-[90vw] max-h-[85vh]"
+        onClick={(e) => e.stopPropagation()}
+        style={{ display: 'inline-block' }}
+      >
+        <img
+          src={file.previewUrl}
+          alt=""
+          className="max-w-[90vw] max-h-[85vh] object-contain rounded-lg shadow-2xl block"
+        />
+        {/* Overlay bounding boxes scaled to the displayed image size */}
+        {hasRegions && showBoxes && (
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none rounded-lg"
+            viewBox={`0 0 ${imgW} ${imgH}`}
+            preserveAspectRatio="xMidYMid meet"
+          >
+            {clusters.map((c, i) => {
+              const { x0, y0, x1, y1 } = c.bbox;
+              const color = c.isStatBlock ? '#22d3ee' : '#f59e0b';
+              return (
+                <g key={i}>
+                  <rect
+                    x={x0} y={y0} width={x1 - x0} height={y1 - y0}
+                    fill="none" stroke={color} strokeWidth={Math.max(2, imgW * 0.003)}
+                    strokeDasharray={c.isStatBlock ? 'none' : `${imgW * 0.008},${imgW * 0.005}`}
+                    opacity={0.85}
+                  />
+                  <text
+                    x={x0 + 4} y={y0 + Math.max(14, imgH * 0.02)}
+                    fill={color} fontSize={Math.max(12, imgH * 0.016)}
+                    fontFamily="monospace" fontWeight="bold"
+                    opacity={0.9}
+                  >
+                    {c.isStatBlock ? `Region ${i + 1}` : `(non-stat ${i + 1})`}
+                  </text>
+                  {c.textPreview && (
+                    <text
+                      x={x0 + 4} y={y0 + Math.max(28, imgH * 0.04)}
+                      fill={color} fontSize={Math.max(10, imgH * 0.012)}
+                      fontFamily="monospace"
+                      opacity={0.7}
+                    >
+                      {c.textPreview.length > 40 ? c.textPreview.slice(0, 40) + '\u2026' : c.textPreview}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        )}
+      </div>
+
+      {/* Controls */}
+      <div className="absolute top-4 right-4 flex items-center gap-2">
+        {hasRegions && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowBoxes(!showBoxes); }}
+            className={`text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${
+              showBoxes
+                ? 'bg-cyan-600/80 text-white hover:bg-cyan-500'
+                : 'bg-black/60 text-white/70 hover:text-white hover:bg-black/80'
+            }`}
+          >
+            {showBoxes ? `Regions (${clusters.length})` : 'Show regions'}
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          className="text-white/70 hover:text-white bg-black/50 rounded-full p-2 transition-colors"
+        >
+          <X size={20} />
+        </button>
+      </div>
+
+      {/* Legend */}
+      {hasRegions && showBoxes && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/70 rounded-full px-4 py-2 text-xs">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 border-2 border-cyan-400 rounded-sm inline-block" />
+            <span className="text-cyan-300">Stat block region</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 border-2 border-amber-400 border-dashed rounded-sm inline-block" />
+            <span className="text-amber-300">Non-stat text</span>
+          </span>
+          <span className="text-slate-400">{imgW}&times;{imgH}px &middot; {clusters.length} cluster{clusters.length !== 1 ? 's' : ''}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -647,6 +791,7 @@ function CollectionToggleCard({
   onToggleReplace,
   confidence,
   onToggleCollection,
+  onEditDetail,
 }) {
   const confidencePct = confidence != null ? Math.round(confidence * 100) : null;
   const confColor =
@@ -681,6 +826,7 @@ function CollectionToggleCard({
         selected={selected}
         onToggleSelect={onToggleSelect}
         onUpdate={onUpdate}
+        onEditDetail={onEditDetail}
         colorScheme={colorScheme}
         replaceMode={replaceMode}
         onToggleReplace={onToggleReplace}

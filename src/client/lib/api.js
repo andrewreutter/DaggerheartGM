@@ -300,6 +300,57 @@ export const fetchMe = async () => {
   return res.json();
 };
 
+/** Admin-only: fetch Reddit queue status counts ({ needs_review: N, failed: N, ... }). */
+export const fetchRedditQueueCounts = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/admin/reddit/counts', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Admin-only: fetch a page of Reddit queue items by status. */
+export const fetchRedditQueue = async ({ status, collection, offset = 0, limit = 20 } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams({ status, offset: String(offset), limit: String(limit) });
+  if (collection) params.set('collection', collection);
+  const res = await fetch(`/api/admin/reddit/queue?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Admin-only: set _redditStatus on a Reddit mirror item. */
+export const triggerRedditScan = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/admin/reddit/scan', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+export const setRedditItemStatus = async (collection, id, status) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/admin/reddit/${collection}/${id}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /** Admin-only: permanently hide a Reddit post from all users. */
 export const blockRedditPost = async (redditPostId) => {
   const token = await getAuthToken();

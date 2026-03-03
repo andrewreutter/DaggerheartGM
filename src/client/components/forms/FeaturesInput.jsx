@@ -10,9 +10,8 @@ export function FeaturesInput({ features, onChange }) {
 
   return (
     <div className="mt-6 border-t border-slate-800 pt-4">
-      <div className="flex justify-between items-center mb-4">
+      <div className="mb-4">
         <h4 className="font-medium text-slate-300 flex items-center gap-1">Features<MarkdownHelpTooltip /></h4>
-        <button type="button" onClick={addFeature} className="text-xs bg-slate-800 hover:bg-slate-700 text-white px-2 py-1 rounded flex items-center gap-1"><Plus size={12} /> Add</button>
       </div>
       <div className="space-y-4">
         {features.map(f => (
@@ -29,6 +28,7 @@ export function FeaturesInput({ features, onChange }) {
         ))}
         {features.length === 0 && <p className="text-xs text-slate-500 italic">No features added.</p>}
       </div>
+      <button type="button" onClick={addFeature} className="mt-3 text-xs bg-slate-800 hover:bg-slate-700 text-white px-2 py-1 rounded flex items-center gap-1"><Plus size={12} /> Add</button>
     </div>
   );
 }

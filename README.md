@@ -16,7 +16,7 @@ Data loading is **lazy and per-collection**: on sign-in only `table_state` and n
 
 **Fresh Cut Grass integration**: adversaries and environments tabs have an "FCG" source filter that merges results from the FreshCutGrass.app public search API directly into the infinite-scroll list. Played/cloned FCG items are stored as `__MIRROR__` rows in the DB so they surface in local search (with their accumulated popularity) and are deduped from live FCG results. When an FCG item is picked as a scene reference (via `CollectionRefPicker`), a mirror is automatically created so the item can be resolved by ID later. The Feature Library panel (shown when editing adversaries/environments) uses the same source filter — selecting FCG includes live FCG features in the suggestion list. FCG environment `potential_adversaries` is stored as name-only placeholder objects from the FCG `potentialAdversaries` array.
 
-**Reddit integration**: adversaries and environments tabs have a **"Reddit"** source filter (explicitly selected — not included in "All") that searches r/daggerbrew and r/daggerheart for homebrew content. r/daggerbrew is filtered by `Adversaries` or `Environments` flair depending on the active collection tab. r/daggerheart is always filtered to the `Homebrew` flair. Results appear as stub cards (post title as name, `Tier ?`, no game stats). Parsing is **admin-only**: clicking a Reddit card as an admin automatically triggers the three-stage parse cascade — (1) regex text parsing of the post markdown, (2) Tesseract.js OCR on stat block images + regex parsing of extracted text, (3) optional GPT-4o LLM fallback (requires `OPENAI_API_KEY`). Non-admin users see unparsed stubs as display-only with no parse controls. A spinner shows during parsing. The parsed result is stored as a `__MIRROR__` row so subsequent views (for all users) show the enriched card immediately. A badge shows the parse method used (text/OCR/AI/partial). Admins can re-parse at any time (with optional "Re-parse with AI" for partial results) and can directly edit parsed Reddit items — edits auto-save to the mirror row via `PUT /api/admin/mirror/:collection`. For composite images that contain both artwork and a stat block (e.g. an illustration banner above the stat block text), the OCR stage automatically detects non-text margins on all four sides using Tesseract bounding boxes and crops each qualifying region as a standalone artwork image via `sharp`; these become the item's `imageUrl` and `_additionalImages` alongside the original full image. Pure artwork images (not classified as stat blocks) are preserved directly.
+**Reddit integration**: Reddit content is sourced from a persistent background scanner (`src/reddit-scanner.js`) rather than live API queries. The scanner runs every 15 minutes, discovers new posts from r/daggerbrew (Adversaries/Environments flair) and r/daggerheart (Homebrew flair), runs the full three-stage parse cascade (regex → OCR → LLM), and stores results as `__MIRROR__` rows with `_redditStatus: 'needs_review'` (successful parse) or `'failed'`. Posts containing multiple stat blocks (e.g. a book page with three adversaries) produce multiple mirror rows with suffixed IDs (`reddit-{postId}-0`, `-1`, etc.), each sharing the same artwork. Only admin-approved items (`_redditStatus: 'parsed'`) appear in the Library. Admins manage the queue via the **Reddit Queue** top-level nav (admin-only): a dynamic sub-nav shows "Needs Review (N)", "Failed (N)", and any custom triage tags with their item counts. Each card shows Reddit metadata (subreddit, flair, score, author, parse method badge) and a pencil button to open the standard `ItemDetailModal` stacked on top of the queue, including a "Make Public" checkbox. A triage text input on each card lets admins assign a free-form reason (e.g. "Not Daggerheart", "Duplicate"); previously used tags appear as clickable badge shortcuts. Custom-tagged items are also added to `blocked_reddit_posts` so the scanner doesn't re-discover them; moving an item "Back to Review" unblocks it. Reddit mirrors are now included in "All" library results (not excluded like before). The parse cascade logic lives in the shared `src/reddit-parse-cascade.js` module, used by both the scanner and the manual `POST /api/reddit/parse` endpoint.
 
 The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 
@@ -32,7 +32,9 @@ DaggerheartGM/
 │   ├── 002_add_is_public.sql
 │   ├── 003_add_popularity.sql  # clone_count, play_count, _clonedFrom index
 │   ├── 004_remove_srd_rows.sql # Removes legacy __SRD__ DB rows (SRD now in-memory)
-│   └── 005_create_blocked_reddit.sql # blocked_reddit_posts table for admin content moderation
+│   ├── 005_create_blocked_reddit.sql # blocked_reddit_posts table for scanner dedup
+│   ├── 006_reddit_queue.sql    # Clean-slate Reddit data; adds reddit mirror partial index
+│   └── 007_reddit_queue_index.sql  # Faster index for queue pagination (_redditStatus + created_at)
 ├── public/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked)
 │   └── styles.css              # Generated Tailwind output (do not edit by hand)
@@ -41,21 +43,24 @@ DaggerheartGM/
 │   │   ├── app.jsx             # React SPA entry point
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, …)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
+│   │   │   ├── RedditQueueView.jsx    # Admin Reddit Queue — dynamic sub-tabs (Needs Review/Failed/custom tags), triage UI, stacked ItemDetailModal
 │   │   │   ├── forms/          # Item forms (controlled+uncontrolled); CollectionRefPicker; FeatureLibrary.jsx sidebar
-    │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay); ItemPickerModal; EditChoiceDialog; import modals
-    │   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo, markdown.js + reddit-markdown.js (marked)
+│   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay); ItemPickerModal; EditChoiceDialog; ImageImportModal; ImportPreviewCard
+│   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo, markdown.js + reddit-markdown.js (marked)
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
 │   │   └── index.js            # Re-exports srdRouter, warmCache, getItem, searchCollection, COLLECTION_NAMES
-│      ├── db.js                   # Postgres pool + migration runner + query helpers (own, community, popularity, mirrors)
-    │   ├── external-sources.js     # EXTERNAL_SOURCES array — SRD + HoD + FCG + Reddit sharing a common search contract
-    │   ├── fcg-search.js           # FreshCutGrass public search API integration
-    │   ├── hod-search.js           # Heart of Daggers Vault integration (list search + Foundry JSON detail)
-    │   ├── reddit-search.js        # Reddit search — r/daggerbrew + r/daggerheart flair-filtered search
-    │   ├── text-parse.js           # Regex-based stat block parser (selftext + OCR output)
-    │   ├── ocr-parse.js            # Tesseract.js OCR + sharp — image → text; crops artwork from composite images
-    │   ├── llm-parse.js            # GPT-4o vision parse — optional LLM fallback for Reddit posts
+│   ├── db.js                   # Postgres pool + migration runner + query helpers (own, community, popularity, mirrors, reddit queue)
+│   ├── external-sources.js     # EXTERNAL_SOURCES array — SRD + HoD + FCG + Reddit (DB-backed approved mirrors)
+│   ├── fcg-search.js           # FreshCutGrass public search API integration
+│   ├── hod-search.js           # Heart of Daggers Vault integration (list search + Foundry JSON detail)
+│   ├── reddit-search.js        # Reddit API utilities (fetchPage, normalizePost, getRedditPost) used by scanner
+│   ├── reddit-scanner.js       # Background scanner — discovers Reddit posts, auto-parses, stores needs_review/failed mirrors
+│   ├── reddit-parse-cascade.js # Shared parse cascade (text → OCR → LLM); used by scanner + POST /api/reddit/parse
+│   ├── text-parse.js           # Regex-based stat block parser (selftext + OCR output)
+│   ├── ocr-parse.js            # Tesseract.js OCR + sharp — image → text; crops artwork from composite images
+│   ├── llm-parse.js            # GPT-4o vision parse — optional LLM fallback for Reddit posts
 │   └── input.css               # Tailwind CSS entry point
 ├── server.js                   # Express server + API routes
 ├── package.json
@@ -143,7 +148,7 @@ The **"Import"** button in the Library header opens an `ImageImportModal` — a 
 
 **Optional text input** — paste one or more stat blocks as plain text (separate multiple blocks with blank lines).
 
-**Auto-parse**: images are parsed automatically as they're added or removed (debounced 600ms). Each image thumbnail has a role toggle — **"Stat block"** (default, sent to `POST /api/import/parse` for OCR + regex detection) or **"Scene img"** (excluded from parsing, used as scene artwork). Toggling an image to "Scene img" automatically enables the Scene builder. The server runs Tesseract.js OCR on each buffer via `ocrBuffer()`, then calls `detectCollection()` to auto-detect adversary vs environment using keyword heuristics. No LLM is used.
+**Auto-parse**: images are parsed automatically as they're added or removed (debounced 600ms). Each image thumbnail has a role toggle — **"Stat block"** (default, sent to `POST /api/import/parse` for OCR + regex detection) or **"Scene img"** (excluded from parsing, used as scene artwork). Toggling an image to "Scene img" automatically enables the Scene builder. The server runs Tesseract.js OCR on each buffer via `ocrBuffer()`, clusters the resulting text blocks into spatially coherent regions (separating side-by-side and stacked stat blocks), detects artwork from the non-text areas, then calls `detectCollections()` on each region. A single image containing N stat blocks produces N parsed items, all sharing the same extracted artwork. No LLM is used.
 
 **Inline preview**: parsed items appear below the input area in collapsible cards. A confidence badge (%) indicates parse quality. An `⇄` button lets you override the auto-detected type. All cards are editable inline via `AdversaryForm` / `EnvironmentForm` before importing. Duplicate detection warns when an item's name matches an existing library entry, with "Add as new" / "Replace existing" choice.
 

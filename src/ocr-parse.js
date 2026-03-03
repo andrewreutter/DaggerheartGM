@@ -4,11 +4,14 @@
  * Uses Tesseract.js (WASM, no system binaries) to extract text from images,
  * then classifies each image as a stat block or artwork based on keyword density.
  *
- * For composite images that contain both artwork and a stat block (e.g. artwork
- * banner above the stat block), the artwork region(s) are automatically cropped
- * using Tesseract bounding boxes and sharp. All four margins around the text are
- * evaluated; any qualifying region becomes a standalone artwork crop. Results are
- * returned in priority order: top, left, bottom, right.
+ * For images containing multiple stat blocks (e.g., a book page with three
+ * adversaries and shared artwork), the pipeline:
+ *   1. Clusters Tesseract blocks into discrete text regions by spatial proximity.
+ *   2. Identifies large non-text areas between/around clusters as artwork candidates.
+ *   3. Returns one text region per detected stat block, plus artwork crops.
+ *
+ * For single-stat-block images the behavior is identical to before: one text
+ * region, artwork cropped from any large margin areas.
  *
  * Language data (~15MB) downloaded on first use and cached.
  */
@@ -16,27 +19,41 @@
 import sharp from 'sharp';
 import { createWorker } from 'tesseract.js';
 
-// Keywords that indicate an image contains a stat block rather than artwork
+// Keywords that indicate a text region contains a stat block rather than artwork
 const STAT_KEYWORDS = /\b(HP|Hit Points?|Stress|Difficulty|Tier|Attack|ATK|Features?|Experiences?|Thresholds?|Melee|Close|Far|Passive|Action|Reaction|Damage|d\d+)\b/i;
 const MIN_KEYWORD_HITS = 3;
 
-// Minimum fraction of total image area a margin must occupy to qualify as artwork.
-// 0.10 (10%) is chosen to reject thin decorative borders (typically 3-6% of area)
-// while admitting genuine artwork banners (e.g. the Sporenado top banner is ~33%).
-const MIN_AREA_FRACTION = 0.10;
-// Minimum size (in pixels) of the shorter dimension of a cropped region.
-// 100px rejects narrow padding/borders (30-80px) while admitting real banners (~400px+).
-const MIN_SHORT_SIDE_PX = 100;
-// Maximum aspect ratio (longer side / shorter side) for a region to qualify as artwork.
-// 5:1 rejects tall/thin side margins (e.g. a 150x900px right margin = 6:1) that are
-// likely decorative borders, while admitting wide panoramic banners (≤4:1 typical).
-const MAX_ASPECT_RATIO = 5;
-// Inward margin applied to each crop to avoid clipping partial text at the boundary (fraction)
-const CROP_INSET_FRACTION = 0.02;
-// Minimum confidence for a Tesseract line to be included in the text bounding box.
-// Raised to 85 to exclude OCR noise from artwork regions (which scores 54-74) while
-// keeping real printed stat block text (which scores 95+).
+// Minimum confidence for a Tesseract line to be included in clustering.
+// Raised to 85 to exclude OCR noise from artwork regions (which scores 54-74)
+// while keeping real printed stat block text (which scores 95+).
 const MIN_LINE_CONFIDENCE = 85;
+
+// Clustering: maximum vertical gap between consecutive lines (as fraction of
+// image height) for two lines to be considered part of the same text cluster.
+// 0.20 is deliberately generous — we rely on horizontal non-overlap to separate
+// side-by-side columns, and on splitStatBlocks() to split stacked stat blocks.
+const CLUSTER_VERT_GAP_FRAC = 0.20;
+
+// Clustering: minimum fraction of the narrower block's width that must overlap
+// horizontally for two blocks to be in the same cluster (same column).
+const CLUSTER_HORIZ_OVERLAP_FRAC = 0.30;
+
+// Artwork extraction: minimum fraction of total image area a region must
+// occupy to qualify as artwork (rejects thin decorative borders).
+const MIN_AREA_FRACTION = 0.08;
+
+// Artwork extraction: minimum size (pixels) of the shorter dimension.
+const MIN_SHORT_SIDE_PX = 80;
+
+// Artwork extraction: maximum aspect ratio (long side / short side).
+const MAX_ASPECT_RATIO = 5;
+
+// Inward inset applied to each artwork crop to avoid clipping partial text.
+const CROP_INSET_FRACTION = 0.02;
+
+// Artwork coverage threshold: if another cluster covers >30% of a candidate
+// artwork area, that area is considered "covered" and skipped.
+const COVERAGE_THRESHOLD = 0.30;
 
 let _worker = null;
 
@@ -48,8 +65,7 @@ async function getWorker() {
 }
 
 /**
- * Classify OCR text: does it look like a stat block?
- * Returns true if enough game-mechanic keywords are present.
+ * Classify a text string: does it look like a stat block?
  */
 function isStatBlock(text) {
   const matches = text.match(new RegExp(STAT_KEYWORDS.source, 'gi'));
@@ -77,89 +93,241 @@ async function fetchImage(url) {
 }
 
 /**
- * Given a stat-block image buffer and the Tesseract blocks output, find all
- * margins (top, left, bottom, right) around the text bounding box that are
- * large enough to plausibly contain artwork, crop each one, and return an
- * array of base64 data URLs in priority order (top, left, bottom, right).
- *
- * Returns an empty array if no qualifying margin is found.
- *
- * @param {Buffer} buf - Raw image buffer
- * @param {import('tesseract.js').Block[]} blocks - Tesseract block data
- * @returns {Promise<string[]>} Array of data:image/jpeg;base64,... URLs
+ * Compute the fraction of the narrower block's width that two bboxes overlap horizontally.
  */
-async function extractArtworkRegions(buf, blocks) {
-  try {
-    const { width: W, height: H } = await sharp(buf).metadata();
-    if (!W || !H) return [];
+function horizOverlapFrac(ba, bb) {
+  const ol = Math.max(ba.x0, bb.x0);
+  const or_ = Math.min(ba.x1, bb.x1);
+  if (or_ <= ol) return 0;
+  const narrower = Math.min(ba.x1 - ba.x0, bb.x1 - bb.x0);
+  return narrower > 0 ? (or_ - ol) / narrower : 0;
+}
 
-    // Collect all high-confidence lines with meaningful text
-    const lines = blocks.flatMap(b =>
-      b.paragraphs.flatMap(p =>
-        p.lines.filter(l => l.confidence > MIN_LINE_CONFIDENCE && l.text.trim().length > 2)
-      )
-    );
+/**
+ * Expand a bbox to also contain another bbox.
+ */
+function expandBbox(a, b) {
+  return {
+    x0: Math.min(a.x0, b.x0),
+    y0: Math.min(a.y0, b.y0),
+    x1: Math.max(a.x1, b.x1),
+    y1: Math.max(a.y1, b.y1),
+  };
+}
 
-    if (lines.length === 0) return [];
+/**
+ * Cluster Tesseract blocks into spatially coherent text regions.
+ *
+ * Two lines are placed in the same cluster when they have sufficient
+ * horizontal overlap (same column) and the vertical gap is below the
+ * threshold.  This naturally separates side-by-side columns while keeping
+ * all content within a single stat block together.
+ *
+ * @param {import('tesseract.js').Block[]} blocks - Tesseract block data
+ * @param {number} W - Image width in pixels
+ * @param {number} H - Image height in pixels
+ * @returns {{ bbox: {x0,y0,x1,y1}, text: string }[]}
+ */
+function clusterBlocks(blocks, W, H) {
+  // Flatten all high-confidence lines
+  const lines = [];
+  for (const block of blocks) {
+    for (const para of (block.paragraphs || [])) {
+      for (const line of (para.lines || [])) {
+        if (line.confidence > MIN_LINE_CONFIDENCE && (line.text || '').trim().length > 2) {
+          lines.push({ bbox: { ...line.bbox }, text: line.text });
+        }
+      }
+    }
+  }
 
-    // Compute tight bounding box around all qualifying text
-    let textMinX = Infinity, textMinY = Infinity, textMaxX = -Infinity, textMaxY = -Infinity;
-    for (const line of lines) {
-      const { x0, y0, x1, y1 } = line.bbox;
-      if (x0 < textMinX) textMinX = x0;
-      if (y0 < textMinY) textMinY = y0;
-      if (x1 > textMaxX) textMaxX = x1;
-      if (y1 > textMaxY) textMaxY = y1;
+  if (lines.length === 0) return [];
+
+  // Sort top-to-bottom, left-to-right so greedy merge is order-consistent
+  lines.sort((a, b) => a.bbox.y0 !== b.bbox.y0 ? a.bbox.y0 - b.bbox.y0 : a.bbox.x0 - b.bbox.x0);
+
+  const vertGapMax = H * CLUSTER_VERT_GAP_FRAC;
+
+  // Greedy clustering: assign each line to the best existing cluster or start a new one.
+  //
+  // Each cluster tracks TWO x-ranges:
+  //   colX0/colX1  — stable "column" range used for horizontal overlap checks.
+  //                  Only expanded when a line's width is reasonable (≤1.5× the
+  //                  current column width). Wide outlier lines (headers/badges
+  //                  spanning the full card) are absorbed into the cluster but
+  //                  don't corrupt the column range.
+  //   bbox         — full enclosing box of all lines (including outliers).
+  //                  Used for artwork gap detection only.
+  const clusters = []; // { bbox, colX0, colX1, lineTexts }
+
+  for (const line of lines) {
+    let bestCluster = null;
+    let bestScore = -Infinity;
+
+    for (const cluster of clusters) {
+      const vertGap = line.bbox.y0 - cluster.bbox.y1;
+      if (vertGap > vertGapMax) continue;
+
+      // Use the stable column x-range for overlap checks, NOT the full bbox.
+      // This prevents a single wide line from making the cluster "swallow"
+      // lines from adjacent columns.
+      const colBbox = { x0: cluster.colX0, y0: cluster.bbox.y0, x1: cluster.colX1, y1: cluster.bbox.y1 };
+      const horiz = horizOverlapFrac(colBbox, line.bbox);
+      if (horiz < CLUSTER_HORIZ_OVERLAP_FRAC) continue;
+
+      const score = horiz - (Math.max(0, vertGap) / (H || 1));
+      if (score > bestScore) {
+        bestScore = score;
+        bestCluster = cluster;
+      }
     }
 
-    const totalArea = W * H;
+    if (bestCluster) {
+      bestCluster.lineTexts.push(line.text);
+      bestCluster.bbox = expandBbox(bestCluster.bbox, line.bbox);
 
-    // Define the four candidate margins in priority order (top, left, bottom, right)
-    const candidates = [
-      { name: 'top',    region: { left: 0,        top: 0,        width: W,             height: textMinY      } },
-      { name: 'left',   region: { left: 0,        top: 0,        width: textMinX,       height: H             } },
-      { name: 'bottom', region: { left: 0,        top: textMaxY, width: W,             height: H - textMaxY  } },
-      { name: 'right',  region: { left: textMaxX, top: 0,        width: W - textMaxX,  height: H             } },
-    ];
+      // Only expand the stable column range if this line isn't an outlier.
+      // An outlier is a line significantly wider than the current column
+      // (e.g., a "STANDARD" badge spanning the full card header).
+      const lineW = line.bbox.x1 - line.bbox.x0;
+      const colW = bestCluster.colX1 - bestCluster.colX0;
+      if (lineW <= colW * 1.5) {
+        bestCluster.colX0 = Math.min(bestCluster.colX0, line.bbox.x0);
+        bestCluster.colX1 = Math.max(bestCluster.colX1, line.bbox.x1);
+      }
+    } else {
+      clusters.push({
+        bbox: { ...line.bbox },
+        colX0: line.bbox.x0,
+        colX1: line.bbox.x1,
+        lineTexts: [line.text],
+      });
+    }
+  }
+
+  return clusters
+    .filter(c => c.lineTexts.length > 0)
+    .map(c => ({
+      bbox: c.bbox,
+      text: c.lineTexts.join('\n').trim(),
+    }));
+}
+
+/**
+ * Check whether a candidate artwork rectangle is substantially covered by
+ * text clusters (other than the self cluster, if any).
+ *
+ * @param {{ left, top, width, height }} rect - Candidate artwork area
+ * @param {{ bbox }|null} selfCluster - Cluster that "owns" this gap (excluded)
+ * @param {{ bbox }[]} allClusters
+ * @returns {boolean}
+ */
+function isCoveredByCluster(rect, selfCluster, allClusters) {
+  const { left, top, width, height } = rect;
+  const rectRight = left + width;
+  const rectBottom = top + height;
+  const rectArea = width * height;
+  if (rectArea <= 0) return false;
+
+  for (const c of allClusters) {
+    if (c === selfCluster) continue;
+    const ol = Math.max(c.bbox.x0, left);
+    const ot = Math.max(c.bbox.y0, top);
+    const or_ = Math.min(c.bbox.x1, rectRight);
+    const ob = Math.min(c.bbox.y1, rectBottom);
+    if (or_ <= ol || ob <= ot) continue;
+    const overlapArea = (or_ - ol) * (ob - ot);
+    if (overlapArea / rectArea > COVERAGE_THRESHOLD) return true;
+  }
+  return false;
+}
+
+/**
+ * Crop artwork from image areas not covered by text clusters.
+ *
+ * For a single-cluster image: checks the four traditional margins (top, left,
+ * bottom, right) around that cluster.
+ *
+ * For multi-cluster images: additionally checks the rectangular area ABOVE and
+ * BELOW each cluster in its own horizontal band, excluding areas already covered
+ * by another cluster.  This correctly detects artwork like a photo that occupies
+ * the top-right quadrant while stat blocks fill the rest of the page.
+ *
+ * @param {Buffer} buf - Raw image buffer
+ * @param {{ bbox }[]} clusters - Text clusters from clusterBlocks()
+ * @param {number} W - Image width
+ * @param {number} H - Image height
+ * @returns {Promise<string[]>} Base64 data URLs of cropped artwork regions
+ */
+async function extractArtworkFromGaps(buf, clusters, W, H) {
+  try {
+    if (!W || !H || clusters.length === 0) return [];
+
+    const candidates = []; // { left, top, width, height, selfCluster }
+
+    // Global bounding box of all clusters
+    let gx0 = Infinity, gy0 = Infinity, gx1 = -Infinity, gy1 = -Infinity;
+    for (const c of clusters) {
+      gx0 = Math.min(gx0, c.bbox.x0);
+      gy0 = Math.min(gy0, c.bbox.y0);
+      gx1 = Math.max(gx1, c.bbox.x1);
+      gy1 = Math.max(gy1, c.bbox.y1);
+    }
+
+    // Four global margin regions (same as original approach)
+    candidates.push(
+      { left: 0, top: 0, width: W, height: gy0, selfCluster: null },
+      { left: 0, top: 0, width: gx0, height: H, selfCluster: null },
+      { left: 0, top: gy1, width: W, height: H - gy1, selfCluster: null },
+      { left: gx1, top: 0, width: W - gx1, height: H, selfCluster: null },
+    );
+
+    // Per-cluster gap regions (only meaningful for multi-cluster images)
+    if (clusters.length > 1) {
+      for (const cluster of clusters) {
+        const { x0, y0, x1, y1 } = cluster.bbox;
+
+        // Area above this cluster (in its x column)
+        if (y0 > 0) {
+          candidates.push({ left: x0, top: 0, width: x1 - x0, height: y0, selfCluster: cluster });
+        }
+
+        // Area below this cluster (in its x column)
+        if (y1 < H) {
+          candidates.push({ left: x0, top: y1, width: x1 - x0, height: H - y1, selfCluster: cluster });
+        }
+      }
+    }
 
     const dataUrls = [];
+    const totalArea = W * H;
+    const seen = new Set();
 
-    for (const { name, region } of candidates) {
-      const { left, top, width, height } = region;
-
-      // Must be a positive region
+    for (const { left, top, width, height, selfCluster } of candidates) {
       if (width <= 0 || height <= 0) continue;
+
+      // Deduplicate similar regions (round to nearest 10px)
+      const key = `${Math.round(left / 10)},${Math.round(top / 10)},${Math.round(width / 10)},${Math.round(height / 10)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (isCoveredByCluster({ left, top, width, height }, selfCluster, clusters)) continue;
 
       const area = width * height;
       const shortSide = Math.min(width, height);
+      const longSide = Math.max(width, height);
 
       if (area / totalArea < MIN_AREA_FRACTION) continue;
       if (shortSide < MIN_SHORT_SIDE_PX) continue;
-      const longSide = Math.max(width, height);
       if (longSide / shortSide > MAX_ASPECT_RATIO) continue;
 
-      // Apply inward inset to avoid clipping partial glyphs at the boundary
-      let cropLeft = left, cropTop = top, cropWidth = width, cropHeight = height;
+      // Uniform inward inset to avoid clipping partial glyphs at boundaries
       const insetX = Math.floor(width * CROP_INSET_FRACTION);
       const insetY = Math.floor(height * CROP_INSET_FRACTION);
-
-      if (name === 'top') {
-        cropHeight = Math.max(1, height - insetY);
-      } else if (name === 'bottom') {
-        cropTop = top + insetY;
-        cropHeight = Math.max(1, height - insetY);
-      } else if (name === 'left') {
-        cropWidth = Math.max(1, width - insetX);
-      } else if (name === 'right') {
-        cropLeft = left + insetX;
-        cropWidth = Math.max(1, width - insetX);
-      }
-
-      // Clamp to image bounds
-      cropLeft = Math.max(0, Math.min(cropLeft, W - 1));
-      cropTop = Math.max(0, Math.min(cropTop, H - 1));
-      cropWidth = Math.max(1, Math.min(cropWidth, W - cropLeft));
-      cropHeight = Math.max(1, Math.min(cropHeight, H - cropTop));
+      const cropLeft = Math.max(0, Math.min(left + insetX, W - 1));
+      const cropTop = Math.max(0, Math.min(top + insetY, H - 1));
+      const cropWidth = Math.max(1, Math.min(width - 2 * insetX, W - cropLeft));
+      const cropHeight = Math.max(1, Math.min(height - 2 * insetY, H - cropTop));
 
       try {
         const cropped = await sharp(buf)
@@ -168,13 +336,13 @@ async function extractArtworkRegions(buf, blocks) {
           .toBuffer();
         dataUrls.push(`data:image/jpeg;base64,${cropped.toString('base64')}`);
       } catch (cropErr) {
-        console.warn(`[ocr] Failed to crop ${name} region:`, cropErr.message);
+        console.warn('[ocr] Failed to crop artwork region:', cropErr.message);
       }
     }
 
     return dataUrls;
   } catch (err) {
-    console.warn('[ocr] extractArtworkRegions error:', err.message);
+    console.warn('[ocr] extractArtworkFromGaps error:', err.message);
     return [];
   }
 }
@@ -182,11 +350,23 @@ async function extractArtworkRegions(buf, blocks) {
 /**
  * Run OCR on a single image buffer.
  *
- * Returns the extracted text and whether the image looks like a stat block.
- * For stat block images, also returns any artwork regions cropped from non-text margins.
+ * Clusters Tesseract blocks into text regions, extracts artwork from the
+ * leftover non-text areas, and returns one text region per detected stat block.
+ *
+ * Return shape:
+ * ```
+ * {
+ *   text: string,              // full concatenated OCR text (backward compat)
+ *   isStatBlock: boolean,      // true when any region looks like a stat block
+ *   textRegions: [{ text: string, bbox: {x0,y0,x1,y1} }],  // one per detected stat block
+ *   artworkRegions: string[],  // base64 data URLs cropped from non-text areas
+ *   allClusters: [{ text: string, bbox: {x0,y0,x1,y1} }],  // ALL detected clusters (debug)
+ *   imageWidth: number,        // source image width in pixels
+ *   imageHeight: number,       // source image height in pixels
+ * }
+ * ```
  *
  * @param {Buffer} buf - Raw image buffer
- * @returns {Promise<{ text: string, isStatBlock: boolean, artworkRegions: string[] }>}
  */
 export async function ocrBuffer(buf) {
   const worker = await getWorker();
@@ -198,37 +378,66 @@ export async function ocrBuffer(buf) {
     ocrText = (data.text || '').trim();
     blocks = data.blocks || [];
   } catch {
-    return { text: '', isStatBlock: false, artworkRegions: [] };
+    return { text: '', isStatBlock: false, textRegions: [], artworkRegions: [], allClusters: [], imageWidth: 0, imageHeight: 0 };
   }
 
   if (!isStatBlock(ocrText)) {
-    return { text: ocrText, isStatBlock: false, artworkRegions: [] };
+    return { text: ocrText, isStatBlock: false, textRegions: [], artworkRegions: [], allClusters: [], imageWidth: 0, imageHeight: 0 };
   }
 
-  const artworkRegions = blocks.length > 0 ? await extractArtworkRegions(buf, blocks) : [];
-  return { text: ocrText, isStatBlock: true, artworkRegions };
+  let W = 0, H = 0;
+  try {
+    ({ width: W, height: H } = await sharp(buf).metadata());
+  } catch {
+    return { text: ocrText, isStatBlock: true, textRegions: [{ text: ocrText, bbox: null }], artworkRegions: [], allClusters: [], imageWidth: 0, imageHeight: 0 };
+  }
+
+  const allClusters = clusterBlocks(blocks, W, H);
+
+  // Separate stat-block clusters from decorative/footer text clusters
+  const statClusters = allClusters.filter(c => isStatBlock(c.text));
+
+  // Use ALL clusters for artwork gap detection so we don't accidentally crop text regions
+  const artworkRegions = allClusters.length > 0
+    ? await extractArtworkFromGaps(buf, allClusters, W, H)
+    : [];
+
+  let textRegions = statClusters.map(c => ({ text: c.text, bbox: c.bbox }));
+
+  // Fallback: if clustering produced no stat-block regions, treat whole image as one region
+  if (textRegions.length === 0) {
+    textRegions = [{ text: ocrText, bbox: { x0: 0, y0: 0, x1: W, y1: H } }];
+  }
+
+  return { text: ocrText, isStatBlock: true, textRegions, artworkRegions, allClusters, imageWidth: W, imageHeight: H };
 }
 
 /**
  * Run OCR on a set of image URLs.
  *
  * Classifies each image as a stat block (text extracted) or artwork (URL preserved).
- * For stat block images, attempts to extract artwork from any large non-text margins
- * (top, left, bottom, right) using Tesseract bounding boxes and sharp.
+ * For stat block images, returns one text region per detected stat block plus
+ * any artwork crops from non-text areas.
  *
  * Processes up to maxImages images sequentially (Tesseract.js WASM is single-threaded).
- * Only non-stat-block image URLs are eligible for `artworkUrl` (primary banner/thumbnail).
- * `hasStatBlockImages` is true when at least one image was classified as a stat block.
+ * Only non-stat-block image URLs are eligible for `artworkUrl`.
  *
  * @param {string[]} imageUrls - Array of image URLs
- * @param {number}   [maxImages=4] - Max images to OCR (all URLs are still preserved)
- * @returns {{ texts: string[], artworkUrl: string|null, additionalImages: string[], hasStatBlockImages: boolean }}
+ * @param {number}   [maxImages=4] - Max images to OCR
+ * @returns {{
+ *   texts: string[],
+ *   textRegions: { text: string, bbox: object|null }[],
+ *   artworkUrl: string|null,
+ *   additionalImages: string[],
+ *   hasStatBlockImages: boolean
+ * }}
  */
 export async function ocrImages(imageUrls, maxImages = 4) {
   const texts = [];
-  const artworkUrls = [];      // pure artwork images (not stat blocks)
-  const croppedArtworkUrls = []; // artwork regions cropped from composite stat block images
-  const statBlockUrls = [];    // original URLs of stat block images (kept as additional)
+  const textRegions = [];         // NEW: one entry per detected stat block region across all images
+  const artworkUrls = [];         // pure artwork images (not stat blocks)
+  const croppedArtworkUrls = [];  // artwork regions cropped from composite stat block images
+  const statBlockUrls = [];       // original URLs of stat block images (kept as additional)
 
   for (const url of imageUrls.slice(0, maxImages)) {
     const buf = await fetchImage(url);
@@ -247,6 +456,7 @@ export async function ocrImages(imageUrls, maxImages = 4) {
       texts.push(result.text);
       statBlockUrls.push(url);
       croppedArtworkUrls.push(...result.artworkRegions);
+      textRegions.push(...result.textRegions);
     } else {
       artworkUrls.push(url);
     }
@@ -264,7 +474,7 @@ export async function ocrImages(imageUrls, maxImages = 4) {
   // Additional images: remaining artwork (pure + cropped beyond the first) + original stat block URLs
   const additionalImages = [...allArtwork.slice(1), ...statBlockUrls];
 
-  return { texts, artworkUrl, additionalImages, hasStatBlockImages: statBlockUrls.length > 0 };
+  return { texts, textRegions, artworkUrl, additionalImages, hasStatBlockImages: statBlockUrls.length > 0 };
 }
 
 /**
