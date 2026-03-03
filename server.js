@@ -11,8 +11,9 @@ import { EXTERNAL_SOURCES } from './src/external-sources.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { getRedditPost } from './src/reddit-search.js';
 import { parseRedditPost } from './src/llm-parse.js';
-import { parseStatBlock, mergeResults } from './src/text-parse.js';
-import { ocrImages } from './src/ocr-parse.js';
+import multer from 'multer';
+import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
+import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -714,6 +715,25 @@ app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
 
 // --- Admin: block a Reddit post from appearing to all users ---
 
+app.put('/api/admin/mirror/:collection', requireAuth, requireAdmin, async (req, res) => {
+  const { collection } = req.params;
+  if (!COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection' });
+  }
+  const item = req.body;
+  if (!item || typeof item !== 'object' || !item.id) {
+    return res.status(400).json({ error: 'Invalid item body — id is required' });
+  }
+  const { id, _source: _s, _owner: _o, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = item;
+  try {
+    await upsertMirror(APP_ID, collection, id, { ...rest, _source: 'reddit' });
+    res.json({ id, ...rest, _source: 'reddit' });
+  } catch (err) {
+    console.error(`PUT /api/admin/mirror/${collection} error:`, err);
+    res.status(500).json({ error: 'Failed to save mirror item' });
+  }
+});
+
 app.post('/api/admin/reddit/block', requireAuth, requireAdmin, async (req, res) => {
   const { redditPostId } = req.body || {};
   if (!redditPostId) return res.status(400).json({ error: 'redditPostId is required' });
@@ -728,7 +748,7 @@ app.post('/api/admin/reddit/block', requireAuth, requireAdmin, async (req, res) 
 
 // --- Reddit parse endpoint (text → OCR → LLM cascade) ---
 
-app.post('/api/reddit/parse', requireAuth, async (req, res) => {
+app.post('/api/reddit/parse', requireAuth, requireAdmin, async (req, res) => {
   const { collection, redditPostId, name, selftext, images, forceLlm, reparse } = req.body || {};
   if (!collection || !['adversaries', 'environments'].includes(collection)) {
     return res.status(400).json({ error: 'collection must be adversaries or environments' });
@@ -843,6 +863,83 @@ app.post('/api/reddit/parse', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('POST /api/reddit/parse error:', err);
     res.status(500).json({ error: err.message || 'Failed to parse Reddit post' });
+  }
+});
+
+// --- Generic image/text import (OCR + regex parse, no LLM) ---
+
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 20 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, file.mimetype.startsWith('image/'));
+  },
+});
+
+app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), async (req, res) => {
+  try {
+    const files = req.files || [];
+    const pastedText = (req.body.text || '').trim();
+
+    // Phase 1: OCR all images, classify each as stat-block or artwork.
+    // Mirrors the approach in ocrImages() / the Reddit parse path.
+    const ocrResults = [];  // { text, artworkRegions, fileIndex }
+    const pureArtworkUrls = [];  // data-URL thumbnails for non-stat-block images
+
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const { text, isStatBlock: isStat, artworkRegions } = await ocrBuffer(files[i].buffer);
+        if (isStat && text) {
+          ocrResults.push({ text, artworkRegions, fileIndex: i });
+        } else {
+          // Non-stat-block image → convert to data URL for use as artwork
+          const mime = files[i].mimetype || 'image/jpeg';
+          pureArtworkUrls.push(`data:${mime};base64,${files[i].buffer.toString('base64')}`);
+        }
+      } catch (imgErr) {
+        console.warn('[import] Failed to process image:', files[i].originalname, imgErr.message);
+      }
+    }
+
+    // Phase 2: Parse each stat-block text and assign artwork.
+    // Same logic as the Reddit path: prefer pure artwork, fall back to cropped regions.
+    const results = [];
+    const allCroppedArtwork = ocrResults.flatMap(r => r.artworkRegions);
+    const availableArtwork = [...pureArtworkUrls, ...allCroppedArtwork];
+    let artworkIdx = 0;
+
+    for (const { text, fileIndex } of ocrResults) {
+      const detected = detectCollection(text);
+      const { collection, item, confidence, missing } = detected;
+
+      // Assign primary artwork URL — take from the shared pool
+      const artworkUrl = availableArtwork[artworkIdx] || null;
+      if (artworkUrl) artworkIdx++;
+      item.imageUrl = artworkUrl || '';
+
+      // Additional images: remaining available artwork beyond the primary
+      const additional = availableArtwork.slice(artworkIdx);
+      if (additional.length > 0) {
+        item._additionalImages = additional;
+      }
+
+      results.push({ collection, item, confidence, missing, artworkUrl, sourceIndex: fileIndex });
+    }
+
+    // Phase 3: Parse optional pasted text blocks
+    if (pastedText) {
+      const blocks = pastedText.split(/\n{3,}/).map(s => s.trim()).filter(Boolean);
+      for (const block of blocks) {
+        const detected = detectCollection(block);
+        const { collection, item, confidence, missing } = detected;
+        results.push({ collection, item, confidence, missing, artworkUrl: null, sourceIndex: -1 });
+      }
+    }
+
+    res.json({ results });
+  } catch (err) {
+    console.error('POST /api/import/parse error:', err);
+    res.status(500).json({ error: err.message || 'Failed to parse import' });
   }
 });
 

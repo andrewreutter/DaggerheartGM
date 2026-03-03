@@ -233,6 +233,21 @@ export const saveItem = async (collectionName, item) => {
   return res.json();
 };
 
+export const saveMirrorItem = async (collectionName, item) => {
+  const token = await getAuthToken();
+  if (!token) return null;
+  const res = await fetch(`/api/admin/mirror/${collectionName}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(item),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
 export const deleteItem = async (collectionName, id) => {
   const token = await getAuthToken();
   if (!token) return;
