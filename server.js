@@ -83,13 +83,16 @@ app.get('/livereload', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  req.socket.setTimeout(0);
   res.flushHeaders();
   res.write('data: connected\n\n');
   liveReloadClients.add(res);
+  const heartbeat = setInterval(() => res.write(':heartbeat\n\n'), 30000);
   // #region agent log
   fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:SSE-connect',message:'SSE client connected',data:{totalClients:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
   // #endregion
   req.on('close', () => {
+    clearInterval(heartbeat);
     liveReloadClients.delete(res);
     // #region agent log
     fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'31f1f7'},body:JSON.stringify({sessionId:'31f1f7',location:'server.js:SSE-close',message:'SSE client disconnected',data:{totalClients:liveReloadClients.size},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
@@ -842,9 +845,14 @@ app.post('/api/reddit/parse', requireAuth, requireAdmin, async (req, res) => {
       // --- Stage 2: OCR images + merge ---
       if (postImages.length > 0) {
         try {
-          const { texts: ocrTexts, artworkUrl, additionalImages, hasStatBlockImages } = await ocrImages(postImages);
+          const { texts: ocrTexts, parsedResults: ocrParsedResults, artworkUrl, additionalImages, hasStatBlockImages } = await ocrImages(postImages, { collection });
           if (ocrTexts.length > 0) {
-            const ocrResult = parseStatBlock(ocrTexts.join('\n\n'), collection, postTitle);
+            // Use pre-merged cross-engine parse result when available; it combines the
+            // best fields from each engine (e.g. EasyOCR title + Tesseract features).
+            // Fall back to parsing the joined raw text when only one engine ran.
+            const ocrResult = ocrParsedResults.length > 0
+              ? ocrParsedResults.reduce((acc, r, i) => i === 0 ? r : mergeResults(acc, r), null)
+              : parseStatBlock(ocrTexts.join('\n\n'), collection, postTitle);
             console.log(`[reddit] OCR parse confidence=${ocrResult.confidence.toFixed(2)}, missing=[${ocrResult.missing.join(', ')}]`);
 
             const merged = mergeResults(textResult, ocrResult);
@@ -945,14 +953,14 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
 
     // Phase 1: OCR all images, classify each as stat-block or artwork.
     // Mirrors the approach in ocrImages() / the Reddit parse path.
-    const ocrResults = [];  // { text, artworkRegions, fileIndex }
+    const ocrResults = [];  // { text, artworkRegions, parsedResult, fileIndex }
     const pureArtworkUrls = [];  // data-URL thumbnails for non-stat-block images
 
     for (let i = 0; i < files.length; i++) {
       try {
-        const { text, isStatBlock: isStat, artworkRegions } = await ocrBuffer(files[i].buffer);
+        const { text, isStatBlock: isStat, artworkRegions, parsedResult } = await ocrBuffer(files[i].buffer);
         if (isStat && text) {
-          ocrResults.push({ text, artworkRegions, fileIndex: i });
+          ocrResults.push({ text, artworkRegions, parsedResult, fileIndex: i });
         } else {
           // Non-stat-block image → convert to data URL for use as artwork
           const mime = files[i].mimetype || 'image/jpeg';
@@ -970,8 +978,10 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
     const availableArtwork = [...pureArtworkUrls, ...allCroppedArtwork];
     let artworkIdx = 0;
 
-    for (const { text, fileIndex } of ocrResults) {
-      const detected = detectCollection(text);
+    for (const { text, parsedResult, fileIndex } of ocrResults) {
+      // Use pre-merged cross-engine parse result when available; fall back to
+      // detectCollection on raw text (single-engine or no parsedResult case).
+      const detected = parsedResult || detectCollection(text);
       const { collection, item, confidence, missing } = detected;
 
       // Assign primary artwork URL — take from the shared pool

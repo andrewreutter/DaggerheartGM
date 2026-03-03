@@ -1,0 +1,10 @@
+{
+  "tesseract": {
+    "wins": 33,
+    "runs": 35
+  },
+  "easyocr": {
+    "wins": 0,
+    "runs": 35
+  }
+}
