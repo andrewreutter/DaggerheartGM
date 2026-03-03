@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera } from 'lucide-react';
+import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, SlidersHorizontal } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -9,6 +9,14 @@ import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { postRolzRoll } from '../lib/api.js';
 import { isOwnItem } from '../lib/constants.js';
+import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
+
+const USER_MOD_OPTIONS = [
+  { key: 'lessDifficult',     label: 'Less difficult / shorter fight',  value: -1 },
+  { key: 'damageBoostD4',     label: '+1d4 damage to all adversaries',  value: -2, exclusive: 'damageBoost' },
+  { key: 'damageBoostStatic', label: '+2 damage to all adversaries',    value: -2, exclusive: 'damageBoost' },
+  { key: 'moreDangerous',     label: 'More dangerous / longer fight',   value: +2 },
+];
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
@@ -243,16 +251,49 @@ function getItemData(element) {
   return rest;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [factorsOpen, setFactorsOpen] = useState(false);
+  const factorsPanelRef = useRef(null);
   const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
   const [editState, setEditState] = useState(null);
+
+  // Close factors panel on outside click
+  useEffect(() => {
+    if (!factorsOpen) return;
+    const handler = (e) => {
+      if (factorsPanelRef.current && !factorsPanelRef.current.contains(e.target)) {
+        setFactorsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [factorsOpen]);
+
+  const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
+  const effectiveMods = tableBattleMods || DEFAULT_BATTLE_MODS;
+
+  const updateTableMod = (key) => {
+    if (!setTableBattleMods) return;
+    const opt = USER_MOD_OPTIONS.find(o => o.key === key);
+    setTableBattleMods(prev => {
+      const next = { ...(prev || DEFAULT_BATTLE_MODS), [key]: !(prev?.[key]) };
+      // Mutually exclusive damage boosts
+      if (opt?.exclusive === 'damageBoost' && next[key]) {
+        if (key === 'damageBoostD4') next.damageBoostStatic = false;
+        if (key === 'damageBoostStatic') next.damageBoostD4 = false;
+      }
+      return next;
+    });
+  };
+
+  const tableDamageBoost = effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : null;
 
   const handleEditClick = (instances, baseElement, collection) => {
     const canEditOriginal = isOwnItem(baseElement);
@@ -588,32 +629,149 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           nudge={configNudge}
         />
         <div className={`flex-1 bg-slate-950 p-6 overflow-y-auto relative${gmTab === 'whiteboard' ? ' hidden' : ''}`}>
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold text-white">The Table</h2>
-          <div className="flex flex-wrap gap-2">
-            {[
-              { col: 'adversaries', label: 'Add Adversary' },
-              { col: 'environments', label: 'Add Environment' },
-              { col: 'scenes', label: 'Add Scene' },
-            ].map(({ col, label }) => (
-              <button
-                key={col}
-                onClick={() => setModalOpen(col)}
-                className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors"
-              >
-                <Plus size={14} /> {label}
-              </button>
-            ))}
-            <button
-              onClick={() => setCaptureOpen(true)}
-              disabled={activeElements.length === 0}
-              title="Save current table as a Scene or Group"
-              className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Camera size={14} /> Capture Table
-            </button>
-          </div>
-        </div>
+        {(() => {
+          // Compute total BP from active adversary elements.
+          const advElements = activeElements.filter(e => e.elementType === 'adversary');
+          // Group by id so counts roll up correctly.
+          const countById = {};
+          const roleAndTierById = {};
+          advElements.forEach(e => {
+            countById[e.id] = (countById[e.id] || 0) + 1;
+            roleAndTierById[e.id] = { role: e.role || 'standard', tier: e.tier ?? 1 };
+          });
+          const tableAdvSummary = Object.entries(countById).map(([id, count]) => ({
+            ...roleAndTierById[id], count,
+          }));
+          const tableBP = computeBattlePoints(tableAdvSummary, partySize);
+          const tableBudget = 3 * partySize + 2;
+          const tableAutoMods = computeAutoModifiers(tableAdvSummary, tableAdvSummary.length > 0 ? Math.max(...tableAdvSummary.map(a => a.tier ?? 1)) : null);
+          const totalMod = computeTotalBudgetMod(tableAutoMods, effectiveMods);
+          const adjustedBudget = tableBudget + totalMod;
+          const tableDiff = tableBP - adjustedBudget;
+          const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
+
+          const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
+          const activeUserMods = USER_MOD_OPTIONS.filter(o => effectiveMods[o.key]);
+          const hasAnyActiveMods = activeAutoMods.length > 0 || activeUserMods.length > 0;
+
+          return (
+            <div className="flex justify-between items-start mb-6 gap-4 flex-wrap">
+              <div className="flex flex-col gap-1">
+                <h2 className="text-2xl font-bold text-white">The Table</h2>
+                {tableBP > 0 && (
+                  <div className="flex items-center gap-2 text-sm whitespace-nowrap">
+                    <span className="text-slate-300">
+                      <span className="font-bold text-white tabular-nums">{tableBP}</span>
+                      <span className="text-slate-500"> BP</span>
+                    </span>
+                    <span className="text-slate-600">·</span>
+                    <span className="text-slate-300 flex items-baseline gap-1">
+                      Budget{' '}
+                      <span className="font-bold text-white tabular-nums">{adjustedBudget}</span>
+                      <span className={`text-xs tabular-nums ${totalMod === 0 ? 'invisible' : totalMod < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                        ({totalMod > 0 ? `+${totalMod}` : totalMod})
+                      </span>
+                    </span>
+                    <span className={`text-xs font-semibold ${tableDiffColor}`}>
+                      {tableDiff === 0 ? 'On budget' : tableDiff > 0 ? `+${tableDiff} over` : `${Math.abs(tableDiff)} under`}
+                    </span>
+                    <div className="flex items-center gap-1 ml-1">
+                      <span className="text-[10px] text-slate-500">PCs</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={partySize}
+                        onChange={e => setPartySize && setPartySize(Math.max(1, Math.min(8, parseInt(e.target.value) || 4)))}
+                        className="w-10 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-white text-xs text-center"
+                      />
+                    </div>
+                    {/* Factors button */}
+                    <div className="relative" ref={factorsPanelRef}>
+                      <button
+                        onClick={() => setFactorsOpen(p => !p)}
+                        title="Budget Factors"
+                        className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors ${hasAnyActiveMods ? 'bg-amber-900/60 text-amber-300 hover:bg-amber-900' : 'text-slate-500 hover:text-slate-300'}`}
+                      >
+                        <SlidersHorizontal size={12} />
+                        {hasAnyActiveMods && <span>Factors</span>}
+                      </button>
+
+                      {factorsOpen && (
+                        <div className="absolute left-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl p-4 w-72 space-y-4">
+                          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Budget Factors</p>
+
+                          {/* Auto-detected */}
+                          {activeAutoMods.length > 0 && (
+                            <div className="space-y-1.5">
+                              <p className="text-[10px] text-slate-500 uppercase tracking-wide">Auto-detected</p>
+                              {activeAutoMods.map(m => (
+                                <div key={m.label} className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-300">{m.label}</span>
+                                  <span className={`font-mono font-semibold ${m.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                    {m.value > 0 ? `+${m.value}` : m.value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* User-controlled */}
+                          <div className="space-y-2">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Your choices</p>
+                            {USER_MOD_OPTIONS.map(opt => (
+                              <label key={opt.key} className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                  type="checkbox"
+                                  checked={!!effectiveMods[opt.key]}
+                                  onChange={() => updateTableMod(opt.key)}
+                                  className="rounded border-slate-500 bg-slate-700 accent-amber-500"
+                                />
+                                <span className="flex-1 text-xs text-slate-300 group-hover:text-white transition-colors">{opt.label}</span>
+                                <span className={`font-mono text-xs font-semibold ${opt.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                  {opt.value > 0 ? `+${opt.value}` : opt.value}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+
+                          {tableDamageBoost && (
+                            <p className="text-[10px] text-amber-400 flex items-center gap-1">
+                              <Zap size={10} /> Damage boost active on all adversaries
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { col: 'adversaries', label: 'Add Adversary' },
+                  { col: 'environments', label: 'Add Environment' },
+                  { col: 'scenes', label: 'Add Scene' },
+                ].map(({ col, label }) => (
+                  <button
+                    key={col}
+                    onClick={() => setModalOpen(col)}
+                    className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors"
+                  >
+                    <Plus size={14} /> {label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setCaptureOpen(true)}
+                  disabled={activeElements.length === 0}
+                  title="Save current table as a Scene or Group"
+                  className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Camera size={14} /> Capture Table
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="columns-1 xl:columns-2 2xl:columns-3 gap-4 space-y-4">
           {consolidatedElements.map((item) => {
@@ -710,7 +868,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     featureCountdowns={featureCountdowns}
                     updateCountdown={updateCountdown}
                     onRollAttack={rolzConfigured ? (attackData) => handleCardRoll(attackData, el.name) : null}
-                    damageBoost={el._damageBoost || null}
+                    damageBoost={tableDamageBoost || el._damageBoost || null}
                   />
                 </div>
               </div>

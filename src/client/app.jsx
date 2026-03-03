@@ -13,6 +13,7 @@ import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
+import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -36,14 +37,17 @@ function App() {
   const [rolzPassword, setRolzPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const [partySize, setPartySize] = useState(4);
+  const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
+  const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
+  const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   const tableStateReadyRef = useRef(false);
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -234,6 +238,7 @@ function App() {
           setRolzPassword(tableState?.rolzPassword || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
           if (tableState?.partySize != null) setPartySize(tableState.partySize);
+          if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           tableStateReadyRef.current = true;
 
         } catch (err) {
@@ -377,7 +382,7 @@ function App() {
     return elements;
   }
 
-  const addToTable = async (item, collectionName) => {
+  const doAddToTable = async (item, collectionName) => {
     const newElements = [];
 
     if (collectionName === 'adversaries' || collectionName === 'environments') {
@@ -443,6 +448,20 @@ function App() {
     }
 
     setActiveElements(prev => [...prev, ...newElements]);
+  };
+
+  const addToTable = (item, collectionName) => {
+    // Intercept scene adds: if the scene has active user-controlled budget factors,
+    // ask the user whether to apply them to the table before proceeding.
+    if (collectionName === 'scenes') {
+      const mods = item?.battleMods;
+      const hasActiveMods = mods && (mods.lessDifficult || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
+      if (hasActiveMods) {
+        setPendingSceneAdd({ scene: item });
+        return;
+      }
+    }
+    return doAddToTable(item, collectionName);
   };
 
   const updateActiveElement = (instanceId, updates) => {
@@ -585,9 +604,29 @@ function App() {
             updateCountdown={(cardKey, featureKey, cdIdx, value) =>
               setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
             }
+            partySize={partySize}
+            setPartySize={setPartySize}
+            tableBattleMods={tableBattleMods}
+            setTableBattleMods={setTableBattleMods}
           />
         )}
       </main>
+      {pendingSceneAdd && (
+        <SceneAdoptDialog
+          scene={pendingSceneAdd.scene}
+          currentTableMods={tableBattleMods}
+          onApply={() => {
+            setTableBattleMods({ ...pendingSceneAdd.scene.battleMods });
+            doAddToTable(pendingSceneAdd.scene, 'scenes');
+            setPendingSceneAdd(null);
+          }}
+          onKeep={() => {
+            doAddToTable(pendingSceneAdd.scene, 'scenes');
+            setPendingSceneAdd(null);
+          }}
+          onCancel={() => setPendingSceneAdd(null)}
+        />
+      )}
     </div>
   );
 }
