@@ -37,7 +37,7 @@ function buildElements(item, tab, data, visited = new Set(), depth = 0) {
   };
 
   (item.environments || []).forEach((envEntry, refIdx) => {
-    if (typeof envEntry === 'object' && envEntry.data) {
+    if (envEntry !== null && typeof envEntry === 'object' && envEntry.data) {
       const env = { id: envEntry.data.id || generateId(), ...envEntry.data };
       pushEnvironment(env, {
         _origin: 'direct-env', _originRefIndex: refIdx,

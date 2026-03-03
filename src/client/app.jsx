@@ -282,6 +282,7 @@ function App() {
           return { ...prev, [collectionName]: updated };
         });
       }
+      return saved;
     } catch (err) {
       console.error(`saveItem(${collectionName}) failed:`, err);
     }
@@ -357,7 +358,7 @@ function App() {
     const elements = [];
 
     (scene.environments || []).forEach(envEntry => {
-      if (typeof envEntry === 'object' && envEntry.data) {
+      if (envEntry !== null && typeof envEntry === 'object' && envEntry.data) {
         elements.push({ id: envEntry.data.id || generateId(), ...envEntry.data, instanceId: generateId(), elementType: 'environment' });
       } else {
         const env = environmentsById[envEntry];

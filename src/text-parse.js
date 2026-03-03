@@ -416,7 +416,7 @@ function extractFeatures(text) {
   // Strategy 1: "Name - Type: description" — captures multi-line/multi-paragraph descriptions
   // Uses [\s\S]+? (non-greedy, crosses blank lines) with a lookahead that stops at the next
   // feature header or end of text.
-  const featureBlockRe = /([A-Z][^\n.!?]*?)\s+-\s+(Passive|Action|Reaction)\s*[:.]\s*([\s\S]+?)(?=\n[A-Z][^\n]*\s+-\s+(?:Passive|Action|Reaction)|$)/gi;
+  const featureBlockRe = /([A-Z][^\n.!?]*?)\s+[-\u2014]\s+(Passive|Action|Reaction)\s*[:.]\s*([\s\S]+?)(?=\n[A-Z][^\n]*\s+[-\u2014]\s+(?:Passive|Action|Reaction)|$)/gi;
   for (const m of featureText.matchAll(featureBlockRe)) {
     const name = m[1].trim().replace(/^[-*•]\s*/, '');
     const type = m[2].toLowerCase();
@@ -447,7 +447,7 @@ function extractFeatures(text) {
 
   // Strategy 3: Bold markdown "**Name - Type:** description" (before stripping)
   // This works on the raw text, so caller should try with both raw and stripped
-  const boldRe = /\*\*([^*]+?)\s+-\s+(Passive|Action|Reaction)\*?\*?:?\s*([^\n]+)/gi;
+  const boldRe = /\*\*([^*]+?)\s+[-\u2014]\s+(Passive|Action|Reaction)\*?\*?:?\s*([^\n]+)/gi;
   for (const m of text.matchAll(boldRe)) {
     const name = m[1].trim();
     const type = m[2].toLowerCase();

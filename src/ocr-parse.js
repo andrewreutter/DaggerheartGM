@@ -1,56 +1,165 @@
 /**
  * OCR-based image parsing for Daggerheart stat block images.
  *
- * Uses Tesseract.js (WASM, no system binaries) to extract text from images,
- * then classifies each image as a stat block or artwork based on keyword density.
+ * Supports multiple OCR engines simultaneously (Tesseract.js + EasyOCR).
+ * Each image is processed by all available engines in parallel; the engine
+ * producing the highest-confidence stat block parse wins and provides the
+ * text and bounding boxes used for artwork extraction.
  *
- * For composite images that contain both artwork and a stat block (e.g. artwork
- * banner above the stat block), the artwork region(s) are automatically cropped
- * using Tesseract bounding boxes and sharp. All four margins around the text are
- * evaluated; any qualifying region becomes a standalone artwork crop. Results are
- * returned in priority order: top, left, bottom, right.
+ * Engine contract: each engine in src/ocr-engines/ exports:
+ *   name:          string
+ *   isAvailable(): boolean
+ *   recognize(buf): Promise<{ text, detections: [{bbox:{x0,y0,x1,y1}, text, confidence}] }>
+ *   terminate():   Promise<void>
  *
- * Language data (~15MB) downloaded on first use and cached.
+ * For composite images containing both artwork and a stat block, artwork
+ * regions are automatically cropped using the winning engine's bounding boxes
+ * and sharp. All four margins around the text are evaluated; any qualifying
+ * region becomes a standalone artwork crop.
+ *
+ * Accuracy logging: on every invocation (when 2+ engines are active) a JSON
+ * line is written to stdout and win counts are persisted to
+ * data/ocr-engine-stats.json. Engines with 0 wins after 50+ total runs are
+ * automatically disabled and a warning is printed on every OCR call.
  */
 
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { createWorker } from 'tesseract.js';
+import { parseStatBlock, detectCollection, mergeResults } from './text-parse.js';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const STATS_PATH = join(__dirname, '../data/ocr-engine-stats.json');
+
+// ---------------------------------------------------------------------------
+// Artwork extraction constants
+// ---------------------------------------------------------------------------
 
 // Keywords that indicate an image contains a stat block rather than artwork
 const STAT_KEYWORDS = /\b(HP|Hit Points?|Stress|Difficulty|Tier|Attack|ATK|Features?|Experiences?|Thresholds?|Melee|Close|Far|Passive|Action|Reaction|Damage|d\d+)\b/i;
 const MIN_KEYWORD_HITS = 3;
 
 // Minimum fraction of total image area a margin must occupy to qualify as artwork.
-// 0.10 (10%) is chosen to reject thin decorative borders (typically 3-6% of area)
-// while admitting genuine artwork banners (e.g. the Sporenado top banner is ~33%).
+// 0.10 (10%) rejects thin decorative borders (typically 3-6%) while admitting
+// genuine artwork banners (e.g. Sporenado top banner is ~33%).
 const MIN_AREA_FRACTION = 0.10;
 // Minimum size (in pixels) of the shorter dimension of a cropped region.
 // 100px rejects narrow padding/borders (30-80px) while admitting real banners (~400px+).
 const MIN_SHORT_SIDE_PX = 100;
-// Maximum aspect ratio (longer side / shorter side) for a region to qualify as artwork.
-// 5:1 rejects tall/thin side margins (e.g. a 150x900px right margin = 6:1) that are
-// likely decorative borders, while admitting wide panoramic banners (≤4:1 typical).
+// Maximum aspect ratio (longer / shorter side) for a region to qualify.
+// 5:1 rejects tall/thin side margins that are likely decorative borders.
 const MAX_ASPECT_RATIO = 5;
-// Inward margin applied to each crop to avoid clipping partial text at the boundary (fraction)
+// Inward margin applied to each crop to avoid clipping partial glyphs (fraction).
 const CROP_INSET_FRACTION = 0.02;
-// Minimum confidence for a Tesseract line to be included in the text bounding box.
-// Raised to 85 to exclude OCR noise from artwork regions (which scores 54-74) while
-// keeping real printed stat block text (which scores 95+).
+// Minimum confidence for a detection line to be included in the text bounding box.
+// 85 excludes OCR noise from artwork regions (54-74) while keeping stat block text (95+).
 const MIN_LINE_CONFIDENCE = 85;
 
-let _worker = null;
+// ---------------------------------------------------------------------------
+// Retirement thresholds
+// ---------------------------------------------------------------------------
+const RETIREMENT_MIN_RUNS = 50; // minimum total runs before retirement can trigger
 
-async function getWorker() {
-  if (!_worker) {
-    _worker = await createWorker('eng');
+// ---------------------------------------------------------------------------
+// Engine registry
+// ---------------------------------------------------------------------------
+
+/** @type {Array<{ name: string, isAvailable: ()=>boolean, recognize: (buf:Buffer)=>Promise<any>, terminate: ()=>Promise<void> }>} */
+let _activeEngines = null; // null = not yet initialized
+
+async function loadEngines() {
+  if (_activeEngines !== null) return _activeEngines;
+
+  const allEngines = await Promise.all([
+    import('./ocr-engines/tesseract.js'),
+    import('./ocr-engines/easyocr.js'),
+  ]);
+
+  const stats = loadStats();
+  const totalRuns = Object.values(stats).reduce((sum, s) => sum + s.runs, 0);
+
+  _activeEngines = [];
+  for (const engine of allEngines) {
+    if (!engine.isAvailable()) {
+      console.log(`[ocr] Engine "${engine.name}" not available (missing dependency) — skipping.`);
+      continue;
+    }
+    // Retirement check
+    const engineStats = stats[engine.name];
+    if (
+      engineStats &&
+      totalRuns >= RETIREMENT_MIN_RUNS &&
+      engineStats.wins === 0
+    ) {
+      console.warn(
+        `[ocr] WARNING: Engine "${engine.name}" has 0 wins in ${totalRuns} runs and is disabled. ` +
+        `Remove it from src/ocr-engines/ to reclaim resources.`
+      );
+      continue;
+    }
+    _activeEngines.push(engine);
   }
-  return _worker;
+
+  if (_activeEngines.length === 0) {
+    throw new Error('[ocr] No OCR engines available. This should never happen (tesseract.js is always available).');
+  }
+
+  console.log(`[ocr] Active engines: ${_activeEngines.map(e => e.name).join(', ')}`);
+  return _activeEngines;
 }
 
-/**
- * Classify OCR text: does it look like a stat block?
- * Returns true if enough game-mechanic keywords are present.
- */
+// ---------------------------------------------------------------------------
+// Accuracy stats persistence
+// ---------------------------------------------------------------------------
+
+function loadStats() {
+  try {
+    if (existsSync(STATS_PATH)) {
+      return JSON.parse(readFileSync(STATS_PATH, 'utf8'));
+    }
+  } catch { /* ignore parse errors */ }
+  return {};
+}
+
+function saveStats(stats) {
+  try {
+    writeFileSync(STATS_PATH, JSON.stringify(stats, null, 2));
+  } catch (err) {
+    console.warn('[ocr] Could not save engine stats:', err.message);
+  }
+}
+
+function recordWin(winnerName, engineNames) {
+  const stats = loadStats();
+  const totalRuns = Object.values(stats).reduce((sum, s) => sum + s.runs, 0) + 1;
+
+  for (const name of engineNames) {
+    if (!stats[name]) stats[name] = { wins: 0, runs: 0 };
+    stats[name].runs += 1;
+  }
+  if (winnerName && stats[winnerName]) {
+    stats[winnerName].wins += 1;
+  }
+  saveStats(stats);
+
+  // Nag about any retired-but-still-installed engines on every call
+  for (const [name, s] of Object.entries(stats)) {
+    if (totalRuns >= RETIREMENT_MIN_RUNS && s.wins === 0 && engineNames.includes(name)) {
+      console.warn(
+        `[ocr] WARNING: Engine "${name}" has 0 wins in ${totalRuns} runs and is disabled. ` +
+        `Remove it from src/ocr-engines/ to reclaim resources.`
+      );
+    }
+  }
+
+  return totalRuns;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function isStatBlock(text) {
   const matches = text.match(new RegExp(STAT_KEYWORDS.source, 'gi'));
   return (matches || []).length >= MIN_KEYWORD_HITS;
@@ -76,36 +185,34 @@ async function fetchImage(url) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Artwork region extraction (engine-agnostic)
+// ---------------------------------------------------------------------------
+
 /**
- * Given a stat-block image buffer and the Tesseract blocks output, find all
+ * Given a stat-block image buffer and a normalized detections array, find all
  * margins (top, left, bottom, right) around the text bounding box that are
  * large enough to plausibly contain artwork, crop each one, and return an
  * array of base64 data URLs in priority order (top, left, bottom, right).
  *
- * Returns an empty array if no qualifying margin is found.
- *
- * @param {Buffer} buf - Raw image buffer
- * @param {import('tesseract.js').Block[]} blocks - Tesseract block data
+ * @param {Buffer} buf
+ * @param {Array<{ bbox: { x0, y0, x1, y1 }, text: string, confidence: number }>} detections
  * @returns {Promise<string[]>} Array of data:image/jpeg;base64,... URLs
  */
-async function extractArtworkRegions(buf, blocks) {
+async function extractArtworkRegions(buf, detections) {
   try {
     const { width: W, height: H } = await sharp(buf).metadata();
     if (!W || !H) return [];
 
-    // Collect all high-confidence lines with meaningful text
-    const lines = blocks.flatMap(b =>
-      b.paragraphs.flatMap(p =>
-        p.lines.filter(l => l.confidence > MIN_LINE_CONFIDENCE && l.text.trim().length > 2)
-      )
+    // Filter to high-confidence lines with meaningful text
+    const lines = detections.filter(
+      d => d.confidence > MIN_LINE_CONFIDENCE && d.text.trim().length > 2
     );
-
     if (lines.length === 0) return [];
 
     // Compute tight bounding box around all qualifying text
     let textMinX = Infinity, textMinY = Infinity, textMaxX = -Infinity, textMaxY = -Infinity;
-    for (const line of lines) {
-      const { x0, y0, x1, y1 } = line.bbox;
+    for (const { bbox: { x0, y0, x1, y1 } } of lines) {
       if (x0 < textMinX) textMinX = x0;
       if (y0 < textMinY) textMinY = y0;
       if (x1 > textMaxX) textMaxX = x1;
@@ -114,7 +221,7 @@ async function extractArtworkRegions(buf, blocks) {
 
     const totalArea = W * H;
 
-    // Define the four candidate margins in priority order (top, left, bottom, right)
+    // Four candidate margins in priority order
     const candidates = [
       { name: 'top',    region: { left: 0,        top: 0,        width: W,             height: textMinY      } },
       { name: 'left',   region: { left: 0,        top: 0,        width: textMinX,       height: H             } },
@@ -127,15 +234,14 @@ async function extractArtworkRegions(buf, blocks) {
     for (const { name, region } of candidates) {
       const { left, top, width, height } = region;
 
-      // Must be a positive region
       if (width <= 0 || height <= 0) continue;
 
       const area = width * height;
       const shortSide = Math.min(width, height);
+      const longSide = Math.max(width, height);
 
       if (area / totalArea < MIN_AREA_FRACTION) continue;
       if (shortSide < MIN_SHORT_SIDE_PX) continue;
-      const longSide = Math.max(width, height);
       if (longSide / shortSide > MAX_ASPECT_RATIO) continue;
 
       // Apply inward inset to avoid clipping partial glyphs at the boundary
@@ -179,56 +285,159 @@ async function extractArtworkRegions(buf, blocks) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Dual-engine orchestration
+// ---------------------------------------------------------------------------
+
 /**
- * Run OCR on a single image buffer.
+ * Run OCR on a single image buffer using all available engines.
  *
- * Returns the extracted text and whether the image looks like a stat block.
- * For stat block images, also returns any artwork regions cropped from non-text margins.
+ * When multiple engines are available, all run in parallel. Each engine's
+ * text is independently parsed, then all parse results are merged with
+ * mergeResults so the best fields from each engine are combined — e.g.
+ * EasyOCR may read a display-font title that Tesseract misses, while
+ * Tesseract may extract features that EasyOCR's text ordering confuses.
  *
- * @param {Buffer} buf - Raw image buffer
- * @returns {Promise<{ text: string, isStatBlock: boolean, artworkRegions: string[] }>}
+ * The highest-confidence engine's bounding boxes are used for artwork
+ * region extraction. The merged parse result is returned as parsedResult
+ * for callers that want to skip re-parsing the raw text.
+ *
+ * @param {Buffer} buf
+ * @param {object} [opts]
+ * @param {string|null} [opts.collection] - 'adversaries'|'environments'|null (auto-detect)
+ * @returns {Promise<{
+ *   text: string,
+ *   isStatBlock: boolean,
+ *   artworkRegions: string[],
+ *   parsedResult: object|null
+ * }>}
  */
-export async function ocrBuffer(buf) {
-  const worker = await getWorker();
+export async function ocrBuffer(buf, { collection = null } = {}) {
+  const engines = await loadEngines();
 
-  let ocrText = '';
-  let blocks = [];
-  try {
-    const { data } = await worker.recognize(buf, {}, { blocks: true });
-    ocrText = (data.text || '').trim();
-    blocks = data.blocks || [];
-  } catch {
-    return { text: '', isStatBlock: false, artworkRegions: [] };
+  // Helper: parse with known collection or auto-detect
+  const parse = (text) => collection
+    ? parseStatBlock(text, collection)
+    : detectCollection(text);
+
+  // With a single engine, skip all comparison overhead
+  if (engines.length === 1) {
+    const engine = engines[0];
+    let result;
+    try {
+      result = await engine.recognize(buf);
+    } catch (err) {
+      console.warn(`[ocr] Engine "${engine.name}" failed:`, err.message);
+      return { text: '', isStatBlock: false, artworkRegions: [], parsedResult: null };
+    }
+    const statBlock = isStatBlock(result.text);
+    const parsedResult = statBlock && result.text ? parse(result.text) : null;
+    const artworkRegions = statBlock && result.detections.length > 0
+      ? await extractArtworkRegions(buf, result.detections)
+      : [];
+    return { text: result.text, isStatBlock: statBlock, artworkRegions, parsedResult };
   }
 
-  if (!isStatBlock(ocrText)) {
-    return { text: ocrText, isStatBlock: false, artworkRegions: [] };
+  // Run all engines in parallel
+  const engineResults = await Promise.all(
+    engines.map(async (engine) => {
+      try {
+        const result = await engine.recognize(buf);
+        return { name: engine.name, result };
+      } catch (err) {
+        console.warn(`[ocr] Engine "${engine.name}" failed:`, err.message);
+        return { name: engine.name, result: { text: '', detections: [] } };
+      }
+    })
+  );
+
+  // Parse each engine's output independently
+  const parsedEngines = engineResults.map(({ name, result }) => {
+    const statBlock = isStatBlock(result.text);
+    const parseResult = statBlock && result.text ? parse(result.text) : null;
+    return {
+      name,
+      result,
+      statBlock,
+      parseResult,
+      confidence: parseResult?.confidence ?? 0,
+      missing: parseResult?.missing ?? [],
+    };
+  });
+
+  // Bbox winner: highest-confidence stat-block engine (for artwork extraction)
+  const statBlockEngines = parsedEngines.filter(s => s.statBlock && s.parseResult);
+  const bboxWinner = (statBlockEngines.length > 0 ? statBlockEngines : parsedEngines)
+    .sort((a, b) => b.confidence - a.confidence)[0];
+
+  // Merge all parse results — best fields from each engine combined
+  const validParsed = parsedEngines.filter(s => s.parseResult);
+  const mergedParseResult = validParsed.length > 0
+    ? validParsed.reduce((acc, s, i) => i === 0 ? s.parseResult : mergeResults(acc, s.parseResult), null)
+    : null;
+  // mergeResults strips the `collection` field — re-attach it from the first parse result
+  // (detectCollection populates it; parseStatBlock doesn't, so this is a no-op when collection is known)
+  if (mergedParseResult && !mergedParseResult.collection) {
+    const firstCollection = validParsed.find(s => s.parseResult?.collection)?.parseResult?.collection;
+    if (firstCollection) mergedParseResult.collection = firstCollection;
   }
 
-  const artworkRegions = blocks.length > 0 ? await extractArtworkRegions(buf, blocks) : [];
-  return { text: ocrText, isStatBlock: true, artworkRegions };
+  // Accuracy logging (bbox winner credited with the win)
+  const engineNames = parsedEngines.map(s => s.name);
+  const totalRuns = recordWin(bboxWinner.statBlock ? bboxWinner.name : null, engineNames);
+
+  const engineLog = {};
+  for (const s of parsedEngines) {
+    engineLog[s.name] = { confidence: s.confidence, missing: s.missing };
+  }
+  console.log(JSON.stringify({
+    event: 'ocr_engine_result',
+    engines: engineLog,
+    winner: bboxWinner.statBlock ? bboxWinner.name : null,
+    mergedConfidence: mergedParseResult?.confidence ?? null,
+    totalRuns,
+    ts: new Date().toISOString(),
+  }));
+
+  const artworkRegions = bboxWinner.statBlock && bboxWinner.result.detections.length > 0
+    ? await extractArtworkRegions(buf, bboxWinner.result.detections)
+    : [];
+
+  return {
+    text: bboxWinner.result.text,
+    isStatBlock: bboxWinner.statBlock,
+    artworkRegions,
+    parsedResult: mergedParseResult,
+  };
 }
 
 /**
  * Run OCR on a set of image URLs.
  *
  * Classifies each image as a stat block (text extracted) or artwork (URL preserved).
- * For stat block images, attempts to extract artwork from any large non-text margins
- * (top, left, bottom, right) using Tesseract bounding boxes and sharp.
+ * For stat block images, attempts to extract artwork from any large non-text margins.
  *
- * Processes up to maxImages images sequentially (Tesseract.js WASM is single-threaded).
- * Only non-stat-block image URLs are eligible for `artworkUrl` (primary banner/thumbnail).
- * `hasStatBlockImages` is true when at least one image was classified as a stat block.
+ * Processes up to maxImages images; remaining URLs are treated as artwork.
+ * Returns parsedResults (cross-engine merged) alongside raw texts.
  *
- * @param {string[]} imageUrls - Array of image URLs
- * @param {number}   [maxImages=4] - Max images to OCR (all URLs are still preserved)
- * @returns {{ texts: string[], artworkUrl: string|null, additionalImages: string[], hasStatBlockImages: boolean }}
+ * @param {string[]} imageUrls
+ * @param {object}   [opts]
+ * @param {number}   [opts.maxImages=4]
+ * @param {string|null} [opts.collection] - passed through to ocrBuffer
+ * @returns {Promise<{
+ *   texts: string[],
+ *   parsedResults: object[],
+ *   artworkUrl: string|null,
+ *   additionalImages: string[],
+ *   hasStatBlockImages: boolean
+ * }>}
  */
-export async function ocrImages(imageUrls, maxImages = 4) {
+export async function ocrImages(imageUrls, { maxImages = 4, collection = null } = {}) {
   const texts = [];
-  const artworkUrls = [];      // pure artwork images (not stat blocks)
-  const croppedArtworkUrls = []; // artwork regions cropped from composite stat block images
-  const statBlockUrls = [];    // original URLs of stat block images (kept as additional)
+  const parsedResults = [];
+  const artworkUrls = [];
+  const croppedArtworkUrls = [];
+  const statBlockUrls = [];
 
   for (const url of imageUrls.slice(0, maxImages)) {
     const buf = await fetchImage(url);
@@ -237,7 +446,7 @@ export async function ocrImages(imageUrls, maxImages = 4) {
       continue;
     }
 
-    const result = await ocrBuffer(buf);
+    const result = await ocrBuffer(buf, { collection });
     if (!result.text) {
       artworkUrls.push(url);
       continue;
@@ -245,6 +454,7 @@ export async function ocrImages(imageUrls, maxImages = 4) {
 
     if (result.isStatBlock) {
       texts.push(result.text);
+      if (result.parsedResult) parsedResults.push(result.parsedResult);
       statBlockUrls.push(url);
       croppedArtworkUrls.push(...result.artworkRegions);
     } else {
@@ -260,20 +470,18 @@ export async function ocrImages(imageUrls, maxImages = 4) {
   // Primary artwork: prefer pure artwork images, fall back to cropped regions
   const allArtwork = [...artworkUrls, ...croppedArtworkUrls];
   const artworkUrl = allArtwork[0] || null;
-
-  // Additional images: remaining artwork (pure + cropped beyond the first) + original stat block URLs
   const additionalImages = [...allArtwork.slice(1), ...statBlockUrls];
 
-  return { texts, artworkUrl, additionalImages, hasStatBlockImages: statBlockUrls.length > 0 };
+  return { texts, parsedResults, artworkUrl, additionalImages, hasStatBlockImages: statBlockUrls.length > 0 };
 }
 
 /**
- * Gracefully shut down the Tesseract worker.
+ * Gracefully shut down all OCR engine workers.
  * Called on server shutdown to clean up resources.
  */
 export async function terminateOcr() {
-  if (_worker) {
-    await _worker.terminate();
-    _worker = null;
+  if (_activeEngines) {
+    await Promise.all(_activeEngines.map(e => e.terminate().catch(() => {})));
+    _activeEngines = null;
   }
 }
