@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2 } from 'lucide-react';
 
-import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay } from './lib/api.js';
+import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 
@@ -44,6 +44,7 @@ function App() {
     return () => clearTimeout(timer);
   }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns]);
 
+  const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [tableFlash, setTableFlash] = useState(false);
@@ -83,6 +84,7 @@ function App() {
 
   const handleSignOut = async () => {
     setUserMenuOpen(false);
+    setIsAdmin(false);
     tableStateReadyRef.current = false;
     setActiveElements([]);
     apiDeleteItem('table_state', 'current').catch(() => {});
@@ -217,10 +219,11 @@ function App() {
       setUser(currentUser);
       if (currentUser) {
         try {
-          // Load table_state and non-paginated collections in parallel
+          // Load table_state, non-paginated collections, and admin status in parallel
           const [tableStateItems] = await Promise.all([
             loadTableState(),
             fetchAllCollections(),
+            fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {}),
           ]);
           const tableState = tableStateItems[0];
           setActiveElements(tableState?.elements || []);
@@ -547,6 +550,7 @@ function App() {
             route={route}
             navigate={navigate}
             onItemsChange={syncDataToApp}
+            isAdmin={isAdmin}
           />
         ) : (
           <GMTableView

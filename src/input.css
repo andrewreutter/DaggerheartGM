@@ -1,3 +1,157 @@
 @import "tailwindcss";
 @source "../src/client/**/*.{jsx,js}";
 @source "../public/index.html";
+
+/* Scoped typography for rendered Daggerheart Markdown content (feature descriptions, item descriptions, etc.) */
+.dh-md p {
+  margin-bottom: 0.5em;
+}
+.dh-md p:last-child {
+  margin-bottom: 0;
+}
+.dh-md a {
+  color: #38bdf8; /* sky-400 */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dh-md a:hover {
+  color: #7dd3fc; /* sky-300 */
+}
+.dh-md strong {
+  font-weight: 700;
+}
+.dh-md em {
+  font-style: italic;
+}
+.dh-md ul {
+  list-style-type: disc;
+  padding-left: 1.4em;
+  margin-bottom: 0.4em;
+}
+.dh-md ol {
+  list-style-type: decimal;
+  padding-left: 1.4em;
+  margin-bottom: 0.4em;
+}
+.dh-md li {
+  margin-bottom: 0.15em;
+}
+.dh-md blockquote {
+  border-left: 3px solid #475569; /* slate-600 */
+  padding-left: 0.75em;
+  color: #94a3b8; /* slate-400 */
+  margin: 0.4em 0;
+  font-style: italic;
+}
+.dh-md code {
+  background: #1e293b; /* slate-800 */
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-family: monospace;
+}
+.dh-md del {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+/* Inline — no top margin for first child */
+.dh-md > *:first-child {
+  margin-top: 0;
+}
+
+/* Scoped typography for rendered Reddit Markdown content */
+.reddit-md p {
+  margin-bottom: 0.6em;
+}
+.reddit-md p:last-child {
+  margin-bottom: 0;
+}
+.reddit-md a {
+  color: #38bdf8; /* sky-400 */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.reddit-md a:hover {
+  color: #7dd3fc; /* sky-300 */
+}
+.reddit-md strong {
+  font-weight: 700;
+}
+.reddit-md em {
+  font-style: italic;
+}
+.reddit-md h1, .reddit-md h2, .reddit-md h3, .reddit-md h4 {
+  font-weight: 700;
+  margin-top: 0.75em;
+  margin-bottom: 0.3em;
+}
+.reddit-md h1 { font-size: 1.2em; }
+.reddit-md h2 { font-size: 1.1em; }
+.reddit-md h3 { font-size: 1em; }
+.reddit-md h4 { font-size: 0.95em; }
+.reddit-md ul {
+  list-style-type: disc;
+  padding-left: 1.4em;
+  margin-bottom: 0.5em;
+}
+.reddit-md ol {
+  list-style-type: decimal;
+  padding-left: 1.4em;
+  margin-bottom: 0.5em;
+}
+.reddit-md li {
+  margin-bottom: 0.2em;
+}
+.reddit-md blockquote {
+  border-left: 3px solid #475569; /* slate-600 */
+  padding-left: 0.75em;
+  color: #94a3b8; /* slate-400 */
+  margin: 0.5em 0;
+  font-style: italic;
+}
+.reddit-md code {
+  background: #1e293b; /* slate-800 */
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-family: monospace;
+}
+.reddit-md pre {
+  background: #1e293b;
+  border-radius: 5px;
+  padding: 0.6em 0.9em;
+  overflow-x: auto;
+  margin-bottom: 0.5em;
+}
+.reddit-md pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.82em;
+}
+.reddit-md sup {
+  font-size: 0.72em;
+  vertical-align: super;
+  line-height: 0;
+}
+.reddit-md table {
+  border-collapse: collapse;
+  margin-bottom: 0.5em;
+  font-size: 0.9em;
+}
+.reddit-md th, .reddit-md td {
+  border: 1px solid #334155; /* slate-700 */
+  padding: 0.3em 0.6em;
+}
+.reddit-md th {
+  background: #1e293b;
+  font-weight: 600;
+}
+.reddit-md del {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.reddit-md hr {
+  border: none;
+  border-top: 1px solid #334155;
+  margin: 0.6em 0;
+}

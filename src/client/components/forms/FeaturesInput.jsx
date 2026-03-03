@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 import { FEATURE_TYPES } from '../../lib/constants.js';
+import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 
 export function FeaturesInput({ features, onChange }) {
   const addFeature = () => onChange([...features, { id: generateId(), name: '', type: 'action', description: '' }]);
@@ -10,7 +11,7 @@ export function FeaturesInput({ features, onChange }) {
   return (
     <div className="mt-6 border-t border-slate-800 pt-4">
       <div className="flex justify-between items-center mb-4">
-        <h4 className="font-medium text-slate-300">Features</h4>
+        <h4 className="font-medium text-slate-300 flex items-center gap-1">Features<MarkdownHelpTooltip /></h4>
         <button type="button" onClick={addFeature} className="text-xs bg-slate-800 hover:bg-slate-700 text-white px-2 py-1 rounded flex items-center gap-1"><Plus size={12} /> Add</button>
       </div>
       <div className="space-y-4">
@@ -23,7 +24,7 @@ export function FeaturesInput({ features, onChange }) {
                 {FEATURE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <textarea placeholder="Description (e.g. 'Spend a Fear to...')" value={f.description} onChange={e => updateFeature(f.id, 'description', e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white h-16 resize-none" />
+            <textarea placeholder="Description (e.g. 'Spend a Fear to...')" value={f.description} onChange={e => updateFeature(f.id, 'description', e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white h-16 resize-none w-full" />
           </div>
         ))}
         {features.length === 0 && <p className="text-xs text-slate-500 italic">No features added.</p>}

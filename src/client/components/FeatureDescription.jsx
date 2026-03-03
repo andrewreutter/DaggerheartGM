@@ -1,12 +1,107 @@
 /**
  * Renders a feature description with:
- *  1. Trailing questions moved to a new line and italicized.
+ *  1. Markdown rendering (bold, italic, lists, etc.)
  *  2. Text matching GM trigger patterns (spend…fear, mark…fear, mark…stress) bolded.
- *  3. Optional inline countdown widgets placed right after each "Countdown (N)" occurrence.
+ *  3. Trailing questions moved to a new line and italicized.
+ *  4. Optional inline countdown widgets placed right after each "Countdown (N)" occurrence.
+ *
+ * For the common (no-countdown) case, description is rendered as markdown HTML with
+ * fear-trigger bolding and question italicizing applied as post-processing steps.
+ *
+ * For the countdown path (GM Table interactive mode), the plain-text React approach is
+ * retained because countdown widgets require inline React components between text segments.
  */
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
+import { renderMarkdown } from '../lib/markdown.js';
 
-const FEAR_TRIGGER_RE = /(\bspend\b[^.!?]*?\bfear\b|\bmark\b[^.!?]*?\bfear\b|\bmark\b[^.!?]*?\bstress\b)/gi;
+// ---------------------------------------------------------------------------
+// Shared: trailing question detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokenize `text` into sentence-ending chunks and find the index of the first
+ * token in the contiguous trailing run of `?`-ending sentences.
+ *
+ * Returns `{ body, questions }` where `body` is the non-question prefix (may be
+ * null/empty) and `questions` is the trailing question text (null if none found).
+ *
+ * Strips HTML tags before checking sentence endings so it works correctly even
+ * when the text has already had <strong> or similar wrapping applied.
+ */
+function splitAtTrailingQuestions(text) {
+  if (!text || !text.includes('?')) return { body: text || null, questions: null };
+
+  const tokenRe = /[^.!?]*[.!?]+\s*/g;
+  const tokens = [];
+  let lastEnd = 0;
+  let m;
+  while ((m = tokenRe.exec(text)) !== null) {
+    tokens.push(m[0]);
+    lastEnd = m.index + m[0].length;
+  }
+  if (lastEnd < text.length) tokens.push(text.slice(lastEnd));
+  if (tokens.length === 0) return { body: text, questions: null };
+
+  const stripTags = s => s.replace(/<[^>]+>/g, '');
+  let firstQIdx = tokens.length;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (stripTags(tokens[i]).trimEnd().endsWith('?')) firstQIdx = i;
+    else break;
+  }
+
+  if (firstQIdx === tokens.length) return { body: text, questions: null };
+
+  return {
+    body: tokens.slice(0, firstQIdx).join('').trimEnd() || null,
+    questions: tokens.slice(firstQIdx).join('').trim(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fear trigger bolding
+// ---------------------------------------------------------------------------
+
+const FEAR_TRIGGER_RE = /(\bspend\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bstress\b)/gi;
+
+/**
+ * Apply fear-bolding to an HTML string without disturbing existing tags.
+ * Iterates through text nodes (portions between HTML tags) and wraps matches.
+ */
+function applyFearBoldingToHtml(html) {
+  return html.replace(/(<[^>]+>)|([^<]+)/g, (match, tag, text) => {
+    if (tag) return tag;
+    return text.replace(FEAR_TRIGGER_RE, '<strong class="text-slate-200">$1</strong>');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Trailing question italicizing (HTML path)
+// ---------------------------------------------------------------------------
+
+/**
+ * In the last <p> block of the rendered HTML, find trailing sentences ending in
+ * '?' and wrap them in <em>, separated from the body by a <br>.
+ * Uses splitAtTrailingQuestions on the last paragraph's content.
+ */
+function applyQuestionItalicsToHtml(html) {
+  const lastPRe = /(<p>)([\s\S]*?)(<\/p>)(?![\s\S]*<p>)/i;
+  const match = lastPRe.exec(html);
+  if (!match) return html;
+
+  const [fullMatch, openTag, content, closeTag] = match;
+  const { body, questions } = splitAtTrailingQuestions(content);
+  if (!questions) return html;
+
+  const newContent = body
+    ? `${body}<br><em>${questions}</em>`
+    : `<em>${questions}</em>`;
+
+  return html.slice(0, match.index) + openTag + newContent + closeTag + html.slice(match.index + fullMatch.length);
+}
+
+// ---------------------------------------------------------------------------
+// React-side fear bolding (used by countdown path)
+// ---------------------------------------------------------------------------
 
 function applyFearBolding(text) {
   if (!text) return text;
@@ -23,33 +118,9 @@ function applyFearBolding(text) {
   return parts.length > 0 ? parts : text;
 }
 
-function splitDescription(text) {
-  if (!text || !text.includes('?')) return { body: text, questions: null };
-
-  const tokens = [];
-  const re = /[^.!?]+[.!?]+\s*/g;
-  let lastEnd = 0;
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    tokens.push(m[0]);
-    lastEnd = m.index + m[0].length;
-  }
-  if (lastEnd < text.length) tokens.push(text.slice(lastEnd));
-  if (tokens.length === 0) return { body: text, questions: null };
-
-  let firstQIdx = tokens.length;
-  for (let i = tokens.length - 1; i >= 0; i--) {
-    if (tokens[i].trimEnd().endsWith('?')) firstQIdx = i;
-    else break;
-  }
-
-  if (firstQIdx === tokens.length) return { body: text, questions: null };
-
-  return {
-    body: tokens.slice(0, firstQIdx).join('').trimEnd() || null,
-    questions: tokens.slice(firstQIdx).join('').trim(),
-  };
-}
+// ---------------------------------------------------------------------------
+// Countdown counter widget
+// ---------------------------------------------------------------------------
 
 export function CountdownCounter({ value, onChange }) {
   return (
@@ -67,11 +138,15 @@ export function CountdownCounter({ value, onChange }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 /**
  * Renders a feature description string.
  *
  * Props:
- *   description       – the raw description text
+ *   description       – the raw description text (plain text or markdown)
  *   countdownValues   – optional number[]; when provided, a CountdownCounter is rendered
  *                       inline immediately after each "Countdown (N)" match in the text.
  *                       Index i corresponds to the i-th Countdown occurrence in order.
@@ -84,22 +159,19 @@ export function FeatureDescription({ description: rawDescription, countdownValue
 
   const allCds = (countdownValues && onCountdownChange) ? parseAllCountdownValues(description) : [];
 
+  // Common path: no countdown widgets — render markdown with HTML post-processing
   if (allCds.length === 0) {
-    const { body, questions } = splitDescription(description);
+    const html = applyQuestionItalicsToHtml(applyFearBoldingToHtml(renderMarkdown(description)));
     return (
-      <>
-        {body && applyFearBolding(body)}
-        {questions && (
-          <>
-            {body && <br />}
-            <em>{applyFearBolding(questions)}</em>
-          </>
-        )}
-      </>
+      <span
+        className="dh-md"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     );
   }
 
-  // Build segments: text (up to + including each countdown match) alternating with widgets.
+  // Countdown path: keep React component approach (widgets must be inline React nodes).
+  // Question splitting uses the shared splitAtTrailingQuestions on the plain-text tail.
   const segments = [];
   let lastIdx = 0;
   allCds.forEach((cd, cdIdx) => {
@@ -110,8 +182,7 @@ export function FeatureDescription({ description: rawDescription, countdownValue
   const tailText = description.slice(lastIdx);
   segments.push({ type: 'text', text: tailText, key: 'tail', isTail: true });
 
-  // Apply body/questions split only to the trailing text segment.
-  const { body: tailBody, questions } = splitDescription(tailText);
+  const { body: tailBody, questions } = splitAtTrailingQuestions(tailText);
 
   return (
     <>

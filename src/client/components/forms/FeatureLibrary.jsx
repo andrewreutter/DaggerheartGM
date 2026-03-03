@@ -4,6 +4,7 @@ import { generateId } from '../../lib/helpers.js';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { SOURCE_BADGE, SOURCE_ORDER } from '../../lib/constants.js';
+import { MarkdownText } from '../../lib/markdown.js';
 
 const TYPE_BADGE = {
   action: 'bg-amber-900/60 text-amber-300',
@@ -186,7 +187,7 @@ function FeatureCard({ feature, source, sourceName, onAdd }) {
                 </span>
               </div>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{feature.description}</p>
+            <MarkdownText text={feature.description} className="text-xs text-slate-300 leading-relaxed" />
             {sourceName && (
               <p className="text-[10px] text-slate-500 mt-2 border-t border-slate-700 pt-2">
                 From: {sourceName}

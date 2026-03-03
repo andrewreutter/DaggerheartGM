@@ -6,7 +6,7 @@ import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
 import { isOwnItem, needsHodEnrich, needsRedditParse } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem, parseRedditItem } from '../lib/api.js';
+import { enrichItems, enrichSingleItem, parseRedditItem, blockRedditPost } from '../lib/api.js';
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
@@ -26,7 +26,7 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange }) {
+export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
   // modalState: null | { item: object, isNew: boolean }
   const [modalState, setModalState] = useState(null);
@@ -108,16 +108,22 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       const enriched = await enrichSingleItem(activeTab, item);
       search.patchItems({ [enriched.id]: enriched });
       setModalState({ item: enriched, isNew: false, enriching: false });
+    } else if (needsRedditParse(item)) {
+      setModalState({ item, isNew: false, enriching: true });
+      handleParseReddit(item);
     } else {
       setModalState({ item, isNew: !item.id });
     }
   };
 
-  const handleParseReddit = async (item) => {
-    setModalState(prev => prev ? { ...prev, enriching: true } : prev);
+  const handleParseReddit = async (item, { forceLlm } = {}) => {
+    const cleanItem = { ...item };
+    delete cleanItem._redditParseError;
+    const alreadyParsed = (item.features || []).length > 0;
+    setModalState({ item: cleanItem, isNew: false, enriching: true });
     try {
-      const parsed = await parseRedditItem(activeTab, item);
-      const merged = { ...item, ...parsed };
+      const { item: parsed, _parseMethod } = await parseRedditItem(activeTab, item, { forceLlm, reparse: alreadyParsed });
+      const merged = { ...item, ...parsed, _parseMethod };
       search.patchItems({ [merged.id]: merged });
       setModalState({ item: merged, isNew: false, enriching: false });
     } catch (err) {
@@ -160,6 +166,17 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     // Open the clone immediately.
     setModalState({ item: cloned, isNew: false });
     navigate(`/library/${activeTab}/${cloned.id}`);
+  };
+
+  const handleBlockReddit = async (redditPostId) => {
+    if (!redditPostId) return;
+    try {
+      await blockRedditPost(redditPostId);
+      if (isPaginatedTab) search.refresh();
+      closeModal();
+    } catch (err) {
+      console.error('Failed to block Reddit post:', err);
+    }
   };
 
   /**
@@ -270,7 +287,10 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
           onClone={!modalItemIsOwn ? () => handleClone(resolvedModalItem) : null}
-          onParseReddit={needsRedditParse(resolvedModalItem) ? () => handleParseReddit(resolvedModalItem) : null}
+          onRetryParse={resolvedModalItem?._source === 'reddit' ? () => handleParseReddit(resolvedModalItem) : null}
+          onForceLlmParse={resolvedModalItem?._parseMethod === 'partial' ? () => handleParseReddit(resolvedModalItem, { forceLlm: true }) : null}
+          isAdmin={isAdmin}
+          onBlockReddit={resolvedModalItem?._source === 'reddit' && isAdmin ? handleBlockReddit : null}
           onClose={closeModal}
         />
       )}

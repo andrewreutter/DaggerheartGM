@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { FormRow } from './FormRow.jsx';
 import { CollectionRefPicker } from './CollectionRefPicker.jsx';
+import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 
 const SCENE_COLLECTIONS = [
   { key: 'adversaries', label: 'Adversary', isCountable: true },
@@ -127,7 +128,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel }) 
   return (
     <div className="space-y-4">
       <FormRow label="Scene Name"><input type="text" value={fd.name} onChange={e => updateField('name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-      <FormRow label="Description"><textarea value={fd.description} onChange={e => updateField('description', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
+      <FormRow label={<>Description<MarkdownHelpTooltip /></>}><textarea value={fd.description} onChange={e => updateField('description', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
       <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={fd.imageUrl} onChange={e => updateField('imageUrl', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <CollectionRefPicker
         collections={SCENE_COLLECTIONS}

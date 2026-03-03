@@ -365,3 +365,31 @@ export async function deleteItem(appId, userId, collection, id) {
     [appId, userId, collection, id]
   );
 }
+
+// --- Admin: blocked Reddit posts ---
+
+/**
+ * Permanently block a Reddit post from appearing to any user.
+ * Idempotent (ON CONFLICT DO NOTHING).
+ */
+export async function blockRedditPost(appId, redditPostId, blockedBy) {
+  const db = getPool();
+  await db.query(
+    `INSERT INTO blocked_reddit_posts (app_id, reddit_post_id, blocked_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (app_id, reddit_post_id) DO NOTHING`,
+    [appId, redditPostId, blockedBy]
+  );
+}
+
+/**
+ * Returns a Set of blocked Reddit post IDs for the given app.
+ */
+export async function getBlockedRedditPostIds(appId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT reddit_post_id FROM blocked_reddit_posts WHERE app_id = $1`,
+    [appId]
+  );
+  return new Set(rows.map(r => r.reddit_post_id));
+}

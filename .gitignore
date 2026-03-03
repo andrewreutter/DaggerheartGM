@@ -141,3 +141,6 @@ vite.config.ts.timestamp-*
 # Generated build artifacts
 public/app.js
 public/styles.css
+
+# Tesseract.js OCR language data (downloaded automatically on first use)
+*.traineddata
