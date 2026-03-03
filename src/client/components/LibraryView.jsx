@@ -6,7 +6,7 @@ import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
 import { isOwnItem, needsHodEnrich, needsRedditParse } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem, parseRedditItem } from '../lib/api.js';
+import { enrichItems, enrichSingleItem, parseRedditItem, blockRedditPost } from '../lib/api.js';
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
@@ -26,7 +26,7 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange }) {
+export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin }) {
   const [showRolzImport, setShowRolzImport] = useState(false);
   // modalState: null | { item: object, isNew: boolean }
   const [modalState, setModalState] = useState(null);
@@ -168,6 +168,17 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     navigate(`/library/${activeTab}/${cloned.id}`);
   };
 
+  const handleBlockReddit = async (redditPostId) => {
+    if (!redditPostId) return;
+    try {
+      await blockRedditPost(redditPostId);
+      if (isPaginatedTab) search.refresh();
+      closeModal();
+    } catch (err) {
+      console.error('Failed to block Reddit post:', err);
+    }
+  };
+
   /**
    * Applies an edited copy of an element back into the parent scene/group data structure,
    * replacing the reference at the given index with an inline owned copy.
@@ -278,6 +289,8 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           onClone={!modalItemIsOwn ? () => handleClone(resolvedModalItem) : null}
           onRetryParse={resolvedModalItem?._source === 'reddit' ? () => handleParseReddit(resolvedModalItem) : null}
           onForceLlmParse={resolvedModalItem?._parseMethod === 'partial' ? () => handleParseReddit(resolvedModalItem, { forceLlm: true }) : null}
+          isAdmin={isAdmin}
+          onBlockReddit={resolvedModalItem?._source === 'reddit' && isAdmin ? handleBlockReddit : null}
           onClose={closeModal}
         />
       )}

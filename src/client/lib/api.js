@@ -273,3 +273,33 @@ export const postRolzRoll = async (room, text, rolzUsername, rolzPassword, from 
   }
   return res.json();
 };
+
+/** Returns { isAdmin } for the currently signed-in user. */
+export const fetchMe = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Admin-only: permanently hide a Reddit post from all users. */
+export const blockRedditPost = async (redditPostId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/admin/reddit/block', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ redditPostId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};

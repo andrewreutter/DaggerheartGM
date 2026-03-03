@@ -206,7 +206,8 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
   const [localData, setLocalData] = useState({
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
     difficulty: initial?.difficulty || 10,
-    description: initial?.description || '', imageUrl: initial?.imageUrl || '',
+    description: initial?.description || '', impulses: initial?.impulses || '',
+    imageUrl: initial?.imageUrl || '',
     features: (initial?.features || []).map(f => f.id ? f : { ...f, id: generateId() }),
     potential_adversaries: normalizePotentialAdversaries(initial?.potential_adversaries),
     is_public: initial?.is_public || false,
@@ -256,6 +257,9 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
         </FormRow>
         <FormRow label="Description">
           <textarea value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-24 resize-none" />
+        </FormRow>
+        <FormRow label="Impulses">
+          <input type="text" value={formData.impulses || ''} onChange={e => update({ ...formData, impulses: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" placeholder="e.g. Spread toxins, strip the land bare, end life" />
         </FormRow>
 
         <PotentialAdversariesInput

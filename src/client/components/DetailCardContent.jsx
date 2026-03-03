@@ -50,6 +50,13 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
         <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{stripHtml(element.description)}</p>
       )}
 
+      {element.impulses && (
+        <div className="mb-3">
+          <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1 mb-1">Impulses</h5>
+          <p className="text-sm text-slate-300">{stripHtml(element.impulses)}</p>
+        </div>
+      )}
+
       {(() => {
         const potAdv = normalizePotentialAdversaries(element.potential_adversaries);
         if (!potAdv.length) return null;

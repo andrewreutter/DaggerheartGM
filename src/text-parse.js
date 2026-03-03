@@ -380,9 +380,20 @@ function extractFeatures(text) {
 }
 
 function extractDescription(text) {
-  // Italic text after tier line
+  // Italic text after tier line (markdown format: _description_)
   const italicAfterTier = text.match(/Tier\s+\d\s+\w+\.?\s*_([^_]+)_/i);
   if (italicAfterTier) return italicAfterTier[1].trim();
+
+  // Plain-text description between tier line and first known section header
+  // Handles OCR output where the description is plain text on lines following "Tier X Type"
+  // with possible blank lines (OCR line-wrapping artifacts) between them.
+  const plainAfterTier = text.match(
+    /Tier\s+\d\s+\w+\s*\n+([\s\S]+?)(?=\n\s*(?:Impulses?|Difficulty|Potential\s+Adversaries?|FEATURES?)\s*[:\n])/i
+  );
+  if (plainAfterTier) {
+    const desc = plainAfterTier[1].trim().replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ');
+    if (desc.length > 20) return desc;
+  }
 
   const labeled = text.match(/Description:\s*([^\n]+(?:\n(?!(?:Tier|HP|Stress|Difficulty|Attack|Experience|Feature|Motive|Potential))[^\n]+)*)/i);
   if (labeled) return labeled[1].trim().replace(/\n/g, ' ');
@@ -403,14 +414,25 @@ function extractMotive(text) {
   return null;
 }
 
+function extractImpulses(text) {
+  const match = text.match(/Impulses?:\s*([^\n]+)/i);
+  return match ? match[1].trim() : '';
+}
+
 function extractPotentialAdversaries(text) {
   const match = text.match(/Potential\s+Adversaries?:\s*([^\n]+)/i);
   if (!match) return [];
   const raw = match[1].trim();
   if (!raw || raw.toLowerCase() === 'any' || raw.toLowerCase() === 'none') return [];
 
-  // Expand "Category (Name1, Name2)" groups
-  const expanded = raw.replace(/[^,()]+\(([^)]+)\)/g, (_, inner) => inner);
+  // Expand "Category (Name1, Name2)" groups only when the parenthetical is a
+  // comma-separated list of sub-names (e.g. "Beasts (Bear, Dire Wolf)" → "Bear, Dire Wolf").
+  // When the parenthetical is a role/type descriptor without commas
+  // (e.g. "Sporebottles (Horde/Swarm)"), keep the category name and discard the descriptor.
+  const expanded = raw.replace(/([^,()]+)\(([^)]+)\)/g, (_, prefix, inner) => {
+    if (inner.includes(',')) return inner;
+    return prefix.trim();
+  });
   return expanded.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name }));
 }
 
@@ -515,6 +537,7 @@ function parseEnvironment(raw, processed, title, features) {
   const type = extractEnvType(processed);
   const difficulty = extractDifficulty(processed);
   const description = extractDescription(raw) || extractDescription(processed);
+  const impulses = extractImpulses(processed) || extractImpulses(raw);
   const potential_adversaries = extractPotentialAdversaries(processed);
 
   const item = {
@@ -522,6 +545,7 @@ function parseEnvironment(raw, processed, title, features) {
     tier: tier || 1,
     type: type || 'exploration',
     description: description || '',
+    impulses: impulses || '',
     difficulty: difficulty || 10,
     potential_adversaries,
     features,
@@ -586,7 +610,7 @@ function emptyAdversary() {
 
 function emptyEnvironment() {
   return {
-    name: '', tier: 1, type: 'exploration', description: '', difficulty: 10,
+    name: '', tier: 1, type: 'exploration', description: '', impulses: '', difficulty: 10,
     potential_adversaries: [], features: [],
   };
 }
@@ -632,6 +656,7 @@ export function mergeResults(a, b) {
   if (merged.potential_adversaries?.length === 0 && bItem.potential_adversaries?.length > 0) {
     merged.potential_adversaries = bItem.potential_adversaries;
   }
+  if (!merged.impulses && bItem.impulses) merged.impulses = bItem.impulses;
 
   // Recompute confidence from the merged item
   const confidence = Math.max(a.confidence, b.confidence);

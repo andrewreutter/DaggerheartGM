@@ -4,7 +4,7 @@ import { dirname, join } from 'path';
 import { watchFile } from 'fs';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone, blockRedditPost, getBlockedRedditPostIds } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
 import { EXTERNAL_SOURCES } from './src/external-sources.js';
@@ -20,6 +20,13 @@ const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
 const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'table_state'];
 
+// Admin access: comma-separated list of email addresses in ADMIN_EMAILS env var.
+// e.g. ADMIN_EMAILS=alice@example.com,bob@example.com
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',')
+  .map(e => e.trim().toLowerCase())
+  .filter(Boolean);
+
 // --- Firebase Admin (token verification only; no service account key needed) ---
 if (!getApps().length) {
   initializeApp({ projectId: process.env.FIREBASE_PROJECT_ID });
@@ -34,10 +41,18 @@ async function requireAuth(req, res, next) {
   try {
     const decoded = await getAuth().verifyIdToken(header.slice(7));
     req.uid = decoded.uid;
+    req.email = decoded.email || '';
     next();
   } catch {
     res.status(401).json({ error: 'Invalid auth token' });
   }
+}
+
+function requireAdmin(req, res, next) {
+  if (!ADMIN_EMAILS.includes(req.email?.toLowerCase())) {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
 }
 
 app.use(express.json());
@@ -52,6 +67,11 @@ app.get('/api/config', (req, res) => {
       appId:      process.env.FIREBASE_APP_ID      || '',
     },
   });
+});
+
+// --- Current user info ---
+app.get('/api/me', requireAuth, (req, res) => {
+  res.json({ isAdmin: ADMIN_EMAILS.includes(req.email?.toLowerCase()) });
 });
 
 // --- Dev live reload (SSE) ---
@@ -330,6 +350,10 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
     // external source results against. Pass an empty set.
     const mirrorIds = new Set();
 
+    // Load blocked Reddit post IDs when Reddit is active, to filter them out of results.
+    const redditActive = activeExternalSources.some(s => s.name === 'reddit');
+    const blockedRedditPostIds = redditActive ? await getBlockedRedditPostIds(APP_ID) : new Set();
+
     const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
       includeMine, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
     });
@@ -361,6 +385,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         limit: searchLimit,
         offset: sourceLocalOffset,
         mirrorIds,
+        blockedRedditPostIds,
       });
 
       if (remaining > 0) {
@@ -685,6 +710,20 @@ app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
     }));
   }
   res.json({ enriched });
+});
+
+// --- Admin: block a Reddit post from appearing to all users ---
+
+app.post('/api/admin/reddit/block', requireAuth, requireAdmin, async (req, res) => {
+  const { redditPostId } = req.body || {};
+  if (!redditPostId) return res.status(400).json({ error: 'redditPostId is required' });
+  try {
+    await blockRedditPost(APP_ID, redditPostId, req.email);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/admin/reddit/block error:', err);
+    res.status(500).json({ error: 'Failed to block Reddit post' });
+  }
 });
 
 // --- Reddit parse endpoint (text → OCR → LLM cascade) ---

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Undo2, Redo2, Trash2, BookCopy, Copy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
+import { X, Undo2, Redo2, Trash2, BookCopy, Copy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink, ShieldOff } from 'lucide-react';
 import { generateRolzExport } from '../../lib/rolz-export.js';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
@@ -52,6 +52,8 @@ export function ItemDetailModal({
   onClone,
   onRetryParse,
   onForceLlmParse,
+  isAdmin = false,
+  onBlockReddit,
   onClose,
 }) {
   const isNew = !item?.id;
@@ -294,14 +296,30 @@ export function ItemDetailModal({
               ) : null;
             })()}
 
-            {onRetryParse && (
-              <button
-                onClick={onRetryParse}
-                className="px-3 py-1.5 rounded text-sm font-medium bg-orange-700 hover:bg-orange-600 text-white transition-colors"
-              >
-                Try again
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {onRetryParse && (
+                <button
+                  onClick={onRetryParse}
+                  className="px-3 py-1.5 rounded text-sm font-medium bg-orange-700 hover:bg-orange-600 text-white transition-colors"
+                >
+                  Try again
+                </button>
+              )}
+              {/* Admin-only: hide Reddit post from all users (also shown for unparsed stubs) */}
+              {isAdmin && onBlockReddit && (
+                <button
+                  onClick={() => {
+                    if (window.confirm('Permanently hide this Reddit post from all users? This cannot be undone.')) {
+                      onBlockReddit(item._redditPostId);
+                    }
+                  }}
+                  title="Admin: Hide from all users"
+                  className="px-3 py-1.5 rounded text-sm font-medium flex items-center gap-1.5 bg-red-900/80 hover:bg-red-800 text-red-200 border border-red-700 transition-colors"
+                >
+                  <ShieldOff size={14} /> Hide from All Users
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -405,6 +423,20 @@ export function ItemDetailModal({
                 className="px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm bg-violet-700 hover:bg-violet-600 text-white transition-colors disabled:opacity-60"
               >
                 <BookCopy size={14} /> {cloningStatus || 'Clone to My Library'}
+              </button>
+            )}
+            {/* Admin-only: hide Reddit post from all users */}
+            {isAdmin && onBlockReddit && item?._source === 'reddit' && (
+              <button
+                onClick={() => {
+                  if (window.confirm('Permanently hide this Reddit post from all users? This cannot be undone.')) {
+                    onBlockReddit(item._redditPostId);
+                  }
+                }}
+                title="Admin: Hide from all users"
+                className="px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm bg-red-900/80 hover:bg-red-800 text-red-200 border border-red-700 transition-colors ml-auto"
+              >
+                <ShieldOff size={14} /> Hide from All Users
               </button>
             )}
           </div>

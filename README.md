@@ -31,7 +31,8 @@ DaggerheartGM/
 │   ├── 001_create_items_table.sql
 │   ├── 002_add_is_public.sql
 │   ├── 003_add_popularity.sql  # clone_count, play_count, _clonedFrom index
-│   └── 004_remove_srd_rows.sql # Removes legacy __SRD__ DB rows (SRD now in-memory)
+│   ├── 004_remove_srd_rows.sql # Removes legacy __SRD__ DB rows (SRD now in-memory)
+│   └── 005_create_blocked_reddit.sql # blocked_reddit_posts table for admin content moderation
 ├── public/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked)
 │   └── styles.css              # Generated Tailwind output (do not edit by hand)
@@ -218,6 +219,7 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 | `DATABASE_URL` | Yes | Supabase Postgres connection string |
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
 | `OPENAI_API_KEY` | No | OpenAI API key — optional LLM fallback for Reddit posts that can't be parsed by regex/OCR |
+| `ADMIN_EMAILS` | No | Comma-separated list of email addresses granted admin access (e.g. `alice@example.com,bob@example.com`). Admins can permanently hide Reddit posts from all users via the "Hide from All Users" button in the Reddit item modal. |
 
 ---
 
