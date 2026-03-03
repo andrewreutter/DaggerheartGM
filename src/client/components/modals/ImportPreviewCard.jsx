@@ -6,9 +6,13 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
 /**
  * Collapsible card for import preview items.
  *
+ * Uses controlled mode for AdversaryForm/EnvironmentForm so edits propagate
+ * immediately — the card header updates in real-time and collapsing/expanding
+ * preserves all changes.
+ *
  * Props:
  *   item             - the item object (must have .id and .name)
-   *   collection       - 'adversaries' | 'environments' | 'scenes'
+ *   collection       - 'adversaries' | 'environments' | 'scenes'
  *   existingItems    - items already in the library, used for name-based duplicate detection
  *   selected         - whether this item is checked for import
  *   onToggleSelect   - called when the checkbox changes
@@ -39,10 +43,8 @@ export function ImportPreviewCard({
   const focusClass = colorScheme === 'green' ? 'focus:border-green-600' : 'focus:border-red-500';
   const accentColor = colorScheme === 'green' ? '#22c55e' : '#ef4444';
 
-  const handleFormSave = (formData) => {
-    // Preserve fields not managed by the form (e.g. id, count)
+  const handleControlledChange = (formData) => {
     onUpdate({ ...item, ...formData });
-    setExpanded(false);
   };
 
   const defaultSummary = (
@@ -105,7 +107,7 @@ export function ImportPreviewCard({
           {/* Name row */}
           <div className="flex items-center gap-2 flex-wrap mb-0.5">
             <span className={`font-semibold text-sm ${selected ? 'text-white' : 'text-slate-500'}`}>
-              {item.name}
+              {item.name || '(unnamed)'}
             </span>
 
             {collection === 'adversaries' && (
@@ -177,21 +179,19 @@ export function ImportPreviewCard({
         </button>
       </div>
 
-      {/* Expanded content */}
+      {/* Expanded content — controlled mode: edits propagate immediately */}
       {expanded && (
         <div className="border-t border-slate-800 p-4">
           {collection === 'adversaries' && (
             <AdversaryForm
-              initial={item}
-              onSave={handleFormSave}
-              onCancel={() => setExpanded(false)}
+              value={item}
+              onChange={handleControlledChange}
             />
           )}
           {collection === 'environments' && (
             <EnvironmentForm
-              initial={item}
-              onSave={handleFormSave}
-              onCancel={() => setExpanded(false)}
+              value={item}
+              onChange={handleControlledChange}
             />
           )}
           {collection === 'scenes' && (

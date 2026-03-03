@@ -21,11 +21,16 @@ const STAT_KEYWORDS = /\b(HP|Hit Points?|Stress|Difficulty|Tier|Attack|ATK|Featu
 const MIN_KEYWORD_HITS = 3;
 
 // Minimum fraction of total image area a margin must occupy to qualify as artwork.
-// For full-width top/bottom strips, area fraction equals height/H; 0.05 allows
-// a ~5% tall banner (e.g. 458px on a 4975px image = 9.2%) to qualify.
-const MIN_AREA_FRACTION = 0.05;
-// Minimum size (in pixels) of the shorter dimension of a cropped region
-const MIN_SHORT_SIDE_PX = 50;
+// 0.10 (10%) is chosen to reject thin decorative borders (typically 3-6% of area)
+// while admitting genuine artwork banners (e.g. the Sporenado top banner is ~33%).
+const MIN_AREA_FRACTION = 0.10;
+// Minimum size (in pixels) of the shorter dimension of a cropped region.
+// 100px rejects narrow padding/borders (30-80px) while admitting real banners (~400px+).
+const MIN_SHORT_SIDE_PX = 100;
+// Maximum aspect ratio (longer side / shorter side) for a region to qualify as artwork.
+// 5:1 rejects tall/thin side margins (e.g. a 150x900px right margin = 6:1) that are
+// likely decorative borders, while admitting wide panoramic banners (≤4:1 typical).
+const MAX_ASPECT_RATIO = 5;
 // Inward margin applied to each crop to avoid clipping partial text at the boundary (fraction)
 const CROP_INSET_FRACTION = 0.02;
 // Minimum confidence for a Tesseract line to be included in the text bounding box.
@@ -130,6 +135,8 @@ async function extractArtworkRegions(buf, blocks) {
 
       if (area / totalArea < MIN_AREA_FRACTION) continue;
       if (shortSide < MIN_SHORT_SIDE_PX) continue;
+      const longSide = Math.max(width, height);
+      if (longSide / shortSide > MAX_ASPECT_RATIO) continue;
 
       // Apply inward inset to avoid clipping partial glyphs at the boundary
       let cropLeft = left, cropTop = top, cropWidth = width, cropHeight = height;
@@ -173,6 +180,36 @@ async function extractArtworkRegions(buf, blocks) {
 }
 
 /**
+ * Run OCR on a single image buffer.
+ *
+ * Returns the extracted text and whether the image looks like a stat block.
+ * For stat block images, also returns any artwork regions cropped from non-text margins.
+ *
+ * @param {Buffer} buf - Raw image buffer
+ * @returns {Promise<{ text: string, isStatBlock: boolean, artworkRegions: string[] }>}
+ */
+export async function ocrBuffer(buf) {
+  const worker = await getWorker();
+
+  let ocrText = '';
+  let blocks = [];
+  try {
+    const { data } = await worker.recognize(buf, {}, { blocks: true });
+    ocrText = (data.text || '').trim();
+    blocks = data.blocks || [];
+  } catch {
+    return { text: '', isStatBlock: false, artworkRegions: [] };
+  }
+
+  if (!isStatBlock(ocrText)) {
+    return { text: ocrText, isStatBlock: false, artworkRegions: [] };
+  }
+
+  const artworkRegions = blocks.length > 0 ? await extractArtworkRegions(buf, blocks) : [];
+  return { text: ocrText, isStatBlock: true, artworkRegions };
+}
+
+/**
  * Run OCR on a set of image URLs.
  *
  * Classifies each image as a stat block (text extracted) or artwork (URL preserved).
@@ -193,8 +230,6 @@ export async function ocrImages(imageUrls, maxImages = 4) {
   const croppedArtworkUrls = []; // artwork regions cropped from composite stat block images
   const statBlockUrls = [];    // original URLs of stat block images (kept as additional)
 
-  const worker = await getWorker();
-
   for (const url of imageUrls.slice(0, maxImages)) {
     const buf = await fetchImage(url);
     if (!buf) {
@@ -202,26 +237,16 @@ export async function ocrImages(imageUrls, maxImages = 4) {
       continue;
     }
 
-    let ocrText = '';
-    let blocks = null;
-    try {
-      const { data } = await worker.recognize(buf, {}, { blocks: true });
-      ocrText = (data.text || '').trim();
-      blocks = data.blocks || [];
-    } catch {
+    const result = await ocrBuffer(buf);
+    if (!result.text) {
       artworkUrls.push(url);
       continue;
     }
 
-    if (isStatBlock(ocrText)) {
-      texts.push(ocrText);
+    if (result.isStatBlock) {
+      texts.push(result.text);
       statBlockUrls.push(url);
-
-      // Attempt to extract artwork from non-text margins of this composite image
-      if (blocks.length > 0) {
-        const crops = await extractArtworkRegions(buf, blocks);
-        croppedArtworkUrls.push(...crops);
-      }
+      croppedArtworkUrls.push(...result.artworkRegions);
     } else {
       artworkUrls.push(url);
     }

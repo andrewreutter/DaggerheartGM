@@ -117,13 +117,26 @@ function extractName(raw, title) {
   if (labeled) return labeled[1].trim();
 
   // All-caps title line — common in OCR output from stat card images where the name is
-  // rendered in large display text (e.g. "SPORENADO"). Must be ≥3 chars and not a known
-  // section header keyword.
-  const SECTION_HEADERS = /^(FEATURES?|PASSIVE|ACTION|REACTION|ATTACK|EXPERIENCES?|THRESHOLDS?|DIFFICULTY|IMPULSES?)$/;
-  const allCaps = raw.match(/^([A-Z][A-Z\s'-]{2,})$/m);
+  // rendered in large display text (e.g. "SPORENADO"). Capture ends with [A-Z] to anchor
+  // on the last uppercase char; (?:\s.*)? tolerates trailing OCR noise from icons/artwork.
+  const SECTION_HEADERS = /^(FEATURES?|PASSIVE|ACTION|REACTION|ATTACK|ATK|EXPERIENCES?|THRESHOLDS?|DIFFICULTY|IMPULSES?|HP|DC)$/;
+  const allCaps = raw.match(/^([A-Z][A-Z\s\u2019'-]{2,}[A-Z])(?:\s*[x\xd7]\s*\d+)?(?:\s.*)?$/m);
+
   if (allCaps) {
     const candidate = allCaps[1].trim();
     if (!SECTION_HEADERS.test(candidate)) return toTitleCase(candidate);
+  }
+
+  // First line followed by a "Tier N" line (possibly with blank lines between) — strong
+  // signal in Daggerheart stat blocks. Capture ends with [A-Z]; [^\n]* eats trailing
+  // OCR noise on the title line; [\s\n]* allows blank lines before "Tier".
+  {
+    const tierFollows = raw.match(/^([A-Z][A-Za-z\s\u2019'-]{2,}[A-Z])(?:\s*[x\xd7]\s*\d+)?[^\n]*\n[\s\n]*Tier\s+\d/m);
+
+    if (tierFollows) {
+      const candidate = tierFollows[1].trim();
+      if (!SECTION_HEADERS.test(candidate.toUpperCase())) return toTitleCase(candidate);
+    }
   }
 
   // Pronoun-reference pattern: "...a/an WORD. It/They VERB..." — the entity's name
@@ -568,10 +581,16 @@ export function parseStatBlock(text, collection = 'adversaries', title = '') {
   return parseAdversary(raw, processed, title, features);
 }
 
+function extractCountFromText(raw) {
+  const m = raw.match(/^[A-Z].*[x\xd7]\s*(\d+)/m);
+  return m ? parseInt(m[1]) : null;
+}
+
 function parseAdversary(raw, processed, title, features) {
   const nameFromText = extractNameFromText(raw);
   const name = nameFromText || (title ? title.trim() : null);
   const nameIsTitle = !nameFromText && !!title;
+  const count = extractCountFromText(raw);
   const { tier, role } = extractTierAndRole(processed);
   const difficulty = extractDifficulty(processed);
   const hp_max = extractHP(processed);
@@ -584,6 +603,7 @@ function parseAdversary(raw, processed, title, features) {
 
   const item = {
     name: name || '',
+    count: count || 1,
     tier: tier || 1,
     role: role || 'standard',
     description: description || '',
@@ -738,4 +758,38 @@ export function mergeResults(a, b) {
   const missing = a.missing.filter(f => b.missing.includes(f));
 
   return { item: merged, confidence, missing };
+}
+
+/**
+ * Detect whether a stat block text is more likely an adversary or environment,
+ * then parse it as that collection.
+ *
+ * Runs parseStatBlock for both collections and uses keyword-based heuristics
+ * to tiebreak when confidence scores are close. Returns the winner along with
+ * the detected collection name.
+ *
+ * @param {string} text   - Raw stat block text
+ * @param {string} [title] - Optional title hint (fallback for name)
+ * @returns {{ collection: 'adversaries'|'environments', item: object, confidence: number, missing: string[] }}
+ */
+export function detectCollection(text, title = '') {
+  const advResult = parseStatBlock(text, 'adversaries', title);
+  const envResult = parseStatBlock(text, 'environments', title);
+
+  // Strong keyword signals override confidence scores
+  const hasHP        = /\b(HP|Hit Points?|Stress)\b/i.test(text);
+  const hasAttack    = /\b(ATK|Attack)\b/i.test(text);
+  const hasThresh    = /\bThresholds?\b/i.test(text);
+  const hasImpulses  = /\bImpulses?\b/i.test(text);
+  const hasPotAdv    = /\bPotential\s+Adversar/i.test(text);
+
+  const advSignals = (hasHP ? 1 : 0) + (hasAttack ? 1 : 0) + (hasThresh ? 1 : 0);
+  const envSignals = (hasImpulses ? 1 : 0) + (hasPotAdv ? 1 : 0);
+
+  if (envSignals > advSignals) return { collection: 'environments', ...envResult };
+  if (advSignals > envSignals) return { collection: 'adversaries', ...advResult };
+
+  // Equal signals — fall back to confidence comparison
+  if (envResult.confidence > advResult.confidence) return { collection: 'environments', ...envResult };
+  return { collection: 'adversaries', ...advResult };
 }

@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { ShieldAlert, Map, Play, BookOpen, Plus } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
-import { RolzImportModal } from './modals/RolzImportModal.jsx';
+import { ImageImportModal } from './modals/ImageImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
 import { isOwnItem, needsHodEnrich, needsRedditParse } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem, parseRedditItem, blockRedditPost } from '../lib/api.js';
+import { enrichItems, enrichSingleItem, parseRedditItem, blockRedditPost, saveMirrorItem } from '../lib/api.js';
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
@@ -27,7 +27,7 @@ const TABS = [
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
 export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin }) {
-  const [showRolzImport, setShowRolzImport] = useState(false);
+  const [showImageImport, setShowImageImport] = useState(false);
   // modalState: null | { item: object, isNew: boolean }
   const [modalState, setModalState] = useState(null);
 
@@ -108,7 +108,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       const enriched = await enrichSingleItem(activeTab, item);
       search.patchItems({ [enriched.id]: enriched });
       setModalState({ item: enriched, isNew: false, enriching: false });
-    } else if (needsRedditParse(item)) {
+    } else if (isAdmin && needsRedditParse(item)) {
       setModalState({ item, isNew: false, enriching: true });
       handleParseReddit(item);
     } else {
@@ -151,6 +151,11 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     await saveItem(activeTab, itemToSave);
     if (isPaginatedTab) search.refresh();
     // Keep modal open after save (auto-save pattern — no explicit "done" step).
+  };
+
+  const handleSaveMirror = async (formData) => {
+    await saveMirrorItem(activeTab, formData);
+    if (isPaginatedTab) search.refresh();
   };
 
   const handleDelete = async (collectionName, id) => {
@@ -244,6 +249,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     : modalState?.item;
 
   const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
+  const modalItemIsRedditParsed = resolvedModalItem?._source === 'reddit' && !needsRedditParse(resolvedModalItem);
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -263,14 +269,15 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
         ))}
       </div>
 
-      {showRolzImport && (
-        <RolzImportModal
-          onClose={() => setShowRolzImport(false)}
+      {showImageImport && (
+        <ImageImportModal
+          onClose={() => setShowImageImport(false)}
           saveItem={saveItem}
           data={data}
           onImportSuccess={(collection, id) => {
-            setShowRolzImport(false);
+            setShowImageImport(false);
             search.refresh();
+            navigate(`/library/${collection}/${id}`);
           }}
         />
       )}
@@ -281,14 +288,14 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           item={resolvedModalItem}
           collection={activeTab}
           data={data}
-          editable={modalState.isNew || modalItemIsOwn}
+          editable={modalState.isNew || modalItemIsOwn || (isAdmin && modalItemIsRedditParsed)}
           enriching={!!modalState.enriching}
-          onSave={handleSave}
+          onSave={isAdmin && modalItemIsRedditParsed ? handleSaveMirror : handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
-          onClone={!modalItemIsOwn ? () => handleClone(resolvedModalItem) : null}
-          onRetryParse={resolvedModalItem?._source === 'reddit' ? () => handleParseReddit(resolvedModalItem) : null}
-          onForceLlmParse={resolvedModalItem?._parseMethod === 'partial' ? () => handleParseReddit(resolvedModalItem, { forceLlm: true }) : null}
+          onClone={!modalItemIsOwn && !modalItemIsRedditParsed ? () => handleClone(resolvedModalItem) : null}
+          onRetryParse={isAdmin && resolvedModalItem?._source === 'reddit' ? () => handleParseReddit(resolvedModalItem) : null}
+          onForceLlmParse={isAdmin && resolvedModalItem?._parseMethod === 'partial' ? () => handleParseReddit(resolvedModalItem, { forceLlm: true }) : null}
           isAdmin={isAdmin}
           onBlockReddit={resolvedModalItem?._source === 'reddit' && isAdmin ? handleBlockReddit : null}
           onClose={closeModal}
@@ -305,10 +312,10 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
 
             <div className="flex items-center gap-3 flex-wrap">
               <button
-                onClick={() => setShowRolzImport(true)}
+                onClick={() => setShowImageImport(true)}
                 className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
               >
-                Import Rolz Markdown
+                Import
               </button>
               <button
                 onClick={openNew}
