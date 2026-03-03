@@ -173,6 +173,36 @@ async function extractArtworkRegions(buf, blocks) {
 }
 
 /**
+ * Run OCR on a single image buffer.
+ *
+ * Returns the extracted text and whether the image looks like a stat block.
+ * For stat block images, also returns any artwork regions cropped from non-text margins.
+ *
+ * @param {Buffer} buf - Raw image buffer
+ * @returns {Promise<{ text: string, isStatBlock: boolean, artworkRegions: string[] }>}
+ */
+export async function ocrBuffer(buf) {
+  const worker = await getWorker();
+
+  let ocrText = '';
+  let blocks = [];
+  try {
+    const { data } = await worker.recognize(buf, {}, { blocks: true });
+    ocrText = (data.text || '').trim();
+    blocks = data.blocks || [];
+  } catch {
+    return { text: '', isStatBlock: false, artworkRegions: [] };
+  }
+
+  if (!isStatBlock(ocrText)) {
+    return { text: ocrText, isStatBlock: false, artworkRegions: [] };
+  }
+
+  const artworkRegions = blocks.length > 0 ? await extractArtworkRegions(buf, blocks) : [];
+  return { text: ocrText, isStatBlock: true, artworkRegions };
+}
+
+/**
  * Run OCR on a set of image URLs.
  *
  * Classifies each image as a stat block (text extracted) or artwork (URL preserved).
@@ -193,8 +223,6 @@ export async function ocrImages(imageUrls, maxImages = 4) {
   const croppedArtworkUrls = []; // artwork regions cropped from composite stat block images
   const statBlockUrls = [];    // original URLs of stat block images (kept as additional)
 
-  const worker = await getWorker();
-
   for (const url of imageUrls.slice(0, maxImages)) {
     const buf = await fetchImage(url);
     if (!buf) {
@@ -202,26 +230,16 @@ export async function ocrImages(imageUrls, maxImages = 4) {
       continue;
     }
 
-    let ocrText = '';
-    let blocks = null;
-    try {
-      const { data } = await worker.recognize(buf, {}, { blocks: true });
-      ocrText = (data.text || '').trim();
-      blocks = data.blocks || [];
-    } catch {
+    const result = await ocrBuffer(buf);
+    if (!result.text) {
       artworkUrls.push(url);
       continue;
     }
 
-    if (isStatBlock(ocrText)) {
-      texts.push(ocrText);
+    if (result.isStatBlock) {
+      texts.push(result.text);
       statBlockUrls.push(url);
-
-      // Attempt to extract artwork from non-text margins of this composite image
-      if (blocks.length > 0) {
-        const crops = await extractArtworkRegions(buf, blocks);
-        croppedArtworkUrls.push(...crops);
-      }
+      croppedArtworkUrls.push(...result.artworkRegions);
     } else {
       artworkUrls.push(url);
     }

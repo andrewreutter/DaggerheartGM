@@ -739,3 +739,37 @@ export function mergeResults(a, b) {
 
   return { item: merged, confidence, missing };
 }
+
+/**
+ * Detect whether a stat block text is more likely an adversary or environment,
+ * then parse it as that collection.
+ *
+ * Runs parseStatBlock for both collections and uses keyword-based heuristics
+ * to tiebreak when confidence scores are close. Returns the winner along with
+ * the detected collection name.
+ *
+ * @param {string} text   - Raw stat block text
+ * @param {string} [title] - Optional title hint (fallback for name)
+ * @returns {{ collection: 'adversaries'|'environments', item: object, confidence: number, missing: string[] }}
+ */
+export function detectCollection(text, title = '') {
+  const advResult = parseStatBlock(text, 'adversaries', title);
+  const envResult = parseStatBlock(text, 'environments', title);
+
+  // Strong keyword signals override confidence scores
+  const hasHP        = /\b(HP|Hit Points?|Stress)\b/i.test(text);
+  const hasAttack    = /\b(ATK|Attack)\b/i.test(text);
+  const hasThresh    = /\bThresholds?\b/i.test(text);
+  const hasImpulses  = /\bImpulses?\b/i.test(text);
+  const hasPotAdv    = /\bPotential\s+Adversar/i.test(text);
+
+  const advSignals = (hasHP ? 1 : 0) + (hasAttack ? 1 : 0) + (hasThresh ? 1 : 0);
+  const envSignals = (hasImpulses ? 1 : 0) + (hasPotAdv ? 1 : 0);
+
+  if (envSignals > advSignals) return { collection: 'environments', ...envResult };
+  if (advSignals > envSignals) return { collection: 'adversaries', ...advResult };
+
+  // Equal signals — fall back to confidence comparison
+  if (envResult.confidence > advResult.confidence) return { collection: 'environments', ...envResult };
+  return { collection: 'adversaries', ...advResult };
+}

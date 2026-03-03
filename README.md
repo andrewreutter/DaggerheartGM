@@ -16,7 +16,7 @@ Data loading is **lazy and per-collection**: on sign-in only `table_state` and n
 
 **Fresh Cut Grass integration**: adversaries and environments tabs have an "FCG" source filter that merges results from the FreshCutGrass.app public search API directly into the infinite-scroll list. Played/cloned FCG items are stored as `__MIRROR__` rows in the DB so they surface in local search (with their accumulated popularity) and are deduped from live FCG results. When an FCG item is picked as a scene reference (via `CollectionRefPicker`), a mirror is automatically created so the item can be resolved by ID later. The Feature Library panel (shown when editing adversaries/environments) uses the same source filter — selecting FCG includes live FCG features in the suggestion list. FCG environment `potential_adversaries` is stored as name-only placeholder objects from the FCG `potentialAdversaries` array.
 
-**Reddit integration**: adversaries and environments tabs have a **"Reddit"** source filter (explicitly selected — not included in "All") that searches r/daggerbrew and r/daggerheart for homebrew content. r/daggerbrew is filtered by `Adversaries` or `Environments` flair depending on the active collection tab. r/daggerheart is always filtered to the `Homebrew` flair. Results appear as stub cards (post title as name, `Tier ?`, no game stats). Clicking a Reddit card **automatically parses** it using a three-stage cascade: (1) regex text parsing of the post markdown, (2) Tesseract.js OCR on stat block images + regex parsing of extracted text, (3) optional GPT-4o LLM fallback (requires `OPENAI_API_KEY`). A spinner shows during parsing. The parsed result is stored as a `__MIRROR__` row so subsequent views show the enriched card immediately. A badge shows the parse method used (text/OCR/AI/partial). Partial results can be manually edited or re-parsed with AI. For composite images that contain both artwork and a stat block (e.g. an illustration banner above the stat block text), the OCR stage automatically detects non-text margins on all four sides using Tesseract bounding boxes and crops each qualifying region as a standalone artwork image via `sharp`; these become the item's `imageUrl` and `_additionalImages` alongside the original full image. Pure artwork images (not classified as stat blocks) are preserved directly.
+**Reddit integration**: adversaries and environments tabs have a **"Reddit"** source filter (explicitly selected — not included in "All") that searches r/daggerbrew and r/daggerheart for homebrew content. r/daggerbrew is filtered by `Adversaries` or `Environments` flair depending on the active collection tab. r/daggerheart is always filtered to the `Homebrew` flair. Results appear as stub cards (post title as name, `Tier ?`, no game stats). Parsing is **admin-only**: clicking a Reddit card as an admin automatically triggers the three-stage parse cascade — (1) regex text parsing of the post markdown, (2) Tesseract.js OCR on stat block images + regex parsing of extracted text, (3) optional GPT-4o LLM fallback (requires `OPENAI_API_KEY`). Non-admin users see unparsed stubs as display-only with no parse controls. A spinner shows during parsing. The parsed result is stored as a `__MIRROR__` row so subsequent views (for all users) show the enriched card immediately. A badge shows the parse method used (text/OCR/AI/partial). Admins can re-parse at any time (with optional "Re-parse with AI" for partial results) and can directly edit parsed Reddit items — edits auto-save to the mirror row via `PUT /api/admin/mirror/:collection`. For composite images that contain both artwork and a stat block (e.g. an illustration banner above the stat block text), the OCR stage automatically detects non-text margins on all four sides using Tesseract bounding boxes and crops each qualifying region as a standalone artwork image via `sharp`; these become the item's `imageUrl` and `_additionalImages` alongside the original full image. Pure artwork images (not classified as stat blocks) are preserved directly.
 
 The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 
@@ -132,6 +132,23 @@ Scenes can reference adversaries, environments, and **nested Scenes** (allowing 
 
 Nested scene chips display in **blue** on `ItemCard` in the Scenes library tab.
 
+### Image Import
+
+The **"Import"** button in the Library header opens an `ImageImportModal` for importing adversaries and environments directly from stat block images or pasted text.
+
+**Three input methods** are supported:
+- **Drag and drop** — drop image files onto the drop zone
+- **Click to browse** — standard file picker (`image/*`, multiple selection)
+- **Clipboard paste** — Ctrl/Cmd+V after copying a screenshot or image
+
+**Optional text input** — paste one or more stat blocks as plain text (separate multiple blocks with blank lines).
+
+**How it works**: images are sent to `POST /api/import/parse` (multipart), where the server runs Tesseract.js OCR on each buffer via `ocrBuffer()`, then calls `detectCollection()` to auto-detect whether each stat block is an adversary or environment using keyword heuristics (HP/Attack/Thresholds → adversary; Impulses/Potential Adversaries → environment) with confidence-score fallback. No LLM is used.
+
+**Preview step**: each parsed item is shown in a collapsible card. A confidence badge (%) indicates parse quality. An `⇄` button lets you override the auto-detected type if needed. All cards are editable inline via `AdversaryForm` / `EnvironmentForm` before importing. Duplicate detection warns when an item's name matches an existing library entry, with "Add as new" / "Replace existing" choice.
+
+**Success step**: lists all imported items with links to open each one in the library.
+
 ### Markdown Support
 
 All multi-line text fields support **GitHub Flavored Markdown** (GFM): bold, italic, bullet lists, numbered lists, blockquotes, inline code, and links. This applies to feature descriptions, adversary/environment descriptions, motives, and scene/adventure descriptions — for items of any origin (own, SRD, Reddit, HoD, FCG, or created from scratch).
@@ -146,7 +163,7 @@ A `MarkdownHelpTooltip` icon (?) appears next to description and feature textare
 
 All item viewing and editing happens inside a single **`ItemDetailModal`** overlay — there are no separate view or edit pages.
 
-- **Library**: Clicking any card (or "New") opens `ItemDetailModal`. Own items show a split pane: **live display preview** on the left (updates in real-time as you type), **edit form** on the right. Adversaries and environments also show a narrow **Feature Library** panel to the right. Changes **auto-save** after 800ms of inactivity. **Undo/redo** (Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z) are available for the full session. SRD/public/FCG items open display-only with Clone and Copy Rolz actions.
+- **Library**: Clicking any card (or "New") opens `ItemDetailModal`. Own items show a split pane: **live display preview** on the left (updates in real-time as you type), **edit form** on the right. Adversaries and environments also show a narrow **Feature Library** panel to the right. Changes **auto-save** after 800ms of inactivity. **Undo/redo** (Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z) are available for the full session. SRD/public/FCG items open display-only with a Clone action.
 - **GM Table**: The pencil button on each card opens an `EditChoiceDialog` asking "Edit Table Copy" or "Edit Library Original", then opens `ItemDetailModal`. Copy mode auto-saves only in memory (preserving HP/stress). Original mode auto-saves to the DB.
 - **Scene detail**: Same pencil → choice dialog → modal flow. Copy mode converts the reference to an inline owned copy in the parent scene. Original mode saves to the DB.
 - SRD and public items are always forced into copy mode.

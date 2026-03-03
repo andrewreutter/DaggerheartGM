@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Undo2, Redo2, Trash2, BookCopy, Copy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink, ShieldOff } from 'lucide-react';
-import { generateRolzExport } from '../../lib/rolz-export.js';
+import { X, Undo2, Redo2, Trash2, BookCopy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink, ShieldOff } from 'lucide-react';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
 import { AdversaryForm } from '../forms/AdversaryForm.jsx';
@@ -25,7 +24,7 @@ const COLLECTION_LABELS = {
  * Editable items show a split layout:
  *   [Live Preview] | [Edit Form] | [Feature Library (adversaries/environments only, narrow)]
  *
- * Non-editable items (SRD/public/FCG) show only the display pane with Clone/Copy Rolz actions.
+ * Non-editable items (SRD/public/FCG) show only the display pane with a Clone action.
  *
  * Auto-saves on every change (debounced 800ms). Provides infinite undo/redo within the session.
  * Keyboard: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo, Escape = close lightbox (if open) or close modal.
@@ -61,7 +60,6 @@ export function ItemDetailModal({
   const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments');
 
   const [libraryPortal, setLibraryPortal] = useState(null);
-  const [copied, setCopied] = useState(false);
   const [cloningStatus, setCloningStatus] = useState('');
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [carouselIdx, setCarouselIdx] = useState(0);
@@ -101,27 +99,6 @@ export function ItemDetailModal({
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [undo, redo, onClose, lightboxUrl, setLightboxUrl]);
-
-  const handleCopyRolz = async () => {
-    try {
-      const src = editable ? formData : item;
-      const markdown = generateRolzExport(src, collection, data || {});
-      try {
-        await navigator.clipboard.writeText(markdown);
-      } catch {
-        const ta = document.createElement('textarea');
-        ta.value = markdown;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Rolz export failed:', err);
-    }
-  };
 
   const handleClone = async () => {
     if (!onClone) return;
@@ -408,15 +385,9 @@ export function ItemDetailModal({
           </div>
         )}
 
-        {/* Actions: Copy Rolz + Clone — hidden for unparsed Reddit stubs */}
-        {!isRedditUnparsed && (
+        {/* Actions: Clone — hidden for unparsed Reddit stubs */}
+        {!isRedditUnparsed && (!editable && onClone || isAdmin && onBlockReddit && item?._source === 'reddit') && (
           <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-800">
-            <button
-              onClick={handleCopyRolz}
-              className={`px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm transition-colors ${copied ? 'bg-green-700 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
-            >
-              <Copy size={14} /> {copied ? 'Copied!' : 'Copy Rolz'}
-            </button>
             {!editable && onClone && (
               <button
                 onClick={handleClone}
@@ -426,7 +397,6 @@ export function ItemDetailModal({
                 <BookCopy size={14} /> {cloningStatus || 'Clone to My Library'}
               </button>
             )}
-            {/* Admin-only: hide Reddit post from all users */}
             {isAdmin && onBlockReddit && item?._source === 'reddit' && (
               <button
                 onClick={() => {
