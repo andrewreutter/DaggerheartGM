@@ -16,7 +16,7 @@ Data loading is **lazy and per-collection**: on sign-in only `table_state` and n
 
 **Fresh Cut Grass integration**: adversaries and environments tabs have an "FCG" source filter that merges results from the FreshCutGrass.app public search API directly into the infinite-scroll list. Played/cloned FCG items are stored as `__MIRROR__` rows in the DB so they surface in local search (with their accumulated popularity) and are deduped from live FCG results. When an FCG item is picked as a scene reference (via `CollectionRefPicker`), a mirror is automatically created so the item can be resolved by ID later. The Feature Library panel (shown when editing adversaries/environments) uses the same source filter — selecting FCG includes live FCG features in the suggestion list. FCG environment `potential_adversaries` is stored as name-only placeholder objects from the FCG `potentialAdversaries` array.
 
-**Reddit integration**: adversaries and environments tabs have a **"Reddit"** source filter (explicitly selected — not included in "All") that searches r/daggerbrew and r/daggerheart for homebrew content. r/daggerbrew is filtered by `Adversaries` or `Environments` flair depending on the active collection tab. r/daggerheart is always filtered to the `Homebrew` flair. Results appear as stub cards (post title as name, `Tier ?`, no game stats). Clicking a Reddit card triggers **LLM-powered parsing** via GPT-4o: the server fetches the full post (text + images), sends everything to GPT-4o with the Daggerheart adversary/environment schema as a prompt, and returns a fully structured item. Images are classified as stat blocks (extract data), artwork (use as card image), or combined (extract stats and use as image). The parsed result is stored as a `__MIRROR__` row so subsequent views show the enriched card immediately. Requires `OPENAI_API_KEY` env vars. Cards display "Click to parse with AI" until parsed; parsed items can be cloned to your library.
+**Reddit integration**: adversaries and environments tabs have a **"Reddit"** source filter (explicitly selected — not included in "All") that searches r/daggerbrew and r/daggerheart for homebrew content. r/daggerbrew is filtered by `Adversaries` or `Environments` flair depending on the active collection tab. r/daggerheart is always filtered to the `Homebrew` flair. Results appear as stub cards (post title as name, `Tier ?`, no game stats). Clicking a Reddit card **automatically parses** it using a three-stage cascade: (1) regex text parsing of the post markdown, (2) Tesseract.js OCR on stat block images + regex parsing of extracted text, (3) optional GPT-4o LLM fallback (requires `OPENAI_API_KEY`). A spinner shows during parsing. The parsed result is stored as a `__MIRROR__` row so subsequent views show the enriched card immediately. A badge shows the parse method used (text/OCR/AI/partial). Partial results can be manually edited or re-parsed with AI. Additional non-stat-block images are preserved on the item for future display.
 
 The nav bar user menu (click your name/email) provides Export JSON, Import JSON, and Sign Out.
 
@@ -33,7 +33,7 @@ DaggerheartGM/
 │   ├── 003_add_popularity.sql  # clone_count, play_count, _clonedFrom index
 │   └── 004_remove_srd_rows.sql # Removes legacy __SRD__ DB rows (SRD now in-memory)
 ├── public/
-│   ├── index.html              # SPA shell — loads Babel, Tailwind, importmap
+│   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked)
 │   └── styles.css              # Generated Tailwind output (do not edit by hand)
 ├── src/
 │   ├── client/
@@ -42,7 +42,7 @@ DaggerheartGM/
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
 │   │   │   ├── forms/          # Item forms (controlled+uncontrolled); CollectionRefPicker; FeatureLibrary.jsx sidebar
     │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay); ItemPickerModal; EditChoiceDialog; import modals
-    │   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo
+    │   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo, reddit-markdown (marked)
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
@@ -51,8 +51,10 @@ DaggerheartGM/
     │   ├── external-sources.js     # EXTERNAL_SOURCES array — SRD + HoD + FCG + Reddit sharing a common search contract
     │   ├── fcg-search.js           # FreshCutGrass public search API integration
     │   ├── hod-search.js           # Heart of Daggers Vault integration (list search + Foundry JSON detail)
-    │   ├── reddit-search.js        # Reddit OAuth2 client — r/daggerbrew + r/daggerheart flair-filtered search
-    │   ├── llm-parse.js            # GPT-4o vision parse — Reddit posts → structured adversary/environment data
+    │   ├── reddit-search.js        # Reddit search — r/daggerbrew + r/daggerheart flair-filtered search
+    │   ├── text-parse.js           # Regex-based stat block parser (selftext + OCR output)
+    │   ├── ocr-parse.js            # Tesseract.js OCR — image → text for stat block images
+    │   ├── llm-parse.js            # GPT-4o vision parse — optional LLM fallback for Reddit posts
 │   └── input.css               # Tailwind CSS entry point
 ├── server.js                   # Express server + API routes
 ├── package.json
@@ -215,7 +217,7 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 | `FIREBASE_APP_ID` | Yes | Firebase web app ID |
 | `DATABASE_URL` | Yes | Supabase Postgres connection string |
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
-| `OPENAI_API_KEY` | No | OpenAI API key — required for LLM parsing of Reddit posts |
+| `OPENAI_API_KEY` | No | OpenAI API key — optional LLM fallback for Reddit posts that can't be parsed by regex/OCR |
 
 ---
 

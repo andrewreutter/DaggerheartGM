@@ -108,16 +108,22 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       const enriched = await enrichSingleItem(activeTab, item);
       search.patchItems({ [enriched.id]: enriched });
       setModalState({ item: enriched, isNew: false, enriching: false });
+    } else if (needsRedditParse(item)) {
+      setModalState({ item, isNew: false, enriching: true });
+      handleParseReddit(item);
     } else {
       setModalState({ item, isNew: !item.id });
     }
   };
 
-  const handleParseReddit = async (item) => {
-    setModalState(prev => prev ? { ...prev, enriching: true } : prev);
+  const handleParseReddit = async (item, { forceLlm } = {}) => {
+    const cleanItem = { ...item };
+    delete cleanItem._redditParseError;
+    const alreadyParsed = (item.features || []).length > 0;
+    setModalState({ item: cleanItem, isNew: false, enriching: true });
     try {
-      const parsed = await parseRedditItem(activeTab, item);
-      const merged = { ...item, ...parsed };
+      const { item: parsed, _parseMethod } = await parseRedditItem(activeTab, item, { forceLlm, reparse: alreadyParsed });
+      const merged = { ...item, ...parsed, _parseMethod };
       search.patchItems({ [merged.id]: merged });
       setModalState({ item: merged, isNew: false, enriching: false });
     } catch (err) {
@@ -270,7 +276,8 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
           onClone={!modalItemIsOwn ? () => handleClone(resolvedModalItem) : null}
-          onParseReddit={needsRedditParse(resolvedModalItem) ? () => handleParseReddit(resolvedModalItem) : null}
+          onRetryParse={resolvedModalItem?._source === 'reddit' ? () => handleParseReddit(resolvedModalItem) : null}
+          onForceLlmParse={resolvedModalItem?._parseMethod === 'partial' ? () => handleParseReddit(resolvedModalItem, { forceLlm: true }) : null}
           onClose={closeModal}
         />
       )}

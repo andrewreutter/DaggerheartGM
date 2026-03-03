@@ -118,14 +118,16 @@ export const enrichSingleItem = async (collection, item) => {
 };
 
 /**
- * LLM-parse a Reddit stub into a fully structured adversary or environment.
- * Calls POST /api/reddit/parse on the server (which fetches the full post and runs GPT-4o).
- * Returns the parsed item on success, or throws on failure.
- * @param {string} collection - 'adversaries' | 'environments'
- * @param {object} item       - Reddit stub item with _redditPostId set
- * @returns {object} Fully structured item with game data populated
+ * Parse a Reddit stub into a fully structured adversary or environment.
+ * Server tries text regex → OCR → LLM cascade unless forceLlm is set.
+ * @param {string}  collection - 'adversaries' | 'environments'
+ * @param {object}  item       - Reddit stub item with _redditPostId set
+ * @param {object}  [opts]
+ * @param {boolean} [opts.forceLlm] - Skip text/OCR and go straight to LLM
+ * @param {boolean} [opts.reparse]  - Skip cache and re-parse from scratch
+ * @returns {{ item: object, _parseMethod: string }}
  */
-export const parseRedditItem = async (collection, item) => {
+export const parseRedditItem = async (collection, item, { forceLlm, reparse } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/reddit/parse', {
@@ -137,6 +139,8 @@ export const parseRedditItem = async (collection, item) => {
       name: item.name,
       selftext: item._redditSelftext,
       images: item._redditImages,
+      forceLlm: !!forceLlm,
+      reparse: !!reparse,
     }),
   });
   if (!res.ok) {
@@ -144,7 +148,7 @@ export const parseRedditItem = async (collection, item) => {
     throw new Error(body.error || `HTTP ${res.status}`);
   }
   const data = await res.json();
-  return data.item;
+  return { item: data.item, _parseMethod: data._parseMethod };
 };
 
 /**

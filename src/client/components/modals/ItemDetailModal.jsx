@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Undo2, Redo2, Trash2, BookCopy, Copy, Sparkles, ExternalLink } from 'lucide-react';
+import { X, Undo2, Redo2, Trash2, BookCopy, Copy, Sparkles, RefreshCw, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { generateRolzExport } from '../../lib/rolz-export.js';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
@@ -9,6 +9,7 @@ import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { ExpandedTablePreview } from '../ItemDetailView.jsx';
 import { SOURCE_BADGE, isOwnItem, needsRedditParse } from '../../lib/constants.js';
+import { RedditMarkdown } from '../../lib/reddit-markdown.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -49,7 +50,8 @@ export function ItemDetailModal({
   onSaveElement,
   onDelete,
   onClone,
-  onParseReddit,
+  onRetryParse,
+  onForceLlmParse,
   onClose,
 }) {
   const isNew = !item?.id;
@@ -59,6 +61,7 @@ export function ItemDetailModal({
   const [copied, setCopied] = useState(false);
   const [cloningStatus, setCloningStatus] = useState('');
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  const [carouselIdx, setCarouselIdx] = useState(0);
   const overlayRef = useRef(null);
 
   // Build a stable initial value for useAutoSaveUndo.
@@ -140,45 +143,80 @@ export function ItemDetailModal({
   const isOwn = isOwnItem(item);
 
   // --- Display Pane content ---
-  const renderDisplayContent = () => (
+  const renderDisplayContent = () => {
+    const isRedditUnparsed = item?._source === 'reddit' && (enriching || needsRedditParse(item) || item?._redditParseError);
+    const allImages = [displayItem.imageUrl].filter(Boolean);
+    const hasCarousel = allImages.length > 1;
+    const safeIdx = allImages.length > 0 ? carouselIdx % allImages.length : 0;
+
+    return (
     <div className="flex flex-col h-full overflow-hidden">
-      {displayItem.imageUrl && (
-        <div className="w-full h-40 overflow-hidden bg-slate-950 shrink-0">
+      {!!displayItem.imageUrl && !isRedditUnparsed && (
+        <div className="w-full h-40 overflow-hidden bg-slate-950 shrink-0 relative group">
           <img
-            src={displayItem.imageUrl}
+            src={allImages[safeIdx]}
             alt={displayItem.name}
-            className="w-full h-full object-cover opacity-90"
+            className="w-full h-full object-cover opacity-90 cursor-zoom-in"
+            onClick={() => setLightboxUrl(allImages[safeIdx])}
             onError={e => { e.target.parentElement.style.display = 'none'; }}
           />
+          {hasCarousel && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setCarouselIdx((safeIdx - 1 + allImages.length) % allImages.length); }}
+                className="absolute left-1 top-1/2 -translate-y-1/2 p-1 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setCarouselIdx((safeIdx + 1) % allImages.length); }}
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+              >
+                <ChevronRight size={16} />
+              </button>
+              <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1">
+                {allImages.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => { e.stopPropagation(); setCarouselIdx(i); }}
+                    className={`w-1.5 h-1.5 rounded-full transition-colors ${i === safeIdx ? 'bg-white' : 'bg-white/40 hover:bg-white/70'}`}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
       <div className="flex-1 overflow-y-auto p-4">
-        <div className="mb-3 flex items-center gap-2 flex-wrap">
-          <h3 className="text-xl font-bold text-white">
-            {displayItem.name || <span className="text-slate-500 italic">Untitled</span>}
-          </h3>
-          {badge && (
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${badge.className}`}>
-              {badge.label}
-            </span>
-          )}
-        </div>
+        {!isRedditUnparsed && editable && (
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            <h3 className="text-xl font-bold text-white">
+              {displayItem.name || <span className="text-slate-500 italic">Untitled</span>}
+            </h3>
+            {badge && (
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded uppercase tracking-wide ${badge.className}`}>
+                {badge.label}
+              </span>
+            )}
+          </div>
+        )}
 
         {enriching && item?._source === 'reddit' ? (
           <div className="mb-3">
             <div className="px-3 py-2 rounded-lg bg-orange-950/40 border border-orange-800/50 mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full border-2 border-orange-400 border-t-transparent animate-spin shrink-0" />
-                <span className="text-sm text-orange-300">Parsing post with AI…</span>
+                <span className="text-sm text-orange-300">Parsing post…</span>
               </div>
               {item._redditAuthor && (
                 <p className="text-xs text-slate-500 mt-1">by u/{item._redditAuthor} · r/{item._redditSubreddit}</p>
               )}
             </div>
             {item._redditSelftext && (
-              <p className="text-xs text-slate-400 whitespace-pre-wrap leading-relaxed">
-                {item._redditSelftext.slice(0, 1200)}{item._redditSelftext.length > 1200 ? '…' : ''}
-              </p>
+              <RedditMarkdown
+                text={item._redditSelftext.length > 1200 ? item._redditSelftext.slice(0, 1200) + '…' : item._redditSelftext}
+                className="text-xs text-slate-400 leading-relaxed"
+              />
             )}
             {(item._redditImages || []).filter(url => url !== item.imageUrl).length > 0 && (
               <div className="flex flex-wrap gap-2 mt-3">
@@ -202,25 +240,18 @@ export function ItemDetailModal({
           </div>
         ) : null}
 
-        {item?._redditParseError && (
-          <div className="mb-3 px-3 py-2 rounded-lg bg-red-950/40 border border-red-800/50 text-xs text-red-300">
-            Could not parse post: {item._redditParseError}.{' '}
-            {item._redditPermalink && (
-              <a
-                href={`https://reddit.com${item._redditPermalink}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-red-200"
-              >
-                View on Reddit
-              </a>
-            )}
-          </div>
-        )}
-
-        {/* Reddit post preview — shown for unparsed stubs that are not currently being parsed */}
-        {needsRedditParse(item) && !enriching && !item?._redditParseError && (
+        {/* Reddit post preview — shown when parsing failed or returned no features */}
+        {(item?._redditParseError || (needsRedditParse(item) && !enriching)) && (
           <div className="mb-4">
+            {item._redditParseError && (
+              <div className="mb-3 px-3 py-2 rounded-lg bg-red-950/40 border border-red-800/50 text-xs text-red-300">
+                Could not parse post: {item._redditParseError}.
+              </div>
+            )}
+            {!item._redditParseError && (
+              <p className="text-sm text-amber-400/80 italic mb-3">No homebrew could be automatically extracted from this post.</p>
+            )}
+
             <div className="flex items-center gap-2 mb-3 text-xs text-slate-500">
               {item._redditAuthor && <span>by u/{item._redditAuthor}</span>}
               {item._redditSubreddit && <span>· r/{item._redditSubreddit}</span>}
@@ -240,8 +271,8 @@ export function ItemDetailModal({
             </div>
 
             {item._redditSelftext && (
-              <div className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed mb-3 max-h-64 overflow-y-auto pr-1">
-                {item._redditSelftext}
+              <div className="mb-3 max-h-64 overflow-y-auto pr-1">
+                <RedditMarkdown text={item._redditSelftext} className="text-sm text-slate-300 leading-relaxed" />
               </div>
             )}
 
@@ -263,25 +294,65 @@ export function ItemDetailModal({
               ) : null;
             })()}
 
-            {!item._redditSelftext && (!item._redditImages || item._redditImages.length === 0) && (
-              <p className="text-sm text-slate-500 italic mb-3">No post text or images available.</p>
-            )}
-
-            {onParseReddit && (
+            {onRetryParse && (
               <button
-                onClick={onParseReddit}
-                className="px-4 py-2 rounded font-medium flex items-center gap-2 text-sm bg-orange-700 hover:bg-orange-600 text-white transition-colors"
+                onClick={onRetryParse}
+                className="px-3 py-1.5 rounded text-sm font-medium bg-orange-700 hover:bg-orange-600 text-white transition-colors"
               >
-                <Sparkles size={14} /> Parse with AI
+                Try again
               </button>
             )}
           </div>
         )}
 
-        {collection === 'adversaries' && (
+        {/* Parse method badge + re-parse options for Reddit items */}
+        {item?._source === 'reddit' && !needsRedditParse(item) && !enriching && (
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            {item._parseMethod && item._parseMethod !== 'cached' && (
+              <span className={`text-xs px-2 py-0.5 rounded ${
+                item._parseMethod === 'llm' ? 'bg-violet-900/60 text-violet-300 border border-violet-700' :
+                item._parseMethod === 'partial' ? 'bg-amber-900/60 text-amber-300 border border-amber-700' :
+                'bg-emerald-900/60 text-emerald-300 border border-emerald-700'
+              }`}>
+                {item._parseMethod === 'text' ? 'Parsed from text' :
+                 item._parseMethod === 'ocr' ? 'Parsed via OCR' :
+                 item._parseMethod === 'llm' ? 'Parsed via AI' :
+                 'Partial parse — review fields'}
+              </span>
+            )}
+            {onRetryParse && (
+              <button
+                onClick={onRetryParse}
+                className="text-xs px-2 py-1 rounded flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+              >
+                <RefreshCw size={11} /> Re-parse
+              </button>
+            )}
+            {onForceLlmParse && (
+              <button
+                onClick={onForceLlmParse}
+                className="text-xs px-2 py-1 rounded flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-orange-400 hover:text-orange-300 border border-slate-700 transition-colors"
+              >
+                <Sparkles size={11} /> Re-parse with AI
+              </button>
+            )}
+            {item._redditPermalink && (
+              <a
+                href={`https://reddit.com${item._redditPermalink}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300"
+              >
+                <ExternalLink size={11} /> Reddit
+              </a>
+            )}
+          </div>
+        )}
+
+        {collection === 'adversaries' && !isRedditUnparsed && (
           <AdversaryCardContent element={displayItem} hoveredFeature={null} cardKey="preview" />
         )}
-        {collection === 'environments' && (
+        {collection === 'environments' && !isRedditUnparsed && (
           <EnvironmentCardContent element={displayItem} hoveredFeature={null} cardKey="preview" />
         )}
         {collection === 'scenes' && data && (
@@ -302,27 +373,45 @@ export function ItemDetailModal({
           <p className="text-sm italic text-slate-300 whitespace-pre-wrap">{displayItem.description}</p>
         )}
 
-        {/* Actions: always show Copy Rolz; Clone only for non-editable */}
-        <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-800">
-          <button
-            onClick={handleCopyRolz}
-            className={`px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm transition-colors ${copied ? 'bg-green-700 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
-          >
-            <Copy size={14} /> {copied ? 'Copied!' : 'Copy Rolz'}
-          </button>
-          {!editable && onClone && (
+        {/* Additional images (OCR'd stat block images or extra post images) */}
+        {(displayItem._additionalImages || []).length > 0 && !isRedditUnparsed && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {displayItem._additionalImages.map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt={`Additional image ${i + 1}`}
+                className="max-h-64 rounded border border-slate-700 object-contain cursor-zoom-in"
+                onClick={() => setLightboxUrl(url)}
+                onError={e => { e.target.style.display = 'none'; }}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Actions: Copy Rolz + Clone — hidden for unparsed Reddit stubs */}
+        {!isRedditUnparsed && (
+          <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-800">
             <button
-              onClick={handleClone}
-              disabled={!!cloningStatus}
-              className="px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm bg-violet-700 hover:bg-violet-600 text-white transition-colors disabled:opacity-60"
+              onClick={handleCopyRolz}
+              className={`px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm transition-colors ${copied ? 'bg-green-700 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
             >
-              <BookCopy size={14} /> {cloningStatus || 'Clone to My Library'}
+              <Copy size={14} /> {copied ? 'Copied!' : 'Copy Rolz'}
             </button>
-          )}
-        </div>
+            {!editable && onClone && (
+              <button
+                onClick={handleClone}
+                disabled={!!cloningStatus}
+                className="px-3 py-1.5 rounded font-medium flex items-center gap-1.5 text-sm bg-violet-700 hover:bg-violet-600 text-white transition-colors disabled:opacity-60"
+              >
+                <BookCopy size={14} /> {cloningStatus || 'Clone to My Library'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
-  );
+  );};
 
   // --- Edit Form Pane ---
   const renderFormContent = () => {
