@@ -247,6 +247,10 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 | `DATABASE_URL` | Yes | Supabase Postgres connection string |
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
 | `OPENAI_API_KEY` | No | OpenAI API key — optional LLM fallback for Reddit posts that can't be parsed by regex/OCR |
+| `HF_TOKEN` | No | Hugging Face access token — enables the "Generate with AI" image button in all item editor forms. Without this the button is hidden. Generate one at huggingface.co/settings/tokens (needs "Inference Providers" write permission). |
+| `HF_MODEL` | No | Hugging Face model ID for text-to-image generation (default: `black-forest-labs/FLUX.1-schnell`) |
+| `HF_EDIT_MODEL` | No | Hugging Face model ID for image-to-image editing (default: `black-forest-labs/FLUX.1-Kontext-dev`) |
+| `HF_PROVIDER` | No | Hugging Face inference provider (default: `replicate`). Other options: `fal-ai`, `together`, `novita`, etc. — see huggingface.co/docs/inference-providers |
 | `ADMIN_EMAILS` | No | Comma-separated list of email addresses granted admin access (e.g. `alice@example.com,bob@example.com`). Admins can permanently hide Reddit posts from all users via the "Hide from All Users" button in the Reddit item modal. |
 
 ---
