@@ -4,15 +4,34 @@
  * Uses Tesseract.js (WASM, no system binaries) to extract text from images,
  * then classifies each image as a stat block or artwork based on keyword density.
  *
- * Language data (~15MB) is downloaded on first use and cached locally.
+ * For composite images that contain both artwork and a stat block (e.g. artwork
+ * banner above the stat block), the artwork region(s) are automatically cropped
+ * using Tesseract bounding boxes and sharp. All four margins around the text are
+ * evaluated; any qualifying region becomes a standalone artwork crop. Results are
+ * returned in priority order: top, left, bottom, right.
+ *
+ * Language data (~15MB) downloaded on first use and cached.
  */
 
-import { createWorker } from 'tesseract.js';
 import sharp from 'sharp';
+import { createWorker } from 'tesseract.js';
 
 // Keywords that indicate an image contains a stat block rather than artwork
 const STAT_KEYWORDS = /\b(HP|Hit Points?|Stress|Difficulty|Tier|Attack|ATK|Features?|Experiences?|Thresholds?|Melee|Close|Far|Passive|Action|Reaction|Damage|d\d+)\b/i;
 const MIN_KEYWORD_HITS = 3;
+
+// Minimum fraction of total image area a margin must occupy to qualify as artwork.
+// For full-width top/bottom strips, area fraction equals height/H; 0.05 allows
+// a ~5% tall banner (e.g. 458px on a 4975px image = 9.2%) to qualify.
+const MIN_AREA_FRACTION = 0.05;
+// Minimum size (in pixels) of the shorter dimension of a cropped region
+const MIN_SHORT_SIDE_PX = 50;
+// Inward margin applied to each crop to avoid clipping partial text at the boundary (fraction)
+const CROP_INSET_FRACTION = 0.02;
+// Minimum confidence for a Tesseract line to be included in the text bounding box.
+// Raised to 85 to exclude OCR noise from artwork regions (which scores 54-74) while
+// keeping real printed stat block text (which scores 95+).
+const MIN_LINE_CONFIDENCE = 85;
 
 let _worker = null;
 
@@ -30,31 +49,6 @@ async function getWorker() {
 function isStatBlock(text) {
   const matches = text.match(new RegExp(STAT_KEYWORDS.source, 'gi'));
   return (matches || []).length >= MIN_KEYWORD_HITS;
-}
-
-/**
- * Extract a title from inverted-image OCR output.
- * In the inverted image, only the originally-dark-background regions are readable.
- * The title is typically the first few non-empty lines before the text degrades.
- * Returns the cleaned title string or null.
- */
-function extractTitleFromInverted(text) {
-  if (!text) return null;
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  // Take lines from the top that look like title text (short, mostly alphabetic)
-  // Stop at the first line that looks like body content (Tier, Difficulty, etc.)
-  const titleLines = [];
-  for (const line of lines) {
-    if (/^(Tier|Difficulty|Impulse|Potential|Features?|HP|Stress|Attack)\b/i.test(line)) break;
-    if (line.length > 60) break;
-    // Skip lines that are mostly garbage characters from the inverted body
-    const alphaRatio = (line.match(/[a-zA-Z\s]/g) || []).length / line.length;
-    if (alphaRatio < 0.6) break;
-    titleLines.push(line);
-    if (titleLines.length >= 3) break;
-  }
-  const title = titleLines.join(' ').trim();
-  return title.length >= 3 ? title : null;
 }
 
 /**
@@ -78,14 +72,116 @@ async function fetchImage(url) {
 }
 
 /**
+ * Given a stat-block image buffer and the Tesseract blocks output, find all
+ * margins (top, left, bottom, right) around the text bounding box that are
+ * large enough to plausibly contain artwork, crop each one, and return an
+ * array of base64 data URLs in priority order (top, left, bottom, right).
+ *
+ * Returns an empty array if no qualifying margin is found.
+ *
+ * @param {Buffer} buf - Raw image buffer
+ * @param {import('tesseract.js').Block[]} blocks - Tesseract block data
+ * @returns {Promise<string[]>} Array of data:image/jpeg;base64,... URLs
+ */
+async function extractArtworkRegions(buf, blocks) {
+  try {
+    const { width: W, height: H } = await sharp(buf).metadata();
+    if (!W || !H) return [];
+
+    // Collect all high-confidence lines with meaningful text
+    const lines = blocks.flatMap(b =>
+      b.paragraphs.flatMap(p =>
+        p.lines.filter(l => l.confidence > MIN_LINE_CONFIDENCE && l.text.trim().length > 2)
+      )
+    );
+
+    if (lines.length === 0) return [];
+
+    // Compute tight bounding box around all qualifying text
+    let textMinX = Infinity, textMinY = Infinity, textMaxX = -Infinity, textMaxY = -Infinity;
+    for (const line of lines) {
+      const { x0, y0, x1, y1 } = line.bbox;
+      if (x0 < textMinX) textMinX = x0;
+      if (y0 < textMinY) textMinY = y0;
+      if (x1 > textMaxX) textMaxX = x1;
+      if (y1 > textMaxY) textMaxY = y1;
+    }
+
+    const totalArea = W * H;
+
+    // Define the four candidate margins in priority order (top, left, bottom, right)
+    const candidates = [
+      { name: 'top',    region: { left: 0,        top: 0,        width: W,             height: textMinY      } },
+      { name: 'left',   region: { left: 0,        top: 0,        width: textMinX,       height: H             } },
+      { name: 'bottom', region: { left: 0,        top: textMaxY, width: W,             height: H - textMaxY  } },
+      { name: 'right',  region: { left: textMaxX, top: 0,        width: W - textMaxX,  height: H             } },
+    ];
+
+    const dataUrls = [];
+
+    for (const { name, region } of candidates) {
+      const { left, top, width, height } = region;
+
+      // Must be a positive region
+      if (width <= 0 || height <= 0) continue;
+
+      const area = width * height;
+      const shortSide = Math.min(width, height);
+
+      if (area / totalArea < MIN_AREA_FRACTION) continue;
+      if (shortSide < MIN_SHORT_SIDE_PX) continue;
+
+      // Apply inward inset to avoid clipping partial glyphs at the boundary
+      let cropLeft = left, cropTop = top, cropWidth = width, cropHeight = height;
+      const insetX = Math.floor(width * CROP_INSET_FRACTION);
+      const insetY = Math.floor(height * CROP_INSET_FRACTION);
+
+      if (name === 'top') {
+        cropHeight = Math.max(1, height - insetY);
+      } else if (name === 'bottom') {
+        cropTop = top + insetY;
+        cropHeight = Math.max(1, height - insetY);
+      } else if (name === 'left') {
+        cropWidth = Math.max(1, width - insetX);
+      } else if (name === 'right') {
+        cropLeft = left + insetX;
+        cropWidth = Math.max(1, width - insetX);
+      }
+
+      // Clamp to image bounds
+      cropLeft = Math.max(0, Math.min(cropLeft, W - 1));
+      cropTop = Math.max(0, Math.min(cropTop, H - 1));
+      cropWidth = Math.max(1, Math.min(cropWidth, W - cropLeft));
+      cropHeight = Math.max(1, Math.min(cropHeight, H - cropTop));
+
+      try {
+        const cropped = await sharp(buf)
+          .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+        dataUrls.push(`data:image/jpeg;base64,${cropped.toString('base64')}`);
+      } catch (cropErr) {
+        console.warn(`[ocr] Failed to crop ${name} region:`, cropErr.message);
+      }
+    }
+
+    return dataUrls;
+  } catch (err) {
+    console.warn('[ocr] extractArtworkRegions error:', err.message);
+    return [];
+  }
+}
+
+/**
  * Run OCR on a set of image URLs.
  *
  * Classifies each image as a stat block (text extracted) or artwork (URL preserved).
+ * For stat block images, attempts to extract artwork from any large non-text margins
+ * (top, left, bottom, right) using Tesseract bounding boxes and sharp.
+ *
  * Processes up to maxImages images sequentially (Tesseract.js WASM is single-threaded).
  * Only non-stat-block image URLs are eligible for `artworkUrl` (primary banner/thumbnail).
- * Stat block images are collected separately and appended to `additionalImages`.
- * `hasStatBlockImages` is true when at least one image was classified as a stat block,
- * allowing callers to avoid falling back to stub imageUrl values.
+ * `hasStatBlockImages` is true when at least one image was classified as a stat block.
  *
  * @param {string[]} imageUrls - Array of image URLs
  * @param {number}   [maxImages=4] - Max images to OCR (all URLs are still preserved)
@@ -93,8 +189,9 @@ async function fetchImage(url) {
  */
 export async function ocrImages(imageUrls, maxImages = 4) {
   const texts = [];
-  const artworkUrls = [];
-  const statBlockUrls = [];
+  const artworkUrls = [];      // pure artwork images (not stat blocks)
+  const croppedArtworkUrls = []; // artwork regions cropped from composite stat block images
+  const statBlockUrls = [];    // original URLs of stat block images (kept as additional)
 
   const worker = await getWorker();
 
@@ -106,36 +203,25 @@ export async function ocrImages(imageUrls, maxImages = 4) {
     }
 
     let ocrText = '';
+    let blocks = null;
     try {
-      const { data } = await worker.recognize(buf);
+      const { data } = await worker.recognize(buf, {}, { blocks: true });
       ocrText = (data.text || '').trim();
+      blocks = data.blocks || [];
     } catch {
       artworkUrls.push(url);
       continue;
     }
 
     if (isStatBlock(ocrText)) {
-      // Stat card titles are often white-on-dark and invisible to normal OCR.
-      // If the text starts with "Tier" (no name before it), invert the image
-      // and run a second pass to recover the title.
-      if (/^\s*Tier\s/i.test(ocrText)) {
-        try {
-          const meta = await sharp(buf).metadata();
-          const cropHeight = Math.round(meta.height * 0.2);
-          const croppedInvBuf = await sharp(buf)
-            .extract({ left: 0, top: 0, width: meta.width, height: cropHeight })
-            .negate({ alpha: false })
-            .toBuffer();
-          const { data: invData } = await worker.recognize(croppedInvBuf);
-          const invText = (invData.text || '').trim();
-          const titleLine = extractTitleFromInverted(invText);
-          if (titleLine) {
-            ocrText = titleLine + '\n' + ocrText;
-          }
-        } catch { /* crop/inversion failed — proceed with original text */ }
-      }
       texts.push(ocrText);
       statBlockUrls.push(url);
+
+      // Attempt to extract artwork from non-text margins of this composite image
+      if (blocks.length > 0) {
+        const crops = await extractArtworkRegions(buf, blocks);
+        croppedArtworkUrls.push(...crops);
+      }
     } else {
       artworkUrls.push(url);
     }
@@ -146,9 +232,12 @@ export async function ocrImages(imageUrls, maxImages = 4) {
     artworkUrls.push(url);
   }
 
-  const artworkUrl = artworkUrls[0] || null;
-  // Additional images: remaining artwork first, then stat block images
-  const additionalImages = [...artworkUrls.slice(1), ...statBlockUrls];
+  // Primary artwork: prefer pure artwork images, fall back to cropped regions
+  const allArtwork = [...artworkUrls, ...croppedArtworkUrls];
+  const artworkUrl = allArtwork[0] || null;
+
+  // Additional images: remaining artwork (pure + cropped beyond the first) + original stat block URLs
+  const additionalImages = [...allArtwork.slice(1), ...statBlockUrls];
 
   return { texts, artworkUrl, additionalImages, hasStatBlockImages: statBlockUrls.length > 0 };
 }
