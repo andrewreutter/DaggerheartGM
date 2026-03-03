@@ -8,6 +8,7 @@ import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countI
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
 import { EXTERNAL_SOURCES } from './src/external-sources.js';
+import { fetchHoDFoundryDetail } from './src/hod-search.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -309,8 +310,10 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-  // Always include mirrors in community so previously-played external items surface locally
-  const includeMirrors = collection === 'adversaries' || collection === 'environments';
+  // Mirrors are never shown as visible DB results — they exist only for ID resolution
+  // (clone/resolve flows). Showing them in DB results would break source priority
+  // ordering (SRD before HoD before FCG).
+  const includeMirrors = false;
 
   try {
     // Determine which external sources are active for this collection
@@ -319,12 +322,9 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       (s.collections === null || s.collections.includes(collection))
     );
 
-    // Fetch mirror IDs for dedup against external source results.
-    // Only relevant for adversaries/environments where mirrors are stored.
-    let mirrorIds = new Set();
-    if (activeExternalSources.length > 0 && includeMirrors) {
-      mirrorIds = new Set(await getMirrorIds(APP_ID, collection, { search, tier, typeField, typeValue }));
-    }
+    // Mirrors are no longer shown in DB results, so there is nothing to dedup
+    // external source results against. Pass an empty set.
+    const mirrorIds = new Set();
 
     const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
       includeMine, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
@@ -372,7 +372,27 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       priorSourceTotal += result.totalCount;
     }
 
-    const allItems = [...dbItemsWithPopularity, ...externalItems];
+    // Substitute HoD stubs with enriched mirror data when available.
+    const hodStubIds = externalItems.filter(i => i._source === 'hod' && (i.features || []).length === 0).map(i => i.id);
+    let mirrorMap = {};
+    if (hodStubIds.length > 0) {
+      try {
+        const mirrorRows = await getItemsByIds(APP_ID, collection, hodStubIds);
+        for (const row of mirrorRows) {
+          const hasFeatures = (row.features || []).length > 0;
+          const isEnrichedAdv = collection === 'adversaries' && typeof row.attack?.damage === 'string';
+          const isEnrichedEnv = collection === 'environments';
+          if (row._source === 'hod' && hasFeatures && (isEnrichedAdv || isEnrichedEnv)) {
+            mirrorMap[row.id] = row;
+          }
+        }
+      } catch {}
+    }
+    const enrichedExternal = Object.keys(mirrorMap).length > 0
+      ? externalItems.map(i => mirrorMap[i.id] || i)
+      : externalItems;
+
+    const allItems = [...dbItemsWithPopularity, ...enrichedExternal];
     // nextOffset tells the client where to start the next page.
     // When a source provides nextLocalOffset (FCG env-subtraction case), use it so the
     // next page starts exactly past all rows consumed (including filtered-out environments).
@@ -422,7 +442,9 @@ async function adoptItem(appId, uid, collection, item) {
   }
 
   if (isExternal) {
-    const { _source: _s, _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = item;
+    // Preserve _source in mirror data so items show the correct source badge when displayed
+    // as community items in "All" mode (stripping it causes them to render as "Mine").
+    const { _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = item;
     await upsertMirror(appId, collection, sourceId, mirrorData, {
       cloneDelta: isNewClone ? 1 : 0,
       playDelta: 1,
@@ -452,8 +474,29 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       const srdFills = await Promise.all(
         missing.filter(id => id.startsWith('srd-')).map(id => getSrdItem(col, id))
       );
-      const extras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
-      return [...dbItems, ...extras];
+      const srdExtras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
+
+      // For HoD items not in DB, fetch full Foundry JSON detail on demand.
+      // These items carry _hodLink on them; if no link is available we skip.
+      const hodMissing = missing.filter(id => id.startsWith('hod-'));
+      const hodFills = await Promise.all(
+        hodMissing.map(async id => {
+          const postId = id.replace(/^hod-/, '');
+          // We don't have the detail URL here — fall back gracefully.
+          // Full detail is only available when the item was previously seen in a search
+          // result and mirrored, or when coming through the clone flow.
+          try {
+            const detailUrl = `https://heartofdaggers.com/?p=${postId}`;
+            return await fetchHoDFoundryDetail(postId, detailUrl, col);
+          } catch (err) {
+            console.warn(`[hod] Could not resolve ${id}:`, err.message);
+            return null;
+          }
+        })
+      );
+      const hodExtras = hodFills.filter(Boolean);
+
+      return [...dbItems, ...srdExtras, ...hodExtras];
     };
 
     const [adversaries, environments, scenes] = await Promise.all([
@@ -496,6 +539,21 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const isExternal = source._source && !['own', 'public'].includes(source._source);
 
   try {
+    // For HoD items, fetch full Foundry JSON detail so we store a rich mirror.
+    // List-search items only have summary data; the detail fetch gives us features,
+    // attacks, thresholds, experiences, etc.
+    let effectiveSource = source;
+    if (source._source === 'hod' && source._hodPostId) {
+      try {
+        const detailUrl = source._hodLink || `https://heartofdaggers.com/?p=${source._hodPostId}`;
+        const full = await fetchHoDFoundryDetail(source._hodPostId, detailUrl, collection);
+        // Preserve the link metadata from the list-search item
+        effectiveSource = { ...full, _hodLink: source._hodLink || detailUrl };
+      } catch (err) {
+        console.warn(`[hod] Could not fetch full detail for ${sourceId}, using summary data:`, err.message);
+      }
+    }
+
     let clone = null;
     let isNewClone = true;
 
@@ -506,7 +564,7 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
     }
 
     if (!clone) {
-      const { _source: _s, _owner: _o, id: _id, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = source;
+      const { _source: _s, _owner: _o, id: _id, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = effectiveSource;
       const newId = crypto.randomUUID();
       const cloneData = { ...rest, _clonedFrom: sourceId };
       await upsertItem(APP_ID, req.uid, collection, newId, cloneData, false);
@@ -515,7 +573,8 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
 
     // Increment counts on source
     if (isExternal) {
-      const { _source: _s, _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = source;
+      // Preserve _source in mirror data so items show the correct source badge.
+      const { _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = effectiveSource;
       await upsertMirror(APP_ID, collection, sourceId, mirrorData, {
         cloneDelta: isNewClone ? 1 : 0,
         playDelta: play ? 1 : 0,
@@ -550,6 +609,44 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
     console.error(`POST /api/data/${collection}/play error:`, err);
     res.status(500).json({ error: 'Failed to record play' });
   }
+});
+
+app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
+  const { collection } = req.params;
+  if (!CLONE_COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection for enrich' });
+  }
+  const { items } = req.body;
+  const hodItems = (Array.isArray(items) ? items : []).filter(i => i._source === 'hod' && i._hodPostId);
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:entry',message:'Enrich endpoint called',data:{collection,totalItems:(items||[]).length,hodItemCount:hodItems.length,hodItemIds:hodItems.map(i=>i.id)},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+  const enriched = {};
+  const CONCURRENCY = 5;
+  for (let i = 0; i < hodItems.length; i += CONCURRENCY) {
+    const batch = hodItems.slice(i, i + CONCURRENCY);
+    await Promise.allSettled(batch.map(async (item) => {
+      try {
+        const detailUrl = item._hodLink || `https://heartofdaggers.com/?p=${item._hodPostId}`;
+        const full = await fetchHoDFoundryDetail(item._hodPostId, detailUrl, collection);
+        enriched[item.id] = full;
+        // #region agent log
+        fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:success',message:'Enrich succeeded for item',data:{collection,itemId:item.id,fullName:full.name,featuresCount:(full.features||[]).length},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        const { id, _source, _owner, clone_count, play_count, popularity, ...mirrorData } = full;
+        upsertMirror(APP_ID, collection, full.id, { ...mirrorData, _source: 'hod' }).catch(() => {});
+      } catch (err) {
+        // #region agent log
+        fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:error',message:'Enrich FAILED for item',data:{collection,itemId:item.id,error:err.message},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        console.warn(`[enrich] Could not enrich ${item.id}:`, err.message);
+      }
+    }));
+  }
+  // #region agent log
+  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'server.js:enrich:response',message:'Enrich response',data:{collection,enrichedCount:Object.keys(enriched).length,enrichedIds:Object.keys(enriched)},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+  res.json({ enriched });
 });
 
 app.post('/api/data/:collection/mirror', requireAuth, async (req, res) => {

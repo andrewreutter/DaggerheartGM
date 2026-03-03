@@ -5,6 +5,7 @@ import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, 
 
 import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
+import { isOwnItem } from './lib/constants.js';
 
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures'];
 
@@ -98,7 +99,7 @@ function App() {
     const collections = ['adversaries', 'environments', 'scenes', 'adventures'];
     // Fetch all own items across all collections to count and delete
     const allOwn = await Promise.all(collections.map(col =>
-      loadCollection(col, { limit: 10000 }).then(r => ({ col, items: r.items.filter(i => !i._source || i._source === 'own') }))
+      loadCollection(col, { limit: 10000 }).then(r => ({ col, items: r.items.filter(isOwnItem) }))
     ));
     const totalItems = allOwn.reduce((sum, { items }) => sum + items.length, 0);
     if (!window.confirm(`Delete all ${totalItems} item(s)? This cannot be undone.`)) return;
@@ -120,7 +121,7 @@ function App() {
     setUserMenuOpen(false);
     const collections = ['adversaries', 'environments', 'scenes', 'adventures'];
     const allData = await Promise.all(collections.map(col =>
-      loadCollection(col, { limit: 10000 }).then(r => [col, r.items.filter(i => !i._source || i._source === 'own')])
+      loadCollection(col, { limit: 10000 }).then(r => [col, r.items.filter(isOwnItem)])
     ));
     const exportObj = Object.fromEntries(allData);
     const jsonStr = JSON.stringify(exportObj, null, 2);
@@ -370,7 +371,7 @@ function App() {
 
     if (collectionName === 'adversaries' || collectionName === 'environments') {
       let tableItem = item;
-      if (!item._source || item._source === 'own') {
+      if (isOwnItem(item)) {
         // Own item: just record the play
         recordPlay(collectionName, item.id).catch(err => console.warn('recordPlay failed:', err));
       } else {

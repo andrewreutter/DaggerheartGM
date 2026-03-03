@@ -1,18 +1,13 @@
 import { useState } from 'react';
 import { Edit, Trash2, Play, Copy, Flame } from 'lucide-react';
-
-const SOURCE_BADGE = {
-  own: { label: 'Mine', className: 'bg-slate-700/60 text-slate-300 border border-slate-600' },
-  srd: { label: 'SRD', className: 'bg-violet-900/60 text-violet-300 border border-violet-700' },
-  public: { label: 'Public', className: 'bg-blue-900/60 text-blue-300 border border-blue-700' },
-  fcg: { label: 'FCG', className: 'bg-green-900/60 text-green-300 border border-green-700' },
-};
+import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
 
 export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable }) {
   const [added, setAdded] = useState(false);
-  const isOwn = !item._source || item._source === 'own';
+  const isOwn = isOwnItem(item);
   const badge = SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own;
   const popularity = item.popularity ?? ((item.clone_count || 0) + (item.play_count || 0));
+  const isEnriching = needsHodEnrich(item);
 
   const handleAddToTable = () => {
     onAddToTable(item, tab);
@@ -31,11 +26,11 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
             <h3 className="font-bold text-sm text-white group-hover:text-red-400 transition-colors leading-tight truncate">{item.name}</h3>
             <div className="flex items-center gap-1 flex-wrap min-h-[18px]">
               {(tab === 'adversaries' || tab === 'environments') && (
-                <span className="relative inline-flex items-center justify-center w-5 h-5 shrink-0" title={`Tier ${item.tier || 0}`}>
+                <span className="relative inline-flex items-center justify-center w-5 h-5 shrink-0" title={`Tier ${item.tier ?? '?'}`}>
                   <svg viewBox="0 0 20 22" className="absolute inset-0 w-full h-full" fill="none">
                     <path d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z" fill="#1e293b" stroke="#64748b" strokeWidth="1.5" />
                   </svg>
-                  <span className="relative text-[10px] font-bold text-slate-200 leading-none mt-0.5">{item.tier || 0}</span>
+                  <span className="relative text-[10px] font-bold text-slate-200 leading-none mt-0.5">{item.tier ?? '?'}</span>
                 </span>
               )}
               {badge && (
@@ -79,8 +74,17 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
           </div>
         </div>
         <div className="text-[11px] text-slate-400 flex-1 capitalize">
-          {tab === 'adversaries' && `Tier ${item.tier || 0} ${item.role}`}
-          {tab === 'environments' && `Tier ${item.tier || 0} ${item.type}`}
+          {tab === 'adversaries' && `Tier ${item.tier ?? '?'} ${item.role}`}
+          {tab === 'environments' && (
+            <>
+              {`Tier ${item.tier ?? '?'} ${item.type}`}
+              {Array.isArray(item.potential_adversaries) && item.potential_adversaries.length > 0 && (
+                <span className="ml-1.5 not-italic text-[10px] text-slate-500 normal-case">
+                  · {item.potential_adversaries.length} adversar{item.potential_adversaries.length === 1 ? 'y' : 'ies'}
+                </span>
+              )}
+            </>
+          )}
           {tab === 'scenes' && (() => {
             const chips = [
               ...(item.environments || []).map((envEntry, i) => {
@@ -117,6 +121,7 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
 
           {item.motive && <p className="mt-0.5 text-[10px] italic text-slate-400 line-clamp-3 pr-24">{item.motive}</p>}
           {item.description && <p className="mt-0.5 text-[10px] opacity-80 line-clamp-3 pr-24">{item.description}</p>}
+          {isEnriching && <p className="mt-1 text-[10px] text-rose-400/70 animate-pulse">Loading details…</p>}
         </div>
       </div>
 

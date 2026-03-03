@@ -17,13 +17,14 @@ export const ITEM_PICKER_SINGULAR = {
  * For scenes/adventures: uses a simple client-side name search over `data[collection]`.
  *
  * Props:
-   *   collection  — which collection to browse ('adversaries' | 'environments' | 'scenes' | 'adventures')
- *   data        — { [collection]: item[] } used for non-paginated collections
- *   title       — optional override for the modal header (default: "Add <Singular>")
- *   onClose     — called when the modal is dismissed
- *   onSelect    — called with the selected item; modal closes itself after
+   *   collection    — which collection to browse ('adversaries' | 'environments' | 'scenes' | 'adventures')
+ *   data          — { [collection]: item[] } used for non-paginated collections
+ *   title         — optional override for the modal header (default: "Add <Singular>")
+ *   initialSearch — pre-fill the search input on open (useful for "Link placeholder" flow)
+ *   onClose       — called when the modal is dismissed
+ *   onSelect      — called with the selected item; modal closes itself after
  */
-export function ItemPickerModal({ collection, data = {}, title, onClose, onSelect }) {
+export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect }) {
   const isPaginated = collection === 'adversaries' || collection === 'environments';
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
   const actionLabel = title || `Add ${singular}`;
@@ -31,6 +32,12 @@ export function ItemPickerModal({ collection, data = {}, title, onClose, onSelec
   const search = useCollectionSearch(collection, { limit: 40, enabled: isPaginated, infinite: true });
   const resultsRef = useRef(null);
   const sentinelRef = useRef(null);
+
+  useEffect(() => {
+    if (initialSearch) search.setFilter('search', initialSearch);
+  // Run only once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const clientItems = useMemo(() => {
     if (isPaginated) return search.items;
@@ -40,9 +47,14 @@ export function ItemPickerModal({ collection, data = {}, title, onClose, onSelec
   }, [isPaginated, search.items, search.filters.search, data, collection]);
 
   useEffect(() => {
-    const handleKey = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKey, true);
+    return () => document.removeEventListener('keydown', handleKey, true);
   }, [onClose]);
 
   useEffect(() => {

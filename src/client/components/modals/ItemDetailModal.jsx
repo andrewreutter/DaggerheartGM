@@ -8,11 +8,7 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
 import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { ExpandedTablePreview } from '../ItemDetailView.jsx';
-
-const SOURCE_BADGE = {
-  srd: { label: 'SRD', className: 'bg-violet-900/60 text-violet-300 border border-violet-700' },
-  public: { label: 'Public', className: 'bg-blue-900/60 text-blue-300 border border-blue-700' },
-};
+import { SOURCE_BADGE, isOwnItem } from '../../lib/constants.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -48,6 +44,7 @@ export function ItemDetailModal({
   collection,
   data,
   editable,
+  enriching = false,
   onSave,
   onSaveElement,
   onDelete,
@@ -138,7 +135,7 @@ export function ItemDetailModal({
 
   const displayItem = editable ? formData : item;
   const badge = SOURCE_BADGE[item?._source];
-  const isOwn = !item?._source || item?._source === 'own';
+  const isOwn = isOwnItem(item);
 
   // --- Display Pane content ---
   const renderDisplayContent = () => (
@@ -164,6 +161,13 @@ export function ItemDetailModal({
             </span>
           )}
         </div>
+
+        {enriching && (
+          <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-rose-950/40 border border-rose-800/50">
+            <div className="w-3 h-3 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
+            <span className="text-sm text-rose-300">Loading full details…</span>
+          </div>
+        )}
 
         {collection === 'adversaries' && (
           <AdversaryCardContent element={displayItem} hoveredFeature={null} cardKey="preview" />
