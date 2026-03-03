@@ -10,6 +10,7 @@ import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { ExpandedTablePreview } from '../ItemDetailView.jsx';
 import { SOURCE_BADGE, isOwnItem, needsRedditParse } from '../../lib/constants.js';
 import { RedditMarkdown } from '../../lib/reddit-markdown.js';
+import { MarkdownText } from '../../lib/markdown.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -376,7 +377,7 @@ export function ItemDetailModal({
         {collection === 'scenes' && data && (
           <>
             {displayItem.description && (
-              <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{displayItem.description}</p>
+              <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300 mb-3" />
             )}
             <ExpandedTablePreview
               item={displayItem}
@@ -388,7 +389,7 @@ export function ItemDetailModal({
           </>
         )}
         {collection === 'adventures' && displayItem.description && (
-          <p className="text-sm italic text-slate-300 whitespace-pre-wrap">{displayItem.description}</p>
+          <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300" />
         )}
 
         {/* Additional images (OCR'd stat block images or extra post images) */}

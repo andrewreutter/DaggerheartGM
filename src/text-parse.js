@@ -52,6 +52,23 @@ const ENV_WEIGHTS = {
 };
 
 // ---------------------------------------------------------------------------
+// Text utilities
+// ---------------------------------------------------------------------------
+
+const TITLE_CASE_MINOR = new Set([
+  'a', 'an', 'the', 'and', 'but', 'or', 'nor', 'for', 'yet', 'so',
+  'in', 'on', 'at', 'to', 'by', 'of', 'up', 'as', 'is', 'if',
+]);
+
+function toTitleCase(str) {
+  return str.toLowerCase().split(/\s+/).map((word, i) =>
+    (i === 0 || !TITLE_CASE_MINOR.has(word))
+      ? word.charAt(0).toUpperCase() + word.slice(1)
+      : word
+  ).join(' ');
+}
+
+// ---------------------------------------------------------------------------
 // Preprocessing
 // ---------------------------------------------------------------------------
 
@@ -106,7 +123,7 @@ function extractName(raw, title) {
   const allCaps = raw.match(/^([A-Z][A-Z\s'-]{2,})$/m);
   if (allCaps) {
     const candidate = allCaps[1].trim();
-    if (!SECTION_HEADERS.test(candidate)) return candidate;
+    if (!SECTION_HEADERS.test(candidate)) return toTitleCase(candidate);
   }
 
   // Pronoun-reference pattern: "...a/an WORD. It/They VERB..." — the entity's name
@@ -329,6 +346,55 @@ function extractExperiences(text) {
   }).filter(Boolean);
 }
 
+/**
+ * Detect common list/table patterns in a feature description (typically from OCR text that
+ * had its newlines preserved) and convert them to markdown.
+ *
+ * Patterns handled:
+ *   - d-table ranges: "1-2: X. 3-4: Y." on a single line (OCR may have lost newlines)
+ *     → each range entry becomes a markdown bullet "- **1-2:** X."
+ *   - Numbered items concatenated without newlines: "1. Foo 2. Bar"
+ *     → insert newlines before each number to yield markdown ordered list
+ *
+ * Only fires when a pattern appears ≥2 times (to avoid false positives on isolated
+ * occurrences like "Steps 1-2 are..." or "see rule 1.").
+ */
+function formatListPatterns(text) {
+  // Pattern: digit range followed by colon, e.g. "1-2:" or "11-12:"
+  // Includes en-dash variant from OCR.
+  const rangeRe = /(\d{1,2}[-–]\d{1,2}):\s*/g;
+  const rangeMatches = [...text.matchAll(rangeRe)];
+
+  if (rangeMatches.length >= 2) {
+    // Split the text on each range marker and re-emit as markdown bullets.
+    // We need to handle:
+    //   "Use the list below to determine what they find: 1-2: Sugar Shrub..."
+    // The preamble before the first range stays as a paragraph; everything
+    // after becomes a list.
+    const firstMatch = rangeMatches[0];
+    const preamble = text.slice(0, firstMatch.index).trim();
+    const listText = text.slice(firstMatch.index);
+
+    // Replace each "N-M: " with a newline + bullet + bold label
+    const listMd = listText.replace(rangeRe, (_, range) => `\n- **${range}:** `);
+
+    return (preamble ? preamble + '\n' : '') + listMd.trim();
+  }
+
+  // Pattern: numbered items run together without newlines (OCR strips line breaks)
+  // Match "1. Word" where the number is preceded by non-newline content
+  // Only when at least 2 such patterns appear.
+  const numberedRe = /(?<!\n)(\s+)(\d+)\.\s+([A-Z])/g;
+  const numberedMatches = [...text.matchAll(numberedRe)];
+
+  if (numberedMatches.length >= 2) {
+    // Insert a newline before each "N. Capital" that isn't already at line start
+    return text.replace(numberedRe, '\n$2. $3');
+  }
+
+  return text;
+}
+
 function extractFeatures(text) {
   const features = [];
 
@@ -343,7 +409,11 @@ function extractFeatures(text) {
   for (const m of featureText.matchAll(featureBlockRe)) {
     const name = m[1].trim().replace(/^[-*•]\s*/, '');
     const type = m[2].toLowerCase();
-    const description = m[3].trim().replace(/\s+/g, ' ');
+    // Preserve newlines; only collapse runs of horizontal whitespace
+    const rawDesc = m[3].trim()
+      .replace(/[^\S\n]+/g, ' ')   // collapse horizontal whitespace runs
+      .replace(/\n{3,}/g, '\n\n'); // normalize excessive blank lines
+    const description = formatListPatterns(rawDesc);
     if (name && description) {
       features.push({ id: crypto.randomUUID(), name, type, description });
     }
@@ -415,8 +485,13 @@ function extractMotive(text) {
 }
 
 function extractImpulses(text) {
-  const match = text.match(/Impulses?:\s*([^\n]+)/i);
-  return match ? match[1].trim() : '';
+  // Capture the first line plus any continuation lines that don't start a new section.
+  // OCR output often wraps long impulse lists across two lines.
+  const match = text.match(
+    /Impulses?:\s*([\s\S]+?)(?=\n\s*(?:Difficulty|Potential\s+Adversaries?|FEATURES?|THRESHOLDS?)\s*[:\n]|$)/i
+  );
+  if (!match) return '';
+  return match[1].trim().replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ');
 }
 
 function extractPotentialAdversaries(text) {

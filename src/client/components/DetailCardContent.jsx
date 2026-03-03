@@ -2,6 +2,7 @@ import { Heart, AlertCircle, X, Dices, Link2 } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
 import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
+import { MarkdownText } from '../lib/markdown.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 
@@ -47,7 +48,7 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
       </div>
 
       {element.description && (
-        <p className="text-sm italic text-slate-300 mb-3 whitespace-pre-wrap">{stripHtml(element.description)}</p>
+        <MarkdownText text={stripHtml(element.description)} className="text-sm italic text-slate-300 mb-3" />
       )}
 
       {element.impulses && (
@@ -159,7 +160,7 @@ export function AdversaryCardContent({
       </div>
 
       {el.description && (
-        <div className="text-sm italic text-slate-300 mb-4 whitespace-pre-wrap">{stripHtml(el.description)}</div>
+        <MarkdownText text={stripHtml(el.description)} className="text-sm italic text-slate-300 mb-4" />
       )}
 
       {(el.motive || (el.experiences && el.experiences.length > 0)) && (
@@ -169,7 +170,7 @@ export function AdversaryCardContent({
               <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1 mb-2">
                 Motives & Tactics
               </h5>
-              <p className="text-sm text-slate-300">{stripHtml(el.motive)}</p>
+              <MarkdownText text={stripHtml(el.motive)} className="text-sm text-slate-300" />
             </div>
           )}
           {el.experiences && el.experiences.length > 0 && (

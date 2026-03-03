@@ -43,7 +43,7 @@ DaggerheartGM/
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
 │   │   │   ├── forms/          # Item forms (controlled+uncontrolled); CollectionRefPicker; FeatureLibrary.jsx sidebar
     │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay); ItemPickerModal; EditChoiceDialog; import modals
-    │   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo, reddit-markdown (marked)
+    │   │   └── lib/                # API client, helpers, constants, parsers, router, useCollectionSearch, useAutoSaveUndo, markdown.js + reddit-markdown.js (marked)
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
@@ -131,6 +131,16 @@ Scenes can reference adversaries, environments, and **nested Scenes** (allowing 
 **Circular reference prevention**: `SceneForm` validates nested scene selections at save time — if adding a scene would create a cycle (scene A → scene B → scene A), the save is blocked with an error. All expansion functions also pass a `visited` set to guard against cycles in stale data.
 
 Nested scene chips display in **blue** on `ItemCard` in the Scenes library tab.
+
+### Markdown Support
+
+All multi-line text fields support **GitHub Flavored Markdown** (GFM): bold, italic, bullet lists, numbered lists, blockquotes, inline code, and links. This applies to feature descriptions, adversary/environment descriptions, motives, and scene/adventure descriptions — for items of any origin (own, SRD, Reddit, HoD, FCG, or created from scratch).
+
+A `MarkdownHelpTooltip` icon (?) appears next to description and feature textareas in all edit forms. Hovering shows a compact cheat sheet and a link to the full GFM documentation.
+
+**Rendering**: `FeatureDescription` renders feature text as markdown HTML with GM-trigger phrases (spend/mark fear, mark stress) bolded as a post-processing step. Other multi-line text fields use the `MarkdownText` component (`src/client/lib/markdown.js`, `.dh-md` CSS class). Items truncated for compact display (card grid, GM sidebar) remain plain text to avoid jagged `line-clamp` truncation.
+
+**OCR parsing**: when a Reddit stat block image is parsed, Strategy 1 of the text parser now preserves newlines and applies `formatListPatterns()` to auto-detect and convert d-table ranges (`1-2: Sugar Shrub. 3-4: Spiced Gravel.`) and concatenated numbered lists into proper markdown bullets. The LLM parser is similarly instructed to emit markdown for feature descriptions containing roll tables or lists.
 
 ### Item Detail and Editing
 

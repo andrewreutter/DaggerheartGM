@@ -8,6 +8,7 @@ import { FormRow } from './FormRow.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
 import { FeatureLibrary } from './FeatureLibrary.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
+import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 
 /**
  * Normalize the potential_adversaries field from any legacy or current format
@@ -255,7 +256,7 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
             {ENV_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </FormRow>
-        <FormRow label="Description">
+        <FormRow label={<>Description<MarkdownHelpTooltip /></>}>
           <textarea value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-24 resize-none" />
         </FormRow>
         <FormRow label="Impulses">
