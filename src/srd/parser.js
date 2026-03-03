@@ -11,6 +11,7 @@
 import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { ROLES } from '../game-constants.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const JSON_DIR = join(__dirname, '..', '..', 'daggerheart-srd', '.build', '03_json');
@@ -70,12 +71,11 @@ function parseFeatures(featureArr, parentId) {
 
 // --- Adversary-specific parsers (must match existing app schema) ---
 
-const VALID_ROLES = new Set(['minion', 'social', 'support', 'horde', 'ranged', 'skulk', 'standard', 'leader', 'bruiser']);
+const VALID_ROLES = new Set(ROLES);
 
 function normalizeRole(type) {
   const t = (type || '').toLowerCase();
   if (t.startsWith('horde')) return 'horde';
-  if (t === 'solo') return 'standard';
   return VALID_ROLES.has(t) ? t : 'standard';
 }
 

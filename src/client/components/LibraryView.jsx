@@ -26,7 +26,7 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin }) {
+export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin, partySize = 4, setPartySize }) {
   const [showImageImport, setShowImageImport] = useState(false);
   // modalState: null | { item: object, isNew: boolean }
   const [modalState, setModalState] = useState(null);
@@ -299,6 +299,8 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           isAdmin={isAdmin}
           onBlockReddit={resolvedModalItem?._source === 'reddit' && isAdmin ? handleBlockReddit : null}
           onClose={closeModal}
+          partySize={partySize}
+          onPartySizeChange={setPartySize}
         />
       )}
 
@@ -361,6 +363,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
                 onDelete={isOwnItem(item) ? handleDelete : null}
                 onClone={() => handleClone(item)}
                 onAddToTable={addToTable}
+                partySize={partySize}
               />
             ))}
             {filteredItems.length === 0 && (

@@ -1,13 +1,19 @@
 import { useState } from 'react';
 import { Edit, Trash2, Play, Copy, Flame } from 'lucide-react';
 import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
+import { computeSceneTier, computeBattlePoints, collectSceneAdversaries } from '../lib/battle-points.js';
 
-export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable }) {
+export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4 }) {
   const [added, setAdded] = useState(false);
   const isOwn = isOwnItem(item);
   const badge = SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own;
   const popularity = item.popularity ?? ((item.clone_count || 0) + (item.play_count || 0));
   const isEnriching = needsHodEnrich(item);
+
+  const sceneTier = tab === 'scenes' ? computeSceneTier(item, data) : null;
+  const sceneBP = tab === 'scenes'
+    ? computeBattlePoints(collectSceneAdversaries(item, data), partySize)
+    : null;
 
   const handleAddToTable = () => {
     onAddToTable(item, tab);
@@ -31,6 +37,19 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
                     <path d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z" fill="#1e293b" stroke="#64748b" strokeWidth="1.5" />
                   </svg>
                   <span className="relative text-[10px] font-bold text-slate-200 leading-none mt-0.5">{item.tier ?? '?'}</span>
+                </span>
+              )}
+              {tab === 'scenes' && sceneTier != null && (
+                <span className="relative inline-flex items-center justify-center w-5 h-5 shrink-0" title={`Tier ${sceneTier}`}>
+                  <svg viewBox="0 0 20 22" className="absolute inset-0 w-full h-full" fill="none">
+                    <path d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z" fill="#0f2040" stroke="#3b82f6" strokeWidth="1.5" />
+                  </svg>
+                  <span className="relative text-[10px] font-bold text-blue-200 leading-none mt-0.5">{sceneTier}</span>
+                </span>
+              )}
+              {tab === 'scenes' && sceneBP > 0 && (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700" title="Battle Points cost">
+                  {sceneBP} BP
                 </span>
               )}
               {badge && (

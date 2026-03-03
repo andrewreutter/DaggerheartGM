@@ -10,16 +10,20 @@
  * Env var: OPENAI_API_KEY (required; module fails gracefully if not set)
  */
 
+import { ROLES } from './game-constants.js';
+
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 
 // ---------------------------------------------------------------------------
 // Schema descriptions embedded in the prompt
 // ---------------------------------------------------------------------------
 
+const ROLE_UNION = ROLES.map(r => `"${r}"`).join(' | ');
+
 const ADVERSARY_SCHEMA = `{
   "name": "string",
   "tier": 1 | 2 | 3 | 4,
-  "role": "bruiser" | "horde" | "leader" | "minion" | "ranged" | "skulk" | "social" | "solo" | "standard" | "support",
+  "role": ${ROLE_UNION},
   "description": "string — background/flavour text",
   "motive": "string — motives and tactics",
   "difficulty": number (default 10),

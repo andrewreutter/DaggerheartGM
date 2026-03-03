@@ -1,10 +1,26 @@
-import { Heart, AlertCircle, X, Dices, Link2 } from 'lucide-react';
+import { Heart, AlertCircle, X, Dices, Link2, Zap } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
 import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
 import { MarkdownText } from '../lib/markdown.js';
+import { applyDamageBoost } from '../lib/battle-points.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
+
+/** Apply damage boost to a damage string, returning original if no boost. */
+function boostedDamage(dmg, damageBoost) {
+  if (!damageBoost || !dmg) return dmg;
+  return applyDamageBoost(dmg, damageBoost);
+}
+
+/** Apply damage boost inside an attack description like "+3 Melee | 2d6 Phy". */
+function boostedAttackDesc(desc, damageBoost) {
+  if (!damageBoost || !desc) return desc;
+  return desc.replace(
+    /^(([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*)([^\s]+)(\s+\w+)$/i,
+    (_, prefix, _mod, _range, dmg, suffix) => `${prefix}${applyDamageBoost(dmg, damageBoost)}${suffix}`,
+  );
+}
 
 function CheckboxTrack({ total, filled, onSetFilled, fillColor, thresholds }) {
   if (!total || total <= 0) return <span className="text-slate-500 text-xs">-</span>;
@@ -152,7 +168,10 @@ export function AdversaryCardContent({
   featureCountdowns,
   updateCountdown,
   onRollAttack,
+  damageBoost,
 }) {
+  // damageBoost: 'd4' | 'static' | null — when set, visually appends +1d4 or +2 to all damage.
+  const dmgBoost = damageBoost || el._damageBoost || null;
   return (
     <>
       <div className="text-sm text-slate-400 mb-2 capitalize">
@@ -282,7 +301,10 @@ export function AdversaryCardContent({
 
       {el.attack && el.attack.name && (
         <div className="space-y-1 mb-4">
-          <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Attack</h5>
+          <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1 flex items-center gap-1">
+            Attack
+            {dmgBoost && <Zap size={10} className="text-amber-400" title="Damage boosted" />}
+          </h5>
           <div
             data-feature-key="attack"
             className={`text-sm pl-2 border-l-2 transition-colors rounded-r ${
@@ -290,11 +312,13 @@ export function AdversaryCardContent({
                 ? 'border-yellow-500'
                 : 'border-transparent'
             } ${onRollAttack ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/atk' : ''}`}
-            onClick={onRollAttack ? () => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: el.attack.damage, trait: el.attack.trait }) : undefined}
+            onClick={onRollAttack ? () => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: boostedDamage(el.attack.damage, dmgBoost), trait: el.attack.trait }) : undefined}
             title={onRollAttack ? 'Roll to dice room' : undefined}
           >
             <span className="font-bold text-slate-200">{el.attack.name}:</span>
-            <span className="text-slate-300"> {el.attack.modifier >= 0 ? '+' : ''}{el.attack.modifier} {el.attack.range} | {el.attack.damage} {el.attack.trait?.toLowerCase()}</span>
+            <span className="text-slate-300"> {el.attack.modifier >= 0 ? '+' : ''}{el.attack.modifier} {el.attack.range} | </span>
+            <span className={dmgBoost ? 'text-amber-300 font-medium' : 'text-slate-300'}>{boostedDamage(el.attack.damage, dmgBoost)}</span>
+            <span className="text-slate-300"> {el.attack.trait?.toLowerCase()}</span>
             {onRollAttack && <Dices size={11} className="inline ml-1.5 text-slate-600 group-hover/atk:text-red-400 transition-colors" />}
           </div>
         </div>
@@ -312,6 +336,7 @@ export function AdversaryCardContent({
             const attackMatch = onRollAttack && feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
             const forceAttack = !attackMatch && onRollAttack && /\bmakes?\b.*?\battack\b/i.test(feat.description || '');
             const isRollable = !!(attackMatch || forceAttack);
+            const displayDesc = dmgBoost ? boostedAttackDesc(feat.description, dmgBoost) : feat.description;
             return (
               <div
                 key={feat.id ?? featIdx}
@@ -323,9 +348,9 @@ export function AdversaryCardContent({
                 } ${isRollable ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/feat' : ''}`}
                 onClick={isRollable ? () => {
                   if (attackMatch) {
-                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: attackMatch[3], trait: attackMatch[4] });
+                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: boostedDamage(attackMatch[3], dmgBoost), trait: attackMatch[4] });
                   } else {
-                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: el.attack?.damage, trait: el.attack?.trait });
+                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: boostedDamage(el.attack?.damage, dmgBoost), trait: el.attack?.trait });
                   }
                 } : undefined}
                 title={isRollable ? 'Roll to dice room' : undefined}
@@ -333,9 +358,9 @@ export function AdversaryCardContent({
                 <span className="font-bold text-slate-200 mr-2">
                   {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
                 </span>
-                <span className="text-slate-400">
+                <span className={`${dmgBoost && attackMatch ? 'text-amber-300/90' : 'text-slate-400'}`}>
                   <FeatureDescription
-                    description={feat.description}
+                    description={displayDesc}
                     countdownValues={updateCountdown && allCds.length > 0 ? cdVals : undefined}
                     onCountdownChange={updateCountdown && allCds.length > 0
                       ? (cdIdx, v) => updateCountdown(cardKey, fKey, cdIdx, v)
