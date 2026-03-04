@@ -155,8 +155,12 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
 
         <FormRow label="Motives & Tactics"><input type="text" placeholder="e.g. To add to their bone collection" value={formData.motive} onChange={e => update({ ...formData, motive: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
         <FormRow label={<>Description (Flavor)<MarkdownHelpTooltip /></>}><textarea placeholder="Description or flavor text..." value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
-        <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-        <ImageGenerator formData={formData} collection="adversaries" onImageGenerated={url => update({ ...formData, imageUrl: url })} />
+        <FormRow label="Image URL (optional)">
+          <div className="flex flex-wrap items-stretch border border-slate-700 rounded overflow-hidden">
+            <input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="flex-1 min-w-[12rem] bg-slate-950 border-0 px-2 py-2 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:ring-inset" />
+            <ImageGenerator formData={formData} collection="adversaries" onImageGenerated={url => update({ ...formData, imageUrl: url })} inline />
+          </div>
+        </FormRow>
 
         <div className="grid grid-cols-5 gap-4 mt-6">
           <FormRow label="Difficulty">
