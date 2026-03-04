@@ -737,7 +737,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             className={`${tabBase} ${gmTab === 'whiteboard' ? tabActive : tabInactive}`}
             onClick={() => navigate('/gm-table/whiteboard')}
           >
-            <LayoutDashboard size={16} /> Game Table
+            <LayoutDashboard size={16} /> Player View
           </button>
         </div>
         <WhiteboardTab

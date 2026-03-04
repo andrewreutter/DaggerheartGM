@@ -6,6 +6,7 @@ import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, 
 import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
+import { computeBattlePoints } from './lib/battle-points.js';
 
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures'];
 
@@ -487,18 +488,27 @@ function App() {
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate('/library/adversaries')} />
               <NavBtn
                 icon={<LayoutDashboard />}
-                label="GM Table"
+                label="Game Table"
                 active={route.view === 'gm-table'}
                 onClick={() => navigate('/gm-table')}
                 pulse={tableFlash}
               />
               {(() => {
-                const advCount = activeElements.filter(e => e.elementType === 'adversary').length;
+                const advElements = activeElements.filter(e => e.elementType === 'adversary');
                 const envCount = activeElements.filter(e => e.elementType === 'environment').length;
-                if (!advCount && !envCount) return null;
+                if (!advElements.length && !envCount) return null;
+                const countById = {};
+                const roleAndTierById = {};
+                advElements.forEach(e => {
+                  countById[e.id] = (countById[e.id] || 0) + 1;
+                  roleAndTierById[e.id] = { role: e.role || 'standard', tier: e.tier ?? 1 };
+                });
+                const tableAdvSummary = Object.entries(countById).map(([id, count]) => ({ ...roleAndTierById[id], count }));
+                const bp = computeBattlePoints(tableAdvSummary, partySize);
                 const parts = [];
-                if (envCount) parts.push(`${envCount} environment${envCount !== 1 ? 's' : ''}`);
-                if (advCount) parts.push(`${advCount} adversar${advCount !== 1 ? 'ies' : 'y'}`);
+                if (bp > 0) parts.push(`${bp} BP`);
+                if (envCount) parts.push(`${envCount} env${envCount !== 1 ? 's' : ''}`);
+                if (advElements.length) parts.push(`${advElements.length} adversar${advElements.length !== 1 ? 'ies' : 'y'}`);
                 return (
                   <span className={`text-xs font-mono transition-colors duration-300 ${tableFlash ? 'text-yellow-400' : 'text-slate-500'}`}>
                     {parts.join(' · ')}
