@@ -1,4 +1,4 @@
-export { ROLES, ENV_TYPES, TIERS, ROLE_BP_COST } from '../../game-constants.js';
+export { ROLES, ENV_TYPES, TIERS, ROLE_BP_COST, ROLE_DESCRIPTIONS } from '../../game-constants.js';
 export const FEATURE_TYPES = ['action', 'reaction', 'passive'];
 export const DAMAGE_TYPES = ['Phy', 'Mag', 'Dir'];
 export const RANGES = ['Melee', 'Very Close', 'Close', 'Far', 'Very Far'];

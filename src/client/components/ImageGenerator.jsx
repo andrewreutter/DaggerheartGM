@@ -76,7 +76,7 @@ function buildImagePrompt(formData, collection) {
  *   collection — 'adversaries' | 'environments' | 'scenes' | 'adventures'
  *   onImageGenerated(dataUrl) — called with the result data URL to set formData.imageUrl
  */
-export function ImageGenerator({ formData, collection, onImageGenerated }) {
+export function ImageGenerator({ formData, collection, onImageGenerated, inline = false }) {
   const [open, setOpen] = useState(false);
   const [lastPrompt, setLastPrompt] = useState(null);
   const [editedPrompt, setEditedPrompt] = useState('');
@@ -161,20 +161,23 @@ export function ImageGenerator({ formData, collection, onImageGenerated }) {
     setOpen(false);
   };
 
-  return (
-    <>
-    <div className="mt-1">
-      <button
-        type="button"
-        onClick={openPanel}
-        className="flex items-center gap-1.5 text-xs text-purple-300 hover:text-purple-100 transition-colors px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 bg-purple-950/30 hover:bg-purple-900/40"
-      >
-        <Sparkles size={12} />
-        Generate with AI
-      </button>
+  const buttonEl = (
+    <button
+      type="button"
+      onClick={openPanel}
+      className={`flex items-center justify-center gap-1.5 text-xs transition-colors shrink-0 cursor-pointer ${
+        inline
+          ? 'h-full min-h-[2.5rem] min-w-[7.5rem] px-3 rounded-none border-l border-slate-700 text-purple-300 hover:text-purple-100 bg-slate-900/80 hover:bg-slate-800/80'
+          : 'px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40'
+      }`}
+    >
+      <Sparkles size={12} />
+      Generate with AI
+    </button>
+  );
 
-      {open && (
-        <div className="mt-2 p-3 bg-slate-900 border border-purple-800/60 rounded-lg space-y-3">
+  const panelEl = open && (
+    <div className={`p-3 bg-slate-900 border border-purple-800/60 rounded-lg space-y-3 ${inline ? 'mt-2 w-full basis-full' : 'mt-2'}`}>
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-purple-300 flex items-center gap-1.5">
               <Sparkles size={12} />
@@ -330,9 +333,21 @@ export function ImageGenerator({ formData, collection, onImageGenerated }) {
             </button>
           )}
         </div>
-      )}
-    </div>
+  );
 
+  return (
+    <>
+      {inline ? (
+        <>
+          {buttonEl}
+          {panelEl}
+        </>
+      ) : (
+        <div className="mt-1">
+          {buttonEl}
+          {panelEl}
+        </div>
+      )}
       {lightboxOpen && currentPreview && (
         <div
           className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-sm"

@@ -161,7 +161,10 @@ export function FeatureDescription({ description: rawDescription, countdownValue
 
   // Common path: no countdown widgets — render markdown with HTML post-processing
   if (allCds.length === 0) {
-    const html = applyQuestionItalicsToHtml(applyFearBoldingToHtml(renderMarkdown(description)));
+    let html = applyQuestionItalicsToHtml(applyFearBoldingToHtml(renderMarkdown(description)));
+    // Strip single wrapping <p> so description flows inline after feature title (no unwanted newline)
+    const singleP = html.trim().match(/^<p>([\s\S]*?)<\/p>$/);
+    if (singleP && !singleP[1].includes('<p')) html = singleP[1];
     return (
       <span
         className="dh-md"

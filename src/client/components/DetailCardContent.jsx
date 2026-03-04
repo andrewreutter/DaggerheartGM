@@ -121,8 +121,8 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
                     : 'border-transparent'
                 }`}
               >
-                <span className="font-bold text-slate-200 mr-2">
-                  {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
+                <span className="font-bold text-slate-200">
+                  {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:{' '}
                 </span>
                 <span className="text-slate-400">
                   <FeatureDescription
@@ -355,8 +355,8 @@ export function AdversaryCardContent({
                 } : undefined}
                 title={isRollable ? 'Roll to dice room' : undefined}
               >
-                <span className="font-bold text-slate-200 mr-2">
-                  {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:
+                <span className="font-bold text-slate-200">
+                  {feat.name}{feat.type ? ` - ${feat.type[0].toUpperCase()}${feat.type.slice(1)}` : ''}:{' '}
                 </span>
                 <span className={`${dmgBoost && attackMatch ? 'text-amber-300/90' : 'text-slate-400'}`}>
                   <FeatureDescription

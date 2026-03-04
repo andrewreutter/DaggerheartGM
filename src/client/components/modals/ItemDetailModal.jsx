@@ -12,6 +12,7 @@ import { RedditMarkdown } from '../../lib/reddit-markdown.js';
 import { MarkdownText } from '../../lib/markdown.js';
 import { computeSceneBudget } from '../../lib/battle-points.js';
 import { generateId } from '../../lib/helpers.js';
+import { getBaselineStats } from '../../lib/adversary-defaults.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -155,11 +156,22 @@ export function ItemDetailModal({
 
   // Build a stable initial value for useAutoSaveUndo.
   // Ensure features/experiences have unique IDs so list editors can key and update by ID.
+  // For new items, merge in collection-specific defaults so forms have required shape (e.g. hp_thresholds, attack).
   const initialRef = useRef(null);
   if (!initialRef.current) {
     const raw = item || {};
     const ensureIds = (arr) => (arr || []).map(entry => entry.id ? entry : { ...entry, id: generateId() });
+    const defaultsForNew = !raw.id && collection === 'adversaries' ? (() => {
+      const baseline = getBaselineStats('standard', 1);
+      return {
+        tier: 1,
+        role: 'standard',
+        ...baseline,
+        attack: { name: '', range: 'Melee', trait: 'Phy', ...baseline?.attack },
+      };
+    })() : {};
     initialRef.current = {
+      ...defaultsForNew,
       ...raw,
       features: ensureIds(raw.features),
       experiences: ensureIds(raw.experiences),
