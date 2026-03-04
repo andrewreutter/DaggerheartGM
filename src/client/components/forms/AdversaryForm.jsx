@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ROLES, TIERS, RANGES, DAMAGE_TYPES } from '../../lib/constants.js';
 import { generateId } from '../../lib/helpers.js';
@@ -8,7 +8,7 @@ import { RoleSelect } from './RoleSelect.jsx';
 import { GuideRangeDropdown } from './GuideRangeDropdown.jsx';
 import { ExperiencesInput } from './ExperiencesInput.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
-import { FeatureLibrary } from './FeatureLibrary.jsx';
+import { LibraryPanelStack } from './LibraryPanelStack.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageGenerator } from '../ImageGenerator.jsx';
 import { AdversaryStatChangeModal } from '../modals/AdversaryStatChangeModal.jsx';
@@ -116,18 +116,50 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
     setPendingStatChange(null);
   };
 
-  const addFeatureFromLibrary = feature => update({ ...formData, features: [...formData.features, { ...feature, id: generateId() }] });
+  const [highlightedFeatureId, setHighlightedFeatureId] = useState(null);
+  const [highlightedExperienceId, setHighlightedExperienceId] = useState(null);
+  const highlightTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    return () => { if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current); };
+  }, []);
+
+  const scheduleHighlightClear = (clearFeature) => {
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = setTimeout(() => {
+      if (clearFeature) setHighlightedFeatureId(null);
+      else setHighlightedExperienceId(null);
+      highlightTimeoutRef.current = null;
+    }, 1800);
+  };
+
+  const addFeatureFromLibrary = (feature) => {
+    const id = generateId();
+    update({ ...formData, features: [...formData.features, { ...feature, id }] });
+    setHighlightedExperienceId(null);
+    setHighlightedFeatureId(id);
+    scheduleHighlightClear(true);
+  };
+  const addExperienceFromLibrary = (exp) => {
+    const id = generateId();
+    update({ ...formData, experiences: [...formData.experiences, { ...exp, id }] });
+    setHighlightedFeatureId(null);
+    setHighlightedExperienceId(id);
+    scheduleHighlightClear(false);
+  };
 
   const baseline = getBaselineStats(formData.role, formData.tier);
   const guideRanges = getGuideRanges(formData.role, formData.tier);
 
   const featureLibraryEl = (
-    <FeatureLibrary
+    <LibraryPanelStack
       tier={formData.tier}
       subtype={formData.role}
       subtypeKey="role"
       currentFeatures={formData.features}
-      onAdd={addFeatureFromLibrary}
+      onAddFeature={addFeatureFromLibrary}
+      currentExperiences={formData.experiences}
+      onAddExperience={addExperienceFromLibrary}
     />
   );
 
@@ -239,8 +271,8 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
           </div>
         </div>
 
-        <ExperiencesInput experiences={formData.experiences} onChange={experiences => update({ ...formData, experiences })} />
-        <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} />
+        <ExperiencesInput experiences={formData.experiences} onChange={experiences => update({ ...formData, experiences })} highlightedId={highlightedExperienceId} />
+        <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} highlightedId={highlightedFeatureId} />
 
         {!isControlled && (
           <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">

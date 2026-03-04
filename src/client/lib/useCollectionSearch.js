@@ -3,13 +3,14 @@ import { loadCollection } from './api.js';
 
 const DEFAULT_FILTERS = { include: 'own', tier: null, type: null, search: '' };
 
-function loadPersistedFilters(persistKey, collection) {
-  if (!persistKey) return { ...DEFAULT_FILTERS };
+function loadPersistedFilters(persistKey, collection, baseFilters = DEFAULT_FILTERS) {
+  const defaults = { ...DEFAULT_FILTERS, ...baseFilters };
+  if (!persistKey) return { ...defaults };
   try {
     const stored = localStorage.getItem(`${persistKey}_${collection}`);
-    if (stored) return { ...DEFAULT_FILTERS, ...JSON.parse(stored) };
+    if (stored) return { ...defaults, ...JSON.parse(stored) };
   } catch {}
-  return { ...DEFAULT_FILTERS };
+  return { ...defaults };
 }
 
 /**
@@ -19,7 +20,8 @@ function loadPersistedFilters(persistKey, collection) {
  * @param {object} opts
  * @param {number}   opts.limit       - Page size (default 20)
  * @param {number}   opts.debounceMs  - Debounce delay for search input (default 300)
- * @param {string}   opts.persistKey  - localStorage key prefix; per-collection suffix is appended
+ * @param {string}   opts.persistKey   - localStorage key prefix; per-collection suffix is appended
+ * @param {object}   opts.defaultFilters - Override default filter values (e.g. { include: 'srd' })
  * @param {boolean}  opts.enabled     - Set false to skip fetching (e.g. non-paginated collections)
  * @param {boolean}  opts.infinite    - When true, items accumulate across pages (infinite scroll mode)
  * @param {number}   opts.maxItems    - When set with infinite:true, trims the oldest items once exceeded
@@ -44,11 +46,13 @@ export function useCollectionSearch(collection, {
   limit = 20,
   debounceMs = 300,
   persistKey = null,
+  defaultFilters = {},
   enabled = true,
   infinite = false,
   maxItems = null,
 } = {}) {
-  const [filters, setFiltersState] = useState(() => loadPersistedFilters(persistKey, collection));
+  const baseFilters = { ...DEFAULT_FILTERS, ...defaultFilters };
+  const [filters, setFiltersState] = useState(() => loadPersistedFilters(persistKey, collection, baseFilters));
   const [offset, setOffsetState] = useState(0);
   const [items, setItems] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -71,7 +75,7 @@ export function useCollectionSearch(collection, {
   useEffect(() => {
     if (prevCollectionRef.current !== collection) {
       prevCollectionRef.current = collection;
-      setFiltersState(loadPersistedFilters(persistKey, collection));
+      setFiltersState(loadPersistedFilters(persistKey, collection, baseFilters));
       setOffsetState(0);
       setItems([]);
       setTotalCount(0);

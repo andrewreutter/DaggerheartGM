@@ -3,10 +3,10 @@ import { Edit, Trash2, Play, Copy, Flame } from 'lucide-react';
 import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { computeSceneTier, computeBattlePoints, collectSceneAdversaries } from '../lib/battle-points.js';
 
-export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4 }) {
+export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4, showSourceBadge = true }) {
   const [added, setAdded] = useState(false);
   const isOwn = isOwnItem(item);
-  const badge = SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own;
+  const badge = showSourceBadge ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
   const popularity = item.popularity ?? ((item.clone_count || 0) + (item.play_count || 0));
   const isEnriching = needsHodEnrich(item);
 
@@ -92,11 +92,11 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
             )}
           </div>
         </div>
-        <div className="text-[11px] text-slate-400 flex-1 capitalize">
-          {tab === 'adversaries' && `Tier ${item.tier ?? '?'} ${item.role}`}
+        <div className="text-[11px] text-slate-400 flex-1">
+          {tab === 'adversaries' && <span className="capitalize">Tier {item.tier ?? '?'} {item.role}</span>}
           {tab === 'environments' && (
             <>
-              {`Tier ${item.tier ?? '?'} ${item.type}`}
+              <span className="capitalize">Tier {item.tier ?? '?'} {item.type}</span>
               {Array.isArray(item.potential_adversaries) && item.potential_adversaries.length > 0 && (
                 <span className="ml-1.5 not-italic text-[10px] text-slate-500 normal-case">
                   · {item.potential_adversaries.length} adversar{item.potential_adversaries.length === 1 ? 'y' : 'ies'}

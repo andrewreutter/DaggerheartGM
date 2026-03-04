@@ -609,6 +609,7 @@ function App() {
             setRolzUsername={setRolzUsername}
             rolzPassword={rolzPassword}
             setRolzPassword={setRolzPassword}
+            route={route}
             gmTab={route.gmTab}
             navigate={navigate}
             featureCountdowns={featureCountdowns}

@@ -1,16 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const VALID_TABS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
+const VALID_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
 
 /**
  * Parses a pathname into a structured route descriptor.
  *
  * Supported patterns:
- *   /                        -> { view: 'home' }
- *   /library/:tab            -> { view: 'library', tab, itemId: null }
- *   /library/:tab/new        -> { view: 'library', tab, itemId: 'new' }
- *   /library/:tab/:id        -> { view: 'library', tab, itemId }
- *   /gm-table                -> { view: 'gm-table' }
+ *   /                              -> { view: 'home' }
+ *   /library/:tab                  -> { view: 'library', tab, itemId: null }
+ *   /library/:tab/new              -> { view: 'library', tab, itemId: 'new' }
+ *   /library/:tab/:id              -> { view: 'library', tab, itemId }
+ *   /gm-table                      -> { view: 'gm-table', gmTab, modalCollection, modalItemId }
+ *   /gm-table/whiteboard           -> { view: 'gm-table', gmTab: 'whiteboard', ... }
+ *   /gm-table/:collection/:id      -> { view: 'gm-table', gmTab: 'table', modalCollection, modalItemId }
  *
  * Note: /library/:tab/:id/edit is no longer a route — item editing is now
  * handled entirely within the ItemDetailModal overlay.
@@ -24,7 +27,16 @@ export function parseRoute(pathname) {
 
   if (parts[0] === 'gm-table') {
     const gmTab = parts[1] === 'whiteboard' ? 'whiteboard' : 'table';
-    return { view: 'gm-table', tab: null, gmTab, itemId: null };
+    // /gm-table/:collection/:id — item detail modal from GM table
+    const modalCollection = VALID_COLLECTIONS.has(parts[1]) ? parts[1] : null;
+    const modalItemId = modalCollection && parts[2] ? parts[2] : null;
+    return {
+      view: 'gm-table',
+      tab: null,
+      gmTab: modalCollection ? 'table' : gmTab,
+      modalCollection,
+      modalItemId,
+    };
   }
 
   if (parts[0] === 'library') {
