@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Pencil } from 'lucide-react';
+import { Pencil, X } from 'lucide-react';
 import { generateId } from '../lib/helpers.js';
 import { resolveItems } from '../lib/api.js';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
@@ -142,6 +142,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
   const [elements, setElements] = useState(() => buildElements(item, tab, data));
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [editState, setEditState] = useState(null);
+  const [lightboxUrl, setLightboxUrl] = useState(null);
   const resolvedIdsRef = useRef(new Set());
   const resolvedDataRef = useRef(resolvedData);
   resolvedDataRef.current = resolvedData;
@@ -270,21 +271,24 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
             return (
               <div key={el.instanceId} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden relative">
                 {el.imageUrl && (
-                  <div className="w-full h-32 overflow-hidden">
+                  <div
+                    className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
+                    onClick={() => setLightboxUrl(el.imageUrl)}
+                  >
                     <img src={el.imageUrl} alt={el.name} className="w-full h-full object-cover opacity-80" onError={e => { e.target.parentElement.style.display = 'none'; }} />
                   </div>
                 )}
+                {showEditBtn && (
+                  <button
+                    onClick={() => handleEditClick(el)}
+                    className={`absolute top-2 right-2 z-10 text-slate-600 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
+                    title="Edit"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                )}
                 <div className="p-4">
-                  {showEditBtn && (
-                    <button
-                      onClick={() => handleEditClick(el)}
-                      className="absolute top-3 right-3 text-slate-600 hover:text-blue-400 transition-colors"
-                      title="Edit"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                  )}
-                  <h4 className="text-lg font-bold text-white mb-0.5 pr-6">{el.name}</h4>
+                  <h4 className={`text-lg font-bold text-white mb-0.5 ${el.imageUrl ? 'pr-20' : 'pr-6'}`}>{el.name}</h4>
                   {el._isOwnedCopy && (
                     <span className="text-[10px] text-amber-400 bg-amber-900/30 border border-amber-700/50 px-1.5 py-0.5 rounded mb-1 inline-block">local copy</span>
                   )}
@@ -302,21 +306,24 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
           return (
             <div key={advCardKey} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden relative">
               {el.imageUrl && (
-                <div className="w-full h-32 overflow-hidden">
+                <div
+                  className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
+                  onClick={() => setLightboxUrl(el.imageUrl)}
+                >
                   <img src={el.imageUrl} alt={el.name} className="w-full h-full object-cover opacity-80" onError={e => { e.target.parentElement.style.display = 'none'; }} />
                 </div>
               )}
+              {canEditEl && (
+                <button
+                  onClick={() => handleEditClick(el)}
+                  className={`absolute top-2 right-2 z-10 text-slate-600 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
+                  title="Edit"
+                >
+                  <Pencil size={14} />
+                </button>
+              )}
               <div className="p-4">
-                {canEditEl && (
-                  <button
-                    onClick={() => handleEditClick(el)}
-                    className="absolute top-3 right-3 text-slate-600 hover:text-blue-400 transition-colors"
-                    title="Edit"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                )}
-                <div className="flex items-center gap-2 mb-0.5 pr-6">
+                <div className={`flex items-center gap-2 mb-0.5 ${el.imageUrl ? 'pr-20' : 'pr-6'}`}>
                   <h4 className="text-lg font-bold text-white">
                     {el.name}
                     {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
@@ -364,6 +371,25 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
           }}
           onClose={() => setEditState(null)}
         />
+      )}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="Enlarged image"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
       )}
     </>
   );
