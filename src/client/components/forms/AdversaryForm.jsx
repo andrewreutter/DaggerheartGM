@@ -3,17 +3,23 @@ import { createPortal } from 'react-dom';
 import { ROLES, TIERS, RANGES, DAMAGE_TYPES } from '../../lib/constants.js';
 import { generateId } from '../../lib/helpers.js';
 import { FormRow } from './FormRow.jsx';
+import { CustomSelect } from './CustomSelect.jsx';
+import { RoleSelect } from './RoleSelect.jsx';
+import { GuideRangeDropdown } from './GuideRangeDropdown.jsx';
 import { ExperiencesInput } from './ExperiencesInput.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
 import { FeatureLibrary } from './FeatureLibrary.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageGenerator } from '../ImageGenerator.jsx';
+import { AdversaryStatChangeModal } from '../modals/AdversaryStatChangeModal.jsx';
 import {
   getBaselineStats,
   computeScaledStats,
   statsMatchBaseline,
   statsMatchGenericDefaults,
   ROLE_STAT_SCALING,
+  getDicePoolOptions,
+  getGuideRanges,
 } from '../../lib/adversary-defaults.js';
 
 /**
@@ -37,6 +43,9 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
   });
 
   const formData = isControlled ? value : localData;
+
+  // When user changes tier/role with customized stats, we show this modal instead of window.confirm.
+  const [pendingStatChange, setPendingStatChange] = useState(null);
 
   const update = (newData) => {
     if (isControlled) {
@@ -80,28 +89,37 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
       return;
     }
 
-    // Stats have been customized — ask before changing them.
-    const capRole = r => r.charAt(0).toUpperCase() + r.slice(1);
-
+    // Stats have been customized — show modal with before/after.
     if (tierChanged && !roleChanged && ROLE_STAT_SCALING[newRole]) {
-      // Tier-only change with scaling data available: offer proportional scaling.
-      if (window.confirm(`Scale stats to Tier ${newTier}?\n\nThis adjusts Difficulty, HP, Thresholds, Stress, and Attack modifier by the guide's per-tier deltas while keeping your other customizations. Attack damage will use the Tier ${newTier} baseline pool.\n\nClick Cancel to change only the Tier label.`)) {
-        const scaled = computeScaledStats(formData, newRole, oldTier, newTier);
-        update({ ...formData, tier: newTier, ...scaled });
-      } else {
-        update({ ...formData, tier: newTier });
-      }
+      const scaled = computeScaledStats(formData, newRole, oldTier, newTier);
+      setPendingStatChange({ newTier, newRole, mode: 'scale', afterStats: scaled });
     } else {
-      // Role changed (or no scaling data for this role): offer full baseline replacement.
-      if (window.confirm(`Apply recommended stats for ${capRole(newRole)} Tier ${newTier}?\n\nThis will replace Difficulty, HP, Thresholds, Stress, Attack modifier, and Attack damage with guide defaults.\n\nClick Cancel to change only the Tier/Role label.`)) {
-        update({ ...formData, tier: newTier, role: newRole, ...newDefaults });
-      } else {
-        update({ ...formData, tier: newTier, role: newRole });
-      }
+      setPendingStatChange({ newTier, newRole, mode: 'baseline', afterStats: newDefaults });
     }
   };
 
+  const handleStatChangeApply = () => {
+    if (!pendingStatChange) return;
+    const { newTier, newRole, mode, afterStats } = pendingStatChange;
+    if (mode === 'scale') {
+      update({ ...formData, tier: newTier, ...afterStats });
+    } else {
+      update({ ...formData, tier: newTier, role: newRole, ...afterStats });
+    }
+    setPendingStatChange(null);
+  };
+
+  const handleStatChangeKeepCurrent = () => {
+    if (!pendingStatChange) return;
+    const { newTier, newRole } = pendingStatChange;
+    update({ ...formData, tier: newTier, role: newRole });
+    setPendingStatChange(null);
+  };
+
   const addFeatureFromLibrary = feature => update({ ...formData, features: [...formData.features, { ...feature, id: generateId() }] });
+
+  const baseline = getBaselineStats(formData.role, formData.tier);
+  const guideRanges = getGuideRanges(formData.role, formData.tier);
 
   const featureLibraryEl = (
     <FeatureLibrary
@@ -120,14 +138,18 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
 
         <div className="grid grid-cols-2 gap-4">
           <FormRow label="Tier">
-            <select value={formData.tier} onChange={e => handleTierOrRoleChange(parseInt(e.target.value), formData.role)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
-              {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <CustomSelect
+              value={formData.tier}
+              onChange={(tier) => handleTierOrRoleChange(tier, formData.role)}
+              options={TIERS}
+              getOptionLabel={(t) => String(t)}
+            />
           </FormRow>
           <FormRow label="Role">
-            <select value={formData.role} onChange={e => handleTierOrRoleChange(formData.tier, e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
-              {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
-            </select>
+            <RoleSelect
+              value={formData.role}
+              onChange={(role) => handleTierOrRoleChange(formData.tier, role)}
+            />
           </FormRow>
         </div>
 
@@ -137,11 +159,36 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
         <ImageGenerator formData={formData} collection="adversaries" onImageGenerated={url => update({ ...formData, imageUrl: url })} />
 
         <div className="grid grid-cols-5 gap-4 mt-6">
-          <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => update({ ...formData, difficulty: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-          <FormRow label="Stress"><input type="number" value={formData.stress_max} onChange={e => update({ ...formData, stress_max: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-          <FormRow label="HP"><input type="number" value={formData.hp_max} onChange={e => update({ ...formData, hp_max: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-          <FormRow label="Major Threshold"><input type="number" value={formData.hp_thresholds.major} onChange={e => update({ ...formData, hp_thresholds: { ...formData.hp_thresholds, major: parseInt(e.target.value) } })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-          <FormRow label="Severe Threshold"><input type="number" value={formData.hp_thresholds.severe} onChange={e => update({ ...formData, hp_thresholds: { ...formData.hp_thresholds, severe: parseInt(e.target.value) } })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+          <FormRow label="Difficulty">
+            <div className="flex items-center gap-2">
+              <input type="number" value={formData.difficulty} onChange={e => update({ ...formData, difficulty: parseInt(e.target.value) })} className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded p-2 text-white" />
+              {guideRanges?.difficulty && <GuideRangeDropdown tier={formData.tier} role={formData.role} guideRange={guideRanges.difficulty} value={formData.difficulty} onChange={(v) => update({ ...formData, difficulty: v })} />}
+            </div>
+          </FormRow>
+          <FormRow label="Stress">
+            <div className="flex items-center gap-2">
+              <input type="number" value={formData.stress_max} onChange={e => update({ ...formData, stress_max: parseInt(e.target.value) })} className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded p-2 text-white" />
+              {guideRanges?.stress_max && <GuideRangeDropdown tier={formData.tier} role={formData.role} guideRange={guideRanges.stress_max} value={formData.stress_max} onChange={(v) => update({ ...formData, stress_max: v })} />}
+            </div>
+          </FormRow>
+          <FormRow label="HP">
+            <div className="flex items-center gap-2">
+              <input type="number" value={formData.hp_max} onChange={e => update({ ...formData, hp_max: parseInt(e.target.value) })} className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded p-2 text-white" />
+              {guideRanges?.hp_max && <GuideRangeDropdown tier={formData.tier} role={formData.role} guideRange={guideRanges.hp_max} value={formData.hp_max} onChange={(v) => update({ ...formData, hp_max: v })} />}
+            </div>
+          </FormRow>
+          <FormRow label="Major Threshold">
+            <div className="flex items-center gap-2">
+              <input type="number" value={formData.hp_thresholds.major} onChange={e => update({ ...formData, hp_thresholds: { ...formData.hp_thresholds, major: parseInt(e.target.value) } })} className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded p-2 text-white" />
+              {guideRanges?.hp_thresholds?.major && <GuideRangeDropdown tier={formData.tier} role={formData.role} guideRange={guideRanges.hp_thresholds.major} value={formData.hp_thresholds.major} onChange={(v) => update({ ...formData, hp_thresholds: { ...formData.hp_thresholds, major: v }})} />}
+            </div>
+          </FormRow>
+          <FormRow label="Severe Threshold">
+            <div className="flex items-center gap-2">
+              <input type="number" value={formData.hp_thresholds.severe} onChange={e => update({ ...formData, hp_thresholds: { ...formData.hp_thresholds, severe: parseInt(e.target.value) } })} className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded p-2 text-white" />
+              {guideRanges?.hp_thresholds?.severe && <GuideRangeDropdown tier={formData.tier} role={formData.role} guideRange={guideRanges.hp_thresholds.severe} value={formData.hp_thresholds.severe} onChange={(v) => update({ ...formData, hp_thresholds: { ...formData.hp_thresholds, severe: v }})} />}
+            </div>
+          </FormRow>
         </div>
 
         <div className="mt-6 border-t border-slate-800 pt-4">
@@ -163,11 +210,26 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
             <div className="grid grid-cols-12 gap-2">
               <div className="col-span-4 flex items-center gap-2">
                 <span className="text-sm text-slate-400">Mod:</span>
-                <input type="number" placeholder="+0" value={formData.attack.modifier} onChange={e => update({ ...formData, attack: { ...formData.attack, modifier: parseInt(e.target.value) || 0 } })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />
+                <input type="number" placeholder="+0" value={formData.attack.modifier} onChange={e => update({ ...formData, attack: { ...formData.attack, modifier: parseInt(e.target.value) || 0 } })} className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />
+                {guideRanges?.attack?.modifier && <GuideRangeDropdown tier={formData.tier} role={formData.role} guideRange={guideRanges.attack.modifier} value={formData.attack.modifier} onChange={(v) => update({ ...formData, attack: { ...formData.attack, modifier: v }})} />}
               </div>
               <div className="col-span-8 flex items-center gap-2">
                 <span className="text-sm text-slate-400">Dmg:</span>
-                <input type="text" placeholder="e.g. d8+2" value={formData.attack.damage} onChange={e => update({ ...formData, attack: { ...formData.attack, damage: e.target.value } })} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />
+                <input type="text" placeholder="e.g. d8+2" value={formData.attack.damage} onChange={e => update({ ...formData, attack: { ...formData.attack, damage: e.target.value } })} className="flex-1 min-w-0 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />
+                {(() => {
+                  const pools = getDicePoolOptions(formData.role, formData.tier);
+                  if (pools.length === 0) return null;
+                  return (
+                    <GuideRangeDropdown
+                      tier={formData.tier}
+                      role={formData.role}
+                      options={pools}
+                      value={formData.attack.damage}
+                      onChange={(v) => update({ ...formData, attack: { ...formData.attack, damage: v }})}
+                      title="RightKnight's guide dice pools for this role and tier"
+                    />
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -210,6 +272,19 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
       </div>
 
       {featureLibraryPortal && createPortal(featureLibraryEl, featureLibraryPortal)}
+
+      {pendingStatChange && (
+        <AdversaryStatChangeModal
+          mode={pendingStatChange.mode}
+          newTier={pendingStatChange.newTier}
+          newRole={pendingStatChange.newRole}
+          formData={formData}
+          afterStats={pendingStatChange.afterStats}
+          onApply={handleStatChangeApply}
+          onKeepCurrent={handleStatChangeKeepCurrent}
+          onClose={() => setPendingStatChange(null)}
+        />
+      )}
     </>
   );
 }

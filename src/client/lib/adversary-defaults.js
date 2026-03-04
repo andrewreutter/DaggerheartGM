@@ -151,6 +151,80 @@ export const ROLE_STAT_BASELINES = {
 };
 
 /**
+ * Guide ranges (min–max) per role and tier.
+ * Mirrors ROLE_STAT_BASELINES but stores [min, max] for each field.
+ * Single values (e.g. Minion HP=1, Solo T1 ATK=3) use [n, n].
+ * Minion damage is flat damage range; other roles use ROLE_DICE_POOLS.
+ */
+export const ROLE_STAT_RANGES = {
+  bruiser: {
+    1: { difficulty: [12, 14], hp_thresholds: { major: [7, 9], severe: [13, 15] }, hp_max: [5, 7], stress_max: [3, 4], attack: { modifier: [0, 2] } },
+    2: { difficulty: [14, 16], hp_thresholds: { major: [12, 14], severe: [23, 26] }, hp_max: [5, 7], stress_max: [4, 6], attack: { modifier: [2, 4] } },
+    3: { difficulty: [16, 18], hp_thresholds: { major: [19, 22], severe: [35, 40] }, hp_max: [6, 8], stress_max: [4, 6], attack: { modifier: [3, 5] } },
+    4: { difficulty: [18, 20], hp_thresholds: { major: [30, 37], severe: [63, 70] }, hp_max: [7, 9], stress_max: [4, 6], attack: { modifier: [5, 8] } },
+  },
+  horde: {
+    1: { difficulty: [10, 12], hp_thresholds: { major: [5, 10], severe: [8, 12] }, hp_max: [4, 6], stress_max: [2, 3], attack: { modifier: [-2, 0] } },
+    2: { difficulty: [12, 14], hp_thresholds: { major: [10, 15], severe: [16, 20] }, hp_max: [5, 6], stress_max: [2, 3], attack: { modifier: [-1, 1] } },
+    3: { difficulty: [14, 16], hp_thresholds: { major: [15, 25], severe: [26, 32] }, hp_max: [6, 7], stress_max: [3, 4], attack: { modifier: [0, 2] } },
+    4: { difficulty: [16, 18], hp_thresholds: { major: [20, 30], severe: [35, 45] }, hp_max: [7, 8], stress_max: [4, 5], attack: { modifier: [1, 3] } },
+  },
+  leader: {
+    1: { difficulty: [12, 14], hp_thresholds: { major: [7, 9], severe: [13, 15] }, hp_max: [5, 7], stress_max: [3, 4], attack: { modifier: [2, 4] } },
+    2: { difficulty: [14, 16], hp_thresholds: { major: [12, 14], severe: [23, 26] }, hp_max: [5, 7], stress_max: [4, 5], attack: { modifier: [3, 5] } },
+    3: { difficulty: [17, 19], hp_thresholds: { major: [19, 22], severe: [35, 40] }, hp_max: [6, 8], stress_max: [5, 6], attack: { modifier: [5, 7] } },
+    4: { difficulty: [19, 21], hp_thresholds: { major: [30, 37], severe: [63, 70] }, hp_max: [7, 9], stress_max: [6, 8], attack: { modifier: [8, 10] } },
+  },
+  minion: {
+    1: { difficulty: [10, 12], hp_thresholds: { major: [0, 0], severe: [0, 0] }, hp_max: [1, 1], stress_max: [1, 1], attack: { modifier: [-2, 0], damage: [1, 3] } },
+    2: { difficulty: [12, 14], hp_thresholds: { major: [0, 0], severe: [0, 0] }, hp_max: [1, 1], stress_max: [1, 1], attack: { modifier: [-1, 1], damage: [2, 4] } },
+    3: { difficulty: [14, 16], hp_thresholds: { major: [0, 0], severe: [0, 0] }, hp_max: [1, 1], stress_max: [1, 2], attack: { modifier: [0, 2], damage: [5, 8] } },
+    4: { difficulty: [16, 18], hp_thresholds: { major: [0, 0], severe: [0, 0] }, hp_max: [1, 1], stress_max: [1, 2], attack: { modifier: [1, 3], damage: [9, 12] } },
+  },
+  ranged: {
+    1: { difficulty: [10, 12], hp_thresholds: { major: [3, 5], severe: [6, 9] }, hp_max: [3, 4], stress_max: [2, 3], attack: { modifier: [1, 2] } },
+    2: { difficulty: [13, 15], hp_thresholds: { major: [5, 8], severe: [13, 18] }, hp_max: [3, 5], stress_max: [2, 3], attack: { modifier: [2, 5] } },
+    3: { difficulty: [15, 17], hp_thresholds: { major: [12, 15], severe: [25, 30] }, hp_max: [4, 6], stress_max: [3, 4], attack: { modifier: [3, 4] } },
+    4: { difficulty: [17, 19], hp_thresholds: { major: [18, 25], severe: [30, 40] }, hp_max: [4, 6], stress_max: [4, 5], attack: { modifier: [4, 6] } },
+  },
+  skulk: {
+    1: { difficulty: [10, 12], hp_thresholds: { major: [5, 7], severe: [8, 12] }, hp_max: [3, 4], stress_max: [2, 3], attack: { modifier: [1, 2] } },
+    2: { difficulty: [12, 14], hp_thresholds: { major: [7, 9], severe: [16, 20] }, hp_max: [3, 5], stress_max: [3, 4], attack: { modifier: [2, 5] } },
+    3: { difficulty: [14, 16], hp_thresholds: { major: [15, 20], severe: [27, 32] }, hp_max: [4, 6], stress_max: [4, 5], attack: { modifier: [3, 7] } },
+    4: { difficulty: [16, 18], hp_thresholds: { major: [20, 30], severe: [35, 45] }, hp_max: [4, 6], stress_max: [4, 6], attack: { modifier: [4, 8] } },
+  },
+  social: {
+    1: { difficulty: [10, 12], hp_thresholds: { major: [3, 5], severe: [6, 9] }, hp_max: [3, 3], stress_max: [2, 3], attack: { modifier: [-4, -1] } },
+    2: { difficulty: [13, 15], hp_thresholds: { major: [5, 8], severe: [13, 18] }, hp_max: [3, 3], stress_max: [2, 3], attack: { modifier: [-3, 0] } },
+    3: { difficulty: [15, 17], hp_thresholds: { major: [15, 20], severe: [27, 32] }, hp_max: [4, 4], stress_max: [2, 3], attack: { modifier: [-2, 2] } },
+    4: { difficulty: [17, 19], hp_thresholds: { major: [25, 35], severe: [35, 50] }, hp_max: [4, 4], stress_max: [2, 3], attack: { modifier: [2, 6] } },
+  },
+  solo: {
+    1: { difficulty: [12, 14], hp_thresholds: { major: [7, 9], severe: [13, 15] }, hp_max: [8, 10], stress_max: [3, 4], attack: { modifier: [3, 3] } },
+    2: { difficulty: [14, 16], hp_thresholds: { major: [12, 14], severe: [23, 26] }, hp_max: [8, 10], stress_max: [4, 5], attack: { modifier: [3, 4] } },
+    3: { difficulty: [17, 19], hp_thresholds: { major: [19, 22], severe: [35, 40] }, hp_max: [10, 12], stress_max: [5, 6], attack: { modifier: [4, 7] } },
+    4: { difficulty: [19, 21], hp_thresholds: { major: [30, 37], severe: [63, 70] }, hp_max: [10, 12], stress_max: [6, 8], attack: { modifier: [7, 10] } },
+  },
+  standard: {
+    1: { difficulty: [11, 13], hp_thresholds: { major: [5, 8], severe: [8, 12] }, hp_max: [4, 5], stress_max: [3, 4], attack: { modifier: [0, 2] } },
+    2: { difficulty: [13, 15], hp_thresholds: { major: [8, 12], severe: [16, 20] }, hp_max: [5, 6], stress_max: [3, 4], attack: { modifier: [1, 3] } },
+    3: { difficulty: [15, 17], hp_thresholds: { major: [15, 20], severe: [27, 32] }, hp_max: [5, 6], stress_max: [4, 5], attack: { modifier: [2, 4] } },
+    4: { difficulty: [17, 19], hp_thresholds: { major: [25, 35], severe: [35, 55] }, hp_max: [5, 6], stress_max: [4, 5], attack: { modifier: [3, 5] } },
+  },
+  support: {
+    1: { difficulty: [12, 14], hp_thresholds: { major: [5, 8], severe: [9, 12] }, hp_max: [3, 4], stress_max: [4, 5], attack: { modifier: [0, 2] } },
+    2: { difficulty: [13, 15], hp_thresholds: { major: [8, 12], severe: [16, 20] }, hp_max: [3, 5], stress_max: [4, 6], attack: { modifier: [1, 3] } },
+    3: { difficulty: [15, 17], hp_thresholds: { major: [15, 20], severe: [28, 35] }, hp_max: [4, 6], stress_max: [5, 6], attack: { modifier: [2, 4] } },
+    4: { difficulty: [17, 19], hp_thresholds: { major: [20, 30], severe: [35, 45] }, hp_max: [4, 6], stress_max: [5, 6], attack: { modifier: [3, 5] } },
+  },
+};
+
+/** Returns the guide ranges for a role+tier, or null if unavailable. */
+export function getGuideRanges(role, tier) {
+  return ROLE_STAT_RANGES[role]?.[tier] ?? null;
+}
+
+/**
  * Per-tier scaling deltas by role.
  * Key is the TARGET tier (2, 3, or 4); values are the additive deltas when
  * stepping up from the previous tier. Subtract them when stepping down.
@@ -216,6 +290,79 @@ export const ROLE_STAT_SCALING = {
   },
   // Social has no scaling table in the guide.
 };
+
+/**
+ * Potential dice pools from the guide per role/tier.
+ * Used as shortcuts for the Damage field dropdown.
+ * Minions use flat damage values (no dice).
+ */
+export const ROLE_DICE_POOLS = {
+  bruiser: {
+    1: ['1d12+2', '1d10+4', '1d8+6'],
+    2: ['2d12+3', '2d10+2', '2d8+6'],
+    3: ['3d12+1', '3d10+4', '3d8+8'],
+    4: ['4d12+15', '4d10+10', '4d8+12'],
+  },
+  horde: {
+    1: ['1d10+2', '1d8+3', '1d6+4'],
+    2: ['2d10+2', '2d8+6', '2d6+3'],
+    3: ['3d10+2', '3d8+4', '3d6+6'],
+    4: ['4d10+4', '4d8+8', '4d6+10'],
+  },
+  leader: {
+    1: ['1d12+1', '1d10+3', '1d8+5'],
+    2: ['2d12+1', '2d10+3', '2d8+6'],
+    3: ['3d10+1', '3d8+8'],
+    4: ['4d12+6', '4d10+8', '4d8+10'],
+  },
+  minion: {
+    1: ['1', '2', '3'],
+    2: ['2', '3', '4'],
+    3: ['5', '6', '7', '8'],
+    4: ['9', '10', '11', '12'],
+  },
+  ranged: {
+    1: ['1d12+1', '1d10+3', '1d8+5'],
+    2: ['2d12+1', '2d10+3', '2d8+6'],
+    3: ['3d10+1', '3d8+8'],
+    4: ['4d12+6', '4d10+8', '4d8+10'],
+  },
+  skulk: {
+    1: ['1d8+3', '1d6+2', '1d4+4'],
+    2: ['2d8+3', '2d6+3', '2d4+6'],
+    3: ['3d8+4', '3d6+5', '3d4+10'],
+    4: ['4d12+10', '4d10+4', '4d6+10'],
+  },
+  social: {
+    1: ['1d6+1', '1d4+1'],
+    2: ['2d6+2', '1d4+3'],
+    3: ['3d6+3', '3d4+6'],
+    4: ['4d8+5', '4d6+4', '4d4+8'],
+  },
+  solo: {
+    1: ['1d20', '1d12+2', '1d10+4'],
+    2: ['2d20+3', '2d10+2', '2d8+6'],
+    3: ['3d20', '3d12+6', '3d10+8'],
+    4: ['4d12+15', '4d10+10', '4d8+12'],
+  },
+  standard: {
+    1: ['1d8+1', '1d6+2', '1d4+4'],
+    2: ['2d8+2', '2d6+3', '2d4+4'],
+    3: ['3d8+2', '3d6+3', '2d12+2'],
+    4: ['4d10+2', '4d8+4', '4d6+10'],
+  },
+  support: {
+    1: ['1d8', '1d6+2', '1d4+4'],
+    2: ['2d8+1', '2d6+2', '2d4+3'],
+    3: ['3d8', '3d6+3', '2d12+1'],
+    4: ['3d10+3', '4d8+4', '4d6+8'],
+  },
+};
+
+/** Returns the potential dice pool options for a role+tier, or empty array if unavailable. */
+export function getDicePoolOptions(role, tier) {
+  return ROLE_DICE_POOLS[role]?.[tier] ?? [];
+}
 
 /** Returns the baseline stat object for a role+tier, or null if unavailable. */
 export function getBaselineStats(role, tier) {
