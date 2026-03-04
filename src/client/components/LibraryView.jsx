@@ -1,12 +1,21 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ShieldAlert, Map, Play, BookOpen, Plus } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
 import { ImageImportModal } from './modals/ImageImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
-import { isOwnItem, needsHodEnrich, needsRedditParse } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem, parseRedditItem, blockRedditPost, saveMirrorItem } from '../lib/api.js';
+import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
+import { enrichItems, enrichSingleItem } from '../lib/api.js';
+
+const CARD_WIDTH = 360;
+const CARD_HEIGHT = 176;
+const GAP = 8;
+const COLUMN_WIDTH = CARD_WIDTH + GAP;
+const ROW_HEIGHT = CARD_HEIGHT + GAP;
+const PAGE_SIZE = 30;
+const LOAD_DEBOUNCE_MS = 180;
 
 const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters';
 
@@ -28,7 +37,6 @@ const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
 export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin, partySize = 4, setPartySize }) {
   const [showImageImport, setShowImageImport] = useState(false);
-  // modalState: null | { item: object, isNew: boolean }
   const [modalState, setModalState] = useState(null);
 
   const activeTab = route.tab || 'adversaries';
@@ -93,11 +101,13 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     if (found) {
       setModalState({ item: found, isNew: false });
       // Keep URL as /library/:tab/:id for back/forward/link/reload
+    } else if (modalState?.item?.id === itemId) {
+      // Item not in items list (e.g. slot evicted, or click before items synced) but we have it from openModal — keep modal
     } else {
       // Item not found (e.g. deleted) — clear URL to avoid stuck state
       navigate(`/library/${activeTab}`, { replace: true });
     }
-  }, [itemId, items, isPaginatedTab, search.loading, activeTab, navigate, action]);
+  }, [itemId, items, isPaginatedTab, search.loading, activeTab, navigate, action, modalState]);
 
   // Reset deep-link flag when tab or route changes.
   useEffect(() => {
@@ -118,27 +128,8 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       const enriched = await enrichSingleItem(activeTab, item);
       search.patchItems({ [enriched.id]: enriched });
       setModalState({ item: enriched, isNew: false, enriching: false });
-    } else if (isAdmin && needsRedditParse(item)) {
-      setModalState({ item, isNew: false, enriching: true });
-      handleParseReddit(item);
     } else {
       setModalState({ item, isNew: !item.id });
-    }
-  };
-
-  const handleParseReddit = async (item, { forceLlm } = {}) => {
-    const cleanItem = { ...item };
-    delete cleanItem._redditParseError;
-    const alreadyParsed = (item.features || []).length > 0;
-    setModalState({ item: cleanItem, isNew: false, enriching: true });
-    try {
-      const { item: parsed, _parseMethod } = await parseRedditItem(activeTab, item, { forceLlm, reparse: alreadyParsed });
-      const merged = { ...item, ...parsed, _parseMethod };
-      search.patchItems({ [merged.id]: merged });
-      setModalState({ item: merged, isNew: false, enriching: false });
-    } catch (err) {
-      console.error('[reddit] Parse failed:', err);
-      setModalState({ item: { ...item, _redditParseError: err.message }, isNew: false, enriching: false });
     }
   };
 
@@ -163,11 +154,6 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     // Keep modal open after save (auto-save pattern — no explicit "done" step).
   };
 
-  const handleSaveMirror = async (formData) => {
-    await saveMirrorItem(activeTab, formData);
-    if (isPaginatedTab) search.refresh();
-  };
-
   const handleDelete = async (collectionName, id) => {
     await deleteItem(collectionName, id);
     if (isPaginatedTab) search.refresh();
@@ -181,17 +167,6 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     // Open the clone immediately.
     setModalState({ item: cloned, isNew: false });
     navigate(`/library/${activeTab}/${cloned.id}`);
-  };
-
-  const handleBlockReddit = async (redditPostId) => {
-    if (!redditPostId) return;
-    try {
-      await blockRedditPost(redditPostId);
-      if (isPaginatedTab) search.refresh();
-      closeModal();
-    } catch (err) {
-      console.error('Failed to block Reddit post:', err);
-    }
   };
 
   /**
@@ -235,23 +210,6 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     ? items.filter(item => !search.filters.search || item.name?.toLowerCase().includes(search.filters.search.toLowerCase()))
     : items;
 
-  // Infinite scroll refs
-  const scrollContainerRef = useRef(null);
-  const sentinelRef = useRef(null);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    const container = scrollContainerRef.current;
-    if (!sentinel || !container || !search.hasMore || search.isLoadingMore) return;
-    const io = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) search.loadMore(); },
-      { root: container, rootMargin: '200px' }
-    );
-    io.observe(sentinel);
-    return () => io.disconnect();
-  }, [search.hasMore, search.isLoadingMore, search.loadMore]);
-
-  const showingCount = search.items.length + search.trimmedCount;
 
   // Resolve modal item: for own items use the latest from items list so edits are fresh.
   const resolvedModalItem = modalState && !modalState.isNew
@@ -259,7 +217,64 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     : modalState?.item;
 
   const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
-  const modalItemIsRedditParsed = resolvedModalItem?._source === 'reddit' && !needsRedditParse(resolvedModalItem);
+
+  const scrollRef = useRef(null);
+  const sentinelRef = useRef(null);
+  const [columnCount, setColumnCount] = useState(1);
+
+  const handleScroll = useCallback((e) => {
+    const el = e.target;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+    if (nearBottom && search.hasMore && !search.loading && !search.isLoadingMore) {
+      search.loadMore();
+    }
+  }, [search]);
+
+  // IntersectionObserver: load more when bottom sentinel is visible (works even when content doesn't overflow)
+  useEffect(() => {
+    if (!isPaginatedTab || !search.hasMore || search.loading || search.isLoadingMore) return;
+    const sentinel = sentinelRef.current;
+    const scrollEl = scrollRef.current;
+    if (!sentinel || !scrollEl) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && search.hasMore && !search.loading && !search.isLoadingMore) {
+          search.loadMore();
+        }
+      },
+      { root: scrollEl, rootMargin: '200px', threshold: 0 }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [isPaginatedTab, search.hasMore, search.loading, search.isLoadingMore, search.loadMore]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth - 48;
+      const cols = Math.max(1, Math.floor(w / COLUMN_WIDTH));
+      setColumnCount(cols);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isPaginatedTab, search.totalCount, search.loading]);
+
+  const totalCount = search.totalCount ?? 0;
+  const gridItems = isPaginatedTab ? filteredItems : filteredItems;
+  const rowCount = columnCount > 0 ? Math.ceil(gridItems.length / columnCount) : 0;
+
+  const rowVirtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 2,
+  });
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  const showingRangeText = isPaginatedTab && search.totalCount > 0
+    ? `Showing ${gridItems.length.toLocaleString()} of ${search.totalCount.toLocaleString()}`
+    : null;
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -298,16 +313,15 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           item={resolvedModalItem}
           collection={activeTab}
           data={data}
-          editable={modalState.isNew || modalItemIsOwn || (isAdmin && modalItemIsRedditParsed)}
+          editable={modalState.isNew || modalItemIsOwn}
           enriching={!!modalState.enriching}
-          onSave={isAdmin && modalItemIsRedditParsed ? handleSaveMirror : handleSave}
+          onSave={handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
-          onClone={!modalItemIsOwn && !modalItemIsRedditParsed ? () => handleClone(resolvedModalItem) : null}
-          onRetryParse={isAdmin && resolvedModalItem?._source === 'reddit' ? () => handleParseReddit(resolvedModalItem) : null}
-          onForceLlmParse={isAdmin && resolvedModalItem?._parseMethod === 'partial' ? () => handleParseReddit(resolvedModalItem, { forceLlm: true }) : null}
+          onClone={() => handleClone(resolvedModalItem)}
+          onAddToTable={() => addToTable(resolvedModalItem, activeTab)}
+          onEdit={modalItemIsOwn ? () => {} : null}
           isAdmin={isAdmin}
-          onBlockReddit={resolvedModalItem?._source === 'reddit' && isAdmin ? handleBlockReddit : null}
           onClose={closeModal}
           partySize={partySize}
           onPartySizeChange={setPartySize}
@@ -346,63 +360,101 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
                 filters={search.filters}
                 onFilterChange={search.setFilter}
                 variant="bar"
+                showSort
               />
               <div className="text-xs text-slate-500 -mt-3">
                 {search.loading && !search.isLoadingMore
                   ? <span className="animate-pulse">Loading {activeTab}…</span>
-                  : search.totalCount > 0
-                    ? `Showing ${showingCount.toLocaleString()} of ${search.totalCount.toLocaleString()}`
-                    : null
+                  : showingRangeText
                 }
               </div>
             </>
           )}
         </div>
 
-        {/* Scrollable grid */}
-        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-4">
-          <div className="flex flex-wrap gap-2">
-            {filteredItems.map(item => (
-              <ItemCard
-                key={`${item._source || 'own'}-${item.id}`}
-                item={item}
-                tab={activeTab}
-                data={data}
-                onView={(item) => openModal(item)}
-                onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
-                onDelete={isOwnItem(item) ? handleDelete : null}
-                onClone={() => handleClone(item)}
-                onAddToTable={addToTable}
-                partySize={partySize}
-                showSourceBadge={isPaginatedTab}
-              />
-            ))}
-            {filteredItems.length === 0 && (
-              <div className="col-span-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg w-full">
-                {search.loading && !search.isLoadingMore
-                  ? <span className="animate-pulse">Loading {activeTab}…</span>
-                  : items.length === 0
-                    ? `No ${activeTab} found. Click "New" to create one.`
-                    : 'No items match the selected filters.'
-                }
+        {/* Scrollable content: virtualized grid for adversaries/environments, flex-wrap for scenes/adventures */}
+        <div className="flex-1 min-h-0 overflow-hidden px-6 py-4 flex flex-col">
+          {isPaginatedTab && gridItems.length > 0 ? (
+            <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto" onScroll={handleScroll}>
+              <div
+                style={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  width: '100%',
+                  position: 'relative',
+                }}
+              >
+                {virtualItems.map(virtualRow => (
+                  <div
+                    key={virtualRow.key}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    className="flex gap-2"
+                  >
+                    {Array.from({ length: columnCount }, (_, columnIndex) => {
+                      const idx = virtualRow.index * columnCount + columnIndex;
+                      if (idx >= gridItems.length) return null;
+                      const item = gridItems[idx];
+                      return (
+                        <ItemCard
+                          key={`${item._source || 'own'}-${item.id}`}
+                          item={item}
+                          tab={activeTab}
+                          data={data}
+                          onView={(i) => openModal(i)}
+                          onEdit={isOwnItem(item) ? (i) => openModal(i) : null}
+                          onDelete={isOwnItem(item) ? handleDelete : null}
+                          onClone={() => handleClone(item)}
+                          onAddToTable={addToTable}
+                          partySize={partySize}
+                          showSourceBadge={isPaginatedTab}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-
-          {search.isLoadingMore && (
-            <div className="text-center text-slate-500 text-sm py-4 animate-pulse">
-              Loading more of the {search.totalCount.toLocaleString()} entries…
+              {search.hasMore && (
+                <div ref={sentinelRef} style={{ height: 1, minHeight: 1 }} aria-hidden="true" />
+              )}
             </div>
-          )}
-          {!search.hasMore && !search.loading && search.totalCount > 0 && (
-            <div className="text-center text-slate-500 text-sm py-4">
-              Loaded last of {search.totalCount.toLocaleString()} entries
+          ) : isPaginatedTab && search.totalCount === 0 && !search.loading ? (
+            <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
+              No items match the selected filters.
             </div>
-          )}
-          {search.hasMore && !search.isLoadingMore && (
-            <div style={{ height: 400 }} />
-          )}
-          <div ref={sentinelRef} className="h-1" />
+          ) : isPaginatedTab && search.loading ? (
+            <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
+              Loading {activeTab}…
+            </div>
+          ) : !isPaginatedTab ? (
+            <div className="flex flex-wrap gap-2 overflow-y-auto">
+              {filteredItems.map(item => (
+                <ItemCard
+                  key={`${item._source || 'own'}-${item.id}`}
+                  item={item}
+                  tab={activeTab}
+                  data={data}
+                  onView={(item) => openModal(item)}
+                  onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
+                  onDelete={isOwnItem(item) ? handleDelete : null}
+                  onClone={() => handleClone(item)}
+                  onAddToTable={addToTable}
+                  partySize={partySize}
+                  showSourceBadge={isPaginatedTab}
+                />
+              ))}
+              {filteredItems.length === 0 && (
+                <div className="w-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
+                  {items.length === 0 ? `No ${activeTab} found. Click "New" to create one.` : 'No items match the selected filters.'}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

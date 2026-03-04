@@ -28,7 +28,7 @@ let cachedNonce = null;
 let nonceFetchedAt = 0;
 const NONCE_TTL = 30 * 60 * 1000; // 30 minutes
 
-async function getVaultNonce() {
+export async function getVaultNonce() {
   if (cachedNonce && Date.now() - nonceFetchedAt < NONCE_TTL) {
     return cachedNonce;
   }

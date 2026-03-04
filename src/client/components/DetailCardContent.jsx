@@ -153,7 +153,7 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
  *   instances        – array of live instance objects; when provided, renders
  *                      interactive HP/stress/conditions rows
  *   updateFn         – (instanceId, updates) => void, required when instances provided
- *   showInstanceRemove – boolean; show X button per row (used by GM Table)
+ *   showInstanceRemove – boolean; show X button per row (used by Game Table)
  *   removeInstanceFn – (instanceId) => void, required when showInstanceRemove true
  */
 export function AdversaryCardContent({
@@ -169,6 +169,8 @@ export function AdversaryCardContent({
   updateCountdown,
   onRollAttack,
   damageBoost,
+  scaledMeta,
+  onScaledToggle,
 }) {
   // damageBoost: 'd4' | 'static' | null — when set, visually appends +1d4 or +2 to all damage.
   const dmgBoost = damageBoost || el._damageBoost || null;
@@ -176,10 +178,19 @@ export function AdversaryCardContent({
     <>
       <div className="text-sm text-slate-400 mb-2 capitalize flex items-center gap-2 flex-wrap">
         <span>Tier {el.tier || 0} {el.role}</span>
-        {el._scaledFromTier != null && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 border border-amber-700/50 text-amber-300">
-            Scaled from Tier {el._scaledFromTier}
-          </span>
+        {scaledMeta && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onScaledToggle?.(); }}
+            className="inline-flex text-[10px] rounded border border-amber-700/50 overflow-hidden cursor-pointer"
+          >
+            <span className={`px-1.5 py-0.5 transition-colors ${scaledMeta.showScaled ? 'bg-amber-800/60 text-amber-200 border-r border-amber-700/50' : 'bg-amber-900/20 text-amber-500/80'}`}>
+              Scaled from Tier {scaledMeta.fromTier}
+            </span>
+            <span className={`px-1.5 py-0.5 transition-colors ${!scaledMeta.showScaled ? 'bg-amber-800/60 text-amber-200 border-l border-amber-700/50' : 'bg-amber-900/20 text-amber-500/80'}`}>
+              Original
+            </span>
+          </button>
         )}
       </div>
 

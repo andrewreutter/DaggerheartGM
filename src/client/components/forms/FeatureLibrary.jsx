@@ -35,7 +35,7 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
     debounceMs: 400,
     infinite: true,
     persistKey: 'dh_featureLibraryFilters',
-    defaultFilters: { include: 'srd' },
+    defaultFilters: { includes: ['srd'] },
   });
 
   const listRef = useRef(null);

@@ -25,7 +25,7 @@ export function ExperienceLibrary({ tier, subtype, currentExperiences, onAdd }) 
     debounceMs: 400,
     infinite: true,
     persistKey: 'dh_experienceLibraryFilters',
-    defaultFilters: { include: 'srd' },
+    defaultFilters: { includes: ['srd'] },
   });
 
   const listRef = useRef(null);

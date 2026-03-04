@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Pencil, X } from 'lucide-react';
 import { generateId } from '../lib/helpers.js';
 import { resolveItems } from '../lib/api.js';
+import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
@@ -146,6 +147,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [editState, setEditState] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  const [scaledToggleState, setScaledToggleState] = useState({});
   const resolvedIdsRef = useRef(new Set());
   const resolvedDataRef = useRef(resolvedData);
   resolvedDataRef.current = resolvedData;
@@ -305,6 +307,9 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
           const count = instances.length;
           const advCardKey = el.id;
           const canEditEl = showEditBtn;
+          const showScaled = scaledToggleState[el.id] ?? true;
+          const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
+          const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
 
           return (
             <div key={advCardKey} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden relative">
@@ -328,7 +333,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
               <div className="p-4">
                 <div className={`flex items-center gap-2 mb-0.5 ${el.imageUrl ? 'pr-20' : 'pr-6'}`}>
                   <h4 className="text-lg font-bold text-white">
-                    {el.name}
+                    {displayEl.name}
                     {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
                   </h4>
                 </div>
@@ -336,7 +341,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
                   <span className="text-[10px] text-amber-400 bg-amber-900/30 border border-amber-700/50 px-1.5 py-0.5 rounded mb-1 inline-block">local copy</span>
                 )}
                 <AdversaryCardContent
-                  element={el}
+                  element={displayEl}
                   hoveredFeature={hoveredFeature}
                   cardKey={advCardKey}
                   count={count}
@@ -344,6 +349,8 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
                   updateFn={updateElement}
                   showInstanceRemove={false}
                   damageBoost={damageBoost}
+                  scaledMeta={scaledMeta}
+                  onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
                 />
               </div>
             </div>

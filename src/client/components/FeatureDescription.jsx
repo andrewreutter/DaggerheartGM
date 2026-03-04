@@ -1,14 +1,14 @@
 /**
  * Renders a feature description with:
  *  1. Markdown rendering (bold, italic, lists, etc.)
- *  2. Text matching GM trigger patterns (spend…fear, mark…fear, mark…stress) bolded.
+ *  2. GM trigger patterns (spend…fear, mark…fear, mark…stress) and dice patterns (XdY+Z) bolded.
  *  3. Trailing questions moved to a new line and italicized.
  *  4. Optional inline countdown widgets placed right after each "Countdown (N)" occurrence.
  *
  * For the common (no-countdown) case, description is rendered as markdown HTML with
- * fear-trigger bolding and question italicizing applied as post-processing steps.
+ * trigger/dice bolding and question italicizing applied as post-processing steps.
  *
- * For the countdown path (GM Table interactive mode), the plain-text React approach is
+ * For the countdown path (Game Table interactive mode), the plain-text React approach is
  * retained because countdown widgets require inline React components between text segments.
  */
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
@@ -58,19 +58,20 @@ function splitAtTrailingQuestions(text) {
 }
 
 // ---------------------------------------------------------------------------
-// Fear trigger bolding
+// Fear trigger and dice pattern bolding
 // ---------------------------------------------------------------------------
 
-const FEAR_TRIGGER_RE = /(\bspend\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bstress\b)/gi;
+/** Matches fear triggers (spend/mark fear/stress) and dice patterns (e.g. 2d6+3, 1d4). */
+const BOLD_PATTERNS_RE = /(\bspend\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bstress\b|\d+d\d+(?:[+-]\d+)?)/gi;
 
 /**
- * Apply fear-bolding to an HTML string without disturbing existing tags.
+ * Apply fear-trigger and dice-pattern bolding to an HTML string without disturbing existing tags.
  * Iterates through text nodes (portions between HTML tags) and wraps matches.
  */
-function applyFearBoldingToHtml(html) {
+function applyBoldingToHtml(html) {
   return html.replace(/(<[^>]+>)|([^<]+)/g, (match, tag, text) => {
     if (tag) return tag;
-    return text.replace(FEAR_TRIGGER_RE, '<strong class="text-slate-200">$1</strong>');
+    return text.replace(BOLD_PATTERNS_RE, '<strong class="text-slate-200">$1</strong>');
   });
 }
 
@@ -100,14 +101,14 @@ function applyQuestionItalicsToHtml(html) {
 }
 
 // ---------------------------------------------------------------------------
-// React-side fear bolding (used by countdown path)
+// React-side bolding (used by countdown path)
 // ---------------------------------------------------------------------------
 
-function applyFearBolding(text) {
+function applyBolding(text) {
   if (!text) return text;
   const parts = [];
   let lastIdx = 0;
-  const re = new RegExp(FEAR_TRIGGER_RE.source, 'gi');
+  const re = new RegExp(BOLD_PATTERNS_RE.source, 'gi');
   let match;
   while ((match = re.exec(text)) !== null) {
     if (match.index > lastIdx) parts.push(text.slice(lastIdx, match.index));
@@ -161,7 +162,7 @@ export function FeatureDescription({ description: rawDescription, countdownValue
 
   // Common path: no countdown widgets — render markdown with HTML post-processing
   if (allCds.length === 0) {
-    let html = applyQuestionItalicsToHtml(applyFearBoldingToHtml(renderMarkdown(description)));
+    let html = applyQuestionItalicsToHtml(applyBoldingToHtml(renderMarkdown(description)));
     // Strip single wrapping <p> so description flows inline after feature title (no unwanted newline)
     const singleP = html.trim().match(/^<p>([\s\S]*?)<\/p>$/);
     if (singleP && !singleP[1].includes('<p')) html = singleP[1];
@@ -200,10 +201,10 @@ export function FeatureDescription({ description: rawDescription, countdownValue
           );
         }
         const text = seg.isTail ? tailBody : seg.text;
-        return <span key={seg.key}>{applyFearBolding(text || '')}</span>;
+        return <span key={seg.key}>{applyBolding(text || '')}</span>;
       })}
       {questions && (
-        <><br /><em>{applyFearBolding(questions)}</em></>
+        <><br /><em>{applyBolding(questions)}</em></>
       )}
     </>
   );

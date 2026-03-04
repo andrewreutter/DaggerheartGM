@@ -1,0 +1,2 @@
+ALTER TABLE items DROP COLUMN IF EXISTS clone_count;
+ALTER TABLE items DROP COLUMN IF EXISTS play_count;
