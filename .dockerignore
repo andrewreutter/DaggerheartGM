@@ -1,0 +1,10 @@
+.env
+.git
+.gitmodules
+node_modules
+data/ocr-engine-stats.json
+daggerheart-srd/.git
+*.md
+.cursor/
+test/
+docs/
