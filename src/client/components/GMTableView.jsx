@@ -291,9 +291,32 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods, ensureScenesLoaded, ensureAdventuresLoaded }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
+
+  // Load scenes/adventures when picker opens so it can display the list.
+  const [pickerLoading, setPickerLoading] = useState(false);
+  useEffect(() => {
+    if (modalOpen === 'scenes' && ensureScenesLoaded) {
+      if ((data.scenes || []).length > 0) {
+        setPickerLoading(false);
+        return;
+      }
+      setPickerLoading(true);
+      ensureScenesLoaded().finally(() => setPickerLoading(false));
+    } else if (modalOpen === 'adventures' && ensureAdventuresLoaded) {
+      if ((data.adventures || []).length > 0) {
+        setPickerLoading(false);
+        return;
+      }
+      setPickerLoading(true);
+      ensureAdventuresLoaded().finally(() => setPickerLoading(false));
+    } else {
+      setPickerLoading(false);
+    }
+  }, [modalOpen, ensureScenesLoaded, ensureAdventuresLoaded, data.scenes?.length, data.adventures?.length]);
+
   useEffect(() => {
     if (!lightboxUrl) return;
     const handler = (e) => { if (e.key === 'Escape') setLightboxUrl(null); };
@@ -472,9 +495,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const displayName = `${feature.sourceName} ${feature.name}`;
     const key = `${feature.cardKey}|${feature.featureKey}`;
     const { id: pendingId, cleanup } = addPendingRoll(displayName, rollText);
-    // #region agent log
-    console.log('[dbg handleRoll] pending roll added', { pendingId, displayName, rollText });
-    // #endregion
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
       setRolledKey(key);
@@ -1115,6 +1135,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         onSelect={(item) => {
           addToTable(item, modalOpen);
         }}
+        isLoading={['scenes', 'adventures'].includes(modalOpen) ? pickerLoading : undefined}
       />
     )}
 
@@ -1143,6 +1164,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         collection={editState.collection}
         data={data}
         editable={true}
+        saveImage={saveImage}
         onSave={async (editedData) => {
           const itemWithId = { ...editedData, id: editState.baseElement.id };
           if (editState.mode === 'copy') {
@@ -1156,6 +1178,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           }
         }}
         onClose={closeEditModal}
+        partySize={partySize}
+        onPartySizeChange={setPartySize}
+        onMergeAdversary={onMergeAdversary}
       />
     )}
 

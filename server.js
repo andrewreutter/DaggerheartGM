@@ -1,11 +1,12 @@
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { gunzipSync } from 'zlib';
 import { watchFile } from 'fs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -66,7 +67,25 @@ function requireAdmin(req, res, next) {
 }
 
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
+// JSON body parser with gzip support (reduces upload time for large payloads)
+const JSON_LIMIT = 10 * 1024 * 1024;
+app.use((req, res, next) => {
+  const ct = req.headers['content-type'];
+  if (!ct?.includes('application/json')) return next();
+  const chunks = [];
+  let len = 0;
+  req.on('data', (c) => { len += c.length; if (len <= JSON_LIMIT) chunks.push(c); });
+  req.on('end', () => {
+    if (len > JSON_LIMIT) return next(new Error('Payload too large'));
+    try {
+      let buf = Buffer.concat(chunks);
+      if (req.headers['content-encoding'] === 'gzip') buf = gunzipSync(buf);
+      req.body = JSON.parse(buf.toString());
+      next();
+    } catch (e) { next(e); }
+  });
+  req.on('error', next);
+});
 
 // --- Config route (no auth required) ---
 app.get('/api/config', (req, res) => {
@@ -687,6 +706,98 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
   }
 });
 
+/**
+ * Deep merge incoming data into current, preserving imageUrl and _additionalImages
+ * when the incoming payload omits them (client strips images from normal PUTs).
+ */
+function deepMergePreservingImages(current, incoming) {
+  if (current == null) return incoming;
+  if (incoming == null) return current;
+  if (typeof incoming !== 'object' || Array.isArray(incoming)) return incoming;
+
+  const result = { ...current };
+  for (const key of Object.keys(incoming)) {
+    if (key === 'imageUrl' || key === '_additionalImages') {
+      const val = incoming[key];
+      if (val !== undefined && val !== null && val !== '') {
+        result[key] = val;
+      }
+      // else keep current
+    } else if (key === 'adversaries' || key === 'environments') {
+      const curArr = current[key] || [];
+      const inArr = incoming[key] || [];
+      result[key] = inArr.map((inEntry, idx) => {
+        const curEntry = curArr[idx];
+        if (inEntry && typeof inEntry === 'object' && inEntry.data) {
+          return { ...inEntry, data: deepMergePreservingImages(curEntry?.data, inEntry.data) };
+        }
+        return inEntry;
+      });
+    } else if (key === 'elements') {
+      const curArr = current[key] || [];
+      const inArr = incoming[key] || [];
+      result[key] = inArr.map((inEntry, idx) => {
+        if (inEntry && typeof inEntry === 'object') {
+          return deepMergePreservingImages(curArr[idx], inEntry);
+        }
+        return inEntry;
+      });
+    } else if (typeof incoming[key] === 'object' && incoming[key] !== null && !Array.isArray(incoming[key])) {
+      result[key] = deepMergePreservingImages(current[key], incoming[key]);
+    } else {
+      result[key] = incoming[key];
+    }
+  }
+  return result;
+}
+
+app.put('/api/data/:collection/:id/image', requireAuth, async (req, res) => {
+  const { collection, id } = req.params;
+  if (!COLLECTIONS.includes(collection)) {
+    return res.status(400).json({ error: 'Unknown collection' });
+  }
+  const { imageUrl, _additionalImages, path: jsonPath } = req.body || {};
+  if (imageUrl === undefined && _additionalImages === undefined) {
+    return res.status(400).json({ error: 'imageUrl or _additionalImages required' });
+  }
+  try {
+    const current = await getItem(APP_ID, req.uid, collection, id);
+    if (!current) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+    const pathParts = (jsonPath || '').split('.').filter(Boolean);
+    const imageUpdates = {};
+    if (imageUrl !== undefined) imageUpdates.imageUrl = imageUrl;
+    if (_additionalImages !== undefined) imageUpdates._additionalImages = _additionalImages;
+
+    let merged;
+    if (pathParts.length === 0) {
+      merged = { ...current, ...imageUpdates };
+    } else {
+      merged = JSON.parse(JSON.stringify(current));
+      let ptr = merged;
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        const part = pathParts[i];
+        const key = /^\d+$/.test(part) ? parseInt(part, 10) : part;
+        ptr = ptr?.[key];
+        if (!ptr) break;
+      }
+      const lastPart = pathParts[pathParts.length - 1];
+      const lastKey = /^\d+$/.test(lastPart) ? parseInt(lastPart, 10) : lastPart;
+      if (ptr && typeof ptr === 'object') {
+        ptr[lastKey] = { ...(ptr[lastKey] || {}), ...imageUpdates };
+      }
+    }
+
+    const { id: _id, is_public, _source, _owner, ...rest } = merged;
+    await upsertItem(APP_ID, req.uid, collection, id, rest, Boolean(merged.is_public));
+    res.json({ id, ...rest, is_public: Boolean(merged.is_public), _source: 'own' });
+  } catch (err) {
+    console.error(`PUT /api/data/${collection}/${id}/image error:`, err);
+    res.status(500).json({ error: 'Failed to save image' });
+  }
+});
+
 app.post('/api/data/:collection/mirror', requireAuth, async (req, res) => {
   const { collection } = req.params;
   if (!CLONE_COLLECTIONS.includes(collection)) {
@@ -716,10 +827,18 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid item body' });
   }
   const id = item.id || crypto.randomUUID();
-  const { id: _id, is_public, _source, _owner, ...rest } = item;
+  const { id: _id, is_public, _source, _owner, ...incoming } = item;
   try {
-    await upsertItem(APP_ID, req.uid, collection, id, { ...rest }, Boolean(is_public));
-    res.json({ id, ...rest, is_public: Boolean(is_public), _source: 'own' });
+    let dataToSave = incoming;
+    if (id) {
+      const current = await getItem(APP_ID, req.uid, collection, id);
+      if (current) {
+        const { id: _cid, is_public: _cp, _source: _cs, _owner: _co, ...currentData } = current;
+        dataToSave = deepMergePreservingImages(currentData, incoming);
+      }
+    }
+    await upsertItem(APP_ID, req.uid, collection, id, dataToSave, Boolean(is_public));
+    res.json({ id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' });
   } catch (err) {
     console.error(`PUT /api/data/${collection} error:`, err);
     res.status(500).json({ error: 'Failed to save item' });

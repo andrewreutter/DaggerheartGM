@@ -67,7 +67,7 @@ function buildSceneForBP(fd, ownedAdvs, ownedEnvs, isControlled, pickerValues) {
  *
  * partySize / onPartySizeChange — global party size setting for BP budget calculation.
  */
-export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 4, onPartySizeChange }) {
+export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 4, onPartySizeChange, onImageSaved, onMergeAdversary }) {
   const isControlled = value !== undefined;
 
   // --- Uncontrolled state (legacy path) ---
@@ -175,12 +175,13 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
       <FormRow label="Scene Name"><input type="text" value={fd.name} onChange={e => updateField('name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
       <FormRow label={<>Description<MarkdownHelpTooltip /></>}><textarea value={fd.description} onChange={e => updateField('description', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
       <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={fd.imageUrl} onChange={e => updateField('imageUrl', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-      <ImageGenerator formData={fd} collection="scenes" onImageGenerated={url => updateField('imageUrl', url)} />
+      <ImageGenerator formData={fd} collection="scenes" onImageGenerated={url => { updateField('imageUrl', url); onImageSaved?.(url); }} />
       <CollectionRefPicker
         collections={SCENE_COLLECTIONS}
         values={pickerValues}
         onChange={handlePickerChange}
         data={data}
+        onAdversaryAdded={onMergeAdversary}
       />
       {cycleError && (
         <div className="text-red-400 text-sm bg-red-900/20 border border-red-800 rounded p-3">{cycleError}</div>

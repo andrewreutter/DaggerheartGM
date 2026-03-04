@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2 } from 'lucide-react';
 
-import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe } from './lib/api.js';
+import { auth, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
@@ -92,6 +92,10 @@ function App() {
     setUserMenuOpen(false);
     setIsAdmin(false);
     tableStateReadyRef.current = false;
+    scenesLoadedRef.current = false;
+    adventuresLoadedRef.current = false;
+    scenesCacheRef.current = [];
+    adventuresCacheRef.current = [];
     setActiveElements([]);
     apiDeleteItem('table_state', 'current').catch(() => {});
     try {
@@ -117,6 +121,10 @@ function App() {
       }
     }
     setData({ adversaries: [], environments: [], scenes: [], adventures: [] });
+    scenesLoadedRef.current = false;
+    adventuresLoadedRef.current = false;
+    scenesCacheRef.current = [];
+    adventuresCacheRef.current = [];
     setActiveElements([]);
     tableStateReadyRef.current = false;
     apiDeleteItem('table_state', 'current').catch(() => {});
@@ -173,65 +181,106 @@ function App() {
 
   const userRef = useRef(null);
   const routeRef = useRef(null);
+  const scenesLoadedRef = useRef(false);
+  const adventuresLoadedRef = useRef(false);
+  const scenesLoadPromiseRef = useRef(null);
+  const adventuresLoadPromiseRef = useRef(null);
+  const scenesCacheRef = useRef([]);
+  const adventuresCacheRef = useRef([]);
 
-  // Load all non-paginated collections (scenes, adventures) — no filter/search.
-  // After loading, batch-resolve any adversary/environment IDs referenced by scenes
-  // so that ItemCard chips can display names without waiting for the user to browse
-  // those library tabs.
-  const fetchAllCollections = async () => {
-    const results = await Promise.all(NON_PAGINATED_COLLECTIONS.map(async (col) => {
-      const result = await loadCollection(col, { limit: 1000 });
-      return [col, result.items];
-    }));
-    const loaded = Object.fromEntries(results);
-
-    const advIds = new Set();
-    const envIds = new Set();
-    for (const scene of (loaded.scenes || [])) {
-      for (const envEntry of (scene.environments || [])) {
-        if (typeof envEntry === 'string') envIds.add(envEntry);
-      }
-      for (const ref of (scene.adversaries || [])) {
-        if (ref != null && !ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
-      }
-    }
-
-    let resolvedAdvs = [];
-    let resolvedEnvs = [];
-    if (advIds.size || envIds.size) {
+  // Load scenes on demand; resolve adversary/env IDs for scene chips.
+  // Returns the scenes array (from cache if already loaded, or freshly loaded).
+  const ensureScenesLoaded = useCallback(async () => {
+    if (scenesLoadedRef.current) return scenesCacheRef.current;
+    if (scenesLoadPromiseRef.current) return scenesLoadPromiseRef.current;
+    const promise = (async () => {
       try {
-        const resolved = await resolveItems({
-          ...(advIds.size ? { adversaries: [...advIds] } : {}),
-          ...(envIds.size ? { environments: [...envIds] } : {}),
+        const result = await loadCollection('scenes', { limit: 1000 });
+        const scenes = result.items || [];
+        const advIds = new Set();
+        const envIds = new Set();
+        for (const scene of scenes) {
+          for (const envEntry of (scene.environments || [])) {
+            if (typeof envEntry === 'string') envIds.add(envEntry);
+          }
+          for (const ref of (scene.adversaries || [])) {
+            if (ref != null && !ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
+          }
+        }
+        let resolvedAdvs = [];
+        let resolvedEnvs = [];
+        if (advIds.size || envIds.size) {
+          try {
+            const resolved = await resolveItems({
+              ...(advIds.size ? { adversaries: [...advIds] } : {}),
+              ...(envIds.size ? { environments: [...envIds] } : {}),
+            });
+            resolvedAdvs = resolved.adversaries || [];
+            resolvedEnvs = resolved.environments || [];
+          } catch { /* best-effort */ }
+        }
+        if (!userRef.current) return [];
+        const resolvedAdvIds = new Set(resolvedAdvs.map(a => a.id));
+        const resolvedEnvIds = new Set(resolvedEnvs.map(e => e.id));
+        setData(prev => {
+          if ((prev.scenes || []).length > 0) return prev;
+          return {
+            ...prev,
+            scenes,
+            adversaries: [...resolvedAdvs, ...(prev.adversaries || []).filter(a => !resolvedAdvIds.has(a.id))],
+            environments: [...resolvedEnvs, ...(prev.environments || []).filter(e => !resolvedEnvIds.has(e.id))],
+          };
         });
-        resolvedAdvs = resolved.adversaries || [];
-        resolvedEnvs = resolved.environments || [];
-      } catch { /* best-effort */ }
-    }
+        scenesLoadedRef.current = true;
+        scenesCacheRef.current = scenes;
+        return scenes;
+      } finally {
+        scenesLoadPromiseRef.current = null;
+      }
+    })();
+    scenesLoadPromiseRef.current = promise;
+    return promise;
+  }, []);
 
-    setData(prev => ({
-      ...prev,
-      ...loaded,
-      adversaries: resolvedAdvs,
-      environments: resolvedEnvs,
-    }));
-  };
+  // Load adventures on demand. Returns the adventures array.
+  const ensureAdventuresLoaded = useCallback(async () => {
+    if (adventuresLoadedRef.current) return adventuresCacheRef.current;
+    if (adventuresLoadPromiseRef.current) return adventuresLoadPromiseRef.current;
+    const promise = (async () => {
+      try {
+        const result = await loadCollection('adventures', { limit: 1000 });
+        const adventures = result.items || [];
+        if (!userRef.current) return [];
+        setData(prev => {
+          if ((prev.adventures || []).length > 0) return prev;
+          return { ...prev, adventures };
+        });
+        adventuresLoadedRef.current = true;
+        adventuresCacheRef.current = adventures;
+        return adventures;
+      } finally {
+        adventuresLoadPromiseRef.current = null;
+      }
+    })();
+    adventuresLoadPromiseRef.current = promise;
+    return promise;
+  }, []);
 
   useEffect(() => {
     if (!auth) { setLoading(false); return; }
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       userRef.current = currentUser;
       setUser(currentUser);
+      setLoading(false);
       if (currentUser) {
-        try {
-          // Load table_state, non-paginated collections, and admin status in parallel
-          const [tableStateItems] = await Promise.all([
-            loadTableState(),
-            fetchAllCollections(),
-            fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {}),
-          ]);
-          const tableState = tableStateItems[0];
+        if (window.location.pathname === '/' || window.location.pathname === '') {
+          navigate('/library/adversaries', { replace: true });
+        }
+        // Fire table state and admin fetch in background; do not block render.
+        loadTableState().then((items) => {
+          if (!userRef.current) return;
+          const tableState = items?.[0];
           setActiveElements(tableState?.elements || []);
           setWhiteboardEmbed(tableState?.whiteboardEmbed || '');
           setRolzRoomName(tableState?.rolzRoomName || '');
@@ -241,18 +290,12 @@ function App() {
           if (tableState?.partySize != null) setPartySize(tableState.partySize);
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           tableStateReadyRef.current = true;
-
-        } catch (err) {
-          console.error('Failed to load data:', err);
-        }
-        if (window.location.pathname === '/' || window.location.pathname === '') {
-          navigate('/library/adversaries', { replace: true });
-        }
+        }).catch(err => console.error('Failed to load table state:', err));
+        fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
       }
-      setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [navigate]);
 
   // Keep routeRef current
   useEffect(() => { routeRef.current = route; }, [route]);
@@ -268,10 +311,37 @@ function App() {
     });
   };
 
+  /** Merge an adversary into app data so BP calculation can resolve it (e.g. when added via scene picker). */
+  const mergeAdversaryIntoData = useCallback((adv) => {
+    if (!adv?.id) return;
+    setData(prev => {
+      const list = prev.adversaries || [];
+      const existing = list.findIndex(a => a.id === adv.id);
+      const updated = existing >= 0 ? list.map(a => (a.id === adv.id ? adv : a)) : [...list, adv];
+      return { ...prev, adversaries: updated };
+    });
+  }, []);
+
+  const saveGenerationRef = useRef(0);
+  const lastSaveGenRef = useRef({});
+
+  const saveImage = async (collectionName, id, imageUrl, opts) => {
+    try {
+      return await apiSaveImage(collectionName, id, imageUrl, opts);
+    } catch (err) {
+      console.error(`saveImage(${collectionName}, ${id}) failed:`, err);
+    }
+  };
+
   const saveItem = async (collectionName, item) => {
+    const key = `${collectionName}:${item?.id ?? 'new'}`;
+    const gen = ++saveGenerationRef.current;
+    lastSaveGenRef.current[key] = gen;
     try {
       const saved = await apiSaveItem(collectionName, item);
       if (!saved) return;
+      const savedKey = `${collectionName}:${saved.id}`;
+      if (item?.id != null && lastSaveGenRef.current[savedKey] !== gen) return saved;
       // Optimistically update non-paginated collections in local data state.
       // Paginated collections (adversaries/environments) are refreshed by LibraryView's hook.
       if (NON_PAGINATED_COLLECTIONS.includes(collectionName)) {
@@ -420,7 +490,8 @@ function App() {
         newElements.push({ ...tableItem, instanceId: generateId(), elementType: 'environment' });
       }
     } else if (collectionName === 'scenes') {
-      const scenesById = Object.fromEntries(data.scenes.map(s => [s.id, s]));
+      const scenes = await ensureScenesLoaded();
+      const scenesById = Object.fromEntries(scenes.map(s => [s.id, s]));
       const { adversaryIds, environmentIds } = collectSceneIds(item, scenesById);
       const resolved = (adversaryIds.length || environmentIds.length)
         ? await resolveItems({ adversaries: adversaryIds, environments: environmentIds }, { adopt: true })
@@ -429,7 +500,9 @@ function App() {
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
       newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
     } else if (collectionName === 'adventures') {
-      const scenesById = Object.fromEntries(data.scenes.map(s => [s.id, s]));
+      const scenes = await ensureScenesLoaded();
+      await ensureAdventuresLoaded();
+      const scenesById = Object.fromEntries(scenes.map(s => [s.id, s]));
       const allAdvIds = new Set();
       const allEnvIds = new Set();
       (item.scenes || []).forEach(sceneId => {
@@ -584,15 +657,19 @@ function App() {
             key={libraryKey}
             data={data}
             saveItem={saveItem}
+            saveImage={saveImage}
             deleteItem={deleteItem}
             cloneItem={cloneItem}
             addToTable={addToTable}
             route={route}
             navigate={navigate}
             onItemsChange={syncDataToApp}
+            onMergeAdversary={mergeAdversaryIntoData}
             isAdmin={isAdmin}
             partySize={partySize}
             setPartySize={setPartySize}
+            ensureScenesLoaded={ensureScenesLoaded}
+            ensureAdventuresLoaded={ensureAdventuresLoaded}
           />
         ) : (
           <GMTableView
@@ -602,7 +679,11 @@ function App() {
             updateActiveElementsBaseData={updateActiveElementsBaseData}
             data={data}
             saveItem={saveItem}
+            saveImage={saveImage}
             addToTable={addToTable}
+            onMergeAdversary={mergeAdversaryIntoData}
+            ensureScenesLoaded={ensureScenesLoaded}
+            ensureAdventuresLoaded={ensureAdventuresLoaded}
             whiteboardEmbed={whiteboardEmbed}
             setWhiteboardEmbed={setWhiteboardEmbed}
             rolzRoomName={rolzRoomName}

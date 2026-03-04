@@ -295,9 +295,6 @@ export function RolzRoomLog({ roomName, pendingRolls = [] }) {
   // Match newly-arrived Rolz items against unresolved pending rolls by displayName.
   // Each dicemsg can only resolve one pending roll (handles same-name duplicates in flight).
   useEffect(() => {
-    // #region agent log
-    console.log('[dbg matchEffect]', JSON.stringify({ itemCount: items.length, pendingCount: pendingRolls.length, resolvedCount: resolvedIds.size, allTypes: items.map(i=>i.type), newest3: items.slice(0,3).map(i=>({ type:i.type, key:i.key, text:i.text?.slice?.(0,80), input:i.input, pre0:i.items?.[0]?.pre, input0:i.items?.[0]?.input, itemsLen:i.items?.length })) }));
-    // #endregion
     if (!items.length || !pendingRolls.length) return;
     const unresolved = pendingRolls.filter(p => !resolvedIds.has(p.id));
     if (!unresolved.length) return;
@@ -308,15 +305,9 @@ export function RolzRoomLog({ roomName, pendingRolls = [] }) {
       for (const item of recentDice) {
         const itemKey = item.key || item.time;
         if (consumedItemKeys.has(itemKey)) continue;
-        // #region agent log
-        console.log('[dbg matchEffect] comparing', { pendingDisplayName: pending.displayName, pre0: item.items?.[0]?.pre, text: item.text, input0: item.items?.[0]?.input, itemsLen: item.items?.length });
-        // #endregion
         if (matchesPendingRoll(item, pending.displayName)) {
           newlyResolved.add(pending.id);
           consumedItemKeys.add(itemKey);
-          // #region agent log
-          console.log('[dbg matchEffect] MATCHED', { pendingId: pending.id, displayName: pending.displayName });
-          // #endregion
           break;
         }
       }

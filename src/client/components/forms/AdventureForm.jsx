@@ -14,7 +14,7 @@ const ADVENTURE_COLLECTIONS = [
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function AdventureForm({ initial, value, onChange, data, onSave, onCancel }) {
+export function AdventureForm({ initial, value, onChange, data, onSave, onCancel, onImageSaved, onMergeAdversary }) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
@@ -46,12 +46,13 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
     <div className="space-y-4">
       <FormRow label="Adventure Name"><input type="text" value={formData.name} onChange={e => updateField('name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full text-lg font-bold" /></FormRow>
       <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => updateField('imageUrl', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-      <ImageGenerator formData={formData} collection="adventures" onImageGenerated={url => updateField('imageUrl', url)} />
+      <ImageGenerator formData={formData} collection="adventures" onImageGenerated={url => { updateField('imageUrl', url); onImageSaved?.(url); }} />
       <CollectionRefPicker
         collections={ADVENTURE_COLLECTIONS}
         values={formData}
         onChange={handleRefChange}
         data={data}
+        onAdversaryAdded={onMergeAdversary}
       />
 
       {!isControlled && (

@@ -14,11 +14,19 @@ import { resolveItems, ensureMirror } from '../../lib/api.js';
  *   onChange    — (key, newValues) => void
  *   data        — app-level data object (used by ItemPickerModal for non-paginated collections)
  */
-export function CollectionRefPicker({ collections, values, onChange, data }) {
+export function CollectionRefPicker({ collections, values, onChange, data, onAdversaryAdded }) {
   const [modalOpen, setModalOpen] = useState(null);
-  const [nameMap, setNameMap] = useState({});
+  const [itemMap, setItemMap] = useState({});
 
-  // On mount, resolve names for all pre-existing referenced IDs.
+  const getSubtype = (collection, item) => {
+    if (!item) return null;
+    if (collection === 'adversaries' && item.role) return item.role;
+    if (collection === 'environments' && item.type) return item.type;
+    if (collection === 'scenes' && item.tier != null) return `Tier ${item.tier}`;
+    return null;
+  };
+
+  // On mount, resolve names and subtypes for all pre-existing referenced IDs.
   useEffect(() => {
     const toResolve = {};
     for (const { key, isCountable } of collections) {
@@ -31,39 +39,46 @@ export function CollectionRefPicker({ collections, values, onChange, data }) {
     resolveItems(toResolve)
       .then(resolved => {
         const map = {};
-        for (const items of Object.values(resolved)) {
+        for (const [coll, items] of Object.entries(resolved)) {
           if (Array.isArray(items)) {
             for (const item of items) {
-              if (item.id && item.name) map[item.id] = item.name;
+              if (item.id && item.name) {
+                map[item.id] = { name: item.name, subtype: getSubtype(coll, item) };
+              }
             }
           }
         }
-        if (Object.keys(map).length) setNameMap(prev => ({ ...prev, ...map }));
+        if (Object.keys(map).length) setItemMap(prev => ({ ...prev, ...map }));
       })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const getName = (id) => {
-    if (nameMap[id]) return nameMap[id];
-    for (const col of Object.values(data || {})) {
-      if (Array.isArray(col)) {
+  const getItemInfo = (id, collection) => {
+    if (itemMap[id]) return itemMap[id];
+    for (const [coll, col] of Object.entries(data || {})) {
+      if (Array.isArray(col) && coll === collection) {
         const item = col.find(i => i.id === id);
-        if (item?.name) return item.name;
+        if (item?.name) {
+          return { name: item.name, subtype: getSubtype(collection, item) };
+        }
       }
     }
-    return id;
+    return { name: id, subtype: null };
   };
 
   const handleSelect = (item, collectionKey) => {
     const cfg = collections.find(c => c.key === collectionKey);
     const current = values[collectionKey] || [];
-    setNameMap(prev => ({ ...prev, [item.id]: item.name }));
+    setItemMap(prev => ({ ...prev, [item.id]: { name: item.name, subtype: getSubtype(collectionKey, item) } }));
     if (item._source && !['own', 'srd', 'public'].includes(item._source)) {
       ensureMirror(collectionKey, item);
     }
     if (cfg?.isCountable) {
       if (!current.find(v => v.id === item.id)) {
+        if (collectionKey === 'adversaries' && onAdversaryAdded) {
+          onAdversaryAdded(item);
+        }
         onChange(collectionKey, [...current, { id: item.id, count: 1 }]);
       }
     } else {
@@ -118,12 +133,16 @@ export function CollectionRefPicker({ collections, values, onChange, data }) {
         <div className="space-y-2">
           {allItems.map(({ id, collection, count, isCountable }) => {
             const cfg = collections.find(c => c.key === collection);
-            const displayName = getName(id);
+            const { name: displayName, subtype } = getItemInfo(id, collection);
             const typeLabel = cfg?.label || ITEM_PICKER_SINGULAR[collection] || collection;
+            const subtypeLabel = subtype ? (subtype.startsWith('Tier ') ? subtype : subtype.charAt(0).toUpperCase() + subtype.slice(1)) : null;
             return (
               <div key={`${collection}-${id}`} className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">{typeLabel}</span>
+                  {subtypeLabel && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300 shrink-0">{subtypeLabel}</span>
+                  )}
                   <span className="text-sm text-white truncate">{displayName}</span>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">

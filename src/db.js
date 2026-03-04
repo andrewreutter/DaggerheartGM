@@ -191,13 +191,14 @@ export async function getItemsPaginated(appId, userId, collection, { search = ''
   const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, tierMax, tiers, typeField, typeValue, typeValues });
   const offsetIdx = base.length + fp.length + 1;
   const limitIdx = offsetIdx + 1;
+  const popExpr = `(COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) + COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0))`;
   const { rows } = await db.query(
     `SELECT i.id, i.data, i.is_public,
        COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) AS clone_count,
        COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS play_count
      FROM items i
      WHERE i.app_id = $1 AND i.user_id = $2 AND i.collection = $3 ${sql}
-     ORDER BY (clone_count + play_count) DESC, i.data->>'name' ASC
+     ORDER BY ${popExpr} DESC, i.data->>'name' ASC
      OFFSET $${offsetIdx} LIMIT $${limitIdx}`,
     [...base, ...fp, offset, limit]
   );
@@ -247,13 +248,14 @@ export async function getCommunityItemsPaginated(appId, collection, {
   const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, tierMax, tiers, typeField, typeValue, typeValues });
   const offsetIdx = base.length + cp.length + 1;
   const limitIdx = offsetIdx + 1;
+  const popExpr = `(COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) + COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0))`;
   const { rows } = await db.query(
     `SELECT i.id, i.user_id, i.data, i.is_public,
        COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) AS clone_count,
        COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS play_count
      FROM items i
      WHERE i.app_id = $1 AND i.collection = $2 ${sql}
-     ORDER BY (clone_count + play_count) DESC, i.data->>'name' ASC
+     ORDER BY ${popExpr} DESC, i.data->>'name' ASC
      OFFSET $${offsetIdx} LIMIT $${limitIdx}`,
     [...base, ...cp, offset, limit]
   );
@@ -349,9 +351,12 @@ export async function upsertMirror(appId, collection, id, data, { cloneDelta = 0
 export async function findAutoClone(appId, userId, collection, sourceId) {
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT id, data, is_public, clone_count, play_count FROM items
-     WHERE app_id = $1 AND user_id = $2 AND collection = $3
-       AND data->>'_clonedFrom' = $4
+    `SELECT i.id, i.data, i.is_public,
+       COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) AS clone_count,
+       COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS play_count
+     FROM items i
+     WHERE i.app_id = $1 AND i.user_id = $2 AND i.collection = $3
+       AND i.data->>'_clonedFrom' = $4
      LIMIT 1`,
     [appId, userId, collection, sourceId]
   );
@@ -361,6 +366,23 @@ export async function findAutoClone(appId, userId, collection, sourceId) {
 }
 
 // --- Resolve by IDs ---
+
+/**
+ * Fetch a single item by ID for the given user.
+ * Returns the item or null if not found.
+ */
+export async function getItem(appId, userId, collection, id) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, data, is_public FROM items
+     WHERE app_id = $1 AND user_id = $2 AND collection = $3 AND id = $4
+     LIMIT 1`,
+    [appId, userId, collection, id]
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return { id: r.id, ...r.data, is_public: r.is_public };
+}
 
 export async function getItemsByIds(appId, collection, ids) {
   if (!ids || ids.length === 0) return [];

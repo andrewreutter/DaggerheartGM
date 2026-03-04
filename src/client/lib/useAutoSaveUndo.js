@@ -42,20 +42,35 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
   const undoPendingRef = useRef(null);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
+  const saveInProgressRef = useRef(false);
+  const pendingSaveDataRef = useRef(null);
+
+  const executeSave = useCallback(async (data) => {
+    if (isNew && !data.name?.trim()) return;
+    if (saveInProgressRef.current) {
+      pendingSaveDataRef.current = data;
+      return;
+    }
+    saveInProgressRef.current = true;
+    setIsSaving(true);
+    try {
+      await onSaveRef.current(data);
+      setSavedOnce(true);
+    } finally {
+      saveInProgressRef.current = false;
+      setIsSaving(false);
+      const pending = pendingSaveDataRef.current;
+      pendingSaveDataRef.current = null;
+      if (pending) executeSave(pending);
+    }
+  }, [isNew]);
 
   const scheduleSave = useCallback((data) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(async () => {
-      if (isNew && !data.name?.trim()) return;
-      setIsSaving(true);
-      try {
-        await onSaveRef.current(data);
-        setSavedOnce(true);
-      } finally {
-        setIsSaving(false);
-      }
+    saveTimerRef.current = setTimeout(() => {
+      executeSave(data);
     }, debounceMs);
-  }, [debounceMs, isNew]);
+  }, [debounceMs, executeSave]);
 
   const setFormData = useCallback((newData) => {
     setFormDataRaw(prev => {

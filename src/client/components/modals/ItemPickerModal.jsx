@@ -24,8 +24,9 @@ export const ITEM_PICKER_SINGULAR = {
  *   onClose       — called when the modal is dismissed
  *   onSelect      — called with the selected item; modal closes itself after
  */
-export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect }) {
+export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect, isLoading }) {
   const isPaginated = collection === 'adversaries' || collection === 'environments';
+  const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
   const actionLabel = title || `Add ${singular}`;
 
@@ -121,10 +122,10 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
 
         {/* Results */}
         <div ref={resultsRef} className="flex-1 overflow-y-auto min-h-0">
-          {search.loading && !search.isLoadingMore && (
+          {(search.loading || showNonPaginatedLoading) && !search.isLoadingMore && (
             <div className="text-center text-slate-500 text-sm py-10">Loading…</div>
           )}
-          {!search.loading && clientItems.length === 0 && (
+          {!search.loading && !showNonPaginatedLoading && clientItems.length === 0 && (
             <div className="text-center text-slate-500 text-sm py-10">No results</div>
           )}
           {clientItems.map(item => (

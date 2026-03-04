@@ -202,7 +202,7 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal }) {
+export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal, onImageSaved }) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
@@ -271,7 +271,7 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
         />
 
         <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-        <ImageGenerator formData={formData} collection="environments" onImageGenerated={url => update({ ...formData, imageUrl: url })} />
+        <ImageGenerator formData={formData} collection="environments" onImageGenerated={url => { update({ ...formData, imageUrl: url }); onImageSaved?.(url); }} />
         <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} />
 
         {!isControlled && (

@@ -27,7 +27,7 @@ import {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function AdversaryForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal }) {
+export function AdversaryForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal, onImageSaved }) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
@@ -190,7 +190,7 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
         <FormRow label="Image URL (optional)">
           <div className="flex flex-wrap items-stretch border border-slate-700 rounded overflow-hidden">
             <input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="flex-1 min-w-[12rem] bg-slate-950 border-0 px-2 py-2 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:ring-inset" />
-            <ImageGenerator formData={formData} collection="adversaries" onImageGenerated={url => update({ ...formData, imageUrl: url })} inline />
+            <ImageGenerator formData={formData} collection="adversaries" onImageGenerated={url => { update({ ...formData, imageUrl: url }); onImageSaved?.(url); }} inline />
           </div>
         </FormRow>
 

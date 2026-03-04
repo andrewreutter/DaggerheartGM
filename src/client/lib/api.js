@@ -268,14 +268,83 @@ export const loadFcgSearch = async ({ search = '', tier } = {}) => {
   return res.json();
 };
 
+const GZIP_THRESHOLD = 100 * 1024; // compress payloads > 100KB
+async function maybeCompressBody(bodyStr) {
+  if (bodyStr.length < GZIP_THRESHOLD) return { body: bodyStr, encoding: null };
+  if (typeof CompressionStream === 'undefined') return { body: bodyStr, encoding: null };
+  try {
+    const stream = new Blob([new TextEncoder().encode(bodyStr)]).stream()
+      .pipeThrough(new CompressionStream('gzip'));
+    const chunks = [];
+    for await (const c of stream) chunks.push(c);
+    const blob = new Blob(chunks);
+    return { body: await blob.arrayBuffer(), encoding: 'gzip' };
+  } catch {
+    return { body: bodyStr, encoding: null };
+  }
+}
+
+/**
+ * Recursively strip imageUrl and _additionalImages from an object.
+ * Used before PUT to avoid sending large base64 payloads; server merges to preserve images.
+ */
+export function stripImageFields(obj) {
+  if (obj == null) return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(stripImageFields);
+  }
+  if (typeof obj !== 'object') return obj;
+  const out = { ...obj };
+  delete out.imageUrl;
+  delete out._additionalImages;
+  for (const key of Object.keys(out)) {
+    if (out[key] != null && typeof out[key] === 'object') {
+      out[key] = stripImageFields(out[key]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Save image fields via the dedicated endpoint. Use when images change (AI generate, import).
+ * path: optional JSON path for nested updates, e.g. "adversaries.2.data" for inline copy in scene.
+ */
+export const saveImage = async (collectionName, id, imageUrl, { _additionalImages, path } = {}) => {
+  const token = await getAuthToken();
+  if (!token || !id) return null;
+  const body = { imageUrl };
+  if (_additionalImages !== undefined) body._additionalImages = _additionalImages;
+  if (path) body.path = path;
+  const res = await fetch(`/api/data/${collectionName}/${id}/image`, {
+    method: 'PUT',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
 export const saveItem = async (collectionName, item) => {
   const token = await getAuthToken();
   if (!token) return null;
-  const res = await fetch(`/api/data/${collectionName}`, {
-    method: 'PUT',
-    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify(item),
-  });
+  let payload = item;
+  if (item?.id) {
+    payload = stripImageFields(JSON.parse(JSON.stringify(item)));
+  }
+  const bodyStr = JSON.stringify(payload);
+  const { body, encoding } = await maybeCompressBody(bodyStr);
+  const headers = apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
+  if (encoding) headers['Content-Encoding'] = 'gzip';
+  let res;
+  try {
+    res = await fetch(`/api/data/${collectionName}`, {
+      method: 'PUT',
+      headers,
+      body,
+    });
+  } catch (fetchErr) {
+    throw fetchErr;
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 };

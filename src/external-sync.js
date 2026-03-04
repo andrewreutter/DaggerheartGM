@@ -11,10 +11,12 @@ import { upsertExternalCache, getCachedExternalIds, getSyncState, setSyncState }
 import { createHash } from 'crypto';
 
 const FCG_PAGE_SIZE = 100;
-const HOD_LIST_PAGE_SIZE = 100;
-const HOD_DETAIL_THROTTLE_MS = 1000;
+// HoD API returns max 20 items per page (WordPress default); requesting more is ignored
+const HOD_LIST_PAGE_SIZE = 20;
+const HOD_DETAIL_THROTTLE_MS = 1500;
 const FCG_PARALLEL_PAGES = 3;
-const HOD_PARALLEL_DETAIL = 3;
+const HOD_PARALLEL_DETAIL = 2;
+const HOD_CONSECUTIVE_FAILURE_LIMIT = 3;
 
 function hashContent(obj) {
   return createHash('sha256').update(JSON.stringify(obj)).digest('hex');
@@ -90,7 +92,7 @@ async function syncFCG(appId, onProgress) {
 /**
  * Sync all HoD adversaries and environments into external_item_cache.
  * List phase: paginate through all list pages to collect post IDs.
- * Detail phase: fetch Foundry JSON for each ID (3 parallel, 1s throttle per chunk).
+ * Detail phase: fetch Foundry JSON for each ID (2 parallel, 1.5s throttle per chunk).
  * When opts.fullRefresh is false (default), skips items already in cache.
  */
 async function syncHoD(appId, onProgress, opts = {}) {
@@ -194,6 +196,7 @@ async function syncHoD(appId, onProgress, opts = {}) {
 
   let detailNum = 0;
   let successCount = 0;
+  let consecutiveFailures = 0;
   for (let i = 0; i < toFetch.length; i += HOD_PARALLEL_DETAIL) {
     if (i > 0) {
       await new Promise(r => setTimeout(r, HOD_DETAIL_THROTTLE_MS));
@@ -223,7 +226,15 @@ async function syncHoD(appId, onProgress, opts = {}) {
     );
 
     for (const r of results) {
-      if (r.success) successCount++;
+      if (r.success) {
+        successCount++;
+        consecutiveFailures = 0;
+      } else {
+        consecutiveFailures++;
+        if (consecutiveFailures >= HOD_CONSECUTIVE_FAILURE_LIMIT) {
+          throw new Error(`HoD sync aborted: ${HOD_CONSECUTIVE_FAILURE_LIMIT} consecutive fetch failures (rerun to resume)`);
+        }
+      }
       detailNum++;
     }
     if (detailNum % 10 === 0 || detailNum === toFetch.length) {

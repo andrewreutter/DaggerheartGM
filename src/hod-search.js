@@ -28,9 +28,12 @@ let cachedNonce = null;
 let nonceFetchedAt = 0;
 const NONCE_TTL = 30 * 60 * 1000; // 30 minutes
 
-export async function getVaultNonce() {
-  if (cachedNonce && Date.now() - nonceFetchedAt < NONCE_TTL) {
+export async function getVaultNonce(forceRefresh = false) {
+  if (!forceRefresh && cachedNonce && Date.now() - nonceFetchedAt < NONCE_TTL) {
     return cachedNonce;
+  }
+  if (forceRefresh) {
+    cachedNonce = null;
   }
   const res = await fetch(HOD_VAULT_URL, {
     headers: { 'User-Agent': 'DaggerheartGM/1.0' },
@@ -345,14 +348,10 @@ function rowToEnvironment(row, tierFilter) {
  * @param {number}  [opts.offset]     - Zero-based offset (HoD uses 1-indexed pages)
  * @returns {{ items, totalCount }}
  */
-export async function searchHoD({ search, tier, type, collection, limit = 20, offset = 0 } = {}) {
-  const nonce = await getVaultNonce();
-
-  // HoD uses 1-indexed page numbers; per_page default is 20
+function buildSearchForm(nonce, { search, tier, type, collection, limit, offset }) {
   const perPage = Math.min(100, Math.max(1, limit));
   const page = Math.floor(offset / perPage) + 1;
 
-  // Build multipart form data
   const form = new FormData();
   form.append('action', 'hb_hub_query');
   form.append('nonce', nonce);
@@ -366,7 +365,6 @@ export async function searchHoD({ search, tier, type, collection, limit = 20, of
 
   if (collection === 'adversaries') {
     form.append('adv_tier', tier ? String(tier) : '');
-    // HoD type values are Title-cased (e.g. "Solo", "Bruiser")
     form.append('adv_type', type ? type.charAt(0).toUpperCase() + type.slice(1) : '');
     form.append('adv_dmgtype', '');
     form.append('adv_diff_min', '');
@@ -385,12 +383,36 @@ export async function searchHoD({ search, tier, type, collection, limit = 20, of
     form.append('env_feat', '');
   }
 
-  const res = await fetch(HOD_AJAX_URL, {
-    method: 'POST',
-    body: form,
-    headers: { 'User-Agent': 'DaggerheartGM/1.0' },
-  });
-  if (!res.ok) throw new Error(`HoD AJAX returned ${res.status}`);
+  return form;
+}
+
+export async function searchHoD({ search, tier, type, collection, limit = 20, offset = 0 } = {}) {
+  let nonce = await getVaultNonce();
+  const opts = { search, tier, type, collection, limit, offset };
+
+  const doRequest = async () => {
+    const form = buildSearchForm(nonce, opts);
+    const res = await fetch(HOD_AJAX_URL, {
+      method: 'POST',
+      body: form,
+      headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+    });
+    if (!res.ok) throw new Error(`HoD AJAX returned ${res.status}`, { cause: res });
+    return res;
+  };
+
+  let res;
+  try {
+    res = await doRequest();
+  } catch (err) {
+    const status = err.cause?.status ?? err.message?.match(/\d{3}/)?.[0];
+    if (Number(status) === 415) {
+      nonce = await getVaultNonce(true);
+      res = await doRequest();
+    } else {
+      throw err;
+    }
+  }
 
   const json = await res.json();
   if (!json.success) throw new Error('HoD AJAX returned success:false');
@@ -423,52 +445,63 @@ export async function searchHoD({ search, tier, type, collection, limit = 20, of
  * @param {string}        collection - 'adversaries' | 'environments'
  * @returns {object} Fully populated native item object
  */
+function extractExportNonce(pageHtml, collection) {
+  const isEnv = collection === 'environments';
+  const nonceVarRe = isEnv
+    ? /window\.HB_ENV_EXPORT_JSON\s*=\s*\{[^}]*(?:"nonce"|nonce)\s*:\s*"([^"]+)"/
+    : /window\.HB_EXPORT_JSON\s*=\s*\{[^}]*(?:"nonce"|nonce)\s*:\s*"([^"]+)"/;
+  const nonceMatch = pageHtml.match(nonceVarRe);
+  return nonceMatch?.[1] ?? null;
+}
+
 export async function fetchHoDFoundryDetail(postId, detailUrl, collection) {
   // Step 1: load the detail page to extract the per-item nonce
   const pageRes = await fetch(detailUrl, {
     headers: { 'User-Agent': 'DaggerheartGM/1.0' },
   });
   if (!pageRes.ok) throw new Error(`HoD detail page returned ${pageRes.status} for ${detailUrl}`);
-  const pageHtml = await pageRes.text();
+  let pageHtml = await pageRes.text();
 
-  // Adversary pages: window.HB_EXPORT_JSON = { nonce: "..." }
-  // Environment pages: window.HB_ENV_EXPORT_JSON = { nonce: "..." }
+  let exportNonce = extractExportNonce(pageHtml, collection);
+  if (!exportNonce) throw new Error(`Could not find Foundry export nonce on HoD detail page: ${detailUrl}`);
+
   const isEnv = collection === 'environments';
-  const nonceVarRe = isEnv
-    ? /window\.HB_ENV_EXPORT_JSON\s*=\s*\{[^}]*(?:"nonce"|nonce)\s*:\s*"([^"]+)"/
-    : /window\.HB_EXPORT_JSON\s*=\s*\{[^}]*(?:"nonce"|nonce)\s*:\s*"([^"]+)"/;
-  const nonceMatch = pageHtml.match(nonceVarRe);
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:nonceStep',message:'Nonce extraction result',data:{postId,collection,detailUrl,nonceFound:!!nonceMatch,exportNonce:nonceMatch?.[1]||null},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-  // #endregion
-  if (!nonceMatch) throw new Error(`Could not find Foundry export nonce on HoD detail page: ${detailUrl}`);
-  const exportNonce = nonceMatch[1];
-
-  // Step 2: fetch Foundry JSON
   const exportAction = isEnv ? 'hb_export_environment_json' : 'hb_export_adversary_json';
-  const exportUrl = `${HOD_AJAX_URL}?action=${exportAction}&post_id=${postId}&nonce=${exportNonce}`;
-  const exportRes = await fetch(exportUrl, {
-    headers: { 'User-Agent': 'DaggerheartGM/1.0' },
-  });
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:exportStep',message:'Foundry export response',data:{postId,collection,exportUrl,exportStatus:exportRes.status,exportOk:exportRes.ok},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
-  if (!exportRes.ok) throw new Error(`HoD Foundry export returned ${exportRes.status}`);
+
+  const doExport = async () => {
+    const exportUrl = `${HOD_AJAX_URL}?action=${exportAction}&post_id=${postId}&nonce=${exportNonce}`;
+    const exportRes = await fetch(exportUrl, {
+      headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+    });
+    if (!exportRes.ok) throw new Error(`HoD Foundry export returned ${exportRes.status}`, { cause: exportRes });
+    return exportRes;
+  };
+
+  let exportRes;
+  try {
+    exportRes = await doExport();
+  } catch (err) {
+    const status = err.cause?.status ?? err.message?.match(/\d{3}/)?.[0];
+    if (Number(status) === 415) {
+      const retryPageRes = await fetch(detailUrl, {
+        headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+      });
+      if (!retryPageRes.ok) throw new Error(`HoD detail page returned ${retryPageRes.status} for ${detailUrl}`);
+      pageHtml = await retryPageRes.text();
+      exportNonce = extractExportNonce(pageHtml, collection);
+      if (!exportNonce) throw new Error(`Could not find Foundry export nonce on HoD detail page: ${detailUrl}`);
+      exportRes = await doExport();
+    } else {
+      throw err;
+    }
+  }
 
   const foundryJson = await exportRes.json();
-
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:foundryJson',message:'Foundry JSON structure',data:{postId,collection,topLevelKeys:Object.keys(foundryJson),name:foundryJson.name,itemsCount:(foundryJson.items||[]).length,itemTypes:(foundryJson.items||[]).map(i=>i.type),sysKeys:Object.keys(foundryJson.system||{}),featureItems:(foundryJson.items||[]).filter(i=>i.type==='feature').map(f=>({name:f.name,sysKeys:Object.keys(f.system||{})}))},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
 
   // Translate to native schema
   const result = isEnv
     ? translateFoundryEnvironment(foundryJson, postId)
     : translateFoundryAdversary(foundryJson, postId);
-
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0a4c47'},body:JSON.stringify({sessionId:'0a4c47',location:'hod-search.js:fetchHoDFoundryDetail:translated',message:'Translated result',data:{postId,collection,resultName:result.name,resultFeaturesCount:(result.features||[]).length,resultFeatures:(result.features||[]).map(f=>({name:f.name,type:f.type,descLen:(f.description||'').length}))},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
 
   return result;
 }

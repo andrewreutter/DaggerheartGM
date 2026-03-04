@@ -35,12 +35,34 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, isAdmin, partySize = 4, setPartySize }) {
+export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 4, setPartySize, ensureScenesLoaded, ensureAdventuresLoaded }) {
   const [showImageImport, setShowImageImport] = useState(false);
   const [modalState, setModalState] = useState(null);
+  const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
 
   const activeTab = route.tab || 'adversaries';
   const isPaginatedTab = SRD_FILTER_TABS.has(activeTab);
+
+  // Load scenes/adventures on demand when user navigates to those tabs.
+  useEffect(() => {
+    if (activeTab === 'scenes' && ensureScenesLoaded) {
+      if ((data.scenes || []).length > 0) {
+        setNonPaginatedLoading(false);
+        return;
+      }
+      setNonPaginatedLoading(true);
+      ensureScenesLoaded().finally(() => setNonPaginatedLoading(false));
+    } else if (activeTab === 'adventures' && ensureAdventuresLoaded) {
+      if ((data.adventures || []).length > 0) {
+        setNonPaginatedLoading(false);
+        return;
+      }
+      setNonPaginatedLoading(true);
+      ensureAdventuresLoaded().finally(() => setNonPaginatedLoading(false));
+    } else {
+      setNonPaginatedLoading(false);
+    }
+  }, [activeTab, ensureScenesLoaded, ensureAdventuresLoaded, data.scenes?.length, data.adventures?.length]);
 
   const search = useCollectionSearch(activeTab, {
     limit: 20,
@@ -88,14 +110,14 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     if (itemId === 'new') {
       deepLinkProcessedRef.current = true;
       setModalState({ item: {}, isNew: true });
-      navigate(`/library/${activeTab}`, { replace: true });
+      // Keep URL as /library/:tab/new so the close effect doesn't fire (it closes when itemId becomes null)
       return;
     }
 
     // Wait for items to load before resolving the deep link.
     const found = items.find(i => i.id === itemId);
     if (!found && isPaginatedTab && search.loading) return; // still loading
-    if (!found && !isPaginatedTab && items.length === 0) return; // not ready yet
+    if (!found && !isPaginatedTab && (items.length === 0 || nonPaginatedLoading)) return; // not ready yet
 
     deepLinkProcessedRef.current = true;
     if (found) {
@@ -107,7 +129,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
       // Item not found (e.g. deleted) — clear URL to avoid stuck state
       navigate(`/library/${activeTab}`, { replace: true });
     }
-  }, [itemId, items, isPaginatedTab, search.loading, activeTab, navigate, action, modalState]);
+  }, [itemId, items, isPaginatedTab, search.loading, nonPaginatedLoading, activeTab, navigate, action, modalState]);
 
   // Reset deep-link flag when tab or route changes.
   useEffect(() => {
@@ -198,9 +220,20 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     if (mode === 'original') {
       await saveItem(element._collection, editedData);
     } else {
-      const updatedParent = applyEditedCopyToParent(element, editedData, modalState?.item, activeTab);
+      const parentItem = modalState?.item;
+      const parentId = parentItem?.id;
+
+      if (parentId && saveImage && (element._origin === 'direct-adv' || element._origin === 'direct-env')) {
+        const idx = element._originRefIndex;
+        const path = element._origin === 'direct-adv' ? `adversaries.${idx}.data` : `environments.${idx}.data`;
+        const hasBase64 = (url) => typeof url === 'string' && url.startsWith('data:');
+        if (hasBase64(editedData.imageUrl) || (Array.isArray(editedData._additionalImages) && editedData._additionalImages.some(hasBase64))) {
+          await saveImage(activeTab, parentId, editedData.imageUrl, { _additionalImages: editedData._additionalImages, path });
+        }
+      }
+
+      const updatedParent = applyEditedCopyToParent(element, editedData, parentItem, activeTab);
       await saveItem(activeTab, updatedParent);
-      // Refresh modal item with updated parent.
       setModalState(prev => prev ? { ...prev, item: updatedParent } : null);
     }
   };
@@ -317,6 +350,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           enriching={!!modalState.enriching}
           onSave={handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
+          saveImage={saveImage}
           onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
           onClone={() => handleClone(resolvedModalItem)}
           onAddToTable={() => addToTable(resolvedModalItem, activeTab)}
@@ -325,6 +359,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
           onClose={closeModal}
           partySize={partySize}
           onPartySizeChange={setPartySize}
+          onMergeAdversary={onMergeAdversary}
         />
       )}
 
@@ -428,6 +463,10 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
               No items match the selected filters.
             </div>
           ) : isPaginatedTab && search.loading ? (
+            <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
+              Loading {activeTab}…
+            </div>
+          ) : !isPaginatedTab && nonPaginatedLoading ? (
             <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
               Loading {activeTab}…
             </div>

@@ -115,6 +115,11 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
       if (lastPrompt === null) {
         setEditedPrompt(buildImagePrompt(formData, collection));
       }
+      // Preload existing image so Edit option is available
+      if (formData?.imageUrl && imageHistory.length === 0) {
+        setImageHistory([formData.imageUrl]);
+        setHistoryIndex(0);
+      }
     }
     setOpen(o => !o);
   };

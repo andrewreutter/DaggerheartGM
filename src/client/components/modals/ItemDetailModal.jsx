@@ -138,6 +138,7 @@ export function ItemDetailModal({
   enriching = false,
   onSave,
   onSaveElement,
+  saveImage,
   onDelete,
   onClone,
   onAddToTable,
@@ -146,6 +147,7 @@ export function ItemDetailModal({
   onClose,
   partySize = 4,
   onPartySizeChange,
+  onMergeAdversary,
 }) {
   const isNew = !item?.id;
   const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments');
@@ -227,7 +229,6 @@ export function ItemDetailModal({
     }
   };
 
-  // Click outside closes the modal.
   const handleOverlayClick = (e) => {
     if (e.target === overlayRef.current) onClose();
   };
@@ -398,6 +399,8 @@ export function ItemDetailModal({
       featureLibraryPortal: libraryPortal,
       partySize,
       onPartySizeChange,
+      onImageSaved: item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined,
+      onMergeAdversary,
     };
 
     return (
