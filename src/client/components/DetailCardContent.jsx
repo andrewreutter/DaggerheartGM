@@ -174,8 +174,13 @@ export function AdversaryCardContent({
   const dmgBoost = damageBoost || el._damageBoost || null;
   return (
     <>
-      <div className="text-sm text-slate-400 mb-2 capitalize">
-        Tier {el.tier || 0} {el.role}
+      <div className="text-sm text-slate-400 mb-2 capitalize flex items-center gap-2 flex-wrap">
+        <span>Tier {el.tier || 0} {el.role}</span>
+        {el._scaledFromTier != null && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 border border-amber-700/50 text-amber-300">
+            Scaled from Tier {el._scaledFromTier}
+          </span>
+        )}
       </div>
 
       {el.description && (

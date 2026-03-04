@@ -192,7 +192,7 @@ function App() {
         if (typeof envEntry === 'string') envIds.add(envEntry);
       }
       for (const ref of (scene.adversaries || [])) {
-        if (!ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
+        if (ref != null && !ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
       }
     }
 
@@ -331,7 +331,7 @@ function App() {
     const environmentIds = new Set();
 
     (scene.environments || []).forEach(e => { if (typeof e === 'string') environmentIds.add(e); });
-    (scene.adversaries || []).forEach(ref => { if (!ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId); });
+    (scene.adversaries || []).forEach(ref => { if (ref != null && !ref.data && ref.adversaryId) adversaryIds.add(ref.adversaryId); });
 
     (scene.scenes || []).forEach(nestedId => {
       const nested = scenesById[nestedId];
@@ -359,7 +359,8 @@ function App() {
     const elements = [];
 
     (scene.environments || []).forEach(envEntry => {
-      if (envEntry !== null && typeof envEntry === 'object' && envEntry.data) {
+      if (envEntry == null) return;
+      if (typeof envEntry === 'object' && envEntry.data) {
         elements.push({ id: envEntry.data.id || generateId(), ...envEntry.data, instanceId: generateId(), elementType: 'environment' });
       } else {
         const env = environmentsById[envEntry];
@@ -368,6 +369,7 @@ function App() {
     });
 
     (scene.adversaries || []).forEach(advRef => {
+      if (advRef == null) return;
       const adv = advRef.data ? { id: advRef.data.id || generateId(), ...advRef.data } : adversariesById[advRef.adversaryId];
       if (adv) {
         for (let i = 0; i < (advRef.count || 1); i++) {

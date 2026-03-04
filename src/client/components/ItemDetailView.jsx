@@ -37,7 +37,8 @@ function buildElements(item, tab, data, visited = new Set(), depth = 0) {
   };
 
   (item.environments || []).forEach((envEntry, refIdx) => {
-    if (envEntry !== null && typeof envEntry === 'object' && envEntry.data) {
+    if (envEntry == null) return;
+    if (typeof envEntry === 'object' && envEntry.data) {
       const env = { id: envEntry.data.id || generateId(), ...envEntry.data };
       pushEnvironment(env, {
         _origin: 'direct-env', _originRefIndex: refIdx,
@@ -56,6 +57,7 @@ function buildElements(item, tab, data, visited = new Set(), depth = 0) {
   });
 
   (item.adversaries || []).forEach((advRef, refIdx) => {
+    if (advRef == null) return;
     if (advRef.data) {
       const adv = { id: advRef.data.id || generateId(), ...advRef.data };
       for (let i = 0; i < (advRef.count || 1); i++) {
@@ -118,6 +120,7 @@ function collectMissingRefs(item, tab, data, visited = new Set()) {
     if (typeof envEntry === 'string' && !envSet.has(envEntry)) missingEnv.push(envEntry);
   }
   for (const ref of (item.adversaries || [])) {
+    if (ref == null) continue;
     if (!ref.data && ref.adversaryId && !advSet.has(ref.adversaryId)) missingAdv.push(ref.adversaryId);
   }
   for (const nestedId of (item.scenes || [])) {
