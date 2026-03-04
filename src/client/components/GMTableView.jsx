@@ -288,7 +288,9 @@ function getItemData(element) {
   return rest;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods }) {
+const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
+
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   useEffect(() => {
@@ -350,7 +352,43 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   const tableDamageBoost = effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : null;
 
+  // Deep-link: open modal when URL has /gm-table/:collection/:id (e.g. refresh, back/forward, shared link)
+  const { modalCollection, modalItemId } = route || {};
+  useEffect(() => {
+    if (!modalCollection || !modalItemId) return;
+    // Don't overwrite if user already opened via handleEditClick (choice or form)
+    if (editState?.collection === modalCollection && editState?.baseElement?.id === modalItemId) return;
+    const elType = COLLECTION_TO_ELEMENT_TYPE[modalCollection];
+    if (!elType) return;
+    const instances = activeElements.filter(e => e.elementType === elType && e.id === modalItemId);
+    const baseElement = instances[0];
+    if (!baseElement) {
+      // Item not on table (e.g. removed) — clear URL to avoid stuck state
+      navigate(gmTab === 'whiteboard' ? '/gm-table/whiteboard' : '/gm-table', { replace: true });
+      return;
+    }
+    const canEditOriginal = isOwnItem(baseElement);
+    const mode = canEditOriginal ? 'original' : 'copy';
+    const item = canEditOriginal
+      ? (data[modalCollection]?.find(i => i.id === baseElement.id) || getItemData(baseElement))
+      : getItemData(baseElement);
+    setEditState({ step: 'form', item, collection: modalCollection, mode, instances, baseElement });
+  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, gmTab, navigate]);
+
+  // Close modal when URL no longer has item (e.g. user pressed back).
+  useEffect(() => {
+    if (!modalCollection && !modalItemId && editState) {
+      setEditState(null);
+    }
+  }, [modalCollection, modalItemId, editState]);
+
+  const closeEditModal = () => {
+    setEditState(null);
+    navigate(gmTab === 'whiteboard' ? '/gm-table/whiteboard' : '/gm-table', { replace: true });
+  };
+
   const handleEditClick = (instances, baseElement, collection) => {
+    navigate(`/gm-table/${collection}/${baseElement.id}`);
     const canEditOriginal = isOwnItem(baseElement);
     if (!canEditOriginal) {
       setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
@@ -1089,7 +1127,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         canEditOriginal={isOwnItem(editState.baseElement)}
         onEditCopy={handleChoiceEditCopy}
         onEditOriginal={handleChoiceEditOriginal}
-        onClose={() => setEditState(null)}
+        onClose={closeEditModal}
       />
     )}
     {editState?.step === 'form' && (
@@ -1110,7 +1148,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
           }
         }}
-        onClose={() => setEditState(null)}
+        onClose={closeEditModal}
       />
     )}
 

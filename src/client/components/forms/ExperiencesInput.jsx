@@ -1,7 +1,16 @@
+import { useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 
-export function ExperiencesInput({ experiences, onChange }) {
+export function ExperiencesInput({ experiences, onChange, highlightedId }) {
+  const highlightedRef = useRef(null);
+
+  useEffect(() => {
+    if (highlightedId && highlightedRef.current) {
+      highlightedRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [highlightedId]);
+
   const addExperience = () => onChange([...experiences, { id: generateId(), name: '', modifier: 1 }]);
   const updateExperience = (id, key, val) => onChange(experiences.map(e => e.id === id ? { ...e, [key]: val } : e));
   const removeExperience = (id) => onChange(experiences.filter(e => e.id !== id));
@@ -14,7 +23,15 @@ export function ExperiencesInput({ experiences, onChange }) {
       </div>
       <div className="space-y-3">
         {experiences.map(exp => (
-          <div key={exp.id} className="flex items-center gap-2 relative bg-slate-950 p-2 rounded border border-slate-800 pr-8">
+          <div
+            key={exp.id}
+            ref={exp.id === highlightedId ? highlightedRef : null}
+            className={`flex items-center gap-2 relative p-2 rounded pr-8 transition-all duration-300 ${
+              exp.id === highlightedId
+                ? 'bg-amber-900/30 border-2 border-amber-500/70 ring-2 ring-amber-400/40'
+                : 'bg-slate-950 border border-slate-800'
+            }`}
+          >
             <input type="text" placeholder="Experience Name" value={exp.name} onChange={e => updateExperience(exp.id, 'name', e.target.value)} className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />
             <span className="text-slate-400 text-sm font-bold">+</span>
             <input type="number" min="1" placeholder="2" value={exp.modifier} onChange={e => updateExperience(exp.id, 'modifier', parseInt(e.target.value) || 1)} className="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white text-center" />

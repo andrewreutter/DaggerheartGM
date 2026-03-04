@@ -34,6 +34,8 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
     limit: 500,
     debounceMs: 400,
     infinite: true,
+    persistKey: 'dh_featureLibraryFilters',
+    defaultFilters: { include: 'srd' },
   });
 
   const listRef = useRef(null);
@@ -114,6 +116,7 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
             source={source}
             sourceName={sourceName}
             onAdd={onAdd}
+            showSourceBadge
           />
         ))}
 
@@ -135,7 +138,7 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
   );
 }
 
-function FeatureCard({ feature, source, sourceName, onAdd }) {
+function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
   const [hoverTop, setHoverTop] = useState(null);
 
   return (
@@ -151,18 +154,24 @@ function FeatureCard({ feature, source, sourceName, onAdd }) {
         className="w-full text-left bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 p-2.5 rounded transition-colors"
       >
         <div className="flex items-start justify-between gap-1 mb-1">
-          <span className="font-medium text-slate-200 text-xs leading-tight">{feature.name || '(unnamed)'}</span>
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            {(feature.type || showSourceBadge) && (
+              <div className="flex flex-wrap gap-1 shrink-0">
+                {feature.type && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || 'bg-slate-700 text-slate-300'}`}>
+                    {feature.type}
+                  </span>
+                )}
+                {showSourceBadge && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || 'bg-slate-700 text-slate-300'}`}>
+                    {SOURCE_BADGE[source]?.label ?? source}
+                  </span>
+                )}
+              </div>
+            )}
+            <span className="font-medium text-slate-200 text-xs leading-tight truncate">{feature.name || '(unnamed)'}</span>
+          </div>
           <Plus size={12} className="text-slate-500 group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
-        </div>
-        <div className="flex flex-wrap gap-1 mb-1.5">
-          {feature.type && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || 'bg-slate-700 text-slate-300'}`}>
-              {feature.type}
-            </span>
-          )}
-          <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || 'bg-slate-700 text-slate-300'}`}>
-            {SOURCE_BADGE[source]?.label ?? source}
-          </span>
         </div>
         <p className="text-xs text-slate-400 line-clamp-2 leading-snug">{feature.description}</p>
       </button>
@@ -182,9 +191,11 @@ function FeatureCard({ feature, source, sourceName, onAdd }) {
                     {feature.type}
                   </span>
                 )}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || ''}`}>
-                  {SOURCE_BADGE[source]?.label ?? source}
-                </span>
+                {showSourceBadge && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || ''}`}>
+                    {SOURCE_BADGE[source]?.label ?? source}
+                  </span>
+                )}
               </div>
             </div>
             <MarkdownText text={feature.description} className="text-xs text-slate-300 leading-relaxed" />

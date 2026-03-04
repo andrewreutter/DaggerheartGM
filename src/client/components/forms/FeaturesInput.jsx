@@ -1,9 +1,18 @@
+import { useEffect, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 import { FEATURE_TYPES } from '../../lib/constants.js';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 
-export function FeaturesInput({ features, onChange }) {
+export function FeaturesInput({ features, onChange, highlightedId }) {
+  const highlightedRef = useRef(null);
+
+  useEffect(() => {
+    if (highlightedId && highlightedRef.current) {
+      highlightedRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [highlightedId]);
+
   const addFeature = () => onChange([...features, { id: generateId(), name: '', type: 'action', description: '' }]);
   const updateFeature = (id, key, val) => onChange(features.map(f => f.id === id ? { ...f, [key]: val } : f));
   const removeFeature = (id) => onChange(features.filter(f => f.id !== id));
@@ -16,7 +25,15 @@ export function FeaturesInput({ features, onChange }) {
       </div>
       <div className="space-y-4">
         {features.map(f => (
-          <div key={f.id} className="bg-slate-950 p-3 rounded border border-slate-800 flex flex-col gap-2 relative">
+          <div
+            key={f.id}
+            ref={f.id === highlightedId ? highlightedRef : null}
+            className={`p-3 rounded flex flex-col gap-2 relative transition-all duration-300 ${
+              f.id === highlightedId
+                ? 'bg-amber-900/30 border-2 border-amber-500/70 ring-2 ring-amber-400/40'
+                : 'bg-slate-950 border border-slate-800'
+            }`}
+          >
             <button type="button" onClick={() => removeFeature(f.id)} className="absolute top-2 right-2 text-slate-500 hover:text-red-500"><Trash2 size={14} /></button>
             <div className="grid grid-cols-2 gap-2 pr-6">
               <input type="text" placeholder="Feature Name" value={f.name} onChange={e => updateFeature(f.id, 'name', e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />

@@ -92,14 +92,24 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
     deepLinkProcessedRef.current = true;
     if (found) {
       setModalState({ item: found, isNew: false });
+      // Keep URL as /library/:tab/:id for back/forward/link/reload
+    } else {
+      // Item not found (e.g. deleted) — clear URL to avoid stuck state
+      navigate(`/library/${activeTab}`, { replace: true });
     }
-    navigate(`/library/${activeTab}`, { replace: true });
   }, [itemId, items, isPaginatedTab, search.loading, activeTab, navigate, action]);
 
   // Reset deep-link flag when tab or route changes.
   useEffect(() => {
     deepLinkProcessedRef.current = false;
   }, [activeTab, itemId]);
+
+  // Close modal when URL no longer has itemId (e.g. user pressed back).
+  useEffect(() => {
+    if (!itemId && modalState) {
+      setModalState(null);
+    }
+  }, [itemId, modalState]);
 
   const openModal = async (item) => {
     navigate(`/library/${activeTab}/${item.id || 'new'}`);
@@ -364,6 +374,7 @@ export function LibraryView({ data, saveItem, deleteItem, cloneItem, addToTable,
                 onClone={() => handleClone(item)}
                 onAddToTable={addToTable}
                 partySize={partySize}
+                showSourceBadge={isPaginatedTab}
               />
             ))}
             {filteredItems.length === 0 && (
