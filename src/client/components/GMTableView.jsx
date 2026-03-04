@@ -44,6 +44,17 @@ const DEFAULT_GM_MOVES = [
   { name: 'Take away an opportunity permanently.', example: '\u201cThe door slams shut, cutting you off from the vault as the temple continues to collapse. You\u2019ll need to find another exit if you want to make it out alive.\u201d' },
 ];
 
+const ROLE_MOVES = {
+  bruiser:  'The {name} roars in anger, preparing for its next strike. The next time the {name} attacks, it gains an additional 1d4 to its attack roll.',
+  horde:    'The {name} rally together, gaining strength. They clear 1 HP or 1 Stress.',
+  leader:   'The {name} encourages one of their allies, giving them advantage on their next attack roll.',
+  minion:   'The {name} moves into a better position, surrounding the target.',
+  ranged:   'The {name} focuses for their next attack, adding +X to the damage of their next attack if it hits.',
+  skulk:    'The {name} retreats to a better position, disengaging from the PCs.',
+  standard: 'The {name} braces for the next attack. Their difficulty increases by 1 until the next GM Turn.',
+  support:  'The {name} clears a condition on themselves or someone else.',
+};
+
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
 
@@ -279,6 +290,13 @@ function getItemData(element) {
 
 export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, addToTable, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
+  const [lightboxUrl, setLightboxUrl] = useState(null);
+  useEffect(() => {
+    if (!lightboxUrl) return;
+    const handler = (e) => { if (e.key === 'Escape') setLightboxUrl(null); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [lightboxUrl]);
   const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
@@ -538,6 +556,24 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           } : null,
         });
       });
+
+      if (element.elementType === 'adversary') {
+        const role = (element.role || 'standard').toLowerCase();
+        const template = ROLE_MOVES[role];
+        if (template) {
+          const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+          menu['Actions'].push({
+            id: `${element.instanceId}-role-move`,
+            name: `${roleLabel} Move`,
+            type: 'action',
+            description: template.replace(/\{name\}/g, element.name),
+            sourceName: element.name,
+            cardKey,
+            featureKey: 'role-move',
+            _isRoleMove: true,
+          });
+        }
+      }
     });
     return menu;
   }, [activeElements]);
@@ -581,38 +617,46 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         onMouseEnter={() => setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey })}
                         onMouseLeave={() => setHoveredFeature(null)}
                         onClick={canRoll ? () => handleRoll(feature) : undefined}
-                        className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 p-3 rounded border transition-all group ${canRoll ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
+                        className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 rounded border transition-all group flex ${canRoll ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
                       >
-                        <div className="flex justify-between items-start mb-1">
-                          <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5">
-                            {feature.name}
-                            {canRoll && (
-                              <Dices size={12} className={justRolled ? 'text-green-400' : rolzConfigured ? 'text-slate-500 group-hover:text-red-400 transition-colors' : 'text-slate-600 group-hover:text-amber-400 transition-colors'} />
-                            )}
-                          </span>
-                          <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
-                        </div>
-                        <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
-                        {allCds.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-slate-700 flex flex-wrap items-center gap-3" onClick={e => e.stopPropagation()}>
-                            {allCds.map((cd, cdIdx) => (
-                              <div key={cdIdx} className="flex items-center gap-1.5">
-                                <span className="text-xs text-slate-400">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
-                                <div className="inline-flex items-center gap-1">
-                                  <button
-                                    onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
-                                    className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-                                  >−</button>
-                                  <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{cdVals[cdIdx]}</span>
-                                  <button
-                                    onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
-                                    className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-                                  >+</button>
-                                </div>
-                              </div>
-                            ))}
+                        {feature._isRoleMove && (
+                          <div className="flex shrink-0 gap-[3px] py-2 pl-1.5">
+                            <div className="w-1 rounded-full bg-amber-500/90" />
+                            <div className="w-1 rounded-full bg-violet-400/80" />
                           </div>
                         )}
+                        <div className="flex-1 min-w-0 p-3">
+                          <div className="flex justify-between items-start mb-1">
+                            <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5">
+                              {feature.name}
+                              {canRoll && (
+                                <Dices size={12} className={justRolled ? 'text-green-400' : rolzConfigured ? 'text-slate-500 group-hover:text-red-400 transition-colors' : 'text-slate-600 group-hover:text-amber-400 transition-colors'} />
+                              )}
+                            </span>
+                            <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
+                          </div>
+                          <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
+                          {allCds.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-slate-700 flex flex-wrap items-center gap-3" onClick={e => e.stopPropagation()}>
+                              {allCds.map((cd, cdIdx) => (
+                                <div key={cdIdx} className="flex items-center gap-1.5">
+                                  <span className="text-xs text-slate-400">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
+                                  <div className="inline-flex items-center gap-1">
+                                    <button
+                                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
+                                      className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                                    >−</button>
+                                    <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{cdVals[cdIdx]}</span>
+                                    <button
+                                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
+                                      className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                                    >+</button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -864,26 +908,29 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   className="break-inside-avoid bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl shadow-lg transition-all duration-300 relative overflow-hidden"
                 >
                   {element.imageUrl && (
-                    <div className="w-full h-40 overflow-hidden bg-slate-950">
+                    <div
+                      className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
+                      onClick={() => setLightboxUrl(element.imageUrl)}
+                    >
                       <img src={element.imageUrl} alt={element.name} className="w-full h-full object-cover opacity-80" onError={e => { e.target.parentElement.style.display = 'none'; }} />
                     </div>
                   )}
 
-                  <div className="p-5">
-                    <div className="absolute top-4 right-4 flex items-center gap-1.5">
-                      <button
-                        onClick={() => handleEditClick([element], element, 'environments')}
-                        className="text-slate-500 hover:text-blue-400"
-                        title="Edit"
-                      >
-                        <Pencil size={15} />
-                      </button>
-                      <button onClick={() => removeActiveElement(element.instanceId)} className="text-slate-500 hover:text-red-500" title="Remove">
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
+                  <div className={`absolute top-2 right-2 z-10 flex items-center gap-1 ${element.imageUrl ? 'bg-slate-900/80 rounded-lg px-1.5 py-1' : ''}`}>
+                    <button
+                      onClick={() => handleEditClick([element], element, 'environments')}
+                      className="text-slate-500 hover:text-blue-400"
+                      title="Edit"
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button onClick={() => removeActiveElement(element.instanceId)} className="text-slate-500 hover:text-red-500" title="Remove">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
 
-                    <div className="flex items-center gap-2 mb-1 pr-14">
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 mb-1 pr-20">
                       <h3 className="text-xl font-bold text-white">{element.name}</h3>
                     </div>
 
@@ -910,26 +957,29 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 className="break-inside-avoid bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl shadow-lg transition-all duration-300 relative overflow-hidden"
               >
                 {el.imageUrl && (
-                  <div className="w-full h-40 overflow-hidden bg-slate-950">
+                  <div
+                    className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
+                    onClick={() => setLightboxUrl(el.imageUrl)}
+                  >
                     <img src={el.imageUrl} alt={el.name} className="w-full h-full object-cover opacity-80" onError={e => { e.target.parentElement.style.display = 'none'; }} />
                   </div>
                 )}
 
-                <div className="p-5">
-                  <div className="absolute top-4 right-4 flex items-center gap-1.5">
-                    <button
-                      onClick={() => handleEditClick(instances, el, 'adversaries')}
-                      className="text-slate-500 hover:text-blue-400"
-                      title="Edit"
-                    >
-                      <Pencil size={15} />
-                    </button>
-                    <button onClick={() => removeGroup(instances)} className="text-slate-500 hover:text-red-500" title="Remove">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+                <div className={`absolute top-2 right-2 z-10 flex items-center gap-1 ${el.imageUrl ? 'bg-slate-900/80 rounded-lg px-1.5 py-1' : ''}`}>
+                  <button
+                    onClick={() => handleEditClick(instances, el, 'adversaries')}
+                    className="text-slate-500 hover:text-blue-400"
+                    title="Edit"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button onClick={() => removeGroup(instances)} className="text-slate-500 hover:text-red-500" title="Remove">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
 
-                  <div className="flex items-center gap-2 mb-1 pr-14">
+                <div className="p-5">
+                  <div className="flex items-center gap-2 mb-1 pr-20">
                     <h3 className="text-xl font-bold text-white">
                       {el.name}
                       {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
@@ -1043,49 +1093,78 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       >
         <div ref={overlayScrollRef} className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
           {hoveredElement.kind === 'environment' ? (
-            <div className="p-5">
+            <div className="p-5 relative">
               {hoveredElement.element.imageUrl && (
-                <div className="w-full h-32 overflow-hidden bg-slate-950 rounded-lg mb-4">
+                <div
+                  className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
+                  onClick={() => setLightboxUrl(hoveredElement.element.imageUrl)}
+                >
                   <img src={hoveredElement.element.imageUrl} alt={hoveredElement.element.name} className="w-full h-full object-cover opacity-80" />
                 </div>
               )}
-              <h3 className="text-xl font-bold text-white mb-1">{hoveredElement.element.name}</h3>
-              <EnvironmentCardContent
-                element={hoveredElement.element}
-                hoveredFeature={hoveredFeature}
-                cardKey={hoveredElement.element.instanceId}
-                featureCountdowns={featureCountdowns}
-                updateCountdown={null}
-              />
+              <div>
+                <h3 className={`text-xl font-bold text-white mb-1 ${hoveredElement.element.imageUrl ? 'pr-20' : ''}`}>{hoveredElement.element.name}</h3>
+                <EnvironmentCardContent
+                  element={hoveredElement.element}
+                  hoveredFeature={hoveredFeature}
+                  cardKey={hoveredElement.element.instanceId}
+                  featureCountdowns={featureCountdowns}
+                  updateCountdown={null}
+                />
+              </div>
             </div>
           ) : (
-            <div className="p-5">
+            <div className="p-5 relative">
               {hoveredElement.baseElement.imageUrl && (
-                <div className="w-full h-32 overflow-hidden bg-slate-950 rounded-lg mb-4">
+                <div
+                  className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
+                  onClick={() => setLightboxUrl(hoveredElement.baseElement.imageUrl)}
+                >
                   <img src={hoveredElement.baseElement.imageUrl} alt={hoveredElement.baseElement.name} className="w-full h-full object-cover opacity-80" />
                 </div>
               )}
-              <h3 className="text-xl font-bold text-white mb-1">
-                {hoveredElement.baseElement.name}
-                {hoveredElement.instances.length > 1 && (
-                  <span className="text-slate-400 font-normal ml-1.5">×{hoveredElement.instances.length}</span>
-                )}
-              </h3>
-              <AdversaryCardContent
-                element={hoveredElement.baseElement}
-                hoveredFeature={hoveredFeature}
-                cardKey={hoveredElement.baseElement.id}
-                count={hoveredElement.instances.length}
-                instances={hoveredElement.instances}
-                updateFn={() => {}}
-                showInstanceRemove={false}
-                featureCountdowns={featureCountdowns}
-                updateCountdown={null}
-                onRollAttack={null}
-              />
+              <div>
+                <h3 className={`text-xl font-bold text-white mb-1 ${hoveredElement.baseElement.imageUrl ? 'pr-20' : ''}`}>
+                  {hoveredElement.baseElement.name}
+                  {hoveredElement.instances.length > 1 && (
+                    <span className="text-slate-400 font-normal ml-1.5">×{hoveredElement.instances.length}</span>
+                  )}
+                </h3>
+                <AdversaryCardContent
+                  element={hoveredElement.baseElement}
+                  hoveredFeature={hoveredFeature}
+                  cardKey={hoveredElement.baseElement.id}
+                  count={hoveredElement.instances.length}
+                  instances={hoveredElement.instances}
+                  updateFn={() => {}}
+                  showInstanceRemove={false}
+                  featureCountdowns={featureCountdowns}
+                  updateCountdown={null}
+                  onRollAttack={null}
+                />
+              </div>
             </div>
           )}
         </div>
+      </div>
+    )}
+    {lightboxUrl && (
+      <div
+        className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+        onClick={() => setLightboxUrl(null)}
+      >
+        <button
+          className="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <X size={20} />
+        </button>
+        <img
+          src={lightboxUrl}
+          alt="Enlarged image"
+          className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+          onClick={e => e.stopPropagation()}
+        />
       </div>
     )}
     </div>

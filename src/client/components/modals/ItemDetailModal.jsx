@@ -225,45 +225,47 @@ export function ItemDetailModal({
 
     return (
     <div className="flex flex-col h-full overflow-hidden">
-      {!!displayItem.imageUrl && !isRedditUnparsed && (
-        <div className="w-full h-40 overflow-hidden bg-slate-950 shrink-0 relative group">
-          <img
-            src={allImages[safeIdx]}
-            alt={displayItem.name}
-            className="w-full h-full object-cover opacity-90 cursor-zoom-in"
-            onClick={() => setLightboxUrl(allImages[safeIdx])}
-            onError={e => { e.target.parentElement.style.display = 'none'; }}
-          />
-          {hasCarousel && (
-            <>
-              <button
-                onClick={(e) => { e.stopPropagation(); setCarouselIdx((safeIdx - 1 + allImages.length) % allImages.length); }}
-                className="absolute left-1 top-1/2 -translate-y-1/2 p-1 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setCarouselIdx((safeIdx + 1) % allImages.length); }}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
-              >
-                <ChevronRight size={16} />
-              </button>
-              <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1">
-                {allImages.map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={(e) => { e.stopPropagation(); setCarouselIdx(i); }}
-                    className={`w-1.5 h-1.5 rounded-full transition-colors ${i === safeIdx ? 'bg-white' : 'bg-white/40 hover:bg-white/70'}`}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-4 relative">
+        {!!displayItem.imageUrl && !isRedditUnparsed && (
+          <div
+            className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer group"
+            onClick={() => setLightboxUrl(allImages[safeIdx])}>
+            <img
+              src={allImages[safeIdx]}
+              alt={displayItem.name}
+              className="w-full h-full object-cover opacity-90"
+              onError={e => { e.target.parentElement.style.display = 'none'; }}
+            />
+            {hasCarousel && (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setCarouselIdx((safeIdx - 1 + allImages.length) % allImages.length); }}
+                  className="absolute left-0.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+                >
+                  <ChevronLeft size={12} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setCarouselIdx((safeIdx + 1) % allImages.length); }}
+                  className="absolute right-0.5 top-1/2 -translate-y-1/2 p-0.5 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+                >
+                  <ChevronRight size={12} />
+                </button>
+                <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex gap-1">
+                  {allImages.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={(e) => { e.stopPropagation(); setCarouselIdx(i); }}
+                      className={`w-1 h-1 rounded-full transition-colors ${i === safeIdx ? 'bg-white' : 'bg-white/40 hover:bg-white/70'}`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        <div>
         {!isRedditUnparsed && editable && (
-          <div className="mb-3 flex items-center gap-2 flex-wrap">
+          <div className={`mb-3 flex items-center gap-2 flex-wrap ${!!displayItem.imageUrl && !isRedditUnparsed ? 'pr-20' : ''}`}>
             <h3 className="text-xl font-bold text-white">
               {displayItem.name || <span className="text-slate-500 italic">Untitled</span>}
             </h3>
@@ -512,6 +514,7 @@ export function ItemDetailModal({
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );};
