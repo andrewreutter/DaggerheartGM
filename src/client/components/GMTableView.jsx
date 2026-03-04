@@ -10,6 +10,7 @@ import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { postRolzRoll } from '../lib/api.js';
 import { isOwnItem } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
+import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 
 const USER_MOD_OPTIONS = [
   { key: 'lessDifficult',     label: 'Less difficult / shorter fight',  value: -1 },
@@ -312,6 +313,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
   const [editState, setEditState] = useState(null);
+  const [scaledToggleState, setScaledToggleState] = useState({});
   const [collapsedSections, setCollapsedSections] = useState(() =>
     new Set(activeElements.length > 0 ? ['Defaults'] : [])
   );
@@ -1029,6 +1031,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             const { baseElement: el, instances } = item;
             const count = instances.length;
             const advCardKey = el.id;
+            const showScaled = scaledToggleState[el.id] ?? true;
+            const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
+            const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
 
             return (
               <div
@@ -1060,13 +1065,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 <div className="p-5">
                   <div className="flex items-center gap-2 mb-1 pr-20">
                     <h3 className="text-xl font-bold text-white">
-                      {el.name}
+                      {displayEl.name}
                       {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
                     </h3>
                   </div>
 
                   <AdversaryCardContent
-                    element={el}
+                    element={displayEl}
                     hoveredFeature={hoveredFeature}
                     cardKey={advCardKey}
                     count={count}
@@ -1078,6 +1083,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     updateCountdown={updateCountdown}
                     onRollAttack={rolzConfigured ? (attackData) => handleCardRoll(attackData, el.name) : null}
                     damageBoost={tableDamageBoost || el._damageBoost || null}
+                    scaledMeta={scaledMeta}
+                    onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
                   />
                 </div>
               </div>
@@ -1204,27 +1211,32 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 />
               </div>
             </div>
-          ) : (
+          ) : (() => {
+            const el = hoveredElement.baseElement;
+            const showScaled = scaledToggleState[el.id] ?? true;
+            const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
+            const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
+            return (
             <div className="p-5 relative">
-              {hoveredElement.baseElement.imageUrl && (
+              {el.imageUrl && (
                 <div
                   className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
-                  onClick={() => setLightboxUrl(hoveredElement.baseElement.imageUrl)}
+                  onClick={() => setLightboxUrl(el.imageUrl)}
                 >
-                  <img src={hoveredElement.baseElement.imageUrl} alt={hoveredElement.baseElement.name} className="w-full h-full object-cover opacity-80" />
+                  <img src={el.imageUrl} alt={el.name} className="w-full h-full object-cover opacity-80" />
                 </div>
               )}
               <div>
-                <h3 className={`text-xl font-bold text-white mb-1 ${hoveredElement.baseElement.imageUrl ? 'pr-20' : ''}`}>
-                  {hoveredElement.baseElement.name}
+                <h3 className={`text-xl font-bold text-white mb-1 ${el.imageUrl ? 'pr-20' : ''}`}>
+                  {displayEl.name}
                   {hoveredElement.instances.length > 1 && (
                     <span className="text-slate-400 font-normal ml-1.5">×{hoveredElement.instances.length}</span>
                   )}
                 </h3>
                 <AdversaryCardContent
-                  element={hoveredElement.baseElement}
+                  element={displayEl}
                   hoveredFeature={hoveredFeature}
-                  cardKey={hoveredElement.baseElement.id}
+                  cardKey={el.id}
                   count={hoveredElement.instances.length}
                   instances={hoveredElement.instances}
                   updateFn={() => {}}
@@ -1232,10 +1244,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
                   onRollAttack={null}
+                  scaledMeta={scaledMeta}
+                  onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
                 />
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     )}

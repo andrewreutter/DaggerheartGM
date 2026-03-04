@@ -27,7 +27,7 @@ export function parseRoute(pathname) {
 
   if (parts[0] === 'gm-table') {
     const gmTab = parts[1] === 'whiteboard' ? 'whiteboard' : 'table';
-    // /gm-table/:collection/:id — item detail modal from GM table
+    // /gm-table/:collection/:id — item detail modal from Game Table
     const modalCollection = VALID_COLLECTIONS.has(parts[1]) ? parts[1] : null;
     const modalItemId = modalCollection && parts[2] ? parts[2] : null;
     return {

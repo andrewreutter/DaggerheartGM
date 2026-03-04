@@ -1,6 +1,6 @@
 /**
  * SceneAdoptDialog — shown when a scene with active budget factors is added to
- * the GM Table.  Asks whether to apply the scene's factors to the table.
+ * the Game Table.  Asks whether to apply the scene's factors to the table.
  */
 
 const MOD_LABELS = {

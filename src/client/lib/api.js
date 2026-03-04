@@ -1,10 +1,19 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 
+/** Headers to add when running behind ngrok (bypasses browser warning interstitial). */
+function apiHeaders(extra = {}) {
+  const h = { ...extra };
+  if (typeof window !== 'undefined' && window.location?.hostname?.includes('ngrok')) {
+    h['ngrok-skip-browser-warning'] = 'true';
+  }
+  return h;
+}
+
 let firebaseConfig;
 export let imageGenEnabled = false;
 try {
-  const res = await fetch('/api/config');
+  const res = await fetch('/api/config', { headers: apiHeaders() });
   const json = await res.json();
   firebaseConfig = json.firebaseConfig;
   imageGenEnabled = !!json.imageGenEnabled;
@@ -32,7 +41,7 @@ export const getAuthToken = async () => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, includeReddit = false, search = '', tier = null, type = null, includeScaledUp = false, offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, search = '', tier = null, tiers = [], type = null, types = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20 } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -41,16 +50,88 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (includePublic) params.set('includePublic', '1');
   if (includeHod) params.set('includeHod', '1');
   if (includeFcg) params.set('includeFcg', '1');
-  if (includeReddit) params.set('includeReddit', '1');
   if (search) params.set('search', search);
-  if (tier != null) params.set('tier', String(tier));
-  if (type) params.set('type', type);
+  if (Array.isArray(tiers) && tiers.length > 0) {
+    tiers.forEach(t => params.append('tier', String(t)));
+  } else if (tier != null) {
+    params.set('tier', String(tier));
+  }
+  if (Array.isArray(types) && types.length > 0) {
+    types.forEach(t => params.append('type', t));
+  } else if (type) {
+    params.set('type', type);
+  }
   if (includeScaledUp) params.set('includeScaledUp', '1');
+  if (sort) params.set('sort', sort);
   const res = await fetch(`/api/data/${collection}?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+};
+
+/**
+ * Load a collection with streaming. Batches arrive as they complete.
+ * @param {string} collection
+ * @param {object} opts - Same as loadCollection
+ * @param {{ onBatch: (data: { source, items?, dbCount?, totalCount? }) => void, onEnrichment?: (data: { mirrorMap }) => void, onDone: (data: { totalCount, nextOffset }) => void, onSources?: (data: { sources: string[] }) => void, onProbative?: (data: { source: string, totalCount?: number }) => void }} handlers
+ */
+export const loadCollectionStream = async (collection, opts, { onBatch, onEnrichment, onDone, onSources, onProbative }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams({ offset: String(opts.offset ?? 0), limit: String(opts.limit ?? 20), stream: '1' });
+  if (!opts.includeMine) params.set('includeMine', '0');
+  if (opts.includeSrd) params.set('includeSrd', '1');
+  if (opts.includePublic) params.set('includePublic', '1');
+  if (opts.includeHod) params.set('includeHod', '1');
+  if (opts.includeFcg) params.set('includeFcg', '1');
+  if (opts.search) params.set('search', opts.search);
+  if (Array.isArray(opts.tiers) && opts.tiers.length > 0) {
+    opts.tiers.forEach(t => params.append('tier', String(t)));
+  } else if (opts.tier != null) {
+    params.set('tier', String(opts.tier));
+  }
+  if (Array.isArray(opts.types) && opts.types.length > 0) {
+    opts.types.forEach(t => params.append('type', t));
+  } else if (opts.type) {
+    params.set('type', opts.type);
+  }
+  if (opts.includeScaledUp) params.set('includeScaledUp', '1');
+
+  const res = await fetch(`/api/data/${collection}?${params}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let currentEvent = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ') && currentEvent) {
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (currentEvent === 'batch') onBatch(data);
+          else if (currentEvent === 'enrichment' && onEnrichment) onEnrichment(data);
+          else if (currentEvent === 'done') onDone(data);
+          else if (currentEvent === 'sources' && onSources) onSources(data);
+          else if (currentEvent === 'probative' && onProbative) onProbative(data);
+        } catch {}
+        currentEvent = null;
+      }
+    }
+  }
 };
 
 /**
@@ -60,7 +141,7 @@ export const loadTableState = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/data/table_state', {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
@@ -80,7 +161,7 @@ export const resolveItems = async (idMap, { adopt = false } = {}) => {
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/data/resolve', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ ...idMap, adopt }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -101,7 +182,7 @@ export const enrichItems = async (collection, items) => {
   try {
     const res = await fetch(`/api/data/${collection}/enrich`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ items: stubs }),
     });
     if (!res.ok) return {};
@@ -121,40 +202,6 @@ export const enrichSingleItem = async (collection, item) => {
 };
 
 /**
- * Parse a Reddit stub into a fully structured adversary or environment.
- * Server tries text regex → OCR → LLM cascade unless forceLlm is set.
- * @param {string}  collection - 'adversaries' | 'environments'
- * @param {object}  item       - Reddit stub item with _redditPostId set
- * @param {object}  [opts]
- * @param {boolean} [opts.forceLlm] - Skip text/OCR and go straight to LLM
- * @param {boolean} [opts.reparse]  - Skip cache and re-parse from scratch
- * @returns {{ item: object, _parseMethod: string }}
- */
-export const parseRedditItem = async (collection, item, { forceLlm, reparse } = {}) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const res = await fetch('/api/reddit/parse', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      collection,
-      redditPostId: item._redditPostId,
-      name: item.name,
-      selftext: item._redditSelftext,
-      images: item._redditImages,
-      forceLlm: !!forceLlm,
-      reparse: !!reparse,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  return { item: data.item, _parseMethod: data._parseMethod };
-};
-
-/**
  * Ensure a mirror row exists for an external item so it can be resolved by ID later.
  * Fire-and-forget — callers don't need to await.
  */
@@ -164,7 +211,7 @@ export const ensureMirror = async (collection, item) => {
   try {
     await fetch(`/api/data/${collection}/mirror`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ item }),
     });
   } catch { /* best-effort */ }
@@ -181,7 +228,7 @@ export const cloneItemToLibrary = async (collectionName, source, { play = false 
   if (!token) throw new Error('Not signed in');
   const res = await fetch(`/api/data/${collectionName}/clone`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ source, play }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -190,7 +237,7 @@ export const cloneItemToLibrary = async (collectionName, source, { play = false 
 };
 
 /**
- * Record a play of an own item (adds it to the GM Table).
+ * Record a play of an own item (adds it to the Game Table).
  * Increments play_count on the item.
  */
 export const recordPlay = async (collectionName, itemId) => {
@@ -198,7 +245,7 @@ export const recordPlay = async (collectionName, itemId) => {
   if (!token) return;
   const res = await fetch(`/api/data/${collectionName}/play`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ itemId }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -215,7 +262,7 @@ export const loadFcgSearch = async ({ search = '', tier } = {}) => {
   if (search) params.set('search', search);
   if (tier) params.set('tier', String(tier));
   const res = await fetch(`/api/fcg-search?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -226,10 +273,7 @@ export const saveItem = async (collectionName, item) => {
   if (!token) return null;
   const res = await fetch(`/api/data/${collectionName}`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify(item),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -241,10 +285,7 @@ export const saveMirrorItem = async (collectionName, item) => {
   if (!token) return null;
   const res = await fetch(`/api/admin/mirror/${collectionName}`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify(item),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -256,7 +297,7 @@ export const deleteItem = async (collectionName, id) => {
   if (!token) return;
   const res = await fetch(`/api/data/${collectionName}/${id}`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 };
@@ -265,7 +306,7 @@ export const fetchRolzRoomLog = async (roomName) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch(`/api/rolz-roomlog?room=${encodeURIComponent(roomName)}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -279,10 +320,7 @@ export const postRolzRoll = async (room, text, rolzUsername, rolzPassword, from 
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/rolz-post', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ room, text, from, rolzUsername, rolzPassword }),
   });
   if (!res.ok) {
@@ -297,7 +335,7 @@ export const fetchMe = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/me', {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -312,10 +350,7 @@ export const generateImage = async (prompt) => {
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/generate-image', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ prompt }),
   });
   if (!res.ok) {
@@ -335,10 +370,7 @@ export const editImage = async (image, prompt) => {
   if (!token) throw new Error('Not signed in');
   const res = await fetch('/api/edit-image', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ image, prompt }),
   });
   if (!res.ok) {
@@ -348,21 +380,3 @@ export const editImage = async (image, prompt) => {
   return res.json();
 };
 
-/** Admin-only: permanently hide a Reddit post from all users. */
-export const blockRedditPost = async (redditPostId) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const res = await fetch('/api/admin/reddit/block', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ redditPostId }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-};

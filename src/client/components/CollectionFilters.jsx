@@ -8,7 +8,14 @@ const SOURCE_OPTIONS = [
   { val: 'public',  label: 'Public' },
   { val: 'hod',     label: 'HoD' },
   { val: 'fcg',     label: 'FCG' },
-  { val: 'reddit',  label: 'Reddit' },
+];
+
+const SORT_OPTIONS = [
+  { val: 'popularity', label: 'Popularity' },
+  { val: 'name',       label: 'Name' },
+  { val: 'type',       label: 'Role/Type' },
+  { val: 'source',     label: 'Source' },
+  { val: 'tier',       label: 'Tier' },
 ];
 
 /**
@@ -16,7 +23,7 @@ const SOURCE_OPTIONS = [
  *
  * Props:
  *   collection      - 'adversaries' | 'environments'
- *   filters         - { include, tier, type, search, includeScaledUp } from useCollectionSearch
+ *   filters         - { includes, tiers, types, search, includeScaledUp } from useCollectionSearch
  *   onFilterChange  - (key, value) => void
  *   variant         - 'bar' (LibraryView horizontal) | 'panel' (modal / FeatureLibrary stacked)
  *   autoFocusSearch - boolean, default false
@@ -27,6 +34,7 @@ export function CollectionFilters({
   onFilterChange,
   variant = 'bar',
   autoFocusSearch = false,
+  showSort = false,
 }) {
   const typeOptions = collection === 'adversaries' ? ROLES : ENV_TYPES;
   const typeLabel = collection === 'adversaries' ? 'Role' : 'Type';
@@ -39,6 +47,7 @@ export function CollectionFilters({
       typeLabel={typeLabel}
       collection={collection}
       autoFocusSearch={autoFocusSearch}
+      showSort={showSort}
     />;
   }
 
@@ -48,6 +57,7 @@ export function CollectionFilters({
     typeOptions={typeOptions}
     typeLabel={typeLabel}
     collection={collection}
+    showSort={showSort}
   />;
 }
 
@@ -55,8 +65,8 @@ export function CollectionFilters({
 // Bar variant — horizontal inline style used in LibraryView
 // ---------------------------------------------------------------------------
 
-function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collection }) {
-  const { include, tier, type, search, includeScaledUp } = filters;
+function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collection, showSort }) {
+  const { includes = [], tiers = [], types = [], search, includeScaledUp, sort = 'popularity' } = filters;
 
   const baseBtn = 'px-2 py-0.5 rounded font-medium border transition-colors';
   const inactive = 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300';
@@ -75,14 +85,14 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
         />
       </div>
 
-      {/* Source + Tier + Type */}
+      {/* Source + Tier + Type + Sort */}
       <div className="flex items-start gap-3 text-xs text-slate-400 flex-wrap">
         <span className="text-slate-500 font-medium uppercase tracking-wider">Include</span>
         {SOURCE_OPTIONS.map(({ val, label }) => (
           <button
             key={String(val)}
-            onClick={() => onFilterChange('include', include === val && val !== null ? null : val)}
-            className={`${baseBtn} ${include === val ? 'bg-cyan-800 border-cyan-500 text-cyan-100' : inactive}`}
+            onClick={() => onFilterChange('include', val === null ? null : val)}
+            className={`${baseBtn} ${(val === null ? includes.length === 0 : includes.includes(val)) ? 'bg-cyan-800 border-cyan-500 text-cyan-100' : inactive}`}
           >
             {label}
           </button>
@@ -94,21 +104,21 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => onFilterChange('tier', null)}
-              className={`${baseBtn} ${tier === null ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
+              className={`${baseBtn} ${tiers.length === 0 ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
             >
               All
             </button>
             {TIERS.map(t => (
               <button
                 key={t}
-                onClick={() => onFilterChange('tier', tier === t ? null : t)}
-                className={`${baseBtn} ${tier === t ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
+                onClick={() => onFilterChange('tier', t)}
+                className={`${baseBtn} ${tiers.includes(t) ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
               >
                 {t}
               </button>
             ))}
           </div>
-          {collection === 'adversaries' && tier != null && (
+          {collection === 'adversaries' && tiers.length === 1 && (
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -125,19 +135,34 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
         <span className="text-slate-500 font-medium uppercase tracking-wider">{typeLabel}</span>
         <button
           onClick={() => onFilterChange('type', null)}
-          className={`${baseBtn} ${type === null ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+          className={`${baseBtn} ${types.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
         >
           All
         </button>
         {typeOptions.map(val => (
           <button
             key={val}
-            onClick={() => onFilterChange('type', type === val ? null : val)}
-            className={`${baseBtn} capitalize ${type === val ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+            onClick={() => onFilterChange('type', val)}
+            className={`${baseBtn} capitalize ${types.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
           >
             {val}
           </button>
         ))}
+        {showSort && (
+          <>
+            <span className="text-slate-700 select-none">|</span>
+            <span className="text-slate-500 font-medium uppercase tracking-wider">Sort</span>
+            <select
+              value={sort}
+              onChange={e => onFilterChange('sort', e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-300 text-xs"
+            >
+              {SORT_OPTIONS.map(({ val, label }) => (
+                <option key={val} value={val}>{label}</option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
     </div>
   );
@@ -147,14 +172,12 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
 // Panel variant — stacked sections with headers, used in modals / FeatureLibrary
 // ---------------------------------------------------------------------------
 
-function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collection, autoFocusSearch }) {
-  const { include, tier, type, search, includeScaledUp } = filters;
+function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collection, autoFocusSearch, showSort }) {
+  const { includes = [], tiers = [], types = [], search, includeScaledUp, sort = 'popularity' } = filters;
 
   const btnBase = 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors border';
   const btnActive = 'bg-red-700 border-red-600 text-white';
   const btnInactive = 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600 hover:text-white';
-
-  const selectClass = 'bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-200 cursor-pointer hover:border-slate-500 focus:outline-none focus:border-blue-500 transition-colors w-full mt-1';
 
   return (
     <div className="flex flex-col gap-3">
@@ -177,8 +200,8 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collect
           {SOURCE_OPTIONS.map(({ val, label }) => (
             <button
               key={String(val)}
-              onClick={() => onFilterChange('include', include === val && val !== null ? null : val)}
-              className={`${btnBase} ${include === val ? btnActive : btnInactive}`}
+              onClick={() => onFilterChange('include', val === null ? null : val)}
+              className={`${btnBase} ${(val === null ? includes.length === 0 : includes.includes(val)) ? btnActive : btnInactive}`}
             >
               {label}
             </button>
@@ -191,12 +214,12 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collect
         <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Tier</div>
         <div className="flex flex-col gap-1.5">
           <div className="flex flex-wrap gap-1.5">
-            <button onClick={() => onFilterChange('tier', null)} className={`${btnBase} ${tier === null ? btnActive : btnInactive}`}>All</button>
+            <button onClick={() => onFilterChange('tier', null)} className={`${btnBase} ${tiers.length === 0 ? btnActive : btnInactive}`}>All</button>
             {TIERS.map(t => (
-              <button key={t} onClick={() => onFilterChange('tier', tier === t ? null : t)} className={`${btnBase} ${tier === t ? btnActive : btnInactive}`}>{t}</button>
+              <button key={t} onClick={() => onFilterChange('tier', t)} className={`${btnBase} ${tiers.includes(t) ? btnActive : btnInactive}`}>{t}</button>
             ))}
           </div>
-          {collection === 'adversaries' && tier != null && (
+          {collection === 'adversaries' && tiers.length === 1 && (
             <label className="flex items-center gap-1.5 cursor-pointer text-xs">
               <input
                 type="checkbox"
@@ -210,20 +233,26 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collect
         </div>
       </div>
 
-      {/* Type / Role — dropdown to stay compact in narrow panels */}
+      {/* Role / Type — button group matching Source/Tier */}
       <div>
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">{typeLabel}</div>
-        <select
-          value={type ?? ''}
-          onChange={e => onFilterChange('type', e.target.value || null)}
-          className={selectClass}
-        >
-          <option value="">All {typeLabel}s</option>
+        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">{typeLabel}</div>
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => onFilterChange('type', null)} className={`${btnBase} ${types.length === 0 ? btnActive : btnInactive}`}>All</button>
           {typeOptions.map(val => (
-            <option key={val} value={val}>{val.charAt(0).toUpperCase() + val.slice(1)}</option>
+            <button key={val} onClick={() => onFilterChange('type', val)} className={`${btnBase} capitalize ${types.includes(val) ? btnActive : btnInactive}`}>{val}</button>
           ))}
-        </select>
+        </div>
       </div>
+      {showSort && (
+        <div>
+          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Sort</div>
+          <select value={sort} onChange={e => onFilterChange('sort', e.target.value)} className={`${btnBase} w-full`}>
+            {SORT_OPTIONS.map(({ val, label }) => (
+              <option key={val} value={val}>{label}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

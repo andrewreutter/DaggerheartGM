@@ -4,7 +4,7 @@
  * Reads pre-built JSON from daggerheart-srd/.build/03_json/ (git submodule),
  * normalizes each collection into a typed schema, and caches everything in memory.
  *
- * Adversary and environment schemas match the existing app format so GM Table,
+ * Adversary and environment schemas match the existing app format so Game Table,
  * ItemCard, forms, etc. continue to work without modification.
  */
 
@@ -389,14 +389,16 @@ export async function getItem(collection, id) {
  * Search a collection with optional filters and pagination.
  *
  * @param {string} collection
- * @param {{ search?: string, tier?: string|number|null, tierMax?: number|null, type?: string|null, limit?: number, offset?: number }} opts
+ * @param {{ search?: string, tier?: string|number|null, tierMax?: number|null, tiers?: number[], type?: string|null, types?: string[], limit?: number, offset?: number }} opts
  * @returns {Promise<{ items: Array, totalCount: number }>}
  */
 export async function searchCollection(collection, {
   search = '',
   tier = null,
   tierMax = null,
+  tiers = [],
   type = null,
+  types = [],
   limit = 20,
   offset = 0,
 } = {}) {
@@ -413,25 +415,31 @@ export async function searchCollection(collection, {
   if (tierMax != null) {
     const max = Number(tierMax);
     items = items.filter(item => (Number(item.tier) || 1) <= max);
+  } else if (Array.isArray(tiers) && tiers.length > 0) {
+    const tierSet = new Set(tiers.map(t => String(t)));
+    items = items.filter(item => tierSet.has(String(item.tier)));
   } else if (tier != null) {
     const t = String(tier);
     items = items.filter(item => String(item.tier) === t);
   }
 
-  if (type != null) {
-    const typeField =
-      collection === 'adversaries'  ? 'role' :
-      collection === 'environments' ? 'type' :
-      collection === 'abilities'    ? 'type' :
-      collection === 'weapons'      ? 'primary_or_secondary' :
-      null;
-    if (typeField) {
-      const t = type.toLowerCase();
-      items = items.filter(item => (item[typeField] || '').toLowerCase() === t);
-    }
+  const typeField =
+    collection === 'adversaries'  ? 'role' :
+    collection === 'environments' ? 'type' :
+    collection === 'abilities'    ? 'type' :
+    collection === 'weapons'      ? 'primary_or_secondary' :
+    null;
+
+  if (typeField && Array.isArray(types) && types.length > 0) {
+    const typeSet = new Set(types.map(t => t.toLowerCase()));
+    items = items.filter(item => typeSet.has((item[typeField] || '').toLowerCase()));
+  } else if (typeField && type != null) {
+    const t = type.toLowerCase();
+    items = items.filter(item => (item[typeField] || '').toLowerCase() === t);
   }
 
   const totalCount = items.length;
+  if (limit === 0) return { items: [], totalCount };
   const lim = Math.max(1, Number(limit) || 20);
   const off = Math.max(0, Number(offset) || 0);
   return { items: items.slice(off, off + lim), totalCount };

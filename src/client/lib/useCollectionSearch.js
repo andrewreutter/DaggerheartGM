@@ -1,47 +1,30 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { loadCollection } from './api.js';
 import { computeScaledStats, ROLE_STAT_SCALING } from './adversary-defaults.js';
 
-const DEFAULT_FILTERS = { include: 'own', tier: null, type: null, search: '', includeScaledUp: false };
+const DEFAULT_FILTERS = { includes: ['own'], tiers: [], types: [], search: '', includeScaledUp: false, sort: 'popularity' };
 
 function loadPersistedFilters(persistKey, collection, baseFilters = DEFAULT_FILTERS) {
   const defaults = { ...DEFAULT_FILTERS, ...baseFilters };
   if (!persistKey) return { ...defaults };
   try {
     const stored = localStorage.getItem(`${persistKey}_${collection}`);
-    if (stored) return { ...defaults, ...JSON.parse(stored) };
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed.tier != null && !Array.isArray(parsed.tiers)) parsed.tiers = [parsed.tier];
+      if (parsed.type && !Array.isArray(parsed.types)) parsed.types = [parsed.type];
+      if (parsed.include != null && !Array.isArray(parsed.includes)) {
+        parsed.includes = parsed.include === null ? [] : [parsed.include];
+      }
+      return { ...defaults, ...parsed };
+    }
   } catch {}
   return { ...defaults };
 }
 
 /**
  * Shared hook for fetching, filtering, and paginating a single collection.
- *
- * @param {string} collection - e.g. 'adversaries', 'environments'
- * @param {object} opts
- * @param {number}   opts.limit       - Page size (default 20)
- * @param {number}   opts.debounceMs  - Debounce delay for search input (default 300)
- * @param {string}   opts.persistKey   - localStorage key prefix; per-collection suffix is appended
- * @param {object}   opts.defaultFilters - Override default filter values (e.g. { include: 'srd' })
- * @param {boolean}  opts.enabled     - Set false to skip fetching (e.g. non-paginated collections)
- * @param {boolean}  opts.infinite    - When true, items accumulate across pages (infinite scroll mode)
- * @param {number}   opts.maxItems    - When set with infinite:true, trims the oldest items once exceeded
- *
- * @returns {{
- *   items: any[],
- *   totalCount: number,
- *   nextOffset: number|null,
- *   loading: boolean,
- *   filters: { include: string|null, tier: number|null, type: string|null, search: string, includeScaledUp: boolean },
- *   setFilter: (key: string, value: any) => void,
- *   offset: number,
- *   setOffset: (n: number) => void,
- *   refresh: () => void,
- *   hasMore: boolean,
- *   isLoadingMore: boolean,
- *   loadMore: () => void,
- *   trimmedCount: number,
- * }}
+ * Uses unified API with traditional OFFSET/LIMIT pagination.
  */
 export function useCollectionSearch(collection, {
   limit = 20,
@@ -59,20 +42,15 @@ export function useCollectionSearch(collection, {
   const [totalCount, setTotalCount] = useState(0);
   const [nextOffset, setNextOffsetState] = useState(null);
   const [loading, setLoading] = useState(false);
-  // Incrementing this counter forces a refetch without changing other deps.
   const [refreshKey, setRefreshKey] = useState(0);
-
-  // Infinite scroll state
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [trimmedCount, setTrimmedCount] = useState(0);
 
   const prevCollectionRef = useRef(collection);
   const debounceRef = useRef(null);
-  // Ref so doFetch can read the current value without being a dep
   const isLoadingMoreRef = useRef(false);
+  const abortControllerRef = useRef(null);
 
-  // When collection changes (e.g. LibraryView tab switch), reset state and load
-  // persisted filters for the new collection.
   useEffect(() => {
     if (prevCollectionRef.current !== collection) {
       prevCollectionRef.current = collection;
@@ -87,56 +65,64 @@ export function useCollectionSearch(collection, {
     }
   }, [collection, persistKey]);
 
-  // Main fetch effect — debounces only the search field; all other changes are immediate.
+  const getLoadOpts = useCallback(() => {
+    const { includes = [], tiers = [], types = [], search, includeScaledUp, sort = 'popularity' } = filters;
+    const singleTier = tiers.length === 1 ? tiers[0] : null;
+    const useScaledUp = includeScaledUp && singleTier != null;
+    const isAll = includes.length === 0;
+    return {
+      includeMine: isAll || includes.includes('own'),
+      includeSrd: isAll || includes.includes('srd'),
+      includePublic: isAll || includes.includes('public'),
+      includeHod: isAll || includes.includes('hod'),
+      includeFcg: isAll || includes.includes('fcg'),
+      search: search || '',
+      tier: singleTier,
+      tiers,
+      type: types.length === 1 ? types[0] : null,
+      types,
+      includeScaledUp: useScaledUp,
+      sort,
+    };
+  }, [filters]);
+
+  const applyScaled = useCallback((items, loadOpts) => {
+    if (collection !== 'adversaries' || !loadOpts.includeScaledUp) return items;
+    const singleTier = loadOpts.tier ?? loadOpts.tiers?.[0];
+    if (singleTier == null) return items;
+    return items.map(item => {
+      const itemTier = item.tier ?? 1;
+      if (itemTier >= singleTier) return item;
+      const role = item.role || 'standard';
+      if (!ROLE_STAT_SCALING[role]) return item;
+      const scaled = computeScaledStats(item, role, itemTier, singleTier);
+      return { ...item, ...scaled, tier: singleTier, name: `[Scaled] ${item.name}`, _scaledFromTier: itemTier };
+    });
+  }, [collection]);
+
   useEffect(() => {
-    if (!enabled) { setItems([]); return; }
+    if (!enabled) {
+      setItems([]);
+      setTotalCount(0);
+      return;
+    }
 
     const appendMode = infinite && isLoadingMoreRef.current;
 
     const doFetch = async () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      abortControllerRef.current = new AbortController();
+
       setLoading(true);
       try {
-        const { include, tier, type, search, includeScaledUp } = filters;
-        const result = await loadCollection(collection, {
-          includeMine: include === null || include === 'own',
-          includeSrd: include === null || include === 'srd',
-          includePublic: include === null || include === 'public',
-          includeHod: include === null || include === 'hod',
-          includeFcg: include === null || include === 'fcg',
-          // Reddit is intentionally excluded from "All" (include === null) to avoid
-          // surfacing unstructured stubs in default results. Only shown on explicit selection.
-          includeReddit: include === 'reddit',
-          search: search || '',
-          tier,
-          type,
-          includeScaledUp: !!(tier != null && includeScaledUp),
-          offset,
-          limit,
-        });
-        setTotalCount(result.totalCount || 0);
-        setNextOffsetState(result.nextOffset ?? null);
-
-        let items = result.items || [];
-        if (collection === 'adversaries' && tier != null && includeScaledUp) {
-          items = items.map(item => {
-            const itemTier = item.tier ?? 1;
-            if (itemTier >= tier) return item;
-            const role = item.role || 'standard';
-            if (!ROLE_STAT_SCALING[role]) return item;
-            const scaled = computeScaledStats(item, role, itemTier, tier);
-            return {
-              ...item,
-              ...scaled,
-              tier,
-              name: `[Scaled] ${item.name}`,
-              _scaledFromTier: itemTier,
-            };
-          });
-        }
+        const loadOpts = { ...getLoadOpts(), offset, limit };
+        const result = await loadCollection(collection, loadOpts);
+        const rawItems = result.items || [];
+        const scaled = applyScaled(rawItems, loadOpts);
 
         if (appendMode) {
           setItems(prev => {
-            const merged = [...prev, ...items];
+            const merged = [...prev, ...scaled];
             if (maxItems && merged.length > maxItems) {
               const excess = merged.length - maxItems;
               setTrimmedCount(tc => tc + excess);
@@ -145,11 +131,13 @@ export function useCollectionSearch(collection, {
             return merged;
           });
         } else {
-          setItems(items);
+          setItems(scaled);
           setTrimmedCount(0);
         }
+        setTotalCount(result.totalCount || 0);
+        setNextOffsetState(result.nextOffset ?? offset + scaled.length);
       } catch (err) {
-        console.error(`useCollectionSearch(${collection}) failed:`, err);
+        if (err.name !== 'AbortError') console.error(`useCollectionSearch(${collection}) failed:`, err);
       } finally {
         setLoading(false);
         setIsLoadingMore(false);
@@ -159,15 +147,39 @@ export function useCollectionSearch(collection, {
 
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(doFetch, filters.search ? debounceMs : 0);
-    return () => clearTimeout(debounceRef.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, offset, collection, limit, enabled, debounceMs, refreshKey]);
+    return () => {
+      clearTimeout(debounceRef.current);
+      abortControllerRef.current?.abort();
+    };
+  }, [filters, offset, collection, limit, enabled, debounceMs, refreshKey, infinite, maxItems]);
 
-  /** Update one filter key and reset pagination to page 1. */
   const setFilter = (key, value) => {
     setFiltersState(prev => {
-      let next = { ...prev, [key]: value };
-      if (key === 'tier' && value == null) next = { ...next, includeScaledUp: false };
+      let next = { ...prev };
+      if (key === 'tier') {
+        if (value == null) next = { ...next, tiers: [] };
+        else {
+          const tiers = next.tiers || [];
+          const has = tiers.includes(value);
+          next.tiers = has ? tiers.filter(t => t !== value) : [...tiers, value].sort((a, b) => a - b);
+        }
+      } else if (key === 'type') {
+        if (value == null) next = { ...next, types: [] };
+        else {
+          const types = next.types || [];
+          const has = types.includes(value);
+          next.types = has ? types.filter(t => t !== value) : [...types, value];
+        }
+      } else if (key === 'include') {
+        if (value == null) next = { ...next, includes: [] };
+        else {
+          const includes = (next.includes ?? []).filter(s => s !== 'reddit');
+          const has = includes.includes(value);
+          next.includes = has ? includes.filter(s => s !== value) : [...includes, value];
+        }
+      } else {
+        next[key] = value;
+      }
       if (persistKey) {
         try { localStorage.setItem(`${persistKey}_${collection}`, JSON.stringify(next)); } catch {}
       }
@@ -177,37 +189,19 @@ export function useCollectionSearch(collection, {
     setIsLoadingMore(false);
     isLoadingMoreRef.current = false;
     setTrimmedCount(0);
-    if (key !== 'search') {
-      setItems([]);
-      setLoading(true);
-    }
+    setItems([]);
+    setLoading(true);
   };
 
-  /** Jump to an explicit page offset. */
   const setOffset = (newOffset) => setOffsetState(newOffset);
-
-  /** Force an immediate refetch with the current filters and offset. */
   const refresh = () => setRefreshKey(k => k + 1);
 
-  /** Merge partial item data by ID into the displayed list (e.g. after lazy-loading enrichment). */
   const patchItems = (patchMap) => {
-    setItems(prev => prev.map(item => {
-      const patched = patchMap[item.id] ? { ...item, ...patchMap[item.id] } : item;
-      if (collection === 'adversaries' && filters.tier != null && filters.includeScaledUp) {
-        const targetTier = filters.tier;
-        const itemTier = patched.tier ?? 1;
-        if (itemTier < targetTier && ROLE_STAT_SCALING[patched.role || 'standard']) {
-          const scaled = computeScaledStats(patched, patched.role || 'standard', itemTier, targetTier);
-          return { ...patched, ...scaled, tier: targetTier, name: `[Scaled] ${patched.name}`, _scaledFromTier: itemTier };
-        }
-      }
-      return patched;
-    }));
+    setItems(prev => prev.map(item => patchMap[item.id] ? { ...item, ...patchMap[item.id] } : item));
   };
 
   const hasMore = infinite ? (items.length + trimmedCount < totalCount) : false;
 
-  /** Load the next page of results, appending to the current list. */
   const loadMore = () => {
     if (!infinite || !hasMore || loading || isLoadingMore) return;
     const next = nextOffset ?? offset + limit;
@@ -217,8 +211,20 @@ export function useCollectionSearch(collection, {
   };
 
   return {
-    items, totalCount, nextOffset, loading, filters, setFilter,
-    offset, setOffset, refresh, patchItems,
-    hasMore, isLoadingMore, loadMore, trimmedCount,
+    items,
+    totalCount,
+    nextOffset,
+    loading,
+    filters,
+    setFilter,
+    offset,
+    setOffset,
+    refresh,
+    patchItems,
+    hasMore,
+    isLoadingMore,
+    loadMore,
+    trimmedCount,
+    getLoadOpts,
   };
 }

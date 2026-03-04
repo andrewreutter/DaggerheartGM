@@ -6,7 +6,7 @@ import { resolveItems, ensureMirror } from '../../lib/api.js';
 /**
  * A button-bank + unified-list widget for picking library references across
  * one or more collections. Shared by SceneForm, GroupForm, AdventureForm, and
- * styled the same as the GM Table "Add ..." buttons.
+ * styled the same as the Game Table "Add ..." buttons.
  *
  * Props:
  *   collections — [{ key, label?, isCountable? }]  which add-buttons to show

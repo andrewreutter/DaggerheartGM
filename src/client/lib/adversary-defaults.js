@@ -407,10 +407,39 @@ export function statsMatchGenericDefaults(formData) {
 }
 
 /**
+ * Dice pattern regex — matches XdY or XdY+Z (same pattern as FeatureDescription.jsx bolding).
+ * Capture groups: 1=count, 2=die size, 3=optional modifier.
+ */
+const DICE_PATTERN_RE = /(\d+)d(\d+)([+-]\d+)?/g;
+
+/**
+ * Applies the tier delta to all dice patterns in text. When scaling up 2→3:
+ * - Dice count: 1d6 → 2d6, 2d6 → 3d6 (clamped to at least 1)
+ * - Modifier: add 2 per tier to the value after +/-, e.g. 2d6+3 → 3d6+5
+ */
+function scaleDiceForTier(text, fromTier, toTier) {
+  if (!text || typeof text !== 'string' || fromTier === toTier) return text;
+  const delta = toTier - fromTier;
+  return text.replace(DICE_PATTERN_RE, (match, count, dieSize, mod = '') => {
+    const newCount = Math.max(1, parseInt(count, 10) + delta);
+    let modStr = mod;
+    if (mod) {
+      const modVal = parseInt(mod, 10); // includes sign via +/-
+      const newMod = modVal + delta * 2;
+      modStr = newMod >= 0 ? `+${newMod}` : `${newMod}`;
+    }
+    return `${newCount}d${dieSize}${modStr}`;
+  });
+}
+
+/**
  * Applies the guide's per-tier scaling deltas cumulatively from fromTier to
  * toTier (can go up or down). The attack.damage string is replaced with the
  * baseline dice pool for the new tier; all other numeric stats are offset
  * relative to the current values so the user's customizations are preserved.
+ *
+ * Dice patterns (XdY, XdY+Z): count gets +1 per tier, modifier gets +2 per tier
+ * (e.g. scaling 2→3: 2d6+3 → 3d6+5).
  *
  * Returns a partial formData-shaped object with only the stat fields updated.
  */
@@ -446,6 +475,13 @@ export function computeScaledStats(currentFormData, role, fromTier, toTier) {
     tier = nextTier;
   }
 
+  const currentDamage = currentFormData.attack?.damage || '';
+  const scaledDamage = scaleDiceForTier(currentDamage, fromTier, toTier);
+  const features = (currentFormData.features || []).map(f => ({
+    ...f,
+    description: f.description ? scaleDiceForTier(f.description, fromTier, toTier) : f.description,
+  }));
+
   return {
     difficulty: Math.max(1, difficulty),
     hp_max: Math.max(0, hp),
@@ -454,9 +490,24 @@ export function computeScaledStats(currentFormData, role, fromTier, toTier) {
     attack: {
       ...(currentFormData.attack || {}),
       modifier: atk,
-      // Damage dice scale by tier in ways deltas can't cleanly express;
-      // use the baseline pool for the new tier instead.
-      damage: baseline?.attack.damage || currentFormData.attack?.damage || '',
+      // Scale dice patterns (XdY) where X matches native tier; otherwise use baseline.
+      damage: scaledDamage || baseline?.attack.damage || currentDamage || '',
     },
+    features,
   };
+}
+
+/**
+ * Returns the original (unscaled) adversary from a scaled item.
+ * Use when toggling from scaled view back to original.
+ */
+export function getUnscaledAdversary(scaledItem) {
+  if (!scaledItem._scaledFromTier) return scaledItem;
+  const fromTier = scaledItem._scaledFromTier;
+  const toTier = scaledItem.tier ?? fromTier;
+  const role = scaledItem.role || 'standard';
+  const unscaled = computeScaledStats(scaledItem, role, toTier, fromTier);
+  const baseName = (scaledItem.name || '').replace(/^\[Scaled\]\s*/, '');
+  const { _scaledFromTier, ...rest } = scaledItem;
+  return { ...rest, ...unscaled, tier: fromTier, name: baseName };
 }

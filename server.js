@@ -2,25 +2,33 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { watchFile } from 'fs';
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getMirrorIds, getItemsByIds, incrementCloneCount, incrementPlayCount, upsertMirror, findAutoClone, blockRedditPost, getBlockedRedditPostIds } from './src/db.js';
+import cron from 'node-cron';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
-import { srdRouter, warmCache, getItem as getSrdItem, searchCollection as searchSrdCollection } from './src/srd/index.js';
-import { EXTERNAL_SOURCES } from './src/external-sources.js';
+import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
-import { getRedditPost } from './src/reddit-search.js';
-import { parseRedditPost } from './src/llm-parse.js';
+import { loadSrdIntoDb } from './src/srd-loader.js';
+import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
 import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
 import { generateImage as hfGenerateImage, editImage as hfEditImage, isConfigured as hfIsConfigured } from './src/huggingface-image.js';
+import compression from 'compression';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
 const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'table_state'];
+
+/** Parse query param as array: tier=1&tier=2 → ['1','2'], tier=1,2 → ['1','2'] */
+function parseQueryArray(val) {
+  if (val == null) return [];
+  if (Array.isArray(val)) return val.filter(Boolean).map(String);
+  return String(val).split(',').map(s => s.trim()).filter(Boolean);
+}
 
 // Admin access: comma-separated list of email addresses in ADMIN_EMAILS env var.
 // e.g. ADMIN_EMAILS=alice@example.com,bob@example.com
@@ -57,6 +65,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 
 // --- Config route (no auth required) ---
@@ -97,12 +106,16 @@ let reloadTimer = null;
 const broadcastReload = () => {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => {
-    for (const client of liveReloadClients) client.write('data: reload\n\n');
+    for (const client of liveReloadClients) {
+      client.write('data: reload\n\n');
+      client.flush?.();
+    }
   }, 150);
 };
-// Poll the two build output files; fires only when mtime changes (actual write), not on reads
-watchFile('./public/app.js', { interval: 200 }, broadcastReload);
-watchFile('./public/styles.css', { interval: 200 }, broadcastReload);
+const publicDir = join(__dirname, 'public');
+watchFile(join(publicDir, 'app.js'), { interval: 200 }, broadcastReload);
+watchFile(join(publicDir, 'styles.css'), { interval: 200 }, broadcastReload);
+watchFile(join(publicDir, 'index.html'), { interval: 200 }, broadcastReload);
 
 // --- Rolz session management ---
 
@@ -262,64 +275,36 @@ app.get('/api/fcg-search', requireAuth, async (req, res) => {
 // --- Per-collection paginated route ---
 
 const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures'];
+const UNIFIED_COLLECTIONS = ['adversaries', 'environments'];
 
-/**
- * Fetch a page of DB items.
- * Tier 1: own items (sorted by popularity desc).
- * Tier 2: community items — public + mirrors — sorted by popularity desc.
- * Returns { items, ownCount, communityCount, dbCount }
- */
-async function fetchDbPage(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, typeField, typeValue, offset, limit }) {
-  const opts = tierMax != null ? { search, tierMax, typeField, typeValue } : { search, tier, typeField, typeValue };
+async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
+  const opts = tierMax != null
+    ? { search, tierMax, typeField, typeValue, typeValues }
+    : { search, tier, tiers, typeField, typeValue, typeValues };
   const hasCommunity = includePublic || includeMirrors;
-
   const [ownCount, communityCount] = await Promise.all([
     includeMine ? countItems(appId, uid, collection, opts) : Promise.resolve(0),
-    hasCommunity
-      ? countCommunityItems(appId, collection, {
-          excludeUserId: uid,
-          includePublic: Boolean(includePublic),
-          includeMirrors: Boolean(includeMirrors),
-          ...opts,
-        })
-      : Promise.resolve(0),
+    hasCommunity ? countCommunityItems(appId, collection, { excludeUserId: uid, includePublic: Boolean(includePublic), includeMirrors: Boolean(includeMirrors), ...opts }) : Promise.resolve(0),
   ]);
-  const dbCount = ownCount + communityCount;
+  return { ownCount, communityCount, dbCount: ownCount + communityCount };
+}
 
-  const items = [];
-  let remaining = limit;
-  let pos = offset;
-
-  // Own items span [0, ownCount)
-  if (includeMine && remaining > 0 && pos < ownCount) {
-    const slice = await getItemsPaginated(appId, uid, collection, { ...opts, offset: pos, limit: remaining });
-    items.push(...slice);
-    remaining -= slice.length;
-    pos += slice.length;
-  }
-  pos = Math.max(pos, ownCount);
-
-  // Community items span [ownCount, dbCount)
-  if (hasCommunity && remaining > 0 && pos < dbCount) {
-    const communityOffset = pos - ownCount;
-    const slice = await getCommunityItemsPaginated(appId, collection, {
-      excludeUserId: uid,
-      includePublic: Boolean(includePublic),
-      includeMirrors: Boolean(includeMirrors),
-      ...opts,
-      offset: communityOffset,
-      limit: remaining,
-    });
-    items.push(...slice);
-  }
-
-  return { items, ownCount, communityCount, dbCount };
+async function fetchDbItems(appId, uid, collection, { includeMine, includePublic, includeMirrors, search, tier, tierMax, tiers, typeField, typeValue, typeValues, offset, limit }, { ownCount, communityCount, dbCount }) {
+  const opts = tierMax != null ? { search, tierMax, typeField, typeValue, typeValues } : { search, tier, tiers, typeField, typeValue, typeValues };
+  const hasCommunity = includePublic || includeMirrors;
+  const ownLimit = includeMine && offset < ownCount ? Math.min(limit, ownCount - offset) : 0;
+  const communityOffset = Math.max(0, offset - ownCount);
+  const communityLimit = hasCommunity && offset + limit > ownCount ? Math.min(limit - ownLimit, Math.max(0, communityCount - communityOffset)) : 0;
+  const [ownSlice, communitySlice] = await Promise.all([
+    ownLimit > 0 ? getItemsPaginated(appId, uid, collection, { ...opts, offset, limit: ownLimit }) : Promise.resolve([]),
+    communityLimit > 0 ? getCommunityItemsPaginated(appId, collection, { excludeUserId: uid, includePublic: Boolean(includePublic), includeMirrors: Boolean(includeMirrors), ...opts, offset: communityOffset, limit: communityLimit }) : Promise.resolve([]),
+  ]);
+  return { items: [...ownSlice, ...communitySlice], dbCount };
 }
 
 app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const { collection } = req.params;
 
-  // table_state: return the single record without pagination
   if (collection === 'table_state') {
     try {
       const rows = await getItems(APP_ID, req.uid, 'table_state');
@@ -337,125 +322,55 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const includeMine = req.query.includeMine !== '0';
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
-  const tier = req.query.tier || null;
   const includeScaledUp = req.query.includeScaledUp === '1';
-  const typeValue = req.query.type || null;
   const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-  // When includeScaledUp + tier: DB and external sources use tierMax (tier <= X) instead of exact tier.
-  const tierMax = (includeScaledUp && tier != null) ? Number(tier) : null;
-  // Mirrors are never shown as visible DB results — they exist only for ID resolution
-  // (clone/resolve flows). Showing them in DB results would break source priority
-  // ordering (SRD before HoD before FCG).
-  const includeMirrors = false;
+  const sort = req.query.sort || 'popularity';
+
+  const tiersRaw = parseQueryArray(req.query.tier);
+  const typeValuesRaw = parseQueryArray(req.query.type);
+  const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 4);
+  const typeValues = typeValuesRaw.filter(Boolean);
+  const tierMax = (includeScaledUp && tiers.length === 1) ? tiers[0] : null;
 
   try {
-    // Determine which external sources are active for this collection
-    const activeExternalSources = EXTERNAL_SOURCES.filter(s =>
-      req.query[s.enabledParam] === '1' &&
-      (s.collections === null || s.collections.includes(collection))
-    );
-
-    // Mirrors are no longer shown in DB results, so there is nothing to dedup
-    // external source results against. Pass an empty set.
-    const mirrorIds = new Set();
-
-    // Load blocked Reddit post IDs when Reddit is active, to filter them out of results.
-    const redditActive = activeExternalSources.some(s => s.name === 'reddit');
-    const blockedRedditPostIds = redditActive ? await getBlockedRedditPostIds(APP_ID) : new Set();
-
-    const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
-      includeMine, includePublic, includeMirrors, search, tier, tierMax, typeField, typeValue, offset, limit,
-    });
-
-    const dbItemsWithPopularity = dbItems.map(item => ({
-      ...item,
-      popularity: (item.clone_count || 0) + (item.play_count || 0),
-    }));
-
-    // Walk external sources in priority order, filling remaining page slots.
-    // Global offset space: [0, dbCount) = DB items, [dbCount, ...) = external sources in order.
-    const externalOffset = Math.max(0, offset - dbCount);
-    let remaining = limit - dbItemsWithPopularity.length;
-    const externalItems = [];
-    let externalTotalCount = 0;
-    let priorSourceTotal = 0;
-    let lastActiveNextLocalOffset = null;
-    let lastActivePriorSourceTotal = 0;
-
-    for (const source of activeExternalSources) {
-      const sourceLocalOffset = Math.max(0, externalOffset - priorSourceTotal);
-      // Always call with at least limit=1 so we get totalCount even when the page is full.
-      const searchLimit = remaining > 0 ? remaining : 1;
-
-      const result = await source.search({
-        collection, search, tier, tierMax,
-        type: typeValue,
+    if (UNIFIED_COLLECTIONS.includes(collection)) {
+      const result = await getUnifiedItems(APP_ID, req.uid, collection, {
+        includeMine,
+        includePublic,
+        includeSrd: req.query.includeSrd === '1',
+        includeHod: req.query.includeHod === '1',
+        includeFcg: req.query.includeFcg === '1',
+        search,
+        tierMax,
+        tiers: tierMax != null ? [] : tiers,
         typeField,
-        limit: searchLimit,
-        offset: sourceLocalOffset,
-        mirrorIds,
-        blockedRedditPostIds,
+        typeValues,
+        sort,
+        offset,
+        limit,
       });
 
-      if (remaining > 0) {
-        externalItems.push(...result.items);
-        remaining -= result.items.length;
-        if (result.nextLocalOffset !== undefined) {
-          lastActiveNextLocalOffset = result.nextLocalOffset;
-          lastActivePriorSourceTotal = priorSourceTotal;
-        }
-      }
+      const items = result.items.map(item => ({
+        ...item,
+        popularity: (item.clone_count || 0) + (item.play_count || 0),
+      }));
 
-      externalTotalCount += result.totalCount;
-      priorSourceTotal += result.totalCount;
+      return res.json({
+        items,
+        totalCount: result.totalCount,
+        dbCount: result.totalCount,
+        nextOffset: offset + items.length,
+      });
     }
 
-    // Substitute HoD and Reddit stubs with enriched mirror data when available.
-    // HoD stubs are enriched in the background; Reddit stubs are enriched on detail click.
-    // In both cases, if a mirror row exists (from a prior enrichment), use it here so the
-    // grid shows the richer data immediately.
-    const stubIds = externalItems
-      .filter(i =>
-        (i._source === 'hod' && (i.features || []).length === 0) ||
-        (i._source === 'reddit' && (i.features || []).length === 0)
-      )
-      .map(i => i.id);
-    let mirrorMap = {};
-    if (stubIds.length > 0) {
-      try {
-        const mirrorRows = await getItemsByIds(APP_ID, collection, stubIds);
-        for (const row of mirrorRows) {
-          const hasFeatures = (row.features || []).length > 0;
-          if (row._source === 'hod') {
-            const isEnrichedAdv = collection === 'adversaries' && typeof row.attack?.damage === 'string';
-            const isEnrichedEnv = collection === 'environments';
-            if (hasFeatures && (isEnrichedAdv || isEnrichedEnv)) mirrorMap[row.id] = row;
-          } else if (row._source === 'reddit' && hasFeatures) {
-            mirrorMap[row.id] = row;
-          }
-        }
-      } catch {}
-    }
-    const enrichedExternal = Object.keys(mirrorMap).length > 0
-      ? externalItems.map(i => mirrorMap[i.id] || i)
-      : externalItems;
-
-    const allItems = [...dbItemsWithPopularity, ...enrichedExternal];
-    // nextOffset tells the client where to start the next page.
-    // When a source provides nextLocalOffset (FCG env-subtraction case), use it so the
-    // next page starts exactly past all rows consumed (including filtered-out environments).
-    const nextOffset = lastActiveNextLocalOffset !== null
-      ? dbCount + lastActivePriorSourceTotal + lastActiveNextLocalOffset
-      : offset + allItems.length;
-
-    res.json({
-      items: allItems,
-      totalCount: dbCount + externalTotalCount,
-      dbCount,
-      nextOffset,
-    });
+    const includeMirrors = false;
+    const dbOpts = { includeMine, includePublic, includeMirrors, search, tier: tiers[0] || null, tierMax, tiers: tierMax != null ? [] : tiers, typeField, typeValue: typeValues[0] || null, typeValues, offset, limit };
+    const { ownCount, communityCount, dbCount } = await fetchDbCounts(APP_ID, req.uid, collection, dbOpts);
+    const { items } = await fetchDbItems(APP_ID, req.uid, collection, dbOpts, { ownCount, communityCount, dbCount });
+    const itemsWithPop = items.map(item => ({ ...item, popularity: (item.clone_count || 0) + (item.play_count || 0) }));
+    return res.json({ items: itemsWithPop, totalCount: dbCount, dbCount, nextOffset: offset + items.length });
   } catch (err) {
     console.error(`GET /api/data/${collection} error:`, err);
     res.status(500).json({ error: 'Failed to fetch collection' });
@@ -471,13 +386,11 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
  */
 async function adoptItem(appId, uid, collection, item) {
   if (item._source === 'own') {
-    await incrementPlayCount(appId, collection, item.id);
+    await recordPlay(appId, uid, collection, item.id);
     return item;
   }
 
   const sourceId = item.id;
-  // SRD items are now treated as external (creates a __MIRROR__ row) rather than
-  // incrementing counts on __SRD__ DB rows (which no longer exist after migration).
   const isExternal = !['public'].includes(item._source);
 
   let clone = await findAutoClone(appId, uid, collection, sourceId);
@@ -491,18 +404,8 @@ async function adoptItem(appId, uid, collection, item) {
     clone = { id: newId, ...cloneData, is_public: false, clone_count: 0, play_count: 0, popularity: 0, _source: 'own' };
   }
 
-  if (isExternal) {
-    // Preserve _source in mirror data so items show the correct source badge when displayed
-    // as community items in "All" mode (stripping it causes them to render as "Mine").
-    const { _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = item;
-    await upsertMirror(appId, collection, sourceId, mirrorData, {
-      cloneDelta: isNewClone ? 1 : 0,
-      playDelta: 1,
-    });
-  } else {
-    if (isNewClone) await incrementCloneCount(appId, collection, sourceId);
-    await incrementPlayCount(appId, collection, sourceId);
-  }
+  if (isNewClone) await recordClone(appId, uid, collection, sourceId);
+  await recordPlay(appId, uid, collection, sourceId);
 
   return clone;
 }
@@ -521,38 +424,32 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
       const missing = ids.filter(id => !foundIds.has(id));
       if (!missing.length) return dbItems;
 
-      const srdFills = await Promise.all(
-        missing.filter(id => id.startsWith('srd-')).map(id => getSrdItem(col, id))
-      );
-      const srdExtras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
-
-      // For HoD items not in DB, fetch full Foundry JSON detail on demand.
-      // These items carry _hodLink on them; if no link is available we skip.
-      const hodMissing = missing.filter(id => id.startsWith('hod-'));
-      const hodFills = await Promise.all(
-        hodMissing.map(async id => {
-          const postId = id.replace(/^hod-/, '');
-          // We don't have the detail URL here — fall back gracefully.
-          // Full detail is only available when the item was previously seen in a search
-          // result and mirrored, or when coming through the clone flow.
-          try {
-            const detailUrl = `https://heartofdaggers.com/?p=${postId}`;
-            return await fetchHoDFoundryDetail(postId, detailUrl, col);
-          } catch (err) {
-            console.warn(`[hod] Could not resolve ${id}:`, err.message);
-            return null;
+      let extras = [];
+      if (['adversaries', 'environments'].includes(col)) {
+        const cacheItems = await getExternalCacheByIds(APP_ID, col, missing);
+        const cacheIds = new Set(cacheItems.map(i => i.id));
+        extras = cacheItems;
+        const stillMissing = missing.filter(id => !cacheIds.has(id));
+        for (const id of stillMissing) {
+          if (id.startsWith('hod-')) {
+            try {
+              const postId = id.replace(/^hod-/, '');
+              const item = await fetchHoDFoundryDetail(postId, `https://heartofdaggers.com/?p=${postId}`, col);
+              extras.push(item);
+            } catch (err) {
+              console.warn(`[hod] Could not resolve ${id}:`, err.message);
+            }
+          } else if (id.startsWith('srd-')) {
+            const item = await getSrdItem(col, id);
+            if (item) extras.push({ ...item, _source: 'srd' });
           }
-        })
-      );
-      const hodExtras = hodFills.filter(Boolean);
+        }
+      } else {
+        const srdFills = await Promise.all(missing.filter(id => id.startsWith('srd-')).map(id => getSrdItem(col, id)));
+        extras = srdFills.filter(Boolean).map(item => ({ ...item, _source: 'srd' }));
+      }
 
-      // For Reddit items not in DB: they can only be fully resolved if previously parsed
-      // (mirror row). Stubs without a mirror are returned as-is (empty features) — they
-      // need an explicit click to trigger LLM parsing.
-      // reddit-* IDs not found in dbItems are simply absent from the result; the caller
-      // should have mirrored them via clone/parse before referencing them in scenes.
-
-      return [...dbItems, ...srdExtras, ...hodExtras];
+      return [...dbItems, ...extras];
     };
 
     const [adversaries, environments, scenes] = await Promise.all([
@@ -610,36 +507,6 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
       }
     }
 
-    // For Reddit stubs, LLM-parse the post before cloning so the clone has full game data.
-    // Check for a previously parsed mirror first to avoid redundant OpenAI calls.
-    if (source._source === 'reddit' && source._redditPostId && (source.features || []).length === 0) {
-      try {
-        const existingMirrors = await getItemsByIds(APP_ID, collection, [sourceId]);
-        const existingMirror = existingMirrors.find(r => r.id === sourceId && (r.features || []).length > 0);
-        if (existingMirror) {
-          effectiveSource = existingMirror;
-        } else {
-          const postDetail = await getRedditPost(source._redditPostId);
-          const { item: parsed, artworkUrl } = await parseRedditPost({
-            title: source.name || postDetail._redditTitle || '',
-            text: postDetail._redditSelftext,
-            imageUrls: postDetail._redditImages,
-            collection,
-          });
-          effectiveSource = {
-            ...source,
-            ...parsed,
-            id: sourceId,
-            imageUrl: artworkUrl || source.imageUrl || '',
-            _redditPostId: source._redditPostId,
-            _redditPermalink: source._redditPermalink,
-          };
-        }
-      } catch (err) {
-        console.warn(`[reddit] Could not parse post for ${sourceId}, using stub data:`, err.message);
-      }
-    }
-
     let clone = null;
     let isNewClone = true;
 
@@ -657,18 +524,8 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
       clone = { id: newId, ...cloneData, is_public: false, clone_count: 0, play_count: 0, popularity: 0, _source: 'own' };
     }
 
-    // Increment counts on source
-    if (isExternal) {
-      // Preserve _source in mirror data so items show the correct source badge.
-      const { _owner: _o, id: _eid, is_public: _ip, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = effectiveSource;
-      await upsertMirror(APP_ID, collection, sourceId, mirrorData, {
-        cloneDelta: isNewClone ? 1 : 0,
-        playDelta: play ? 1 : 0,
-      });
-    } else if (source._source !== 'own') {
-      if (isNewClone) await incrementCloneCount(APP_ID, collection, sourceId);
-      if (play) await incrementPlayCount(APP_ID, collection, sourceId);
-    }
+    if (isNewClone) await recordClone(APP_ID, req.uid, collection, sourceId);
+    if (play) await recordPlay(APP_ID, req.uid, collection, sourceId);
 
     res.json({ item: clone });
   } catch (err) {
@@ -677,7 +534,7 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   }
 });
 
-// --- Play endpoint (own items added to GM Table) ---
+// --- Play endpoint (own items added to Game Table) ---
 
 app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
   const { collection } = req.params;
@@ -689,7 +546,7 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'itemId is required' });
   }
   try {
-    await incrementPlayCount(APP_ID, collection, itemId);
+    await recordPlay(APP_ID, req.uid, collection, itemId);
     res.json({ ok: true });
   } catch (err) {
     console.error(`POST /api/data/${collection}/play error:`, err);
@@ -703,182 +560,13 @@ app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Unknown collection for enrich' });
   }
   const { items } = req.body;
-  const hodItems = (Array.isArray(items) ? items : []).filter(i => i._source === 'hod' && i._hodPostId);
+  const hodItems = (Array.isArray(items) ? items : []).filter(i => i._source === 'hod' && i._hodPostId && (i.features || []).length === 0);
   const enriched = {};
-  const CONCURRENCY = 5;
-  for (let i = 0; i < hodItems.length; i += CONCURRENCY) {
-    const batch = hodItems.slice(i, i + CONCURRENCY);
-    await Promise.allSettled(batch.map(async (item) => {
-      try {
-        const detailUrl = item._hodLink || `https://heartofdaggers.com/?p=${item._hodPostId}`;
-        const full = await fetchHoDFoundryDetail(item._hodPostId, detailUrl, collection);
-        enriched[item.id] = full;
-        const { id, _source, _owner, clone_count, play_count, popularity, ...mirrorData } = full;
-        upsertMirror(APP_ID, collection, full.id, { ...mirrorData, _source: 'hod' }).catch(() => {});
-      } catch (err) {
-        console.warn(`[enrich] Could not enrich ${item.id}:`, err.message);
-      }
-    }));
+  if (hodItems.length > 0) {
+    const cacheItems = await getExternalCacheByIds(APP_ID, collection, hodItems.map(i => i.id));
+    for (const c of cacheItems) enriched[c.id] = c;
   }
   res.json({ enriched });
-});
-
-// --- Admin: block a Reddit post from appearing to all users ---
-
-app.put('/api/admin/mirror/:collection', requireAuth, requireAdmin, async (req, res) => {
-  const { collection } = req.params;
-  if (!COLLECTIONS.includes(collection)) {
-    return res.status(400).json({ error: 'Unknown collection' });
-  }
-  const item = req.body;
-  if (!item || typeof item !== 'object' || !item.id) {
-    return res.status(400).json({ error: 'Invalid item body — id is required' });
-  }
-  const { id, _source: _s, _owner: _o, clone_count: _cc, play_count: _pc, popularity: _pop, ...rest } = item;
-  try {
-    await upsertMirror(APP_ID, collection, id, { ...rest, _source: 'reddit' });
-    res.json({ id, ...rest, _source: 'reddit' });
-  } catch (err) {
-    console.error(`PUT /api/admin/mirror/${collection} error:`, err);
-    res.status(500).json({ error: 'Failed to save mirror item' });
-  }
-});
-
-app.post('/api/admin/reddit/block', requireAuth, requireAdmin, async (req, res) => {
-  const { redditPostId } = req.body || {};
-  if (!redditPostId) return res.status(400).json({ error: 'redditPostId is required' });
-  try {
-    await blockRedditPost(APP_ID, redditPostId, req.email);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('POST /api/admin/reddit/block error:', err);
-    res.status(500).json({ error: 'Failed to block Reddit post' });
-  }
-});
-
-// --- Reddit parse endpoint (text → OCR → LLM cascade) ---
-
-app.post('/api/reddit/parse', requireAuth, requireAdmin, async (req, res) => {
-  const { collection, redditPostId, name, selftext, images, forceLlm, reparse } = req.body || {};
-  if (!collection || !['adversaries', 'environments'].includes(collection)) {
-    return res.status(400).json({ error: 'collection must be adversaries or environments' });
-  }
-  if (!redditPostId) {
-    return res.status(400).json({ error: 'redditPostId is required' });
-  }
-
-  try {
-    const itemId = `reddit-${redditPostId}`;
-
-    // Check for an existing parsed mirror (skip if re-parsing)
-    if (!reparse) {
-      const existing = await getItemsByIds(APP_ID, collection, [itemId]);
-      const existingParsed = existing.find(r => r.id === itemId && (r.features || []).length > 0);
-      if (existingParsed) {
-        return res.json({ item: existingParsed, artworkUrl: existingParsed.imageUrl || null, _parseMethod: 'cached' });
-      }
-    }
-
-    // Fetch full post from Reddit
-    let postText = selftext || '';
-    let postImages = Array.isArray(images) ? images : [];
-    let postTitle = name || '';
-    let redditMeta = {};
-
-    try {
-      const postDetail = await getRedditPost(redditPostId);
-      postText = postDetail._redditSelftext || postText;
-      postImages = postDetail._redditImages?.length ? postDetail._redditImages : postImages;
-      postTitle = postDetail._redditTitle || postTitle;
-      // Preserve Reddit metadata so the mirror and returned item retain the original post link
-      const { _redditPermalink, _redditAuthor, _redditSubreddit, _redditFlair, _redditScore, _redditCreatedUtc } = postDetail;
-      redditMeta = { _redditPermalink, _redditAuthor, _redditSubreddit, _redditFlair, _redditScore, _redditCreatedUtc };
-    } catch (fetchErr) {
-      console.warn(`[reddit] Could not fetch post ${redditPostId}, using client-provided data:`, fetchErr.message);
-    }
-
-    // hasStatBlockImages: when true, all post images were classified as stat blocks so we
-    // must NOT fall back to item.imageUrl (which would be the same stat block image).
-    const respond = (item, artworkUrl, parseMethod, additionalImages = [], hasStatBlockImages = false) => {
-      const fullItem = {
-        ...item,
-        ...redditMeta,
-        id: itemId,
-        imageUrl: artworkUrl || (hasStatBlockImages ? '' : item.imageUrl) || '',
-        _source: 'reddit',
-        _redditPostId: redditPostId,
-      };
-      if (additionalImages.length > 0) {
-        fullItem._additionalImages = additionalImages;
-      }
-      // Upsert mirror so future fetches show enriched data
-      const { id: _id, _source: _s, _owner: _o, clone_count: _cc, play_count: _pc, popularity: _pop, ...mirrorData } = fullItem;
-      upsertMirror(APP_ID, collection, itemId, { ...mirrorData, _source: 'reddit' }).catch(() => {});
-      return res.json({ item: fullItem, artworkUrl: artworkUrl || null, _parseMethod: parseMethod });
-    };
-
-    // --- Stage 1: Regex parse selftext ---
-    if (!forceLlm) {
-      const textResult = parseStatBlock(postText, collection, postTitle);
-      console.log(`[reddit] Text parse confidence=${textResult.confidence.toFixed(2)}, missing=[${textResult.missing.join(', ')}]`);
-
-      if (textResult.confidence >= 0.7) {
-        return respond(textResult.item, null, 'text');
-      }
-
-      // --- Stage 2: OCR images + merge ---
-      if (postImages.length > 0) {
-        try {
-          const { texts: ocrTexts, parsedResults: ocrParsedResults, artworkUrl, additionalImages, hasStatBlockImages } = await ocrImages(postImages, { collection });
-          if (ocrTexts.length > 0) {
-            // Use pre-merged cross-engine parse result when available; it combines the
-            // best fields from each engine (e.g. EasyOCR title + Tesseract features).
-            // Fall back to parsing the joined raw text when only one engine ran.
-            const ocrResult = ocrParsedResults.length > 0
-              ? ocrParsedResults.reduce((acc, r, i) => i === 0 ? r : mergeResults(acc, r), null)
-              : parseStatBlock(ocrTexts.join('\n\n'), collection, postTitle);
-            console.log(`[reddit] OCR parse confidence=${ocrResult.confidence.toFixed(2)}, missing=[${ocrResult.missing.join(', ')}]`);
-
-            const merged = mergeResults(textResult, ocrResult);
-            if (merged.confidence >= 0.5) {
-              return respond(merged.item, artworkUrl, 'ocr', additionalImages, hasStatBlockImages);
-            }
-          }
-          // Even if OCR didn't help with parsing, preserve artwork URL for later stages
-          if (textResult.confidence >= 0.5) {
-            return respond(textResult.item, artworkUrl, 'text', additionalImages, hasStatBlockImages);
-          }
-        } catch (ocrErr) {
-          console.warn(`[reddit] OCR failed for ${redditPostId}:`, ocrErr.message);
-        }
-      }
-
-      // Accept a lower-confidence text parse if it got features
-      if (textResult.item.features?.length > 0) {
-        return respond(textResult.item, null, 'partial');
-      }
-    }
-
-    // --- Stage 3: LLM fallback ---
-    if (!process.env.OPENAI_API_KEY) {
-      // No LLM available — return best partial result
-      const fallback = parseStatBlock(postText, collection, postTitle);
-      return respond(fallback.item, null, 'partial');
-    }
-
-    const { item: parsed, artworkUrl } = await parseRedditPost({
-      title: postTitle,
-      text: postText,
-      imageUrls: postImages,
-      collection,
-    });
-    // Store any remaining images beyond the primary artwork
-    const llmAdditional = postImages.filter(u => u !== artworkUrl);
-    return respond(parsed, artworkUrl, 'llm', llmAdditional);
-  } catch (err) {
-    console.error('POST /api/reddit/parse error:', err);
-    res.status(500).json({ error: err.message || 'Failed to parse Reddit post' });
-  }
 });
 
 // --- Generic image/text import (OCR + regex parse, no LLM) ---
@@ -1066,6 +754,23 @@ async function startServer() {
   await warmCache();
   if (process.env.DATABASE_URL) {
     await runMigrations();
+    await loadSrdIntoDb(APP_ID);
+    cron.schedule('0 3 * * *', async () => {
+      if (isSyncInProgress()) return;
+      try {
+        await runFullSync(APP_ID);
+      } catch (err) {
+        console.error('[cron] Sync failed:', err.message);
+      }
+    });
+    cron.schedule('0 3 * * 0', async () => {
+      if (isSyncInProgress()) return;
+      try {
+        await runSyncSource(APP_ID, 'hod', null, { fullRefresh: true });
+      } catch (err) {
+        console.error('[cron] HoD full refresh failed:', err.message);
+      }
+    });
   } else {
     console.warn('[db] DATABASE_URL not set — running without database');
   }

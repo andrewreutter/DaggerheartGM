@@ -1,10 +1,9 @@
-import { useState } from 'react';
-import { Edit, Trash2, Play, Copy, Flame } from 'lucide-react';
+import { Flame } from 'lucide-react';
 import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { computeSceneTier, computeBattlePoints, collectSceneAdversaries } from '../lib/battle-points.js';
+import { ItemActionButtons } from './ItemActionButtons.jsx';
 
 export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4, showSourceBadge = true }) {
-  const [added, setAdded] = useState(false);
   const isOwn = isOwnItem(item);
   const badge = showSourceBadge ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
   const popularity = item.popularity ?? ((item.clone_count || 0) + (item.play_count || 0));
@@ -14,12 +13,6 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
   const sceneBP = tab === 'scenes'
     ? computeBattlePoints(collectSceneAdversaries(item, data), partySize)
     : null;
-
-  const handleAddToTable = () => {
-    onAddToTable(item, tab);
-    setAdded(true);
-    setTimeout(() => setAdded(false), 900);
-  };
 
   return (
     <div
@@ -65,31 +58,16 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
               )}
             </div>
           </div>
-          <div className="flex gap-1 ml-1 shrink-0" onClick={e => e.stopPropagation()}>
-            {onAddToTable && (
-              <button
-                onClick={handleAddToTable}
-                className={`transition-colors duration-150 ${added ? 'text-yellow-400' : 'text-slate-400 hover:text-white'}`}
-                title="Add to GM Table"
-              >
-                <Play size={14} />
-              </button>
-            )}
-            {onClone && (
-              <button onClick={(e) => { e.stopPropagation(); onClone(item); }} className="text-slate-400 hover:text-violet-400" title="Clone to My Library">
-                <Copy size={14} />
-              </button>
-            )}
-            {isOwn && onEdit && (
-              <button onClick={(e) => { e.stopPropagation(); onEdit(item); }} className="text-slate-400 hover:text-blue-400" title="Edit">
-                <Edit size={14} />
-              </button>
-            )}
-            {isOwn && onDelete && (
-              <button onClick={(e) => { e.stopPropagation(); onDelete(tab, item.id); }} className="text-slate-400 hover:text-red-400" title="Delete">
-                <Trash2 size={14} />
-              </button>
-            )}
+          <div className="ml-1 shrink-0">
+            <ItemActionButtons
+              variant="card"
+              stopPropagation
+              isOwn={isOwn}
+              onAddToTable={onAddToTable ? () => onAddToTable(item, tab) : undefined}
+              onClone={onClone ? () => onClone(item) : undefined}
+              onEdit={isOwn && onEdit ? () => onEdit(item) : undefined}
+              onDelete={isOwn && onDelete ? () => onDelete(tab, item.id) : undefined}
+            />
           </div>
         </div>
         <div className="text-[11px] text-slate-400 flex-1">

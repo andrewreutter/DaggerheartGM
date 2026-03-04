@@ -144,3 +144,6 @@ public/styles.css
 
 # Tesseract.js OCR language data (downloaded automatically on first use)
 *.traineddata
+
+# HoD crawl debug output (predup, dedup, dups JSON files)
+data/hod-crawl/
