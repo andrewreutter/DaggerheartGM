@@ -32,7 +32,7 @@ export const getAuthToken = async () => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, includeReddit = false, search = '', tier = null, type = null, offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, includeReddit = false, search = '', tier = null, type = null, includeScaledUp = false, offset = 0, limit = 20 } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -45,6 +45,7 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (search) params.set('search', search);
   if (tier != null) params.set('tier', String(tier));
   if (type) params.set('type', type);
+  if (includeScaledUp) params.set('includeScaledUp', '1');
   const res = await fetch(`/api/data/${collection}?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
   });

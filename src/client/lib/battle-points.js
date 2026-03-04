@@ -47,6 +47,7 @@ export function collectSceneAdversaries(scene, data, visited = new Set()) {
   const result = [];
 
   (scene.adversaries || []).forEach(advRef => {
+    if (advRef == null) return;
     let adv = null;
     if (advRef.data) {
       adv = advRef.data;

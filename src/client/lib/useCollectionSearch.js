@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { loadCollection } from './api.js';
+import { computeScaledStats, ROLE_STAT_SCALING } from './adversary-defaults.js';
 
-const DEFAULT_FILTERS = { include: 'own', tier: null, type: null, search: '' };
+const DEFAULT_FILTERS = { include: 'own', tier: null, type: null, search: '', includeScaledUp: false };
 
 function loadPersistedFilters(persistKey, collection, baseFilters = DEFAULT_FILTERS) {
   const defaults = { ...DEFAULT_FILTERS, ...baseFilters };
@@ -31,7 +32,7 @@ function loadPersistedFilters(persistKey, collection, baseFilters = DEFAULT_FILT
  *   totalCount: number,
  *   nextOffset: number|null,
  *   loading: boolean,
- *   filters: { include: string|null, tier: number|null, type: string|null, search: string },
+ *   filters: { include: string|null, tier: number|null, type: string|null, search: string, includeScaledUp: boolean },
  *   setFilter: (key: string, value: any) => void,
  *   offset: number,
  *   setOffset: (n: number) => void,
@@ -95,7 +96,7 @@ export function useCollectionSearch(collection, {
     const doFetch = async () => {
       setLoading(true);
       try {
-        const { include, tier, type, search } = filters;
+        const { include, tier, type, search, includeScaledUp } = filters;
         const result = await loadCollection(collection, {
           includeMine: include === null || include === 'own',
           includeSrd: include === null || include === 'srd',
@@ -108,15 +109,34 @@ export function useCollectionSearch(collection, {
           search: search || '',
           tier,
           type,
+          includeScaledUp: !!(tier != null && includeScaledUp),
           offset,
           limit,
         });
         setTotalCount(result.totalCount || 0);
         setNextOffsetState(result.nextOffset ?? null);
 
+        let items = result.items || [];
+        if (collection === 'adversaries' && tier != null && includeScaledUp) {
+          items = items.map(item => {
+            const itemTier = item.tier ?? 1;
+            if (itemTier >= tier) return item;
+            const role = item.role || 'standard';
+            if (!ROLE_STAT_SCALING[role]) return item;
+            const scaled = computeScaledStats(item, role, itemTier, tier);
+            return {
+              ...item,
+              ...scaled,
+              tier,
+              name: `[Scaled] ${item.name}`,
+              _scaledFromTier: itemTier,
+            };
+          });
+        }
+
         if (appendMode) {
           setItems(prev => {
-            const merged = [...prev, ...(result.items || [])];
+            const merged = [...prev, ...items];
             if (maxItems && merged.length > maxItems) {
               const excess = merged.length - maxItems;
               setTrimmedCount(tc => tc + excess);
@@ -125,7 +145,7 @@ export function useCollectionSearch(collection, {
             return merged;
           });
         } else {
-          setItems(result.items || []);
+          setItems(items);
           setTrimmedCount(0);
         }
       } catch (err) {
@@ -146,7 +166,8 @@ export function useCollectionSearch(collection, {
   /** Update one filter key and reset pagination to page 1. */
   const setFilter = (key, value) => {
     setFiltersState(prev => {
-      const next = { ...prev, [key]: value };
+      let next = { ...prev, [key]: value };
+      if (key === 'tier' && value == null) next = { ...next, includeScaledUp: false };
       if (persistKey) {
         try { localStorage.setItem(`${persistKey}_${collection}`, JSON.stringify(next)); } catch {}
       }
@@ -170,7 +191,18 @@ export function useCollectionSearch(collection, {
 
   /** Merge partial item data by ID into the displayed list (e.g. after lazy-loading enrichment). */
   const patchItems = (patchMap) => {
-    setItems(prev => prev.map(item => patchMap[item.id] ? { ...item, ...patchMap[item.id] } : item));
+    setItems(prev => prev.map(item => {
+      const patched = patchMap[item.id] ? { ...item, ...patchMap[item.id] } : item;
+      if (collection === 'adversaries' && filters.tier != null && filters.includeScaledUp) {
+        const targetTier = filters.tier;
+        const itemTier = patched.tier ?? 1;
+        if (itemTier < targetTier && ROLE_STAT_SCALING[patched.role || 'standard']) {
+          const scaled = computeScaledStats(patched, patched.role || 'standard', itemTier, targetTier);
+          return { ...patched, ...scaled, tier: targetTier, name: `[Scaled] ${patched.name}`, _scaledFromTier: itemTier };
+        }
+      }
+      return patched;
+    }));
   };
 
   const hasMore = infinite ? (items.length + trimmedCount < totalCount) : false;

@@ -269,8 +269,8 @@ const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventu
  * Tier 2: community items — public + mirrors — sorted by popularity desc.
  * Returns { items, ownCount, communityCount, dbCount }
  */
-async function fetchDbPage(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, typeField, typeValue, offset, limit }) {
-  const opts = { search, tier, typeField, typeValue };
+async function fetchDbPage(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, typeField, typeValue, offset, limit }) {
+  const opts = tierMax != null ? { search, tierMax, typeField, typeValue } : { search, tier, typeField, typeValue };
   const hasCommunity = includePublic || includeMirrors;
 
   const [ownCount, communityCount] = await Promise.all([
@@ -338,10 +338,13 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
   const tier = req.query.tier || null;
+  const includeScaledUp = req.query.includeScaledUp === '1';
   const typeValue = req.query.type || null;
   const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  // When includeScaledUp + tier: DB and external sources use tierMax (tier <= X) instead of exact tier.
+  const tierMax = (includeScaledUp && tier != null) ? Number(tier) : null;
   // Mirrors are never shown as visible DB results — they exist only for ID resolution
   // (clone/resolve flows). Showing them in DB results would break source priority
   // ordering (SRD before HoD before FCG).
@@ -363,7 +366,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
     const blockedRedditPostIds = redditActive ? await getBlockedRedditPostIds(APP_ID) : new Set();
 
     const { items: dbItems, dbCount } = await fetchDbPage(APP_ID, req.uid, collection, {
-      includeMine, includePublic, includeMirrors, search, tier, typeField, typeValue, offset, limit,
+      includeMine, includePublic, includeMirrors, search, tier, tierMax, typeField, typeValue, offset, limit,
     });
 
     const dbItemsWithPopularity = dbItems.map(item => ({
@@ -387,7 +390,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       const searchLimit = remaining > 0 ? remaining : 1;
 
       const result = await source.search({
-        collection, search, tier,
+        collection, search, tier, tierMax,
         type: typeValue,
         typeField,
         limit: searchLimit,

@@ -46,8 +46,8 @@ function wouldCreateCycle(currentSceneId, selectedSceneIds, allScenes) {
  */
 function buildSceneForBP(fd, ownedAdvs, ownedEnvs, isControlled, pickerValues) {
   const advRefs = isControlled
-    ? (fd.adversaries || []).filter(a => a.adversaryId)
-    : pickerValues.adversaries.map(a => ({ adversaryId: a.id, count: a.count }));
+    ? (fd.adversaries || []).filter(a => a != null && a.adversaryId)
+    : (pickerValues.adversaries || []).filter(Boolean).map(a => ({ adversaryId: a.id, count: a.count }));
   const ownedAdvRefs = ownedAdvs || [];
   return {
     id: fd.id,
@@ -71,10 +71,10 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
   const isControlled = value !== undefined;
 
   // --- Uncontrolled state (legacy path) ---
-  const initialOwnedEnvs = (initial?.environments || []).filter(e => typeof e === 'object' && e.data);
+  const initialOwnedEnvs = (initial?.environments || []).filter(e => e != null && typeof e === 'object' && e.data);
   const initialRefEnvs = (initial?.environments || []).filter(e => typeof e === 'string');
-  const initialOwnedAdvs = (initial?.adversaries || []).filter(a => a.data);
-  const initialRefAdvs = (initial?.adversaries || []).filter(a => a.adversaryId);
+  const initialOwnedAdvs = (initial?.adversaries || []).filter(a => a != null && a.data);
+  const initialRefAdvs = (initial?.adversaries || []).filter(a => a != null && a.adversaryId);
 
   const [localData, setLocalData] = useState({
     name: initial?.name || '', description: initial?.description || '',
@@ -91,16 +91,16 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
 
   // --- Controlled helpers ---
   const controlledRefAdvs = isControlled
-    ? (value.adversaries || []).filter(a => a.adversaryId).map(a => ({ id: a.adversaryId, count: a.count }))
+    ? (value.adversaries || []).filter(a => a != null && a.adversaryId).map(a => ({ id: a.adversaryId, count: a.count }))
     : null;
   const controlledOwnedAdvs = isControlled
-    ? (value.adversaries || []).filter(a => a.data)
+    ? (value.adversaries || []).filter(a => a != null && a.data)
     : null;
   const controlledRefEnvs = isControlled
     ? (value.environments || []).filter(e => typeof e === 'string')
     : null;
   const controlledOwnedEnvs = isControlled
-    ? (value.environments || []).filter(e => typeof e === 'object' && e.data)
+    ? (value.environments || []).filter(e => e != null && typeof e === 'object' && e.data)
     : null;
 
   // The values object passed to CollectionRefPicker.

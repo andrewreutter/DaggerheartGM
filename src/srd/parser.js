@@ -389,12 +389,13 @@ export async function getItem(collection, id) {
  * Search a collection with optional filters and pagination.
  *
  * @param {string} collection
- * @param {{ search?: string, tier?: string|number|null, type?: string|null, limit?: number, offset?: number }} opts
+ * @param {{ search?: string, tier?: string|number|null, tierMax?: number|null, type?: string|null, limit?: number, offset?: number }} opts
  * @returns {Promise<{ items: Array, totalCount: number }>}
  */
 export async function searchCollection(collection, {
   search = '',
   tier = null,
+  tierMax = null,
   type = null,
   limit = 20,
   offset = 0,
@@ -409,7 +410,10 @@ export async function searchCollection(collection, {
     items = items.filter(item => item.name.toLowerCase().includes(q));
   }
 
-  if (tier != null) {
+  if (tierMax != null) {
+    const max = Number(tierMax);
+    items = items.filter(item => (Number(item.tier) || 1) <= max);
+  } else if (tier != null) {
     const t = String(tier);
     items = items.filter(item => String(item.tier) === t);
   }

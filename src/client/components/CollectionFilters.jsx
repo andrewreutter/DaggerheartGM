@@ -16,7 +16,7 @@ const SOURCE_OPTIONS = [
  *
  * Props:
  *   collection      - 'adversaries' | 'environments'
- *   filters         - { include, tier, type, search } from useCollectionSearch
+ *   filters         - { include, tier, type, search, includeScaledUp } from useCollectionSearch
  *   onFilterChange  - (key, value) => void
  *   variant         - 'bar' (LibraryView horizontal) | 'panel' (modal / FeatureLibrary stacked)
  *   autoFocusSearch - boolean, default false
@@ -37,6 +37,7 @@ export function CollectionFilters({
       onFilterChange={onFilterChange}
       typeOptions={typeOptions}
       typeLabel={typeLabel}
+      collection={collection}
       autoFocusSearch={autoFocusSearch}
     />;
   }
@@ -55,7 +56,7 @@ export function CollectionFilters({
 // ---------------------------------------------------------------------------
 
 function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collection }) {
-  const { include, tier, type, search } = filters;
+  const { include, tier, type, search, includeScaledUp } = filters;
 
   const baseBtn = 'px-2 py-0.5 rounded font-medium border transition-colors';
   const inactive = 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300';
@@ -75,7 +76,7 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
       </div>
 
       {/* Source + Tier + Type */}
-      <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
+      <div className="flex items-start gap-3 text-xs text-slate-400 flex-wrap">
         <span className="text-slate-500 font-medium uppercase tracking-wider">Include</span>
         {SOURCE_OPTIONS.map(({ val, label }) => (
           <button
@@ -89,21 +90,36 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
 
         <span className="text-slate-700 select-none">|</span>
         <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
-        <button
-          onClick={() => onFilterChange('tier', null)}
-          className={`${baseBtn} ${tier === null ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
-        >
-          All
-        </button>
-        {TIERS.map(t => (
-          <button
-            key={t}
-            onClick={() => onFilterChange('tier', tier === t ? null : t)}
-            className={`${baseBtn} ${tier === t ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
-          >
-            {t}
-          </button>
-        ))}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => onFilterChange('tier', null)}
+              className={`${baseBtn} ${tier === null ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
+            >
+              All
+            </button>
+            {TIERS.map(t => (
+              <button
+                key={t}
+                onClick={() => onFilterChange('tier', tier === t ? null : t)}
+                className={`${baseBtn} ${tier === t ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          {collection === 'adversaries' && tier != null && (
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!includeScaledUp}
+                onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
+                className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50"
+              />
+              <span className="text-slate-400">Include Scaled</span>
+            </label>
+          )}
+        </div>
 
         <span className="text-slate-700 select-none">|</span>
         <span className="text-slate-500 font-medium uppercase tracking-wider">{typeLabel}</span>
@@ -131,8 +147,8 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
 // Panel variant — stacked sections with headers, used in modals / FeatureLibrary
 // ---------------------------------------------------------------------------
 
-function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, autoFocusSearch }) {
-  const { include, tier, type, search } = filters;
+function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collection, autoFocusSearch }) {
+  const { include, tier, type, search, includeScaledUp } = filters;
 
   const btnBase = 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors border';
   const btnActive = 'bg-red-700 border-red-600 text-white';
@@ -173,11 +189,24 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, autoFoc
       {/* Tier */}
       <div>
         <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Tier</div>
-        <div className="flex flex-wrap gap-1.5">
-          <button onClick={() => onFilterChange('tier', null)} className={`${btnBase} ${tier === null ? btnActive : btnInactive}`}>All</button>
-          {TIERS.map(t => (
-            <button key={t} onClick={() => onFilterChange('tier', tier === t ? null : t)} className={`${btnBase} ${tier === t ? btnActive : btnInactive}`}>{t}</button>
-          ))}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={() => onFilterChange('tier', null)} className={`${btnBase} ${tier === null ? btnActive : btnInactive}`}>All</button>
+            {TIERS.map(t => (
+              <button key={t} onClick={() => onFilterChange('tier', tier === t ? null : t)} className={`${btnBase} ${tier === t ? btnActive : btnInactive}`}>{t}</button>
+            ))}
+          </div>
+          {collection === 'adversaries' && tier != null && (
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+              <input
+                type="checkbox"
+                checked={!!includeScaledUp}
+                onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
+                className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50"
+              />
+              <span>Include Scaled</span>
+            </label>
+          )}
         </div>
       </div>
 

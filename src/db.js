@@ -85,8 +85,9 @@ export async function getPublicItems(appId, excludeUserId, collection) {
 /**
  * Builds additional WHERE clauses for search text, tier, and type value.
  * @param {number} baseParamCount  Number of positional params already in the query.
+ * @param {number|null} tierMax    When set (includeScaledUp), filter tier <= tierMax instead of exact match.
  */
-function buildFilterSQL(baseParamCount, { search = '', tier = null, typeField = null, typeValue = null } = {}) {
+function buildFilterSQL(baseParamCount, { search = '', tier = null, tierMax = null, typeField = null, typeValue = null } = {}) {
   const clauses = [];
   const params = [];
   let idx = baseParamCount + 1;
@@ -96,7 +97,11 @@ function buildFilterSQL(baseParamCount, { search = '', tier = null, typeField = 
     params.push(search);
     idx++;
   }
-  if (tier != null) {
+  if (tierMax != null) {
+    clauses.push(`(data->>'tier')::int <= $${idx}`);
+    params.push(Number(tierMax));
+    idx++;
+  } else if (tier != null) {
     clauses.push(`data->>'tier' = $${idx}`);
     params.push(String(tier));
     idx++;
@@ -125,6 +130,7 @@ function buildCommunitySQL(baseParamCount, {
   excludeUserId = null,
   search = '',
   tier = null,
+  tierMax = null,
   typeField = null,
   typeValue = null,
 } = {}) {
@@ -145,17 +151,17 @@ function buildCommunitySQL(baseParamCount, {
     ? `AND (${sourceClauses.join(' OR ')})`
     : 'AND FALSE';
 
-  const { sql: filterSQL, params: filterParams } = buildFilterSQL(baseParamCount + extraParams.length, { search, tier, typeField, typeValue });
+  const { sql: filterSQL, params: filterParams } = buildFilterSQL(baseParamCount + extraParams.length, { search, tier, tierMax, typeField, typeValue });
 
   return { sql: sourceSQL + ' ' + filterSQL, params: [...extraParams, ...filterParams] };
 }
 
 // --- Own-item paginated helpers ---
 
-export async function countItems(appId, userId, collection, { search = '', tier = null, typeField = null, typeValue = null } = {}) {
+export async function countItems(appId, userId, collection, { search = '', tier = null, tierMax = null, typeField = null, typeValue = null } = {}) {
   const db = getPool();
   const base = [appId, userId, collection];
-  const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, typeField, typeValue });
+  const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, tierMax, typeField, typeValue });
   const { rows } = await db.query(
     `SELECT COUNT(*) FROM items WHERE app_id = $1 AND user_id = $2 AND collection = $3 ${sql}`,
     [...base, ...fp]
@@ -163,10 +169,10 @@ export async function countItems(appId, userId, collection, { search = '', tier 
   return parseInt(rows[0].count, 10);
 }
 
-export async function getItemsPaginated(appId, userId, collection, { search = '', tier = null, typeField = null, typeValue = null, offset = 0, limit = 20 } = {}) {
+export async function getItemsPaginated(appId, userId, collection, { search = '', tier = null, tierMax = null, typeField = null, typeValue = null, offset = 0, limit = 20 } = {}) {
   const db = getPool();
   const base = [appId, userId, collection];
-  const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, typeField, typeValue });
+  const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, tierMax, typeField, typeValue });
   const offsetIdx = base.length + fp.length + 1;
   const limitIdx = offsetIdx + 1;
   const { rows } = await db.query(
@@ -187,12 +193,13 @@ export async function countCommunityItems(appId, collection, {
   includeMirrors = true,
   search = '',
   tier = null,
+  tierMax = null,
   typeField = null,
   typeValue = null,
 } = {}) {
   const db = getPool();
   const base = [appId, collection];
-  const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, typeField, typeValue });
+  const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, tierMax, typeField, typeValue });
   const { rows } = await db.query(
     `SELECT COUNT(*) FROM items WHERE app_id = $1 AND collection = $2 ${sql}`,
     [...base, ...cp]
@@ -206,6 +213,7 @@ export async function getCommunityItemsPaginated(appId, collection, {
   includeMirrors = true,
   search = '',
   tier = null,
+  tierMax = null,
   typeField = null,
   typeValue = null,
   offset = 0,
@@ -213,7 +221,7 @@ export async function getCommunityItemsPaginated(appId, collection, {
 } = {}) {
   const db = getPool();
   const base = [appId, collection];
-  const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, typeField, typeValue });
+  const { sql, params: cp } = buildCommunitySQL(base.length, { includePublic, includeMirrors, excludeUserId, search, tier, tierMax, typeField, typeValue });
   const offsetIdx = base.length + cp.length + 1;
   const limitIdx = offsetIdx + 1;
   const { rows } = await db.query(
@@ -242,10 +250,10 @@ export async function getCommunityItemsPaginated(appId, collection, {
  * Returns the IDs of all mirror items matching the given search filters.
  * Used to dedup live external API results that already exist as mirrors.
  */
-export async function getMirrorIds(appId, collection, { search = '', tier = null, typeField = null, typeValue = null } = {}) {
+export async function getMirrorIds(appId, collection, { search = '', tier = null, tierMax = null, typeField = null, typeValue = null } = {}) {
   const db = getPool();
   const base = [appId, MIRROR_USER_ID, collection];
-  const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, typeField, typeValue });
+  const { sql, params: fp } = buildFilterSQL(base.length, { search, tier, tierMax, typeField, typeValue });
   const { rows } = await db.query(
     `SELECT id FROM items WHERE app_id = $1 AND user_id = $2 AND collection = $3 ${sql}`,
     [...base, ...fp]
