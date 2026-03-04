@@ -8,6 +8,13 @@ import { FeaturesInput } from './FeaturesInput.jsx';
 import { FeatureLibrary } from './FeatureLibrary.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageGenerator } from '../ImageGenerator.jsx';
+import {
+  getBaselineStats,
+  computeScaledStats,
+  statsMatchBaseline,
+  statsMatchGenericDefaults,
+  ROLE_STAT_SCALING,
+} from '../../lib/adversary-defaults.js';
 
 /**
  * Controlled mode: pass `value` (full formData) + `onChange(newFormData)`.
@@ -39,6 +46,61 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
     }
   };
 
+  /**
+   * Smart handler for tier/role changes.
+   *
+   * - If stats are at generic initial values or at the baseline for the
+   *   current role+tier, silently apply the new baseline.
+   * - If stats have been customized and only the tier changed (and scaling
+   *   data is available), offer to scale the values proportionally.
+   * - If the role changed (or no scaling data), offer to replace with the
+   *   new role's baseline.
+   * - Declining any prompt applies only the tier/role change, leaving stats as-is.
+   */
+  const handleTierOrRoleChange = (newTier, newRole) => {
+    const oldTier = formData.tier;
+    const oldRole = formData.role;
+    const tierChanged = newTier !== oldTier;
+    const roleChanged = newRole !== oldRole;
+
+    const newDefaults = getBaselineStats(newRole, newTier);
+
+    // No baseline data for this combination — just apply the label change.
+    if (!newDefaults) {
+      update({ ...formData, tier: newTier, role: newRole });
+      return;
+    }
+
+    const atOldBaseline = statsMatchBaseline(formData, oldRole, oldTier);
+    const atGenericDefaults = statsMatchGenericDefaults(formData);
+
+    if (atOldBaseline || atGenericDefaults) {
+      // Stats are still at defaults — silently apply the new baseline.
+      update({ ...formData, tier: newTier, role: newRole, ...newDefaults });
+      return;
+    }
+
+    // Stats have been customized — ask before changing them.
+    const capRole = r => r.charAt(0).toUpperCase() + r.slice(1);
+
+    if (tierChanged && !roleChanged && ROLE_STAT_SCALING[newRole]) {
+      // Tier-only change with scaling data available: offer proportional scaling.
+      if (window.confirm(`Scale stats to Tier ${newTier}?\n\nThis adjusts Difficulty, HP, Thresholds, Stress, and Attack modifier by the guide's per-tier deltas while keeping your other customizations. Attack damage will use the Tier ${newTier} baseline pool.\n\nClick Cancel to change only the Tier label.`)) {
+        const scaled = computeScaledStats(formData, newRole, oldTier, newTier);
+        update({ ...formData, tier: newTier, ...scaled });
+      } else {
+        update({ ...formData, tier: newTier });
+      }
+    } else {
+      // Role changed (or no scaling data for this role): offer full baseline replacement.
+      if (window.confirm(`Apply recommended stats for ${capRole(newRole)} Tier ${newTier}?\n\nThis will replace Difficulty, HP, Thresholds, Stress, Attack modifier, and Attack damage with guide defaults.\n\nClick Cancel to change only the Tier/Role label.`)) {
+        update({ ...formData, tier: newTier, role: newRole, ...newDefaults });
+      } else {
+        update({ ...formData, tier: newTier, role: newRole });
+      }
+    }
+  };
+
   const addFeatureFromLibrary = feature => update({ ...formData, features: [...formData.features, { ...feature, id: generateId() }] });
 
   const featureLibraryEl = (
@@ -58,12 +120,12 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
 
         <div className="grid grid-cols-2 gap-4">
           <FormRow label="Tier">
-            <select value={formData.tier} onChange={e => update({ ...formData, tier: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
+            <select value={formData.tier} onChange={e => handleTierOrRoleChange(parseInt(e.target.value), formData.role)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
               {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </FormRow>
           <FormRow label="Role">
-            <select value={formData.role} onChange={e => update({ ...formData, role: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
+            <select value={formData.role} onChange={e => handleTierOrRoleChange(formData.tier, e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
               {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
             </select>
           </FormRow>

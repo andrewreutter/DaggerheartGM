@@ -298,6 +298,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     return () => window.removeEventListener('keydown', handler);
   }, [lightboxUrl]);
   const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
+  const [hoveredCompactTooltip, setHoveredCompactTooltip] = useState(null);
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
@@ -309,6 +310,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
   const [editState, setEditState] = useState(null);
+  const [collapsedSections, setCollapsedSections] = useState(() =>
+    new Set(activeElements.length > 0 ? ['Defaults'] : [])
+  );
+  const toggleSection = (name) => setCollapsedSections(prev => {
+    const next = new Set(prev);
+    next.has(name) ? next.delete(name) : next.add(name);
+    return next;
+  });
 
   // Close factors panel on outside click
   useEffect(() => {
@@ -599,10 +608,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         <div className="p-4 space-y-6">
           {Object.entries(consolidatedMenu).map(([category, features]) => {
             if (features.length === 0) return null;
+            const catCollapsed = collapsedSections.has(category);
             return (
               <div key={category}>
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">{category}</h3>
-                <div className="space-y-2">
+                <button
+                  onClick={() => toggleSection(category)}
+                  className="w-full flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1 hover:text-slate-200 transition-colors"
+                >
+                  {catCollapsed
+                    ? <ChevronRight size={12} className="shrink-0" />
+                    : <ChevronDown size={12} className="shrink-0" />
+                  }
+                  <span className="flex-1 text-left">{category}</span>
+                  <span className="text-[10px] font-normal text-slate-600 normal-case tracking-normal">{features.length}</span>
+                </button>
+                {!catCollapsed && <div className="space-y-1.5">
                   {features.map((feature, idx) => {
                     const allCds = parseAllCountdownValues(feature.description);
                     const cdKey = `${feature.cardKey}|${feature.featureKey}`;
@@ -614,42 +634,51 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     return (
                       <div
                         key={`${feature.id}-${idx}`}
-                        onMouseEnter={() => setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey })}
-                        onMouseLeave={() => setHoveredFeature(null)}
+                        onMouseEnter={(e) => {
+                          setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey });
+                          if (feature._isRoleMove || feature.featureKey === 'attack') {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setHoveredCompactTooltip({ description: feature.description, top: rect.top, bottom: rect.bottom });
+                          }
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredFeature(null);
+                          if (feature._isRoleMove || feature.featureKey === 'attack') setHoveredCompactTooltip(null);
+                        }}
                         onClick={canRoll ? () => handleRoll(feature) : undefined}
                         className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 rounded border transition-all group flex ${canRoll ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
                       >
                         {feature._isRoleMove && (
-                          <div className="flex shrink-0 gap-[3px] py-2 pl-1.5">
+                          <div className="flex shrink-0 gap-[3px] py-1.5 pl-1">
                             <div className="w-1 rounded-full bg-amber-500/90" />
                             <div className="w-1 rounded-full bg-violet-400/80" />
                           </div>
                         )}
-                        <div className="flex-1 min-w-0 p-3">
-                          <div className="flex justify-between items-start mb-1">
-                            <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5">
+                        <div className="flex-1 min-w-0 p-2">
+                          <div className="flex justify-between items-start gap-2">
+                            <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5 min-w-0">
                               {feature.name}
                               {canRoll && (
-                                <Dices size={12} className={justRolled ? 'text-green-400' : rolzConfigured ? 'text-slate-500 group-hover:text-red-400 transition-colors' : 'text-slate-600 group-hover:text-amber-400 transition-colors'} />
+                                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : rolzConfigured ? 'text-slate-500 group-hover:text-red-400 transition-colors' : 'text-slate-600 group-hover:text-amber-400 transition-colors'}`} />
                               )}
                             </span>
-                            <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400">{feature.sourceName}</span>
+                            <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400 shrink-0">{feature.sourceName}</span>
                           </div>
-                          <p className="text-xs text-slate-400 line-clamp-2"><FeatureDescription description={feature.description} /></p>
+                          {!feature._isRoleMove && feature.featureKey !== 'attack' && <p className="text-xs text-slate-400 line-clamp-2 leading-snug mt-0.5"><FeatureDescription description={feature.description} /></p>}
                           {allCds.length > 0 && (
-                            <div className="mt-2 pt-2 border-t border-slate-700 flex flex-wrap items-center gap-3" onClick={e => e.stopPropagation()}>
+                            <div className="mt-1.5 pt-1.5 border-t border-slate-700 flex flex-wrap items-center gap-2" onClick={e => e.stopPropagation()}>
                               {allCds.map((cd, cdIdx) => (
-                                <div key={cdIdx} className="flex items-center gap-1.5">
-                                  <span className="text-xs text-slate-400">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
-                                  <div className="inline-flex items-center gap-1">
+                                <div key={cdIdx} className="flex items-center gap-1">
+                                  <span className="text-[10px] text-slate-400">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
+                                  <div className="inline-flex items-center gap-0.5">
                                     <button
                                       onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
-                                      className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                                      className="w-4 h-4 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
                                     >−</button>
-                                    <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{cdVals[cdIdx]}</span>
+                                    <span className="min-w-[1.25rem] text-center font-bold text-yellow-400 text-xs tabular-nums">{cdVals[cdIdx]}</span>
                                     <button
                                       onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
-                                      className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+                                      className="w-4 h-4 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
                                     >+</button>
                                   </div>
                                 </div>
@@ -660,7 +689,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       </div>
                     );
                   })}
-                </div>
+                </div>}
               </div>
             );
           })}
@@ -670,56 +699,68 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </div>
           )}
 
-          {/* Default GM Moves — always shown */}
+          {/* Default GM Moves — collapsible */}
           <div>
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1">Defaults</h3>
-            <div className="flex">
-              {/* Three color strips indicating which dice results use each move */}
-              <div
-                className="relative w-4 shrink-0 mr-2 cursor-default"
-                onMouseEnter={() => setShowStripLegend(true)}
-                onMouseLeave={() => setShowStripLegend(false)}
-              >
-                <div className="absolute left-0 w-1 rounded-full bg-amber-500/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
-                <div className="absolute left-[5px] w-1 rounded-full bg-violet-400/80" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
-                <div className="absolute left-[10px] w-1 rounded-full bg-blue-900" style={{ top: `${(FEAR_FAILURE_START / DEFAULT_GM_MOVES.length) * 100}%`, bottom: 0 }} />
-                {showStripLegend && (
-                  <div className="absolute left-6 top-0 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-3 w-48 pointer-events-none">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">When to use</p>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-sm bg-amber-500 shrink-0" />
-                        <span className="text-xs text-slate-300">Failure with Hope</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-sm bg-violet-400 shrink-0" />
-                        <span className="text-xs text-slate-300">Success with Fear</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-sm bg-blue-900 shrink-0" />
-                        <span className="text-xs text-slate-300">Failure with Fear</span>
+            <button
+              onClick={() => toggleSection('Defaults')}
+              className="w-full flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1 hover:text-slate-200 transition-colors"
+            >
+              {collapsedSections.has('Defaults')
+                ? <ChevronRight size={12} className="shrink-0" />
+                : <ChevronDown size={12} className="shrink-0" />
+              }
+              <span className="flex-1 text-left">Defaults</span>
+              <span className="text-[10px] font-normal text-slate-600 normal-case tracking-normal">{DEFAULT_GM_MOVES.length}</span>
+            </button>
+            {!collapsedSections.has('Defaults') && (
+              <div className="flex">
+                {/* Three color strips indicating which dice results use each move */}
+                <div
+                  className="relative w-4 shrink-0 mr-2 cursor-default"
+                  onMouseEnter={() => setShowStripLegend(true)}
+                  onMouseLeave={() => setShowStripLegend(false)}
+                >
+                  <div className="absolute left-0 w-1 rounded-full bg-amber-500/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                  <div className="absolute left-[5px] w-1 rounded-full bg-violet-400/80" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                  <div className="absolute left-[10px] w-1 rounded-full bg-blue-900" style={{ top: `${(FEAR_FAILURE_START / DEFAULT_GM_MOVES.length) * 100}%`, bottom: 0 }} />
+                  {showStripLegend && (
+                    <div className="absolute left-6 top-0 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-3 w-48 pointer-events-none">
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">When to use</p>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-sm bg-amber-500 shrink-0" />
+                          <span className="text-xs text-slate-300">Failure with Hope</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-sm bg-violet-400 shrink-0" />
+                          <span className="text-xs text-slate-300">Success with Fear</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-sm bg-blue-900 shrink-0" />
+                          <span className="text-xs text-slate-300">Failure with Fear</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+                {/* Compact move list */}
+                <div className="flex-1">
+                  {DEFAULT_GM_MOVES.map((move, idx) => (
+                    <div
+                      key={idx}
+                      onMouseEnter={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setHoveredDefaultMove({ ...move, top: rect.top, bottom: rect.bottom });
+                      }}
+                      onMouseLeave={() => setHoveredDefaultMove(null)}
+                      className="w-full text-left px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-default"
+                    >
+                      <span className="text-slate-300 text-xs leading-snug">{move.name}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-              {/* Move cards */}
-              <div className="flex-1 space-y-1.5">
-                {DEFAULT_GM_MOVES.map((move, idx) => (
-                  <div
-                    key={idx}
-                    onMouseEnter={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setHoveredDefaultMove({ ...move, top: rect.top, bottom: rect.bottom });
-                    }}
-                    onMouseLeave={() => setHoveredDefaultMove(null)}
-                    className="w-full text-left bg-slate-800/30 hover:bg-slate-800 px-3 py-2 rounded border border-slate-700/50 hover:border-r-yellow-500 transition-all cursor-default"
-                  >
-                    <span className="font-medium text-slate-300 text-sm">{move.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -1081,6 +1122,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       >
         <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
           <p className="text-sm text-slate-300 italic leading-relaxed">{hoveredDefaultMove.example}</p>
+        </div>
+      </div>
+    )}
+
+    {/* Hover overlay for role moves and basic attacks — description shown on hover */}
+    {hoveredCompactTooltip && (
+      <div
+        className="fixed z-50 pointer-events-none"
+        style={{ left: 'calc(20rem + 12px)', top: (hoveredCompactTooltip.top + hoveredCompactTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
+      >
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
+          <p className="text-sm text-slate-300 leading-relaxed"><FeatureDescription description={hoveredCompactTooltip.description} /></p>
         </div>
       </div>
     )}
