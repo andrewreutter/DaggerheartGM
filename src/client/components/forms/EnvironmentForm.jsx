@@ -9,7 +9,7 @@ import { FeaturesInput } from './FeaturesInput.jsx';
 import { FeatureLibrary } from './FeatureLibrary.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
-import { ImageGenerator } from '../ImageGenerator.jsx';
+import { ImageEditor } from './ImageEditor.jsx';
 
 /**
  * Normalize the potential_adversaries field from any legacy or current format
@@ -209,7 +209,7 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
     difficulty: initial?.difficulty || 10,
     description: initial?.description || '', impulses: initial?.impulses || '',
-    imageUrl: initial?.imageUrl || '',
+    imageUrl: initial?.imageUrl || '', _additionalImages: initial?._additionalImages || [],
     features: (initial?.features || []).map(f => f.id ? f : { ...f, id: generateId() }),
     potential_adversaries: normalizePotentialAdversaries(initial?.potential_adversaries),
     is_public: initial?.is_public || false,
@@ -270,8 +270,16 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
           tier={formData.tier}
         />
 
-        <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-        <ImageGenerator formData={formData} collection="environments" onImageGenerated={url => { update({ ...formData, imageUrl: url }); onImageSaved?.(url); }} />
+        <FormRow label="Images (optional)">
+          <ImageEditor
+            imageUrl={formData.imageUrl}
+            _additionalImages={formData._additionalImages}
+            onChange={({ imageUrl, _additionalImages }) => update({ ...formData, imageUrl, _additionalImages })}
+            onImageSaved={onImageSaved}
+            collection="environments"
+            formData={formData}
+          />
+        </FormRow>
         <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} />
 
         {!isControlled && (

@@ -45,7 +45,7 @@ DaggerheartGM/
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, ItemCard, ItemActionButtons, …)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
 │   │   │   ├── ItemActionButtons.jsx  # Shared Add to Table, Clone, Edit, Delete (ItemCard + ItemDetailModal)
-│   │   │   ├── forms/          # Item forms (controlled+uncontrolled); SceneForm has Battle Budget section
+│   │   │   ├── forms/          # Item forms (controlled+uncontrolled); ImageEditor for add/remove images; SceneForm has Battle Budget section
 │   │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay; SceneBudgetBar for scenes)
 │   │   └── lib/                # API client, helpers, constants, battle-points.js, router, hooks, markdown
 │   ├── srd/                    # SRD sub-application (no DB dependency)

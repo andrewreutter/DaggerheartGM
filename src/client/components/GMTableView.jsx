@@ -291,9 +291,10 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods, ensureScenesLoaded, ensureAdventuresLoaded }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
+  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
 
   // Load scenes/adventures when picker opens so it can display the list.
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -328,7 +329,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   const [configNudge, setConfigNudge] = useState(0);
-  const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
   const [captureOpen, setCaptureOpen] = useState(false);
   const [factorsOpen, setFactorsOpen] = useState(false);
   const factorsPanelRef = useRef(null);
@@ -993,6 +993,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 >
                   <Camera size={14} /> Capture Table
                 </button>
+                <button
+                  onClick={() => {
+                    if (!window.confirm('Clear all adversaries and environments from the table? This cannot be undone.')) return;
+                    clearTable?.();
+                  }}
+                  disabled={activeElements.length === 0}
+                  title="Remove all items from the table"
+                  className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-red-600 text-sm rounded px-3 py-2 text-slate-300 hover:text-red-400 outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Trash2 size={14} /> Clear Table
+                </button>
               </div>
             </div>
           );
@@ -1174,6 +1185,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             );
           } else {
             await saveItem(editState.collection, itemWithId);
+            if (saveImage && (editedData.imageUrl != null || editedData._additionalImages != null)) {
+              await saveImage(editState.collection, itemWithId.id, editedData.imageUrl ?? '', { _additionalImages: editedData._additionalImages });
+            }
             updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
           }
         }}
@@ -1199,7 +1213,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     {/* Hover overlay for role moves and basic attacks — description shown on hover */}
     {hoveredCompactTooltip && (
       <div
-        className="fixed z-50 pointer-events-none"
+        className="fixed z-[60] pointer-events-none"
         style={{ left: 'calc(20rem + 12px)', top: (hoveredCompactTooltip.top + hoveredCompactTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
       >
         <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">

@@ -268,14 +268,14 @@ export function ItemDetailModal({
 
   // --- Display Pane content ---
   const renderDisplayContent = () => {
-    const allImages = [displayItem.imageUrl].filter(Boolean);
+    const allImages = [displayItem.imageUrl, ...(displayItem._additionalImages || [])].filter(Boolean);
     const hasCarousel = allImages.length > 1;
     const safeIdx = allImages.length > 0 ? carouselIdx % allImages.length : 0;
 
     return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex-1 overflow-y-auto p-4 relative">
-        {!!displayItem.imageUrl && (
+        {allImages.length > 0 && (
           <div
             className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer group"
             onClick={() => setLightboxUrl(allImages[safeIdx])}>
@@ -314,7 +314,7 @@ export function ItemDetailModal({
         )}
         <div>
         {editable && (
-          <div className={`mb-3 flex items-center gap-2 flex-wrap ${!!displayItem.imageUrl ? 'pr-20' : ''}`}>
+          <div className={`mb-3 flex items-center gap-2 flex-wrap ${allImages.length > 0 ? 'pr-20' : ''}`}>
             <h3 className="text-xl font-bold text-white">
               {displayItem.name || <span className="text-slate-500 italic">Untitled</span>}
             </h3>
@@ -367,22 +367,6 @@ export function ItemDetailModal({
         )}
         {collection === 'adventures' && displayItem.description && (
           <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300" />
-        )}
-
-        {/* Additional images (OCR'd stat block images or extra post images) */}
-        {(displayItem._additionalImages || []).length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {displayItem._additionalImages.map((url, i) => (
-              <img
-                key={i}
-                src={url}
-                alt={`Additional image ${i + 1}`}
-                className="max-h-64 rounded border border-slate-700 object-contain cursor-zoom-in"
-                onClick={() => setLightboxUrl(url)}
-                onError={e => { e.target.style.display = 'none'; }}
-              />
-            ))}
-          </div>
         )}
 
         </div>
