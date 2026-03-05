@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FormRow } from './FormRow.jsx';
 import { CollectionRefPicker } from './CollectionRefPicker.jsx';
-import { ImageGenerator } from '../ImageGenerator.jsx';
+import { ImageEditor } from './ImageEditor.jsx';
 
 const ADVENTURE_COLLECTIONS = [
   { key: 'scenes', label: 'Scene' },
@@ -18,7 +18,7 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
-    name: initial?.name || '', imageUrl: initial?.imageUrl || '',
+    name: initial?.name || '', imageUrl: initial?.imageUrl || '', _additionalImages: initial?._additionalImages || [],
     scenes: initial?.scenes || [],
     environments: initial?.environments || [], adversaries: initial?.adversaries || [],
     is_public: initial?.is_public || false,
@@ -45,8 +45,19 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
   return (
     <div className="space-y-4">
       <FormRow label="Adventure Name"><input type="text" value={formData.name} onChange={e => updateField('name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full text-lg font-bold" /></FormRow>
-      <FormRow label="Image URL (optional)"><input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => updateField('imageUrl', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-      <ImageGenerator formData={formData} collection="adventures" onImageGenerated={url => { updateField('imageUrl', url); onImageSaved?.(url); }} />
+      <FormRow label="Images (optional)">
+        <ImageEditor
+          imageUrl={formData.imageUrl}
+          _additionalImages={formData._additionalImages}
+          onChange={({ imageUrl, _additionalImages }) => {
+            if (isControlled) onChange({ ...value, imageUrl, _additionalImages });
+            else setLocalData(prev => ({ ...prev, imageUrl, _additionalImages }));
+          }}
+          onImageSaved={onImageSaved}
+          collection="adventures"
+          formData={formData}
+        />
+      </FormRow>
       <CollectionRefPicker
         collections={ADVENTURE_COLLECTIONS}
         values={formData}

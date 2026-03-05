@@ -494,7 +494,7 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
 
 // --- Clone endpoint (explicit clone + auto-clone-on-play) ---
 
-const CLONE_COLLECTIONS = ['adversaries', 'environments'];
+const CLONE_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures'];
 
 app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const { collection } = req.params;
@@ -511,10 +511,13 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const isExternal = source._source && !['own', 'public'].includes(source._source);
 
   try {
-    // For HoD items, fetch full Foundry JSON detail so we store a rich mirror.
-    // List-search items only have summary data; the detail fetch gives us features,
-    // attacks, thresholds, experiences, etc.
+    // For owned items, client sends stripped payload (no base64 images) to avoid huge uploads.
+    // Fetch full source from DB so the clone includes images.
     let effectiveSource = source;
+    if (!isExternal && sourceId) {
+      const dbSource = await getItem(APP_ID, req.uid, collection, sourceId);
+      if (dbSource) effectiveSource = dbSource;
+    }
     if (source._source === 'hod' && source._hodPostId) {
       try {
         const detailUrl = source._hodLink || `https://heartofdaggers.com/?p=${source._hodPostId}`;

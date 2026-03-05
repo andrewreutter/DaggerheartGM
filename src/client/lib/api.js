@@ -226,10 +226,13 @@ export const ensureMirror = async (collection, item) => {
 export const cloneItemToLibrary = async (collectionName, source, { play = false } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
+  // For owned items, strip images so we don't send huge base64 payloads; server fetches full data from DB.
+  const isOwn = !source?._source || source._source === 'own';
+  const payload = isOwn ? stripImageFields(JSON.parse(JSON.stringify(source))) : source;
   const res = await fetch(`/api/data/${collectionName}/clone`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ source, play }),
+    body: JSON.stringify({ source: payload, play }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();

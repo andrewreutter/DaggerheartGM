@@ -172,6 +172,9 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
       // because the server upserts and returns the item.
     }
     await saveItem(activeTab, itemToSave);
+    if (formData.id && saveImage && (formData.imageUrl != null || formData._additionalImages != null)) {
+      await saveImage(activeTab, formData.id, formData.imageUrl ?? '', { _additionalImages: formData._additionalImages });
+    }
     if (isPaginatedTab) search.refresh();
     // Keep modal open after save (auto-save pattern — no explicit "done" step).
   };

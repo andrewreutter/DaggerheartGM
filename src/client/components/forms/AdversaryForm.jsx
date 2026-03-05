@@ -10,7 +10,7 @@ import { ExperiencesInput } from './ExperiencesInput.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
 import { LibraryPanelStack } from './LibraryPanelStack.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
-import { ImageGenerator } from '../ImageGenerator.jsx';
+import { ImageEditor } from './ImageEditor.jsx';
 import { AdversaryStatChangeModal } from '../modals/AdversaryStatChangeModal.jsx';
 import {
   getBaselineStats,
@@ -33,7 +33,7 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
   const [localData, setLocalData] = useState({
     name: initial?.name || '', tier: initial?.tier || 1, role: initial?.role || 'standard',
     motive: initial?.motive || '', description: initial?.description || '',
-    imageUrl: initial?.imageUrl || '',
+    imageUrl: initial?.imageUrl || '', _additionalImages: initial?._additionalImages || [],
     difficulty: initial?.difficulty || 10, hp_max: initial?.hp_max || 6,
     hp_thresholds: initial?.hp_thresholds || { major: 3, severe: 5 }, stress_max: initial?.stress_max || 4,
     attack: initial?.attack || initial?.attacks?.[0] || { name: '', range: 'Melee', modifier: 0, trait: 'Phy', damage: '' },
@@ -187,11 +187,16 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
 
         <FormRow label="Motives & Tactics"><input type="text" placeholder="e.g. To add to their bone collection" value={formData.motive} onChange={e => update({ ...formData, motive: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
         <FormRow label={<>Description (Flavor)<MarkdownHelpTooltip /></>}><textarea placeholder="Description or flavor text..." value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
-        <FormRow label="Image URL (optional)">
-          <div className="flex flex-wrap items-stretch border border-slate-700 rounded overflow-hidden">
-            <input type="url" placeholder="https://..." value={formData.imageUrl} onChange={e => update({ ...formData, imageUrl: e.target.value })} className="flex-1 min-w-[12rem] bg-slate-950 border-0 px-2 py-2 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:ring-inset" />
-            <ImageGenerator formData={formData} collection="adversaries" onImageGenerated={url => { update({ ...formData, imageUrl: url }); onImageSaved?.(url); }} inline />
-          </div>
+        <FormRow label="Images (optional)">
+          <ImageEditor
+            imageUrl={formData.imageUrl}
+            _additionalImages={formData._additionalImages}
+            onChange={({ imageUrl, _additionalImages }) => update({ ...formData, imageUrl, _additionalImages })}
+            onImageSaved={onImageSaved}
+            collection="adversaries"
+            formData={formData}
+            inline
+          />
         </FormRow>
 
         <div className="grid grid-cols-5 gap-4 mt-6">

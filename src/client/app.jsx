@@ -181,6 +181,7 @@ function App() {
 
   const userRef = useRef(null);
   const routeRef = useRef(null);
+  const lastLibraryPathRef = useRef('/library/adversaries');
   const scenesLoadedRef = useRef(false);
   const adventuresLoadedRef = useRef(false);
   const scenesLoadPromiseRef = useRef(null);
@@ -197,6 +198,15 @@ function App() {
       try {
         const result = await loadCollection('scenes', { limit: 1000 });
         const scenes = result.items || [];
+        if (!userRef.current) return [];
+        // Show scenes immediately so the UI feels instant; resolve refs in background for chip names.
+        setData(prev => {
+          if ((prev.scenes || []).length > 0) return prev;
+          return { ...prev, scenes };
+        });
+        scenesLoadedRef.current = true;
+        scenesCacheRef.current = scenes;
+
         const advIds = new Set();
         const envIds = new Set();
         for (const scene of scenes) {
@@ -207,32 +217,23 @@ function App() {
             if (ref != null && !ref.data && ref.adversaryId) advIds.add(ref.adversaryId);
           }
         }
-        let resolvedAdvs = [];
-        let resolvedEnvs = [];
         if (advIds.size || envIds.size) {
-          try {
-            const resolved = await resolveItems({
-              ...(advIds.size ? { adversaries: [...advIds] } : {}),
-              ...(envIds.size ? { environments: [...envIds] } : {}),
-            });
-            resolvedAdvs = resolved.adversaries || [];
-            resolvedEnvs = resolved.environments || [];
-          } catch { /* best-effort */ }
+          resolveItems({
+            ...(advIds.size ? { adversaries: [...advIds] } : {}),
+            ...(envIds.size ? { environments: [...envIds] } : {}),
+          }).then(resolved => {
+            if (!userRef.current) return;
+            const resolvedAdvs = resolved.adversaries || [];
+            const resolvedEnvs = resolved.environments || [];
+            const resolvedAdvIds = new Set(resolvedAdvs.map(a => a.id));
+            const resolvedEnvIds = new Set(resolvedEnvs.map(e => e.id));
+            setData(prev => ({
+              ...prev,
+              adversaries: [...resolvedAdvs, ...(prev.adversaries || []).filter(a => !resolvedAdvIds.has(a.id))],
+              environments: [...resolvedEnvs, ...(prev.environments || []).filter(e => !resolvedEnvIds.has(e.id))],
+            }));
+          }).catch(() => {});
         }
-        if (!userRef.current) return [];
-        const resolvedAdvIds = new Set(resolvedAdvs.map(a => a.id));
-        const resolvedEnvIds = new Set(resolvedEnvs.map(e => e.id));
-        setData(prev => {
-          if ((prev.scenes || []).length > 0) return prev;
-          return {
-            ...prev,
-            scenes,
-            adversaries: [...resolvedAdvs, ...(prev.adversaries || []).filter(a => !resolvedAdvIds.has(a.id))],
-            environments: [...resolvedEnvs, ...(prev.environments || []).filter(e => !resolvedEnvIds.has(e.id))],
-          };
-        });
-        scenesLoadedRef.current = true;
-        scenesCacheRef.current = scenes;
         return scenes;
       } finally {
         scenesLoadPromiseRef.current = null;
@@ -299,6 +300,13 @@ function App() {
 
   // Keep routeRef current
   useEffect(() => { routeRef.current = route; }, [route]);
+
+  // Remember last library tab so we can return there when navigating back from Game Table
+  useEffect(() => {
+    if (route.view === 'library' && route.tab) {
+      lastLibraryPathRef.current = `/library/${route.tab}`;
+    }
+  }, [route.view, route.tab]);
 
   /** Called by LibraryView whenever its hook fetches a new page of adversaries/environments.
    *  Merges with previously resolved items (from fetchAllCollections) so scene
@@ -549,6 +557,11 @@ function App() {
     setActiveElements(prev => prev.filter(el => el.instanceId !== instanceId));
   };
 
+  const clearTable = () => {
+    setActiveElements([]);
+    setFeatureCountdowns({});
+  };
+
   if (loading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Loading...</div>;
 
   return (
@@ -560,7 +573,7 @@ function App() {
               <Swords size={24} /> DAGGERHEART GM
             </h1>
             <div className="flex items-center gap-2">
-              <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate('/library/adversaries')} />
+              <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
               <NavBtn
                 icon={<LayoutDashboard />}
                 label="Game Table"
@@ -652,58 +665,80 @@ function App() {
               <Users size={20} /> Sign In with Google
             </button>
           </div>
-        ) : route.view === 'library' ? (
-          <LibraryView
-            key={libraryKey}
-            data={data}
-            saveItem={saveItem}
-            saveImage={saveImage}
-            deleteItem={deleteItem}
-            cloneItem={cloneItem}
-            addToTable={addToTable}
-            route={route}
-            navigate={navigate}
-            onItemsChange={syncDataToApp}
-            onMergeAdversary={mergeAdversaryIntoData}
-            isAdmin={isAdmin}
-            partySize={partySize}
-            setPartySize={setPartySize}
-            ensureScenesLoaded={ensureScenesLoaded}
-            ensureAdventuresLoaded={ensureAdventuresLoaded}
-          />
         ) : (
-          <GMTableView
-            activeElements={activeElements}
-            updateActiveElement={updateActiveElement}
-            removeActiveElement={removeActiveElement}
-            updateActiveElementsBaseData={updateActiveElementsBaseData}
-            data={data}
-            saveItem={saveItem}
-            saveImage={saveImage}
-            addToTable={addToTable}
-            onMergeAdversary={mergeAdversaryIntoData}
-            ensureScenesLoaded={ensureScenesLoaded}
-            ensureAdventuresLoaded={ensureAdventuresLoaded}
-            whiteboardEmbed={whiteboardEmbed}
-            setWhiteboardEmbed={setWhiteboardEmbed}
-            rolzRoomName={rolzRoomName}
-            setRolzRoomName={setRolzRoomName}
-            rolzUsername={rolzUsername}
-            setRolzUsername={setRolzUsername}
-            rolzPassword={rolzPassword}
-            setRolzPassword={setRolzPassword}
-            route={route}
-            gmTab={route.gmTab}
-            navigate={navigate}
-            featureCountdowns={featureCountdowns}
-            updateCountdown={(cardKey, featureKey, cdIdx, value) =>
-              setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
-            }
-            partySize={partySize}
-            setPartySize={setPartySize}
-            tableBattleMods={tableBattleMods}
-            setTableBattleMods={setTableBattleMods}
-          />
+          <>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'library' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'library'}
+            >
+              <LibraryView
+                key={libraryKey}
+                data={data}
+                saveItem={saveItem}
+                saveImage={saveImage}
+                deleteItem={deleteItem}
+                cloneItem={cloneItem}
+                addToTable={addToTable}
+                route={
+                  route.view === 'library'
+                    ? route
+                    : {
+                        view: 'library',
+                        tab: (lastLibraryPathRef.current.match(/^\/library\/([^/]+)/)?.[1]) || 'adversaries',
+                        itemId: null,
+                      }
+                }
+                navigate={navigate}
+                onItemsChange={syncDataToApp}
+                onMergeAdversary={mergeAdversaryIntoData}
+                isAdmin={isAdmin}
+                partySize={partySize}
+                setPartySize={setPartySize}
+                ensureScenesLoaded={ensureScenesLoaded}
+                ensureAdventuresLoaded={ensureAdventuresLoaded}
+              />
+            </div>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'gm-table' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'gm-table'}
+            >
+              <GMTableView
+                activeElements={activeElements}
+                updateActiveElement={updateActiveElement}
+                removeActiveElement={removeActiveElement}
+                updateActiveElementsBaseData={updateActiveElementsBaseData}
+                data={data}
+                saveItem={saveItem}
+                saveImage={saveImage}
+                addToTable={addToTable}
+                onMergeAdversary={mergeAdversaryIntoData}
+                ensureScenesLoaded={ensureScenesLoaded}
+                ensureAdventuresLoaded={ensureAdventuresLoaded}
+                whiteboardEmbed={whiteboardEmbed}
+                setWhiteboardEmbed={setWhiteboardEmbed}
+                rolzRoomName={rolzRoomName}
+                setRolzRoomName={setRolzRoomName}
+                rolzUsername={rolzUsername}
+                setRolzUsername={setRolzUsername}
+                rolzPassword={rolzPassword}
+                setRolzPassword={setRolzPassword}
+                route={route}
+                gmTab={route.gmTab}
+                navigate={navigate}
+                featureCountdowns={featureCountdowns}
+                updateCountdown={(cardKey, featureKey, cdIdx, value) =>
+                  setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
+                }
+                partySize={partySize}
+                setPartySize={setPartySize}
+                tableBattleMods={tableBattleMods}
+                setTableBattleMods={setTableBattleMods}
+                clearTable={clearTable}
+              />
+            </div>
+          </>
         )}
       </main>
       {pendingSceneAdd && (
