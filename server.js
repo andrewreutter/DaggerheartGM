@@ -17,6 +17,7 @@ import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse
 import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
 import { generateImage as hfGenerateImage, editImage as hfEditImage, isConfigured as hfIsConfigured } from './src/huggingface-image.js';
 import compression from 'compression';
+import jwt from 'jsonwebtoken';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -637,6 +638,44 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('POST /api/edit-image error:', err);
     res.status(500).json({ error: err.message || 'Image editing failed' });
+  }
+});
+
+// --- Zoom Meeting SDK signature (JWT for joining meetings) ---
+app.post('/api/zoom-signature', requireAuth, async (req, res) => {
+  const sdkKey = (process.env.ZOOM_CLIENT_ID || '').trim();
+  const sdkSecret = (process.env.ZOOM_CLIENT_SECRET || '').trim();
+  if (!sdkKey || !sdkSecret) {
+    return res.status(503).json({ error: 'Zoom Meeting SDK is not configured (ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET required)' });
+  }
+  const { meetingNumber, role = 0, debug } = req.body || {};
+  const mn = String(meetingNumber || '').replace(/\s/g, '');
+  if (!mn) {
+    return res.status(400).json({ error: 'meetingNumber is required' });
+  }
+  try {
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 7200; // 2 hours (min 1800, max 48h per Zoom docs)
+    const payload = {
+      sdkKey,
+      appKey: sdkKey,
+      mn,
+      role: role === 1 ? 1 : 0,
+      iat,
+      exp,
+      tokenExp: exp,
+    };
+    const signature = jwt.sign(payload, sdkSecret, { algorithm: 'HS256' });
+    console.log('[zoom-signature] payload:', JSON.stringify({ ...payload, sdkKey: sdkKey ? `${sdkKey.slice(0, 4)}...` : null }));
+    const out = { signature, sdkKey };
+    if (debug) {
+      const decoded = jwt.decode(signature, { complete: true });
+      out._debug = { payload: decoded?.payload, hint: 'Paste signature at jwt.io to verify. Ensure you use Meeting SDK app (not OAuth/JWT app) in Zoom Marketplace.' };
+    }
+    res.json(out);
+  } catch (err) {
+    console.error('POST /api/zoom-signature error:', err);
+    res.status(500).json({ error: err.message || 'Failed to generate signature' });
   }
 });
 

@@ -102,7 +102,9 @@ The **Game Table** tab has two side-by-side panels (70/30 split):
 - **Zoom Whiteboard** (left) — paste an `<iframe>` embed code to display a Zoom whiteboard
 - **Rolz Room Log** (right) — a live chat-style view of your Rolz dice room that polls for new messages every 5 seconds. Shows text messages, dice rolls (highlighted), server messages, and time separators. Includes a header with refresh and "open in new tab" links.
 
-A collapsible **Configure Embeds** bar at the top contains inputs for both. It collapses automatically once configured, giving the embeds maximum vertical space.
+A **Zoom Meeting** strip runs along the full bottom of the Game Table (visible on both Behind the Screen and Player View tabs). Configure meeting number and password in the Configure Embeds panel; your display name is taken from your Google account. Requires `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET` in `.env` (from [Zoom Marketplace](https://marketplace.zoom.us/) → Your Meeting SDK app → App Credentials).
+
+A collapsible **Configure Embeds** bar at the top contains inputs for whiteboard, Rolz, and Zoom Meeting. It collapses automatically once configured, giving the embeds maximum vertical space.
 
 When a **room name and Rolz credentials** are configured, adversary attack actions become clickable throughout the Game Table:
 - Clicking an action in the **GM Moves** sidebar posts the roll to the Rolz room (briefly flashes green on success)
@@ -260,6 +262,8 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 | `HF_EDIT_MODEL` | No | Hugging Face model ID for image-to-image editing (default: `black-forest-labs/FLUX.1-Kontext-dev`) |
 | `HF_PROVIDER` | No | Hugging Face inference provider (default: `replicate`). Other options: `fal-ai`, `together`, `novita`, etc. — see huggingface.co/docs/inference-providers |
 | `ADMIN_EMAILS` | No | Comma-separated list of email addresses granted admin access (e.g. `alice@example.com,bob@example.com`). |
+| `ZOOM_CLIENT_ID` | No | Zoom Meeting SDK Client ID — enables the embedded Zoom Meeting strip. From [Zoom Marketplace](https://marketplace.zoom.us/) → Your Meeting SDK app → App Credentials. |
+| `ZOOM_CLIENT_SECRET` | No | Zoom Meeting SDK Client Secret — used server-side to generate JWT signatures. Required when `ZOOM_CLIENT_ID` is set. |
 
 ---
 

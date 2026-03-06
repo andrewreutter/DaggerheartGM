@@ -452,3 +452,29 @@ export const editImage = async (image, prompt) => {
   return res.json();
 };
 
+/**
+ * Get a Zoom Meeting SDK JWT signature for joining a meeting.
+ * meetingNumber — Zoom meeting number (spaces allowed, will be stripped)
+ * role — 0 for participant, 1 for host (default 0)
+ * debug — if true, response includes _debug with payload for troubleshooting
+ * Returns { signature, sdkKey, _debug? }.
+ */
+export const getZoomSignature = async (meetingNumber, role = 0, debug = false) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/zoom-signature', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ meetingNumber: String(meetingNumber || '').replace(/\s/g, ''), role, debug }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  if (data._debug) {
+    console.log('[zoom] Debug:', data._debug);
+  }
+  return data;
+};
+

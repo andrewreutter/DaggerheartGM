@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, SlidersHorizontal } from 'lucide-react';
+import { Zap, Trash2, Pencil, LayoutDashboard, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, SlidersHorizontal, Video } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
+import { ZoomMeetingStrip } from './ZoomMeetingStrip.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent } from './DetailCardContent.jsx';
@@ -72,21 +73,24 @@ function extractIframeSrc(embedCode) {
   return null;
 }
 
-function ConfigSummary({ iframeSrc, rolzRoomName, rolzUsername }) {
+function ConfigSummary({ iframeSrc, rolzRoomName, rolzUsername, zoomMeetingNumber }) {
   const parts = [];
-  if (iframeSrc) parts.push('Zoom');
+  if (iframeSrc) parts.push('Whiteboard');
   if (rolzRoomName) parts.push(rolzUsername ? `Rolz: ${rolzRoomName} (${rolzUsername})` : `Rolz: ${rolzRoomName}`);
+  if (zoomMeetingNumber) parts.push('Zoom Meeting');
   return parts.length > 0
     ? <span className="text-slate-500 text-xs ml-2">{parts.join(' · ')}</span>
     : <span className="text-slate-600 text-xs ml-2 italic">Not configured</span>;
 }
 
-function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, hidden, nudge }) {
+function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, zoomMeetingNumber, setZoomMeetingNumber, zoomPassword, setZoomPassword, user, hidden, nudge }) {
   const [embedDraft, setEmbedDraft] = useState(whiteboardEmbed);
   const [roomNameDraft, setRoomNameDraft] = useState(rolzRoomName);
   const [usernameDraft, setUsernameDraft] = useState(rolzUsername);
   const [passwordDraft, setPasswordDraft] = useState(rolzPassword);
-  const [configOpen, setConfigOpen] = useState(!whiteboardEmbed && !rolzRoomName);
+  const [zoomMeetingDraft, setZoomMeetingDraft] = useState(zoomMeetingNumber);
+  const [zoomPasswordDraft, setZoomPasswordDraft] = useState(zoomPassword);
+  const [configOpen, setConfigOpen] = useState(!whiteboardEmbed && !rolzRoomName && !zoomMeetingNumber);
   const [nudgeHint, setNudgeHint] = useState(false);
 
   // Sync draft state and configOpen when props change (e.g. after table_state loads async)
@@ -95,8 +99,10 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
     setRoomNameDraft(rolzRoomName);
     setUsernameDraft(rolzUsername);
     setPasswordDraft(rolzPassword);
-    setConfigOpen(prev => (whiteboardEmbed || rolzRoomName) ? false : prev);
-  }, [whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword]);
+    setZoomMeetingDraft(zoomMeetingNumber);
+    setZoomPasswordDraft(zoomPassword);
+    setConfigOpen(prev => (whiteboardEmbed || rolzRoomName || zoomMeetingNumber) ? false : prev);
+  }, [whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, zoomMeetingNumber, zoomPassword]);
 
   useEffect(() => {
     if (!nudge) return;
@@ -113,7 +119,9 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
     setRolzRoomName(roomNameDraft.trim());
     setRolzUsername(usernameDraft.trim());
     setRolzPassword(passwordDraft);
-    if (embedDraft.trim() || roomNameDraft.trim()) setConfigOpen(false);
+    setZoomMeetingNumber(zoomMeetingDraft.trim());
+    setZoomPassword(zoomPasswordDraft);
+    if (embedDraft.trim() || roomNameDraft.trim() || zoomMeetingDraft.trim()) setConfigOpen(false);
   };
 
   return (
@@ -129,7 +137,7 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
             : <ChevronRight size={14} className="text-slate-500" />
           }
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Configure Embeds</span>
-          {!configOpen && <ConfigSummary iframeSrc={iframeSrc} rolzRoomName={rolzRoomName} rolzUsername={rolzUsername} />}
+          {!configOpen && <ConfigSummary iframeSrc={iframeSrc} rolzRoomName={rolzRoomName} rolzUsername={rolzUsername} zoomMeetingNumber={zoomMeetingNumber} />}
         </button>
 
         {configOpen && (
@@ -181,6 +189,30 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
               </p>
             </div>
 
+            {/* Zoom Meeting config */}
+            <div className="flex flex-col gap-1.5 min-w-[16rem]">
+              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Video size={12} className="text-blue-400" /> Zoom Meeting
+              </label>
+              <input
+                className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                placeholder="Meeting number (e.g. 123 456 7890)"
+                value={zoomMeetingDraft}
+                onChange={(e) => setZoomMeetingDraft(e.target.value)}
+              />
+              <input
+                type="text"
+                autoComplete="off"
+                className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                placeholder="Meeting password (optional)"
+                value={zoomPasswordDraft}
+                onChange={(e) => setZoomPasswordDraft(e.target.value)}
+              />
+              <p className="text-[10px] text-slate-500 leading-snug">
+                Embed a Zoom meeting in a strip below the whiteboard. Requires <a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">Zoom SDK</a> credentials on the server.
+              </p>
+            </div>
+
             {/* Nudge hint */}
             {nudgeHint && (
               <div className="col-span-2 flex items-start gap-2 bg-amber-900/30 border border-amber-600/50 rounded-lg px-3 py-2 text-amber-300 text-xs">
@@ -202,7 +234,7 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
         )}
       </div>
 
-      {/* Whiteboard embed — full width */}
+      {/* Whiteboard embed — full height */}
       <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col">
         {iframeSrc ? (
           <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
@@ -300,7 +332,7 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, zoomMeetingNumber, setZoomMeetingNumber, zoomPassword, setZoomPassword, user, route, gmTab, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
@@ -664,8 +696,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const tabActive = 'border-red-500 text-white';
   const tabInactive = 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600';
 
+  const zoomUserName = user?.displayName || user?.email?.split('@')[0] || 'GM';
+
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
       {/* Left Column: Consolidated Actions (always visible) */}
       <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
         <div className="p-4 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
@@ -859,6 +894,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           setRolzUsername={setRolzUsername}
           rolzPassword={rolzPassword}
           setRolzPassword={setRolzPassword}
+          zoomMeetingNumber={zoomMeetingNumber}
+          setZoomMeetingNumber={setZoomMeetingNumber}
+          zoomPassword={zoomPassword}
+          setZoomPassword={setZoomPassword}
+          user={user}
           hidden={gmTab !== 'whiteboard'}
           nudge={configNudge}
         />
@@ -1146,6 +1186,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           <RolzRoomLog roomName={rolzRoomName} pendingRolls={pendingRolls} />
         </div>
       )}
+      </div>
+
+      {/* Zoom Meeting strip — full width along bottom of Game Table */}
+      <ZoomMeetingStrip
+        meetingNumber={zoomMeetingNumber}
+        password={zoomPassword}
+        userName={zoomUserName}
+      />
 
     {modalOpen && (
       <ItemPickerModal

@@ -36,6 +36,8 @@ function App() {
   const [rolzRoomName, setRolzRoomName] = useState('');
   const [rolzUsername, setRolzUsername] = useState('');
   const [rolzPassword, setRolzPassword] = useState('');
+  const [zoomMeetingNumber, setZoomMeetingNumber] = useState('');
+  const [zoomPassword, setZoomPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const [partySize, setPartySize] = useState(4);
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
@@ -45,10 +47,10 @@ function App() {
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, zoomMeetingNumber, zoomPassword, featureCountdowns, partySize, tableBattleMods });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, zoomMeetingNumber, zoomPassword, featureCountdowns, partySize, tableBattleMods]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -287,6 +289,8 @@ function App() {
           setRolzRoomName(tableState?.rolzRoomName || '');
           setRolzUsername(tableState?.rolzUsername || '');
           setRolzPassword(tableState?.rolzPassword || '');
+          setZoomMeetingNumber(tableState?.zoomMeetingNumber || '');
+          setZoomPassword(tableState?.zoomPassword || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
           if (tableState?.partySize != null) setPartySize(tableState.partySize);
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
@@ -570,7 +574,7 @@ function App() {
         <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-10">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
-              <Swords size={24} /> DAGGERHEART GM
+              <Swords size={24} /> DAGGERMASTER
             </h1>
             <div className="flex items-center gap-2">
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
@@ -656,7 +660,7 @@ function App() {
         {!user || route.view === 'home' ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-slate-900 to-slate-950">
             <Swords size={64} className="text-red-500 mb-6" />
-            <h1 className="text-4xl font-bold text-white mb-2">Daggerheart GM Tool</h1>
+            <h1 className="text-4xl font-bold text-white mb-2">Daggermaster</h1>
             <p className="text-slate-400 mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
             <button
               onClick={handleGoogleSignIn}
@@ -724,6 +728,11 @@ function App() {
                 setRolzUsername={setRolzUsername}
                 rolzPassword={rolzPassword}
                 setRolzPassword={setRolzPassword}
+                zoomMeetingNumber={zoomMeetingNumber}
+                setZoomMeetingNumber={setZoomMeetingNumber}
+                zoomPassword={zoomPassword}
+                setZoomPassword={setZoomPassword}
+                user={user}
                 route={route}
                 gmTab={route.gmTab}
                 navigate={navigate}
