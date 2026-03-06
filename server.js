@@ -147,7 +147,7 @@ const ROLZ_SESSION_TTL = 30 * 60 * 1000; // 30 minutes
 // collect browser-side instrumentation logs via /api/debug-log, bypassing CORS.
 // Client sends: { _debugUrl: "http://127.0.0.1:PORT/ingest/UUID", _debugSessionId: "ID", ...payload }
 if (process.env.NODE_ENV !== 'production') {
-  app.post('/api/debug-log', express.json(), (req, res) => {
+  app.post('/api/debug-log', (req, res) => {
     const { _debugUrl, _debugSessionId, ...payload } = req.body || {};
     if (!_debugUrl || !_debugUrl.startsWith('http://127.0.0.1:')) return res.status(400).json({ error: 'Invalid debug URL' });
     const headers = { 'Content-Type': 'application/json' };

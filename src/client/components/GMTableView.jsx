@@ -89,6 +89,15 @@ function WhiteboardTab({ whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setR
   const [configOpen, setConfigOpen] = useState(!whiteboardEmbed && !rolzRoomName);
   const [nudgeHint, setNudgeHint] = useState(false);
 
+  // Sync draft state and configOpen when props change (e.g. after table_state loads async)
+  useEffect(() => {
+    setEmbedDraft(whiteboardEmbed);
+    setRoomNameDraft(rolzRoomName);
+    setUsernameDraft(rolzUsername);
+    setPasswordDraft(rolzPassword);
+    setConfigOpen(prev => (whiteboardEmbed || rolzRoomName) ? false : prev);
+  }, [whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword]);
+
   useEffect(() => {
     if (!nudge) return;
     setConfigOpen(true);
