@@ -701,6 +701,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-1 flex overflow-hidden min-h-0">
+      {/* Zoom Meeting strip — vertical sidebar on far left */}
+      <ZoomMeetingStrip
+        meetingNumber={zoomMeetingNumber}
+        password={zoomPassword}
+        userName={zoomUserName}
+        vertical={true}
+      />
+
       {/* Left Column: Consolidated Actions (always visible) */}
       <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
         <div className="p-4 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
@@ -1187,13 +1195,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
       )}
       </div>
-
-      {/* Zoom Meeting strip — full width along bottom of Game Table */}
-      <ZoomMeetingStrip
-        meetingNumber={zoomMeetingNumber}
-        password={zoomPassword}
-        userName={zoomUserName}
-      />
 
     {modalOpen && (
       <ItemPickerModal
