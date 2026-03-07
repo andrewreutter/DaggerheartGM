@@ -165,3 +165,8 @@
 .fear-pulse-anim {
   animation: fear-pulse 0.65s ease-out forwards;
 }
+
+/* Pending dice roll amber pulse — same golden ring as fear-pulse, ping-pong */
+.pending-roll-pulse {
+  animation: fear-pulse 0.65s ease-out infinite alternate;
+}

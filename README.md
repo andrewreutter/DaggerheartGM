@@ -41,9 +41,10 @@ DaggerheartGM/
 ├── src/
 │   ├── game-constants.js       # Single source of truth: ROLES, ROLE_BP_COST, ENV_TYPES, TIERS
 │   ├── client/
-│   │   ├── app.jsx             # React SPA entry point (partySize in table_state)
+│   │   ├── app.jsx             # React SPA entry point (partySize + partyTier derived from character elements)
 │   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, ItemCard, ItemActionButtons, …)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
+│   │   │   ├── TierSelector.jsx       # Shared tier 1–4 button bank (multi-select for filters, single-select for character dialog)
 │   │   │   ├── ItemActionButtons.jsx  # Shared Add to Table, Clone, Edit, Delete (ItemCard + ItemDetailModal)
 │   │   │   ├── forms/          # Item forms (controlled+uncontrolled); ImageEditor for add/remove images; SceneForm has Battle Budget section
 │   │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay; SceneBudgetBar for scenes)
@@ -98,11 +99,11 @@ A **compact/spacious view toggle** (grid icon in the header) switches between a 
 
 ### Rolz.org Dice Room Integration
 
-The **Game Table** tab layout: a left sidebar (Tracker) with Fear counter, GM Moves, Add menu, character cards, environment cards, and adversary HP/stress tracks; a center column with a combined toolbar (BP display, party size, budget factors, Capture/Clear Table, collapsible Embeds config) above the Zoom whiteboard iframe; and an optional Rolz room log on the right when configured.
+The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a self-managing Rolz room log strip above a self-managing Zoom whiteboard iframe (each widget shows inline config when unconfigured, and a gear icon when configured to re-open config); an **Encounter panel** (right sidebar, `w-56`) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
 
-The Add menu in the Tracker has four options: **Character**, Adversary, Environment, Scene. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, Hope counter (±buttons), HP track, Stress track, and conditions field. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
+The "+ Add Character" button in the Characters panel opens a small dialog. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, **tier** (1–4, default 1; selected via the shared `TierSelector` component), Hope counter (±buttons), HP track, Stress track, and conditions field. A tier badge (`T{n}`) is displayed on each character card header. The highest character tier (`partyTier`) is used as the comparison basis for the "lower-tier adversary" BP budget auto-modifier. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
 - **Zoom Whiteboard** (center) — paste an `<iframe>` embed code in the Embeds config to display a Zoom whiteboard
-- **Rolz Room Log** (right) — a live chat-style view of your Rolz dice room that polls for new messages every 5 seconds. Shows text messages, dice rolls (highlighted), server messages, and time separators. Includes a header with refresh and "open in new tab" links.
+- **Rolz Room Log** (center, strip above whiteboard) — a compact live chat-style strip that polls for new messages every 5 seconds, auto-scrolls to the newest message, and includes a slim header with refresh and "open in new tab" links
 
 A collapsible **Configure Embeds** bar at the top contains inputs for both. It collapses automatically once configured, giving the embeds maximum vertical space.
 
@@ -116,7 +117,7 @@ Room name and credentials are persisted in your session state automatically.
 
 ### Adding to the Game Table
 
-The Tracker sidebar has an **Add** menu with three options — **Adversary**, **Environment**, and **Scene** — each of which opens an **`ItemPickerModal`** and **appends** the selection to the current table (never clears the board). For adversaries and environments the modal uses `useCollectionSearch` + `CollectionFilters` (panel variant) providing Source, Tier, Role/Type, and a search box with infinite scroll. For scenes a simple client-side search is shown. Results appear as text rows. Clicking a result adds it to the table and closes the modal.
+The Encounter panel's **Add** menu has three options — **Adversary**, **Environment**, and **Scene** — each of which opens an **`ItemPickerModal`** and **appends** the selection to the current table (never clears the board). For adversaries and environments the modal uses `useCollectionSearch` + `CollectionFilters` (panel variant) providing Source, Tier, Role/Type, and a search box with infinite scroll. For scenes a simple client-side search is shown. Results appear as text rows. Clicking a result adds it to the table and closes the modal.
 
 A **Capture Table** button (camera icon, disabled when the table is empty) opens a small dialog where you name and save the current table contents as a new **Scene** (capturing all adversaries and environments). After saving, the new scene is opened in the library.
 

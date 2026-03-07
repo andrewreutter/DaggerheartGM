@@ -286,7 +286,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
                 {showEditBtn && (
                   <button
                     onClick={() => handleEditClick(el)}
-                    className={`absolute top-2 right-2 z-10 text-slate-600 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
+                    className={`absolute top-2 right-2 z-10 text-slate-500 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
                     title="Edit"
                   >
                     <Pencil size={14} />
@@ -324,7 +324,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
               {canEditEl && (
                 <button
                   onClick={() => handleEditClick(el)}
-                  className={`absolute top-2 right-2 z-10 text-slate-600 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
+                  className={`absolute top-2 right-2 z-10 text-slate-500 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
                   title="Edit"
                 >
                   <Pencil size={14} />

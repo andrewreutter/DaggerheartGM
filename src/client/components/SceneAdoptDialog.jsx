@@ -4,10 +4,12 @@
  */
 
 const MOD_LABELS = {
-  lessDifficult:    { label: 'Less difficult / shorter fight',    value: -1 },
-  damageBoostD4:    { label: '+1d4 damage to all adversaries',    value: -2 },
-  damageBoostStatic:{ label: '+2 damage to all adversaries',      value: -2 },
-  moreDangerous:    { label: 'More dangerous / longer fight',     value: +2 },
+  lessDifficult:         { label: 'Less difficult / shorter fight',                       value: -1 },
+  damageBoostPlusOne:    { label: '+1 damage to all adversaries',                         value: -1 },
+  damageBoostStatic:     { label: '+2 damage to all adversaries',                         value: -2 },
+  damageBoostD4:         { label: '+1d4 damage to all adversaries',                       value: -2 },
+  slightlyMoreDangerous: { label: 'Slightly more dangerous / slightly longer fight',      value: +1 },
+  moreDangerous:         { label: 'More dangerous / longer fight',                        value: +2 },
 };
 
 function ActiveModList({ mods, emptyLabel }) {

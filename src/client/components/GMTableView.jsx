@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, SlidersHorizontal, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User } from 'lucide-react';
+import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -8,16 +8,11 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { postRolzRoll } from '../lib/api.js';
-import { isOwnItem } from '../lib/constants.js';
+import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
+import { TierSelector } from './TierSelector.jsx';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 
-const USER_MOD_OPTIONS = [
-  { key: 'lessDifficult',     label: 'Less difficult / shorter fight',  value: -1 },
-  { key: 'damageBoostD4',     label: '+1d4 damage to all adversaries',  value: -2, exclusive: 'damageBoost' },
-  { key: 'damageBoostStatic', label: '+2 damage to all adversaries',    value: -2, exclusive: 'damageBoost' },
-  { key: 'moreDangerous',     label: 'More dangerous / longer fight',   value: +2 },
-];
 
 // Strip boundaries (1-indexed in the spec, 0-indexed here):
 // Amber (Failure w/ Hope): items 1–6, Violet (Success w/ Fear): items 6–13,
@@ -77,15 +72,6 @@ function extractIframeSrc(embedCode) {
     if (match && match[1].startsWith('https://')) return match[1];
   } catch (_) {}
   return null;
-}
-
-function ConfigSummary({ iframeSrc, rolzRoomName, rolzUsername }) {
-  const parts = [];
-  if (iframeSrc) parts.push('Zoom');
-  if (rolzRoomName) parts.push(rolzUsername ? `Rolz: ${rolzRoomName} (${rolzUsername})` : `Rolz: ${rolzRoomName}`);
-  return parts.length > 0
-    ? <span className="text-slate-500 text-xs ml-2">{parts.join(' · ')}</span>
-    : <span className="text-slate-600 text-xs ml-2 italic">Not configured</span>;
 }
 
 function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
@@ -164,7 +150,7 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 4, setPartySize, tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
@@ -174,7 +160,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [roomNameDraft, setRoomNameDraft] = useState(rolzRoomName);
   const [usernameDraft, setUsernameDraft] = useState(rolzUsername);
   const [passwordDraft, setPasswordDraft] = useState(rolzPassword);
-  const [configOpen, setConfigOpen] = useState(!whiteboardEmbed && !rolzRoomName);
+  const [whiteboardConfigOpen, setWhiteboardConfigOpen] = useState(false);
+  const [rolzConfigOpen, setRolzConfigOpen] = useState(false);
   const [nudgeHint, setNudgeHint] = useState(false);
 
   useEffect(() => {
@@ -182,17 +169,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     setRoomNameDraft(rolzRoomName);
     setUsernameDraft(rolzUsername);
     setPasswordDraft(rolzPassword);
-    setConfigOpen(prev => (whiteboardEmbed || rolzRoomName) ? false : prev);
   }, [whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword]);
 
   const iframeSrc = extractIframeSrc(whiteboardEmbed);
 
-  const handleSaveConfig = () => {
+  const handleSaveWhiteboardConfig = () => {
     setWhiteboardEmbed(embedDraft.trim());
+    setWhiteboardConfigOpen(false);
+  };
+
+  const handleSaveRolzConfig = () => {
     setRolzRoomName(roomNameDraft.trim());
     setRolzUsername(usernameDraft.trim());
     setRolzPassword(passwordDraft);
-    if (embedDraft.trim() || roomNameDraft.trim()) setConfigOpen(false);
+    if (roomNameDraft.trim()) setRolzConfigOpen(false);
   };
 
   // Load scenes/adventures when picker opens so it can display the list.
@@ -228,11 +218,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   const [captureOpen, setCaptureOpen] = useState(false);
-  const [factorsOpen, setFactorsOpen] = useState(false);
-  const factorsPanelRef = useRef(null);
+  const [budgetCardOpen, setBudgetCardOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef(null);
-  const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, maxHope, maxHp, maxStress }
+  const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, tier, maxHope, maxHp, maxStress }
   const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
@@ -290,18 +279,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     return next;
   });
 
-  // Close factors panel on outside click
-  useEffect(() => {
-    if (!factorsOpen) return;
-    const handler = (e) => {
-      if (factorsPanelRef.current && !factorsPanelRef.current.contains(e.target)) {
-        setFactorsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [factorsOpen]);
-
   useEffect(() => {
     if (!addMenuOpen) return;
     const handler = (e) => {
@@ -344,24 +321,30 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   }, [showGmMovesOverlay]);
 
-  const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
+  const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const effectiveMods = tableBattleMods || DEFAULT_BATTLE_MODS;
 
-  const updateTableMod = (key) => {
+  const setDifficulty = (val) => {
     if (!setTableBattleMods) return;
-    const opt = USER_MOD_OPTIONS.find(o => o.key === key);
-    setTableBattleMods(prev => {
-      const next = { ...(prev || DEFAULT_BATTLE_MODS), [key]: !(prev?.[key]) };
-      // Mutually exclusive damage boosts
-      if (opt?.exclusive === 'damageBoost' && next[key]) {
-        if (key === 'damageBoostD4') next.damageBoostStatic = false;
-        if (key === 'damageBoostStatic') next.damageBoostD4 = false;
-      }
-      return next;
-    });
+    setTableBattleMods(prev => ({
+      ...(prev || DEFAULT_BATTLE_MODS),
+      lessDifficult: val === 'lessDifficult',
+      slightlyMoreDangerous: val === 'slightlyMoreDangerous',
+      moreDangerous: val === 'moreDangerous',
+    }));
   };
 
-  const tableDamageBoost = effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : null;
+  const setDamageBoost = (val) => {
+    if (!setTableBattleMods) return;
+    setTableBattleMods(prev => ({
+      ...(prev || DEFAULT_BATTLE_MODS),
+      damageBoostPlusOne: val === 'plusOne',
+      damageBoostD4: val === 'd4',
+      damageBoostStatic: val === 'static',
+    }));
+  };
+
+  const tableDamageBoost = effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : effectiveMods.damageBoostPlusOne ? 'plusOne' : null;
 
   // Deep-link: open modal when URL has /gm-table/:collection/:id (e.g. refresh, back/forward, shared link)
   const { modalCollection, modalItemId } = route || {};
@@ -455,7 +438,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const handleRoll = async (feature) => {
     if (!feature._rollData && !feature._diceRoll) return;
     if (!rolzConfigured) {
-      setConfigOpen(true);
+      setRolzConfigOpen(true);
       setNudgeHint(true);
       setTimeout(() => setNudgeHint(false), 6000);
       return;
@@ -591,7 +574,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         const dicePatterns = feature.description
           ? [...feature.description.matchAll(DICE_PATTERN_RE)].map(dm => dm[0])
           : [];
-        const includeAttack = /\bmakes?\b.*?\battack\b/i.test(feature.description || '');
+        const includeAttack = /\bmakes?\b.*?\battack\b/is.test(feature.description || '');
         menu[category].push({
           ...feature,
           sourceName: element.name,
@@ -652,126 +635,59 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   }));
   const tableBP = computeBattlePoints(tableAdvSummary, partySize);
   const tableBudget = 3 * partySize + 2;
-  const tableAutoMods = computeAutoModifiers(tableAdvSummary, tableAdvSummary.length > 0 ? Math.max(...tableAdvSummary.map(a => a.tier ?? 1)) : null);
+  const tableAutoMods = computeAutoModifiers(tableAdvSummary, partyTier);
   const totalMod = computeTotalBudgetMod(tableAutoMods, effectiveMods);
   const adjustedBudget = tableBudget + totalMod;
   const tableDiff = tableBP - adjustedBudget;
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
-  const hasAnyActiveMods = activeAutoMods.length > 0 || USER_MOD_OPTIONS.some(o => effectiveMods[o.key]);
+
+  const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
+  const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
 
   return (
     <div className="flex-1 flex overflow-hidden">
-      {/* Adversary Tracker Panel */}
+      {/* Characters Panel */}
       <div className="w-56 bg-slate-950 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
         <div className="p-3 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
           <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
-            <Swords size={15} className="text-red-400" /> Tracker
+            <Users size={15} className="text-sky-400" /> Characters
           </h2>
         </div>
 
-        {/* Fear tracker */}
-        <div className="px-2 pt-2 pb-1 sticky top-[41px] z-10 bg-slate-950 border-b border-slate-800">
-          <div
-            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-amber-500 bg-amber-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
-          >
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-amber-300' : 'text-amber-500'}`} />
-              <CheckboxTrack
-                total={6}
-                filled={Math.min(fearCount, 6)}
-                onSetFilled={(v) => setFearCount && setFearCount(v)}
-                fillColor="bg-amber-500"
-                label="Fear"
-                verbs={['Gain', 'Spend']}
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Flame size={12} className="shrink-0 invisible" />
-              <CheckboxTrack
-                total={6}
-                filled={Math.max(0, fearCount - 6)}
-                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
-                fillColor="bg-amber-500"
-                label="Fear"
-                verbs={['Gain', 'Spend']}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* GM Moves hover trigger */}
-        <div className="px-2 pb-1 sticky top-[85px] z-10 bg-slate-950 border-b border-slate-800">
-          <div
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${showGmMovesOverlay ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
-            onMouseEnter={showGmMoves}
-            onMouseLeave={scheduleHideGmMoves}
-          >
-            <Zap size={14} className="text-yellow-500 shrink-0" />
-            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">GM Moves</span>
-            {(() => {
-              const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
-              return count > 0 ? <span className="text-[10px] text-slate-500 tabular-nums">{count}</span> : null;
-            })()}
-          </div>
-        </div>
-
         <div className="p-2 space-y-3">
-          {/* + Add menu */}
-          <div className="relative" ref={addMenuRef}>
-            <button
-              onClick={() => setAddMenuOpen(p => !p)}
-              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-slate-500 bg-slate-800/60' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`}
-            >
-              <Plus size={12} className="text-slate-400" />
-              <span className="text-xs font-semibold text-slate-400">Add</span>
-            </button>
-            {addMenuOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
-                <button
-                  onClick={() => { setCharacterDialog({ name: '', playerName: '', maxHope: 6, maxHp: 6, maxStress: 6 }); setAddMenuOpen(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-sky-300 hover:bg-slate-700 hover:text-sky-200 transition-colors"
-                >
-                  Character
-                </button>
-                {[
-                  { col: 'adversaries', label: 'Adversary' },
-                  { col: 'environments', label: 'Environment' },
-                  { col: 'scenes', label: 'Scene' },
-                ].map(({ col, label }) => (
-                  <button
-                    key={col}
-                    onClick={() => { setModalOpen(col); setAddMenuOpen(false); }}
-                    className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* + Add Character button */}
+          <button
+            onClick={() => setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6 })}
+            className="w-full rounded-lg border border-dashed border-sky-900/50 bg-sky-950/20 hover:border-sky-700/60 hover:bg-sky-950/40 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <Plus size={12} className="text-sky-500" />
+            <span className="text-xs font-semibold text-sky-400">Add Character</span>
+          </button>
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => (
             <div key={el.instanceId} className="rounded-lg bg-sky-950/30 border border-sky-900/40 overflow-hidden group/char">
               <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
                 <User size={10} className="text-sky-400 shrink-0" />
                 <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name}</span>
+                <span className="text-[10px] font-bold text-sky-400/70 bg-sky-900/50 border border-sky-800/50 rounded px-1 shrink-0 group-hover/char:hidden">T{el.tier ?? 1}</span>
+                {el.playerName && (
+                  <span className="text-[10px] text-sky-300/60 truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
+                )}
                 <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
                   <button
-                    onClick={() => setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress })}
-                    className="text-slate-600 hover:text-sky-400 transition-colors"
+                    onClick={() => setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', tier: el.tier ?? 1, maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress })}
+                    className="text-slate-500 hover:text-sky-400 transition-colors"
                     title="Edit character"
                   ><Pencil size={11} /></button>
                   <button
                     onClick={() => { if (window.confirm(`Remove ${el.name} from the table?`)) removeActiveElement(el.instanceId); }}
-                    className="text-slate-600 hover:text-red-400 transition-colors"
+                    className="text-slate-500 hover:text-red-400 transition-colors"
                     title="Remove from table"
                   ><X size={11} /></button>
                 </div>
               </div>
-              {el.playerName && (
-                <div className="px-2.5 pt-1.5 text-[10px] text-sky-300/60 truncate">{el.playerName}</div>
-              )}
+
               <div className="p-2 space-y-1.5">
                 {/* Hope track */}
                 {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
@@ -816,7 +732,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     {!el.conditions && !openConditions.has(el.instanceId) && (
                       <button
                         onClick={() => setOpenConditions(prev => new Set([...prev, el.instanceId]))}
-                        className="ml-1 text-slate-700 hover:text-slate-400 transition-colors shrink-0"
+                        className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
                         title="Add conditions"
                       ><Tag size={10} /></button>
                     )}
@@ -842,139 +758,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </div>
           ))}
 
-          {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
-            const el = item.element;
-            return (
-              <div
-                key={el.instanceId}
-                className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
-                onMouseEnter={(e) => showTrackerGroup(item, e)}
-                onMouseLeave={scheduleHideTracker}
-              >
-                <div className="px-2.5 py-1.5 flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
-                  <button
-                    onClick={() => { removeActiveElement(el.instanceId); setHoveredTrackerGroup(null); }}
-                    className="hidden group-hover/env:block text-slate-600 hover:text-red-400 transition-colors shrink-0"
-                    title="Remove from table"
-                  ><X size={12} /></button>
-                </div>
-              </div>
-            );
-          })}
-          {consolidatedElements.filter(item => item.kind === 'adversary-group').map((item) => {
-            const { baseElement: el, instances } = item;
-            const count = instances.length;
-            const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
-            return (
-              <div
-                key={el.id}
-                className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden group/adv"
-                onMouseEnter={(e) => showTrackerGroup(item, e)}
-                onMouseLeave={scheduleHideTracker}
-              >
-                <div className="px-2.5 py-1.5 border-b border-slate-800 flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-slate-200 truncate flex-1">{displayEl.name}</span>
-                  {count > 1 && <span className="text-[10px] text-slate-500 shrink-0 group-hover/adv:hidden tabular-nums">×{count}</span>}
-                  <div className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0">
-                    <button
-                      onClick={() => addToTable(getItemData(el), 'adversaries')}
-                      className="w-4 h-4 rounded bg-slate-800 hover:bg-green-900 text-slate-400 hover:text-green-300 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
-                      title="Add one more"
-                    >+</button>
-                    <span className="min-w-[1rem] text-center text-[10px] text-slate-400 font-semibold tabular-nums">{count}</span>
-                    <button
-                      onClick={() => {
-                        if (count === 1) {
-                          if (window.confirm(`Remove ${displayEl.name} from the table?`)) {
-                            removeGroup(instances);
-                            setHoveredTrackerGroup(null);
-                          }
-                        } else {
-                          removeActiveElement(instances[instances.length - 1].instanceId);
-                        }
-                      }}
-                      className="w-4 h-4 rounded bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-red-300 flex items-center justify-center transition-colors leading-none"
-                      title={count === 1 ? 'Remove from table' : 'Remove one'}
-                    >{count === 1 ? <X size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
-                  </div>
-                </div>
-                <div className="p-2 space-y-2">
-                  {instances.map((inst, idx) => {
-                    const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
-                    return (
-                      <div key={inst.instanceId} className="space-y-1">
-                        {count > 1 && (
-                          <span className="text-[10px] text-slate-600 font-medium">#{idx + 1}</span>
-                        )}
-                        {(displayEl.hp_max || 0) > 0 && (
-                          <div className="flex items-center gap-1">
-                            <Heart size={10} className="text-red-500 shrink-0" />
-                            <CheckboxTrack
-                              total={displayEl.hp_max || 0}
-                              filled={hpDamage}
-                              onSetFilled={(dmg) => updateActiveElement(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
-                              fillColor="bg-red-500"
-                              label="HP"
-                              verbs={['Mark', 'Clear']}
-                            />
-                            {(displayEl.stress_max || 0) === 0 && !inst.conditions && !openConditions.has(inst.instanceId) && (
-                              <button
-                                onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
-                                className="ml-1 text-slate-700 hover:text-slate-400 transition-colors shrink-0"
-                                title="Add conditions"
-                              ><Tag size={10} /></button>
-                            )}
-                          </div>
-                        )}
-                        {(displayEl.stress_max || 0) > 0 && (
-                          <div className="flex items-center gap-1">
-                            <AlertCircle size={10} className="text-purple-500 shrink-0" />
-                            <CheckboxTrack
-                              total={displayEl.stress_max || 0}
-                              filled={inst.currentStress || 0}
-                              onSetFilled={(s) => updateActiveElement(inst.instanceId, { currentStress: s })}
-                              fillColor="bg-purple-500"
-                              label="Stress"
-                              verbs={['Mark', 'Clear']}
-                            />
-                            {!inst.conditions && !openConditions.has(inst.instanceId) && (
-                              <button
-                                onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
-                                className="ml-1 text-slate-700 hover:text-slate-400 transition-colors shrink-0"
-                                title="Add conditions"
-                              ><Tag size={10} /></button>
-                            )}
-                          </div>
-                        )}
-                        {(inst.conditions || openConditions.has(inst.instanceId)) && (
-                          <input
-                            type="text"
-                            placeholder="Conditions..."
-                            autoFocus={openConditions.has(inst.instanceId) && !inst.conditions}
-                            value={inst.conditions || ''}
-                            onChange={e => updateActiveElement(inst.instanceId, { conditions: e.target.value })}
-                            onBlur={() => {
-                              if (!inst.conditions) {
-                                setOpenConditions(prev => { const s = new Set(prev); s.delete(inst.instanceId); return s; });
-                              }
-                            }}
-                            className="w-full bg-slate-800/50 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white outline-none focus:border-blue-500 placeholder-slate-600"
-                          />
-                        )}
-                        {idx < instances.length - 1 && (
-                          <div className="border-t border-slate-800 mt-1" />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-          {consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
+          {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
             <div className="text-center text-slate-600 text-xs py-6">
-              No adversaries on table.
+              No characters yet.
             </div>
           )}
         </div>
@@ -984,7 +770,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       {showGmMovesOverlay && (
       <div
         className="fixed z-[55] bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col overflow-hidden"
-        style={{ left: 'calc(14rem + 8px)', top: '8px', width: '20rem', maxHeight: 'calc(100vh - 16px)' }}
+        style={{ right: 'calc(14rem + 8px)', top: '8px', width: '20rem', maxHeight: 'calc(100vh - 16px)' }}
         onMouseEnter={cancelHideGmMoves}
         onMouseLeave={() => { setShowGmMovesOverlay(false); if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; } }}
       >
@@ -1161,160 +947,34 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       </div>
       )}
 
-      {/* Center Column: combined toolbar + player view content */}
+      {/* Center Column */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-slate-950">
-        {/* Combined toolbar */}
-        <div className="bg-slate-950 border-b border-slate-800 shrink-0">
-          <div className="flex items-center px-4 py-2 gap-3">
-            {/* BP display (left) */}
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              {tableBP > 0 && (
-                <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-                  <span className="text-slate-300">
-                    <span className="font-bold text-white tabular-nums">{tableBP}</span>
-                    <span className="text-slate-500"> BP</span>
-                  </span>
-                  <span className="text-slate-600">·</span>
-                  <span className="text-slate-300 flex items-baseline gap-1">
-                    Budget{' '}
-                    <span className="font-bold text-white tabular-nums">{adjustedBudget}</span>
-                    <span className={`text-xs tabular-nums ${totalMod === 0 ? 'invisible' : totalMod < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                      ({totalMod > 0 ? `+${totalMod}` : totalMod})
-                    </span>
-                  </span>
-                  <span className={`text-xs font-semibold ${tableDiffColor}`}>
-                    {tableDiff === 0 ? 'On budget' : tableDiff > 0 ? `+${tableDiff} over` : `${Math.abs(tableDiff)} under`}
-                  </span>
-                  <div className="flex items-center gap-1 ml-1">
-                    <span className="text-[10px] text-slate-500">PCs</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={8}
-                      value={partySize}
-                      onChange={e => setPartySize && setPartySize(Math.max(1, Math.min(8, parseInt(e.target.value) || 4)))}
-                      className="w-10 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-white text-xs text-center"
-                    />
-                  </div>
-                  <div className="relative" ref={factorsPanelRef}>
-                    <button
-                      onClick={() => setFactorsOpen(p => !p)}
-                      title="Budget Factors"
-                      className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors ${hasAnyActiveMods ? 'bg-amber-900/60 text-amber-300 hover:bg-amber-900' : 'text-slate-500 hover:text-slate-300'}`}
-                    >
-                      <SlidersHorizontal size={12} />
-                      {hasAnyActiveMods && <span>Factors</span>}
-                    </button>
-                    {factorsOpen && (
-                      <div className="absolute left-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl p-4 w-72 space-y-4">
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Budget Factors</p>
-                        {activeAutoMods.length > 0 && (
-                          <div className="space-y-1.5">
-                            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Auto-detected</p>
-                            {activeAutoMods.map(m => (
-                              <div key={m.label} className="flex items-center justify-between text-xs">
-                                <span className="text-slate-300">{m.label}</span>
-                                <span className={`font-mono font-semibold ${m.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                                  {m.value > 0 ? `+${m.value}` : m.value}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div className="space-y-2">
-                          <p className="text-[10px] text-slate-500 uppercase tracking-wide">Your choices</p>
-                          {USER_MOD_OPTIONS.map(opt => (
-                            <label key={opt.key} className="flex items-center gap-2 cursor-pointer group">
-                              <input
-                                type="checkbox"
-                                checked={!!effectiveMods[opt.key]}
-                                onChange={() => updateTableMod(opt.key)}
-                                className="rounded border-slate-500 bg-slate-700 accent-amber-500"
-                              />
-                              <span className="flex-1 text-xs text-slate-300 group-hover:text-white transition-colors">{opt.label}</span>
-                              <span className={`font-mono text-xs font-semibold ${opt.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                                {opt.value > 0 ? `+${opt.value}` : opt.value}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                        {tableDamageBoost && (
-                          <p className="text-[10px] text-amber-400 flex items-center gap-1">
-                            <Zap size={10} /> Damage boost active on all adversaries
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
+        {/* Rolz room log strip — self-managing */}
+        {rolzConfigOpen || !rolzRoomName ? (
+          <div className="shrink-0 border-b border-slate-800 bg-slate-950">
+            <div className="flex items-center gap-2 px-3 py-1 border-b border-slate-800/60">
+              <Dices size={11} className="text-red-400 shrink-0" />
+              <span className="text-[11px] font-medium text-slate-400 flex-1">Dice Room</span>
+              {rolzRoomName && (
+                <button
+                  onClick={() => { setRoomNameDraft(rolzRoomName); setUsernameDraft(rolzUsername); setPasswordDraft(rolzPassword); setRolzConfigOpen(false); setNudgeHint(false); }}
+                  className="text-slate-500 hover:text-slate-300 transition-colors"
+                  title="Cancel"
+                >
+                  <X size={10} />
+                </button>
               )}
             </div>
-
-            {/* Actions (right) */}
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setCaptureOpen(true)}
-                disabled={activeElements.length === 0}
-                title="Save current table as a Scene"
-                className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-xs rounded px-2.5 py-1.5 text-slate-300 hover:text-white outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Camera size={13} /> Capture
-              </button>
-              <button
-                onClick={() => {
-                  if (!window.confirm('Clear all adversaries and environments from the table? This cannot be undone.')) return;
-                  clearTable?.();
-                }}
-                disabled={activeElements.length === 0}
-                title="Remove all items from the table"
-                className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-red-600 text-xs rounded px-2.5 py-1.5 text-slate-300 hover:text-red-400 outline-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Trash2 size={13} /> Clear
-              </button>
-              <div className="w-px h-5 bg-slate-700 mx-1" />
-              <button
-                onClick={() => setConfigOpen(o => !o)}
-                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
-              >
-                {configOpen
-                  ? <ChevronDown size={13} className="text-slate-500" />
-                  : <ChevronRight size={13} className="text-slate-500" />
-                }
-                <span className="font-semibold uppercase tracking-wider text-[11px]">Embeds</span>
-                {!configOpen && <ConfigSummary iframeSrc={iframeSrc} rolzRoomName={rolzRoomName} rolzUsername={rolzUsername} />}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Collapsible embed config panel */}
-        {configOpen && (
-          <div className="shrink-0 border-b border-slate-800 px-5 pb-4 pt-3 grid grid-cols-[1fr,auto] gap-x-6 gap-y-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Monitor size={12} /> Zoom Whiteboard
-              </label>
-              <textarea
-                className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-16"
-                placeholder='Paste your <iframe ...> embed code here'
-                value={embedDraft}
-                onChange={(e) => setEmbedDraft(e.target.value)}
-                spellCheck={false}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5 min-w-[20rem]">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Dices size={12} className="text-red-400" /> Rolz Dice Room
-              </label>
+            <div className="px-3 py-2 space-y-2">
               <input
-                className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500"
                 placeholder="Room name"
                 value={roomNameDraft}
                 onChange={(e) => setRoomNameDraft(e.target.value)}
               />
               <div className="flex gap-2">
                 <input
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500"
                   placeholder="Rolz username"
                   value={usernameDraft}
                   onChange={(e) => setUsernameDraft(e.target.value)}
@@ -1322,37 +982,62 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 />
                 <input
                   type="password"
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500"
                   placeholder="Rolz password"
                   value={passwordDraft}
                   onChange={(e) => setPasswordDraft(e.target.value)}
                   autoComplete="current-password"
                 />
               </div>
-              <p className="text-[10px] text-slate-500 leading-snug">
-                Enter your <a href="https://rolz.org/table/login" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">Rolz.org</a> credentials. In your dice room, type <code className="text-slate-400 bg-slate-800 px-1 rounded">/room api=on</code> to enable posting.
-              </p>
-            </div>
-            {nudgeHint && (
-              <div className="col-span-2 flex items-start gap-2 bg-amber-900/30 border border-amber-600/50 rounded-lg px-3 py-2 text-amber-300 text-xs">
-                <Dices size={13} className="text-amber-400 shrink-0 mt-0.5" />
-                <span>Enter your <strong>Rolz username and password</strong> and click <strong>Save</strong> to enable dice rolling from the GM Moves. Make sure to type <code className="bg-amber-900/50 px-1 rounded">/room api=on</code> in your Rolz room first.</span>
+              {nudgeHint && (
+                <div className="flex items-start gap-2 bg-amber-900/30 border border-amber-600/50 rounded px-2.5 py-1.5 text-amber-300 text-[10px]">
+                  <Dices size={11} className="text-amber-400 shrink-0 mt-0.5" />
+                  <span>Enter your <strong>Rolz username and password</strong> and click <strong>Save</strong>. Type <code className="bg-amber-900/50 px-1 rounded">/room api=on</code> in your Rolz room first.</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] text-slate-500 leading-snug">
+                  <a href="https://rolz.org/table/login" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">Rolz.org</a> credentials · type <code className="text-slate-400 bg-slate-800 px-0.5 rounded">/room api=on</code>
+                </p>
+                <button
+                  onClick={handleSaveRolzConfig}
+                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded transition-colors"
+                >
+                  Save
+                </button>
               </div>
-            )}
-            <div className="col-span-2 flex justify-end">
+            </div>
+          </div>
+        ) : (
+          <RolzRoomLog
+            roomName={rolzRoomName}
+            pendingRolls={pendingRolls}
+            compact
+            onConfigOpen={() => { setRoomNameDraft(rolzRoomName); setUsernameDraft(rolzUsername); setPasswordDraft(rolzPassword); setRolzConfigOpen(true); }}
+          />
+        )}
+
+        {/* Whiteboard — self-managing */}
+        <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col">
+          {!iframeSrc ? (
+            <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">
+              <Monitor size={32} className="opacity-40" />
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Zoom Whiteboard</p>
+              <textarea
+                className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
+                placeholder='Paste your <iframe ...> embed code here'
+                value={embedDraft}
+                onChange={(e) => setEmbedDraft(e.target.value)}
+                spellCheck={false}
+              />
               <button
-                onClick={handleSaveConfig}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition-colors"
+                onClick={handleSaveWhiteboardConfig}
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
               >
                 Save
               </button>
             </div>
-          </div>
-        )}
-
-        {/* Whiteboard content */}
-        <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col">
-          {iframeSrc ? (
+          ) : (
             <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
               <iframe
                 src={iframeSrc}
@@ -1360,22 +1045,400 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 allowFullScreen
                 title="Zoom Whiteboard"
               />
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2">
-              <Monitor size={32} className="opacity-40" />
-              <p className="text-sm">Configure a Zoom whiteboard embed above.</p>
+              <button
+                className="absolute top-2 right-2 w-7 h-7 rounded bg-slate-900/80 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors z-10"
+                onClick={() => { setEmbedDraft(whiteboardEmbed); setWhiteboardConfigOpen(true); }}
+                title="Configure whiteboard"
+              >
+                <Settings size={14} />
+              </button>
+              {whiteboardConfigOpen && (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-8 bg-black/60 backdrop-blur-sm">
+                  <Monitor size={32} className="text-slate-400 opacity-60" />
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">Zoom Whiteboard</p>
+                  <textarea
+                    className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
+                    placeholder='Paste your <iframe ...> embed code here'
+                    value={embedDraft}
+                    onChange={(e) => setEmbedDraft(e.target.value)}
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setEmbedDraft(whiteboardEmbed); setWhiteboardConfigOpen(false); }}
+                      className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveWhiteboardConfig}
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Persistent Dice Room Log — always visible when configured */}
-      {rolzRoomName && (
-        <div className="w-80 border-l border-slate-800 flex flex-col overflow-hidden shrink-0">
-          <RolzRoomLog roomName={rolzRoomName} pendingRolls={pendingRolls} />
+      {/* Encounter Panel */}
+      <div className="w-56 bg-slate-950 border-l border-slate-800 flex flex-col overflow-y-auto shrink-0">
+        <div className="p-3 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
+              <Swords size={15} className="text-red-400" /> Encounter
+            </h2>
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => setCaptureOpen(true)}
+                disabled={activeElements.length === 0}
+                title="Save current table as a Scene"
+                className="p-1 rounded text-slate-500 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              ><Camera size={13} /></button>
+              <button
+                onClick={() => {
+                  if (!window.confirm('Clear all adversaries and environments from the table? This cannot be undone.')) return;
+                  clearTable?.();
+                }}
+                disabled={activeElements.length === 0}
+                title="Remove all items from the table"
+                className="p-1 rounded text-slate-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              ><Trash2 size={13} /></button>
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Fear tracker */}
+        <div className="px-2 pt-2 pb-1 sticky top-[41px] z-10 bg-slate-950 border-b border-slate-800">
+          <div
+            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-amber-500 bg-amber-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-amber-300' : 'text-amber-500'}`} />
+              <CheckboxTrack
+                total={6}
+                filled={Math.min(fearCount, 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v)}
+                fillColor="bg-amber-500"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+                currentAbsoluteValue={fearCount}
+                targetToAbsolute={(v) => v}
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Flame size={12} className="shrink-0 invisible" />
+              <CheckboxTrack
+                total={6}
+                filled={Math.max(0, fearCount - 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
+                fillColor="bg-amber-500"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+                currentAbsoluteValue={fearCount}
+                targetToAbsolute={(v) => v + 6}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* GM Moves hover trigger */}
+        <div className="px-2 pb-1 sticky top-[85px] z-10 bg-slate-950 border-b border-slate-800">
+          <div
+            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${showGmMovesOverlay ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
+            onMouseEnter={showGmMoves}
+            onMouseLeave={scheduleHideGmMoves}
+          >
+            <Zap size={14} className="text-yellow-500 shrink-0" />
+            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">GM Moves</span>
+            {(() => {
+              const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
+              return count > 0 ? <span className="text-[10px] text-slate-500 tabular-nums">{count}</span> : null;
+            })()}
+          </div>
+        </div>
+
+        <div className="p-2 space-y-3">
+          {/* Battle Budget card */}
+          <div className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
+            <button
+              onClick={() => setBudgetCardOpen(o => !o)}
+              className="w-full px-2.5 py-2 flex items-center gap-1.5 text-left hover:bg-slate-800/50 transition-colors"
+            >
+              {budgetCardOpen
+                ? <ChevronDown size={11} className="text-slate-500 shrink-0" />
+                : <ChevronRight size={11} className="text-slate-500 shrink-0" />
+              }
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex-1">BP Budget</span>
+              <span className="text-xs tabular-nums text-slate-400">
+                <span className="font-bold text-white">{tableBP}</span>
+                <span className="text-slate-500"> of </span>
+                <span className="font-bold text-white">{adjustedBudget}</span>
+              </span>
+              {tableBP > 0 && (
+                <span className={`text-[10px] font-semibold tabular-nums ml-1 ${tableDiffColor}`}>
+                  {tableDiff === 0 ? '=' : tableDiff > 0 ? `+${tableDiff}` : `${tableDiff}`}
+                </span>
+              )}
+            </button>
+            {budgetCardOpen && (
+              <div className="border-t border-slate-800 px-2.5 py-2.5 space-y-3">
+                {/* Budget formula */}
+                <div className="text-xs">
+                  <span className="text-slate-400">({partySize} PCs × 3) + 2 = </span>
+                  <span className="font-bold text-white tabular-nums">{tableBudget}</span>
+                  {totalMod !== 0 && (
+                    <>
+                      <span className={`tabular-nums ${totalMod < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                        {' '}{totalMod > 0 ? `+${totalMod}` : totalMod}
+                      </span>
+                      <span className="text-slate-400"> = </span>
+                      <span className="font-bold text-white tabular-nums">{adjustedBudget}</span>
+                    </>
+                  )}
+                  <span className="text-slate-500"> BP</span>
+                </div>
+
+                {/* Auto-detected modifiers */}
+                {activeAutoMods.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide">Auto-detected</p>
+                    {activeAutoMods.map(m => (
+                      <div key={m.label} className="flex items-center justify-between text-xs gap-2">
+                        <span className="text-slate-300 leading-tight">{m.label}</span>
+                        <span className={`font-mono font-semibold shrink-0 ${m.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {m.value > 0 ? `+${m.value}` : m.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Difficulty / Length dropdown */}
+                <div className="space-y-1">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wide">Difficulty / Length</p>
+                  <select
+                    value={difficultyValue}
+                    onChange={e => setDifficulty(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-slate-500 cursor-pointer"
+                  >
+                    <option value="lessDifficult">Less difficult / shorter fight  −1</option>
+                    <option value="">Standard</option>
+                    <option value="slightlyMoreDangerous">Slightly more dangerous / slightly longer fight  +1</option>
+                    <option value="moreDangerous">More dangerous / longer fight  +2</option>
+                  </select>
+                </div>
+
+                {/* Damage Boost dropdown */}
+                <div className="space-y-1">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wide">Damage Boost</p>
+                  <select
+                    value={damageBoostValue}
+                    onChange={e => setDamageBoost(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-slate-500 cursor-pointer"
+                  >
+                    <option value="">None</option>
+                    <option value="plusOne">+1 damage to all adversaries  −1</option>
+                    <option value="static">+2 damage to all adversaries  −2</option>
+                    <option value="d4">+1d4 damage to all adversaries  −2</option>
+                  </select>
+                </div>
+
+                {tableDamageBoost && (
+                  <p className="text-[10px] text-amber-400 flex items-center gap-1">
+                    <Zap size={10} /> {tableDamageBoost === 'plusOne' ? '+1' : tableDamageBoost === 'static' ? '+2' : '+1d4'} damage boost active on all adversaries
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* + Add menu (Adversary, Environment, Scene) */}
+          <div
+            className="relative"
+            ref={addMenuRef}
+            onMouseLeave={() => setAddMenuOpen(false)}
+          >
+            <button
+              onClick={() => setAddMenuOpen(p => !p)}
+              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-slate-500 bg-slate-800/60' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`}
+            >
+              <Plus size={12} className="text-slate-400" />
+              <span className="text-xs font-semibold text-slate-400">Add...</span>
+            </button>
+            {addMenuOpen && (
+              <div className="absolute left-0 right-0 top-full z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
+                {[
+                  { col: 'adversaries', label: 'Adversary' },
+                  { col: 'environments', label: 'Environment' },
+                  { col: 'scenes', label: 'Scene' },
+                ].map(({ col, label }) => (
+                  <button
+                    key={col}
+                    onClick={() => { setModalOpen(col); setAddMenuOpen(false); }}
+                    className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
+            const el = item.element;
+            return (
+              <div
+                key={el.instanceId}
+                className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
+                onMouseEnter={(e) => showTrackerGroup(item, e)}
+                onMouseLeave={scheduleHideTracker}
+              >
+                <div className="px-2.5 py-1.5 flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
+                  <button
+                    onClick={() => { removeActiveElement(el.instanceId); setHoveredTrackerGroup(null); }}
+                    className="hidden group-hover/env:block text-slate-500 hover:text-red-400 transition-colors shrink-0"
+                    title="Remove from table"
+                  ><X size={12} /></button>
+                </div>
+              </div>
+            );
+          })}
+          {consolidatedElements.filter(item => item.kind === 'adversary-group').map((item) => {
+            const { baseElement: el, instances } = item;
+            const count = instances.length;
+            const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
+            return (
+              <div
+                key={el.id}
+                className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden group/adv"
+                onMouseEnter={(e) => showTrackerGroup(item, e)}
+                onMouseLeave={scheduleHideTracker}
+              >
+                <div className="px-2.5 py-1.5 border-b border-slate-800 flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-slate-200 truncate flex-1">{displayEl.name}</span>
+                  {count > 1 && <span className="text-[10px] text-slate-500 shrink-0 group-hover/adv:hidden tabular-nums">×{count}</span>}
+                  <div className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0">
+                    <button
+                      onClick={() => addToTable(getItemData(el), 'adversaries')}
+                      className="w-4 h-4 rounded bg-slate-800 hover:bg-green-900 text-slate-400 hover:text-green-300 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
+                      title="Add one more"
+                    >+</button>
+                    <span className="min-w-[1rem] text-center text-[10px] text-slate-400 font-semibold tabular-nums">{count}</span>
+                    <button
+                      onClick={() => {
+                        if (count === 1) {
+                          if (window.confirm(`Remove ${displayEl.name} from the table?`)) {
+                            removeGroup(instances);
+                            setHoveredTrackerGroup(null);
+                          }
+                        } else {
+                          removeActiveElement(instances[instances.length - 1].instanceId);
+                        }
+                      }}
+                      className="w-4 h-4 rounded bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-red-300 flex items-center justify-center transition-colors leading-none"
+                      title={count === 1 ? 'Remove from table' : 'Remove one'}
+                    >{count === 1 ? <X size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
+                  </div>
+                </div>
+                <div className="p-2 space-y-2">
+                  {instances.map((inst, idx) => {
+                    const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
+                    return (
+                      <div key={inst.instanceId} className="space-y-1">
+                        {(count > 1 || budgetCardOpen) && (
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                            {count > 1 && <span className="text-slate-600 font-medium">#{idx + 1}</span>}
+                            {budgetCardOpen && (
+                              <>
+                                {count > 1 && <span className="text-slate-700">·</span>}
+                                <span className="capitalize">{displayEl.role || 'Standard'}</span>
+                                <span className="text-slate-700">·</span>
+                                {displayEl.role === 'minion'
+                                  ? <span>1/group BP</span>
+                                  : <span className="text-slate-400 tabular-nums">{ROLE_BP_COST[displayEl.role || 'standard'] ?? ROLE_BP_COST.standard} BP</span>
+                                }
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {(displayEl.hp_max || 0) > 0 && (
+                          <div className="flex items-center gap-1">
+                            <Heart size={10} className="text-red-500 shrink-0" />
+                            <CheckboxTrack
+                              total={displayEl.hp_max || 0}
+                              filled={hpDamage}
+                              onSetFilled={(dmg) => updateActiveElement(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
+                              fillColor="bg-red-500"
+                              label="HP"
+                              verbs={['Mark', 'Clear']}
+                            />
+                            {(displayEl.stress_max || 0) === 0 && !inst.conditions && !openConditions.has(inst.instanceId) && (
+                              <button
+                                onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
+                                className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                                title="Add conditions"
+                              ><Tag size={10} /></button>
+                            )}
+                          </div>
+                        )}
+                        {(displayEl.stress_max || 0) > 0 && (
+                          <div className="flex items-center gap-1">
+                            <AlertCircle size={10} className="text-purple-500 shrink-0" />
+                            <CheckboxTrack
+                              total={displayEl.stress_max || 0}
+                              filled={inst.currentStress || 0}
+                              onSetFilled={(s) => updateActiveElement(inst.instanceId, { currentStress: s })}
+                              fillColor="bg-purple-500"
+                              label="Stress"
+                              verbs={['Mark', 'Clear']}
+                            />
+                            {!inst.conditions && !openConditions.has(inst.instanceId) && (
+                              <button
+                                onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
+                                className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                                title="Add conditions"
+                              ><Tag size={10} /></button>
+                            )}
+                          </div>
+                        )}
+                        {(inst.conditions || openConditions.has(inst.instanceId)) && (
+                          <input
+                            type="text"
+                            placeholder="Conditions..."
+                            autoFocus={openConditions.has(inst.instanceId) && !inst.conditions}
+                            value={inst.conditions || ''}
+                            onChange={e => updateActiveElement(inst.instanceId, { conditions: e.target.value })}
+                            onBlur={() => {
+                              if (!inst.conditions) {
+                                setOpenConditions(prev => { const s = new Set(prev); s.delete(inst.instanceId); return s; });
+                              }
+                            }}
+                            className="w-full bg-slate-800/50 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white outline-none focus:border-blue-500 placeholder-slate-600"
+                          />
+                        )}
+                        {idx < instances.length - 1 && (
+                          <div className="border-t border-slate-800 mt-1" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
+            <div className="text-center text-slate-600 text-xs py-6">
+              No adversaries on table.
+            </div>
+          )}
+        </div>
+      </div>
 
     {characterDialog && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setCharacterDialog(null)}>
@@ -1407,6 +1470,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 value={characterDialog.playerName}
                 onChange={e => setCharacterDialog(d => ({ ...d, playerName: e.target.value }))}
                 className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500 placeholder-slate-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Tier</label>
+              <TierSelector
+                value={characterDialog.tier ?? 1}
+                onChange={t => setCharacterDialog(d => ({ ...d, tier: t }))}
+                activeClass="bg-sky-700 border-sky-500 text-sky-100"
+                inactiveClass="bg-slate-700 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-200"
               />
             </div>
             <div className="flex gap-3">
@@ -1458,6 +1530,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   updateActiveElement(characterDialog.editInstanceId, {
                     name: characterDialog.name.trim(),
                     playerName: characterDialog.playerName.trim(),
+                    tier: characterDialog.tier ?? 1,
                     maxHope: characterDialog.maxHope,
                     maxHp: characterDialog.maxHp,
                     maxStress: characterDialog.maxStress,
@@ -1467,6 +1540,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     elementType: 'character',
                     name: characterDialog.name.trim(),
                     playerName: characterDialog.playerName.trim(),
+                    tier: characterDialog.tier ?? 1,
                     hope: characterDialog.maxHope,
                     maxHope: characterDialog.maxHope,
                     maxHp: characterDialog.maxHp,
@@ -1540,7 +1614,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         }}
         onClose={closeEditModal}
         partySize={partySize}
-        onPartySizeChange={setPartySize}
+        partyTier={partyTier}
         onMergeAdversary={onMergeAdversary}
       />
     )}
@@ -1550,7 +1624,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <div
         ref={trackerOverlayRef}
         className="fixed z-[55]"
-        style={{ left: 'calc(14rem + 12px)', top: (hoveredTrackerGroup.top + hoveredTrackerGroup.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: '26rem', maxHeight: 'calc(100vh - 16px)' }}
+        style={{ right: 'calc(14rem + 12px)', top: (hoveredTrackerGroup.top + hoveredTrackerGroup.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: '26rem', maxHeight: 'calc(100vh - 16px)' }}
         onMouseEnter={cancelHideTracker}
         onMouseLeave={() => setHoveredTrackerGroup(null)}
       >
@@ -1589,48 +1663,57 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   />
                 </>
               );
-            })() : (
-              <>
-                <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
-                  <button
-                    onClick={() => { setHoveredTrackerGroup(null); handleEditClick(hoveredTrackerGroup.instances, hoveredTrackerGroup.baseElement, 'adversaries'); }}
-                    className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
-                    title="Edit"
-                  ><Edit size={14} /></button>
-                  <button
-                    onClick={() => { removeGroup(hoveredTrackerGroup.instances); setHoveredTrackerGroup(null); }}
-                    className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
-                    title="Remove from table"
-                  ><Trash2 size={14} /></button>
-                </div>
-                {hoveredTrackerGroup.baseElement.imageUrl && (
-                  <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
-                    <img src={hoveredTrackerGroup.baseElement.imageUrl} alt={hoveredTrackerGroup.baseElement.name} className="w-full h-full object-cover opacity-80" />
+            })(            ) : (() => {
+              // Derive live instances from consolidatedElements so the overlay
+              // re-renders when HP/stress is updated from the Encounters panel.
+              const liveGroup = consolidatedElements.find(
+                g => g.kind === 'adversary-group' && g.baseElement.id === hoveredTrackerGroup.baseElement.id
+              );
+              const liveInstances = liveGroup?.instances ?? hoveredTrackerGroup.instances;
+              const liveBaseElement = liveGroup?.baseElement ?? hoveredTrackerGroup.baseElement;
+              return (
+                <>
+                  <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
+                    <button
+                      onClick={() => { setHoveredTrackerGroup(null); handleEditClick(liveInstances, liveBaseElement, 'adversaries'); }}
+                      className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
+                      title="Edit"
+                    ><Edit size={14} /></button>
+                    <button
+                      onClick={() => { removeGroup(liveInstances); setHoveredTrackerGroup(null); }}
+                      className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                      title="Remove from table"
+                    ><Trash2 size={14} /></button>
                   </div>
-                )}
-                <h3 className={`text-xl font-bold text-white mb-1 pr-20`}>
-                  {hoveredTrackerGroup.baseElement.name}
-                  {hoveredTrackerGroup.instances.length > 1 && (
-                    <span className="text-slate-400 font-normal ml-1.5">×{hoveredTrackerGroup.instances.length}</span>
+                  {liveBaseElement.imageUrl && (
+                    <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
+                      <img src={liveBaseElement.imageUrl} alt={liveBaseElement.name} className="w-full h-full object-cover opacity-80" />
+                    </div>
                   )}
-                </h3>
-                <AdversaryCardContent
-                  element={hoveredTrackerGroup.baseElement}
-                  hoveredFeature={null}
-                  cardKey={hoveredTrackerGroup.baseElement.id}
-                  count={hoveredTrackerGroup.instances.length}
-                  instances={hoveredTrackerGroup.instances}
-                  updateFn={() => {}}
-                  showInstanceRemove={false}
-                  featureCountdowns={featureCountdowns}
-                  updateCountdown={null}
-                  onRollAttack={null}
-                  damageBoost={tableDamageBoost || hoveredTrackerGroup.baseElement._damageBoost || null}
-                  scaledMeta={null}
-                  onScaledToggle={null}
-                />
-              </>
-            )}
+                  <h3 className={`text-xl font-bold text-white mb-1 pr-20`}>
+                    {liveBaseElement.name}
+                    {liveInstances.length > 1 && (
+                      <span className="text-slate-400 font-normal ml-1.5">×{liveInstances.length}</span>
+                    )}
+                  </h3>
+                  <AdversaryCardContent
+                    element={liveBaseElement}
+                    hoveredFeature={null}
+                    cardKey={liveBaseElement.id}
+                    count={liveInstances.length}
+                    instances={liveInstances}
+                    updateFn={updateActiveElement}
+                    showInstanceRemove={false}
+                    featureCountdowns={featureCountdowns}
+                    updateCountdown={null}
+                    onRollAttack={null}
+                    damageBoost={tableDamageBoost || liveBaseElement._damageBoost || null}
+                    scaledMeta={null}
+                    onScaledToggle={null}
+                  />
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -1641,7 +1724,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     {hoveredDefaultMove && (
       <div
         className="fixed z-50 pointer-events-none"
-        style={{ left: 'calc(34rem + 20px)', top: (hoveredDefaultMove.top + hoveredDefaultMove.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
+        style={{ right: 'calc(34rem + 20px)', top: (hoveredDefaultMove.top + hoveredDefaultMove.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
       >
         <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
           <p className="text-sm text-slate-300 italic leading-relaxed">{hoveredDefaultMove.example}</p>
@@ -1653,7 +1736,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     {hoveredCompactTooltip && (
       <div
         className="fixed z-[60] pointer-events-none"
-        style={{ left: 'calc(34rem + 20px)', top: (hoveredCompactTooltip.top + hoveredCompactTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
+        style={{ right: 'calc(34rem + 20px)', top: (hoveredCompactTooltip.top + hoveredCompactTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
       >
         <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
           <p className="text-sm text-slate-300 leading-relaxed"><FeatureDescription description={hoveredCompactTooltip.description} /></p>
@@ -1665,7 +1748,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     {hoveredElement && (
       <div
         className="fixed z-50 pointer-events-none"
-        style={{ left: 'calc(34rem + 20px)', top: '50%', transform: 'translateY(-50%)', width: '26rem', maxHeight: '80vh' }}
+        style={{ right: 'calc(34rem + 20px)', top: '50%', transform: 'translateY(-50%)', width: '26rem', maxHeight: '80vh' }}
       >
         <div ref={overlayScrollRef} className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
           {hoveredElement.kind === 'environment' ? (
@@ -1717,7 +1800,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   cardKey={el.id}
                   count={hoveredElement.instances.length}
                   instances={hoveredElement.instances}
-                  updateFn={() => {}}
+                  updateFn={updateActiveElement}
                   showInstanceRemove={false}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
