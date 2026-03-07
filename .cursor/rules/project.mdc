@@ -131,7 +131,7 @@ The Game Table shows the Zoom whiteboard (iframe embed) in the center column, wi
 **Clickable dice rolls**: When room name + Rolz credentials are all configured, attack actions become clickable:
 - **GM Moves** (left sidebar): clicking an attack card posts the roll to the Rolz room via `POST /api/rolz-post` and briefly flashes green
 - **Game Table adversary cards**: the Attack line and action-type features with attack patterns show a dice icon and post a roll when clicked
-- Rolls are formatted as: `{sourceName} {attackName} [d20+{modifier}] damage [{damage} {trait}] {range}`
+- Rolls are formatted as: `{sourceName} {attackName} [d20+{modifier}] damage [{damage}] {trait} {range}`
 - Only primary attacks and action-type features matching the attack description pattern (`+N Range | Xd6 trait`) are made rollable
 - Clicking an attack when not fully configured navigates to the Game Table tab and opens the config panel with a hint
 

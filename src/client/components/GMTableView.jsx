@@ -68,7 +68,7 @@ function parseFearCost(description) {
 
 function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
   const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
-  return `${sourceName} ${name} [d20${modStr}] damage [${damage} ${(trait || 'phy').toLowerCase()}] ${range}`;
+  return `${sourceName} ${name} [d20${modStr}] damage [${damage}] ${(trait || 'phy').toLowerCase()} ${range}`;
 }
 
 function extractIframeSrc(embedCode) {
@@ -471,7 +471,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         parts.push(`Attack [1d20${modStr}]`);
       }
       if (attackDamage) {
-        parts.push(`damage [${attackDamage} ${(attackTrait || '').toLowerCase()}]`);
+        parts.push(attackTrait ? `damage [${attackDamage}] ${(attackTrait || '').toLowerCase()}` : `damage [${attackDamage}]`);
         if (attackRange) parts.push(attackRange);
       }
       patterns.forEach(p => parts.push(`[${p}]`));
