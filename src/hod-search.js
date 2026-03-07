@@ -12,11 +12,29 @@
  */
 
 import { ROLES } from './game-constants.js';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 
 const HOD_VAULT_URL = 'https://heartofdaggers.com/vault/';
 const HOD_AJAX_URL = 'https://heartofdaggers.com/wp-admin/admin-ajax.php';
 
+const USER_AGENT = process.env.HOD_USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+const PROXY_URL = process.env.HOD_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+const dispatcher = PROXY_URL ? new ProxyAgent(PROXY_URL) : undefined;
+
+async function fetchWithProxy(url, options = {}) {
+  const opts = { ...options };
+  if (dispatcher) {
+    opts.dispatcher = dispatcher;
+  }
+  // Use undici.fetch if proxy is configured (for dispatcher support) or native fetch otherwise
+  // Note: Node 18+ native fetch also supports dispatcher, but undici.fetch is explicit.
+  // We'll use undiciFetch always to ensure consistent behavior with ProxyAgent.
+  return undiciFetch(url, opts);
+}
+
 const VALID_ROLES = new Set(ROLES);
+
 const VALID_ENV_TYPES = new Set(['traversal', 'exploration', 'social', 'event']);
 const VALID_RANGES = ['Melee', 'Very Close', 'Close', 'Far', 'Very Far'];
 
@@ -35,8 +53,8 @@ export async function getVaultNonce(forceRefresh = false) {
   if (forceRefresh) {
     cachedNonce = null;
   }
-  const res = await fetch(HOD_VAULT_URL, {
-    headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+  const res = await fetchWithProxy(HOD_VAULT_URL, {
+    headers: { 'User-Agent': USER_AGENT },
   });
   if (!res.ok) throw new Error(`HoD vault page returned ${res.status}`);
   const html = await res.text();
@@ -392,10 +410,10 @@ export async function searchHoD({ search, tier, type, collection, limit = 20, of
 
   const doRequest = async () => {
     const form = buildSearchForm(nonce, opts);
-    const res = await fetch(HOD_AJAX_URL, {
+    const res = await fetchWithProxy(HOD_AJAX_URL, {
       method: 'POST',
       body: form,
-      headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+      headers: { 'User-Agent': USER_AGENT },
     });
     if (!res.ok) throw new Error(`HoD AJAX returned ${res.status}`, { cause: res });
     return res;
@@ -456,8 +474,8 @@ function extractExportNonce(pageHtml, collection) {
 
 export async function fetchHoDFoundryDetail(postId, detailUrl, collection) {
   // Step 1: load the detail page to extract the per-item nonce
-  const pageRes = await fetch(detailUrl, {
-    headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+  const pageRes = await fetchWithProxy(detailUrl, {
+    headers: { 'User-Agent': USER_AGENT },
   });
   if (!pageRes.ok) throw new Error(`HoD detail page returned ${pageRes.status} for ${detailUrl}`);
   let pageHtml = await pageRes.text();
@@ -470,8 +488,8 @@ export async function fetchHoDFoundryDetail(postId, detailUrl, collection) {
 
   const doExport = async () => {
     const exportUrl = `${HOD_AJAX_URL}?action=${exportAction}&post_id=${postId}&nonce=${exportNonce}`;
-    const exportRes = await fetch(exportUrl, {
-      headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+    const exportRes = await fetchWithProxy(exportUrl, {
+      headers: { 'User-Agent': USER_AGENT },
     });
     if (!exportRes.ok) throw new Error(`HoD Foundry export returned ${exportRes.status}`, { cause: exportRes });
     return exportRes;
@@ -483,8 +501,8 @@ export async function fetchHoDFoundryDetail(postId, detailUrl, collection) {
   } catch (err) {
     const status = err.cause?.status ?? err.message?.match(/\d{3}/)?.[0];
     if (Number(status) === 415) {
-      const retryPageRes = await fetch(detailUrl, {
-        headers: { 'User-Agent': 'DaggerheartGM/1.0' },
+      const retryPageRes = await fetchWithProxy(detailUrl, {
+        headers: { 'User-Agent': USER_AGENT },
       });
       if (!retryPageRes.ok) throw new Error(`HoD detail page returned ${retryPageRes.status} for ${detailUrl}`);
       pageHtml = await retryPageRes.text();
