@@ -27,7 +27,8 @@
     "pg": "^8.19.0",
     "puppeteer": "^24.37.5",
     "sharp": "^0.34.5",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "undici": "^7.22.0"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.1",

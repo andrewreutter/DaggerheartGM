@@ -40,15 +40,16 @@ function App() {
   const [partySize, setPartySize] = useState(4);
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
+  const [fearCount, setFearCount] = useState(0);
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   const tableStateReadyRef = useRef(false);
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods, fearCount });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods, fearCount]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -290,6 +291,7 @@ function App() {
           setFeatureCountdowns(tableState?.featureCountdowns || {});
           if (tableState?.partySize != null) setPartySize(tableState.partySize);
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
+          if (tableState?.fearCount != null) setFearCount(tableState.fearCount);
           tableStateReadyRef.current = true;
         }).catch(err => console.error('Failed to load table state:', err));
         fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
@@ -570,7 +572,7 @@ function App() {
         <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-10">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
-              <Swords size={24} /> DAGGERHEART GM
+              <Swords size={24} /> DAGGERMIND
             </h1>
             <div className="flex items-center gap-2">
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
@@ -656,7 +658,7 @@ function App() {
         {!user || route.view === 'home' ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-slate-900 to-slate-950">
             <Swords size={64} className="text-red-500 mb-6" />
-            <h1 className="text-4xl font-bold text-white mb-2">Daggerheart GM Tool</h1>
+            <h1 className="text-4xl font-bold text-white mb-2">Daggermind</h1>
             <p className="text-slate-400 mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
             <button
               onClick={handleGoogleSignIn}
@@ -725,7 +727,6 @@ function App() {
                 rolzPassword={rolzPassword}
                 setRolzPassword={setRolzPassword}
                 route={route}
-                gmTab={route.gmTab}
                 navigate={navigate}
                 featureCountdowns={featureCountdowns}
                 updateCountdown={(cardKey, featureKey, cdIdx, value) =>
@@ -735,6 +736,8 @@ function App() {
                 setPartySize={setPartySize}
                 tableBattleMods={tableBattleMods}
                 setTableBattleMods={setTableBattleMods}
+                fearCount={fearCount}
+                setFearCount={setFearCount}
                 clearTable={clearTable}
               />
             </div>

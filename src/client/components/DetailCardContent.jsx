@@ -22,16 +22,11 @@ function boostedAttackDesc(desc, damageBoost) {
   );
 }
 
-function CheckboxTrack({ total, filled, onSetFilled, fillColor, thresholds }) {
+export function CheckboxTrack({ total, filled, onSetFilled, fillColor }) {
   if (!total || total <= 0) return <span className="text-slate-500 text-xs">-</span>;
 
-  const thresholdSet = new Set(thresholds || []);
   const items = [];
-
   for (let i = 0; i < total; i++) {
-    if (thresholdSet.has(i) && i > 0) {
-      items.push(<div key={`t${i}`} className="w-0.5 h-4 bg-yellow-600/50 mx-px rounded-full flex-shrink-0" />);
-    }
     const isChecked = i < filled;
     items.push(
       <button
@@ -256,7 +251,6 @@ export function AdversaryCardContent({
                         filled={hpDamage}
                         onSetFilled={(dmg) => updateFn(inst.instanceId, { currentHp: (el.hp_max || 0) - dmg })}
                         fillColor="bg-red-500"
-                        thresholds={el.hp_thresholds ? [el.hp_thresholds.major, el.hp_thresholds.severe].filter(Boolean) : []}
                       />
                     </div>
                     {(el.stress_max || 0) > 0 && (

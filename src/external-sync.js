@@ -13,9 +13,9 @@ import { createHash } from 'crypto';
 const FCG_PAGE_SIZE = 100;
 // HoD API returns max 20 items per page (WordPress default); requesting more is ignored
 const HOD_LIST_PAGE_SIZE = 20;
-const HOD_DETAIL_THROTTLE_MS = 1500;
+const HOD_DETAIL_THROTTLE_MS = parseInt(process.env.HOD_THROTTLE_MS || '1500', 10);
 const FCG_PARALLEL_PAGES = 3;
-const HOD_PARALLEL_DETAIL = 2;
+const HOD_PARALLEL_DETAIL = parseInt(process.env.HOD_PARALLEL_LIMIT || '2', 10);
 const HOD_CONSECUTIVE_FAILURE_LIMIT = 3;
 
 function hashContent(obj) {

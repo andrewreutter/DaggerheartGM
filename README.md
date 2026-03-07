@@ -98,8 +98,8 @@ A **compact/spacious view toggle** (grid icon in the header) switches between a 
 
 ### Rolz.org Dice Room Integration
 
-The **Game Table** tab has two side-by-side panels (70/30 split):
-- **Zoom Whiteboard** (left) — paste an `<iframe>` embed code to display a Zoom whiteboard
+The **Game Table** tab layout: a left sidebar (Tracker) with Fear counter, GM Moves, Add menu, and adversary HP/stress tracks; a center column with a combined toolbar (BP display, party size, budget factors, Capture/Clear Table, collapsible Embeds config) above the Zoom whiteboard iframe; and an optional Rolz room log on the right when configured.
+- **Zoom Whiteboard** (center) — paste an `<iframe>` embed code in the Embeds config to display a Zoom whiteboard
 - **Rolz Room Log** (right) — a live chat-style view of your Rolz dice room that polls for new messages every 5 seconds. Shows text messages, dice rolls (highlighted), server messages, and time separators. Includes a header with refresh and "open in new tab" links.
 
 A collapsible **Configure Embeds** bar at the top contains inputs for both. It collapses automatically once configured, giving the embeds maximum vertical space.
@@ -114,7 +114,7 @@ Room name and credentials are persisted in your session state automatically.
 
 ### Adding to the Game Table
 
-The "Behind the Screen" view has three buttons — **Add Adversary**, **Add Environment**, and **Add Scene** — each of which opens an **`ItemPickerModal`** and **appends** the selection to the current table (never clears the board). For adversaries and environments the modal uses `useCollectionSearch` + `CollectionFilters` (panel variant) providing Source, Tier, Role/Type, and a search box with infinite scroll. For scenes a simple client-side search is shown. Results appear as text rows. Clicking a result adds it to the table and closes the modal.
+The Tracker sidebar has an **Add** menu with three options — **Adversary**, **Environment**, and **Scene** — each of which opens an **`ItemPickerModal`** and **appends** the selection to the current table (never clears the board). For adversaries and environments the modal uses `useCollectionSearch` + `CollectionFilters` (panel variant) providing Source, Tier, Role/Type, and a search box with infinite scroll. For scenes a simple client-side search is shown. Results appear as text rows. Clicking a result adds it to the table and closes the modal.
 
 A **Capture Table** button (camera icon, disabled when the table is empty) opens a small dialog where you name and save the current table contents as a new **Scene** (capturing all adversaries and environments). After saving, the new scene is opened in the library.
 
