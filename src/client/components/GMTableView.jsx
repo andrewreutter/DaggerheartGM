@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, SlidersHorizontal, Swords, Heart, AlertCircle, Tag, Flame, Edit } from 'lucide-react';
+import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, SlidersHorizontal, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -232,6 +232,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const factorsPanelRef = useRef(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef(null);
+  const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, maxHope, maxHp, maxStress }
   const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
@@ -513,7 +514,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const seenAdvKeys = {}; // key -> index in result
 
     activeElements.forEach(el => {
-      if (el.elementType !== 'adversary') {
+      if (el.elementType === 'character') {
+        result.push({ kind: 'character', element: el });
+      } else if (el.elementType !== 'adversary') {
         result.push({ kind: 'environment', element: el });
       } else {
         const key = el.id;
@@ -670,22 +673,29 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         {/* Fear tracker */}
         <div className="px-2 pt-2 pb-1 sticky top-[41px] z-10 bg-slate-950 border-b border-slate-800">
           <div
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors ${fearPulsing ? 'border-amber-500 bg-amber-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
+            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-amber-500 bg-amber-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
           >
-            <Flame size={14} className={`shrink-0 transition-colors ${fearPulsing ? 'text-amber-300' : 'text-amber-500'}`} />
-            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">Fear</span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setFearCount && setFearCount(prev => Math.max(0, prev - 1))}
-                className="w-5 h-5 rounded bg-slate-700 hover:bg-red-900 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-              >−</button>
-              <span className={`min-w-[1.5rem] text-center font-bold text-base tabular-nums transition-colors ${fearPulsing ? 'text-amber-200' : fearCount > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
-                {fearCount}
-              </span>
-              <button
-                onClick={() => setFearCount && setFearCount(prev => Math.min(12, prev + 1))}
-                className="w-5 h-5 rounded bg-slate-700 hover:bg-green-900 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
-              >+</button>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-amber-300' : 'text-amber-500'}`} />
+              <CheckboxTrack
+                total={6}
+                filled={Math.min(fearCount, 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v)}
+                fillColor="bg-amber-500"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Flame size={12} className="shrink-0 invisible" />
+              <CheckboxTrack
+                total={6}
+                filled={Math.max(0, fearCount - 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
+                fillColor="bg-amber-500"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+              />
             </div>
           </div>
         </div>
@@ -718,6 +728,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </button>
             {addMenuOpen && (
               <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
+                <button
+                  onClick={() => { setCharacterDialog({ name: '', playerName: '', maxHope: 6, maxHp: 6, maxStress: 6 }); setAddMenuOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-sky-300 hover:bg-slate-700 hover:text-sky-200 transition-colors"
+                >
+                  Character
+                </button>
                 {[
                   { col: 'adversaries', label: 'Adversary' },
                   { col: 'environments', label: 'Environment' },
@@ -734,6 +750,97 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               </div>
             )}
           </div>
+
+          {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => (
+            <div key={el.instanceId} className="rounded-lg bg-sky-950/30 border border-sky-900/40 overflow-hidden group/char">
+              <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
+                <User size={10} className="text-sky-400 shrink-0" />
+                <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name}</span>
+                <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress })}
+                    className="text-slate-600 hover:text-sky-400 transition-colors"
+                    title="Edit character"
+                  ><Pencil size={11} /></button>
+                  <button
+                    onClick={() => { if (window.confirm(`Remove ${el.name} from the table?`)) removeActiveElement(el.instanceId); }}
+                    className="text-slate-600 hover:text-red-400 transition-colors"
+                    title="Remove from table"
+                  ><X size={11} /></button>
+                </div>
+              </div>
+              {el.playerName && (
+                <div className="px-2.5 pt-1.5 text-[10px] text-sky-300/60 truncate">{el.playerName}</div>
+              )}
+              <div className="p-2 space-y-1.5">
+                {/* Hope track */}
+                {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
+                  <div className="flex items-center gap-1">
+                    <Sparkles size={10} className="text-amber-400 shrink-0" />
+                    <CheckboxTrack
+                      total={maxHope}
+                      filled={el.hope ?? maxHope}
+                      onSetFilled={(h) => updateActiveElement(el.instanceId, { hope: h })}
+                      fillColor="bg-amber-400"
+                      label="Hope"
+                      verbs={['Gain', 'Spend']}
+                    />
+                  </div>
+                ); })()}
+                {/* HP track */}
+                {(el.maxHp || 0) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <Heart size={10} className="text-red-500 shrink-0" />
+                    <CheckboxTrack
+                      total={el.maxHp || 0}
+                      filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
+                      onSetFilled={(dmg) => updateActiveElement(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
+                      fillColor="bg-red-500"
+                      label="HP"
+                      verbs={['Mark', 'Clear']}
+                    />
+                  </div>
+                )}
+                {/* Stress track */}
+                {(el.maxStress || 0) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <AlertCircle size={10} className="text-purple-500 shrink-0" />
+                    <CheckboxTrack
+                      total={el.maxStress || 0}
+                      filled={el.currentStress || 0}
+                      onSetFilled={(s) => updateActiveElement(el.instanceId, { currentStress: s })}
+                      fillColor="bg-purple-500"
+                      label="Stress"
+                      verbs={['Mark', 'Clear']}
+                    />
+                    {!el.conditions && !openConditions.has(el.instanceId) && (
+                      <button
+                        onClick={() => setOpenConditions(prev => new Set([...prev, el.instanceId]))}
+                        className="ml-1 text-slate-700 hover:text-slate-400 transition-colors shrink-0"
+                        title="Add conditions"
+                      ><Tag size={10} /></button>
+                    )}
+                  </div>
+                )}
+                {/* Conditions */}
+                {(el.conditions || openConditions.has(el.instanceId)) && (
+                  <input
+                    type="text"
+                    placeholder="Conditions..."
+                    autoFocus={openConditions.has(el.instanceId) && !el.conditions}
+                    value={el.conditions || ''}
+                    onChange={e => updateActiveElement(el.instanceId, { conditions: e.target.value })}
+                    onBlur={() => {
+                      if (!el.conditions) {
+                        setOpenConditions(prev => { const s = new Set(prev); s.delete(el.instanceId); return s; });
+                      }
+                    }}
+                    className="w-full bg-slate-800/50 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-600"
+                  />
+                )}
+              </div>
+            </div>
+          ))}
 
           {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
             const el = item.element;
@@ -808,6 +915,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                               filled={hpDamage}
                               onSetFilled={(dmg) => updateActiveElement(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })}
                               fillColor="bg-red-500"
+                              label="HP"
+                              verbs={['Mark', 'Clear']}
                             />
                             {(displayEl.stress_max || 0) === 0 && !inst.conditions && !openConditions.has(inst.instanceId) && (
                               <button
@@ -826,6 +935,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                               filled={inst.currentStress || 0}
                               onSetFilled={(s) => updateActiveElement(inst.instanceId, { currentStress: s })}
                               fillColor="bg-purple-500"
+                              label="Stress"
+                              verbs={['Mark', 'Clear']}
                             />
                             {!inst.conditions && !openConditions.has(inst.instanceId) && (
                               <button
@@ -1265,6 +1376,114 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           <RolzRoomLog roomName={rolzRoomName} pendingRolls={pendingRolls} />
         </div>
       )}
+
+    {characterDialog && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setCharacterDialog(null)}>
+        <div className="bg-slate-800 border border-sky-900/60 rounded-xl shadow-2xl w-80 p-5 space-y-4" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-2">
+            <User size={16} className="text-sky-400 shrink-0" />
+            <h3 className="text-sm font-bold text-sky-200">
+              {characterDialog.editInstanceId ? 'Edit Character' : 'Add Character'}
+            </h3>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Character Name *</label>
+              <input
+                autoFocus
+                type="text"
+                placeholder="e.g. Thorn"
+                value={characterDialog.name}
+                onChange={e => setCharacterDialog(d => ({ ...d, name: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.form?.requestSubmit?.(); }}
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500 placeholder-slate-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Player Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Alice"
+                value={characterDialog.playerName}
+                onChange={e => setCharacterDialog(d => ({ ...d, playerName: e.target.value }))}
+                className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500 placeholder-slate-500"
+              />
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Max Hope</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="99"
+                  value={characterDialog.maxHope}
+                  onChange={e => setCharacterDialog(d => ({ ...d, maxHope: Math.max(0, parseInt(e.target.value) || 0) }))}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Max HP</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="99"
+                  value={characterDialog.maxHp}
+                  onChange={e => setCharacterDialog(d => ({ ...d, maxHp: Math.max(0, parseInt(e.target.value) || 0) }))}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Max Stress</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="99"
+                  value={characterDialog.maxStress}
+                  onChange={e => setCharacterDialog(d => ({ ...d, maxStress: Math.max(0, parseInt(e.target.value) || 0) }))}
+                  className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => setCharacterDialog(null)}
+              className="flex-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium transition-colors"
+            >Cancel</button>
+            <button
+              disabled={!characterDialog.name.trim()}
+              onClick={() => {
+                if (!characterDialog.name.trim()) return;
+                if (characterDialog.editInstanceId) {
+                  updateActiveElement(characterDialog.editInstanceId, {
+                    name: characterDialog.name.trim(),
+                    playerName: characterDialog.playerName.trim(),
+                    maxHope: characterDialog.maxHope,
+                    maxHp: characterDialog.maxHp,
+                    maxStress: characterDialog.maxStress,
+                  });
+                } else {
+                  addToTable({
+                    elementType: 'character',
+                    name: characterDialog.name.trim(),
+                    playerName: characterDialog.playerName.trim(),
+                    hope: characterDialog.maxHope,
+                    maxHope: characterDialog.maxHope,
+                    maxHp: characterDialog.maxHp,
+                    maxStress: characterDialog.maxStress,
+                    currentHp: characterDialog.maxHp,
+                    currentStress: 0,
+                    conditions: '',
+                  }, 'characters');
+                }
+                setCharacterDialog(null);
+              }}
+              className="flex-1 px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors"
+            >{characterDialog.editInstanceId ? 'Save' : 'Add to Table'}</button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {modalOpen && (
       <ItemPickerModal

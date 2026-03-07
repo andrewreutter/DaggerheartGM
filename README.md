@@ -98,7 +98,9 @@ A **compact/spacious view toggle** (grid icon in the header) switches between a 
 
 ### Rolz.org Dice Room Integration
 
-The **Game Table** tab layout: a left sidebar (Tracker) with Fear counter, GM Moves, Add menu, and adversary HP/stress tracks; a center column with a combined toolbar (BP display, party size, budget factors, Capture/Clear Table, collapsible Embeds config) above the Zoom whiteboard iframe; and an optional Rolz room log on the right when configured.
+The **Game Table** tab layout: a left sidebar (Tracker) with Fear counter, GM Moves, Add menu, character cards, environment cards, and adversary HP/stress tracks; a center column with a combined toolbar (BP display, party size, budget factors, Capture/Clear Table, collapsible Embeds config) above the Zoom whiteboard iframe; and an optional Rolz room log on the right when configured.
+
+The Add menu in the Tracker has four options: **Character**, Adversary, Environment, Scene. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, Hope counter (±buttons), HP track, Stress track, and conditions field. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
 - **Zoom Whiteboard** (center) — paste an `<iframe>` embed code in the Embeds config to display a Zoom whiteboard
 - **Rolz Room Log** (right) — a live chat-style view of your Rolz dice room that polls for new messages every 5 seconds. Shows text messages, dice rolls (highlighted), server messages, and time separators. Includes a header with refresh and "open in new tab" links.
 

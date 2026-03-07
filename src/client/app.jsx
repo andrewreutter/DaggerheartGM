@@ -390,7 +390,8 @@ function App() {
   };
 
   // Runtime fields that must be preserved when base data is updated in-place.
-  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions'];
+  // Character-specific fields are included so they survive any future base-data update calls.
+  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope', 'playerName', 'maxHp', 'maxStress', 'name'];
 
   const updateActiveElementsBaseData = (predicate, newBaseData) => {
     setActiveElements(prev => prev.map(el => {
@@ -509,6 +510,8 @@ function App() {
       const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
       newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
+    } else if (collectionName === 'characters') {
+      newElements.push({ ...item, instanceId: generateId() });
     } else if (collectionName === 'adventures') {
       const scenes = await ensureScenesLoaded();
       await ensureAdventuresLoaded();
@@ -560,7 +563,7 @@ function App() {
   };
 
   const clearTable = () => {
-    setActiveElements([]);
+    setActiveElements(prev => prev.filter(el => el.elementType === 'character'));
     setFeatureCountdowns({});
   };
 
