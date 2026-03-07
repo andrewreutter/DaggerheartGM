@@ -35,7 +35,7 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 4, setPartySize, ensureScenesLoaded, ensureAdventuresLoaded }) {
+export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 1, partyTier = 1, ensureScenesLoaded, ensureAdventuresLoaded }) {
   const [showImageImport, setShowImageImport] = useState(false);
   const [modalState, setModalState] = useState(null);
   const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
@@ -361,7 +361,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
           isAdmin={isAdmin}
           onClose={closeModal}
           partySize={partySize}
-          onPartySizeChange={setPartySize}
+          partyTier={partyTier}
           onMergeAdversary={onMergeAdversary}
         />
       )}
@@ -450,6 +450,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
                           onClone={() => handleClone(item)}
                           onAddToTable={addToTable}
                           partySize={partySize}
+                          partyTier={partyTier}
                           showSourceBadge={isPaginatedTab}
                         />
                       );
@@ -487,6 +488,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
                   onClone={() => handleClone(item)}
                   onAddToTable={addToTable}
                   partySize={partySize}
+                  partyTier={partyTier}
                   showSourceBadge={isPaginatedTab}
                 />
               ))}

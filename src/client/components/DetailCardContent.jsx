@@ -22,16 +22,32 @@ function boostedAttackDesc(desc, damageBoost) {
   );
 }
 
-export function CheckboxTrack({ total, filled, onSetFilled, fillColor }) {
+export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, valueOffset = 0, verbs, currentAbsoluteValue, targetToAbsolute }) {
   if (!total || total <= 0) return <span className="text-slate-500 text-xs">-</span>;
 
   const items = [];
   for (let i = 0; i < total; i++) {
     const isChecked = i < filled;
+    const targetValue = isChecked ? i : i + 1;
+    const delta = (currentAbsoluteValue != null && typeof targetToAbsolute === 'function')
+      ? Math.abs(targetToAbsolute(targetValue) - currentAbsoluteValue)
+      : Math.abs(targetValue - filled);
+    let title = '';
+    if (label && delta > 0) {
+      if (verbs) {
+        const verb = (currentAbsoluteValue != null && typeof targetToAbsolute === 'function'
+          ? targetToAbsolute(targetValue) < currentAbsoluteValue
+          : targetValue < filled) ? verbs[1] : verbs[0];
+        title = `${verb} ${delta} ${label}`;
+      } else {
+        title = `${label} → ${targetValue + valueOffset}`;
+      }
+    }
     items.push(
       <button
         key={i}
-        onClick={() => onSetFilled(isChecked ? i : i + 1)}
+        onClick={() => onSetFilled(targetValue)}
+        title={title}
         className={`w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${
           isChecked
             ? `${fillColor} border-transparent`
@@ -251,6 +267,8 @@ export function AdversaryCardContent({
                         filled={hpDamage}
                         onSetFilled={(dmg) => updateFn(inst.instanceId, { currentHp: (el.hp_max || 0) - dmg })}
                         fillColor="bg-red-500"
+                        label="HP"
+                        verbs={['Mark', 'Clear']}
                       />
                     </div>
                     {(el.stress_max || 0) > 0 && (
@@ -262,6 +280,8 @@ export function AdversaryCardContent({
                           filled={inst.currentStress || 0}
                           onSetFilled={(s) => updateFn(inst.instanceId, { currentStress: s })}
                           fillColor="bg-purple-500"
+                          label="Stress"
+                          verbs={['Mark', 'Clear']}
                         />
                       </div>
                     )}
@@ -277,7 +297,7 @@ export function AdversaryCardContent({
                   {showInstanceRemove && count > 1 && (
                     <button
                       onClick={() => removeInstanceFn(inst.instanceId)}
-                      className="text-slate-600 hover:text-red-500 flex-shrink-0 mt-0.5"
+                      className="text-slate-500 hover:text-red-500 flex-shrink-0 mt-0.5"
                       title="Remove this copy"
                     >
                       <X size={14} />
@@ -344,7 +364,7 @@ export function AdversaryCardContent({
               featureCountdowns?.[(cardKey + '|' + fKey + '|' + cdIdx)] ?? cd.value
             );
             const attackMatch = onRollAttack && feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
-            const forceAttack = !attackMatch && onRollAttack && /\bmakes?\b.*?\battack\b/i.test(feat.description || '');
+            const forceAttack = !attackMatch && onRollAttack && /\bmakes?\b.*?\battack\b/is.test(feat.description || '');
             const isRollable = !!(attackMatch || forceAttack);
             const displayDesc = dmgBoost ? boostedAttackDesc(feat.description, dmgBoost) : feat.description;
             return (

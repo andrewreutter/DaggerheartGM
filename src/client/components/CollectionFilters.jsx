@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
-import { TIERS, ROLES, ENV_TYPES } from '../lib/constants.js';
+import { ROLES, ENV_TYPES } from '../lib/constants.js';
+import { TierSelector } from './TierSelector.jsx';
 
 const SOURCE_OPTIONS = [
   { val: 'own',     label: 'Mine' },
@@ -101,23 +102,15 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
         <span className="text-slate-700 select-none">|</span>
         <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => onFilterChange('tier', null)}
-              className={`${baseBtn} ${tiers.length === 0 ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
-            >
-              All
-            </button>
-            {TIERS.map(t => (
-              <button
-                key={t}
-                onClick={() => onFilterChange('tier', t)}
-                className={`${baseBtn} ${tiers.includes(t) ? 'bg-amber-700 border-amber-500 text-amber-100' : inactive}`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+          <TierSelector
+            value={tiers}
+            onChange={t => onFilterChange('tier', t)}
+            multi
+            showAll
+            activeClass="bg-amber-700 border-amber-500 text-amber-100"
+            inactiveClass={inactive}
+            btnClass={baseBtn}
+          />
           {collection === 'adversaries' && tiers.length === 1 && (
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
@@ -213,12 +206,15 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collect
       <div>
         <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Tier</div>
         <div className="flex flex-col gap-1.5">
-          <div className="flex flex-wrap gap-1.5">
-            <button onClick={() => onFilterChange('tier', null)} className={`${btnBase} ${tiers.length === 0 ? btnActive : btnInactive}`}>All</button>
-            {TIERS.map(t => (
-              <button key={t} onClick={() => onFilterChange('tier', t)} className={`${btnBase} ${tiers.includes(t) ? btnActive : btnInactive}`}>{t}</button>
-            ))}
-          </div>
+          <TierSelector
+            value={tiers}
+            onChange={t => onFilterChange('tier', t)}
+            multi
+            showAll
+            activeClass={btnActive}
+            inactiveClass={btnInactive}
+            btnClass={btnBase}
+          />
           {collection === 'adversaries' && tiers.length === 1 && (
             <label className="flex items-center gap-1.5 cursor-pointer text-xs">
               <input

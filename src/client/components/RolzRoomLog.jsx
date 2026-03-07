@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Dices, ExternalLink, RefreshCw } from 'lucide-react';
+import { Dices, ExternalLink, RefreshCw, Settings } from 'lucide-react';
 import { fetchRolzRoomLog } from '../lib/api.js';
 
 const IDLE_INTERVAL = 60_000;
@@ -130,13 +130,20 @@ function matchesPendingRoll(item, displayName) {
 }
 
 function PendingRollPlaceholder({ roll }) {
+  const bracketIdx = roll.rollText.indexOf('[');
+  const prefix = bracketIdx > 0 ? roll.rollText.slice(0, bracketIdx) : roll.rollText;
+  const diceExpr = bracketIdx > 0 ? roll.rollText.slice(bracketIdx) : '';
+
   return (
-    <div className="px-2 py-1.5 rounded bg-slate-800/40 border border-slate-700/40 animate-pulse">
+    <div className="px-2 py-1.5 rounded bg-slate-800/60 border border-amber-700/40 pending-roll-pulse">
       <div className="flex items-baseline gap-1.5">
-        <span className="font-semibold text-xs text-red-400/60">{roll.displayName}</span>
-        <span className="text-[10px] text-slate-600 italic ml-auto tabular-nums">rolling…</span>
+        <span className="font-semibold text-xs text-red-400">{roll.displayName}</span>
+        <span className="text-[10px] text-amber-500/70 italic ml-auto tabular-nums">rolling…</span>
       </div>
-      <div className="mt-0.5 font-mono text-xs text-slate-600 truncate">{roll.rollText}</div>
+      <div className="mt-0.5 font-mono text-xs">
+        <span className="text-slate-300">{prefix}</span>
+        {diceExpr && <span className="text-slate-600">{diceExpr}</span>}
+      </div>
     </div>
   );
 }
@@ -191,13 +198,14 @@ function RolzMessage({ item }) {
   );
 }
 
-export function RolzRoomLog({ roomName, pendingRolls = [] }) {
+export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onConfigOpen }) {
   const [items, setItems] = useState([]);
   const [motd, setMotd] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [resolvedIds, setResolvedIds] = useState(new Set());
   const lastKeyRef = useRef(null);
+  const compactScrollRef = useRef(null);
   const eagerUntilRef = useRef(0);
   const pollTimeoutRef = useRef(null);
   const isMountedRef = useRef(false);
@@ -231,10 +239,9 @@ export function RolzRoomLog({ roomName, pendingRolls = [] }) {
 
       const newItems = (data.items || [])
         .filter(hasContent)
-        .slice()
-        .reverse();
+        .slice(); // chronological: oldest first, newest last
 
-      const latestKey = newItems.length > 0 ? newItems[0].key : null;
+      const latestKey = newItems.length > 0 ? newItems[newItems.length - 1].key : null;
       const gotNew = latestKey !== lastKeyRef.current;
       if (gotNew) {
         setItems(newItems);
@@ -322,11 +329,66 @@ export function RolzRoomLog({ roomName, pendingRolls = [] }) {
     fetchLog(false).then(() => scheduleNext());
   };
 
+  // Auto-scroll to bottom in compact strip mode when new messages arrive.
+  useEffect(() => {
+    if (!compact || !compactScrollRef.current) return;
+    compactScrollRef.current.scrollTop = compactScrollRef.current.scrollHeight;
+  }, [compact, items, activePending]);
+
   if (!roomName) {
     return (
       <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-2 px-4">
         <Dices size={32} className="opacity-40" />
         <p className="text-sm text-center">Configure a Rolz room above.</p>
+      </div>
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="shrink-0 flex flex-col border-t border-slate-800 bg-slate-950">
+        {/* Slim strip header */}
+        <div className="flex items-center gap-2 px-3 py-1 border-b border-slate-800/60">
+          <Dices size={11} className="text-red-400 shrink-0" />
+          <span className="text-[11px] font-medium text-slate-400 truncate flex-1">{roomName}</span>
+          <button
+            onClick={handleRefresh}
+            className="text-slate-500 hover:text-slate-300 transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw size={10} />
+          </button>
+          <a
+            href={`https://rolz.org/dr?room=${encodeURIComponent(roomName)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-500 hover:text-blue-400 transition-colors"
+            title="Open in new tab"
+          >
+            <ExternalLink size={10} />
+          </a>
+          {onConfigOpen && (
+            <button
+              onClick={onConfigOpen}
+              className="text-slate-500 hover:text-slate-300 transition-colors"
+              title="Configure"
+            >
+              <Settings size={10} />
+            </button>
+          )}
+        </div>
+        {/* Messages strip — fixed height, chronological, auto-scrolls to bottom */}
+        <div ref={compactScrollRef} className="h-24 overflow-y-auto px-2 py-1 space-y-0.5">
+          {loading && (
+            <div className="text-slate-600 text-xs py-2 text-center">Loading...</div>
+          )}
+          {items.map(item => (
+            <RolzMessage key={item.key || item.time} item={item} />
+          ))}
+          {activePending.map(p => (
+            <PendingRollPlaceholder key={p.id} roll={p} />
+          ))}
+        </div>
       </div>
     );
   }
@@ -366,7 +428,7 @@ export function RolzRoomLog({ roomName, pendingRolls = [] }) {
         </div>
       )}
 
-      {/* Messages — pending placeholders first (newest), then real items newest-first */}
+      {/* Messages — chronological: oldest first, newest last; pending at bottom */}
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
         {loading && (
           <div className="flex items-center justify-center py-8 text-slate-500 text-sm gap-2">
@@ -383,11 +445,11 @@ export function RolzRoomLog({ roomName, pendingRolls = [] }) {
             No messages yet.
           </div>
         )}
-        {activePending.slice().reverse().map(p => (
-          <PendingRollPlaceholder key={p.id} roll={p} />
-        ))}
         {items.map(item => (
           <RolzMessage key={item.key || item.time} item={item} />
+        ))}
+        {activePending.map(p => (
+          <PendingRollPlaceholder key={p.id} roll={p} />
         ))}
       </div>
     </div>

@@ -25,10 +25,9 @@ const COLLECTION_LABELS = {
 /**
  * Compact battle budget summary bar for scene detail view.
  * Shows tier, BP cost, adjusted budget with modifiers.
- * Includes an inline party size control so the user can adjust it right here.
  */
-function SceneBudgetBar({ item, data, partySize = 4, onPartySizeChange }) {
-  const { tier, bp, budget, autoMods, userMods, totalMod, adjustedBudget } = computeSceneBudget(item, data, partySize);
+function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1 }) {
+  const { tier, bp, budget, autoMods, userMods, totalMod, adjustedBudget } = computeSceneBudget(item, data, partySize, partyTier);
 
   const hasAdversaries = bp > 0 || tier != null;
   if (!hasAdversaries) return null;
@@ -41,8 +40,10 @@ function SceneBudgetBar({ item, data, partySize = 4, onPartySizeChange }) {
     autoMods.lowerTierAdversary.active && { label: 'Lower-tier adversary', value: +1, auto: true },
     autoMods.noHeavyRoles.active && { label: 'No heavy roles', value: +1, auto: true },
     userMods.lessDifficult && { label: 'Less difficult', value: -1, auto: false },
+    userMods.damageBoostPlusOne && { label: '+1 damage', value: -1, auto: false },
     userMods.damageBoostD4 && { label: '+1d4 damage', value: -2, auto: false },
     userMods.damageBoostStatic && { label: '+2 damage', value: -2, auto: false },
+    userMods.slightlyMoreDangerous && { label: 'Slightly more dangerous', value: +1, auto: false },
     userMods.moreDangerous && { label: 'More dangerous', value: +2, auto: false },
   ].filter(Boolean);
 
@@ -74,16 +75,7 @@ function SceneBudgetBar({ item, data, partySize = 4, onPartySizeChange }) {
           {diff === 0 ? 'On budget' : diff > 0 ? `+${diff} over budget` : `${Math.abs(diff)} under budget`}
         </span>
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
-          <span className="text-[10px] text-slate-500">PCs</span>
-          <input
-            type="number"
-            min={1}
-            max={8}
-            value={partySize}
-            onChange={e => onPartySizeChange && onPartySizeChange(Math.max(1, Math.min(8, parseInt(e.target.value) || 4)))}
-            onClick={e => e.stopPropagation()}
-            className="w-10 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-white text-xs text-center"
-          />
+          <span className="text-[10px] text-slate-500">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
         </div>
       </div>
       {activeMods.length > 0 && (
@@ -145,8 +137,8 @@ export function ItemDetailModal({
   onEdit,
   isAdmin = false,
   onClose,
-  partySize = 4,
-  onPartySizeChange,
+  partySize = 1,
+  partyTier = 1,
   onMergeAdversary,
 }) {
   const isNew = !item?.id;
@@ -350,7 +342,7 @@ export function ItemDetailModal({
             {displayItem.description && (
               <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300 mb-3" />
             )}
-            <SceneBudgetBar item={displayItem} data={data} partySize={partySize} onPartySizeChange={onPartySizeChange} />
+            <SceneBudgetBar item={displayItem} data={data} partySize={partySize} partyTier={partyTier} />
             <ExpandedTablePreview
               item={displayItem}
               tab={collection}
@@ -360,6 +352,7 @@ export function ItemDetailModal({
               damageBoost={
                 displayItem.battleMods?.damageBoostD4 ? 'd4'
                 : displayItem.battleMods?.damageBoostStatic ? 'static'
+                : displayItem.battleMods?.damageBoostPlusOne ? 'plusOne'
                 : null
               }
             />
@@ -382,7 +375,7 @@ export function ItemDetailModal({
       data,
       featureLibraryPortal: libraryPortal,
       partySize,
-      onPartySizeChange,
+      partyTier,
       onImageSaved: item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined,
       onMergeAdversary,
     };

@@ -156,7 +156,7 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
                 <button
                   type="button"
                   onClick={() => handleRemove(idx)}
-                  className="text-slate-600 hover:text-red-500 shrink-0"
+                  className="text-slate-500 hover:text-red-500 shrink-0"
                 >
                   <Trash2 size={13} />
                 </button>

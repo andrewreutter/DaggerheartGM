@@ -13,6 +13,8 @@ const SCENE_COLLECTIONS = [
 
 const DEFAULT_BATTLE_MODS = {
   lessDifficult: false,
+  slightlyMoreDangerous: false,
+  damageBoostPlusOne: false,
   damageBoostD4: false,
   damageBoostStatic: false,
   moreDangerous: false,
@@ -65,9 +67,10 @@ function buildSceneForBP(fd, ownedAdvs, ownedEnvs, isControlled, pickerValues) {
  *
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  *
- * partySize / onPartySizeChange — global party size setting for BP budget calculation.
+ * partySize — character count from the Game Table, used for BP budget calculation.
+ * partyTier — highest tier among player characters, used for the lower-tier adversary BP modifier.
  */
-export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 4, onPartySizeChange, onImageSaved, onMergeAdversary }) {
+export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 1, partyTier = 1, onImageSaved, onMergeAdversary }) {
   const isControlled = value !== undefined;
 
   // --- Uncontrolled state (legacy path) ---
@@ -138,8 +141,9 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
   const updateBattleMod = (key, val) => {
     const newMods = { ...battleMods, [key]: val };
     // Damage boost options are mutually exclusive
-    if (key === 'damageBoostD4' && val) newMods.damageBoostStatic = false;
-    if (key === 'damageBoostStatic' && val) newMods.damageBoostD4 = false;
+    if (key === 'damageBoostPlusOne' && val) { newMods.damageBoostD4 = false; newMods.damageBoostStatic = false; }
+    if (key === 'damageBoostD4' && val) { newMods.damageBoostStatic = false; newMods.damageBoostPlusOne = false; }
+    if (key === 'damageBoostStatic' && val) { newMods.damageBoostD4 = false; newMods.damageBoostPlusOne = false; }
     updateField('battleMods', newMods);
   };
 
@@ -165,7 +169,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
 
   // --- Battle Budget calculation ---
   const sceneForBP = buildSceneForBP(fd, displayedOwnedAdvs, displayedOwnedEnvs, isControlled, pickerValues);
-  const { tier, bp, budget, autoMods, totalMod, adjustedBudget } = computeSceneBudget(sceneForBP, data, partySize);
+  const { tier, bp, budget, autoMods, totalMod, adjustedBudget } = computeSceneBudget(sceneForBP, data, partySize, partyTier);
 
   const diff = bp - adjustedBudget;
   const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-slate-400';
@@ -220,17 +224,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
       <div className="mt-4 pt-4 border-t border-slate-800">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Battle Budget</span>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">Party Size</span>
-            <input
-              type="number"
-              min={1}
-              max={8}
-              value={partySize}
-              onChange={e => onPartySizeChange && onPartySizeChange(Math.max(1, Math.min(8, parseInt(e.target.value) || 4)))}
-              className="w-12 bg-slate-950 border border-slate-700 rounded px-2 py-0.5 text-white text-sm text-center"
-            />
-          </div>
+          <span className="text-xs text-slate-500">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
         </div>
 
         {/* BP summary row */}

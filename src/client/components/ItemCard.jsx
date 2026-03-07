@@ -3,7 +3,7 @@ import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { computeSceneTier, computeBattlePoints, collectSceneAdversaries } from '../lib/battle-points.js';
 import { ItemActionButtons } from './ItemActionButtons.jsx';
 
-export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4, showSourceBadge = true }) {
+export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4, partyTier = 1, showSourceBadge = true }) {
   const isOwn = isOwnItem(item);
   const badge = showSourceBadge ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
   const popularity = item.popularity ?? ((item.clone_count || 0) + (item.play_count || 0));

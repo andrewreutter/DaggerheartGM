@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2 } from 'lucide-react';
@@ -37,8 +37,12 @@ function App() {
   const [rolzUsername, setRolzUsername] = useState('');
   const [rolzPassword, setRolzPassword] = useState('');
   const [featureCountdowns, setFeatureCountdowns] = useState({});
-  const [partySize, setPartySize] = useState(4);
-  const DEFAULT_BATTLE_MODS = { lessDifficult: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
+  const partySize = useMemo(() => Math.max(1, activeElements.filter(el => el.elementType === 'character').length), [activeElements]);
+  const partyTier = useMemo(() => {
+    const chars = activeElements.filter(el => el.elementType === 'character');
+    return chars.length > 0 ? Math.max(...chars.map(c => c.tier ?? 1)) : 1;
+  }, [activeElements]);
+  const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
@@ -46,10 +50,10 @@ function App() {
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods, fearCount });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, tableBattleMods, fearCount });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, partySize, tableBattleMods, fearCount]);
+  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, tableBattleMods, fearCount]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -289,7 +293,6 @@ function App() {
           setRolzUsername(tableState?.rolzUsername || '');
           setRolzPassword(tableState?.rolzPassword || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
-          if (tableState?.partySize != null) setPartySize(tableState.partySize);
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           if (tableState?.fearCount != null) setFearCount(tableState.fearCount);
           tableStateReadyRef.current = true;
@@ -390,7 +393,8 @@ function App() {
   };
 
   // Runtime fields that must be preserved when base data is updated in-place.
-  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions'];
+  // Character-specific fields are included so they survive any future base-data update calls.
+  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope', 'playerName', 'maxHp', 'maxStress', 'name'];
 
   const updateActiveElementsBaseData = (predicate, newBaseData) => {
     setActiveElements(prev => prev.map(el => {
@@ -433,7 +437,7 @@ function App() {
 
     // Only the root scene (depth 0) sets the damage boost; nested scenes inherit it.
     const damageBoost = depth === 0
-      ? (scene.battleMods?.damageBoostD4 ? 'd4' : scene.battleMods?.damageBoostStatic ? 'static' : null)
+      ? (scene.battleMods?.damageBoostD4 ? 'd4' : scene.battleMods?.damageBoostStatic ? 'static' : scene.battleMods?.damageBoostPlusOne ? 'plusOne' : null)
       : rootDamageBoost;
 
     const elements = [];
@@ -509,6 +513,8 @@ function App() {
       const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
       newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
+    } else if (collectionName === 'characters') {
+      newElements.push({ ...item, instanceId: generateId() });
     } else if (collectionName === 'adventures') {
       const scenes = await ensureScenesLoaded();
       await ensureAdventuresLoaded();
@@ -542,7 +548,7 @@ function App() {
     // ask the user whether to apply them to the table before proceeding.
     if (collectionName === 'scenes') {
       const mods = item?.battleMods;
-      const hasActiveMods = mods && (mods.lessDifficult || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
+      const hasActiveMods = mods && (mods.lessDifficult || mods.slightlyMoreDangerous || mods.damageBoostPlusOne || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
       if (hasActiveMods) {
         setPendingSceneAdd({ scene: item });
         return;
@@ -560,7 +566,7 @@ function App() {
   };
 
   const clearTable = () => {
-    setActiveElements([]);
+    setActiveElements(prev => prev.filter(el => el.elementType === 'character'));
     setFeatureCountdowns({});
   };
 
@@ -696,7 +702,7 @@ function App() {
                 onMergeAdversary={mergeAdversaryIntoData}
                 isAdmin={isAdmin}
                 partySize={partySize}
-                setPartySize={setPartySize}
+                partyTier={partyTier}
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
               />
@@ -733,7 +739,7 @@ function App() {
                   setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
                 }
                 partySize={partySize}
-                setPartySize={setPartySize}
+                partyTier={partyTier}
                 tableBattleMods={tableBattleMods}
                 setTableBattleMods={setTableBattleMods}
                 fearCount={fearCount}

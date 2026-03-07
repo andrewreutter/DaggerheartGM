@@ -15,14 +15,16 @@
  *
  * Budget modifiers (auto-detected from scene content):
  *   -2  if 2 or more Solo adversaries
- *   +1  if any adversary is from a lower tier than the scene tier
+ *   +1  if any adversary is from a lower tier than the party's highest character tier
  *   +1  if no Bruisers, Hordes, Leaders, or Solos are present
  *
  * Budget modifiers (user-controlled via battleMods on the scene):
- *   -1  lessDifficult  — fight should be less difficult or shorter
- *   -2  damageBoostD4  — all adversaries deal +1d4 extra damage
- *   -2  damageBoostStatic — all adversaries deal +2 extra damage
- *   +2  moreDangerous  — fight should be more dangerous or last longer
+ *   -1  lessDifficult          — fight should be less difficult or shorter
+ *   -1  damageBoostPlusOne     — all adversaries deal +1 extra damage
+ *   -2  damageBoostD4          — all adversaries deal +1d4 extra damage
+ *   -2  damageBoostStatic      — all adversaries deal +2 extra damage
+ *   +1  slightlyMoreDangerous  — fight should be slightly more dangerous or slightly longer
+ *   +2  moreDangerous          — fight should be more dangerous or last longer
  */
 
 import { ROLE_BP_COST } from './constants.js';
@@ -142,14 +144,14 @@ export function computeBudget(partySize = 4) {
  * Returns an object describing each modifier: { active: boolean, value: number, label: string }
  *
  * @param {{ role: string, tier: number, count: number }[]} adversaries
- * @param {number|null} sceneTier
+ * @param {number|null} partyTier - highest tier among player characters (or null if no characters)
  * @returns {{ twoOrMoreSolos, lowerTierAdversary, noHeavyRoles }}
  */
-export function computeAutoModifiers(adversaries, sceneTier) {
+export function computeAutoModifiers(adversaries, partyTier) {
   const soloCount = adversaries.reduce((n, a) => n + (a.role === 'solo' ? a.count : 0), 0);
   const heavyRoles = new Set(['bruiser', 'horde', 'leader', 'solo']);
   const hasHeavy = adversaries.some(a => heavyRoles.has(a.role));
-  const hasLowerTier = sceneTier != null && adversaries.some(a => (a.tier ?? 1) < sceneTier);
+  const hasLowerTier = partyTier != null && adversaries.some(a => (a.tier ?? 1) < partyTier);
 
   return {
     twoOrMoreSolos: {
@@ -178,7 +180,7 @@ export function computeAutoModifiers(adversaries, sceneTier) {
  * Sum all budget modifiers (auto + user) into a single number.
  *
  * @param {{ twoOrMoreSolos, lowerTierAdversary, noHeavyRoles }} autoMods
- * @param {{ lessDifficult?: boolean, damageBoostD4?: boolean, damageBoostStatic?: boolean, moreDangerous?: boolean }} userMods
+ * @param {{ lessDifficult?: boolean, slightlyMoreDangerous?: boolean, damageBoostPlusOne?: boolean, damageBoostD4?: boolean, damageBoostStatic?: boolean, moreDangerous?: boolean }} userMods
  * @returns {number}
  */
 export function computeTotalBudgetMod(autoMods, userMods = {}) {
@@ -189,8 +191,10 @@ export function computeTotalBudgetMod(autoMods, userMods = {}) {
   if (autoMods.noHeavyRoles?.active) mod += autoMods.noHeavyRoles.value;
 
   if (userMods.lessDifficult) mod -= 1;
+  if (userMods.damageBoostPlusOne) mod -= 1;
   if (userMods.damageBoostD4) mod -= 2;
   if (userMods.damageBoostStatic) mod -= 2;
+  if (userMods.slightlyMoreDangerous) mod += 1;
   if (userMods.moreDangerous) mod += 2;
 
   return mod;
@@ -209,7 +213,7 @@ export function computeTotalBudgetMod(autoMods, userMods = {}) {
  */
 export function applyDamageBoost(damageStr, boostType) {
   if (!damageStr) return damageStr;
-  const boost = boostType === 'd4' ? '+1d4' : '+2';
+  const boost = boostType === 'd4' ? '+1d4' : boostType === 'plusOne' ? '+1' : '+2';
   return `${damageStr}${boost}`;
 }
 
@@ -223,6 +227,8 @@ export function applyDamageBoost(damageStr, boostType) {
  * @param {object} scene      - scene item data (with adversaries, scenes, battleMods)
  * @param {object} data       - library data: { adversaries, scenes }
  * @param {number} partySize
+ * @param {number|null} partyTier - highest tier among player characters; used for the
+ *   "lower-tier adversary" auto-modifier. Defaults to null (modifier inactive).
  * @returns {{
  *   tier: number|null,
  *   adversaries: { role, tier, count }[],
@@ -233,12 +239,12 @@ export function applyDamageBoost(damageStr, boostType) {
  *   adjustedBudget: number,
  * }}
  */
-export function computeSceneBudget(scene, data, partySize = 4) {
+export function computeSceneBudget(scene, data, partySize = 4, partyTier = null) {
   const adversaries = collectSceneAdversaries(scene, data);
   const tier = computeSceneTier(scene, data);
   const bp = computeBattlePoints(adversaries, partySize);
   const budget = computeBudget(partySize);
-  const autoMods = computeAutoModifiers(adversaries, tier);
+  const autoMods = computeAutoModifiers(adversaries, partyTier);
   const userMods = scene?.battleMods || {};
   const totalMod = computeTotalBudgetMod(autoMods, userMods);
   const adjustedBudget = budget + totalMod;
