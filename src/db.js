@@ -692,3 +692,21 @@ export async function getUnifiedItems(appId, userId, collection, {
 
   return { items, totalCount };
 }
+
+/**
+ * Find all table_state records whose playerEmails array contains the given email.
+ * Used by GET /api/my-rooms to let players discover which GMs have invited them.
+ * Returns [{ userId, data }] where userId is the GM's Firebase UID.
+ */
+export async function getTableStatesByPlayerEmail(appId, email) {
+  const db = getPool();
+  // Use the ? (key exists in array) JSONB operator to check membership.
+  // Note: in node-postgres, ? is not a placeholder — $1/$2 are used for that.
+  const { rows } = await db.query(
+    `SELECT user_id, data FROM items
+     WHERE app_id = $1 AND collection = 'table_state'
+     AND data->'playerEmails' ? $2`,
+    [appId, email]
+  );
+  return rows.map(r => ({ userId: r.user_id, data: r.data }));
+}

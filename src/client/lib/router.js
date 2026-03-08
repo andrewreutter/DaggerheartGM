@@ -25,14 +25,15 @@ export function parseRoute(pathname) {
   }
 
   if (parts[0] === 'gm-table') {
-    const modalCollection = VALID_COLLECTIONS.has(parts[1]) ? parts[1] : null;
-    const modalItemId = modalCollection && parts[2] ? parts[2] : null;
-    return {
-      view: 'gm-table',
-      tab: null,
-      modalCollection,
-      modalItemId,
-    };
+    // Legacy: /gm-table/:collection/:id — collection names never look like Firebase UIDs
+    if (VALID_COLLECTIONS.has(parts[1])) {
+      return { view: 'gm-table', gmUid: null, tab: null, modalCollection: parts[1], modalItemId: parts[2] || null };
+    }
+    // Current: /gm-table/:gmUid[/:collection/:id]
+    const gmUid = parts[1] || null;
+    const modalCollection = VALID_COLLECTIONS.has(parts[2]) ? parts[2] : null;
+    const modalItemId = modalCollection && parts[3] ? parts[3] : null;
+    return { view: 'gm-table', gmUid, tab: null, modalCollection, modalItemId };
   }
 
   if (parts[0] === 'library') {

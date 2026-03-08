@@ -185,3 +185,38 @@
 .pending-roll-pulse {
   animation: pending-pulse 0.65s ease-out infinite alternate;
 }
+
+/* Damage applied pulse — triggered when a roll banner is dropped on a target */
+@keyframes damage-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.9); background-color: rgba(127, 29, 29, 0.5); }
+  20%  { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0.4); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); background-color: transparent; }
+}
+.damage-pulse-anim {
+  animation: damage-pulse 1.8s ease-out forwards;
+}
+
+/* Drop zone highlight — valid target while dragging a damage roll */
+.damage-drop-zone {
+  outline: 1px dashed rgba(239, 68, 68, 0.4);
+  outline-offset: 2px;
+  transition: background-color 0.1s;
+}
+.damage-drop-zone-over {
+  outline: 2px solid rgba(239, 68, 68, 0.8);
+  outline-offset: 2px;
+  background-color: rgba(127, 29, 29, 0.25) !important;
+}
+
+/* Dice result banner: fade in, hold, then fade out */
+@keyframes dice-banner-in {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(12px) scale(0.92); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0)     scale(1);    }
+}
+@keyframes dice-banner-out {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+.dice-result-banner {
+  animation: dice-banner-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}

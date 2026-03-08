@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink } from 'lucide-react';
+import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -7,12 +7,13 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRolzRoll, syncDaggerstackCharacter, resolveItems } from '../lib/api.js';
+import { postRolzRoll, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { TierSelector } from './TierSelector.jsx';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
+import { DiceRoller } from './DiceRoller.jsx';
 
 
 /**
@@ -90,6 +91,27 @@ function parseFearCost(description) {
   if (!m) return 1;
   const v = m[1].toLowerCase();
   return (v === 'a' || v === 'an') ? 1 : (parseInt(v, 10) || 1);
+}
+
+// Parse ALL bracket-enclosed expressions from a Rolz roll string into synthetic subItems
+// that mirror the structure Rolz returns — full pre text between brackets, trailing post
+// text on the last item, and both dice and flat-number expressions included. Results and
+// details are left empty; DiceRoller shows spinners for unknown values.
+function rollTextToSyntheticSubItems(rollText) {
+  const items = [];
+  const re = /\[([^\]]+)\]/g;
+  let lastEnd = 0;
+  let m;
+  while ((m = re.exec(rollText)) !== null) {
+    const pre = rollText.slice(lastEnd, m.index);
+    const expr = m[1].trim();
+    items.push({ pre, input: expr, result: '', details: '', post: '' });
+    lastEnd = m.index + m[0].length;
+  }
+  if (items.length > 0 && lastEnd < rollText.length) {
+    items[items.length - 1].post = rollText.slice(lastEnd);
+  }
+  return items;
 }
 
 function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
@@ -181,8 +203,34 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
+/**
+ * Daggerheart damage threshold resolution.
+ * Returns the number of HP boxes to mark given a raw damage total and thresholds.
+ *   < major             → 1 (Minor)
+ *   >= major < severe   → 2 (Major)
+ *   >= severe           → 3 (Severe), +1 for each doubling beyond severe
+ */
+function computeHpLoss(damage, thresholds) {
+  const major = thresholds?.major;
+  const severe = thresholds?.severe;
+  if (severe != null && damage >= severe) {
+    let hp = 3;
+    let threshold = severe * 2;
+    while (damage >= threshold) {
+      hp++;
+      threshold *= 2;
+    }
+    return hp;
+  }
+  if (major != null && damage >= major) return 2;
+  return 1;
+}
+
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerUid, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceRollBroadcast, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
+  const [gmHoverOverlayActive, setGmHoverOverlayActive] = useState(false);
+  const gmHoverHideTimer = useRef(null);
+  const lastHoveredElementRef = useRef(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
 
@@ -194,6 +242,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [whiteboardConfigOpen, setWhiteboardConfigOpen] = useState(false);
   const [rolzConfigOpen, setRolzConfigOpen] = useState(false);
   const [nudgeHint, setNudgeHint] = useState(false);
+
+  // Dice roller queue — each entry is a full roll object passed to DiceRoller.
+  // New rolls are appended; DiceRoller consumes [0] and calls onComplete to dequeue.
+  const [diceRollQueue, setDiceRollQueue] = useState([]);
 
   useEffect(() => {
     setEmbedDraft(whiteboardEmbed);
@@ -253,6 +305,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef(null);
   const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, tier, maxHope, maxHp, maxStress, daggerstackUrl?, daggerstackEmail?, daggerstackPassword?, _synced? }
+  const [playerEmailInput, setPlayerEmailInput] = useState('');
+  const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
+  const [contactsToken, setContactsToken] = useState(null);
+  const [contactSuggestions, setContactSuggestions] = useState([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const contactsDebounceRef = useRef(null);
   const [dialogSyncing, setDialogSyncing] = useState(false);
   const [dialogSyncError, setDialogSyncError] = useState('');
   const overlayScrollRef = useRef(null);
@@ -299,6 +357,32 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
   const cancelHideCharacterCard = () => {
     if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
+  };
+
+  // Potential adversary hover card state (shown to the left of the environment hover card)
+  const [hoveredPotentialAdversary, setHoveredPotentialAdversary] = useState(null); // { element, top, bottom }
+  const potAdvHideTimerRef = useRef(null);
+  const potAdvOverlayRef = useRef(null);
+  const potAdvKey = hoveredPotentialAdversary?.element?.id ?? null;
+  const potAdvAdjust = useViewportClamp(potAdvOverlayRef, !!hoveredPotentialAdversary, potAdvKey);
+
+  const handlePotentialAdversaryHover = async (adversaryId, rect) => {
+    if (potAdvHideTimerRef.current) { clearTimeout(potAdvHideTimerRef.current); potAdvHideTimerRef.current = null; }
+    try {
+      const result = await resolveItems({ adversaries: [adversaryId] });
+      const adversary = result.adversaries?.[0];
+      if (adversary) {
+        setHoveredPotentialAdversary({ element: adversary, top: rect.top, bottom: rect.bottom });
+      }
+    } catch (err) {
+      console.warn('Failed to resolve potential adversary for hover:', err);
+    }
+  };
+  const schedulHidePotAdv = () => {
+    potAdvHideTimerRef.current = setTimeout(() => { setHoveredPotentialAdversary(null); potAdvHideTimerRef.current = null; }, 120);
+  };
+  const cancelHidePotAdv = () => {
+    if (potAdvHideTimerRef.current) { clearTimeout(potAdvHideTimerRef.current); potAdvHideTimerRef.current = null; }
   };
 
   const handleResyncCharacter = async (el) => {
@@ -364,7 +448,70 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     });
   };
 
-  const handleDaggerheartRoll = (dominant, rollUser) => {
+  // ── Damage-drop drag state ─────────────────────────────────────────────────
+  const diceRollerRef = useRef(null);
+  const [draggedRoll, setDraggedRoll]   = useState(null); // roll being dragged, or null
+  const [dragOverId, setDragOverId]     = useState(null); // instanceId currently hovered during drag
+  const dropAppliedRef                  = useRef(false);  // true when onDrop fired before onDragEnd
+
+  const [damagePulsingId, setDamagePulsingId] = useState(null);
+  const damagePulseTimerRef = useRef(null);
+  const triggerDamagePulse = (instanceId) => {
+    if (damagePulseTimerRef.current) clearTimeout(damagePulseTimerRef.current);
+    setDamagePulsingId(null);
+    requestAnimationFrame(() => {
+      setDamagePulsingId(instanceId);
+      damagePulseTimerRef.current = setTimeout(() => setDamagePulsingId(null), 1800);
+    });
+  };
+
+  const handleRollDragStart = (roll, dmgTotal) => {
+    dropAppliedRef.current = false;
+    setDraggedRoll({ ...roll, _dmgTotal: dmgTotal });
+  };
+
+  const handleRollDragEnd = () => {
+    console.log('[DamageDrop] handleRollDragEnd, dropApplied:', dropAppliedRef.current);
+    if (dropAppliedRef.current) {
+      diceRollerRef.current?.dismiss();
+    }
+    dropAppliedRef.current = false;
+    setDraggedRoll(null);
+    setDragOverId(null);
+  };
+
+  const handleDropOnCharacter = (el) => {
+    if (!draggedRoll) return;
+    const dmgTotal = draggedRoll._dmgTotal ?? 0;
+    const hpLoss = computeHpLoss(dmgTotal, el.armorThresholds);
+    const currentHp = el.currentHp ?? el.maxHp ?? 0;
+    const newHp = Math.max(0, currentHp - hpLoss);
+    console.log('[DamageDrop] character:', { name: el.name, dmgTotal, thresholds: el.armorThresholds, hpLoss, currentHp, newHp, roll: draggedRoll });
+    updateActiveElement(el.instanceId, { currentHp: newHp });
+    triggerDamagePulse(el.instanceId);
+    dropAppliedRef.current = true;
+    setDragOverId(null);
+  };
+
+  const handleDropOnAdversary = (inst, displayEl) => {
+    if (!draggedRoll) return;
+    const dmgTotal = draggedRoll._dmgTotal ?? 0;
+    const hpLoss = computeHpLoss(dmgTotal, displayEl.hp_thresholds);
+    const currentHp = inst.currentHp ?? displayEl.hp_max ?? 0;
+    const newHp = Math.max(0, currentHp - hpLoss);
+    console.log('[DamageDrop] adversary:', { name: displayEl.name, dmgTotal, thresholds: displayEl.hp_thresholds, hpLoss, currentHp, newHp, roll: draggedRoll });
+    updateActiveElement(inst.instanceId, { currentHp: newHp });
+    triggerDamagePulse(inst.instanceId);
+    dropAppliedRef.current = true;
+    setDragOverId(null);
+  };
+
+
+  // Apply Hope/Fear side effects after the dice animation completes.
+  // Separated from handleDaggerheartRoll so effects fire when the banner dismisses.
+  const applyRollSideEffects = (dominant, rollUser) => {
+    const charNames = activeElements.filter(el => el.elementType === 'character').map(el => ({ name: el.name, playerName: el.playerName }));
+    console.log('[DamageDrop] applyRollSideEffects:', { dominant, rollUser, charNames });
     if (dominant === 'fear') {
       setFearCount(prev => Math.min(prev + 1, 12));
       triggerFearPulse();
@@ -373,9 +520,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (!characters.length) return;
 
       const nameLower = (rollUser || '').toLowerCase().trim();
+      // Exact match on name or playerName
       let match = characters.find(
         el => el.name?.toLowerCase() === nameLower || el.playerName?.toLowerCase() === nameLower
       );
+      // Prefix match: rollUser might be "CharName TraitName AttackName" from optimistic rolls
+      if (!match) {
+        match = characters.find(
+          el => (el.name && nameLower.startsWith(el.name.toLowerCase())) ||
+                (el.playerName && nameLower.startsWith(el.playerName.toLowerCase()))
+        );
+      }
       // Fall back to the only character when there's exactly one and no name match.
       if (!match && characters.length === 1) match = characters[0];
       if (!match) return;
@@ -384,8 +539,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       // el.hope undefined means the track is at full but the field was never written — treat as maxHope.
       const currentHope = match.hope ?? maxHope;
       const newHope = Math.min(currentHope + 1, maxHope);
-      // Always update and pulse, even if the increment is capped (hope was already full but
-      // undefined — this writes the explicit value so the track reflects the state).
+      // Always update and pulse, even if the increment is capped.
       const updates = { hope: newHope };
       if (dominant === 'critical') {
         const currentStress = match.currentStress ?? 0;
@@ -393,6 +547,68 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
       updateActiveElement(match.instanceId, updates);
       triggerHopePulse(match.instanceId);
+    }
+  };
+
+  // Receives the full roll object from RolzRoomLog: { dominant, total, hopeResult, fearResult,
+  // characterName, rollUser, subItems }. Enqueues it for 3D dice animation.
+  // If an optimistic roll is at the front of the queue (from an immediate click), replace it
+  // with the confirmed real data (marked _update: true for DiceRoller to handle in-place).
+  const handleDaggerheartRoll = (rollData) => {
+    // Broadcast confirmed roll to all players (GM only, fire-and-forget)
+    onDiceRollBroadcast?.(rollData);
+    setDiceRollQueue(prev => {
+      if (prev.length > 0 && prev[0]._optimistic) {
+        // Preserve the optimistic rollUser (constructed with full context at click time)
+        // over the Rolz-derived characterName/rollUser which are lossy text reconstructions.
+        const { rollUser } = prev[0];
+        return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
+      }
+      return [...prev, rollData];
+    });
+  };
+
+  // Compute pulse/element-update ack payload for broadcasting to players.
+  const computeRollAck = (dominant, rollUser) => {
+    const pulses = [];
+    const elementUpdates = [];
+    if (dominant === 'fear') {
+      pulses.push({ type: 'fear' });
+      elementUpdates.push({ type: 'fearCount', newValue: Math.min(fearCount + 1, 12) });
+    } else if (dominant === 'hope' || dominant === 'critical') {
+      const chars = activeElements.filter(el => el.elementType === 'character');
+      if (!chars.length) return { pulses, elementUpdates };
+      const nameLower = (rollUser || '').toLowerCase().trim();
+      let match = chars.find(el => el.name?.toLowerCase() === nameLower || el.playerName?.toLowerCase() === nameLower);
+      if (!match) {
+        match = chars.find(
+          el => (el.name && nameLower.startsWith(el.name.toLowerCase())) ||
+                (el.playerName && nameLower.startsWith(el.playerName.toLowerCase()))
+        );
+      }
+      if (!match && chars.length === 1) match = chars[0];
+      if (!match) return { pulses, elementUpdates };
+      const maxHope = match.maxHope ?? 6;
+      const currentHope = match.hope ?? maxHope;
+      const newHope = Math.min(currentHope + 1, maxHope);
+      pulses.push({ type: 'hope', instanceId: match.instanceId });
+      elementUpdates.push({ instanceId: match.instanceId, updates: { hope: newHope } });
+      if (dominant === 'critical') {
+        elementUpdates.push({ instanceId: match.instanceId, updates: { currentStress: Math.max(0, (match.currentStress ?? 0) - 1) } });
+      }
+    }
+    return { pulses, elementUpdates };
+  };
+
+  // Called by DiceRoller after animation + banner dismiss. Apply game side-effects now.
+  // Skip side effects if the roll was dismissed while still optimistic (real data not yet arrived).
+  const handleDiceRollComplete = (roll) => {
+    console.log('[DamageDrop] handleDiceRollComplete:', { dominant: roll.dominant, rollUser: roll.rollUser, _optimistic: roll._optimistic });
+    setDiceRollQueue(prev => prev.slice(1));
+    if (!roll._optimistic) {
+      const ackData = computeRollAck(roll.dominant, roll.rollUser);
+      applyRollSideEffects(roll.dominant, roll.rollUser);
+      onDiceAckBroadcast?.(ackData);
     }
   };
   const handleSpendHope = (instanceId) => {
@@ -414,6 +630,28 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     updateActiveElement(instanceId, { hope: currentHope - 3, selectedExperienceIndex: null });
     triggerHopePulse(instanceId);
   };
+
+  // Player: handle dice-ack event — dismiss banner and apply element updates from GM
+  const playerDiceRollerRef = useRef(null);
+  useEffect(() => {
+    if (!isPlayer || !playerDiceAck) return;
+    // Dismiss the player's banner
+    playerDiceRollerRef.current?.dismiss();
+    // Apply element updates (hope, stress, hp changes)
+    if (Array.isArray(playerDiceAck.elementUpdates)) {
+      playerDiceAck.elementUpdates.forEach(({ instanceId, updates }) => {
+        if (instanceId) updateActiveElement(instanceId, updates);
+      });
+    }
+    // Trigger local pulse animations for visible elements
+    if (Array.isArray(playerDiceAck.pulses)) {
+      playerDiceAck.pulses.forEach(pulse => {
+        if (pulse.type === 'hope' && pulse.instanceId) triggerHopePulse(pulse.instanceId);
+        if (pulse.type === 'damage' && pulse.instanceId) triggerDamagePulse(pulse.instanceId);
+      });
+    }
+    setPlayerDiceAck?.(null);
+  }, [playerDiceAck, isPlayer]);
 
   const [collapsedSections, setCollapsedSections] = useState(() =>
     new Set(activeElements.length > 0 ? ['Defaults'] : [])
@@ -479,7 +717,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const instances = activeElements.filter(e => e.elementType === elType && e.id === modalItemId);
     const baseElement = instances[0];
     if (!baseElement) {
-      navigate('/gm-table', { replace: true });
+      navigate(gmUid ? `/gm-table/${gmUid}` : '/gm-table', { replace: true });
       return;
     }
     const canEditOriginal = isOwnItem(baseElement);
@@ -499,7 +737,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   const closeEditModal = () => {
     setEditState(null);
-    navigate('/gm-table', { replace: true });
+    navigate(gmUid ? `/gm-table/${gmUid}` : '/gm-table', { replace: true });
   };
 
   const handleAddPotentialAdversary = async (adversaryId) => {
@@ -513,7 +751,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
 
   const handleEditClick = (instances, baseElement, collection) => {
-    navigate(`/gm-table/${collection}/${baseElement.id}`);
+    navigate(gmUid ? `/gm-table/${gmUid}/${collection}/${baseElement.id}` : `/gm-table/${collection}/${baseElement.id}`);
     const canEditOriginal = isOwnItem(baseElement);
     if (!canEditOriginal) {
       setEditState({ step: 'form', item: getItemData(baseElement), collection, mode: 'copy', instances, baseElement });
@@ -567,6 +805,22 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     setPendingRolls(prev => prev.filter(p => p.id !== id));
   };
 
+  const dismissAllHoverCards = () => {
+    if (trackerHideTimerRef.current) { clearTimeout(trackerHideTimerRef.current); trackerHideTimerRef.current = null; }
+    if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
+    if (potAdvHideTimerRef.current) { clearTimeout(potAdvHideTimerRef.current); potAdvHideTimerRef.current = null; }
+    if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; }
+    if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
+    setHoveredTrackerGroup(null);
+    setHoveredCharacter(null);
+    setHoveredPotentialAdversary(null);
+    setHoveredDefaultMove(null);
+    setHoveredCompactTooltip(null);
+    setHoveredFeature(null);
+    setGmHoverOverlayActive(false);
+    setShowGmMovesOverlay(false);
+  };
+
   const handleRoll = async (feature) => {
     if (!feature._rollData && !feature._diceRoll) return;
     if (!rolzConfigured) {
@@ -575,6 +829,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       setTimeout(() => setNudgeHint(false), 6000);
       return;
     }
+    dismissAllHoverCards();
     let rollText;
     if (feature._rollData) {
       const { modifier, range, damage, trait } = feature._rollData;
@@ -595,29 +850,50 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
     const displayName = `${feature.sourceName} ${feature.name}`;
     const key = `${feature.cardKey}|${feature.featureKey}`;
-    const { id: pendingId, cleanup } = addPendingRoll(displayName, rollText);
+    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (syntheticSubItems.length > 0) {
+      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
+    }
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+      addPendingRoll(displayName, rollText);
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     } catch (err) {
-      cleanup();
-      removePendingRoll(pendingId);
+      if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Rolz roll failed:', err);
     }
   };
 
   const handleCardRoll = async (attackData, sourceName) => {
-    if (!rolzConfigured) return;
-    const { name, modifier, range, damage, trait } = attackData;
-    const rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
+    if (!rolzConfigured) {
+      setRolzConfigOpen(true);
+      setNudgeHint(true);
+      setTimeout(() => setNudgeHint(false), 6000);
+      return;
+    }
+    dismissAllHoverCards();
+    const { name, modifier, range, damage, trait, patterns } = attackData;
+    let rollText;
+    if (patterns) {
+      const parts = [`${sourceName} ${name}`];
+      patterns.forEach(p => parts.push(`[${p}]`));
+      rollText = parts.join(' ');
+    } else {
+      rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
+    }
     const displayName = `${sourceName} ${name}`;
-    const { id: pendingId, cleanup } = addPendingRoll(displayName, rollText);
+    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (syntheticSubItems.length > 0) {
+      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
+    }
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+      addPendingRoll(displayName, rollText);
     } catch (err) {
-      cleanup();
-      removePendingRoll(pendingId);
+      if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Rolz roll failed:', err);
     }
   };
@@ -629,12 +905,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       setTimeout(() => setNudgeHint(false), 6000);
       return;
     }
-    const { id: pendingId, cleanup } = addPendingRoll(displayName || rollText, rollText);
+    dismissAllHoverCards();
+    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (syntheticSubItems.length > 0) {
+      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName || rollText }]);
+    }
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+      addPendingRoll(displayName || rollText, rollText);
     } catch (err) {
-      cleanup();
-      removePendingRoll(pendingId);
+      if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Trait roll failed:', err);
     }
   };
@@ -670,9 +951,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     for (const item of consolidatedElements) {
       if (item.kind === 'adversary-group') {
         const key = item.baseElement.id;
-        if (key === hoveredFeature.cardKey) return item;
+        if (key === hoveredFeature.cardKey) { lastHoveredElementRef.current = item; return item; }
       } else {
-        if (item.element.instanceId === hoveredFeature.cardKey) return item;
+        if (item.element.instanceId === hoveredFeature.cardKey) { lastHoveredElementRef.current = item; return item; }
       }
     }
     return null;
@@ -796,54 +1077,256 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Preview-as-player banner */}
+      {previewAsPlayerEmail && (() => {
+        const p = connectedPlayers.find(c => c.email === previewAsPlayerEmail);
+        const name = p?.name || previewAsPlayerEmail;
+        return (
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-amber-900/80 border-b border-amber-700 text-amber-200 text-xs shrink-0">
+            <div className="flex items-center gap-1.5">
+              <Eye size={12} className="shrink-0" />
+              <span>Previewing as <strong>{name}</strong></span>
+            </div>
+            <button
+              onClick={onExitPreview}
+              className="flex items-center gap-1 hover:text-white transition-colors"
+              title="Exit preview"
+            >
+              <EyeOff size={12} />
+              Exit preview
+            </button>
+          </div>
+        );
+      })()}
+      <div className="flex-1 flex overflow-hidden">
       {/* Characters Panel */}
       <div className="w-56 bg-slate-950 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
         <div className="p-3 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
-          <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
-            <Users size={15} className="text-sky-400" /> Characters
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
+              <Users size={15} className="text-sky-400" /> Characters
+            </h2>
+            {!isPlayer && (
+              <button
+                onClick={() => setShowPlayerEmailPanel(p => !p)}
+                className="text-slate-500 hover:text-sky-400 transition-colors"
+                title="Manage invited players"
+              ><Users size={13} /></button>
+            )}
+          </div>
+          {/* Player email management (GM only) */}
+          {!isPlayer && showPlayerEmailPanel && (
+            <div className="mt-2 space-y-2">
+              <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Invited Players</p>
+              {playerEmails.map(email => {
+                const connected = connectedPlayers.find(p => p.email === email);
+                const isPreviewing = previewAsPlayerEmail === email;
+                return (
+                  <div key={email} className="flex items-center gap-1.5">
+                    {connected && (
+                      <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
+                    )}
+                    <span className="flex-1 text-xs text-slate-300 truncate">{email}</span>
+                    <button
+                      onClick={() => onPreviewAsPlayer?.(isPreviewing ? null : email)}
+                      title={isPreviewing ? 'Exit preview' : `Preview as ${connected?.name || email}`}
+                      className={`shrink-0 transition-colors ${isPreviewing ? 'text-amber-400 hover:text-amber-300' : 'text-slate-500 hover:text-sky-400'}`}
+                    >
+                      {isPreviewing ? <EyeOff size={11} /> : <Eye size={11} />}
+                    </button>
+                    <button
+                      onClick={() => setPlayerEmails?.(prev => prev.filter(e => e !== email))}
+                      className="text-slate-600 hover:text-red-400 transition-colors shrink-0"
+                    ><X size={11} /></button>
+                  </div>
+                );
+              })}
+              {/* Email input with contacts autocomplete */}
+              <div className="relative">
+                <div className="flex gap-1">
+                  <input
+                    type="email"
+                    placeholder="player@email.com"
+                    value={playerEmailInput}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPlayerEmailInput(val);
+                      if (contactsDebounceRef.current) clearTimeout(contactsDebounceRef.current);
+                      if (!val.trim() || !contactsToken) { setContactSuggestions([]); return; }
+                      contactsDebounceRef.current = setTimeout(async () => {
+                        setContactsLoading(true);
+                        const results = await searchGoogleContacts(val, contactsToken);
+                        setContactsLoading(false);
+                        if (results === null) {
+                          // token expired
+                          setContactsToken(null);
+                          setContactSuggestions([]);
+                        } else {
+                          setContactSuggestions(results.filter(r => !playerEmails.includes(r.email)));
+                        }
+                      }, 300);
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') { setContactSuggestions([]); return; }
+                      if (e.key === 'Enter' && playerEmailInput.trim()) {
+                        setPlayerEmails?.(prev => prev.includes(playerEmailInput.trim()) ? prev : [...prev, playerEmailInput.trim()]);
+                        setPlayerEmailInput('');
+                        setContactSuggestions([]);
+                      }
+                    }}
+                    onBlur={() => setTimeout(() => setContactSuggestions([]), 150)}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-sky-500 min-w-0"
+                  />
+                  <button
+                    onClick={() => {
+                      if (playerEmailInput.trim()) {
+                        setPlayerEmails?.(prev => prev.includes(playerEmailInput.trim()) ? prev : [...prev, playerEmailInput.trim()]);
+                        setPlayerEmailInput('');
+                        setContactSuggestions([]);
+                      }
+                    }}
+                    className="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white text-xs rounded transition-colors shrink-0"
+                  ><Plus size={11} /></button>
+                </div>
+                {/* Autocomplete dropdown */}
+                {contactSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-0.5 bg-slate-800 border border-slate-700 rounded shadow-lg z-30 overflow-hidden">
+                    {contactSuggestions.map(({ name, email }) => (
+                      <button
+                        key={email}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => {
+                          setPlayerEmails?.(prev => prev.includes(email) ? prev : [...prev, email]);
+                          setPlayerEmailInput('');
+                          setContactSuggestions([]);
+                        }}
+                        className="w-full text-left px-2 py-1.5 hover:bg-slate-700 cursor-pointer"
+                      >
+                        {name && <span className="block text-xs text-white truncate">{name}</span>}
+                        <span className="block text-[10px] text-slate-400 truncate">{email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* Connect Google Contacts prompt */}
+                {!contactsToken && (
+                  <button
+                    onClick={async () => {
+                      const token = await requestGoogleContactsAccess();
+                      if (token) setContactsToken(token);
+                    }}
+                    className="mt-1 text-[10px] text-sky-500 hover:text-sky-400 transition-colors"
+                  >
+                    {contactsLoading ? 'Searching…' : '+ Connect Google Contacts'}
+                  </button>
+                )}
+              </div>
+              {/* Connected players */}
+              {connectedPlayers.length > 0 && (
+                <div className="pt-1 border-t border-slate-800">
+                  <p className="text-[10px] text-slate-500 mb-1">Online ({connectedPlayers.length})</p>
+                  {connectedPlayers.map(p => (
+                    <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                      <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
+                      <span className="truncate">{p.name || p.email}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {/* Player view: show who's online */}
+          {isPlayer && connectedPlayers.length > 0 && (
+            <div className="mt-2 space-y-0.5">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Online ({connectedPlayers.length})</p>
+              {connectedPlayers.map(p => (
+                <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                  <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
+                  <span className="truncate">{p.name || p.email}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="p-2 space-y-3">
           {/* + Add Character button */}
           <button
-            onClick={() => { setDialogSyncError(''); setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6, daggerstackUrl: '', daggerstackEmail: '', daggerstackPassword: '', _synced: false }); }}
+            onClick={() => {
+              if (isPlayer && onPlayerAddCharacter) {
+                setDialogSyncError('');
+                setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6, daggerstackUrl: '', daggerstackEmail: '', daggerstackPassword: '', _synced: false, _playerMode: true });
+              } else if (!isPlayer) {
+                setDialogSyncError('');
+                setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6, daggerstackUrl: '', daggerstackEmail: '', daggerstackPassword: '', _synced: false });
+              }
+            }}
             className="w-full rounded-lg border border-dashed border-sky-900/50 bg-sky-950/20 hover:border-sky-700/60 hover:bg-sky-950/40 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
             <Plus size={12} className="text-sky-500" />
             <span className="text-xs font-semibold text-sky-400">Add Character</span>
           </button>
 
-          {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => (
+          {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
+            const isMyCharacter = isPlayer && el.assignedPlayerUid === playerUid;
+            const isAssigned = !isPlayer || isMyCharacter;
+            return (
             <div
               key={el.instanceId}
-              className={`rounded-lg bg-sky-950/30 border overflow-hidden group/char transition-colors ${hopePulsingId === el.instanceId ? 'border-amber-400 hope-pulse-anim' : 'border-sky-900/40'}`}
-              onMouseEnter={(e) => showCharacterCard(el, e)}
-              onMouseLeave={scheduleHideCharacterCard}
+              className={`rounded-lg border overflow-hidden group/char transition-colors ${isMyCharacter ? 'bg-green-950/30 border-green-700/50' : 'bg-sky-950/30'} ${hopePulsingId === el.instanceId ? 'border-amber-400 hope-pulse-anim' : isMyCharacter ? '' : 'border-sky-900/40'}`}
+              onMouseEnter={(e) => !isPlayer && showCharacterCard(el, e)}
+              onMouseLeave={!isPlayer ? scheduleHideCharacterCard : undefined}
             >
               <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
-                <User size={10} className="text-sky-400 shrink-0" />
+                <User size={10} className={isMyCharacter ? 'text-green-400 shrink-0' : 'text-sky-400 shrink-0'} />
                 <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name}</span>
                 <span className="text-[10px] font-bold text-sky-400/70 bg-sky-900/50 border border-sky-800/50 rounded px-1 shrink-0 group-hover/char:hidden">T{el.tier ?? 1}</span>
                 {el.playerName && (
                   <span className="text-[10px] text-sky-300/60 truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
                 )}
-                <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => { setDialogSyncError(''); setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', tier: el.tier ?? 1, maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress, daggerstackUrl: el.daggerstackUrl || '', daggerstackEmail: el.daggerstackEmail || '', daggerstackPassword: el.daggerstackPassword || '', _synced: !!el.daggerstackUrl }); }}
-                    className="text-slate-500 hover:text-sky-400 transition-colors"
-                    title="Edit character"
-                  ><Pencil size={11} /></button>
-                  <button
-                    onClick={() => { if (window.confirm(`Remove ${el.name} from the table?`)) removeActiveElement(el.instanceId); }}
-                    className="text-slate-500 hover:text-red-400 transition-colors"
-                    title="Remove from table"
-                  ><X size={11} /></button>
-                </div>
+                {/* GM: edit/remove + assignment dropdown */}
+                {!isPlayer && (
+                  <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => { setDialogSyncError(''); setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', tier: el.tier ?? 1, maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress, daggerstackUrl: el.daggerstackUrl || '', daggerstackEmail: el.daggerstackEmail || '', daggerstackPassword: el.daggerstackPassword || '', _synced: !!el.daggerstackUrl }); }}
+                      className="text-slate-500 hover:text-sky-400 transition-colors"
+                      title="Edit character"
+                    ><Pencil size={11} /></button>
+                    <button
+                      onClick={() => { if (window.confirm(`Remove ${el.name} from the table?`)) removeActiveElement(el.instanceId); }}
+                      className="text-slate-500 hover:text-red-400 transition-colors"
+                      title="Remove from table"
+                    ><X size={11} /></button>
+                  </div>
+                )}
               </div>
+              {/* GM: player assignment dropdown */}
+              {!isPlayer && connectedPlayers.length > 0 && (
+                <div className="px-2 pt-1 pb-0.5 border-b border-sky-900/20">
+                  <select
+                    value={el.assignedPlayerUid || ''}
+                    onChange={e => updateActiveElement(el.instanceId, { assignedPlayerUid: e.target.value || undefined })}
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none focus:border-sky-500"
+                  >
+                    <option value="">Unassigned</option>
+                    {connectedPlayers.map(p => (
+                      <option key={p.uid} value={p.uid}>{p.name || p.email}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-              <div className="p-2 space-y-1.5">
+              {/* Stat block — drop zone for adversary attacks (GM or assigned player only) */}
+              <div
+                className={`p-2 space-y-1.5 rounded-b-lg transition-colors
+                  ${isAssigned && draggedRoll ? 'damage-drop-zone' : ''}
+                  ${damagePulsingId === el.instanceId ? 'damage-pulse-anim' : ''}
+                  ${dragOverId === el.instanceId ? 'damage-drop-zone-over' : ''}`}
+                onDragOver={isAssigned && draggedRoll ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOverId(el.instanceId); } : undefined}
+                onDragLeave={isAssigned && draggedRoll ? () => setDragOverId(id => id === el.instanceId ? null : id) : undefined}
+                onDrop={isAssigned && draggedRoll ? (e) => { e.preventDefault(); handleDropOnCharacter(el); } : undefined}
+              >
                 {/* Hope track */}
                 {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
                   <div className="flex items-center gap-1">
@@ -851,7 +1334,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     <CheckboxTrack
                       total={maxHope}
                       filled={el.hope ?? maxHope}
-                      onSetFilled={(h) => updateActiveElement(el.instanceId, { hope: h })}
+                      onSetFilled={isAssigned ? (h) => updateActiveElement(el.instanceId, { hope: h }) : undefined}
                       fillColor="bg-amber-400"
                       label="Hope"
                       verbs={['Gain', 'Spend']}
@@ -882,7 +1365,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     <CheckboxTrack
                       total={el.maxArmor || 0}
                       filled={el.currentArmor || 0}
-                      onSetFilled={(v) => updateActiveElement(el.instanceId, { currentArmor: v })}
+                      onSetFilled={isAssigned ? (v) => updateActiveElement(el.instanceId, { currentArmor: v }) : undefined}
                       fillColor="bg-cyan-500"
                       label="Armor"
                       verbs={['Mark', 'Clear']}
@@ -896,7 +1379,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     <CheckboxTrack
                       total={el.maxHp || 0}
                       filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
-                      onSetFilled={(dmg) => updateActiveElement(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
+                      onSetFilled={isAssigned ? (dmg) => updateActiveElement(el.instanceId, { currentHp: (el.maxHp || 0) - dmg }) : undefined}
                       fillColor="bg-red-500"
                       label="HP"
                       verbs={['Mark', 'Clear']}
@@ -910,12 +1393,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     <CheckboxTrack
                       total={el.maxStress || 0}
                       filled={el.currentStress || 0}
-                      onSetFilled={(s) => updateActiveElement(el.instanceId, { currentStress: s })}
+                      onSetFilled={isAssigned ? (s) => updateActiveElement(el.instanceId, { currentStress: s }) : undefined}
                       fillColor="bg-orange-500"
                       label="Stress"
                       verbs={['Mark', 'Clear']}
                     />
-                    {!el.conditions && !openConditions.has(el.instanceId) && (
+                    {isAssigned && !el.conditions && !openConditions.has(el.instanceId) && (
                       <button
                         onClick={() => setOpenConditions(prev => new Set([...prev, el.instanceId]))}
                         className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
@@ -931,7 +1414,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     placeholder="Conditions..."
                     autoFocus={openConditions.has(el.instanceId) && !el.conditions}
                     value={el.conditions || ''}
-                    onChange={e => updateActiveElement(el.instanceId, { conditions: e.target.value })}
+                    readOnly={!isAssigned}
+                    onChange={isAssigned ? e => updateActiveElement(el.instanceId, { conditions: e.target.value }) : undefined}
                     onBlur={() => {
                       if (!el.conditions) {
                         setOpenConditions(prev => { const s = new Set(prev); s.delete(el.instanceId); return s; });
@@ -942,7 +1426,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
               </div>
             </div>
-          ))}
+          );
+          })}
 
           {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
             <div className="text-center text-slate-600 text-xs py-6">
@@ -955,11 +1440,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       {/* GM Moves hover overlay */}
       {showGmMovesOverlay && (
       <div
-        className="fixed z-[55] bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col overflow-hidden"
-        style={{ right: 'calc(14rem + 8px)', top: '8px', width: '20rem', maxHeight: 'calc(100vh - 16px)' }}
+        className="fixed z-[55]"
+        style={{ right: 'calc(14rem)', paddingRight: '8px', top: '8px', width: 'calc(20rem + 8px)', maxHeight: 'calc(100vh - 16px)' }}
         onMouseEnter={cancelHideGmMoves}
         onMouseLeave={() => { setShowGmMovesOverlay(false); if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; } }}
       >
+      <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 16px)' }}>
         <div className="p-3 bg-slate-950 border-b border-slate-700 sticky top-0 z-10 rounded-t-xl shrink-0">
           <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
             <Zap size={16} className="text-yellow-500" /> GM Moves
@@ -996,6 +1482,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       <div
                         key={`${feature.id}-${idx}`}
                         onMouseEnter={(e) => {
+                          if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
                           setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey });
                           if (feature._isRoleMove || feature.featureKey === 'attack') {
                             const rect = e.currentTarget.getBoundingClientRect();
@@ -1005,6 +1492,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         onMouseLeave={() => {
                           setHoveredFeature(null);
                           if (feature._isRoleMove || feature.featureKey === 'attack') setHoveredCompactTooltip(null);
+                          gmHoverHideTimer.current = setTimeout(() => { setGmHoverOverlayActive(false); gmHoverHideTimer.current = null; }, 120);
                         }}
                         onClick={(category === 'Fear Actions' || canRoll) ? () => {
                           if (category === 'Fear Actions') {
@@ -1131,10 +1619,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           </div>
         </div>
       </div>
+      </div>
       )}
 
       {/* Center Column */}
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-slate-950">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-slate-950 relative">
         {/* Rolz room log strip — self-managing */}
         {rolzConfigOpen || !rolzRoomName ? (
           <div className="shrink-0 border-b border-slate-800 bg-slate-950">
@@ -1204,8 +1693,19 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           />
         )}
 
-        {/* Whiteboard — self-managing */}
-        <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col">
+        {/* Whiteboard — self-managing; relative so the DiceRoller overlay anchors here */}
+        <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
+          <DiceRoller
+            ref={isPlayer ? playerDiceRollerRef : diceRollerRef}
+            roll={isPlayer ? playerDiceRollQueue[0] : diceRollQueue[0]}
+            onComplete={isPlayer
+              ? (roll) => setPlayerDiceRollQueue?.(prev => prev.slice(1))
+              : handleDiceRollComplete
+            }
+            onDragStart={isPlayer ? undefined : handleRollDragStart}
+            onDragEnd={isPlayer ? undefined : handleRollDragEnd}
+            disableDismiss={isPlayer}
+          />
           {!iframeSrc ? (
             <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">
               <Monitor size={32} className="opacity-40" />
@@ -1272,9 +1772,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
       </div>
 
-      {/* Encounter Panel */}
-      <div className="w-56 bg-slate-950 border-l border-slate-800 flex flex-col overflow-y-auto shrink-0">
-        <div className="p-3 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
+      {/* Encounter Panel — hidden for players */}
+      {!isPlayer && <div className="w-56 bg-slate-950 border-l border-slate-800 flex flex-col overflow-y-auto shrink-0">
+        <div className="px-2 py-2 bg-slate-950 border-b border-slate-800 sticky top-0 z-10 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
               <Swords size={15} className="text-red-400" /> Encounter
@@ -1297,59 +1797,37 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               ><Trash2 size={13} /></button>
             </div>
           </div>
-        </div>
-
-        {/* Fear tracker */}
-        <div className="px-2 pt-2 pb-1 sticky top-[41px] z-10 bg-slate-950 border-b border-slate-800">
+          {/* + Add menu (Adversary, Environment, Scene) */}
           <div
-            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-purple-500 bg-purple-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
+            className="relative"
+            ref={addMenuRef}
+            onMouseLeave={() => setAddMenuOpen(false)}
           >
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-purple-300' : 'text-purple-500'}`} />
-              <CheckboxTrack
-                total={6}
-                filled={Math.min(fearCount, 6)}
-                onSetFilled={(v) => setFearCount && setFearCount(v)}
-                fillColor="bg-purple-500"
-                label="Fear"
-                verbs={['Gain', 'Spend']}
-                currentAbsoluteValue={fearCount}
-                targetToAbsolute={(v) => v}
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Flame size={12} className="shrink-0 invisible" />
-              <CheckboxTrack
-                total={6}
-                filled={Math.max(0, fearCount - 6)}
-                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
-                fillColor="bg-purple-500"
-                label="Fear"
-                verbs={['Gain', 'Spend']}
-                currentAbsoluteValue={fearCount}
-                targetToAbsolute={(v) => v + 6}
-              />
-            </div>
+            <button
+              onClick={() => setAddMenuOpen(p => !p)}
+              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-slate-500 bg-slate-800/60' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`}
+            >
+              <Plus size={12} className="text-slate-400" />
+              <span className="text-xs font-semibold text-slate-400">Add...</span>
+            </button>
+            {addMenuOpen && (
+              <div className="absolute left-0 right-0 top-full z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
+                {[
+                  { col: 'adversaries', label: 'Adversary' },
+                  { col: 'environments', label: 'Environment' },
+                  { col: 'scenes', label: 'Scene' },
+                ].map(({ col, label }) => (
+                  <button
+                    key={col}
+                    onClick={() => { setModalOpen(col); setAddMenuOpen(false); }}
+                    className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-
-        {/* GM Moves hover trigger */}
-        <div className="px-2 pb-1 sticky top-[85px] z-10 bg-slate-950 border-b border-slate-800">
-          <div
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${showGmMovesOverlay ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
-            onMouseEnter={showGmMoves}
-            onMouseLeave={scheduleHideGmMoves}
-          >
-            <Zap size={14} className="text-yellow-500 shrink-0" />
-            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">GM Moves</span>
-            {(() => {
-              const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
-              return count > 0 ? <span className="text-[10px] text-slate-500 tabular-nums">{count}</span> : null;
-            })()}
-          </div>
-        </div>
-
-        <div className="p-2 space-y-3">
           {/* Battle Budget card */}
           <div className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
             <button
@@ -1466,39 +1944,53 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               </div>
             )}
           </div>
-
-          {/* + Add menu (Adversary, Environment, Scene) */}
+          {/* Fear tracker */}
           <div
-            className="relative"
-            ref={addMenuRef}
-            onMouseLeave={() => setAddMenuOpen(false)}
+            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-purple-500 bg-purple-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
           >
-            <button
-              onClick={() => setAddMenuOpen(p => !p)}
-              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-slate-500 bg-slate-800/60' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`}
-            >
-              <Plus size={12} className="text-slate-400" />
-              <span className="text-xs font-semibold text-slate-400">Add...</span>
-            </button>
-            {addMenuOpen && (
-              <div className="absolute left-0 right-0 top-full z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
-                {[
-                  { col: 'adversaries', label: 'Adversary' },
-                  { col: 'environments', label: 'Environment' },
-                  { col: 'scenes', label: 'Scene' },
-                ].map(({ col, label }) => (
-                  <button
-                    key={col}
-                    onClick={() => { setModalOpen(col); setAddMenuOpen(false); }}
-                    className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-purple-300' : 'text-purple-500'}`} />
+              <CheckboxTrack
+                total={6}
+                filled={Math.min(fearCount, 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v)}
+                fillColor="bg-purple-500"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+                currentAbsoluteValue={fearCount}
+                targetToAbsolute={(v) => v}
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Flame size={12} className="shrink-0 invisible" />
+              <CheckboxTrack
+                total={6}
+                filled={Math.max(0, fearCount - 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
+                fillColor="bg-purple-500"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+                currentAbsoluteValue={fearCount}
+                targetToAbsolute={(v) => v + 6}
+              />
+            </div>
           </div>
+          {/* GM Moves hover trigger */}
+          <div
+            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${showGmMovesOverlay ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
+            onMouseEnter={showGmMoves}
+            onMouseLeave={scheduleHideGmMoves}
+          >
+            <Zap size={14} className="text-yellow-500 shrink-0" />
+            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">GM Moves</span>
+            {(() => {
+              const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
+              return count > 0 ? <span className="text-[10px] text-slate-500 tabular-nums">{count}</span> : null;
+            })()}
+          </div>
+        </div>
 
+        <div className="p-2 space-y-3">
           {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
             const el = item.element;
             return (
@@ -1577,7 +2069,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   {instances.map((inst, idx) => {
                     const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
                     return (
-                      <div key={inst.instanceId} className="space-y-1">
+                      <div
+                        key={inst.instanceId}
+                        className={`space-y-1 rounded transition-colors
+                          ${draggedRoll ? 'damage-drop-zone' : ''}
+                          ${damagePulsingId === inst.instanceId ? 'damage-pulse-anim' : ''}
+                          ${dragOverId === inst.instanceId ? 'damage-drop-zone-over' : ''}`}
+                        onDragOver={draggedRoll ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOverId(inst.instanceId); } : undefined}
+                        onDragLeave={draggedRoll ? () => setDragOverId(id => id === inst.instanceId ? null : id) : undefined}
+                        onDrop={draggedRoll ? (e) => { e.preventDefault(); handleDropOnAdversary(inst, displayEl); } : undefined}
+                      >
                         {(count > 1 || budgetCardOpen) && (
                           <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
                             {count > 1 && <span className="text-slate-600 font-medium">#{idx + 1}</span>}
@@ -1665,7 +2166,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
     {characterDialog && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setCharacterDialog(null)}>
@@ -1878,6 +2379,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     ...cleanDsFields,
                     ...dsCredentials,
                   });
+                } else if (isPlayer && onPlayerAddCharacter) {
+                  onPlayerAddCharacter({
+                    name: characterDialog.name.trim(),
+                    playerName: characterDialog.playerName.trim(),
+                    tier: characterDialog.tier ?? 1,
+                    maxHope: characterDialog.maxHope,
+                    maxHp: characterDialog.maxHp,
+                    maxStress: characterDialog.maxStress,
+                  });
                 } else {
                   addToTable({
                     elementType: 'character',
@@ -1971,7 +2481,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <div
         ref={trackerOverlayRef}
         className="fixed z-[55]"
-        style={{ right: 'calc(14rem + 12px)', top: (hoveredTrackerGroup.top + hoveredTrackerGroup.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: '26rem', maxHeight: 'calc(100vh - 16px)' }}
+        style={{ right: 'calc(14rem)', paddingRight: '12px', top: (hoveredTrackerGroup.top + hoveredTrackerGroup.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100vh - 16px)' }}
         onMouseEnter={cancelHideTracker}
         onMouseLeave={() => setHoveredTrackerGroup(null)}
       >
@@ -2008,6 +2518,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     featureCountdowns={featureCountdowns}
                     updateCountdown={null}
                     onAddAdversary={handleAddPotentialAdversary}
+                    onPotentialAdversaryHover={handlePotentialAdversaryHover}
+                    onPotentialAdversaryLeave={schedulHidePotAdv}
                   />
                 </>
               );
@@ -2054,7 +2566,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     showInstanceRemove={false}
                     featureCountdowns={featureCountdowns}
                     updateCountdown={null}
-                    onRollAttack={null}
+                    onRollAttack={(data) => handleCardRoll(data, liveBaseElement.name)}
                     damageBoost={tableDamageBoost || liveBaseElement._damageBoost || null}
                     scaledMeta={null}
                     onScaledToggle={null}
@@ -2062,6 +2574,43 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 </>
               );
             })()}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Potential adversary hover card — shown to the left of the environment hover card */}
+    {hoveredPotentialAdversary && (
+      <div
+        ref={potAdvOverlayRef}
+        className="fixed z-[56]"
+        style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (hoveredPotentialAdversary.top + hoveredPotentialAdversary.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100vh - 16px)' }}
+        onMouseEnter={cancelHidePotAdv}
+        onMouseLeave={() => setHoveredPotentialAdversary(null)}
+      >
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100vh - 16px)' }}>
+          <div className="p-5 relative">
+            {hoveredPotentialAdversary.element.imageUrl && (
+              <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
+                <img src={hoveredPotentialAdversary.element.imageUrl} alt={hoveredPotentialAdversary.element.name} className="w-full h-full object-cover opacity-80" />
+              </div>
+            )}
+            <h3 className="text-xl font-bold text-white mb-1 pr-16">{hoveredPotentialAdversary.element.name}</h3>
+            <AdversaryCardContent
+              element={hoveredPotentialAdversary.element}
+              hoveredFeature={null}
+              cardKey={hoveredPotentialAdversary.element.id}
+              count={1}
+              instances={[]}
+              updateFn={null}
+              showInstanceRemove={false}
+              featureCountdowns={featureCountdowns}
+              updateCountdown={null}
+              onRollAttack={(data) => handleCardRoll(data, hoveredPotentialAdversary.element.name)}
+              damageBoost={null}
+              scaledMeta={null}
+              onScaledToggle={null}
+            />
           </div>
         </div>
       </div>
@@ -2093,28 +2642,33 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     )}
 
     {/* Hover overlay: shown when a GM Moves item is hovered */}
-    {hoveredElement && (
+    {(hoveredElement || gmHoverOverlayActive) && (() => {
+      const displayElement = hoveredElement || lastHoveredElementRef.current;
+      if (!displayElement) return null;
+      return (
       <div
-        className="fixed z-50 pointer-events-none"
+        className="fixed z-50"
         style={{ right: 'calc(34rem + 20px)', top: '50%', transform: 'translateY(-50%)', width: '26rem', maxHeight: '80vh' }}
+        onMouseEnter={() => { if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; } setGmHoverOverlayActive(true); }}
+        onMouseLeave={() => { setGmHoverOverlayActive(false); }}
       >
         <div ref={overlayScrollRef} className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
-          {hoveredElement.kind === 'environment' ? (
+          {displayElement.kind === 'environment' ? (
             <div className="p-5 relative">
-              {hoveredElement.element.imageUrl && (
+              {displayElement.element.imageUrl && (
                 <div
                   className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
-                  onClick={() => setLightboxUrl(hoveredElement.element.imageUrl)}
+                  onClick={() => setLightboxUrl(displayElement.element.imageUrl)}
                 >
-                  <img src={hoveredElement.element.imageUrl} alt={hoveredElement.element.name} className="w-full h-full object-cover opacity-80" />
+                  <img src={displayElement.element.imageUrl} alt={displayElement.element.name} className="w-full h-full object-cover opacity-80" />
                 </div>
               )}
               <div>
-                <h3 className={`text-xl font-bold text-white mb-1 ${hoveredElement.element.imageUrl ? 'pr-20' : ''}`}>{hoveredElement.element.name}</h3>
+                <h3 className={`text-xl font-bold text-white mb-1 ${displayElement.element.imageUrl ? 'pr-20' : ''}`}>{displayElement.element.name}</h3>
                 <EnvironmentCardContent
-                  element={hoveredElement.element}
+                  element={displayElement.element}
                   hoveredFeature={hoveredFeature}
-                  cardKey={hoveredElement.element.instanceId}
+                  cardKey={displayElement.element.instanceId}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
                   onAddAdversary={handleAddPotentialAdversary}
@@ -2122,7 +2676,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               </div>
             </div>
           ) : (() => {
-            const el = hoveredElement.baseElement;
+            const el = displayElement.baseElement;
             const showScaled = scaledToggleState[el.id] ?? true;
             const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
             const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
@@ -2139,21 +2693,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               <div>
                 <h3 className={`text-xl font-bold text-white mb-1 ${el.imageUrl ? 'pr-20' : ''}`}>
                   {displayEl.name}
-                  {hoveredElement.instances.length > 1 && (
-                    <span className="text-slate-400 font-normal ml-1.5">×{hoveredElement.instances.length}</span>
+                  {displayElement.instances.length > 1 && (
+                    <span className="text-slate-400 font-normal ml-1.5">×{displayElement.instances.length}</span>
                   )}
                 </h3>
                 <AdversaryCardContent
                   element={displayEl}
                   hoveredFeature={hoveredFeature}
                   cardKey={el.id}
-                  count={hoveredElement.instances.length}
-                  instances={hoveredElement.instances}
+                  count={displayElement.instances.length}
+                  instances={displayElement.instances}
                   updateFn={updateActiveElement}
                   showInstanceRemove={false}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
-                  onRollAttack={null}
+                  onRollAttack={(data) => handleCardRoll(data, el.name)}
                   scaledMeta={scaledMeta}
                   onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
                 />
@@ -2163,7 +2717,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           })()}
         </div>
       </div>
-    )}
+      );
+    })()}
     {lightboxUrl && (
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
@@ -2192,9 +2747,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         <div
           className="fixed z-[55] flex flex-col"
           style={{
-            left: 'calc(14rem + 8px)',
+            left: 'calc(14rem)',
+            paddingLeft: '8px',
             top: 8,
-            width: '22rem',
+            width: 'calc(22rem + 8px)',
             height: 'calc(100vh - 16px)',
           }}
           onMouseEnter={cancelHideCharacterCard}
@@ -2215,6 +2771,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       );
     })()}
 
+      </div>{/* end flex-1 flex overflow-hidden */}
     </div>
   );
 }
