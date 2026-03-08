@@ -44,15 +44,16 @@ export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, va
         title = `${label} → ${targetValue + valueOffset}`;
       }
     }
+    const El = onSetFilled ? 'button' : 'div';
     items.push(
-      <button
+      <El
         key={i}
-        onClick={() => onSetFilled(targetValue)}
-        title={title}
+        onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
+        title={onSetFilled ? title : undefined}
         className={`w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${
           isChecked
             ? `${fillColor} border-transparent`
-            : 'border-slate-600 hover:border-slate-400'
+            : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700'
         }`}
       />
     );

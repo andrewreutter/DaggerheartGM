@@ -196,17 +196,6 @@
   animation: damage-pulse 1.8s ease-out forwards;
 }
 
-/* Drop zone highlight — valid target while dragging a damage roll */
-.damage-drop-zone {
-  outline: 1px dashed rgba(239, 68, 68, 0.4);
-  outline-offset: 2px;
-  transition: background-color 0.1s;
-}
-.damage-drop-zone-over {
-  outline: 2px solid rgba(239, 68, 68, 0.8);
-  outline-offset: 2px;
-  background-color: rgba(127, 29, 29, 0.25) !important;
-}
 
 /* Dice result banner: fade in, hold, then fade out */
 @keyframes dice-banner-in {

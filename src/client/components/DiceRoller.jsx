@@ -166,7 +166,7 @@ function Spinner({ lg = false }) {
 
 // ── Result Banner ───────────────────────────────────────────────────────────
 
-function ResultBanner({ roll, hasMore, resolved, onDismiss, onDragStart, onDragEnd }) {
+function ResultBanner({ roll, hasMore, resolved, onDismiss, targets, onApplyDamage, disableDismiss }) {
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = characterName || rollUser || '';
 
@@ -178,10 +178,8 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, onDragStart, onDragE
 
   const actionItems = (roll.subItems || []).filter(s => !/damage/i.test(s.pre || ''));
   const damageSub   = (roll.subItems || []).find(s => /damage/i.test(s.pre || '') && s.input);
-  // Always parse structure; spinners replace individual numbers when !resolved.
   const dmg         = parseDiceSub(damageSub);
   const hasDamage   = resolved && dmg != null;
-
 
   // DH rolls: label + numeric value for each non-damage sub-item.
   const dhParts = isDaggerheart
@@ -198,7 +196,6 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, onDragStart, onDragE
   const genericTotal  = total ?? computeActionTotal(roll.subItems);
 
   // Color schemes for DH (hope/fear) vs generic rolls.
-  // Stay neutral until resolved so the hope/fear color doesn't spoil the result.
   const neutralScheme = { card: 'bg-slate-900/90 border-2 border-sky-500/60 text-sky-100', ghost: 'bg-slate-900/70 border-2 border-sky-500/40', detail: 'text-sky-200/60' };
   const scheme = (!resolved || !isDaggerheart)
     ? neutralScheme
@@ -206,14 +203,28 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, onDragStart, onDragE
       ? { card: 'bg-amber-900/90 border-2 border-amber-400 text-amber-50', ghost: 'bg-amber-900/70 border-2 border-amber-400/50', detail: 'text-amber-400/80' }
       : { card: 'bg-purple-950/90 border-2 border-purple-500/60 text-purple-100', ghost: 'bg-purple-950/70 border-2 border-purple-500/40', detail: 'text-purple-200/60' };
 
+  // Whether to show action buttons (only for GM once resolved)
+  const showActions = resolved && !disableDismiss;
+
+  // Character rolls target adversaries; adversary/other rolls target characters.
+  // Match the roll source against character target names (exact or prefix).
+  const allTargets = targets || [];
+  const rollSrc = (rollUser || characterName || '').toLowerCase().trim();
+  const isCharacterRoll = rollSrc
+    ? allTargets.some(t => t.type === 'character' && (
+        t.name.toLowerCase() === rollSrc ||
+        rollSrc.startsWith(t.name.toLowerCase())
+      ))
+    : false;
+  const filteredTargets = isCharacterRoll
+    ? allTargets.filter(t => t.type === 'adversary')
+    : allTargets.filter(t => t.type === 'character');
+
   return (
     <div
-      className="dice-result-banner select-none cursor-pointer"
+      className="dice-result-banner select-none"
       style={{ position: 'absolute', bottom: '1.5rem', left: '50%', transform: 'translateX(-50%)', zIndex: 20, pointerEvents: 'auto' }}
-      onClick={onDismiss}
-      title={hasDamage ? 'Drag damage to a target · click to dismiss' : 'Click to dismiss'}
     >
-      {/* Inline wrapper so the ghost can be positioned relative to the card */}
       <div style={{ position: 'relative', display: 'inline-block' }}>
         {/* Ghost card — visible when another roll is queued */}
         {hasMore && (
@@ -276,40 +287,63 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, onDragStart, onDragE
             )}
           </div>
 
-          {/* ── Damage line — draggable to apply damage to a target ── */}
+          {/* ── Damage line ── */}
           {dmg && (
-            <>
-              <div
-                className={`flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug rounded px-1 -mx-1 transition-colors ${hasDamage ? 'cursor-grab active:cursor-grabbing hover:bg-red-900/30' : ''}`}
-                draggable={hasDamage}
-                onDragStart={hasDamage ? (e) => {
-                  e.dataTransfer.setData('text/plain', String(dmg.total));
-                  e.dataTransfer.effectAllowed = 'copy';
-                  onDragStart?.(roll, dmg.total);
-                } : undefined}
-                onDragEnd={hasDamage ? () => onDragEnd?.() : undefined}
-              >
-                <span className="text-[11px] text-red-300/60">
-                  {dmg.notation} {resolved ? dmg.dieValue : <Spinner />}
-                  {dmg.modifier !== 0 && (
-                    <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
-                  )}
-                  {' ='}
-                </span>
-                <span className="text-lg font-black tabular-nums text-red-300 ml-1">
-                  {resolved ? dmg.total : <Spinner />}
-                </span>
-                {dmg.type && (
-                  <span className="text-sm font-semibold text-red-300/80 ml-0.5">{dmg.type}</span>
+            <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
+              <span className="text-[11px] text-red-300/60">
+                {dmg.notation} {resolved ? dmg.dieValue : <Spinner />}
+                {dmg.modifier !== 0 && (
+                  <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
                 )}
-                <span className="text-sm font-semibold text-red-300/80">damage</span>
-              </div>
-              {resolved && (
-                <div className="text-[10px] text-red-300/40 mt-1.5 text-center leading-none pointer-events-none">
-                  ↕ drag to apply
-                </div>
+                {' ='}
+              </span>
+              <span className="text-lg font-black tabular-nums text-red-300 ml-1">
+                {resolved ? dmg.total : <Spinner />}
+              </span>
+              {dmg.type && (
+                <span className="text-sm font-semibold text-red-300/80 ml-0.5">{dmg.type}</span>
               )}
-            </>
+              <span className="text-sm font-semibold text-red-300/80">damage</span>
+            </div>
+          )}
+
+          {/* ── Action row: target badges or Acknowledge ── */}
+          {showActions && (
+            <div className="mt-2.5 pt-2 border-t border-white/10">
+              {hasDamage ? (
+                <>
+                  <div className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider">Apply to</div>
+                  <div className="flex flex-wrap justify-center gap-1">
+                    {filteredTargets.map(t => (
+                      <button
+                        key={t.instanceId}
+                        onClick={() => { onApplyDamage?.(t, dmg.total); onDismiss?.(); }}
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                          t.type === 'character'
+                            ? 'bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-500'
+                            : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                        }`}
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                    <button
+                      onClick={onDismiss}
+                      className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  onClick={onDismiss}
+                  className="w-full px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                >
+                  Acknowledge
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -319,7 +353,7 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, onDragStart, onDragE
 
 // ── DiceRoller ──────────────────────────────────────────────────────────────
 
-export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onDragStart, onDragEnd, disableDismiss = false }, ref) {
+export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, targets, onApplyDamage, disableDismiss = false }, ref) {
   const containerRef    = useRef(null);
   const containerIdRef  = useRef(`dice-canvas-container-${Date.now()}`);
   const diceBoxRef      = useRef(null);
@@ -334,8 +368,10 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
   const [bannerResolved, setBannerResolved] = useState(false);
   const [queueLen, setQueueLen]             = useState(0);
 
-  // Called when dragging the banner to a target — same sequence as a click dismiss.
   function dismissBanner() {
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:dismissBanner',message:'banner dismissed',data:{disableDismiss,queueLen:queueRef.current.length,bannerResolved:animDoneRef.current},timestamp:Date.now(),hypothesisId:'H-F H-G'})}).catch(()=>{});
+    // #endregion
     const current = queueRef.current[0];
     setBanner(null);
     setBannerResolved(false);
@@ -354,14 +390,10 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
     const db = diceBoxRef.current;
     if (!db) return;
 
-    // Pre-create all colorsets (may involve async texture loading on first use)
     const colorSets = await Promise.all(
       groups.map(g => db.DiceColors.makeColorSet(getColorsetForLabel(g.label)))
     );
 
-    // Bypass roll()/add() — they use a global colorset and add() clears dice
-    // mid-animation. Instead, drive the internal spawn→simulate→animate pipeline
-    // directly so every group's dice fly simultaneously with correct colors.
     db.clearDice();
 
     const allVectors = [];
@@ -418,15 +450,23 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
   }
 
   function startAnimation(groups) {
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:startAnimation',message:'animation starting',data:{groupsLen:groups.length,disableDismiss},timestamp:Date.now(),hypothesisId:'H-E H-F'})}).catch(()=>{});
+    // #endregion
     animateGroups(groups)
       .then(() => {
         animDoneRef.current = true;
-        // Only resolve spinners now if we have real (non-optimistic) data.
-        // If still optimistic, resolution is deferred until the _update arrives.
-        if (!queueRef.current[0]?._optimistic) setBannerResolved(true);
+        const isOpt = !!queueRef.current[0]?._optimistic;
+        // #region agent log
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:animDone',message:'animation complete',data:{isOptimistic:isOpt,willResolve:!isOpt,disableDismiss},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
+        // #endregion
+        if (!isOpt) setBannerResolved(true);
         setQueueLen(queueRef.current.length);
       })
-      .catch(() => {
+      .catch((err) => {
+        // #region agent log
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:animError',message:'animation error',data:{err:String(err),disableDismiss},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
+        // #endregion
         animatingRef.current = false;
         setBanner(null);
         setBannerResolved(false);
@@ -452,14 +492,10 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
 
     animatingRef.current = true;
     animDoneRef.current = false;
-    // Show banner with spinners immediately — numbers resolve when animation ends.
     setBanner(current);
     setBannerResolved(false);
 
-    // For optimistic rolls, show the banner now but defer dice animation until
-    // real Rolz data arrives via _update — we don't have actual die values yet.
     if (current._optimistic) return;
-
     if (!initDoneRef.current) return;
 
     startAnimation(groups);
@@ -489,9 +525,6 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
         if (db.desk) db.desk.visible = false;
         initDoneRef.current = true;
         diceBoxRef.current  = db;
-        // If a non-optimistic roll arrived before init completed, its banner is
-        // already showing — kick off the dice animation now. Optimistic rolls wait
-        // for real data via _update, so don't start animation for those.
         if (animatingRef.current && queueRef.current.length && !queueRef.current[0]._optimistic) {
           const groups = parseRollDice(queueRef.current[0].subItems);
           if (groups.length) startAnimation(groups);
@@ -510,17 +543,14 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
   useEffect(() => {
     if (!roll) return;
     if (roll._update) {
-      // Replace the optimistic placeholder with confirmed Rolz data in-place.
       if (queueRef.current.length > 0 && queueRef.current[0]._optimistic) {
         const realRoll = { ...roll, _update: false, _optimistic: false };
         queueRef.current[0] = realRoll;
         setBanner(realRoll);
-        // Now kick off the dice animation with real values.
         const groups = parseRollDice(realRoll.subItems);
         if (groups.length && initDoneRef.current) {
           startAnimation(groups);
         } else if (!groups.length) {
-          // No parseable dice — just resolve the banner immediately.
           setBannerResolved(true);
         }
       }
@@ -541,9 +571,10 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, onD
           roll={banner}
           hasMore={queueLen > 1}
           resolved={bannerResolved}
-          onDismiss={disableDismiss ? undefined : dismissBanner}
-          onDragStart={disableDismiss ? undefined : onDragStart}
-          onDragEnd={disableDismiss ? undefined : onDragEnd}
+          onDismiss={dismissBanner}
+          targets={targets}
+          onApplyDamage={onApplyDamage}
+          disableDismiss={disableDismiss}
         />
       )}
     </div>

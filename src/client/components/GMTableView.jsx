@@ -195,6 +195,19 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
 }
 
 
+/** Renders N filled (marked) boxes with an icon — used in the player Encounter panel. */
+function MarkedBoxes({ count, fillColor, icon: Icon, iconColor }) {
+  if (!count || count <= 0) return null;
+  return (
+    <div className="flex items-center gap-0.5">
+      <Icon size={10} className={`${iconColor} shrink-0`} />
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className={`w-3 h-3 rounded-sm ${fillColor} flex-shrink-0`} />
+      ))}
+    </div>
+  );
+}
+
 // Strip runtime tracking fields to get the base item data for form editing.
 function getItemData(element) {
   const { instanceId, elementType, currentHp, currentStress, conditions, ...rest } = element;
@@ -448,11 +461,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     });
   };
 
-  // ── Damage-drop drag state ─────────────────────────────────────────────────
+  // ── Damage application state ─────────────────────────────────────────────
   const diceRollerRef = useRef(null);
-  const [draggedRoll, setDraggedRoll]   = useState(null); // roll being dragged, or null
-  const [dragOverId, setDragOverId]     = useState(null); // instanceId currently hovered during drag
-  const dropAppliedRef                  = useRef(false);  // true when onDrop fired before onDragEnd
+  const pendingDamageRef = useRef(null); // stash applied damage for ack broadcast
 
   const [damagePulsingId, setDamagePulsingId] = useState(null);
   const damagePulseTimerRef = useRef(null);
@@ -465,53 +476,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     });
   };
 
-  const handleRollDragStart = (roll, dmgTotal) => {
-    dropAppliedRef.current = false;
-    setDraggedRoll({ ...roll, _dmgTotal: dmgTotal });
-  };
-
-  const handleRollDragEnd = () => {
-    console.log('[DamageDrop] handleRollDragEnd, dropApplied:', dropAppliedRef.current);
-    if (dropAppliedRef.current) {
-      diceRollerRef.current?.dismiss();
-    }
-    dropAppliedRef.current = false;
-    setDraggedRoll(null);
-    setDragOverId(null);
-  };
-
-  const handleDropOnCharacter = (el) => {
-    if (!draggedRoll) return;
-    const dmgTotal = draggedRoll._dmgTotal ?? 0;
-    const hpLoss = computeHpLoss(dmgTotal, el.armorThresholds);
-    const currentHp = el.currentHp ?? el.maxHp ?? 0;
+  // Called from the banner's "Apply to" target badge.
+  const handleApplyDamage = (target, dmgTotal) => {
+    const hpLoss = computeHpLoss(dmgTotal, target.thresholds);
+    const currentHp = target.currentHp ?? target.maxHp ?? 0;
     const newHp = Math.max(0, currentHp - hpLoss);
-    console.log('[DamageDrop] character:', { name: el.name, dmgTotal, thresholds: el.armorThresholds, hpLoss, currentHp, newHp, roll: draggedRoll });
-    updateActiveElement(el.instanceId, { currentHp: newHp });
-    triggerDamagePulse(el.instanceId);
-    dropAppliedRef.current = true;
-    setDragOverId(null);
-  };
-
-  const handleDropOnAdversary = (inst, displayEl) => {
-    if (!draggedRoll) return;
-    const dmgTotal = draggedRoll._dmgTotal ?? 0;
-    const hpLoss = computeHpLoss(dmgTotal, displayEl.hp_thresholds);
-    const currentHp = inst.currentHp ?? displayEl.hp_max ?? 0;
-    const newHp = Math.max(0, currentHp - hpLoss);
-    console.log('[DamageDrop] adversary:', { name: displayEl.name, dmgTotal, thresholds: displayEl.hp_thresholds, hpLoss, currentHp, newHp, roll: draggedRoll });
-    updateActiveElement(inst.instanceId, { currentHp: newHp });
-    triggerDamagePulse(inst.instanceId);
-    dropAppliedRef.current = true;
-    setDragOverId(null);
+    updateActiveElement(target.instanceId, { currentHp: newHp });
+    triggerDamagePulse(target.instanceId);
+    pendingDamageRef.current = { instanceId: target.instanceId, newHp };
   };
 
 
   // Apply Hope/Fear side effects after the dice animation completes.
   // Separated from handleDaggerheartRoll so effects fire when the banner dismisses.
   const applyRollSideEffects = (dominant, rollUser) => {
-    const charNames = activeElements.filter(el => el.elementType === 'character').map(el => ({ name: el.name, playerName: el.playerName }));
-    console.log('[DamageDrop] applyRollSideEffects:', { dominant, rollUser, charNames });
     if (dominant === 'fear') {
       setFearCount(prev => Math.min(prev + 1, 12));
       triggerFearPulse();
@@ -603,11 +581,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // Called by DiceRoller after animation + banner dismiss. Apply game side-effects now.
   // Skip side effects if the roll was dismissed while still optimistic (real data not yet arrived).
   const handleDiceRollComplete = (roll) => {
-    console.log('[DamageDrop] handleDiceRollComplete:', { dominant: roll.dominant, rollUser: roll.rollUser, _optimistic: roll._optimistic });
     setDiceRollQueue(prev => prev.slice(1));
     if (!roll._optimistic) {
       const ackData = computeRollAck(roll.dominant, roll.rollUser);
       applyRollSideEffects(roll.dominant, roll.rollUser);
+      // Include any damage applied via the banner target badge in the ack broadcast.
+      const dmgPending = pendingDamageRef.current;
+      pendingDamageRef.current = null;
+      if (dmgPending) {
+        ackData.pulses.push({ type: 'damage', instanceId: dmgPending.instanceId });
+        ackData.elementUpdates.push({ instanceId: dmgPending.instanceId, updates: { currentHp: dmgPending.newHp } });
+      }
       onDiceAckBroadcast?.(ackData);
     }
   };
@@ -853,7 +837,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
+      const optimisticRoll = { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName };
+      setDiceRollQueue(prev => [...prev, optimisticRoll]);
+      onDiceRollBroadcast?.(optimisticRoll);
     }
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
@@ -887,7 +873,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
+      const optimisticRoll = { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName };
+      setDiceRollQueue(prev => [...prev, optimisticRoll]);
+      onDiceRollBroadcast?.(optimisticRoll);
     }
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
@@ -909,7 +897,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName || rollText }]);
+      const optimisticRoll = { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName || rollText };
+      setDiceRollQueue(prev => [...prev, optimisticRoll]);
+      onDiceRollBroadcast?.(optimisticRoll);
     }
     try {
       await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
@@ -964,6 +954,37 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const el = overlayScrollRef.current.querySelector(`[data-feature-key="${hoveredFeature.featureKey}"]`);
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }, [hoveredFeature]);
+
+  // Flat list of all hittable targets for the damage banner: characters + adversary instances.
+  const damageTargets = useMemo(() => {
+    const targets = [];
+    for (const item of consolidatedElements) {
+      if (item.kind === 'character') {
+        const el = item.element;
+        targets.push({
+          instanceId: el.instanceId,
+          name: el.name,
+          type: 'character',
+          thresholds: el.armorThresholds,
+          maxHp: el.maxHp ?? 0,
+          currentHp: el.currentHp ?? el.maxHp ?? 0,
+        });
+      } else if (item.kind === 'adversary-group') {
+        const { baseElement, instances } = item;
+        instances.forEach((inst, idx) => {
+          targets.push({
+            instanceId: inst.instanceId,
+            name: instances.length > 1 ? `${baseElement.name} #${idx + 1}` : baseElement.name,
+            type: 'adversary',
+            thresholds: baseElement.hp_thresholds,
+            maxHp: baseElement.hp_max ?? 0,
+            currentHp: inst.currentHp ?? baseElement.hp_max ?? 0,
+          });
+        });
+      }
+    }
+    return targets;
+  }, [consolidatedElements]);
 
   // Deduplicate actions by adversary id — same type only appears once in the board.
   const consolidatedMenu = useMemo(() => {
@@ -1269,14 +1290,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           </button>
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
-            const isMyCharacter = isPlayer && el.assignedPlayerUid === playerUid;
+            const isMyCharacter = isPlayer && playerUid != null && el.assignedPlayerUid === playerUid;
             const isAssigned = !isPlayer || isMyCharacter;
             return (
             <div
               key={el.instanceId}
               className={`rounded-lg border overflow-hidden group/char transition-colors ${isMyCharacter ? 'bg-green-950/30 border-green-700/50' : 'bg-sky-950/30'} ${hopePulsingId === el.instanceId ? 'border-amber-400 hope-pulse-anim' : isMyCharacter ? '' : 'border-sky-900/40'}`}
-              onMouseEnter={(e) => !isPlayer && showCharacterCard(el, e)}
-              onMouseLeave={!isPlayer ? scheduleHideCharacterCard : undefined}
+              onMouseEnter={(e) => showCharacterCard(el, e)}
+              onMouseLeave={scheduleHideCharacterCard}
             >
               <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
                 <User size={10} className={isMyCharacter ? 'text-green-400 shrink-0' : 'text-sky-400 shrink-0'} />
@@ -1317,15 +1338,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 </div>
               )}
 
-              {/* Stat block — drop zone for adversary attacks (GM or assigned player only) */}
+              {/* Stat block */}
               <div
                 className={`p-2 space-y-1.5 rounded-b-lg transition-colors
-                  ${isAssigned && draggedRoll ? 'damage-drop-zone' : ''}
-                  ${damagePulsingId === el.instanceId ? 'damage-pulse-anim' : ''}
-                  ${dragOverId === el.instanceId ? 'damage-drop-zone-over' : ''}`}
-                onDragOver={isAssigned && draggedRoll ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOverId(el.instanceId); } : undefined}
-                onDragLeave={isAssigned && draggedRoll ? () => setDragOverId(id => id === el.instanceId ? null : id) : undefined}
-                onDrop={isAssigned && draggedRoll ? (e) => { e.preventDefault(); handleDropOnCharacter(el); } : undefined}
+                  ${damagePulsingId === el.instanceId ? 'damage-pulse-anim' : ''}`}
               >
                 {/* Hope track */}
                 {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
@@ -1702,8 +1718,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               ? (roll) => setPlayerDiceRollQueue?.(prev => prev.slice(1))
               : handleDiceRollComplete
             }
-            onDragStart={isPlayer ? undefined : handleRollDragStart}
-            onDragEnd={isPlayer ? undefined : handleRollDragEnd}
+            targets={isPlayer ? [] : damageTargets}
+            onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             disableDismiss={isPlayer}
           />
           {!iframeSrc ? (
@@ -2072,12 +2088,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       <div
                         key={inst.instanceId}
                         className={`space-y-1 rounded transition-colors
-                          ${draggedRoll ? 'damage-drop-zone' : ''}
-                          ${damagePulsingId === inst.instanceId ? 'damage-pulse-anim' : ''}
-                          ${dragOverId === inst.instanceId ? 'damage-drop-zone-over' : ''}`}
-                        onDragOver={draggedRoll ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOverId(inst.instanceId); } : undefined}
-                        onDragLeave={draggedRoll ? () => setDragOverId(id => id === inst.instanceId ? null : id) : undefined}
-                        onDrop={draggedRoll ? (e) => { e.preventDefault(); handleDropOnAdversary(inst, displayEl); } : undefined}
+                          ${damagePulsingId === inst.instanceId ? 'damage-pulse-anim' : ''}`}
                       >
                         {(count > 1 || budgetCardOpen) && (
                           <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
@@ -2167,6 +2178,109 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           )}
         </div>
       </div>}
+
+      {/* Player Encounter Panel — read-only Fear + damaged adversaries */}
+      {isPlayer && (
+        <div className="w-56 bg-slate-950 border-l border-slate-800 flex flex-col overflow-y-auto shrink-0">
+          <div className="px-2 py-2 bg-slate-950 border-b border-slate-800 sticky top-0 z-10 space-y-2">
+            <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
+              <Swords size={15} className="text-red-400" /> Encounter
+            </h2>
+            {/* Fear tracker — read-only */}
+            <div className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-purple-500 bg-purple-950/60 fear-pulse-anim' : 'border-slate-700 bg-slate-900'}`}>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-purple-300' : 'text-purple-500'}`} />
+                <CheckboxTrack
+                  total={6}
+                  filled={Math.min(fearCount, 6)}
+                  fillColor="bg-purple-500"
+                  label="Fear"
+                />
+              </div>
+              {fearCount > 6 && (
+                <div className="flex items-center gap-1.5">
+                  <Flame size={12} className="shrink-0 invisible" />
+                  <CheckboxTrack
+                    total={6}
+                    filled={Math.max(0, fearCount - 6)}
+                    fillColor="bg-purple-500"
+                    label="Fear"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Damaged adversaries */}
+          <div className="p-2 space-y-2">
+            {(() => {
+              const damagedGroups = consolidatedElements
+                .filter(item => item.kind === 'adversary-group')
+                .map(item => {
+                  const { baseElement: el, instances } = item;
+                  const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
+                  const damagedInstances = instances.filter(inst => {
+                    const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
+                    const stressDamage = inst.currentStress || 0;
+                    return hpDamage > 0 || stressDamage > 0;
+                  });
+                  return { displayEl, instances, damagedInstances };
+                })
+                .filter(g => g.damagedInstances.length > 0);
+
+              if (damagedGroups.length === 0) return null;
+
+              return damagedGroups.map(({ displayEl, instances, damagedInstances }) => (
+                <div
+                  key={displayEl.id || displayEl.instanceId}
+                  className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden"
+                >
+                  <div className="px-2.5 py-1.5 border-b border-slate-800">
+                    <span className="text-xs font-semibold text-slate-200 truncate block">{displayEl.name}</span>
+                  </div>
+                  <div className="p-2 space-y-1.5">
+                    {damagedInstances.map((inst, idx) => {
+                      const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
+                      const stressDamage = inst.currentStress || 0;
+                      return (
+                        <div key={inst.instanceId} className="space-y-1">
+                          {instances.length > 1 && (
+                            <span className="text-[10px] text-slate-600 font-medium">
+                              #{instances.indexOf(inst) + 1}
+                            </span>
+                          )}
+                          {hpDamage > 0 && (
+                            <MarkedBoxes
+                              count={hpDamage}
+                              fillColor="bg-red-500"
+                              icon={Heart}
+                              iconColor="text-red-500"
+                            />
+                          )}
+                          {stressDamage > 0 && (
+                            <MarkedBoxes
+                              count={stressDamage}
+                              fillColor="bg-orange-500"
+                              icon={AlertCircle}
+                              iconColor="text-orange-500"
+                            />
+                          )}
+                          {inst.conditions && (
+                            <p className="text-[10px] text-slate-400 italic ml-3.5">{inst.conditions}</p>
+                          )}
+                          {idx < damagedInstances.length - 1 && (
+                            <div className="border-t border-slate-800 mt-1" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
 
     {characterDialog && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setCharacterDialog(null)}>
@@ -2758,12 +2872,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         >
           <CharacterHoverCard
             el={liveEl}
-            updateFn={updateActiveElement}
-            onResync={liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
+            updateFn={!isPlayer ? updateActiveElement : undefined}
+            onResync={!isPlayer && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
             isSyncing={resyncingCharId === liveEl.instanceId}
-            onRoll={handleTraitRoll}
-            onSpendHope={handleSpendHope}
-            onUseHopeAbility={handleUseHopeAbility}
+            onRoll={!isPlayer ? handleTraitRoll : undefined}
+            onSpendHope={!isPlayer ? handleSpendHope : undefined}
+            onUseHopeAbility={!isPlayer ? handleUseHopeAbility : undefined}
             onDebugMouseEnter={cancelHideCharacterCard}
             onDebugMouseLeave={() => setHoveredCharacter(null)}
           />

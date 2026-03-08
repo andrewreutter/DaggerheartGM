@@ -127,6 +127,13 @@ Server listens on `process.env.PORT` or `3456` by default. On startup, `loadSrdI
 
 **OCR fixture tests**: `node test/parse-fixtures.js` — runs fixture images through all available engines and prints a per-engine scorecard. Add fixtures to `test/fixtures/{adversaries,environments}/` whenever a card parses poorly in production.
 
+**Regression test suite**: Two layers of automated tests:
+- **Vitest unit tests** (`test/unit/*.test.js`): pure-logic modules (no browser, no DB). Run with `npm run test:unit`.
+- **Playwright browser tests** (`test/browser/*.spec.js`): full headless browser tests against a real Express server on port 3457 (`NODE_ENV=test`). Run with `npm run test:browser`. The `test/helpers/auth.js` helper mocks Firebase + API config for authenticated sessions.
+- **`npm test`**: runs both suites in sequence.
+- **Test auth bypass**: `requireAuth` in `server.js` accepts `Authorization: Bearer test-token` when `NODE_ENV=test`, setting `req.uid = 'test-user-uid'` and `req.email = 'test@example.com'`.
+- **Mandatory policy**: every bugfix MUST include a regression test. See `.cursor/rules/testing.mdc`.
+
 **Deployment**: `Dockerfile` and `fly.toml` are included for Fly.io. The image bundles Node.js + Python + EasyOCR (CPU-only) with the model pre-downloaded at build time. Allocates 1 GB RAM per VM for CPU inference.
 
 ## Rolz.org Dice Room Integration

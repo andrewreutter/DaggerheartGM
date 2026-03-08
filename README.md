@@ -80,6 +80,17 @@ DaggerheartGM/
 │   └── input.css               # Tailwind CSS entry point
 ├── server.js                   # Express server + API routes
 ├── package.json
+├── vitest.config.js            # Vitest unit test config (test/unit/**/*.test.js)
+├── playwright.config.js        # Playwright browser test config (port 3457, NODE_ENV=test)
+├── test/
+│   ├── unit/                   # Vitest unit tests for pure logic modules
+│   │   └── battle-points.test.js
+│   ├── browser/                # Playwright browser/visual regression tests
+│   │   └── smoke.spec.js
+│   ├── helpers/
+│   │   └── auth.js             # Playwright helper: mock Firebase + API for authenticated tests
+│   ├── fixtures/               # OCR parse fixture images + expected JSON
+│   └── parse-fixtures.js       # OCR engine accuracy scorecard (run manually)
 ├── .env                        # Local environment variables (never commit)
 └── .gitignore
 ```
@@ -304,6 +315,31 @@ npm run refresh:daggerstack          # regenerate Daggerstack UUID map (same as 
 ### Dev Live Reload
 
 `npm run dev` starts esbuild and Tailwind in watch mode. The server exposes `GET /livereload` — an SSE endpoint that watches `public/` for file changes and broadcasts a reload signal. `public/index.html` includes a small inline `EventSource` script that calls `location.reload()` whenever the signal arrives or the connection is re-established after a server restart. No browser extension or extra tooling needed.
+
+### Regression Test Suite
+
+The project has two layers of automated tests:
+
+| Layer | Framework | Location | Command |
+|-------|-----------|----------|---------|
+| Unit (pure logic) | Vitest | `test/unit/*.test.js` | `npm run test:unit` |
+| Browser / visual | Playwright | `test/browser/*.spec.js` | `npm run test:browser` |
+| Both | — | — | `npm test` |
+
+```bash
+npm test              # run unit + browser tests
+npm run test:unit     # Vitest only (fast, no server needed)
+npm run test:browser  # Playwright only (starts server on port 3457)
+```
+
+**Regression test policy**: every bugfix must include a test that fails without the fix and passes with it. See `.cursor/rules/testing.mdc` for detailed guidance, including how to mock Firebase auth and assert CSS properties for visual bug regressions.
+
+The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase auth bypass for `Authorization: Bearer test-token`. The `test/helpers/auth.js` helper sets up all required route mocks in one call.
+
+First-time setup (Playwright Chromium download):
+```bash
+npx playwright install chromium
+```
 
 ### OCR Engine Testing
 

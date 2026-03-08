@@ -52,8 +52,12 @@ function App() {
   const [fearCount, setFearCount] = useState(0);
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   const tableStateReadyRef = useRef(false);
+  // Set to true when table state is received via SSE from another window; suppresses one save cycle
+  // to prevent an infinite broadcast loop (receive -> save -> broadcast -> receive -> ...).
+  const sseStateReceivedRef = useRef(false);
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
+    if (sseStateReceivedRef.current) { sseStateReceivedRef.current = false; return; }
     const timer = setTimeout(() => {
       apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, tableBattleMods, fearCount, playerEmails, gmDisplayName: userRef.current?.displayName || '' });
     }, 800);
@@ -348,7 +352,7 @@ function App() {
     }
   }, [user, route.view, route.gmUid, navigate]);
 
-  // GM SSE: receive player presence and character updates
+  // GM SSE: receive player presence, character updates, and state/dice syncs from other GM windows
   useEffect(() => {
     if (!user || route.view !== 'gm-table' || isPlayer) return;
     let es;
@@ -367,6 +371,40 @@ function App() {
       es.addEventListener('character-added', (e) => {
         const character = JSON.parse(e.data);
         setActiveElements(prev => [...prev, character]);
+      });
+      // Sync table state broadcast from another GM window (e.g. primary window saving changes)
+      es.addEventListener('state', (e) => {
+        const state = JSON.parse(e.data);
+        sseStateReceivedRef.current = true;
+        if (Array.isArray(state.elements)) setActiveElements(state.elements);
+        if (state.fearCount != null) setFearCount(state.fearCount);
+        if (state.whiteboardEmbed != null) setWhiteboardEmbed(state.whiteboardEmbed);
+        if (state.rolzRoomName != null) setRolzRoomName(state.rolzRoomName);
+        if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
+        if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
+        if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+      });
+      // Dice roll/ack from the primary GM window (so preview-as-player sees dice animations)
+      es.addEventListener('dice-roll', (e) => {
+        // #region agent log
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'app.jsx:GM-SSE-dice-roll',message:'GM SSE dice-roll received',data:{previewAsPlayerEmail,isPlayer,playerDiceRollQueueLen:playerDiceRollQueue.length},timestamp:Date.now(),hypothesisId:'H-B H-C'})}).catch(()=>{});
+        // #endregion
+        const roll = JSON.parse(e.data);
+        setPlayerDiceRollQueue(prev => {
+          // Confirmed roll arriving after an optimistic one → pass _update:true so DiceRoller
+          // replaces the spinner state with the real animation in-place.
+          if (!roll._optimistic && prev.length > 0 && prev[0]._optimistic) {
+            const { rollUser } = prev[0];
+            return [{ ...roll, _update: true, _optimistic: false, rollUser: rollUser || roll.rollUser }, ...prev.slice(1)];
+          }
+          return [...prev, roll];
+        });
+      });
+      es.addEventListener('dice-ack', (e) => {
+        // #region agent log
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'app.jsx:GM-SSE-dice-ack',message:'GM SSE dice-ack received',data:{previewAsPlayerEmail,isPlayer},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
+        // #endregion
+        setPlayerDiceAck(JSON.parse(e.data));
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
@@ -886,16 +924,16 @@ function App() {
                 setRolzPassword={effectiveIsPlayer ? () => {} : setRolzPassword}
                 route={route}
                 navigate={navigate}
-                featureCountdowns={featureCountdowns}
+                featureCountdowns={isPlayer ? (playerTableState?.featureCountdowns || {}) : featureCountdowns}
                 updateCountdown={effectiveIsPlayer ? () => {} : (cardKey, featureKey, cdIdx, value) =>
                   setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
                 }
                 partySize={partySize}
                 partyTier={partyTier}
                 characters={characters}
-                tableBattleMods={tableBattleMods}
+                tableBattleMods={isPlayer ? (playerTableState?.tableBattleMods || tableBattleMods) : tableBattleMods}
                 setTableBattleMods={effectiveIsPlayer ? () => {} : setTableBattleMods}
-                fearCount={fearCount}
+                fearCount={isPlayer ? (playerTableState?.fearCount ?? 0) : fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : setFearCount}
                 clearTable={effectiveIsPlayer ? () => {} : clearTable}
                 isPlayer={effectiveIsPlayer}
