@@ -368,7 +368,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (dominant === 'fear') {
       setFearCount(prev => Math.min(prev + 1, 12));
       triggerFearPulse();
-    } else if (dominant === 'hope') {
+    } else if (dominant === 'hope' || dominant === 'critical') {
       const characters = activeElements.filter(el => el.elementType === 'character');
       if (!characters.length) return;
 
@@ -386,7 +386,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       const newHope = Math.min(currentHope + 1, maxHope);
       // Always update and pulse, even if the increment is capped (hope was already full but
       // undefined — this writes the explicit value so the track reflects the state).
-      updateActiveElement(match.instanceId, { hope: newHope });
+      const updates = { hope: newHope };
+      if (dominant === 'critical') {
+        const currentStress = match.currentStress ?? 0;
+        updates.currentStress = Math.max(0, currentStress - 1);
+      }
+      updateActiveElement(match.instanceId, updates);
       triggerHopePulse(match.instanceId);
     }
   };

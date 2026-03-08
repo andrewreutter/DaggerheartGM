@@ -340,7 +340,7 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
 
       if (!Array.isArray(item.items) || item.items.length === 0) continue;
       const dh = parseDaggerheartRoll(item.items);
-      if (!dh || dh.dominant === 'critical') continue;
+      if (!dh) continue;
 
       const cb = onDaggerheartRollRef.current;
       if (!cb) continue;
