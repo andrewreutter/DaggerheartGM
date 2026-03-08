@@ -414,6 +414,23 @@ export const fetchMe = async () => {
 };
 
 /**
+ * Sync a character from Daggerstack.com.
+ * Returns { character } with all resolved stats.
+ */
+export const syncDaggerstackCharacter = async (url, email, password) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/daggerstack/sync', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ url, email, password }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/**
  * Generate an image from a text prompt via the Hugging Face Inference API.
  * Returns { imageUrl } where imageUrl is a base64 data URL.
  */

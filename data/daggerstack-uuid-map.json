@@ -1,0 +1,1392 @@
+{
+  "2f2e3390-7e0b-4763-acd2-4935714dd5e6": {
+    "srdId": "srd-cls-bard",
+    "collection": "classes",
+    "name": "Bard"
+  },
+  "78d46ae5-4d1a-4405-ad16-0c61166ad0c2": {
+    "srdId": "srd-cls-druid",
+    "collection": "classes",
+    "name": "Druid"
+  },
+  "464ea0a6-8834-457b-9ab0-d3ec53430ec2": {
+    "srdId": "srd-cls-guardian",
+    "collection": "classes",
+    "name": "Guardian"
+  },
+  "9b9736e8-dad6-441d-a0db-3d8754a8137a": {
+    "srdId": "srd-cls-ranger",
+    "collection": "classes",
+    "name": "Ranger"
+  },
+  "868894f0-99f6-4fb8-ba8e-6917644e26a5": {
+    "srdId": "srd-cls-rogue",
+    "collection": "classes",
+    "name": "Rogue"
+  },
+  "dee1dd2d-d9fe-42d9-a33e-0882a54feaa0": {
+    "srdId": "srd-cls-seraph",
+    "collection": "classes",
+    "name": "Seraph"
+  },
+  "a8c77529-8851-4cb2-918e-94412bc4c768": {
+    "srdId": "srd-cls-sorcerer",
+    "collection": "classes",
+    "name": "Sorcerer"
+  },
+  "0ad990d0-281e-4711-92b3-ed36a466b435": {
+    "srdId": "srd-cls-warrior",
+    "collection": "classes",
+    "name": "Warrior"
+  },
+  "ae2b4486-2db1-4f64-86aa-32d1f5015857": {
+    "srdId": "srd-cls-wizard",
+    "collection": "classes",
+    "name": "Wizard"
+  },
+  "63923c44-89a4-4afd-bd0c-aa6fd449169b": {
+    "srdId": "srd-sub-wordsmith",
+    "collection": "subclasses",
+    "name": "Wordsmith"
+  },
+  "9f423ec9-13c7-4447-b20e-2912a1112f94": {
+    "srdId": "srd-sub-warden-of-the-elements",
+    "collection": "subclasses",
+    "name": "Warden of the Elements"
+  },
+  "d3465bf8-b97b-4a64-b7e8-a37a73c1e31f": {
+    "srdId": "srd-sub-stalwart",
+    "collection": "subclasses",
+    "name": "Stalwart"
+  },
+  "46dc2269-8c2e-40d3-83fc-8b019a00a2f5": {
+    "srdId": "srd-sub-vengeance",
+    "collection": "subclasses",
+    "name": "Vengeance"
+  },
+  "20ca8327-1986-456d-b61f-0dff999fb6c5": {
+    "srdId": "srd-sub-wayfinder",
+    "collection": "subclasses",
+    "name": "Wayfinder"
+  },
+  "64ea3a4b-db0f-4f2d-a308-bdcf0af4e1d4": {
+    "srdId": "srd-sub-beastbound",
+    "collection": "subclasses",
+    "name": "Beastbound"
+  },
+  "24030fb9-2e58-40fb-9254-7ba4ce18e4d6": {
+    "srdId": "srd-sub-primal-origin",
+    "collection": "subclasses",
+    "name": "Primal Origin"
+  },
+  "7e9b0b69-1b90-4e85-aa25-ddcedf783559": {
+    "srdId": "srd-sub-elemental-origin",
+    "collection": "subclasses",
+    "name": "Elemental Origin"
+  },
+  "fc562c93-8280-4113-9389-2bcf3187ff6f": {
+    "srdId": "srd-sub-call-of-the-slayer",
+    "collection": "subclasses",
+    "name": "Call of the Slayer"
+  },
+  "4e979deb-2e55-4a50-b048-aafbe14c2807": {
+    "srdId": "srd-sub-call-of-the-brave",
+    "collection": "subclasses",
+    "name": "Call of the Brave"
+  },
+  "db72969b-1bd8-416d-ac09-ab544458ec9b": {
+    "srdId": "srd-sub-school-of-knowledge",
+    "collection": "subclasses",
+    "name": "School of Knowledge"
+  },
+  "aef7368a-8cfb-4816-9cdf-96a3191f5e10": {
+    "srdId": "srd-anc-clank",
+    "collection": "ancestries",
+    "name": "Clank"
+  },
+  "3ab7fd2a-2f6c-4315-830d-88693e549775": {
+    "srdId": "srd-anc-ribbet",
+    "collection": "ancestries",
+    "name": "Ribbet"
+  },
+  "d0256503-d6b9-47a4-a671-212254ab60c3": {
+    "srdId": "srd-anc-infernis",
+    "collection": "ancestries",
+    "name": "Inferis"
+  },
+  "c2cded96-7cc4-41f3-b916-7f5d39185173": {
+    "srdId": "srd-anc-dwarf",
+    "collection": "ancestries",
+    "name": "Dwarf"
+  },
+  "28e267c4-6be0-4e80-84b3-1557dd659501": {
+    "srdId": "srd-anc-giant",
+    "collection": "ancestries",
+    "name": "Giant"
+  },
+  "dd07f842-8c19-45d6-bbfe-d4728bbc111e": {
+    "srdId": "srd-anc-elf",
+    "collection": "ancestries",
+    "name": "Elf"
+  },
+  "39334fa6-28f8-46d4-81d7-fa802ffa7d27": {
+    "srdId": "srd-anc-human",
+    "collection": "ancestries",
+    "name": "Human"
+  },
+  "00c99966-a578-4a9b-9748-2b8038ffb581": {
+    "srdId": "srd-anc-orc",
+    "collection": "ancestries",
+    "name": "Orc"
+  },
+  "0acf8a9c-a65f-4168-bae1-c8c51282aba1": {
+    "srdId": "srd-anc-halfling",
+    "collection": "ancestries",
+    "name": "Halfling"
+  },
+  "8eaef6f8-2748-45bc-9706-2cae63af2043": {
+    "srdId": "srd-anc-drakona",
+    "collection": "ancestries",
+    "name": "Drakona"
+  },
+  "d094fce2-776e-4882-9b68-7ff21c9cfcbd": {
+    "srdId": "srd-anc-katari",
+    "collection": "ancestries",
+    "name": "Katari"
+  },
+  "b64b9f21-bef8-4ff5-942f-3c7e9afc5797": {
+    "srdId": "srd-anc-faerie",
+    "collection": "ancestries",
+    "name": "Faerie"
+  },
+  "b3cbc7d9-bacc-4311-a1a6-0e21e837df87": {
+    "srdId": "srd-anc-faun",
+    "collection": "ancestries",
+    "name": "Faun"
+  },
+  "a104aa49-258d-4918-8e38-0969bd5013e7": {
+    "srdId": "srd-anc-galapa",
+    "collection": "ancestries",
+    "name": "Galapa"
+  },
+  "ed4872c5-ffdc-4771-890d-279f0da80156": {
+    "srdId": "srd-anc-goblin",
+    "collection": "ancestries",
+    "name": "Goblin"
+  },
+  "c7b6fb7b-06ee-454a-a45e-3b7334697d21": {
+    "srdId": "srd-anc-fungril",
+    "collection": "ancestries",
+    "name": "Fungril"
+  },
+  "f5495d46-a3a0-4cdc-92bc-6d2b132fbc54": {
+    "srdId": "srd-anc-firbolg",
+    "collection": "ancestries",
+    "name": "Firbolg"
+  },
+  "6a78be2e-ef82-4e66-8cc5-fdfc16839fe3": {
+    "srdId": "srd-anc-simiah",
+    "collection": "ancestries",
+    "name": "Simiah"
+  },
+  "87d1ce71-8b77-48b9-b626-29d164447b6d": {
+    "srdId": "srd-com-highborne",
+    "collection": "communities",
+    "name": "Highborne"
+  },
+  "ffd1c379-e6c2-44e6-9ee7-47a2842e9a47": {
+    "srdId": "srd-com-ridgeborne",
+    "collection": "communities",
+    "name": "Ridgeborne"
+  },
+  "818976b6-48ee-4882-9360-00648f318d2d": {
+    "srdId": "srd-com-seaborne",
+    "collection": "communities",
+    "name": "Seaborne"
+  },
+  "e799e0a9-660a-455a-b356-3bc1a385755c": {
+    "srdId": "srd-com-underborne",
+    "collection": "communities",
+    "name": "Underborne"
+  },
+  "6164d1a7-d2fd-4005-8035-7b1a894be433": {
+    "srdId": "srd-com-wildborne",
+    "collection": "communities",
+    "name": "Wildborne"
+  },
+  "5c3011d0-7c22-4a16-aa54-d27f71745ccd": {
+    "srdId": "srd-com-loreborne",
+    "collection": "communities",
+    "name": "Loreborne"
+  },
+  "ae19c182-bfe3-4b45-88f8-a9bd5708c851": {
+    "srdId": "srd-com-orderborne",
+    "collection": "communities",
+    "name": "Orderborne"
+  },
+  "df055b58-cd56-42e6-8a98-89cb8e31f813": {
+    "srdId": "srd-com-wanderborne",
+    "collection": "communities",
+    "name": "Wanderborne"
+  },
+  "3a966d4f-2d4e-447d-87a9-3305d81a0aa6": {
+    "srdId": "srd-com-slyborne",
+    "collection": "communities",
+    "name": "Slyborne"
+  },
+  "2101ccd6-c315-4cb9-a9ec-5544c07e6665": {
+    "srdId": "srd-arm-gambeson-armor",
+    "collection": "armor",
+    "name": "Gambeson Armor"
+  },
+  "50613f0b-af31-49ed-985d-4cc8253880c8": {
+    "srdId": "srd-arm-leather-armor",
+    "collection": "armor",
+    "name": "Leather Armor"
+  },
+  "1b70e384-92f1-4cf2-90ed-91baa3aa6368": {
+    "srdId": "srd-arm-chainmail-armor",
+    "collection": "armor",
+    "name": "Chainmail Armor"
+  },
+  "096da9fc-d249-4d11-a395-ab4734865f30": {
+    "srdId": "srd-arm-full-plate-armor",
+    "collection": "armor",
+    "name": "Full Plate Armor"
+  },
+  "86cb0c0b-a928-4cda-995f-53bf2e73a0b3": {
+    "srdId": "srd-arm-improved-gambeson-armor",
+    "collection": "armor",
+    "name": "Improved Gambeson Armor"
+  },
+  "060a35da-6d49-4fa3-84fc-f85b614c42d5": {
+    "srdId": "srd-arm-improved-leather-armor",
+    "collection": "armor",
+    "name": "Improved Leather Armor"
+  },
+  "57797765-e963-47b5-a47f-119b856f8d76": {
+    "srdId": "srd-arm-improved-chainmail-armor",
+    "collection": "armor",
+    "name": "Improved Chainmail Armor"
+  },
+  "7f512725-0ada-428f-a647-4a90ef15bf67": {
+    "srdId": "srd-arm-improved-full-plate-armor",
+    "collection": "armor",
+    "name": "Improved Full Plate Armor"
+  },
+  "a06323ac-4607-4c43-baa1-84d010e928d9": {
+    "srdId": "srd-arm-elundrian-chain-armor",
+    "collection": "armor",
+    "name": "Elundrian Chain Armor"
+  },
+  "6bae6cab-36b4-4f20-9407-a727d5a8c3d4": {
+    "srdId": "srd-arm-harrowbone-armor",
+    "collection": "armor",
+    "name": "Harrowbone Armor"
+  },
+  "0158baf3-fef3-4675-b9a1-48e6d7e813f1": {
+    "srdId": "srd-arm-irontree-breastplate-armor",
+    "collection": "armor",
+    "name": "Irontree Breastplate Armor"
+  },
+  "1a82c7c0-adcc-4821-9076-9c0ab5c788d1": {
+    "srdId": "srd-arm-runetan-floating-armor",
+    "collection": "armor",
+    "name": "Runetan Floating Armor"
+  },
+  "950d416c-ece6-4c0e-bcd0-d5632a6008d3": {
+    "srdId": "srd-arm-tyris-soft-armor",
+    "collection": "armor",
+    "name": "Tyris Soft Armor"
+  },
+  "3f64aabe-34fe-48c5-ad3c-4f0ccce0f6fa": {
+    "srdId": "srd-arm-rosewild-armor",
+    "collection": "armor",
+    "name": "Rosewild Armor"
+  },
+  "ab8a99b4-e9c5-4344-9bfd-9c6869274a2e": {
+    "srdId": "srd-arm-advanced-gambeson-armor",
+    "collection": "armor",
+    "name": "Advanced Gambeson Armor"
+  },
+  "ff569d88-7335-4fc8-b177-8e20e359215c": {
+    "srdId": "srd-arm-advanced-leather-armor",
+    "collection": "armor",
+    "name": "Advanced Leather Armor"
+  },
+  "27c31187-b145-4c92-ac57-f6dd1c2dc0ea": {
+    "srdId": "srd-arm-advanced-chainmail-armor",
+    "collection": "armor",
+    "name": "Advanced Chainmail Armor"
+  },
+  "57f2ed36-ebb4-4b9e-a2b1-3ebe69ab57e6": {
+    "srdId": "srd-arm-advanced-full-plate-armor",
+    "collection": "armor",
+    "name": "Advanced Full Plate Armor"
+  },
+  "0e93a4f8-8bd8-4b39-bc7d-3637853afd13": {
+    "srdId": "srd-arm-bellamoi-fine-armor",
+    "collection": "armor",
+    "name": "Bellamoi Fine Armor"
+  },
+  "6b4d17f5-0ab6-4b3a-9292-bf6288485841": {
+    "srdId": "srd-arm-dragonscale-armor",
+    "collection": "armor",
+    "name": "Dragonscale Armor"
+  },
+  "37322579-68e6-43e9-adac-0b4e56d5ba2b": {
+    "srdId": "srd-arm-bladefare-armor",
+    "collection": "armor",
+    "name": "Bladefare Armor"
+  },
+  "41acdc1d-74e7-4cb4-9825-b5a151f405e4": {
+    "srdId": "srd-arm-monett-s-cloak",
+    "collection": "armor",
+    "name": "Monett's Cloak"
+  },
+  "9f625787-2155-458b-a56c-30a9febf759a": {
+    "srdId": "srd-arm-runes-of-fortification",
+    "collection": "armor",
+    "name": "Runes of Fortification"
+  },
+  "076fbfd1-2457-4795-afe3-82fdb3304857": {
+    "srdId": "srd-arm-legendary-gambeson-armor",
+    "collection": "armor",
+    "name": "Legendary Gambeson Armor"
+  },
+  "713a83c1-29a6-4ef0-b4c0-e0a47c2b0486": {
+    "srdId": "srd-arm-legendary-leather-armor",
+    "collection": "armor",
+    "name": "Legendary Leather Armor"
+  },
+  "3030a017-c4b1-4fcb-bbd8-75dd71c3d8ee": {
+    "srdId": "srd-arm-legendary-chainmail-armor",
+    "collection": "armor",
+    "name": "Legendary Chainmail Armor"
+  },
+  "ec61b8c6-5ebc-48ec-8ecd-02e5cb582df7": {
+    "srdId": "srd-arm-legendary-full-plate-armor",
+    "collection": "armor",
+    "name": "Legendary Full Plate Armor"
+  },
+  "e600585e-e42f-469e-a3e1-f3b005281165": {
+    "srdId": "srd-arm-dunamis-silkchain",
+    "collection": "armor",
+    "name": "Dunamis Silkchain"
+  },
+  "f7ddad46-b275-47eb-95f8-3ba937656561": {
+    "srdId": "srd-arm-channeling-armor",
+    "collection": "armor",
+    "name": "Channeling Armor"
+  },
+  "381f5791-dde4-4f0d-8821-0be117407289": {
+    "srdId": "srd-arm-emberwoven-armor",
+    "collection": "armor",
+    "name": "Emberwoven Armor"
+  },
+  "9a19e9ba-3813-40ce-ab87-c015f60c1b17": {
+    "srdId": "srd-arm-full-fortified-armor",
+    "collection": "armor",
+    "name": "Full Fortified Armor"
+  },
+  "48704bdf-f050-4a9f-ac0d-8cdd761d3be2": {
+    "srdId": "srd-arm-veritas-opal-armor",
+    "collection": "armor",
+    "name": "Veritas Opal Armor"
+  },
+  "a8bfbf13-c4b9-4e58-882f-3236e8c636f7": {
+    "srdId": "srd-arm-savior-chainmail",
+    "collection": "armor",
+    "name": "Savior Chainmail"
+  },
+  "419bcefd-b546-4149-b807-986e319d3b4e": {
+    "srdId": "srd-wpn-broadsword",
+    "collection": "weapons",
+    "name": "Broadsword"
+  },
+  "7f433f89-975d-43ca-953a-fdb4bf4d4a50": {
+    "srdId": "srd-wpn-longsword",
+    "collection": "weapons",
+    "name": "Longsword"
+  },
+  "36cacb26-80d8-47e0-821c-2ae58178abd1": {
+    "srdId": "srd-wpn-mace",
+    "collection": "weapons",
+    "name": "Mace"
+  },
+  "3a2c087c-6e07-426a-86cc-0fe9b881b5d8": {
+    "srdId": "srd-wpn-battleaxe",
+    "collection": "weapons",
+    "name": "Battleaxe"
+  },
+  "1669d872-7d2b-4f25-94e7-7a2678d5adcf": {
+    "srdId": "srd-wpn-greatsword",
+    "collection": "weapons",
+    "name": "Greatsword"
+  },
+  "f1264c8c-bcde-43b6-aabf-e41eadde9ed4": {
+    "srdId": "srd-wpn-warhammer",
+    "collection": "weapons",
+    "name": "Warhammer"
+  },
+  "22ced67d-2b0b-4522-b376-5066aa8cd8d1": {
+    "srdId": "srd-wpn-dagger",
+    "collection": "weapons",
+    "name": "Dagger"
+  },
+  "128a509d-8919-459b-a574-a74161f1733c": {
+    "srdId": "srd-wpn-quarterstaff",
+    "collection": "weapons",
+    "name": "Quarterstaff"
+  },
+  "c8cb9722-6ec5-4e40-aebc-835c2ab8662b": {
+    "srdId": "srd-wpn-cutlass",
+    "collection": "weapons",
+    "name": "Cutlass"
+  },
+  "b2163386-ddf2-45a8-9a37-936477c10098": {
+    "srdId": "srd-wpn-rapier",
+    "collection": "weapons",
+    "name": "Rapier"
+  },
+  "4f3e7c3f-6fc2-45de-b083-0939973bd508": {
+    "srdId": "srd-wpn-halberd",
+    "collection": "weapons",
+    "name": "Halberd"
+  },
+  "2ca004ca-6f9b-479a-ae0e-c3242ee7a6fd": {
+    "srdId": "srd-wpn-spear",
+    "collection": "weapons",
+    "name": "Spear"
+  },
+  "bd4f8d87-d7fe-4e5c-bdd8-aa3d08e21df9": {
+    "srdId": "srd-wpn-shortbow",
+    "collection": "weapons",
+    "name": "Shortbow"
+  },
+  "72831050-ec4b-4f24-80d8-cbd9a83d265f": {
+    "srdId": "srd-wpn-crossbow",
+    "collection": "weapons",
+    "name": "Crossbow"
+  },
+  "18cbf841-7e03-4759-8790-99f2f76b6e4d": {
+    "srdId": "srd-wpn-longbow",
+    "collection": "weapons",
+    "name": "Longbow"
+  },
+  "33dd1b0e-0a9f-4763-a5d3-b74d04b0d091": {
+    "srdId": "srd-wpn-hallowed-axe",
+    "collection": "weapons",
+    "name": "Hallowed Axe"
+  },
+  "2d450aba-9a2a-4588-81c5-fb2590b0c3be": {
+    "srdId": "srd-wpn-arcane-gauntlets",
+    "collection": "weapons",
+    "name": "Arcane Gauntlets"
+  },
+  "4a27bc1c-9a7a-42c8-ac28-3678bc143795": {
+    "srdId": "srd-wpn-glowing-rings",
+    "collection": "weapons",
+    "name": "Glowing Rings"
+  },
+  "67ae1ebf-e8c5-43f5-bfb8-495fc7a98ad3": {
+    "srdId": "srd-wpn-hand-runes",
+    "collection": "weapons",
+    "name": "Hand Runes"
+  },
+  "1ce72a0f-f929-44ed-9701-1ae85cd4118d": {
+    "srdId": "srd-wpn-returning-blade",
+    "collection": "weapons",
+    "name": "Returning Blade"
+  },
+  "38654a76-a7de-439c-828f-c563b314f3cb": {
+    "srdId": "srd-wpn-shortstaff",
+    "collection": "weapons",
+    "name": "Shortstaff"
+  },
+  "157bd3e2-3ede-432d-8a31-fe7f2cbf1680": {
+    "srdId": "srd-wpn-dualstaff",
+    "collection": "weapons",
+    "name": "Dualstaff"
+  },
+  "4e19800e-436c-4e8f-8b2b-c3371c2cc4a6": {
+    "srdId": "srd-wpn-scepter",
+    "collection": "weapons",
+    "name": "Scepter"
+  },
+  "4e4c595b-4c48-465d-9cfc-00a978ad8de6": {
+    "srdId": "srd-wpn-wand",
+    "collection": "weapons",
+    "name": "Wand"
+  },
+  "0f3902ea-545e-4075-8074-7c3f3209b689": {
+    "srdId": "srd-wpn-greatstaff",
+    "collection": "weapons",
+    "name": "Greatstaff"
+  },
+  "2bbf30d7-f16f-4f30-8bf9-53a02597d811": {
+    "srdId": "srd-wpn-improved-broadsword",
+    "collection": "weapons",
+    "name": "Improved Broadsword"
+  },
+  "07c69fd3-fe79-4935-b2d8-00eda12684d0": {
+    "srdId": "srd-wpn-improved-longsword",
+    "collection": "weapons",
+    "name": "Improved Longsword"
+  },
+  "e409ff38-36ac-4d18-be1f-9c6d4e6303d2": {
+    "srdId": "srd-wpn-improved-mace",
+    "collection": "weapons",
+    "name": "Improved Mace"
+  },
+  "9667e493-a3c9-46f2-b637-60fe114510ab": {
+    "srdId": "srd-wpn-improved-battleaxe",
+    "collection": "weapons",
+    "name": "Improved Battleaxe"
+  },
+  "021903cc-63da-4b9c-9335-46181205ce22": {
+    "srdId": "srd-wpn-improved-greatsword",
+    "collection": "weapons",
+    "name": "Improved Greatsword"
+  },
+  "bf2ee9d8-3090-4e74-8828-f25d99a2a313": {
+    "srdId": "srd-wpn-improved-warhammer",
+    "collection": "weapons",
+    "name": "Improved Warhammer"
+  },
+  "4f183ce0-128a-4e6b-9c86-f034fe1c97dd": {
+    "srdId": "srd-wpn-improved-dagger",
+    "collection": "weapons",
+    "name": "Improved Dagger"
+  },
+  "15a5f1a3-881d-4691-8082-8528a9fa4f94": {
+    "srdId": "srd-wpn-improved-quarterstaff",
+    "collection": "weapons",
+    "name": "Improved Quarterstaff"
+  },
+  "03f338b1-6055-4c2c-b8ce-0b0a1f450d45": {
+    "srdId": "srd-wpn-improved-cutlass",
+    "collection": "weapons",
+    "name": "Improved Cutlass"
+  },
+  "47c487f5-9cc7-43d7-8594-3c848594bc79": {
+    "srdId": "srd-wpn-improved-rapier",
+    "collection": "weapons",
+    "name": "Improved Rapier"
+  },
+  "46b1f8cd-e6e4-4ab0-9dc0-cc5842ddc574": {
+    "srdId": "srd-wpn-improved-halberd",
+    "collection": "weapons",
+    "name": "Improved Halberd"
+  },
+  "3500d74c-d681-4a95-9c5a-4739fb6f1305": {
+    "srdId": "srd-wpn-improved-spear",
+    "collection": "weapons",
+    "name": "Improved Spear"
+  },
+  "5d0dfcff-70bf-4975-b058-84cf80c65999": {
+    "srdId": "srd-wpn-improved-shortbow",
+    "collection": "weapons",
+    "name": "Improved Shortbow"
+  },
+  "61c1c954-e7a2-49b6-8547-69ee2c234417": {
+    "srdId": "srd-wpn-improved-crossbow",
+    "collection": "weapons",
+    "name": "Improved Crossbow"
+  },
+  "cb31f66e-bb6a-4786-bfbb-b475a8de0e2c": {
+    "srdId": "srd-wpn-improved-longbow",
+    "collection": "weapons",
+    "name": "Improved Longbow"
+  },
+  "e5a79d8b-7f8f-4cf6-80db-6a143bd8e8a6": {
+    "srdId": "srd-wpn-gilded-falchion",
+    "collection": "weapons",
+    "name": "Gilded Falchion"
+  },
+  "fa5ba699-2363-40fe-bcb2-8b4fbb6e1058": {
+    "srdId": "srd-wpn-knuckle-blades",
+    "collection": "weapons",
+    "name": "Knuckle Blades"
+  },
+  "d4696347-432f-4c6c-b084-15a013387927": {
+    "srdId": "srd-wpn-urok-broadsword",
+    "collection": "weapons",
+    "name": "Urok Broadsword"
+  },
+  "a3d80586-a3d5-4619-810d-bb0d95e22eac": {
+    "srdId": "srd-wpn-bladed-whip",
+    "collection": "weapons",
+    "name": "Bladed Whip"
+  },
+  "578f7aa3-76a7-455f-b274-9503d1048a36": {
+    "srdId": "srd-wpn-steelforged-halberd",
+    "collection": "weapons",
+    "name": "Steelforged Halberd"
+  },
+  "d93edc48-f684-4f3f-9a5c-9059c39c0b90": {
+    "srdId": "srd-wpn-war-scythe",
+    "collection": "weapons",
+    "name": "War Scythe"
+  },
+  "296f4a9d-b2f4-4fd7-9d6d-5f0a26c9939e": {
+    "srdId": "srd-wpn-greatbow",
+    "collection": "weapons",
+    "name": "Greatbow"
+  },
+  "931958d0-612a-4a6e-82a2-ca9b4f6973f2": {
+    "srdId": "srd-wpn-blunderbuss",
+    "collection": "weapons",
+    "name": "Blunderbuss"
+  },
+  "e014b982-d885-43cc-b789-ebe175f78e4a": {
+    "srdId": "srd-wpn-finehair-bow",
+    "collection": "weapons",
+    "name": "Finehair Bow"
+  },
+  "fab00339-dcec-4e5f-bac0-f901cfd17039": {
+    "srdId": "srd-wpn-improved-hallowed-axe",
+    "collection": "weapons",
+    "name": "Improved Hallowed Axe"
+  },
+  "d9877ed9-6c89-484d-89c9-0389727ae69c": {
+    "srdId": "srd-wpn-improved-arcane-gauntlets",
+    "collection": "weapons",
+    "name": "Improved Arcane Gauntlets"
+  },
+  "edc25fef-b1ec-4454-bb21-738343df9a73": {
+    "srdId": "srd-wpn-improved-glowing-rings",
+    "collection": "weapons",
+    "name": "Improved Glowing Rings"
+  },
+  "2a9b2f22-efe4-4bf8-a76b-fd4241ef7537": {
+    "srdId": "srd-wpn-improved-hand-runes",
+    "collection": "weapons",
+    "name": "Improved Hand Runes"
+  },
+  "be9ad2eb-be2c-4088-9d8d-95cd5699ce18": {
+    "srdId": "srd-wpn-improved-returning-blade",
+    "collection": "weapons",
+    "name": "Improved Returning Blade"
+  },
+  "14e62d3d-2d08-47e8-ab32-13a189b1a20b": {
+    "srdId": "srd-wpn-improved-shortstaff",
+    "collection": "weapons",
+    "name": "Improved Shortstaff"
+  },
+  "b0c37440-2b6e-4113-bb19-9925be57788f": {
+    "srdId": "srd-wpn-improved-dualstaff",
+    "collection": "weapons",
+    "name": "Improved Dualstaff"
+  },
+  "0ccb91ff-6971-414f-9f89-d0cb1d5bd3c9": {
+    "srdId": "srd-wpn-improved-scepter",
+    "collection": "weapons",
+    "name": "Improved Scepter"
+  },
+  "706c989c-747a-49b4-897a-b925d51b8d8e": {
+    "srdId": "srd-wpn-improved-wand",
+    "collection": "weapons",
+    "name": "Improved Wand"
+  },
+  "82b0c749-02d0-4835-affd-d1af8910c21d": {
+    "srdId": "srd-wpn-improved-greatstaff",
+    "collection": "weapons",
+    "name": "Improved Greatstaff"
+  },
+  "4dabc3b3-1f41-4214-b0b0-0cbb38ac60d0": {
+    "srdId": "srd-wpn-ego-blade",
+    "collection": "weapons",
+    "name": "Ego Blade"
+  },
+  "a03d5c52-212a-40cf-a2b6-96c683d8c892": {
+    "srdId": "srd-wpn-casting-sword",
+    "collection": "weapons",
+    "name": "Casting Sword"
+  },
+  "df01835d-1b90-4b9d-9dc6-e112be439763": {
+    "srdId": "srd-wpn-devouring-dagger",
+    "collection": "weapons",
+    "name": "Devouring Dagger"
+  },
+  "4d7e64ef-f579-48cb-9ad8-f58847134e0d": {
+    "srdId": "srd-wpn-hammer-of-exota",
+    "collection": "weapons",
+    "name": "Hammer of Exota"
+  },
+  "eb05f129-af27-4c5a-b275-f4d83f88f342": {
+    "srdId": "srd-wpn-yutari-bloodbow",
+    "collection": "weapons",
+    "name": "Yutari Bloodbow"
+  },
+  "8471249d-3451-43b0-a0e1-19ac4e97eb4a": {
+    "srdId": "srd-wpn-elder-bow",
+    "collection": "weapons",
+    "name": "Elder Bow"
+  },
+  "d46ef041-545d-4d4e-b352-4bf12623041c": {
+    "srdId": "srd-wpn-scepter-of-elias",
+    "collection": "weapons",
+    "name": "Scepter of Elias"
+  },
+  "8d64e1f4-db5d-4097-98e3-304e4810ca9f": {
+    "srdId": "srd-wpn-wand-of-enthrallment",
+    "collection": "weapons",
+    "name": "Wand of Enthrallment"
+  },
+  "1c2ed57b-3224-484d-bb50-eb858c11af26": {
+    "srdId": "srd-wpn-keeper-s-staff",
+    "collection": "weapons",
+    "name": "Keeper's Staff"
+  },
+  "ea118327-2439-4ab9-9008-1f6fa6db7200": {
+    "srdId": "srd-wpn-advanced-broadsword",
+    "collection": "weapons",
+    "name": "Advanced Broadsword"
+  },
+  "90385f69-4721-4dfd-8445-18015984cb35": {
+    "srdId": "srd-wpn-advanced-longsword",
+    "collection": "weapons",
+    "name": "Advanced Longsword"
+  },
+  "a8006495-a172-4d36-896b-c1104b48b346": {
+    "srdId": "srd-wpn-advanced-mace",
+    "collection": "weapons",
+    "name": "Advanced Mace"
+  },
+  "156c3c3b-c254-4db2-a735-c8a132525f71": {
+    "srdId": "srd-wpn-advanced-battleaxe",
+    "collection": "weapons",
+    "name": "Advanced Battleaxe"
+  },
+  "2d5493bf-55c1-4ad5-ab69-f0c8d1a81c3d": {
+    "srdId": "srd-wpn-advanced-greatsword",
+    "collection": "weapons",
+    "name": "Advanced Greatsword"
+  },
+  "351dffa8-13b2-4dd4-a7d6-8505ea5feeb2": {
+    "srdId": "srd-wpn-advanced-warhammer",
+    "collection": "weapons",
+    "name": "Advanced Warhammer"
+  },
+  "83b7049a-34ef-4c11-8859-babec717a299": {
+    "srdId": "srd-wpn-advanced-dagger",
+    "collection": "weapons",
+    "name": "Advanced Dagger"
+  },
+  "9d9f8bb0-4749-4cd1-b44f-80f4e3565dc7": {
+    "srdId": "srd-wpn-advanced-quarterstaff",
+    "collection": "weapons",
+    "name": "Advanced Quarterstaff"
+  },
+  "656a65d3-faf1-4f4a-8b2d-df2e1d62af84": {
+    "srdId": "srd-wpn-advanced-cutlass",
+    "collection": "weapons",
+    "name": "Advanced Cutlass"
+  },
+  "c64563a2-488d-4055-954b-6cfe5889381d": {
+    "srdId": "srd-wpn-advanced-rapier",
+    "collection": "weapons",
+    "name": "Advanced Rapier"
+  },
+  "046ee669-a697-40b9-98b2-3bbb2bf983c8": {
+    "srdId": "srd-wpn-advanced-halberd",
+    "collection": "weapons",
+    "name": "Advanced Halberd"
+  },
+  "71b217bb-25dd-4a48-8b9e-04afad9939b3": {
+    "srdId": "srd-wpn-advanced-spear",
+    "collection": "weapons",
+    "name": "Advanced Spear"
+  },
+  "bc5d93bb-2ba3-440b-92b8-f8698d8323bf": {
+    "srdId": "srd-wpn-advanced-shortbow",
+    "collection": "weapons",
+    "name": "Advanced Shortbow"
+  },
+  "7f3e422b-388a-4f05-94c1-72aaff5fd49c": {
+    "srdId": "srd-wpn-advanced-crossbow",
+    "collection": "weapons",
+    "name": "Advanced Crossbow"
+  },
+  "717507a1-7bb0-4e78-8637-15c9f5dd6f34": {
+    "srdId": "srd-wpn-advanced-longbow",
+    "collection": "weapons",
+    "name": "Advanced Longbow"
+  },
+  "7f4db24d-b389-439f-9306-467d0f0720c0": {
+    "srdId": "srd-wpn-flickerfly-blade",
+    "collection": "weapons",
+    "name": "Flickerfly Blade"
+  },
+  "8943573b-8d2c-48af-912f-814bd599141b": {
+    "srdId": "srd-wpn-bravesword",
+    "collection": "weapons",
+    "name": "Bravesword"
+  },
+  "ce7682f3-2e87-4b72-9ced-c42b1acb389f": {
+    "srdId": "srd-wpn-hammer-of-wrath",
+    "collection": "weapons",
+    "name": "Hammer of Wrath"
+  },
+  "e42b7532-c7f4-43d8-8368-5415469578b2": {
+    "srdId": "srd-wpn-labrys-axe",
+    "collection": "weapons",
+    "name": "Labrys Axe"
+  },
+  "61c4ffcf-9332-4d76-9f5c-420219ed8af0": {
+    "srdId": "srd-wpn-meridian-cutlass",
+    "collection": "weapons",
+    "name": "Meridian Cutlass"
+  },
+  "86865d5e-4708-4d3e-bc7d-ead8add137d8": {
+    "srdId": "srd-wpn-retractable-saber",
+    "collection": "weapons",
+    "name": "Retractable Saber"
+  },
+  "c2a82f29-9499-475a-b5d1-e6d580f4e84f": {
+    "srdId": "srd-wpn-double-flail",
+    "collection": "weapons",
+    "name": "Double Flail"
+  },
+  "794336c1-8a48-467c-8ace-3c8b8fac54bb": {
+    "srdId": "srd-wpn-talon-blades",
+    "collection": "weapons",
+    "name": "Talon Blades"
+  },
+  "d725865d-d0ef-44cd-a290-1dbde7873a5a": {
+    "srdId": "srd-wpn-spiked-bow",
+    "collection": "weapons",
+    "name": "Spiked Bow"
+  },
+  "c032dbe0-353f-49be-b8c6-a68fc91b37f9": {
+    "srdId": "srd-wpn-black-powder-revolver",
+    "collection": "weapons",
+    "name": "Black Powder Revolver"
+  },
+  "36829b2b-5bfc-45b6-8c1a-85b70a1c58d0": {
+    "srdId": "srd-wpn-advanced-hallowed-axe",
+    "collection": "weapons",
+    "name": "Advanced Hallowed Axe"
+  },
+  "3b436346-b058-4e22-bb9d-d7a3099f5f59": {
+    "srdId": "srd-wpn-advanced-arcane-gauntlets",
+    "collection": "weapons",
+    "name": "Advanced Arcane Gauntlets"
+  },
+  "9e3c98c8-f6f9-4ecd-9c01-c7b40dba45ab": {
+    "srdId": "srd-wpn-advanced-glowing-rings",
+    "collection": "weapons",
+    "name": "Advanced Glowing Rings"
+  },
+  "ad986831-6dd1-4564-b5fe-b3ba8bc8ee4b": {
+    "srdId": "srd-wpn-advanced-hand-runes",
+    "collection": "weapons",
+    "name": "Advanced Hand Runes"
+  },
+  "a834d691-5500-48dd-8518-663b3a909430": {
+    "srdId": "srd-wpn-advanced-returning-blade",
+    "collection": "weapons",
+    "name": "Advanced Returning Blade"
+  },
+  "27aed2d4-9587-417b-9381-fbe6e780312e": {
+    "srdId": "srd-wpn-advanced-shortstaff",
+    "collection": "weapons",
+    "name": "Advanced Shortstaff"
+  },
+  "58698dce-57a8-4af5-9353-923b5e229f5f": {
+    "srdId": "srd-wpn-advanced-dualstaff",
+    "collection": "weapons",
+    "name": "Advanced Dualstaff"
+  },
+  "9a370d0c-b8ae-4d2f-939d-0227dac29de0": {
+    "srdId": "srd-wpn-advanced-scepter",
+    "collection": "weapons",
+    "name": "Advanced Scepter"
+  },
+  "f122439e-628f-4278-972b-7499a8c3de52": {
+    "srdId": "srd-wpn-advanced-wand",
+    "collection": "weapons",
+    "name": "Advanced Wand"
+  },
+  "e328dc9a-0427-4197-bd15-14a65a2263c5": {
+    "srdId": "srd-wpn-advanced-greatstaff",
+    "collection": "weapons",
+    "name": "Advanced Greatstaff"
+  },
+  "447407ce-797d-4217-8430-19bcc6c2500e": {
+    "srdId": "srd-wpn-axe-of-fortunis",
+    "collection": "weapons",
+    "name": "Axe of Fortunis"
+  },
+  "d77a57bd-0b45-4e23-9b5c-802457c6a62c": {
+    "srdId": "srd-wpn-blessed-anlace",
+    "collection": "weapons",
+    "name": "Blessed Anlace"
+  },
+  "d9674512-fddf-4941-8bd7-427baf9db918": {
+    "srdId": "srd-wpn-ghostblade",
+    "collection": "weapons",
+    "name": "Ghostblade"
+  },
+  "6ef4cf5a-f0fc-46f4-9a7d-0eda0005befc": {
+    "srdId": "srd-wpn-runes-of-ruination",
+    "collection": "weapons",
+    "name": "Runes of Ruination"
+  },
+  "341ff734-f509-44b4-80f2-d9ce16ced115": {
+    "srdId": "srd-wpn-widogast-pendant",
+    "collection": "weapons",
+    "name": "Widogast Pendant"
+  },
+  "e4dc0aa6-1766-4c05-a650-c398095077ec": {
+    "srdId": "srd-wpn-gilded-bow",
+    "collection": "weapons",
+    "name": "Gilded Bow"
+  },
+  "3ee7b779-92ac-4053-877c-ae4c2469226a": {
+    "srdId": "srd-wpn-firestaff",
+    "collection": "weapons",
+    "name": "Firestaff"
+  },
+  "6549870b-dd86-4d90-912a-373678f05f1d": {
+    "srdId": "srd-wpn-mage-orb",
+    "collection": "weapons",
+    "name": "Mage Orb"
+  },
+  "9fd72a87-dbb4-4601-bc8a-f64030836fc7": {
+    "srdId": "srd-wpn-legendary-broadsword",
+    "collection": "weapons",
+    "name": "Legendary Broadsword"
+  },
+  "51b398ed-dc35-4dbc-a693-9ee144beec0a": {
+    "srdId": "srd-wpn-legendary-longsword",
+    "collection": "weapons",
+    "name": "Legendary Longsword"
+  },
+  "1bf2a065-6101-4e6b-ba53-22e74c41e64e": {
+    "srdId": "srd-wpn-legendary-mace",
+    "collection": "weapons",
+    "name": "Legendary Mace"
+  },
+  "cff13045-9899-452d-95c8-8da1b7761429": {
+    "srdId": "srd-wpn-legendary-battleaxe",
+    "collection": "weapons",
+    "name": "Legendary Battleaxe"
+  },
+  "22a9e82a-b810-4c8f-b3bc-e68d90ca9778": {
+    "srdId": "srd-wpn-legendary-greatsword",
+    "collection": "weapons",
+    "name": "Legendary Greatsword"
+  },
+  "1fb5f7a6-d5ef-4a50-a75a-8e812d764b35": {
+    "srdId": "srd-wpn-legendary-warhammer",
+    "collection": "weapons",
+    "name": "Legendary Warhammer"
+  },
+  "a0f6603c-d852-47b1-889d-24ae25e2b5c7": {
+    "srdId": "srd-wpn-legendary-dagger",
+    "collection": "weapons",
+    "name": "Legendary Dagger"
+  },
+  "2c962d5e-8c24-4d62-848b-a8a8e8029553": {
+    "srdId": "srd-wpn-legendary-quarterstaff",
+    "collection": "weapons",
+    "name": "Legendary Quarterstaff"
+  },
+  "76d1f3fb-b43b-4da6-870a-7f2b946798a4": {
+    "srdId": "srd-wpn-legendary-cutlass",
+    "collection": "weapons",
+    "name": "Legendary Cutlass"
+  },
+  "b8f20958-1e6a-4d41-8bdd-e01985ee85e9": {
+    "srdId": "srd-wpn-legendary-rapier",
+    "collection": "weapons",
+    "name": "Legendary Rapier"
+  },
+  "0214f7e3-85e3-4e5d-a64d-7f6606382a95": {
+    "srdId": "srd-wpn-legendary-halberd",
+    "collection": "weapons",
+    "name": "Legendary Halberd"
+  },
+  "32f24ab2-09bb-4a01-a0b6-f472507dd9b7": {
+    "srdId": "srd-wpn-legendary-spear",
+    "collection": "weapons",
+    "name": "Legendary Spear"
+  },
+  "a247c4d8-01b8-46fc-9fa5-982a49dc6f18": {
+    "srdId": "srd-wpn-legendary-shortbow",
+    "collection": "weapons",
+    "name": "Legendary Shortbow"
+  },
+  "2b06a3ec-e349-4a23-bb57-2bb559fd145e": {
+    "srdId": "srd-wpn-legendary-crossbow",
+    "collection": "weapons",
+    "name": "Legendary Crossbow"
+  },
+  "b112a850-065a-4f30-93be-e4a13dbb8e21": {
+    "srdId": "srd-wpn-legendary-longbow",
+    "collection": "weapons",
+    "name": "Legendary Longbow"
+  },
+  "7ecabf4c-5819-4dbf-b93e-02f37be36a1f": {
+    "srdId": "srd-wpn-dual-ended-sword",
+    "collection": "weapons",
+    "name": "Double-Ended Sword"
+  },
+  "28562fe9-c566-4380-b141-8d9e0d5b55a5": {
+    "srdId": "srd-wpn-impact-gauntlet",
+    "collection": "weapons",
+    "name": "Impact Gauntlet"
+  },
+  "23dddad8-68e1-4835-afa6-623afdeeb11a": {
+    "srdId": "srd-wpn-sledge-axe",
+    "collection": "weapons",
+    "name": "Sledge Axe"
+  },
+  "28f153b4-61c1-48ce-bbc3-0d6c82d3b6eb": {
+    "srdId": "srd-wpn-curved-dagger",
+    "collection": "weapons",
+    "name": "Curved Dagger"
+  },
+  "ce463528-b5a6-4d7f-8aa2-db0d6a9d3613": {
+    "srdId": "srd-wpn-extended-polearm",
+    "collection": "weapons",
+    "name": "Extended Polearm"
+  },
+  "e22f94f2-1989-4ee3-be1b-040572a743df": {
+    "srdId": "srd-wpn-swinging-ropeblade",
+    "collection": "weapons",
+    "name": "Swinging Ropeblade"
+  },
+  "b3a031b3-2fd9-4238-b658-ca11c142eb7a": {
+    "srdId": "srd-wpn-ricochet-axes",
+    "collection": "weapons",
+    "name": "Ricochet Axes"
+  },
+  "77531da3-37eb-47a5-9118-6eea8171ab09": {
+    "srdId": "srd-wpn-aantari-bow",
+    "collection": "weapons",
+    "name": "Aantari Bow"
+  },
+  "356cd224-91f3-4f5a-9ea0-2a43f6af821b": {
+    "srdId": "srd-wpn-hand-cannon",
+    "collection": "weapons",
+    "name": "Hand Cannon"
+  },
+  "80ba5598-bd56-4ecb-895a-3bdd046e553d": {
+    "srdId": "srd-wpn-legendary-hallowed-axe",
+    "collection": "weapons",
+    "name": "Legendary Hallowed Axe"
+  },
+  "dad576de-4491-4228-8eed-82d60fb9b742": {
+    "srdId": "srd-wpn-legendary-arcane-gauntlets",
+    "collection": "weapons",
+    "name": "Legendary Arcane Gauntlets"
+  },
+  "98601c3d-f497-4a6a-a262-8b37dce543ff": {
+    "srdId": "srd-wpn-legendary-glowing-rings",
+    "collection": "weapons",
+    "name": "Legendary Glowing Rings"
+  },
+  "66f5f297-6799-4d1b-b3ba-18f6a2b0e540": {
+    "srdId": "srd-wpn-legendary-hand-runes",
+    "collection": "weapons",
+    "name": "Legendary Hand Runes"
+  },
+  "f32336c8-f1a2-4f6a-819f-68b28f3237dd": {
+    "srdId": "srd-wpn-legendary-returning-blade",
+    "collection": "weapons",
+    "name": "Legendary Returning Blade"
+  },
+  "f5129343-d232-441f-ad4a-da870457091d": {
+    "srdId": "srd-wpn-legendary-shortstaff",
+    "collection": "weapons",
+    "name": "Legendary Shortstaff"
+  },
+  "f28282c6-e1fa-4d22-a9de-2d18321170f7": {
+    "srdId": "srd-wpn-legendary-dualstaff",
+    "collection": "weapons",
+    "name": "Legendary Dualstaff"
+  },
+  "02a272cd-fc8c-4eeb-9e3d-aabac9d24b61": {
+    "srdId": "srd-wpn-legendary-scepter",
+    "collection": "weapons",
+    "name": "Legendary Scepter"
+  },
+  "cae4f5ac-e53d-4a0b-aadb-c6bccb09c43a": {
+    "srdId": "srd-wpn-legendary-wand",
+    "collection": "weapons",
+    "name": "Legendary Wand"
+  },
+  "fbfadb44-2779-4ee6-b21c-65a0d1ca9ca2": {
+    "srdId": "srd-wpn-legendary-greatstaff",
+    "collection": "weapons",
+    "name": "Legendary Greatstaff"
+  },
+  "7b803b0c-97ca-4fe5-a484-c5ea64d59786": {
+    "srdId": "srd-wpn-sword-of-light-flame",
+    "collection": "weapons",
+    "name": "Sword of Light & Flame"
+  },
+  "d144c1e1-70dc-438d-8465-7a625e3f4a72": {
+    "srdId": "srd-wpn-siphoning-gauntlets",
+    "collection": "weapons",
+    "name": "Siphoning Gauntlets"
+  },
+  "9a5d9ece-ce45-40b9-94a7-d73668787763": {
+    "srdId": "srd-wpn-midas-scythe",
+    "collection": "weapons",
+    "name": "Midas Scythe"
+  },
+  "22f01f19-03a3-4fc4-82c5-e726ea6eaebf": {
+    "srdId": "srd-wpn-floating-bladeshards",
+    "collection": "weapons",
+    "name": "Floating Bladeshards"
+  },
+  "ad4a189e-f370-4a41-83eb-ff985e9ca0d0": {
+    "srdId": "srd-wpn-bloodstaff",
+    "collection": "weapons",
+    "name": "Bloodstaff"
+  },
+  "6e742d12-0bc3-4379-aeb7-b8ccb8d24e94": {
+    "srdId": "srd-wpn-thistlebow",
+    "collection": "weapons",
+    "name": "Thistlebow"
+  },
+  "2a6df213-ccb5-4c20-9b4c-a6377cddc86a": {
+    "srdId": "srd-wpn-wand-of-essek",
+    "collection": "weapons",
+    "name": "Wand of Essek"
+  },
+  "07cd1783-f158-4356-9d0f-50fabcf9af1f": {
+    "srdId": "srd-wpn-magus-revolver",
+    "collection": "weapons",
+    "name": "Magus Revolver"
+  },
+  "4891b65c-ddff-4621-abd6-2782ddfb0051": {
+    "srdId": "srd-wpn-fusion-gloves",
+    "collection": "weapons",
+    "name": "Fusion Gloves"
+  },
+  "290445d5-d237-4653-8246-920541aed6f9": {
+    "srdId": "srd-wpn-shortsword",
+    "collection": "weapons",
+    "name": "Shortsword"
+  },
+  "b36d1277-db27-416b-9d5b-3572b3b3302d": {
+    "srdId": "srd-wpn-round-shield",
+    "collection": "weapons",
+    "name": "Round Shield"
+  },
+  "c7c0b735-0a4d-4146-bc56-6797a56e95d7": {
+    "srdId": "srd-wpn-tower-shield",
+    "collection": "weapons",
+    "name": "Tower Shield"
+  },
+  "df32112b-c99c-4440-a8a7-9464fccfffa6": {
+    "srdId": "srd-wpn-small-dagger",
+    "collection": "weapons",
+    "name": "Small Dagger"
+  },
+  "9a442be9-d97b-4ee6-a187-96b6dfe84337": {
+    "srdId": "srd-wpn-whip",
+    "collection": "weapons",
+    "name": "Whip"
+  },
+  "d2899acb-b71a-4278-8dfa-8e05236b7d96": {
+    "srdId": "srd-wpn-grappler",
+    "collection": "weapons",
+    "name": "Grappler"
+  },
+  "37e70552-73ca-4793-9479-8a0dd222680e": {
+    "srdId": "srd-wpn-hand-crossbow",
+    "collection": "weapons",
+    "name": "Hand Crossbow"
+  },
+  "e19de0d3-9e38-43db-9e01-7469be59ed72": {
+    "srdId": "srd-wpn-improved-shortsword",
+    "collection": "weapons",
+    "name": "Improved Shortsword"
+  },
+  "e2911396-79b6-4ea8-9853-482913985ad4": {
+    "srdId": "srd-wpn-improved-round-shield",
+    "collection": "weapons",
+    "name": "Improved Round Shield"
+  },
+  "b88ed1cd-46eb-49d3-94f9-f36c53a6b097": {
+    "srdId": "srd-wpn-improved-tower-shield",
+    "collection": "weapons",
+    "name": "Improved Tower Shield"
+  },
+  "ee2c9de2-bbe0-4d1b-8446-a42ad5569bef": {
+    "srdId": "srd-wpn-improved-small-dagger",
+    "collection": "weapons",
+    "name": "Improved Small Dagger"
+  },
+  "bd25471f-53be-4e67-9fa0-5b2bbe062f40": {
+    "srdId": "srd-wpn-improved-whip",
+    "collection": "weapons",
+    "name": "Improved Whip"
+  },
+  "ff3aa93c-f66e-4c7c-9fd9-57859b73cb69": {
+    "srdId": "srd-wpn-improved-grappler",
+    "collection": "weapons",
+    "name": "Improved Grappler"
+  },
+  "9c4ebc52-1599-45e9-a26a-70a7bd0686fc": {
+    "srdId": "srd-wpn-improved-hand-crossbow",
+    "collection": "weapons",
+    "name": "Improved Hand Crossbow"
+  },
+  "207ed585-f3ac-400e-8b76-a01bfb237197": {
+    "srdId": "srd-wpn-spiked-shield",
+    "collection": "weapons",
+    "name": "Spiked Shield"
+  },
+  "4147519b-2917-44ce-a562-55ae80d0d592": {
+    "srdId": "srd-wpn-parrying-dagger",
+    "collection": "weapons",
+    "name": "Parrying Dagger"
+  },
+  "5fba2b26-cf81-4e4a-8115-198b35130175": {
+    "srdId": "srd-wpn-returning-axe",
+    "collection": "weapons",
+    "name": "Returning Axe"
+  },
+  "5c9c809d-b1b4-4f29-8f86-b62195bd9432": {
+    "srdId": "srd-wpn-advanced-shortsword",
+    "collection": "weapons",
+    "name": "Advanced Shortsword"
+  },
+  "61b98e45-2677-4edd-a643-7d8f2a695254": {
+    "srdId": "srd-wpn-advanced-round-shield",
+    "collection": "weapons",
+    "name": "Advanced Round Shield"
+  },
+  "276e530b-d027-4937-8e66-f8cbd003e286": {
+    "srdId": "srd-wpn-advanced-tower-shield",
+    "collection": "weapons",
+    "name": "Advanced Tower Shield"
+  },
+  "832bf554-1525-4ae1-9e62-12fc6f2e3bf0": {
+    "srdId": "srd-wpn-advanced-small-dagger",
+    "collection": "weapons",
+    "name": "Advanced Small Dagger"
+  },
+  "6ecf7381-5565-4a48-a959-bf2d514c65f2": {
+    "srdId": "srd-wpn-advanced-whip",
+    "collection": "weapons",
+    "name": "Advanced Whip"
+  },
+  "002608d9-0367-4b0f-840e-a0a8ff36d130": {
+    "srdId": "srd-wpn-advanced-grappler",
+    "collection": "weapons",
+    "name": "Advanced Grappler"
+  },
+  "f0b0c233-571d-4d28-878d-3ec3bb41f030": {
+    "srdId": "srd-wpn-advanced-hand-crossbow",
+    "collection": "weapons",
+    "name": "Advanced Hand Crossbow"
+  },
+  "bed5ff1f-759a-4846-9f6a-1d9f0d31c0fd": {
+    "srdId": "srd-wpn-buckler",
+    "collection": "weapons",
+    "name": "Buckler"
+  },
+  "4dc19cd9-38ac-416f-87b0-db4a9f9b01bf": {
+    "srdId": "srd-wpn-powered-gauntlet",
+    "collection": "weapons",
+    "name": "Powered Gauntlet"
+  },
+  "27c925a3-e734-40a6-a88d-c4c7b51d0ca8": {
+    "srdId": "srd-wpn-hand-sling",
+    "collection": "weapons",
+    "name": "Hand Sling"
+  },
+  "a13a3ce0-2891-4d2d-9f35-0d631aebe2c1": {
+    "srdId": "srd-wpn-legendary-shortsword",
+    "collection": "weapons",
+    "name": "Legendary Shortsword"
+  },
+  "0ed1dc14-9161-4358-8618-2d4aa650acd2": {
+    "srdId": "srd-wpn-legendary-round-shield",
+    "collection": "weapons",
+    "name": "Legendary Round Shield"
+  },
+  "bcd9f21d-6ce8-4010-9920-a926d6bc4079": {
+    "srdId": "srd-wpn-legendary-tower-shield",
+    "collection": "weapons",
+    "name": "Legendary Tower Shield"
+  },
+  "35b3a39b-2bdf-44cf-9095-0a322a871475": {
+    "srdId": "srd-wpn-legendary-small-dagger",
+    "collection": "weapons",
+    "name": "Legendary Small Dagger"
+  },
+  "88abe07d-4dee-4bfa-85d7-c95a25e04430": {
+    "srdId": "srd-wpn-legendary-whip",
+    "collection": "weapons",
+    "name": "Legendary Whip"
+  },
+  "edd28d34-2b0f-4b5a-81ee-8a5da5034a63": {
+    "srdId": "srd-wpn-legendary-grappler",
+    "collection": "weapons",
+    "name": "Legendary Grappler"
+  },
+  "d30178ab-3072-491a-88b6-2dcaeeaf7da1": {
+    "srdId": "srd-wpn-legendary-hand-crossbow",
+    "collection": "weapons",
+    "name": "Legendary Hand Crossbow"
+  },
+  "ac6b7f71-72e6-4de5-860d-9768c44c6746": {
+    "srdId": "srd-wpn-braveshield",
+    "collection": "weapons",
+    "name": "Braveshield"
+  },
+  "698c299d-aa92-4731-bd13-279a01571a7e": {
+    "srdId": "srd-wpn-knuckle-claws",
+    "collection": "weapons",
+    "name": "Knuckle Claws"
+  },
+  "f2bb2db2-09f1-4c8a-83d1-4c58f1b86234": {
+    "srdId": "srd-wpn-primer-shard",
+    "collection": "weapons",
+    "name": "Primer Shard"
+  },
+  "8430ab1b-d400-4145-9467-29be7142d681": {
+    "srdId": "srd-sub-troubadour",
+    "collection": "subclasses",
+    "name": "Troubadour"
+  },
+  "b65706e1-faf3-43c8-8f7a-238d466c8659": {
+    "srdId": "srd-sub-warden-of-renewal",
+    "collection": "subclasses",
+    "name": "Warden of Renewal"
+  },
+  "134569d3-8b23-4114-877a-c6871d8b9b91": {
+    "srdId": "srd-sub-nightwalker",
+    "collection": "subclasses",
+    "name": "Nightwalker"
+  },
+  "ebe8fdfe-0bd1-42bc-8dad-0ae9c64e22c1": {
+    "srdId": "srd-sub-syndicate",
+    "collection": "subclasses",
+    "name": "Syndicate"
+  },
+  "a4992a4b-b311-41c7-ba37-3e25875070c7": {
+    "srdId": "srd-sub-divine-wielder",
+    "collection": "subclasses",
+    "name": "Divine Wielder"
+  },
+  "6ddb59a8-bd16-4d37-a415-2523ebd59631": {
+    "srdId": "srd-sub-winged-sentinel",
+    "collection": "subclasses",
+    "name": "Winged Sentinel"
+  },
+  "bd02a775-ac7c-40fb-b011-8dfa863452ca": {
+    "srdId": "srd-sub-school-of-war",
+    "collection": "subclasses",
+    "name": "School of War"
+  }
+}

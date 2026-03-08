@@ -60,7 +60,7 @@ export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, va
   return <div className="flex items-center gap-0.5 flex-wrap">{items}</div>;
 }
 
-export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown }) {
+export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown, onAddAdversary }) {
   return (
     <>
       <div className="text-sm text-slate-400 mb-2 capitalize">
@@ -88,20 +88,38 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
       {(() => {
         const potAdv = normalizePotentialAdversaries(element.potential_adversaries);
         if (!potAdv.length) return null;
+        const hasClickable = onAddAdversary && potAdv.some(e => e.adversaryId);
         return (
           <div className="space-y-1 mb-3">
-            <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">Potential Adversaries</h5>
+            <h5 className="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800 pb-1">
+              Potential Adversaries{hasClickable ? ' — click to add' : ''}
+            </h5>
             <div className="flex flex-wrap gap-1.5 pt-1">
               {potAdv.map((entry, idx) => {
                 const isLinked = !!entry.adversaryId;
+                const isClickable = isLinked && !!onAddAdversary;
+                const baseClass = `flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+                  isLinked
+                    ? 'bg-slate-800 border border-slate-700 text-slate-300'
+                    : 'bg-slate-900 border border-dashed border-slate-600 text-slate-400 italic'
+                }`;
+                if (isClickable) {
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => onAddAdversary(entry.adversaryId)}
+                      className={`${baseClass} hover:bg-green-900/60 hover:border-green-700 hover:text-green-200 transition-colors cursor-pointer`}
+                      title={`Add ${entry.name} to encounter`}
+                    >
+                      <Link2 size={10} className="text-blue-400 shrink-0" />
+                      {entry.name}
+                    </button>
+                  );
+                }
                 return (
                   <span
                     key={idx}
-                    className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
-                      isLinked
-                        ? 'bg-slate-800 border border-slate-700 text-slate-300'
-                        : 'bg-slate-900 border border-dashed border-slate-600 text-slate-400 italic'
-                    }`}
+                    className={baseClass}
                   >
                     {isLinked && <Link2 size={10} className="text-blue-400 shrink-0" />}
                     {entry.name}

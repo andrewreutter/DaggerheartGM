@@ -34,13 +34,13 @@ import { ROLE_BP_COST } from './constants.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a flat array of { role, tier, count } for every adversary in the
+ * Returns a flat array of { role, tier, count, name } for every adversary in the
  * scene, including those from nested scenes. Uses cycle detection.
  *
  * @param {object} scene  - scene item data
  * @param {object} data   - { adversaries: [], scenes: [] } resolved library data
  * @param {Set}    visited - IDs already visited (cycle prevention)
- * @returns {{ role: string, tier: number, count: number }[]}
+ * @returns {{ role: string, tier: number, count: number, name: string }[]}
  */
 export function collectSceneAdversaries(scene, data, visited = new Set()) {
   if (!scene || visited.has(scene.id)) return [];
@@ -57,7 +57,7 @@ export function collectSceneAdversaries(scene, data, visited = new Set()) {
       adv = (data?.adversaries || []).find(a => a.id === advRef.adversaryId);
     }
     if (adv) {
-      result.push({ role: adv.role || 'standard', tier: adv.tier ?? 1, count: advRef.count || 1 });
+      result.push({ role: adv.role || 'standard', tier: adv.tier ?? 1, count: advRef.count || 1, name: adv.name || '' });
     }
   });
 
@@ -151,7 +151,8 @@ export function computeAutoModifiers(adversaries, partyTier) {
   const soloCount = adversaries.reduce((n, a) => n + (a.role === 'solo' ? a.count : 0), 0);
   const heavyRoles = new Set(['bruiser', 'horde', 'leader', 'solo']);
   const hasHeavy = adversaries.some(a => heavyRoles.has(a.role));
-  const hasLowerTier = partyTier != null && adversaries.some(a => (a.tier ?? 1) < partyTier);
+  const lowerTierItems = partyTier != null ? adversaries.filter(a => (a.tier ?? 1) < partyTier) : [];
+  const hasLowerTier = lowerTierItems.length > 0;
 
   return {
     twoOrMoreSolos: {
@@ -163,6 +164,9 @@ export function computeAutoModifiers(adversaries, partyTier) {
       active: hasLowerTier,
       value: +1,
       label: 'Lower-tier adversary',
+      // Extra context for display: the party tier used and which adversaries are below it.
+      partyTier: partyTier ?? null,
+      lowerTierItems, // [{ role, tier, count, name? }]
     },
     noHeavyRoles: {
       active: adversaries.length > 0 && !hasHeavy,

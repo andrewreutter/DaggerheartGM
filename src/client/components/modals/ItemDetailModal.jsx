@@ -26,7 +26,7 @@ const COLLECTION_LABELS = {
  * Compact battle budget summary bar for scene detail view.
  * Shows tier, BP cost, adjusted budget with modifiers.
  */
-function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1 }) {
+function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1, characters = [] }) {
   const { tier, bp, budget, autoMods, userMods, totalMod, adjustedBudget } = computeSceneBudget(item, data, partySize, partyTier);
 
   const hasAdversaries = bp > 0 || tier != null;
@@ -35,9 +35,23 @@ function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1 }) {
   const diff = bp - adjustedBudget;
   const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-slate-400';
 
+  const { lowerTierAdversary } = autoMods;
+  const topTierChars = lowerTierAdversary.active
+    ? characters.filter(c => (c.tier ?? 1) >= (lowerTierAdversary.partyTier ?? 1))
+    : [];
+  const lowerTierAdvNames = lowerTierAdversary.active
+    ? [...new Map((lowerTierAdversary.lowerTierItems || []).map(a => [a.name || a.role, a])).values()]
+    : [];
+  const lowerTierTooltip = lowerTierAdversary.active
+    ? [
+        `Party T${lowerTierAdversary.partyTier ?? 1}${topTierChars.length > 0 ? `: ${topTierChars.map(c => c.name).join(', ')}` : ''}`,
+        lowerTierAdvNames.length > 0 ? `Lower: ${lowerTierAdvNames.map(a => `${a.name || a.role} T${a.tier ?? 1}`).join(', ')}` : '',
+      ].filter(Boolean).join(' · ')
+    : '';
+
   const activeMods = [
     autoMods.twoOrMoreSolos.active && { label: '2+ Solos', value: -2, auto: true },
-    autoMods.lowerTierAdversary.active && { label: 'Lower-tier adversary', value: +1, auto: true },
+    lowerTierAdversary.active && { label: 'Lower-tier adversary', value: +1, auto: true, tooltip: lowerTierTooltip },
     autoMods.noHeavyRoles.active && { label: 'No heavy roles', value: +1, auto: true },
     userMods.lessDifficult && { label: 'Less difficult', value: -1, auto: false },
     userMods.damageBoostPlusOne && { label: '+1 damage', value: -1, auto: false },
@@ -83,15 +97,28 @@ function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1 }) {
           {activeMods.map((m, i) => (
             <span
               key={i}
+              title={m.tooltip || undefined}
               className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
                 m.value > 0
                   ? 'bg-emerald-900/40 border-emerald-700/50 text-emerald-300'
                   : 'bg-red-900/40 border-red-700/50 text-red-300'
-              } ${m.auto ? '' : 'border-dashed'}`}
+              } ${m.auto ? '' : 'border-dashed'} ${m.tooltip ? 'cursor-help' : ''}`}
             >
               {m.label} {m.value > 0 ? '+' : ''}{m.value}
             </span>
           ))}
+        </div>
+      )}
+      {lowerTierAdversary.active && (
+        <div className="mt-1.5 space-y-0.5">
+          <p className="text-[10px] text-sky-400/80 leading-snug">
+            Party T{lowerTierAdversary.partyTier ?? 1}{topTierChars.length > 0 ? `: ${topTierChars.map(c => c.name).join(', ')}` : ''}
+          </p>
+          {lowerTierAdvNames.length > 0 && (
+            <p className="text-[10px] text-emerald-400/70 leading-snug">
+              Lower: {lowerTierAdvNames.map(a => `${a.name || a.role} T${a.tier ?? 1}`).join(', ')}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -139,6 +166,7 @@ export function ItemDetailModal({
   onClose,
   partySize = 1,
   partyTier = 1,
+  characters = [],
   onMergeAdversary,
 }) {
   const isNew = !item?.id;
@@ -342,7 +370,7 @@ export function ItemDetailModal({
             {displayItem.description && (
               <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300 mb-3" />
             )}
-            <SceneBudgetBar item={displayItem} data={data} partySize={partySize} partyTier={partyTier} />
+            <SceneBudgetBar item={displayItem} data={data} partySize={partySize} partyTier={partyTier} characters={characters} />
             <ExpandedTablePreview
               item={displayItem}
               tab={collection}
@@ -376,6 +404,7 @@ export function ItemDetailModal({
       featureLibraryPortal: libraryPortal,
       partySize,
       partyTier,
+      characters,
       onImageSaved: item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined,
       onMergeAdversary,
     };

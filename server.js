@@ -16,6 +16,8 @@ import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
 import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
 import { generateImage as hfGenerateImage, editImage as hfEditImage, isConfigured as hfIsConfigured } from './src/huggingface-image.js';
+import { syncDaggerstackCharacter, invalidateSrdLookupCache } from './src/daggerstack-sync.js';
+import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.js';
 import compression from 'compression';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -601,6 +603,22 @@ const importUpload = multer({
   },
 });
 
+// --- Daggerstack character sync ---
+
+app.post('/api/daggerstack/sync', requireAuth, async (req, res) => {
+  const { url, email, password } = req.body || {};
+  if (!url || !email || !password) {
+    return res.status(400).json({ error: 'url, email, and password are required' });
+  }
+  try {
+    const { character, _debug, _lookupTables } = await syncDaggerstackCharacter(url, email, password);
+    res.json({ character, _debug, _lookupTables });
+  } catch (err) {
+    console.error('POST /api/daggerstack/sync error:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // --- Hugging Face image generation ---
 
 app.post('/api/generate-image', requireAuth, async (req, res) => {
@@ -739,9 +757,12 @@ function deepMergePreservingImages(current, incoming) {
     } else if (key === 'elements') {
       const curArr = current[key] || [];
       const inArr = incoming[key] || [];
-      result[key] = inArr.map((inEntry, idx) => {
+      const curByInstanceId = {};
+      curArr.forEach(el => { if (el?.instanceId) curByInstanceId[el.instanceId] = el; });
+      result[key] = inArr.map((inEntry) => {
         if (inEntry && typeof inEntry === 'object') {
-          return deepMergePreservingImages(curArr[idx], inEntry);
+          const curEntry = inEntry.instanceId ? curByInstanceId[inEntry.instanceId] : undefined;
+          return curEntry ? deepMergePreservingImages(curEntry, inEntry) : inEntry;
         }
         return inEntry;
       });
@@ -891,6 +912,15 @@ async function startServer() {
         await runSyncSource(APP_ID, 'hod', null, { fullRefresh: true });
       } catch (err) {
         console.error('[cron] HoD full refresh failed:', err.message);
+      }
+    });
+    cron.schedule('0 4 * * *', async () => {
+      try {
+        await refreshDaggerstackUuidMap();
+        invalidateSrdLookupCache();
+        console.log('[cron] Daggerstack UUID map refreshed');
+      } catch (err) {
+        console.error('[cron] Daggerstack UUID refresh failed:', err.message);
       }
     });
   } else {

@@ -35,7 +35,7 @@ const TABS = [
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 1, partyTier = 1, ensureScenesLoaded, ensureAdventuresLoaded }) {
+export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 1, partyTier = 1, characters = [], ensureScenesLoaded, ensureAdventuresLoaded }) {
   const [showImageImport, setShowImageImport] = useState(false);
   const [modalState, setModalState] = useState(null);
   const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
@@ -362,6 +362,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
           onClose={closeModal}
           partySize={partySize}
           partyTier={partyTier}
+          characters={characters}
           onMergeAdversary={onMergeAdversary}
         />
       )}

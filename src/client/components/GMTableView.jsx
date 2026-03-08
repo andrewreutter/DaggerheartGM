@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings } from 'lucide-react';
+import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -7,12 +7,43 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRolzRoll } from '../lib/api.js';
+import { postRolzRoll, syncDaggerstackCharacter, resolveItems } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { TierSelector } from './TierSelector.jsx';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
+import { CharacterHoverCard } from './CharacterHoverCard.jsx';
 
+
+/**
+ * Shared hook: after layout, measure a fixed-position overlay and compute a
+ * vertical pixel adjustment so it stays within the viewport (8px padding).
+ * Returns the adjustment value to add to the overlay's `top` style.
+ */
+function useViewportClamp(ref, isActive, key) {
+  const [adjust, setAdjust] = useState(0);
+  const keyRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (!isActive || !ref.current) {
+      keyRef.current = null;
+      if (adjust !== 0) setAdjust(0);
+      return;
+    }
+    if (keyRef.current !== key) {
+      keyRef.current = key;
+      if (adjust !== 0) { setAdjust(0); return; }
+    } else if (adjust !== 0) {
+      return;
+    }
+    const rect = ref.current.getBoundingClientRect();
+    const vh = window.innerHeight;
+    if (rect.top < 8) setAdjust(8 - rect.top);
+    else if (rect.bottom > vh - 8) setAdjust(vh - 8 - rect.bottom);
+  }, [isActive, key, adjust]);
+
+  return adjust;
+}
 
 // Strip boundaries (1-indexed in the spec, 0-indexed here):
 // Amber (Failure w/ Hope): items 1–6, Violet (Success w/ Fear): items 6–13,
@@ -150,7 +181,7 @@ function getItemData(element) {
 
 const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
@@ -221,7 +252,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [budgetCardOpen, setBudgetCardOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef(null);
-  const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, tier, maxHope, maxHp, maxStress }
+  const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, tier, maxHope, maxHp, maxStress, daggerstackUrl?, daggerstackEmail?, daggerstackPassword?, _synced? }
+  const [dialogSyncing, setDialogSyncing] = useState(false);
+  const [dialogSyncError, setDialogSyncError] = useState('');
   const overlayScrollRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
@@ -229,9 +262,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [scaledToggleState, setScaledToggleState] = useState({});
   const [hoveredTrackerGroup, setHoveredTrackerGroup] = useState(null); // { baseElement, instances, top, bottom }
   const trackerOverlayRef = useRef(null);
-  const trackerGroupIdRef = useRef(null);
-  const [trackerAdjust, setTrackerAdjust] = useState(0); // px to shift overlay so it stays in viewport
+  const trackerKey = hoveredTrackerGroup
+    ? (hoveredTrackerGroup.kind === 'environment' ? hoveredTrackerGroup.element.instanceId : hoveredTrackerGroup.baseElement.id)
+    : null;
+  const trackerAdjust = useViewportClamp(trackerOverlayRef, !!hoveredTrackerGroup, trackerKey);
   const trackerHideTimerRef = useRef(null);
+  // Character hover card state
+  const [hoveredCharacter, setHoveredCharacter] = useState(null); // { element, top, bottom }
+  const charHideTimerRef = useRef(null);
+  const [resyncingCharId, setResyncingCharId] = useState(null);
   const showTrackerGroup = (item, e) => {
     if (trackerHideTimerRef.current) { clearTimeout(trackerHideTimerRef.current); trackerHideTimerRef.current = null; }
     const rect = e.currentTarget.getBoundingClientRect();
@@ -247,6 +286,50 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const cancelHideTracker = () => {
     if (trackerHideTimerRef.current) { clearTimeout(trackerHideTimerRef.current); trackerHideTimerRef.current = null; }
   };
+
+  // Character hover card helpers
+  const showCharacterCard = (el, e) => {
+    if (!el.daggerstackUrl) return;
+    if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHoveredCharacter({ element: el, top: rect.top, bottom: rect.bottom });
+  };
+  const scheduleHideCharacterCard = () => {
+    charHideTimerRef.current = setTimeout(() => { setHoveredCharacter(null); charHideTimerRef.current = null; }, 120);
+  };
+  const cancelHideCharacterCard = () => {
+    if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
+  };
+
+  const handleResyncCharacter = async (el) => {
+    if (!el.daggerstackUrl || !el.daggerstackEmail || !el.daggerstackPassword) return;
+    setResyncingCharId(el.instanceId);
+    try {
+      const { character, _debug, _lookupTables } = await syncDaggerstackCharacter(el.daggerstackUrl, el.daggerstackEmail, el.daggerstackPassword);
+      // Preserve runtime state (current HP/stress/hope/armor, conditions, playerName)
+      updateActiveElement(el.instanceId, {
+        ...character,
+        _daggerstackDebug: _debug,
+        _daggerstackLookupTables: _lookupTables,
+        instanceId: el.instanceId,
+        elementType: 'character',
+        currentHp: el.currentHp,
+        currentStress: el.currentStress,
+        hope: el.hope,
+        currentArmor: el.currentArmor,
+        conditions: el.conditions,
+        playerName: el.playerName || character.playerName,
+      });
+      // Update hover card element reference
+      setHoveredCharacter(prev => prev?.element?.instanceId === el.instanceId ? { ...prev, element: { ...prev.element, ...character, _daggerstackDebug: _debug, _daggerstackLookupTables: _lookupTables, instanceId: el.instanceId } } : prev);
+    } catch (err) {
+      console.error('Re-sync failed:', err);
+      alert(`Re-sync failed: ${err.message}`);
+    } finally {
+      setResyncingCharId(null);
+    }
+  };
+
   const [showGmMovesOverlay, setShowGmMovesOverlay] = useState(false);
   const gmMovesHideTimerRef = useRef(null);
   const showGmMoves = () => {
@@ -267,9 +350,66 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     setFearPulsing(false);
     requestAnimationFrame(() => {
       setFearPulsing(true);
-      fearPulseTimerRef.current = setTimeout(() => setFearPulsing(false), 700);
+      fearPulseTimerRef.current = setTimeout(() => setFearPulsing(false), 2500);
     });
   };
+  const [hopePulsingId, setHopePulsingId] = useState(null);
+  const hopePulseTimerRef = useRef(null);
+  const triggerHopePulse = (instanceId) => {
+    if (hopePulseTimerRef.current) clearTimeout(hopePulseTimerRef.current);
+    setHopePulsingId(null);
+    requestAnimationFrame(() => {
+      setHopePulsingId(instanceId);
+      hopePulseTimerRef.current = setTimeout(() => setHopePulsingId(null), 2500);
+    });
+  };
+
+  const handleDaggerheartRoll = (dominant, rollUser) => {
+    if (dominant === 'fear') {
+      setFearCount(prev => Math.min(prev + 1, 12));
+      triggerFearPulse();
+    } else if (dominant === 'hope') {
+      const characters = activeElements.filter(el => el.elementType === 'character');
+      if (!characters.length) return;
+
+      const nameLower = (rollUser || '').toLowerCase().trim();
+      let match = characters.find(
+        el => el.name?.toLowerCase() === nameLower || el.playerName?.toLowerCase() === nameLower
+      );
+      // Fall back to the only character when there's exactly one and no name match.
+      if (!match && characters.length === 1) match = characters[0];
+      if (!match) return;
+
+      const maxHope = match.maxHope ?? 6;
+      // el.hope undefined means the track is at full but the field was never written — treat as maxHope.
+      const currentHope = match.hope ?? maxHope;
+      const newHope = Math.min(currentHope + 1, maxHope);
+      // Always update and pulse, even if the increment is capped (hope was already full but
+      // undefined — this writes the explicit value so the track reflects the state).
+      updateActiveElement(match.instanceId, { hope: newHope });
+      triggerHopePulse(match.instanceId);
+    }
+  };
+  const handleSpendHope = (instanceId) => {
+    const el = activeElements.find(e => e.instanceId === instanceId);
+    if (!el) return;
+    const maxHope = el.maxHope ?? 6;
+    const currentHope = el.hope ?? maxHope;
+    const newHope = Math.max(0, currentHope - 1);
+    updateActiveElement(instanceId, { hope: newHope, selectedExperienceIndex: null });
+    triggerHopePulse(instanceId);
+  };
+
+  const handleUseHopeAbility = (instanceId) => {
+    const el = activeElements.find(e => e.instanceId === instanceId);
+    if (!el) return;
+    const maxHope = el.maxHope ?? 6;
+    const currentHope = el.hope ?? maxHope;
+    if (currentHope < 3) return;
+    updateActiveElement(instanceId, { hope: currentHope - 3, selectedExperienceIndex: null });
+    triggerHopePulse(instanceId);
+  };
+
   const [collapsedSections, setCollapsedSections] = useState(() =>
     new Set(activeElements.length > 0 ? ['Defaults'] : [])
   );
@@ -289,29 +429,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [addMenuOpen]);
-
-  // Clamp tracker hover overlay to stay within the viewport.
-  useLayoutEffect(() => {
-    if (!hoveredTrackerGroup || !trackerOverlayRef.current) {
-      trackerGroupIdRef.current = null;
-      if (trackerAdjust !== 0) setTrackerAdjust(0);
-      return;
-    }
-    const groupId = hoveredTrackerGroup.kind === 'environment' ? hoveredTrackerGroup.element.instanceId : hoveredTrackerGroup.baseElement.id;
-    if (trackerGroupIdRef.current !== groupId) {
-      // New group: record it and reset adjustment so we measure from scratch.
-      trackerGroupIdRef.current = groupId;
-      if (trackerAdjust !== 0) { setTrackerAdjust(0); return; }
-      // adj already 0 — fall through to measure immediately
-    } else if (trackerAdjust !== 0) {
-      // Already clamped for this group; don't re-measure.
-      return;
-    }
-    const rect = trackerOverlayRef.current.getBoundingClientRect();
-    const vh = window.innerHeight;
-    if (rect.top < 8) setTrackerAdjust(8 - rect.top);
-    else if (rect.bottom > vh - 8) setTrackerAdjust(vh - 8 - rect.bottom);
-  }, [hoveredTrackerGroup, trackerAdjust]);
 
   useEffect(() => {
     if (!showGmMovesOverlay) {
@@ -378,6 +495,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const closeEditModal = () => {
     setEditState(null);
     navigate('/gm-table', { replace: true });
+  };
+
+  const handleAddPotentialAdversary = async (adversaryId) => {
+    try {
+      const result = await resolveItems({ adversaries: [adversaryId] });
+      const adversary = result.adversaries?.[0];
+      if (adversary) addToTable(adversary, 'adversaries');
+    } catch (err) {
+      console.warn('Failed to resolve potential adversary:', err);
+    }
   };
 
   const handleEditClick = (instances, baseElement, collection) => {
@@ -487,6 +614,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       cleanup();
       removePendingRoll(pendingId);
       console.error('Rolz roll failed:', err);
+    }
+  };
+
+  const handleTraitRoll = async (rollText, displayName) => {
+    if (!rolzConfigured) {
+      setRolzConfigOpen(true);
+      setNudgeHint(true);
+      setTimeout(() => setNudgeHint(false), 6000);
+      return;
+    }
+    const { id: pendingId, cleanup } = addPendingRoll(displayName || rollText, rollText);
+    try {
+      await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+    } catch (err) {
+      cleanup();
+      removePendingRoll(pendingId);
+      console.error('Trait roll failed:', err);
     }
   };
 
@@ -628,7 +772,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const roleAndTierById = {};
   advElements.forEach(e => {
     countById[e.id] = (countById[e.id] || 0) + 1;
-    roleAndTierById[e.id] = { role: e.role || 'standard', tier: e.tier ?? 1 };
+    roleAndTierById[e.id] = { role: e.role || 'standard', tier: e.tier ?? 1, name: e.name || '' };
   });
   const tableAdvSummary = Object.entries(countById).map(([id, count]) => ({
     ...roleAndTierById[id], count,
@@ -641,6 +785,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const tableDiff = tableBP - adjustedBudget;
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
+  const tableCharacters = activeElements.filter(e => e.elementType === 'character');
 
   const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
@@ -658,7 +803,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         <div className="p-2 space-y-3">
           {/* + Add Character button */}
           <button
-            onClick={() => setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6 })}
+            onClick={() => { setDialogSyncError(''); setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6, daggerstackUrl: '', daggerstackEmail: '', daggerstackPassword: '', _synced: false }); }}
             className="w-full rounded-lg border border-dashed border-sky-900/50 bg-sky-950/20 hover:border-sky-700/60 hover:bg-sky-950/40 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
             <Plus size={12} className="text-sky-500" />
@@ -666,7 +811,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           </button>
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => (
-            <div key={el.instanceId} className="rounded-lg bg-sky-950/30 border border-sky-900/40 overflow-hidden group/char">
+            <div
+              key={el.instanceId}
+              className={`rounded-lg bg-sky-950/30 border overflow-hidden group/char transition-colors ${hopePulsingId === el.instanceId ? 'border-amber-400 hope-pulse-anim' : 'border-sky-900/40'}`}
+              onMouseEnter={(e) => showCharacterCard(el, e)}
+              onMouseLeave={scheduleHideCharacterCard}
+            >
               <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
                 <User size={10} className="text-sky-400 shrink-0" />
                 <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name}</span>
@@ -676,7 +826,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
                 <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
                   <button
-                    onClick={() => setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', tier: el.tier ?? 1, maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress })}
+                    onClick={() => { setDialogSyncError(''); setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', tier: el.tier ?? 1, maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress, daggerstackUrl: el.daggerstackUrl || '', daggerstackEmail: el.daggerstackEmail || '', daggerstackPassword: el.daggerstackPassword || '', _synced: !!el.daggerstackUrl }); }}
                     className="text-slate-500 hover:text-sky-400 transition-colors"
                     title="Edit character"
                   ><Pencil size={11} /></button>
@@ -703,6 +853,37 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     />
                   </div>
                 ); })()}
+                {/* Evasion + Damage Thresholds */}
+                {(el.evasion != null || el.armorThresholds) && (
+                  <div className="flex items-center gap-1.5 flex-wrap ml-[14px]">
+                    {el.evasion != null && (
+                      <span className="text-[10px] font-bold text-cyan-400/70 bg-cyan-900/50 border border-cyan-800/50 rounded px-1">
+                        EVA {el.evasion}
+                      </span>
+                    )}
+                    {el.armorThresholds && (
+                      <span className="text-[10px] text-slate-400">
+                        Thresholds <span className="font-bold text-yellow-300">{el.armorThresholds.major}</span>
+                        <span className="text-slate-600"> / </span>
+                        <span className="font-bold text-red-300">{el.armorThresholds.severe}</span>
+                      </span>
+                    )}
+                  </div>
+                )}
+                {/* Armor track */}
+                {(el.maxArmor || 0) > 0 && (
+                  <div className="flex items-center gap-1">
+                    <Shield size={10} className="text-cyan-500 shrink-0" />
+                    <CheckboxTrack
+                      total={el.maxArmor || 0}
+                      filled={el.currentArmor || 0}
+                      onSetFilled={(v) => updateActiveElement(el.instanceId, { currentArmor: v })}
+                      fillColor="bg-cyan-500"
+                      label="Armor"
+                      verbs={['Mark', 'Clear']}
+                    />
+                  </div>
+                )}
                 {/* HP track */}
                 {(el.maxHp || 0) > 0 && (
                   <div className="flex items-center gap-1">
@@ -720,12 +901,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 {/* Stress track */}
                 {(el.maxStress || 0) > 0 && (
                   <div className="flex items-center gap-1">
-                    <AlertCircle size={10} className="text-purple-500 shrink-0" />
+                    <AlertCircle size={10} className="text-orange-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxStress || 0}
                       filled={el.currentStress || 0}
                       onSetFilled={(s) => updateActiveElement(el.instanceId, { currentStress: s })}
-                      fillColor="bg-purple-500"
+                      fillColor="bg-orange-500"
                       label="Stress"
                       verbs={['Mark', 'Clear']}
                     />
@@ -1014,6 +1195,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             pendingRolls={pendingRolls}
             compact
             onConfigOpen={() => { setRoomNameDraft(rolzRoomName); setUsernameDraft(rolzUsername); setPasswordDraft(rolzPassword); setRolzConfigOpen(true); }}
+            onDaggerheartRoll={handleDaggerheartRoll}
           />
         )}
 
@@ -1115,15 +1297,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         {/* Fear tracker */}
         <div className="px-2 pt-2 pb-1 sticky top-[41px] z-10 bg-slate-950 border-b border-slate-800">
           <div
-            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-amber-500 bg-amber-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
+            className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-purple-500 bg-purple-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
-              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-amber-300' : 'text-amber-500'}`} />
+              <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-purple-300' : 'text-purple-500'}`} />
               <CheckboxTrack
                 total={6}
                 filled={Math.min(fearCount, 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v)}
-                fillColor="bg-amber-500"
+                fillColor="bg-purple-500"
                 label="Fear"
                 verbs={['Gain', 'Spend']}
                 currentAbsoluteValue={fearCount}
@@ -1136,7 +1318,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 total={6}
                 filled={Math.max(0, fearCount - 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
-                fillColor="bg-amber-500"
+                fillColor="bg-purple-500"
                 label="Fear"
                 verbs={['Gain', 'Spend']}
                 currentAbsoluteValue={fearCount}
@@ -1207,14 +1389,37 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 {activeAutoMods.length > 0 && (
                   <div className="space-y-1">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide">Auto-detected</p>
-                    {activeAutoMods.map(m => (
-                      <div key={m.label} className="flex items-center justify-between text-xs gap-2">
-                        <span className="text-slate-300 leading-tight">{m.label}</span>
-                        <span className={`font-mono font-semibold shrink-0 ${m.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {m.value > 0 ? `+${m.value}` : m.value}
-                        </span>
-                      </div>
-                    ))}
+                    {activeAutoMods.map(m => {
+                      const isLowerTier = m === tableAutoMods.lowerTierAdversary;
+                      const topTierChars = isLowerTier
+                        ? tableCharacters.filter(c => (c.tier ?? 1) >= (m.partyTier ?? 1))
+                        : [];
+                      const lowerAdvs = isLowerTier
+                        ? [...new Map((m.lowerTierItems || []).map(a => [a.name || a.role, a])).values()]
+                        : [];
+                      return (
+                        <div key={m.label} className="flex items-start justify-between text-xs gap-2">
+                          <div className="flex flex-col gap-0.5 leading-tight min-w-0">
+                            <span className="text-slate-300">{m.label}</span>
+                            {isLowerTier && (
+                              <>
+                                <span className="text-[10px] text-sky-400/80 leading-snug">
+                                  Party T{m.partyTier ?? 1}{topTierChars.length > 0 ? `: ${topTierChars.map(c => c.name).join(', ')}` : ''}
+                                </span>
+                                {lowerAdvs.length > 0 && (
+                                  <span className="text-[10px] text-emerald-400/70 leading-snug">
+                                    Lower: {lowerAdvs.map(a => `${a.name || a.role} T${a.tier ?? 1}`).join(', ')}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          <span className={`font-mono font-semibold shrink-0 mt-0.5 ${m.value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {m.value > 0 ? `+${m.value}` : m.value}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1346,6 +1551,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     >{count === 1 ? <X size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
                   </div>
                 </div>
+                {/* Difficulty + Damage Thresholds */}
+                {(displayEl.difficulty != null || (displayEl.hp_thresholds && (displayEl.hp_thresholds.major != null || displayEl.hp_thresholds.severe != null))) && (
+                  <div className="flex items-center gap-1.5 flex-wrap px-2.5 pt-1.5">
+                    {displayEl.difficulty != null && (
+                      <span className="text-[10px] font-bold text-cyan-400/70 bg-cyan-900/50 border border-cyan-800/50 rounded px-1">
+                        Diff {displayEl.difficulty}
+                      </span>
+                    )}
+                    {displayEl.hp_thresholds && (displayEl.hp_thresholds.major != null || displayEl.hp_thresholds.severe != null) && (
+                      <span className="text-[10px] text-slate-400">
+                        Thresholds <span className="font-bold text-yellow-300">{displayEl.hp_thresholds.major}</span>
+                        <span className="text-slate-600"> / </span>
+                        <span className="font-bold text-red-300">{displayEl.hp_thresholds.severe}</span>
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="p-2 space-y-2">
                   {instances.map((inst, idx) => {
                     const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
@@ -1389,12 +1611,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         )}
                         {(displayEl.stress_max || 0) > 0 && (
                           <div className="flex items-center gap-1">
-                            <AlertCircle size={10} className="text-purple-500 shrink-0" />
+                            <AlertCircle size={10} className="text-orange-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.stress_max || 0}
                               filled={inst.currentStress || 0}
                               onSetFilled={(s) => updateActiveElement(inst.instanceId, { currentStress: s })}
-                              fillColor="bg-purple-500"
+                              fillColor="bg-orange-500"
                               label="Stress"
                               verbs={['Mark', 'Clear']}
                             />
@@ -1442,13 +1664,104 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
     {characterDialog && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setCharacterDialog(null)}>
-        <div className="bg-slate-800 border border-sky-900/60 rounded-xl shadow-2xl w-80 p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="bg-slate-800 border border-sky-900/60 rounded-xl shadow-2xl w-96 p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
           <div className="flex items-center gap-2">
             <User size={16} className="text-sky-400 shrink-0" />
             <h3 className="text-sm font-bold text-sky-200">
               {characterDialog.editInstanceId ? 'Edit Character' : 'Add Character'}
             </h3>
           </div>
+
+          {/* Daggerstack sync section */}
+          <div className="rounded-lg border border-sky-900/40 bg-sky-950/20 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setCharacterDialog(d => ({ ...d, _dsOpen: !d._dsOpen }))}
+              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-sky-950/30 transition-colors"
+            >
+              <ExternalLink size={12} className="text-sky-500 shrink-0" />
+              <span className="text-[11px] font-semibold text-sky-300 flex-1">Sync from Daggerstack</span>
+              {characterDialog._synced && (
+                <span className="text-[9px] bg-sky-900/60 text-sky-300 rounded px-1.5 py-0.5">synced</span>
+              )}
+              {characterDialog._dsOpen ? <ChevronDown size={11} className="text-slate-500" /> : <ChevronRight size={11} className="text-slate-500" />}
+            </button>
+            {characterDialog._dsOpen && (
+              <div className="px-3 pb-3 space-y-2 border-t border-sky-900/30">
+                <div className="pt-2">
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Character URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://daggerstack.com/character/12345"
+                    value={characterDialog.daggerstackUrl || ''}
+                    onChange={e => setCharacterDialog(d => ({ ...d, daggerstackUrl: e.target.value }))}
+                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Daggerstack Email</label>
+                  <input
+                    type="email"
+                    placeholder="you@example.com"
+                    value={characterDialog.daggerstackEmail || ''}
+                    onChange={e => setCharacterDialog(d => ({ ...d, daggerstackEmail: e.target.value }))}
+                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Daggerstack Password</label>
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={characterDialog.daggerstackPassword || ''}
+                    onChange={e => setCharacterDialog(d => ({ ...d, daggerstackPassword: e.target.value }))}
+                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-500"
+                  />
+                </div>
+                {dialogSyncError && (
+                  <p className="text-[11px] text-red-400 leading-tight">{dialogSyncError}</p>
+                )}
+                <button
+                  type="button"
+                  disabled={dialogSyncing || !characterDialog.daggerstackUrl?.trim() || !characterDialog.daggerstackEmail?.trim() || !characterDialog.daggerstackPassword?.trim()}
+                  onClick={async () => {
+                    setDialogSyncError('');
+                    setDialogSyncing(true);
+                    try {
+                      const { character, _debug, _lookupTables } = await syncDaggerstackCharacter(
+                        characterDialog.daggerstackUrl,
+                        characterDialog.daggerstackEmail,
+                        characterDialog.daggerstackPassword,
+                      );
+                      setCharacterDialog(d => ({
+                        ...d,
+                        name: character.name || d.name,
+                        playerName: d.playerName || '',
+                        tier: character.tier ?? d.tier,
+                        maxHope: character.maxHope ?? d.maxHope,
+                        maxHp: character.maxHp ?? d.maxHp,
+                        maxStress: character.maxStress ?? d.maxStress,
+                        _syncedData: { ...character, _daggerstackDebug: _debug, _daggerstackLookupTables: _lookupTables },
+                        _synced: true,
+                      }));
+                    } catch (err) {
+                      setDialogSyncError(err.message);
+                    } finally {
+                      setDialogSyncing(false);
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-sky-100 text-xs font-semibold transition-colors"
+                >
+                  <RefreshCw size={11} className={dialogSyncing ? 'animate-spin' : ''} />
+                  {dialogSyncing ? 'Syncing…' : 'Sync Character'}
+                </button>
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  Credentials are stored with the character and used to re-sync later. Stats (HP, Stress, etc.) are overwritten from Daggerstack on each sync.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="space-y-3">
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Character Name *</label>
@@ -1518,6 +1831,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </div>
           </div>
           <div className="flex gap-2 pt-1">
+            {characterDialog.editInstanceId && (
+              <button
+                onClick={() => {
+                  if (window.confirm(`Remove ${characterDialog.name} from the table?`)) {
+                    removeActiveElement(characterDialog.editInstanceId);
+                    setCharacterDialog(null);
+                  }
+                }}
+                className="px-3 py-1.5 rounded-lg bg-red-900/70 hover:bg-red-800 text-red-300 text-xs font-medium transition-colors"
+              >Remove</button>
+            )}
             <button
               onClick={() => setCharacterDialog(null)}
               className="flex-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium transition-colors"
@@ -1526,6 +1850,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               disabled={!characterDialog.name.trim()}
               onClick={() => {
                 if (!characterDialog.name.trim()) return;
+                const dsFields = characterDialog._syncedData || {};
+                const dsCredentials = {
+                  daggerstackUrl: characterDialog.daggerstackUrl || undefined,
+                  daggerstackEmail: characterDialog.daggerstackEmail || undefined,
+                  daggerstackPassword: characterDialog.daggerstackPassword || undefined,
+                  daggerstackCharacterId: dsFields.daggerstackCharacterId,
+                };
+                // Strip internal-only dialog keys
+                const cleanDsFields = { ...dsFields };
+                delete cleanDsFields.conditions;
+                delete cleanDsFields.playerName;
+                delete cleanDsFields.elementType;
                 if (characterDialog.editInstanceId) {
                   updateActiveElement(characterDialog.editInstanceId, {
                     name: characterDialog.name.trim(),
@@ -1534,6 +1870,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     maxHope: characterDialog.maxHope,
                     maxHp: characterDialog.maxHp,
                     maxStress: characterDialog.maxStress,
+                    ...cleanDsFields,
+                    ...dsCredentials,
                   });
                 } else {
                   addToTable({
@@ -1541,13 +1879,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     name: characterDialog.name.trim(),
                     playerName: characterDialog.playerName.trim(),
                     tier: characterDialog.tier ?? 1,
-                    hope: characterDialog.maxHope,
+                    hope: dsFields.hope ?? characterDialog.maxHope,
                     maxHope: characterDialog.maxHope,
                     maxHp: characterDialog.maxHp,
                     maxStress: characterDialog.maxStress,
-                    currentHp: characterDialog.maxHp,
-                    currentStress: 0,
+                    currentHp: dsFields.currentHp ?? characterDialog.maxHp,
+                    currentStress: dsFields.currentStress ?? 0,
+                    currentArmor: dsFields.currentArmor ?? 0,
                     conditions: '',
+                    ...cleanDsFields,
+                    ...dsCredentials,
                   }, 'characters');
                 }
                 setCharacterDialog(null);
@@ -1615,6 +1956,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         onClose={closeEditModal}
         partySize={partySize}
         partyTier={partyTier}
+        characters={characters}
         onMergeAdversary={onMergeAdversary}
       />
     )}
@@ -1660,6 +2002,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     cardKey={el.instanceId}
                     featureCountdowns={featureCountdowns}
                     updateCountdown={null}
+                    onAddAdversary={handleAddPotentialAdversary}
                   />
                 </>
               );
@@ -1769,6 +2112,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   cardKey={hoveredElement.element.instanceId}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
+                  onAddAdversary={handleAddPotentialAdversary}
                 />
               </div>
             </div>
@@ -1834,6 +2178,38 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         />
       </div>
     )}
+
+    {/* Character hover card overlay — appears to the RIGHT of the Characters panel */}
+    {hoveredCharacter && (() => {
+      // Look up the live element so CheckboxTrack interactions reflect current state
+      const liveEl = activeElements.find(e => e.instanceId === hoveredCharacter.element.instanceId) || hoveredCharacter.element;
+      return (
+        <div
+          className="fixed z-[55] flex flex-col"
+          style={{
+            left: 'calc(14rem + 8px)',
+            top: 8,
+            width: '22rem',
+            height: 'calc(100vh - 16px)',
+          }}
+          onMouseEnter={cancelHideCharacterCard}
+          onMouseLeave={() => setHoveredCharacter(null)}
+        >
+          <CharacterHoverCard
+            el={liveEl}
+            updateFn={updateActiveElement}
+            onResync={liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
+            isSyncing={resyncingCharId === liveEl.instanceId}
+            onRoll={handleTraitRoll}
+            onSpendHope={handleSpendHope}
+            onUseHopeAbility={handleUseHopeAbility}
+            onDebugMouseEnter={cancelHideCharacterCard}
+            onDebugMouseLeave={() => setHoveredCharacter(null)}
+          />
+        </div>
+      );
+    })()}
+
     </div>
   );
 }

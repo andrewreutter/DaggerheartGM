@@ -68,9 +68,10 @@ function buildSceneForBP(fd, ownedAdvs, ownedEnvs, isControlled, pickerValues) {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  *
  * partySize — character count from the Game Table, used for BP budget calculation.
- * partyTier — highest tier among player characters, used for the lower-tier adversary BP modifier.
+ * partyTier   — highest tier among player characters, used for the lower-tier adversary BP modifier.
+ * characters  — array of { name, tier } for display in lower-tier adversary detail.
  */
-export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 1, partyTier = 1, onImageSaved, onMergeAdversary }) {
+export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 1, partyTier = 1, characters = [], onImageSaved, onMergeAdversary }) {
   const isControlled = value !== undefined;
 
   // --- Uncontrolled state (legacy path) ---
@@ -262,11 +263,26 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
                 2+ Solos −2
               </span>
             )}
-            {autoMods.lowerTierAdversary.active && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">
-                Lower-tier adversary +1
-              </span>
-            )}
+            {autoMods.lowerTierAdversary.active && (() => {
+              const ltMod = autoMods.lowerTierAdversary;
+              const topChars = characters.filter(c => (c.tier ?? 1) >= (ltMod.partyTier ?? 1));
+              const lowerAdvs = [...new Map((ltMod.lowerTierItems || []).map(a => [a.name || a.role, a])).values()];
+              return (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">
+                    Lower-tier adversary +1
+                  </span>
+                  <span className="text-[10px] text-sky-400/80 px-1 leading-snug">
+                    Party T{ltMod.partyTier ?? 1}{topChars.length > 0 ? `: ${topChars.map(c => c.name).join(', ')}` : ''}
+                  </span>
+                  {lowerAdvs.length > 0 && (
+                    <span className="text-[10px] text-emerald-400/70 px-1 leading-snug">
+                      Lower: {lowerAdvs.map(a => `${a.name || a.role} T${a.tier ?? 1}`).join(', ')}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             {autoMods.noHeavyRoles.active && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">
                 No heavy roles +1

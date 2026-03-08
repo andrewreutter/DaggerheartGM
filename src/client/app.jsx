@@ -42,6 +42,10 @@ function App() {
     const chars = activeElements.filter(el => el.elementType === 'character');
     return chars.length > 0 ? Math.max(...chars.map(c => c.tier ?? 1)) : 1;
   }, [activeElements]);
+  const characters = useMemo(
+    () => activeElements.filter(el => el.elementType === 'character').map(c => ({ name: c.name, tier: c.tier ?? 1 })),
+    [activeElements]
+  );
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
@@ -394,7 +398,17 @@ function App() {
 
   // Runtime fields that must be preserved when base data is updated in-place.
   // Character-specific fields are included so they survive any future base-data update calls.
-  const RUNTIME_KEYS = ['instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope', 'playerName', 'maxHp', 'maxStress', 'name'];
+  const RUNTIME_KEYS = [
+    'instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope',
+    'playerName', 'maxHp', 'maxStress', 'name',
+    // Daggerstack-synced character fields
+    'daggerstackUrl', 'daggerstackEmail', 'daggerstackPassword', 'daggerstackCharacterId',
+    'class', 'subclass', 'level', 'pronouns', 'description', 'ancestry', 'community',
+    'domains', 'traits', 'evasion', 'armorScore', 'armorName', 'armorThresholds',
+    'maxArmor', 'currentArmor', 'weapons', 'gold', 'inventory',
+    'classFeatures', 'subclassFeatures', 'ancestryFeatures', 'communityFeatures',
+    'experiences', 'spellcastTrait', 'hopeAbility', 'hopeAbilityName', 'companion', 'tier',
+  ];
 
   const updateActiveElementsBaseData = (predicate, newBaseData) => {
     setActiveElements(prev => prev.map(el => {
@@ -703,6 +717,7 @@ function App() {
                 isAdmin={isAdmin}
                 partySize={partySize}
                 partyTier={partyTier}
+                characters={characters}
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
               />
@@ -740,6 +755,7 @@ function App() {
                 }
                 partySize={partySize}
                 partyTier={partyTier}
+                characters={characters}
                 tableBattleMods={tableBattleMods}
                 setTableBattleMods={setTableBattleMods}
                 fearCount={fearCount}

@@ -9,6 +9,7 @@
     "crawl": "node --env-file=.env scripts/crawl.js",
     "crawl:fcg": "node --env-file=.env scripts/crawl.js fcg",
     "crawl:hod": "node --env-file=.env scripts/crawl.js hod",
+    "refresh:daggerstack": "node scripts/refresh-daggerstack-uuids.js",
     "dev": "node --env-file=.env --watch server.js & npm run dev:css & npm run dev:js",
     "build": "npm run build:css && npm run build:js",
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",

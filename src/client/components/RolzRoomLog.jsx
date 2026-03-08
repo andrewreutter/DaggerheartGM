@@ -34,35 +34,54 @@ function hasContent(item) {
 }
 
 // Detect if sub-items represent a Daggerheart Hope/Fear dual-roll.
-// Returns { total, hopeResult, fearResult, dominant: 'hope'|'fear'|'critical' } or null.
+// Returns { total, hopeResult, fearResult, dominant: 'hope'|'fear'|'critical', characterName: string|null } or null.
+// Damage sub-items (pre matches /damage/i) are excluded from the action total.
+// characterName is extracted from the Hope die's pre label, which the app formats as
+// "{characterName} {traitName} Hope" — strip "Hope" and the trailing trait word to get the name.
 function parseDaggerheartRoll(subItems) {
   let hopeResult = null;
   let fearResult = null;
+  let hopePre = null;
   let total = 0;
 
   for (const sub of subItems) {
+    if (/damage/i.test(sub.pre || '')) continue;
     const result = parseInt(sub.result, 10);
     if (isNaN(result)) continue;
     total += result;
-    if (/hope/i.test(sub.pre || '')) hopeResult = result;
+    if (/hope/i.test(sub.pre || '')) { hopeResult = result; hopePre = sub.pre; }
     else if (/fear/i.test(sub.pre || '')) fearResult = result;
   }
 
   if (hopeResult === null || fearResult === null) return null;
 
+  // Extract character name from "{characterName} {traitName} Hope " pattern.
+  let characterName = null;
+  if (hopePre) {
+    const withoutHope = hopePre.replace(/\s*hope\s*/i, '').trim();
+    const words = withoutHope.split(/\s+/).filter(Boolean);
+    if (words.length > 1) {
+      words.pop(); // remove trailing trait word
+      characterName = words.join(' ');
+    }
+  }
+
   const dominant =
     hopeResult === fearResult ? 'critical' : hopeResult > fearResult ? 'hope' : 'fear';
-  return { total, hopeResult, fearResult, dominant };
+  return { total, hopeResult, fearResult, dominant, characterName };
 }
 
 // Render a compound roll stored in item.items[]:
 // Each sub-item has: pre, input, result, details, post
+// Damage sub-items (pre matches /damage/i) are rendered after the Hope/Fear summary.
 function CompoundRoll({ subItems }) {
   const dh = parseDaggerheartRoll(subItems);
+  const actionItems = subItems.filter(s => !/damage/i.test(s.pre || ''));
+  const damageItems = subItems.filter(s => /damage/i.test(s.pre || ''));
 
   return (
     <span>
-      {subItems.map((sub, i) => (
+      {actionItems.map((sub, i) => (
         <span key={i}>
           {sub.pre
             ? <span className="text-slate-300">{sub.pre}</span>
@@ -70,11 +89,11 @@ function CompoundRoll({ subItems }) {
           }
           {sub.input && (
             <>
-              <span className="text-yellow-400 font-bold">[</span>
-              <span className="text-yellow-300">{sub.input} </span>
+              <span className="text-sky-400 font-bold">[</span>
+              <span className="text-sky-300">{sub.input} </span>
               <span className="text-slate-500">= </span>
               <span className="text-green-400 font-bold">{sub.result}</span>
-              <span className="text-yellow-400 font-bold">]</span>
+              <span className="text-sky-400 font-bold">]</span>
             </>
           )}
           {sub.post && <span className="text-slate-300">{sub.post}</span>}
@@ -89,11 +108,23 @@ function CompoundRoll({ subItems }) {
           ) : (
             <>
               <span className="text-slate-400"> with </span>
-              <span className={dh.dominant === 'hope' ? 'text-sky-300 font-semibold' : 'text-purple-300 font-semibold'}>
+              <span className={dh.dominant === 'hope' ? 'text-amber-400 font-semibold' : 'text-purple-400 font-semibold'}>
                 {dh.dominant === 'hope' ? 'Hope' : 'Fear'}
               </span>
             </>
           )}
+          {damageItems.map((sub, i) => (
+            <span key={i}>
+              <span className="text-slate-400"> for </span>
+              <span className="text-sky-400 font-bold">[</span>
+              <span className="text-sky-300">{sub.input} </span>
+              <span className="text-slate-500">= </span>
+              <span className="text-yellow-300 font-bold">{sub.result}</span>
+              <span className="text-sky-400 font-bold">]</span>
+              {sub.post && <span className="text-slate-400">{sub.post}</span>}
+              <span className="text-slate-400"> damage</span>
+            </span>
+          ))}
         </span>
       )}
     </span>
@@ -104,11 +135,11 @@ function CompoundRoll({ subItems }) {
 function SimpleRoll({ item }) {
   return (
     <span>
-      <span className="text-yellow-400 font-bold">[</span>
-      <span className="text-yellow-300">{item.input} </span>
+      <span className="text-sky-400 font-bold">[</span>
+      <span className="text-sky-300">{item.input} </span>
       <span className="text-slate-500">= </span>
       <span className="text-green-400 font-bold">{item.result}</span>
-      <span className="text-yellow-400 font-bold">]</span>
+      <span className="text-sky-400 font-bold">]</span>
       {item.details && <span className="text-slate-500 ml-1">{item.details}</span>}
     </span>
   );
@@ -198,7 +229,7 @@ function RolzMessage({ item }) {
   );
 }
 
-export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onConfigOpen }) {
+export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onConfigOpen, onDaggerheartRoll }) {
   const [items, setItems] = useState([]);
   const [motd, setMotd] = useState('');
   const [loading, setLoading] = useState(true);
@@ -209,6 +240,10 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
   const eagerUntilRef = useRef(0);
   const pollTimeoutRef = useRef(null);
   const isMountedRef = useRef(false);
+  const processedKeysRef = useRef(new Set());
+  const isInitialLoadRef = useRef(true);
+  const onDaggerheartRollRef = useRef(onDaggerheartRoll);
+  useEffect(() => { onDaggerheartRollRef.current = onDaggerheartRoll; }, [onDaggerheartRoll]);
 
   // Derive the timestamp of the most-recently added pending roll to trigger eager polling.
   const latestAddedAt = useMemo(
@@ -276,6 +311,8 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
     setError(null);
     lastKeyRef.current = null;
     eagerUntilRef.current = 0;
+    processedKeysRef.current = new Set();
+    isInitialLoadRef.current = true;
 
     fetchLog(true).then(() => scheduleNext());
 
@@ -284,6 +321,37 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
       clearTimeout(pollTimeoutRef.current);
     };
   }, [roomName]);
+
+  // Fire onDaggerheartRoll for newly arrived Hope/Fear rolls.
+  // On initial load, mark all existing items as seen without firing.
+  useEffect(() => {
+    if (!items.length) return;
+
+    if (isInitialLoadRef.current) {
+      items.forEach(item => processedKeysRef.current.add(item.key || item.time));
+      isInitialLoadRef.current = false;
+      return;
+    }
+
+    for (const item of items) {
+      const key = item.key || item.time;
+      if (processedKeysRef.current.has(key)) continue;
+      processedKeysRef.current.add(key);
+
+      if (!Array.isArray(item.items) || item.items.length === 0) continue;
+      const dh = parseDaggerheartRoll(item.items);
+      if (!dh || dh.dominant === 'critical') continue;
+
+      const cb = onDaggerheartRollRef.current;
+      if (!cb) continue;
+
+      // Prefer the character name extracted from the roll's Hope die pre label
+      // (format: "{characterName} {traitName} Hope"). Fall back to the Rolz account name.
+      const fromName = extractCharacterName(item.from_html);
+      const rollUser = dh.characterName || fromName || item.from || '';
+      cb(dh.dominant, rollUser);
+    }
+  }, [items]);
 
   // Activate eager polling when a new pending roll is added.
   useEffect(() => {
