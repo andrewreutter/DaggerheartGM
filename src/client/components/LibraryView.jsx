@@ -167,10 +167,6 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
 
   const handleSave = async (formData) => {
     const itemToSave = { ...formData };
-    if (modalState?.isNew && !itemToSave.id) {
-      // Let the server assign an ID on first save; we don't need to set one here
-      // because the server upserts and returns the item.
-    }
     await saveItem(activeTab, itemToSave);
     if (formData.id && saveImage && (formData.imageUrl != null || formData._additionalImages != null)) {
       await saveImage(activeTab, formData.id, formData.imageUrl ?? '', { _additionalImages: formData._additionalImages });

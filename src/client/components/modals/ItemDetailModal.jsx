@@ -203,6 +203,9 @@ export function ItemDetailModal({
     initialRef.current = {
       ...defaultsForNew,
       ...raw,
+      // Assign a stable client-generated ID for new items so every auto-save
+      // upserts the same row instead of creating a new one on each debounce fire.
+      id: raw.id || generateId(),
       features: ensureIds(raw.features),
       experiences: ensureIds(raw.experiences),
     };
