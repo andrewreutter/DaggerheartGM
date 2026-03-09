@@ -1641,19 +1641,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">
               <Monitor size={32} className="opacity-40" />
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Zoom Whiteboard</p>
-              <textarea
-                className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
-                placeholder='Paste your <iframe ...> embed code here'
-                value={embedDraft}
-                onChange={(e) => setEmbedDraft(e.target.value)}
-                spellCheck={false}
-              />
-              <button
-                onClick={handleSaveWhiteboardConfig}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
-              >
-                Save
-              </button>
+              {!isPlayer && <>
+                <textarea
+                  className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
+                  placeholder='Paste your <iframe ...> embed code here'
+                  value={embedDraft}
+                  onChange={(e) => setEmbedDraft(e.target.value)}
+                  spellCheck={false}
+                />
+                <button
+                  onClick={handleSaveWhiteboardConfig}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
+                >
+                  Save
+                </button>
+              </>}
             </div>
           ) : (
             <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
@@ -1663,14 +1665,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 allowFullScreen
                 title="Zoom Whiteboard"
               />
-              <button
+              {!isPlayer && <button
                 className="absolute top-2 right-2 w-7 h-7 rounded bg-slate-900/80 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors z-10"
                 onClick={() => { setEmbedDraft(whiteboardEmbed); setWhiteboardConfigOpen(true); }}
                 title="Configure whiteboard"
               >
                 <Settings size={14} />
-              </button>
-              {whiteboardConfigOpen && (
+              </button>}
+              {whiteboardConfigOpen && !isPlayer && (
                 <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-8 bg-black/60 backdrop-blur-sm">
                   <Monitor size={32} className="text-slate-400 opacity-60" />
                   <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">Zoom Whiteboard</p>
