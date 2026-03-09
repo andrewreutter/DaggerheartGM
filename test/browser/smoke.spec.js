@@ -31,15 +31,15 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
 // ---------------------------------------------------------------------------
 // Authenticated shell
 // ---------------------------------------------------------------------------
-test('authenticated user sees the library nav and DAGGERMIND heading', async ({ page }) => {
+test('authenticated user sees the library nav and DAGGEROP heading', async ({ page }) => {
   await authenticate(page);
   // Navigate directly to the library route to avoid the root→library redirect.
   await page.goto('/library/adversaries');
 
-  // The DAGGERMIND heading and Library nav button both live inside {user && nav}.
+  // The DAGGEROP heading and Library nav button both live inside {user && nav}.
   // They become visible once onAuthStateChanged fires and sets the user.
   // Use h1 selector to avoid matching SVG icon path text.
-  await expect(page.locator('h1')).toContainText('DAGGERMIND', { timeout: 10000 });
+  await expect(page.locator('h1')).toContainText('DAGGERTOP', { timeout: 10000 });
   await expect(page.locator('button', { hasText: 'Library' })).toBeVisible({ timeout: 5000 });
 });
 

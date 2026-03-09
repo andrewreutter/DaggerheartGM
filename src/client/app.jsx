@@ -868,7 +868,7 @@ function App() {
         {!user || route.view === 'home' ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-slate-900 to-slate-950">
             <Swords size={64} className="text-red-500 mb-6" />
-            <h1 className="text-4xl font-bold text-white mb-2">Daggermind</h1>
+            <h1 className="text-4xl font-bold text-white mb-2">Daggertop</h1>
             <p className="text-slate-400 mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
             <button
               onClick={handleGoogleSignIn}

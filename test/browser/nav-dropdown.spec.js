@@ -14,7 +14,7 @@ test('nav z-index is higher than encounter panel overlays so the user menu is ne
   await page.goto('/library/adversaries');
 
   // Wait for the authenticated shell to render.
-  await expect(page.locator('h1')).toContainText('DAGGERMIND', { timeout: 10000 });
+  await expect(page.locator('h1')).toContainText('DAGGERTOP', { timeout: 10000 });
 
   // The nav element must have a z-index that beats the highest encounter-panel
   // fixed overlay (z-index 60). We assert >= 70, the value set in the bugfix.
