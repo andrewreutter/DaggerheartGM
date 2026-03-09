@@ -2,14 +2,14 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff } from 'lucide-react';
-import { RolzRoomLog } from './RolzRoomLog.jsx';
+import { DiceLog } from './DiceLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRolzRoll, postPlayerRoll, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { TierSelector } from './TierSelector.jsx';
@@ -241,7 +241,7 @@ function computeHpLoss(damage, thresholds) {
   return 1;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceRollBroadcast, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
   const isTouch = useTouchDevice();
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -260,38 +260,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   // Embed config state (was WhiteboardTab)
   const [embedDraft, setEmbedDraft] = useState(whiteboardEmbed);
-  const [roomNameDraft, setRoomNameDraft] = useState(rolzRoomName);
-  const [usernameDraft, setUsernameDraft] = useState(rolzUsername);
-  const [passwordDraft, setPasswordDraft] = useState(rolzPassword);
   const [whiteboardConfigOpen, setWhiteboardConfigOpen] = useState(false);
-  const [rolzConfigOpen, setRolzConfigOpen] = useState(false);
-  const [nudgeHint, setNudgeHint] = useState(false);
 
   // Dice roller queue — each entry is a full roll object passed to DiceRoller.
   // New rolls are appended; DiceRoller consumes [0] and calls onComplete to dequeue.
   const [diceRollQueue, setDiceRollQueue] = useState([]);
-  // Track recently-played roll signatures so the Rolz poll doesn't replay an SSE-delivered roll.
-  const ssePlayedRollSigsRef = useRef(new Set());
+  // Dice log — completed rolls shown in the DiceLog strip above the whiteboard.
+  const [diceLog, setDiceLog] = useState([]);
 
   useEffect(() => {
     setEmbedDraft(whiteboardEmbed);
-    setRoomNameDraft(rolzRoomName);
-    setUsernameDraft(rolzUsername);
-    setPasswordDraft(rolzPassword);
-  }, [whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword]);
+  }, [whiteboardEmbed]);
 
   const iframeSrc = extractIframeSrc(whiteboardEmbed);
 
   const handleSaveWhiteboardConfig = () => {
     setWhiteboardEmbed(embedDraft.trim());
     setWhiteboardConfigOpen(false);
-  };
-
-  const handleSaveRolzConfig = () => {
-    setRolzRoomName(roomNameDraft.trim());
-    setRolzUsername(usernameDraft.trim());
-    setRolzPassword(passwordDraft);
-    if (roomNameDraft.trim()) setRolzConfigOpen(false);
   };
 
   // Load scenes/adventures when picker opens so it can display the list.
@@ -490,38 +475,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
-  // Receives the full roll object from RolzRoomLog: { dominant, total, hopeResult, fearResult,
-  // characterName, rollUser, subItems }. Enqueues it for 3D dice animation.
-  // If an optimistic roll is at the front of the queue (from an immediate click), replace it
-  // with the confirmed real data (marked _update: true for DiceRoller to handle in-place).
-  const handleDaggerheartRoll = (rollData) => {
-    // Broadcast confirmed roll to all players (GM only, fire-and-forget)
-    onDiceRollBroadcast?.(rollData);
-    // Skip if this roll was already shown via SSE from another window (dedup).
-    const sig = `${rollData.rollUser}|${rollData.dominant}|${rollData.total}`;
-    if (ssePlayedRollSigsRef.current.has(sig)) {
-      ssePlayedRollSigsRef.current.delete(sig);
-      return;
-    }
-    if (isPlayer) {
-      // In player/preview mode the DiceRoller reads playerDiceRollQueue, so the
-      // _update signal must go there, not to diceRollQueue.
-      setPlayerDiceRollQueue?.(prev => {
-        if (prev.length > 0 && prev[0]._optimistic) {
-          const { rollUser } = prev[0];
-          return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
-        }
-        return [...prev, rollData];
-      });
-    } else {
-      setDiceRollQueue(prev => {
-        if (prev.length > 0 && prev[0]._optimistic) {
-          const { rollUser } = prev[0];
-          return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
-        }
-        return [...prev, rollData];
-      });
-    }
+  // Receives confirmed roll data (from server HTTP response).
+  // Adds to the dice log and enqueues for 3D dice animation.
+  // If an optimistic roll is at the front of the queue, replace it with the real data
+  // (marked _update: true for DiceRoller to handle in-place).
+  const handleRollResult = (rollData) => {
+    const logEntry = { ...rollData, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
+    setDiceLog(prev => [...prev.slice(-49), logEntry]);
+    setDiceRollQueue(prev => {
+      if (prev.length > 0 && prev[0]._optimistic) {
+        const { rollUser } = prev[0];
+        return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
+      }
+      return [...prev, rollData];
+    });
   };
 
   // Compute pulse/element-update ack payload for broadcasting to players.
@@ -563,7 +530,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (!roll._optimistic) {
       const ackData = computeRollAck(roll.dominant, roll.rollUser);
       applyRollSideEffects(roll.dominant, roll.rollUser);
-      // Include any damage applied via the banner target badge in the ack broadcast.
       const dmgPending = pendingDamageRef.current;
       pendingDamageRef.current = null;
       if (dmgPending) {
@@ -572,6 +538,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
       onDiceAckBroadcast?.(ackData);
     }
+  };
+
+  // Called when a player's roll (from playerDiceRollQueue) finishes animating on the GM screen.
+  const handlePlayerRollComplete = (roll) => {
+    if (!roll._optimistic) {
+      const logEntry = { ...roll, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
+      setDiceLog(prev => [...prev.slice(-49), logEntry]);
+    }
+    setPlayerDiceRollQueue?.(prev => prev.slice(1));
   };
   const handleSpendHope = (instanceId) => {
     const el = activeElements.find(e => e.instanceId === instanceId);
@@ -783,25 +758,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
-  const [pendingRolls, setPendingRolls] = useState([]);
-
-  const rolzConfigured = !!(rolzRoomName && rolzUsername && rolzPassword);
-
-  const addPendingRoll = (displayName, rollText) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const addedAt = Date.now();
-    setPendingRolls(prev => [...prev, { id, displayName, rollText, addedAt }]);
-    // Auto-expire after eager window + buffer
-    const t = setTimeout(() => {
-      setPendingRolls(prev => prev.filter(p => p.id !== id));
-    }, 17000);
-    return { id, cleanup: () => clearTimeout(t) };
-  };
-
-  const removePendingRoll = (id) => {
-    setPendingRolls(prev => prev.filter(p => p.id !== id));
-  };
-
   const dismissAllHoverCards = () => {
     trackerOverlay.close();
     characterOverlay.close();
@@ -816,12 +772,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   const handleRoll = async (feature) => {
     if (!feature._rollData && !feature._diceRoll) return;
-    if (!rolzConfigured) {
-      setRolzConfigOpen(true);
-      setNudgeHint(true);
-      setTimeout(() => setNudgeHint(false), 6000);
-      return;
-    }
     dismissAllHoverCards();
     let rollText;
     if (feature._rollData) {
@@ -846,28 +796,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      const optimisticRoll = { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName };
-      setDiceRollQueue(prev => [...prev, optimisticRoll]);
-      onDiceRollBroadcast?.(optimisticRoll);
+      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
     }
     try {
-      await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
-      addPendingRoll(displayName, rollText);
+      const rollData = await postRoll(rollText, displayName);
+      handleRollResult(rollData);
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     } catch (err) {
       if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
-      console.error('Rolz roll failed:', err);
+      console.error('Roll failed:', err);
     }
   };
 
   const handleCardRoll = async (attackData, sourceName) => {
-    if (!rolzConfigured) {
-      setRolzConfigOpen(true);
-      setNudgeHint(true);
-      setTimeout(() => setNudgeHint(false), 6000);
-      return;
-    }
     dismissAllHoverCards();
     const { name, modifier, range, damage, trait, patterns } = attackData;
     let rollText;
@@ -882,48 +824,36 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      const optimisticRoll = { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName };
-      setDiceRollQueue(prev => [...prev, optimisticRoll]);
-      onDiceRollBroadcast?.(optimisticRoll);
+      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
     }
     try {
-      await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
-      addPendingRoll(displayName, rollText);
+      const rollData = await postRoll(rollText, displayName);
+      handleRollResult(rollData);
     } catch (err) {
       if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
-      console.error('Rolz roll failed:', err);
+      console.error('Roll failed:', err);
     }
   };
 
   const handleTraitRoll = async (rollText, displayName) => {
-    if (!rolzConfigured) {
-      setRolzConfigOpen(true);
-      setNudgeHint(true);
-      setTimeout(() => setNudgeHint(false), 6000);
-      return;
-    }
     dismissAllHoverCards();
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      const optimisticRoll = { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName || rollText };
-      setDiceRollQueue(prev => [...prev, optimisticRoll]);
-      onDiceRollBroadcast?.(optimisticRoll);
+      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName || rollText }]);
     }
     try {
-      await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
-      addPendingRoll(displayName || rollText, rollText);
+      const rollData = await postRoll(rollText, displayName || rollText);
+      handleRollResult(rollData);
     } catch (err) {
       if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Trait roll failed:', err);
     }
   };
 
-  // Roll handler for a player acting on their own character. Shows local dice animation
-  // via playerDiceRollQueue (the queue DiceRoller reads in player/preview mode).
-  // In preview mode (GM has credentials): posts directly via existing Rolz path.
-  // In real player mode: proxies through POST /api/room/:gmUid/player-roll so the
-  // GM's Rolz credentials are used server-side and never exposed to player browsers.
+  // Roll handler for a player acting on their own character.
+  // Routes through POST /api/room/:gmUid/roll (validated server-side, real dice).
+  // GM preview mode uses the GM roll route (null gmUid → /api/room/my/roll).
   const handlePlayerOwnRoll = async (rollText, displayName) => {
     dismissAllHoverCards();
     const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
@@ -932,18 +862,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       const optimisticRoll = { _optimistic: true, _optId: optId, _playerInitiated: true, subItems: syntheticSubItems, rollUser: displayName || rollText };
       setPlayerDiceRollQueue?.(prev => [...prev, optimisticRoll]);
     }
+    // Real player mode uses the player route; GM preview uses the GM route (null)
+    const targetGmUid = (isPlayer && !previewAsPlayerEmail) ? gmUid : null;
     try {
-      if (rolzConfigured) {
-        // Preview mode: GM credentials are available locally
-        await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
-      } else if (gmUid) {
-        // Real player mode: proxy through server using GM's stored credentials
-        await postPlayerRoll(gmUid, rollText, displayName || rollText);
-      }
-      addPendingRoll(displayName || rollText, rollText);
+      const rollData = await postRoll(rollText, displayName || rollText, targetGmUid);
+      setPlayerDiceRollQueue?.(prev => {
+        if (prev.length > 0 && prev[0]._optimistic) {
+          const { rollUser } = prev[0];
+          return [{ ...rollData, _update: true, rollUser, characterName: null, _playerInitiated: true }, ...prev.slice(1)];
+        }
+        return [...prev, { ...rollData, _playerInitiated: true }];
+      });
+      setDiceLog(prev => [...prev.slice(-49), { ...rollData, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` }]);
     } catch (err) {
       if (syntheticSubItems.length > 0) setPlayerDiceRollQueue?.(prev => prev.filter(r => r._optId !== optId));
-      console.error('Player trait roll failed:', err);
+      console.error('Player roll failed:', err);
     }
   };
 
@@ -1569,7 +1502,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                             <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5 min-w-0">
                               {feature.name}
                               {canRoll && (
-                                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : rolzConfigured ? 'text-slate-500 group-hover:text-red-400 transition-colors' : 'text-slate-600 group-hover:text-amber-400 transition-colors'}`} />
+                                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : 'text-slate-500 group-hover:text-red-400 transition-colors'}`} />
                               )}
                             </span>
                             <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400 shrink-0">{feature.sourceName}</span>
@@ -1686,74 +1619,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
       {/* Center Column */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-slate-950 relative">
-        {/* Rolz room log strip — self-managing */}
-        {rolzConfigOpen || !rolzRoomName ? (
-          <div className="shrink-0 border-b border-slate-800 bg-slate-950">
-            <div className="flex items-center gap-2 px-3 py-1 border-b border-slate-800/60">
-              <Dices size={11} className="text-red-400 shrink-0" />
-              <span className="text-[11px] font-medium text-slate-400 flex-1">Dice Room</span>
-              {rolzRoomName && (
-                <button
-                  onClick={() => { setRoomNameDraft(rolzRoomName); setUsernameDraft(rolzUsername); setPasswordDraft(rolzPassword); setRolzConfigOpen(false); setNudgeHint(false); }}
-                  className="text-slate-500 hover:text-slate-300 transition-colors"
-                  title="Cancel"
-                >
-                  <X size={10} />
-                </button>
-              )}
-            </div>
-            <div className="px-3 py-2 space-y-2">
-              <input
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500"
-                placeholder="Room name"
-                value={roomNameDraft}
-                onChange={(e) => setRoomNameDraft(e.target.value)}
-              />
-              <div className="flex gap-2">
-                <input
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500"
-                  placeholder="Rolz username"
-                  value={usernameDraft}
-                  onChange={(e) => setUsernameDraft(e.target.value)}
-                  autoComplete="username"
-                />
-                <input
-                  type="password"
-                  className="flex-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-blue-500"
-                  placeholder="Rolz password"
-                  value={passwordDraft}
-                  onChange={(e) => setPasswordDraft(e.target.value)}
-                  autoComplete="current-password"
-                />
-              </div>
-              {nudgeHint && (
-                <div className="flex items-start gap-2 bg-amber-900/30 border border-amber-600/50 rounded px-2.5 py-1.5 text-amber-300 text-[10px]">
-                  <Dices size={11} className="text-amber-400 shrink-0 mt-0.5" />
-                  <span>Enter your <strong>Rolz username and password</strong> and click <strong>Save</strong>. Type <code className="bg-amber-900/50 px-1 rounded">/room api=on</code> in your Rolz room first.</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] text-slate-500 leading-snug">
-                  <a href="https://rolz.org/table/login" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">Rolz.org</a> credentials · type <code className="text-slate-400 bg-slate-800 px-0.5 rounded">/room api=on</code>
-                </p>
-                <button
-                  onClick={handleSaveRolzConfig}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded transition-colors"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <RolzRoomLog
-            roomName={rolzRoomName}
-            pendingRolls={pendingRolls}
-            compact
-            onConfigOpen={() => { setRoomNameDraft(rolzRoomName); setUsernameDraft(rolzUsername); setPasswordDraft(rolzPassword); setRolzConfigOpen(true); }}
-            onDaggerheartRoll={handleDaggerheartRoll}
-          />
-        )}
+        {/* Dice log strip — shows completed rolls for this session */}
+        <DiceLog rolls={diceLog} />
 
         {/* Whiteboard — self-managing; relative so the DiceRoller overlay anchors here */}
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
@@ -1763,10 +1630,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onComplete={isPlayer
               ? (roll) => setPlayerDiceRollQueue?.(prev => prev.slice(1))
               : (!diceRollQueue[0] && playerDiceRollQueue[0])
-                ? (roll) => {
-                    if (roll.total != null) ssePlayedRollSigsRef.current.add(`${roll.rollUser}|${roll.dominant}|${roll.total}`);
-                    setPlayerDiceRollQueue?.(prev => prev.slice(1));
-                  }
+                ? handlePlayerRollComplete
                 : handleDiceRollComplete
             }
             targets={isPlayer ? [] : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? [] : damageTargets}
@@ -1777,19 +1641,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">
               <Monitor size={32} className="opacity-40" />
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Zoom Whiteboard</p>
-              <textarea
-                className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
-                placeholder='Paste your <iframe ...> embed code here'
-                value={embedDraft}
-                onChange={(e) => setEmbedDraft(e.target.value)}
-                spellCheck={false}
-              />
-              <button
-                onClick={handleSaveWhiteboardConfig}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
-              >
-                Save
-              </button>
+              {!isPlayer && <>
+                <textarea
+                  className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
+                  placeholder='Paste your <iframe ...> embed code here'
+                  value={embedDraft}
+                  onChange={(e) => setEmbedDraft(e.target.value)}
+                  spellCheck={false}
+                />
+                <button
+                  onClick={handleSaveWhiteboardConfig}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
+                >
+                  Save
+                </button>
+              </>}
             </div>
           ) : (
             <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
@@ -1799,14 +1665,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 allowFullScreen
                 title="Zoom Whiteboard"
               />
-              <button
+              {!isPlayer && <button
                 className="absolute top-2 right-2 w-7 h-7 rounded bg-slate-900/80 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors z-10"
                 onClick={() => { setEmbedDraft(whiteboardEmbed); setWhiteboardConfigOpen(true); }}
                 title="Configure whiteboard"
               >
                 <Settings size={14} />
-              </button>
-              {whiteboardConfigOpen && (
+              </button>}
+              {whiteboardConfigOpen && !isPlayer && (
                 <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-8 bg-black/60 backdrop-blur-sm">
                   <Monitor size={32} className="text-slate-400 opacity-60" />
                   <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">Zoom Whiteboard</p>
@@ -2550,6 +2416,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     maxHope: characterDialog.maxHope,
                     maxHp: characterDialog.maxHp,
                     maxStress: characterDialog.maxStress,
+                    ...cleanDsFields,
+                    ...dsCredentials,
                   });
                 } else {
                   addToTable({

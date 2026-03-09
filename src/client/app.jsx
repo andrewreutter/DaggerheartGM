@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle } from 'lucide-react';
 
-import { auth, getAuthToken, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postDiceRoll, postDiceAck } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postDiceAck } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
@@ -33,9 +33,6 @@ function App() {
 
   const [activeElements, setActiveElements] = useState([]);
   const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
-  const [rolzRoomName, setRolzRoomName] = useState('');
-  const [rolzUsername, setRolzUsername] = useState('');
-  const [rolzPassword, setRolzPassword] = useState('');
   const [playerEmails, setPlayerEmails] = useState([]); // GM's invited player emails
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const partySize = useMemo(() => Math.max(1, activeElements.filter(el => el.elementType === 'character').length), [activeElements]);
@@ -59,10 +56,10 @@ function App() {
     if (!tableStateReadyRef.current) return;
     if (sseStateReceivedRef.current) { sseStateReceivedRef.current = false; return; }
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, tableBattleMods, fearCount, playerEmails, gmDisplayName: userRef.current?.displayName || '' });
+      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns, tableBattleMods, fearCount, playerEmails, gmDisplayName: userRef.current?.displayName || '' });
     }, 800);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, rolzRoomName, rolzUsername, rolzPassword, featureCountdowns, tableBattleMods, fearCount, playerEmails]);
+  }, [activeElements, whiteboardEmbed, featureCountdowns, tableBattleMods, fearCount, playerEmails]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   // Multi-player room state
@@ -72,7 +69,6 @@ function App() {
   const [playerTableState, setPlayerTableState] = useState(null); // table state from SSE
   const [playerDiceRollQueue, setPlayerDiceRollQueue] = useState([]);
   const [playerDiceAck, setPlayerDiceAck] = useState(null);
-  const diceClientIdRef = useRef(crypto.randomUUID());
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -313,9 +309,6 @@ function App() {
           const tableState = items?.[0];
           setActiveElements(tableState?.elements || []);
           setWhiteboardEmbed(tableState?.whiteboardEmbed || '');
-          setRolzRoomName(tableState?.rolzRoomName || '');
-          setRolzUsername(tableState?.rolzUsername || '');
-          setRolzPassword(tableState?.rolzPassword || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           if (tableState?.fearCount != null) setFearCount(tableState.fearCount);
@@ -380,15 +373,14 @@ function App() {
         if (Array.isArray(state.elements)) setActiveElements(state.elements);
         if (state.fearCount != null) setFearCount(state.fearCount);
         if (state.whiteboardEmbed != null) setWhiteboardEmbed(state.whiteboardEmbed);
-        if (state.rolzRoomName != null) setRolzRoomName(state.rolzRoomName);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
       });
-      // Dice roll/ack from the primary GM window (so preview-as-player sees dice animations)
+      // Dice roll from a player or another GM window (skip own rolls — already handled via HTTP response)
       es.addEventListener('dice-roll', (e) => {
         const roll = JSON.parse(e.data);
-        if (roll._clientId === diceClientIdRef.current) return;
+        if (roll._clientId === CLIENT_ID) return;
         setPlayerDiceRollQueue(prev => {
           const willUpdate = !roll._optimistic && prev.length > 0 && prev[0]._optimistic;
           if (willUpdate) {
@@ -431,7 +423,9 @@ function App() {
         setPlayerTableState(prev => prev ? { ...prev, elements: [...(prev.elements || []), character] } : { elements: [character] });
       });
       es.addEventListener('dice-roll', (e) => {
-        setPlayerDiceRollQueue(prev => [...prev, JSON.parse(e.data)]);
+        const roll = JSON.parse(e.data);
+        if (roll._clientId === CLIENT_ID) return; // Skip own roll (already handled via HTTP response)
+        setPlayerDiceRollQueue(prev => [...prev, roll]);
       });
       es.addEventListener('dice-ack', (e) => {
         setPlayerDiceAck(JSON.parse(e.data));
@@ -757,10 +751,6 @@ function App() {
   };
 
   // GM dice broadcast callbacks
-  const handleDiceRollBroadcast = useCallback((rollData) => {
-    postDiceRoll({ ...rollData, _clientId: diceClientIdRef.current }).catch(err => console.warn('postDiceRoll failed:', err));
-  }, []);
-
   const handleDiceAckBroadcast = useCallback((ackData) => {
     postDiceAck(ackData).catch(err => console.warn('postDiceAck failed:', err));
   }, []);
@@ -931,12 +921,6 @@ function App() {
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
                 whiteboardEmbed={isPlayer ? (playerTableState?.whiteboardEmbed || '') : whiteboardEmbed}
                 setWhiteboardEmbed={effectiveIsPlayer ? () => {} : setWhiteboardEmbed}
-                rolzRoomName={isPlayer ? (playerTableState?.rolzRoomName || '') : rolzRoomName}
-                setRolzRoomName={effectiveIsPlayer ? () => {} : setRolzRoomName}
-                rolzUsername={isPlayer ? '' : rolzUsername}
-                setRolzUsername={effectiveIsPlayer ? () => {} : setRolzUsername}
-                rolzPassword={isPlayer ? '' : rolzPassword}
-                setRolzPassword={effectiveIsPlayer ? () => {} : setRolzPassword}
                 route={route}
                 navigate={navigate}
                 featureCountdowns={isPlayer ? (playerTableState?.featureCountdowns || {}) : featureCountdowns}
@@ -962,7 +946,6 @@ function App() {
                 setPlayerDiceRollQueue={setPlayerDiceRollQueue}
                 playerDiceAck={playerDiceAck}
                 setPlayerDiceAck={setPlayerDiceAck}
-                onDiceRollBroadcast={!effectiveIsPlayer ? handleDiceRollBroadcast : undefined}
                 onDiceAckBroadcast={!effectiveIsPlayer ? handleDiceAckBroadcast : undefined}
                 previewAsPlayerEmail={isPreviewMode ? previewAsPlayerEmail : null}
                 onPreviewAsPlayer={!effectiveIsPlayer ? setPreviewAsPlayerEmail : undefined}

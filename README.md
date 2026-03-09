@@ -52,7 +52,8 @@ DaggerheartGM/
 │   ├── client/
 │   │   ├── app.jsx             # React SPA entry point (partySize + partyTier derived from character elements)
 │   │   ├── components/         # UI components (LibraryView, GMTableView, DiceRoller, NavBtn, ItemCard, ItemActionButtons, …)
-│   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — animates Rolz rolls using @3d-dice/dice-box
+│   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — animates server-rolled dice using @3d-dice/dice-box
+│   │   │   ├── DiceLog.jsx            # Compact dice history strip above the whiteboard (no polling)
 │   │   │   ├── CharacterHoverCard.jsx # Detailed character sheet hover panel (traits, defense, weapons, inventory, features)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
 │   │   │   ├── TierSelector.jsx       # Shared tier 1–4 button bank (multi-select for filters, single-select for character dialog)
@@ -117,25 +118,21 @@ There is also an **Include HoD** and **Include FCG** toggle for the [Heart of Da
 
 A **compact/spacious view toggle** (grid icon in the header) switches between a spacious 3-column card layout and a dense 7-column layout. Compact mode hides the banner image and shows a small bottom-right thumbnail that expands on hover. The choice is persisted in `localStorage` under `libraryViewMode`.
 
-### Rolz.org Dice Room Integration
+### Built-In Dice System
 
-The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a self-managing Rolz room log strip above a self-managing Zoom whiteboard iframe (each widget shows inline config when unconfigured, and a gear icon when configured to re-open config); an **Encounter panel** (right sidebar, `w-56`, GM only) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
+The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a compact **Dice Log strip** (`DiceLog.jsx`) above a Zoom whiteboard iframe; an **Encounter panel** (right sidebar, `w-56`, GM only) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
 
 The "+ Add Character" button in the Characters panel opens a small dialog. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, **tier** (1–4, default 1; selected via the shared `TierSelector` component), Hope counter (±buttons), HP track, Stress track, and conditions field. A tier badge (`T{n}`) is displayed on each character card header. The highest character tier (`partyTier`) is used as the comparison basis for the "lower-tier adversary" BP budget auto-modifier. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
 
 **Multi-player support**: GMs can invite players by email via the "Manage Invited Players" section in the Characters panel. Invited players sign in and see a dedicated nav tab linking directly to the GM's table. Real-time sync uses **Server-Sent Events (SSE)**: `GET /api/room/my/players` keeps the GM updated on who is connected; `GET /api/room/:gmUid/stream` streams table state and dice roll events to players. When the GM rolls dice, 3D dice animations play on all screens simultaneously; the GM acknowledges the roll (via `POST /api/room/my/dice-ack`), which then applies side effects on all clients. The GM can assign characters to specific players (`assignedPlayerUid`); assigned players can edit their own character's resources (HP, stress, hope) while all other table content is read-only for players.
 - **Zoom Whiteboard** (center) — paste an `<iframe>` embed code in the Embeds config to display a Zoom whiteboard
-- **Rolz Room Log** (center, strip above whiteboard) — a compact live chat-style strip that polls for new messages every 5 seconds, auto-scrolls to the newest message, and includes a slim header with refresh and "open in new tab" links
+- **Dice Log** (center, strip above whiteboard) — a compact history of completed rolls for the current session; auto-scrolls to the newest entry
 
-A collapsible **Configure Embeds** bar at the top contains inputs for both. It collapses automatically once configured, giving the embeds maximum vertical space.
+Dice rolling requires no external service or credentials. Attack actions are always clickable:
+- Clicking an action in the **GM Moves** sidebar rolls server-side and briefly flashes green on success
+- The **attack line** and **action-type attack features** on each adversary card also show a dice icon and roll when clicked
 
-When a **room name and Rolz credentials** are configured, adversary attack actions become clickable throughout the Game Table:
-- Clicking an action in the **GM Moves** sidebar posts the roll to the Rolz room (briefly flashes green on success)
-- The **attack line** and **action-type attack features** on each adversary card also show a dice icon and post a roll when clicked
-
-**To enable posting:** enter your Rolz dice room and type `/room api=on`. Then fill in your Rolz username and password in the Configure Embeds panel and click Save. The server logs in on your behalf and caches the session for 30 minutes.
-
-Room name and credentials are persisted in your session state automatically.
+Rolls are processed by `POST /api/room/my/roll` (GM) or `POST /api/room/:gmUid/roll` (player). The server uses `crypto.randomInt` for tamper-proof dice and broadcasts results to all room clients via SSE. An in-memory ring buffer (last 50 rolls) is sent to late-joining players on connect.
 
 ### Adding to the Game Table
 

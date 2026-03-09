@@ -2,6 +2,7 @@ import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
+import { randomInt } from 'crypto';
 import { watchFile } from 'fs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -148,12 +149,6 @@ if (process.env.NODE_ENV !== 'test') {
   watchFile(join(publicDir, 'index.html'), { interval: 200 }, broadcastReload);
 }
 
-// --- Rolz session management ---
-
-// In-memory cache: uid -> { cookie, expiresAt }
-const rolzSessions = new Map();
-const ROLZ_SESSION_TTL = 30 * 60 * 1000; // 30 minutes
-
 // Debug log relay — forwards client-side log payloads to a localhost debug server.
 // Only active in development (NODE_ENV != production). Used by Cursor debug mode to
 // collect browser-side instrumentation logs via /api/debug-log, bypassing CORS.
@@ -169,28 +164,90 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-async function rolzLogin(username, password) {
-  // Form field is "nick", hidden field "action" is required
-  const body = new URLSearchParams({ action: 'signin', nick: username, password, whence: '', t: '' });
-  const res = await fetch('https://rolz.org/join/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-    redirect: 'manual',
-  });
-  const setCookie = res.headers.get('set-cookie');
-  if (!setCookie) throw new Error('Rolz login failed — no session cookie returned');
-  // Take only the first name=value pair; avoid splitting on commas inside expires dates
-  const cookie = setCookie.split(';')[0].trim();
-  return cookie;
+// --- Server-side dice rolling ---
+
+// Parse NdX±M expression and roll all dice using crypto.randomInt.
+function rollDice(expr) {
+  const m = /^(\d*)d(\d+)([+-]\d+)?$/i.exec((expr || '').trim());
+  if (!m) return null;
+  const qty = parseInt(m[1] || '1', 10);
+  const sides = parseInt(m[2], 10);
+  const modifier = m[3] ? parseInt(m[3], 10) : 0;
+  if (sides < 2 || qty < 1 || qty > 100) return null;
+  const values = Array.from({ length: qty }, () => randomInt(1, sides + 1));
+  const sum = values.reduce((a, b) => a + b, 0);
+  const result = sum + modifier;
+  const details = qty > 1 ? `(${values.join('+')})` : `(${values[0]})`;
+  return { qty, sides, modifier, values, result, details, input: expr };
 }
 
-async function getRolzSession(uid, username, password) {
-  const cached = rolzSessions.get(uid);
-  if (cached && Date.now() < cached.expiresAt) return cached.cookie;
-  const cookie = await rolzLogin(username, password);
-  rolzSessions.set(uid, { cookie, expiresAt: Date.now() + ROLZ_SESSION_TTL });
-  return cookie;
+// Parse all [expr] bracket expressions from rollText, roll each, return subItems array.
+function rollFromText(rollText) {
+  const subItems = [];
+  const re = /\[([^\]]+)\]/g;
+  let lastEnd = 0;
+  let m;
+  while ((m = re.exec(rollText)) !== null) {
+    const pre = rollText.slice(lastEnd, m.index);
+    const expr = m[1].trim();
+    const rolled = rollDice(expr);
+    if (rolled) {
+      subItems.push({ pre, input: rolled.input, result: String(rolled.result), details: rolled.details, post: '' });
+    } else {
+      subItems.push({ pre, input: expr, result: expr, details: '', post: '' });
+    }
+    lastEnd = m.index + m[0].length;
+  }
+  if (subItems.length > 0 && lastEnd < rollText.length) {
+    subItems[subItems.length - 1].post = rollText.slice(lastEnd);
+  }
+  return subItems;
+}
+
+// Detect Daggerheart Hope/Fear dual-roll from subItems (mirrors client-side parseDaggerheartRoll).
+function parseDaggerheartResult(subItems) {
+  let hopeResult = null;
+  let fearResult = null;
+  let hopePre = null;
+  let total = 0;
+  for (const sub of subItems) {
+    if (/damage/i.test(sub.pre || '')) continue;
+    const result = parseInt(sub.result, 10);
+    if (isNaN(result)) continue;
+    total += result;
+    if (/hope/i.test(sub.pre || '')) { hopeResult = result; hopePre = sub.pre; }
+    else if (/fear/i.test(sub.pre || '')) fearResult = result;
+  }
+  if (hopeResult === null || fearResult === null) return null;
+  let characterName = null;
+  if (hopePre) {
+    const withoutHope = hopePre.replace(/\s*hope\s*/i, '').trim();
+    const words = withoutHope.split(/\s+/).filter(Boolean);
+    if (words.length > 1) { words.pop(); characterName = words.join(' '); }
+  }
+  const dominant = hopeResult === fearResult ? 'critical' : hopeResult > fearResult ? 'hope' : 'fear';
+  return { total, hopeResult, fearResult, dominant, characterName };
+}
+
+// Build a full roll data object from text + displayName.
+function buildRollData(rollText, displayName, _clientId, extra = {}) {
+  const subItems = rollFromText(rollText);
+  if (!subItems.length) return null;
+  const dh = parseDaggerheartResult(subItems);
+  let rollData;
+  if (dh) {
+    rollData = { ...dh, rollUser: dh.characterName || displayName || '', subItems, timestamp: Date.now() };
+  } else {
+    let total = 0;
+    for (const sub of subItems) {
+      if (/damage/i.test(sub.pre || '')) continue;
+      const v = parseInt(sub.result, 10);
+      if (!isNaN(v)) total += v;
+    }
+    rollData = { rollUser: displayName || '', total, subItems, timestamp: Date.now() };
+  }
+  if (_clientId) rollData._clientId = _clientId;
+  return { ...rollData, ...extra };
 }
 
 // --- Multi-player room state (in-memory) ---
@@ -209,9 +266,17 @@ async function verifyTokenFromQuery(req, res) {
   }
 }
 
+const ROLL_LOG_SIZE = 50;
+
 function getOrCreateRoom(gmUid) {
-  if (!rooms.has(gmUid)) rooms.set(gmUid, { players: new Map(), gmClients: new Set() });
+  if (!rooms.has(gmUid)) rooms.set(gmUid, { players: new Map(), gmClients: new Set(), rollLog: [] });
   return rooms.get(gmUid);
+}
+
+function appendRollLog(gmUid, rollData) {
+  const room = getOrCreateRoom(gmUid);
+  room.rollLog.push(rollData);
+  if (room.rollLog.length > ROLL_LOG_SIZE) room.rollLog.shift();
 }
 
 function broadcastPresenceToGm(gmUid) {
@@ -236,63 +301,6 @@ function broadcastToPlayers(gmUid, eventName, data) {
   const msg = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const { res } of room.players.values()) { res.write(msg); res.flush?.(); }
 }
-
-// --- Rolz API proxies ---
-
-app.get('/api/rolz-roomlog', requireAuth, async (req, res) => {
-  const { room } = req.query;
-  if (!room) {
-    return res.status(400).json({ error: 'room parameter is required' });
-  }
-  try {
-    const rolzRes = await fetch(`https://rolz.org/api/roomlog?room=${encodeURIComponent(room)}`);
-    const body = await rolzRes.text();
-    try {
-      const parsed = JSON.parse(body);
-      res.json(parsed);
-    } catch {
-      res.json({ raw: body });
-    }
-  } catch (err) {
-    console.error('Rolz roomlog proxy error:', err);
-    res.status(500).json({ error: `Failed to reach Rolz.org: ${err.message}` });
-  }
-});
-
-app.post('/api/rolz-post', requireAuth, async (req, res) => {
-  const { room, text, from, rolzUsername, rolzPassword } = req.body;
-  if (!room || !text) {
-    return res.status(400).json({ error: 'room and text are required' });
-  }
-  if (!rolzUsername || !rolzPassword) {
-    return res.status(400).json({ error: 'rolzUsername and rolzPassword are required' });
-  }
-  const postToRolz = async (cookie) => {
-    const params = new URLSearchParams({ room, text });
-    if (from) params.set('from', from);
-    return fetch(`https://rolz.org/api/post?${params}`, { headers: { Cookie: cookie } });
-  };
-  try {
-    let cookie = await getRolzSession(req.uid, rolzUsername, rolzPassword);
-    let rolzRes = await postToRolz(cookie);
-    let body = await rolzRes.text();
-    // If session expired, invalidate cache and retry once with a fresh login
-    if (body.includes('Invalid account name')) {
-      rolzSessions.delete(req.uid);
-      cookie = await getRolzSession(req.uid, rolzUsername, rolzPassword);
-      rolzRes = await postToRolz(cookie);
-      body = await rolzRes.text();
-    }
-    try {
-      res.json(JSON.parse(body));
-    } catch {
-      res.json({ raw: body });
-    }
-  } catch (err) {
-    console.error('Rolz proxy error:', err);
-    res.status(500).json({ error: `Failed to reach Rolz.org: ${err.message}` });
-  }
-});
 
 // --- Data routes ---
 
@@ -919,10 +927,9 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };
     res.json(saved);
 
-    // Broadcast filtered table_state to all connected room clients (players + other GM windows)
+    // Broadcast table_state to all connected room clients (players + other GM windows)
     if (collection === 'table_state' && rooms.has(req.uid)) {
-      const { rolzUsername: _u, rolzPassword: _p, ...filteredState } = dataToSave;
-      broadcastToAllRoomClients(req.uid, 'state', filteredState);
+      broadcastToAllRoomClients(req.uid, 'state', dataToSave);
     }
   } catch (err) {
     console.error(`PUT /api/data/${collection} error:`, err);
@@ -973,6 +980,11 @@ app.get('/api/room/my/players', async (req, res) => {
   // Send current presence immediately
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
+
+  // Send recent roll history so reconnecting GM windows see prior rolls
+  if (room.rollLog.length > 0) {
+    res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+  }
   res.flush?.();
 
   const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
@@ -997,9 +1009,8 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
     req.socket.setTimeout(0);
     res.flushHeaders();
 
-    // Send initial state (credentials stripped)
-    const { rolzUsername: _u, rolzPassword: _p, ...filteredState } = tableState;
-    res.write(`event: state\ndata: ${JSON.stringify(filteredState)}\n\n`);
+    // Send initial state
+    res.write(`event: state\ndata: ${JSON.stringify(tableState)}\n\n`);
 
     // Track player in room
     const room = getOrCreateRoom(gmUid);
@@ -1008,6 +1019,11 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
     // Send current presence to this player
     const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
     res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
+
+    // Send recent roll history so late-joining players see prior rolls
+    if (room.rollLog.length > 0) {
+      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+    }
     res.flush?.();
 
     // Notify GM of new player
@@ -1025,11 +1041,15 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
   }
 });
 
-// POST /api/room/my/dice-roll — GM broadcasts a dice roll to all room clients
-app.post('/api/room/my/dice-roll', requireAuth, (req, res) => {
-  const room = rooms.get(req.uid);
-  broadcastToAllRoomClients(req.uid, 'dice-roll', req.body);
-  res.json({ ok: true });
+// POST /api/room/my/roll — GM rolls dice server-side; result broadcast to all room clients
+app.post('/api/room/my/roll', requireAuth, (req, res) => {
+  const { rollText, displayName, _clientId } = req.body;
+  if (!rollText) return res.status(400).json({ error: 'rollText is required' });
+  const rollData = buildRollData(rollText, displayName, _clientId);
+  if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
+  appendRollLog(req.uid, rollData);
+  broadcastToAllRoomClients(req.uid, 'dice-roll', rollData);
+  res.json(rollData);
 });
 
 // POST /api/room/my/dice-ack — GM broadcasts acknowledgement (dismiss + pulses) to all room clients
@@ -1069,8 +1089,9 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
     if (!(tableState.playerEmails || []).includes(req.email)) {
       return res.status(403).json({ error: 'Not invited to this room' });
     }
-    const { name, playerName, maxHope, maxHp, maxStress, tier } = req.body;
+    const { name, playerName, maxHope, maxHp, maxStress, tier, ...extraFields } = req.body;
     const character = {
+      ...extraFields,
       instanceId: crypto.randomUUID(),
       elementType: 'character',
       assignedPlayerEmail: req.email,
@@ -1080,10 +1101,11 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
       maxHope: maxHope || 6,
       maxHp: maxHp || 6,
       maxStress: maxStress || 6,
-      hope: maxHope || 6,
-      currentHp: maxHp || 6,
-      currentStress: 0,
-      conditions: '',
+      hope: extraFields.hope ?? (maxHope || 6),
+      currentHp: extraFields.currentHp ?? (maxHp || 6),
+      currentStress: extraFields.currentStress ?? 0,
+      currentArmor: extraFields.currentArmor ?? 0,
+      conditions: extraFields.conditions || '',
     };
     broadcastToAllRoomClients(gmUid, 'character-added', character);
     res.json({ character });
@@ -1093,12 +1115,11 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/room/:gmUid/player-roll — Player posts a dice roll via the GM's Rolz credentials.
-// The GM's rolzUsername/rolzPassword are read server-side from the GM's table_state so they are
-// never exposed to player browsers. The Rolz session is cached under the GM's UID.
-app.post('/api/room/:gmUid/player-roll', requireAuth, async (req, res) => {
+// POST /api/room/:gmUid/roll — Player rolls dice server-side; validates room membership,
+// broadcasts result to GM + all players via SSE.
+app.post('/api/room/:gmUid/roll', requireAuth, async (req, res) => {
   const { gmUid } = req.params;
-  const { rollText, displayName } = req.body;
+  const { rollText, displayName, _clientId } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   try {
     const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
@@ -1106,28 +1127,14 @@ app.post('/api/room/:gmUid/player-roll', requireAuth, async (req, res) => {
     if (!(tableState.playerEmails || []).includes(req.email)) {
       return res.status(403).json({ error: 'Not a player in this room' });
     }
-    const { rolzRoomName, rolzUsername, rolzPassword } = tableState;
-    if (!rolzRoomName || !rolzUsername || !rolzPassword) {
-      return res.status(503).json({ error: 'Rolz not configured for this table' });
-    }
-    const from = displayName || req.email;
-    const postToRolz = async (cookie) => {
-      const params = new URLSearchParams({ room: rolzRoomName, text: rollText, from });
-      return fetch(`https://rolz.org/api/post?${params}`, { headers: { Cookie: cookie } });
-    };
-    let cookie = await getRolzSession(gmUid, rolzUsername, rolzPassword);
-    let rolzRes = await postToRolz(cookie);
-    let body = await rolzRes.text();
-    if (body.includes('Invalid account name')) {
-      rolzSessions.delete(gmUid);
-      cookie = await getRolzSession(gmUid, rolzUsername, rolzPassword);
-      rolzRes = await postToRolz(cookie);
-      body = await rolzRes.text();
-    }
-    try { res.json(JSON.parse(body)); } catch { res.json({ raw: body }); }
+    const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true });
+    if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
+    appendRollLog(gmUid, rollData);
+    broadcastToAllRoomClients(gmUid, 'dice-roll', rollData);
+    res.json(rollData);
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/player-roll error:`, err);
-    res.status(500).json({ error: `Failed to post roll: ${err.message}` });
+    console.error(`POST /api/room/${gmUid}/roll error:`, err);
+    res.status(500).json({ error: `Roll failed: ${err.message}` });
   }
 });
 

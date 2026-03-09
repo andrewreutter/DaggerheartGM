@@ -35,7 +35,6 @@ async function mockPlayerStream(page, gmUid, { elements = [] } = {}) {
   const tableState = {
     elements,
     whiteboardEmbed: '',
-    rolzRoomName: '',
     featureCountdowns: {},
     tableBattleMods: {},
     fearCount: 0,

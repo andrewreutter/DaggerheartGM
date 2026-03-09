@@ -374,42 +374,22 @@ export const deleteItem = async (collectionName, id) => {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 };
 
-export const fetchRolzRoomLog = async (roomName) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const res = await fetch(`/api/rolz-roomlog?room=${encodeURIComponent(roomName)}`, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-};
+// Stable client ID used to tag outgoing dice rolls for SSE dedup (skip own rolls on receive).
+export const CLIENT_ID = crypto.randomUUID();
 
-export const postRolzRoll = async (room, text, rolzUsername, rolzPassword, from = 'DaggerheartGM') => {
+/**
+ * Roll dice server-side. Returns full roll data including subItems.
+ * gmUid — pass the GM's uid for player rolls (routes to /api/room/:gmUid/roll);
+ *          omit (null) for the GM's own rolls (routes to /api/room/my/roll).
+ */
+export const postRoll = async (rollText, displayName, gmUid = null) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
-  const res = await fetch('/api/rolz-post', {
+  const url = gmUid ? `/api/room/${gmUid}/roll` : '/api/room/my/roll';
+  const res = await fetch(url, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ room, text, from, rolzUsername, rolzPassword }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
-  }
-  return res.json();
-};
-
-/** Player posts a dice roll via the GM's server-side Rolz credentials. */
-export const postPlayerRoll = async (gmUid, rollText, displayName) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const res = await fetch(`/api/room/${gmUid}/player-roll`, {
-    method: 'POST',
-    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ rollText, displayName }),
+    body: JSON.stringify({ rollText, displayName, _clientId: CLIENT_ID }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -497,19 +477,6 @@ export const postAddCharacter = async (gmUid, charData) => {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify(charData),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-};
-
-/** GM: broadcast a confirmed dice roll to all players in the room. */
-export const postDiceRoll = async (rollData) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const res = await fetch('/api/room/my/dice-roll', {
-    method: 'POST',
-    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify(rollData),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
