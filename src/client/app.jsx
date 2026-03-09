@@ -54,6 +54,9 @@ function App() {
   const sseStateReceivedRef = useRef(false);
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
+    // Never overwrite the GM's table_state from a player session.
+    const r = routeRef.current;
+    if (r?.view === 'gm-table' && r?.gmUid && r?.gmUid !== userRef.current?.uid) return;
     if (sseStateReceivedRef.current) { sseStateReceivedRef.current = false; return; }
     const timer = setTimeout(() => {
       apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns, tableBattleMods, fearCount, playerEmails, gmDisplayName: userRef.current?.displayName || '' });
@@ -121,10 +124,9 @@ function App() {
     adventuresLoadedRef.current = false;
     scenesCacheRef.current = [];
     adventuresCacheRef.current = [];
-    setActiveElements([]);
-    apiDeleteItem('table_state', 'current').catch(() => {});
-    try {
-      await signOut(auth);
+  setActiveElements([]);
+  try {
+    await signOut(auth);
       navigate('/');
     } catch (err) {
       console.error('Sign-Out Error:', err);
@@ -409,7 +411,13 @@ function App() {
       if (!token || !userRef.current) return;
       es = new EventSource(`/api/room/${route.gmUid}/stream?token=${encodeURIComponent(token)}`);
       es.addEventListener('state', (e) => {
-        setPlayerTableState(JSON.parse(e.data));
+        const state = JSON.parse(e.data);
+        setPlayerTableState(state);
+        // Ensure a nav tab exists for this GM's room now that we've confirmed access.
+        setMyRooms(prev => {
+          if (prev.some(r => r.gmUid === route.gmUid)) return prev;
+          return [...prev, { gmUid: route.gmUid, gmName: state.gmDisplayName || '' }];
+        });
       });
       es.addEventListener('character-update', (e) => {
         const { instanceId, updates } = JSON.parse(e.data);
@@ -723,8 +731,9 @@ function App() {
   const handlePlayerAddCharacter = useCallback(async (charData) => {
     if (!route.gmUid) return;
     try {
-      const { character } = await postAddCharacter(route.gmUid, charData);
-      setPlayerTableState(prev => prev ? { ...prev, elements: [...(prev.elements || []), character] } : { elements: [character] });
+      await postAddCharacter(route.gmUid, charData);
+      // State update is handled by the character-added SSE event that the server broadcasts
+      // to all room clients (including this player). Updating here too would double-add.
     } catch (err) {
       console.error('postAddCharacter failed:', err);
     }

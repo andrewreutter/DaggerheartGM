@@ -336,7 +336,7 @@ export async function upsertMirror(appId, collection, id, data, { cloneDelta = 0
   const { rows } = await db.query(
     `INSERT INTO items (id, app_id, user_id, collection, data, is_public)
      VALUES ($1, $2, $3, $4, $5, false)
-     ON CONFLICT (app_id, collection, id)
+     ON CONFLICT (app_id, user_id, collection, id)
      DO UPDATE SET data = EXCLUDED.data, updated_at = now()
      RETURNING id`,
     [id, appId, MIRROR_USER_ID, collection, data]
@@ -416,7 +416,7 @@ export async function upsertItem(appId, userId, collection, id, data, isPublic =
   const { rows } = await db.query(
     `INSERT INTO items (id, app_id, user_id, collection, data, is_public)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (app_id, collection, id)
+     ON CONFLICT (app_id, user_id, collection, id)
      DO UPDATE SET data = $5, is_public = $6, updated_at = now()
      RETURNING id`,
     [id, appId, userId, collection, data, isPublic]
