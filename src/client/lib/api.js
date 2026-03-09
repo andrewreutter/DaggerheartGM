@@ -402,6 +402,22 @@ export const postRolzRoll = async (room, text, rolzUsername, rolzPassword, from 
   return res.json();
 };
 
+/** Player posts a dice roll via the GM's server-side Rolz credentials. */
+export const postPlayerRoll = async (gmUid, rollText, displayName) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${gmUid}/player-roll`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ rollText, displayName }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /** Returns { isAdmin } for the currently signed-in user. */
 export const fetchMe = async () => {
   const token = await getAuthToken();

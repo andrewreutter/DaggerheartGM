@@ -1093,6 +1093,44 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/room/:gmUid/player-roll — Player posts a dice roll via the GM's Rolz credentials.
+// The GM's rolzUsername/rolzPassword are read server-side from the GM's table_state so they are
+// never exposed to player browsers. The Rolz session is cached under the GM's UID.
+app.post('/api/room/:gmUid/player-roll', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const { rollText, displayName } = req.body;
+  if (!rollText) return res.status(400).json({ error: 'rollText is required' });
+  try {
+    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+    const tableState = tableStateItems[0] || {};
+    if (!(tableState.playerEmails || []).includes(req.email)) {
+      return res.status(403).json({ error: 'Not a player in this room' });
+    }
+    const { rolzRoomName, rolzUsername, rolzPassword } = tableState;
+    if (!rolzRoomName || !rolzUsername || !rolzPassword) {
+      return res.status(503).json({ error: 'Rolz not configured for this table' });
+    }
+    const from = displayName || req.email;
+    const postToRolz = async (cookie) => {
+      const params = new URLSearchParams({ room: rolzRoomName, text: rollText, from });
+      return fetch(`https://rolz.org/api/post?${params}`, { headers: { Cookie: cookie } });
+    };
+    let cookie = await getRolzSession(gmUid, rolzUsername, rolzPassword);
+    let rolzRes = await postToRolz(cookie);
+    let body = await rolzRes.text();
+    if (body.includes('Invalid account name')) {
+      rolzSessions.delete(gmUid);
+      cookie = await getRolzSession(gmUid, rolzUsername, rolzPassword);
+      rolzRes = await postToRolz(cookie);
+      body = await rolzRes.text();
+    }
+    try { res.json(JSON.parse(body)); } catch { res.json({ raw: body }); }
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/player-roll error:`, err);
+    res.status(500).json({ error: `Failed to post roll: ${err.message}` });
+  }
+});
+
 app.use('/api/srd', srdRouter);
 
 app.use(express.static(join(__dirname, 'public')));

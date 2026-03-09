@@ -9,7 +9,7 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRolzRoll, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRolzRoll, postPlayerRoll, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { TierSelector } from './TierSelector.jsx';
@@ -503,13 +503,25 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       ssePlayedRollSigsRef.current.delete(sig);
       return;
     }
-    setDiceRollQueue(prev => {
-      if (prev.length > 0 && prev[0]._optimistic) {
-        const { rollUser } = prev[0];
-        return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
-      }
-      return [...prev, rollData];
-    });
+    if (isPlayer) {
+      // In player/preview mode the DiceRoller reads playerDiceRollQueue, so the
+      // _update signal must go there, not to diceRollQueue.
+      setPlayerDiceRollQueue?.(prev => {
+        if (prev.length > 0 && prev[0]._optimistic) {
+          const { rollUser } = prev[0];
+          return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
+        }
+        return [...prev, rollData];
+      });
+    } else {
+      setDiceRollQueue(prev => {
+        if (prev.length > 0 && prev[0]._optimistic) {
+          const { rollUser } = prev[0];
+          return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
+        }
+        return [...prev, rollData];
+      });
+    }
   };
 
   // Compute pulse/element-update ack payload for broadcasting to players.
@@ -904,6 +916,34 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     } catch (err) {
       if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Trait roll failed:', err);
+    }
+  };
+
+  // Roll handler for a player acting on their own character. Shows local dice animation
+  // via playerDiceRollQueue (the queue DiceRoller reads in player/preview mode).
+  // In preview mode (GM has credentials): posts directly via existing Rolz path.
+  // In real player mode: proxies through POST /api/room/:gmUid/player-roll so the
+  // GM's Rolz credentials are used server-side and never exposed to player browsers.
+  const handlePlayerOwnRoll = async (rollText, displayName) => {
+    dismissAllHoverCards();
+    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (syntheticSubItems.length > 0) {
+      const optimisticRoll = { _optimistic: true, _optId: optId, _playerInitiated: true, subItems: syntheticSubItems, rollUser: displayName || rollText };
+      setPlayerDiceRollQueue?.(prev => [...prev, optimisticRoll]);
+    }
+    try {
+      if (rolzConfigured) {
+        // Preview mode: GM credentials are available locally
+        await postRolzRoll(rolzRoomName, rollText, rolzUsername, rolzPassword);
+      } else if (gmUid) {
+        // Real player mode: proxy through server using GM's stored credentials
+        await postPlayerRoll(gmUid, rollText, displayName || rollText);
+      }
+      addPendingRoll(displayName || rollText, rollText);
+    } catch (err) {
+      if (syntheticSubItems.length > 0) setPlayerDiceRollQueue?.(prev => prev.filter(r => r._optId !== optId));
+      console.error('Player trait roll failed:', err);
     }
   };
 
@@ -1731,7 +1771,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             }
             targets={isPlayer ? [] : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? [] : damageTargets}
             onApplyDamage={isPlayer ? undefined : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? undefined : handleApplyDamage}
-            disableDismiss={isPlayer}
+            disableDismiss={isPlayer && !previewAsPlayerEmail && !playerDiceRollQueue[0]?._playerInitiated}
           />
           {!iframeSrc ? (
             <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">
@@ -2878,17 +2918,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           }}
           {...characterOverlay.overlayHandlers}
         >
-          <CharacterHoverCard
-            el={liveEl}
-            updateFn={!isPlayer ? updateActiveElement : undefined}
-            onResync={!isPlayer && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
-            isSyncing={resyncingCharId === liveEl.instanceId}
-            onRoll={!isPlayer ? handleTraitRoll : undefined}
-            onSpendHope={!isPlayer ? handleSpendHope : undefined}
-            onUseHopeAbility={!isPlayer ? handleUseHopeAbility : undefined}
-            onDebugMouseEnter={characterOverlay.cancelClose}
-            onDebugMouseLeave={characterOverlay.close}
-          />
+          {(() => {
+            const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
+            const allowInteract = !isPlayer || isMyCharacter;
+            return (
+              <CharacterHoverCard
+                el={liveEl}
+                updateFn={allowInteract ? updateActiveElement : undefined}
+                onResync={!isPlayer && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
+                isSyncing={resyncingCharId === liveEl.instanceId}
+                onRoll={allowInteract ? handlePlayerOwnRoll : undefined}
+                onSpendHope={allowInteract ? handleSpendHope : undefined}
+                onUseHopeAbility={allowInteract ? handleUseHopeAbility : undefined}
+                onDebugMouseEnter={characterOverlay.cancelClose}
+                onDebugMouseLeave={characterOverlay.close}
+              />
+            );
+          })()}
         </div>
       );
     })()}
