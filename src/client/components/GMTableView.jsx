@@ -239,7 +239,7 @@ function computeHpLoss(damage, thresholds) {
   return 1;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerUid, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceRollBroadcast, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceRollBroadcast, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [gmHoverOverlayActive, setGmHoverOverlayActive] = useState(false);
   const gmHoverHideTimer = useRef(null);
@@ -1311,7 +1311,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           </button>
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
-            const isMyCharacter = isPlayer && playerUid != null && el.assignedPlayerUid === playerUid;
+            const isMyCharacter = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
             const isAssigned = !isPlayer || isMyCharacter;
             return (
             <div
@@ -1344,17 +1344,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
               </div>
               {/* GM: player assignment dropdown */}
-              {!isPlayer && connectedPlayers.length > 0 && (
+              {!isPlayer && playerEmails.length > 0 && (
                 <div className="px-2 pt-1 pb-0.5 border-b border-sky-900/20">
                   <select
-                    value={el.assignedPlayerUid || ''}
-                    onChange={e => updateActiveElement(el.instanceId, { assignedPlayerUid: e.target.value || undefined })}
+                    value={el.assignedPlayerEmail || ''}
+                    onChange={e => updateActiveElement(el.instanceId, { assignedPlayerEmail: e.target.value || undefined })}
                     className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none focus:border-sky-500"
                   >
                     <option value="">Unassigned</option>
-                    {connectedPlayers.map(p => (
-                      <option key={p.uid} value={p.uid}>{p.name || p.email}</option>
-                    ))}
+                    {playerEmails.map(email => {
+                      const connected = connectedPlayers.find(p => p.email === email);
+                      return <option key={email} value={email}>{connected?.name || email}</option>;
+                    })}
                   </select>
                 </div>
               )}
@@ -2889,9 +2890,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           style={{
             left: 'calc(14rem)',
             paddingLeft: '8px',
-            top: 8,
+            top: 90,
             width: 'calc(22rem + 8px)',
-            height: 'calc(100vh - 16px)',
+            height: 'calc(100vh - 98px)',
           }}
           onMouseEnter={cancelHideCharacterCard}
           onMouseLeave={() => setHoveredCharacter(null)}

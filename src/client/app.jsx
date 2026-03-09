@@ -338,8 +338,8 @@ function App() {
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'gm-table';
   const effectiveIsPlayer = isPlayer || isPreviewMode;
-  const previewPlayerUid = isPreviewMode ? connectedPlayers.find(p => p.email === previewAsPlayerEmail)?.uid : undefined;
-  const effectivePlayerUid = isPlayer ? user?.uid : (previewPlayerUid || undefined);
+  // Characters are assigned by email, so use email as the player identity for both real and preview mode
+  const effectivePlayerEmail = isPlayer ? user?.email : (isPreviewMode ? previewAsPlayerEmail : undefined);
 
   // Declared early so SSE effects below can reference it in their dependency arrays
   const updateActiveElement = useCallback((instanceId, updates) => {
@@ -752,7 +752,7 @@ function App() {
       currentHp: maxHp ?? 6,
       currentStress: 0,
       conditions: '',
-      assignedPlayerUid: previewPlayerUid || undefined,
+      assignedPlayerEmail: previewAsPlayerEmail || undefined,
     }, 'characters');
   };
 
@@ -952,7 +952,7 @@ function App() {
                 setFearCount={effectiveIsPlayer ? () => {} : setFearCount}
                 clearTable={effectiveIsPlayer ? () => {} : clearTable}
                 isPlayer={effectiveIsPlayer}
-                playerUid={effectivePlayerUid}
+                playerEmail={effectivePlayerEmail}
                 connectedPlayers={connectedPlayers}
                 playerEmails={playerEmails}
                 setPlayerEmails={effectiveIsPlayer ? () => {} : setPlayerEmails}

@@ -21,7 +21,7 @@ const JSON_DIR = join(SRD_ROOT, '.build', '03_json');
  */
 export async function getSubmoduleHash() {
   try {
-    const rev = execSync('git rev-parse HEAD', { cwd: SRD_ROOT, encoding: 'utf8' }).trim();
+    const rev = execSync('git rev-parse HEAD', { cwd: SRD_ROOT, encoding: 'utf8', stdio: 'pipe' }).trim();
     return rev;
   } catch {
     try {

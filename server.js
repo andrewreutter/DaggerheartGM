@@ -1045,7 +1045,7 @@ app.post('/api/room/:gmUid/character-update', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Not a player in this room' });
     }
     const character = (tableState.elements || []).find(e => e.instanceId === instanceId);
-    if (!character || character.assignedPlayerUid !== req.uid) {
+    if (!character || character.assignedPlayerEmail !== req.email) {
       return res.status(403).json({ error: 'Not assigned to this character' });
     }
     broadcastToAllRoomClients(gmUid, 'character-update', { instanceId, updates });
@@ -1069,7 +1069,7 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
     const character = {
       instanceId: crypto.randomUUID(),
       elementType: 'character',
-      assignedPlayerUid: req.uid,
+      assignedPlayerEmail: req.email,
       name: name || 'Unnamed',
       playerName: playerName || req.email,
       tier: tier || 1,
