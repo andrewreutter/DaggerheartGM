@@ -1089,8 +1089,9 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
     if (!(tableState.playerEmails || []).includes(req.email)) {
       return res.status(403).json({ error: 'Not invited to this room' });
     }
-    const { name, playerName, maxHope, maxHp, maxStress, tier } = req.body;
+    const { name, playerName, maxHope, maxHp, maxStress, tier, ...extraFields } = req.body;
     const character = {
+      ...extraFields,
       instanceId: crypto.randomUUID(),
       elementType: 'character',
       assignedPlayerEmail: req.email,
@@ -1100,10 +1101,11 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
       maxHope: maxHope || 6,
       maxHp: maxHp || 6,
       maxStress: maxStress || 6,
-      hope: maxHope || 6,
-      currentHp: maxHp || 6,
-      currentStress: 0,
-      conditions: '',
+      hope: extraFields.hope ?? (maxHope || 6),
+      currentHp: extraFields.currentHp ?? (maxHp || 6),
+      currentStress: extraFields.currentStress ?? 0,
+      currentArmor: extraFields.currentArmor ?? 0,
+      conditions: extraFields.conditions || '',
     };
     broadcastToAllRoomClients(gmUid, 'character-added', character);
     res.json({ character });

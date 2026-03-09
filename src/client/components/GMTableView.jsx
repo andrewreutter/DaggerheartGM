@@ -2416,6 +2416,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     maxHope: characterDialog.maxHope,
                     maxHp: characterDialog.maxHp,
                     maxStress: characterDialog.maxStress,
+                    ...cleanDsFields,
+                    ...dsCredentials,
                   });
                 } else {
                   addToTable({
