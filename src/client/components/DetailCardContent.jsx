@@ -50,7 +50,7 @@ export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, va
         key={i}
         onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
         title={onSetFilled ? title : undefined}
-        className={`w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${
+        className={`checkbox-track-item w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${
           isChecked
             ? `${fillColor} border-transparent`
             : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700'

@@ -197,6 +197,50 @@
 }
 
 
+/* ── Touch / coarse-pointer devices (iPad, etc.) ──────────────────────────
+   On touch devices hover is simulated and unreliable. These rules ensure
+   group-hover-hidden action buttons are always visible and that touch
+   targets meet the 44px minimum. */
+@media (pointer: coarse) {
+  /* Character cards: show edit/remove/assign buttons; keep tier badge + player name */
+  .group\/char .group-hover\/char\:flex   { display: flex   !important; }
+  .group\/char .group-hover\/char\:hidden { display: revert !important; }
+
+  /* Environment cards: show the remove (X) button */
+  .group\/env  .group-hover\/env\:block   { display: block  !important; }
+
+  /* Adversary rows: show add (+) / remove (−) count buttons */
+  .group\/adv  .group-hover\/adv\:flex    { display: flex   !important; }
+  .group\/adv  .group-hover\/adv\:hidden  { display: revert !important; }
+
+  /* Generic group-hover opacity reveals (carousel arrows, thumbnail buttons) */
+  .group .group-hover\:opacity-100 { opacity: 1 !important; }
+  .group .group-hover\:text-white\/80 { color: rgb(255 255 255 / 0.8) !important; }
+  .group .group-hover\:bg-black\/30 { background-color: rgb(0 0 0 / 0.3) !important; }
+
+  /* Minimum touch target size */
+  .touch-target {
+    min-height: 44px;
+    min-width:  44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* CheckboxTrack: expand interactive area for finger tapping without changing visual size */
+  button.checkbox-track-item {
+    min-width:  28px;
+    min-height: 28px;
+  }
+
+  /* Encounter panel count buttons (+/-) and remove (X) buttons: expand touch area */
+  .group\/adv button.w-4,
+  .group\/env button.w-4 {
+    min-width:  32px;
+    min-height: 32px;
+  }
+}
+
 /* Dice result banner: fade in, hold, then fade out */
 @keyframes dice-banner-in {
   0%   { opacity: 0; transform: translateX(-50%) translateY(12px) scale(0.92); }

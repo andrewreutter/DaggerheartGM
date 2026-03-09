@@ -5,6 +5,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:3457',
     headless: true,
+    screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'PORT=3457 NODE_ENV=test node --env-file=.env server.js',

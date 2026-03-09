@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { useTouchDevice } from '../../lib/useTouchDevice.js';
 import { BookOpen, Plus } from 'lucide-react';
 import { generateId } from '../../lib/helpers.js';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
@@ -140,18 +141,54 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
 
 function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
   const [hoverTop, setHoverTop] = useState(null);
+  const isTouch = useTouchDevice();
+  // Touch: track tap count — first tap shows preview, second adds
+  const tapCountRef = useRef(0);
+  const tapTimerRef = useRef(null);
+  const wrapperRef = useRef(null);
+
+  const handleTouchClick = useCallback((e) => {
+    tapCountRef.current += 1;
+    if (tapCountRef.current === 1) {
+      // First tap: show preview
+      const rect = e.currentTarget.getBoundingClientRect();
+      setHoverTop(Math.max(8, Math.min(rect.top, window.innerHeight - 300)));
+      tapTimerRef.current = setTimeout(() => { tapCountRef.current = 0; setHoverTop(null); }, 3000);
+    } else {
+      // Second tap: add the feature and reset
+      clearTimeout(tapTimerRef.current);
+      tapCountRef.current = 0;
+      setHoverTop(null);
+      onAdd({ ...feature, id: generateId() });
+    }
+  }, [feature, onAdd]);
+
+  // Touch: dismiss preview on tap outside
+  useEffect(() => {
+    if (!isTouch || hoverTop === null) return;
+    const handler = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        clearTimeout(tapTimerRef.current);
+        tapCountRef.current = 0;
+        setHoverTop(null);
+      }
+    };
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => document.removeEventListener('touchstart', handler);
+  }, [isTouch, hoverTop]);
 
   return (
-    <div className="relative">
+    <div ref={wrapperRef} className="relative">
       <button
         type="button"
-        onClick={() => onAdd({ ...feature, id: generateId() })}
-        onMouseEnter={e => {
+        onClick={isTouch ? handleTouchClick : () => onAdd({ ...feature, id: generateId() })}
+        onMouseEnter={isTouch ? undefined : (e => {
           const rect = e.currentTarget.getBoundingClientRect();
           setHoverTop(Math.max(8, Math.min(rect.top, window.innerHeight - 300)));
-        }}
-        onMouseLeave={() => setHoverTop(null)}
+        })}
+        onMouseLeave={isTouch ? undefined : (() => setHoverTop(null))}
         className="w-full text-left bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 p-2.5 rounded transition-colors"
+        title={isTouch ? 'Tap to preview · tap again to add' : undefined}
       >
         <div className="flex items-start justify-between gap-1 mb-1">
           <div className="flex items-center gap-1.5 min-w-0 flex-1">

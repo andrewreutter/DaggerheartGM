@@ -429,7 +429,7 @@ export function ItemDetailModal({
     >
       <div className={`flex gap-3 items-start w-full ${maxWidth}`}>
         {/* Main modal card */}
-        <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 2rem)' }}>
+        <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 2rem)' }}>
 
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 shrink-0">
@@ -516,7 +516,7 @@ export function ItemDetailModal({
           <div
             ref={setLibraryPortal}
             className="w-72 shrink-0 rounded-xl"
-            style={{ height: 'calc(100vh - 2rem)' }}
+            style={{ height: 'calc(100dvh - 2rem)' }}
           />
         )}
       </div>

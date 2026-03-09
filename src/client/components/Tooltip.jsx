@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useTouchDevice } from '../lib/useTouchDevice.js';
 
 /**
  * Instant tooltip (no browser delay). Shows on mouseEnter, hides on mouseLeave.
+ * On touch devices: tap to show, tap anywhere outside to dismiss.
  *
  * @param {Object} props
  * @param {React.ReactNode} props.children
@@ -10,6 +12,8 @@ import { useState } from 'react';
  */
 export function Tooltip({ children, label, placement = 'bottom-right' }) {
   const [visible, setVisible] = useState(false);
+  const isTouch = useTouchDevice();
+  const wrapperRef = useRef(null);
 
   const positionClass =
     placement === 'top'
@@ -18,11 +22,25 @@ export function Tooltip({ children, label, placement = 'bottom-right' }) {
         ? 'top-full left-1/2 -translate-x-1/2 mt-1.5'
         : 'top-full right-0 mt-1.5';
 
+  // Touch: dismiss on tap outside
+  useEffect(() => {
+    if (!isTouch || !visible) return;
+    const handler = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setVisible(false);
+      }
+    };
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => document.removeEventListener('touchstart', handler);
+  }, [isTouch, visible]);
+
   return (
     <span
+      ref={wrapperRef}
       className="relative inline-flex"
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
+      onMouseEnter={() => { if (!isTouch) setVisible(true); }}
+      onMouseLeave={() => { if (!isTouch) setVisible(false); }}
+      onClick={() => { if (isTouch) setVisible(v => !v); }}
     >
       {children}
       {visible && label && (

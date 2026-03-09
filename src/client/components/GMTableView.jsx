@@ -1,4 +1,6 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useTouchDevice } from '../lib/useTouchDevice.js';
+import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import { RolzRoomLog } from './RolzRoomLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
@@ -240,6 +242,15 @@ function computeHpLoss(damage, thresholds) {
 }
 
 export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, rolzRoomName, setRolzRoomName, rolzUsername, setRolzUsername, rolzPassword, setRolzPassword, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceRollBroadcast, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
+  const isTouch = useTouchDevice();
+
+  // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
+  const trackerOverlay    = useHoverOverlay({ hideDelay: 120, isTouch });
+  const characterOverlay  = useHoverOverlay({ hideDelay: 120, isTouch });
+  const potAdvOverlay     = useHoverOverlay({ hideDelay: 120, isTouch });
+  const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch });
+
+  // GM Feature hover (multi-trigger within GM Moves panel — managed separately)
   const [hoveredFeature, setHoveredFeature] = useState(null);
   const [gmHoverOverlayActive, setGmHoverOverlayActive] = useState(false);
   const gmHoverHideTimer = useRef(null);
@@ -329,75 +340,32 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [dialogSyncing, setDialogSyncing] = useState(false);
   const [dialogSyncError, setDialogSyncError] = useState('');
   const overlayScrollRef = useRef(null);
+  const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances }
   const [editState, setEditState] = useState(null);
   const [scaledToggleState, setScaledToggleState] = useState({});
-  const [hoveredTrackerGroup, setHoveredTrackerGroup] = useState(null); // { baseElement, instances, top, bottom }
-  const trackerOverlayRef = useRef(null);
-  const trackerKey = hoveredTrackerGroup
-    ? (hoveredTrackerGroup.kind === 'environment' ? hoveredTrackerGroup.element.instanceId : hoveredTrackerGroup.baseElement.id)
+  const trackerKey = trackerOverlay.data
+    ? (trackerOverlay.data.kind === 'environment' ? trackerOverlay.data.element.instanceId : trackerOverlay.data.baseElement.id)
     : null;
-  const trackerAdjust = useViewportClamp(trackerOverlayRef, !!hoveredTrackerGroup, trackerKey);
-  const trackerHideTimerRef = useRef(null);
-  // Character hover card state
-  const [hoveredCharacter, setHoveredCharacter] = useState(null); // { element, top, bottom }
-  const charHideTimerRef = useRef(null);
+  const trackerAdjust = useViewportClamp(trackerOverlay.overlayRef, trackerOverlay.isOpen, trackerKey);
+
   const [resyncingCharId, setResyncingCharId] = useState(null);
-  const showTrackerGroup = (item, e) => {
-    if (trackerHideTimerRef.current) { clearTimeout(trackerHideTimerRef.current); trackerHideTimerRef.current = null; }
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (item.kind === 'environment') {
-      setHoveredTrackerGroup({ kind: 'environment', element: item.element, top: rect.top, bottom: rect.bottom });
-    } else {
-      setHoveredTrackerGroup({ kind: 'adversary', baseElement: item.baseElement, instances: item.instances, top: rect.top, bottom: rect.bottom });
-    }
-  };
-  const scheduleHideTracker = () => {
-    trackerHideTimerRef.current = setTimeout(() => { setHoveredTrackerGroup(null); trackerHideTimerRef.current = null; }, 120);
-  };
-  const cancelHideTracker = () => {
-    if (trackerHideTimerRef.current) { clearTimeout(trackerHideTimerRef.current); trackerHideTimerRef.current = null; }
-  };
 
-  // Character hover card helpers
-  const showCharacterCard = (el, e) => {
-    if (!el.daggerstackUrl) return;
-    if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setHoveredCharacter({ element: el, top: rect.top, bottom: rect.bottom });
-  };
-  const scheduleHideCharacterCard = () => {
-    charHideTimerRef.current = setTimeout(() => { setHoveredCharacter(null); charHideTimerRef.current = null; }, 120);
-  };
-  const cancelHideCharacterCard = () => {
-    if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
-  };
-
-  // Potential adversary hover card state (shown to the left of the environment hover card)
-  const [hoveredPotentialAdversary, setHoveredPotentialAdversary] = useState(null); // { element, top, bottom }
-  const potAdvHideTimerRef = useRef(null);
-  const potAdvOverlayRef = useRef(null);
-  const potAdvKey = hoveredPotentialAdversary?.element?.id ?? null;
-  const potAdvAdjust = useViewportClamp(potAdvOverlayRef, !!hoveredPotentialAdversary, potAdvKey);
+  const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
+  const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
 
   const handlePotentialAdversaryHover = async (adversaryId, rect) => {
-    if (potAdvHideTimerRef.current) { clearTimeout(potAdvHideTimerRef.current); potAdvHideTimerRef.current = null; }
+    potAdvOverlay.cancelClose();
     try {
       const result = await resolveItems({ adversaries: [adversaryId] });
       const adversary = result.adversaries?.[0];
       if (adversary) {
-        setHoveredPotentialAdversary({ element: adversary, top: rect.top, bottom: rect.bottom });
+        potAdvOverlay.show({ element: adversary, top: rect.top, bottom: rect.bottom });
       }
     } catch (err) {
       console.warn('Failed to resolve potential adversary for hover:', err);
     }
-  };
-  const schedulHidePotAdv = () => {
-    potAdvHideTimerRef.current = setTimeout(() => { setHoveredPotentialAdversary(null); potAdvHideTimerRef.current = null; }, 120);
-  };
-  const cancelHidePotAdv = () => {
-    if (potAdvHideTimerRef.current) { clearTimeout(potAdvHideTimerRef.current); potAdvHideTimerRef.current = null; }
   };
 
   const handleResyncCharacter = async (el) => {
@@ -420,7 +388,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         playerName: el.playerName || character.playerName,
       });
       // Update hover card element reference
-      setHoveredCharacter(prev => prev?.element?.instanceId === el.instanceId ? { ...prev, element: { ...prev.element, ...character, _daggerstackDebug: _debug, _daggerstackLookupTables: _lookupTables, instanceId: el.instanceId } } : prev);
+      const prevCharData = characterOverlay.data;
+      if (prevCharData?.element?.instanceId === el.instanceId) {
+        characterOverlay.show({ ...prevCharData, element: { ...prevCharData.element, ...character, _daggerstackDebug: _debug, _daggerstackLookupTables: _lookupTables, instanceId: el.instanceId } });
+      }
     } catch (err) {
       console.error('Re-sync failed:', err);
       alert(`Re-sync failed: ${err.message}`);
@@ -429,18 +400,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
-  const [showGmMovesOverlay, setShowGmMovesOverlay] = useState(false);
-  const gmMovesHideTimerRef = useRef(null);
-  const showGmMoves = () => {
-    if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; }
-    setShowGmMovesOverlay(true);
-  };
-  const scheduleHideGmMoves = () => {
-    gmMovesHideTimerRef.current = setTimeout(() => { setShowGmMovesOverlay(false); gmMovesHideTimerRef.current = null; }, 150);
-  };
-  const cancelHideGmMoves = () => {
-    if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; }
-  };
+  // gmMovesOverlay — handled by useHoverOverlay hook declared above
   const [openConditions, setOpenConditions] = useState(() => new Set()); // instanceIds with conditions input open
   const [fearPulsing, setFearPulsing] = useState(false);
   const fearPulseTimerRef = useRef(null);
@@ -675,16 +635,36 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
   }, [addMenuOpen]);
 
   useEffect(() => {
-    if (!showGmMovesOverlay) {
+    if (!gmMovesOverlay.isOpen) {
       setHoveredFeature(null);
       setHoveredDefaultMove(null);
       setHoveredCompactTooltip(null);
     }
-  }, [showGmMovesOverlay]);
+  }, [gmMovesOverlay.isOpen]);
+
+  // Touch: dismiss GM feature overlay on tap outside
+  useEffect(() => {
+    if (!isTouch || !gmHoverOverlayActive) return;
+    const handler = (e) => {
+      if (
+        gmFeatureOverlayRef.current && !gmFeatureOverlayRef.current.contains(e.target) &&
+        gmMovesOverlay.overlayRef.current && !gmMovesOverlay.overlayRef.current.contains(e.target)
+      ) {
+        setGmHoverOverlayActive(false);
+        setHoveredFeature(null);
+      }
+    };
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => document.removeEventListener('touchstart', handler);
+  }, [isTouch, gmHoverOverlayActive]);
 
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const effectiveMods = tableBattleMods || DEFAULT_BATTLE_MODS;
@@ -811,19 +791,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
 
   const dismissAllHoverCards = () => {
-    if (trackerHideTimerRef.current) { clearTimeout(trackerHideTimerRef.current); trackerHideTimerRef.current = null; }
-    if (charHideTimerRef.current) { clearTimeout(charHideTimerRef.current); charHideTimerRef.current = null; }
-    if (potAdvHideTimerRef.current) { clearTimeout(potAdvHideTimerRef.current); potAdvHideTimerRef.current = null; }
-    if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; }
+    trackerOverlay.close();
+    characterOverlay.close();
+    potAdvOverlay.close();
+    gmMovesOverlay.close();
     if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
-    setHoveredTrackerGroup(null);
-    setHoveredCharacter(null);
-    setHoveredPotentialAdversary(null);
     setHoveredDefaultMove(null);
     setHoveredCompactTooltip(null);
     setHoveredFeature(null);
     setGmHoverOverlayActive(false);
-    setShowGmMovesOverlay(false);
   };
 
   const handleRoll = async (feature) => {
@@ -1317,8 +1293,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             <div
               key={el.instanceId}
               className={`rounded-lg border overflow-hidden group/char transition-colors ${isMyCharacter ? 'bg-green-950/30 border-green-700/50' : 'bg-sky-950/30'} ${hopePulsingId === el.instanceId ? 'border-amber-400 hope-pulse-anim' : isMyCharacter ? '' : 'border-sky-900/40'}`}
-              onMouseEnter={(e) => showCharacterCard(el, e)}
-              onMouseLeave={scheduleHideCharacterCard}
+              {...(el.daggerstackUrl ? characterOverlay.triggerProps(e => ({ element: el, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom })) : {})}
             >
               <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
                 <User size={10} className={isMyCharacter ? 'text-green-400 shrink-0' : 'text-sky-400 shrink-0'} />
@@ -1476,14 +1451,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       </div>
 
       {/* GM Moves hover overlay */}
-      {showGmMovesOverlay && (
+      {gmMovesOverlay.isOpen && (
       <div
+        ref={gmMovesOverlay.overlayRef}
         className="fixed z-[55]"
-        style={{ right: 'calc(14rem)', paddingRight: '8px', top: '8px', width: 'calc(20rem + 8px)', maxHeight: 'calc(100vh - 16px)' }}
-        onMouseEnter={cancelHideGmMoves}
-        onMouseLeave={() => { setShowGmMovesOverlay(false); if (gmMovesHideTimerRef.current) { clearTimeout(gmMovesHideTimerRef.current); gmMovesHideTimerRef.current = null; } }}
+        style={{ right: 'calc(14rem)', paddingRight: '8px', top: 90, width: 'calc(20rem + 8px)', maxHeight: 'calc(100dvh - 98px)' }}
+        {...gmMovesOverlay.overlayHandlers}
       >
-      <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 16px)' }}>
+      <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100dvh - 98px)' }}>
         <div className="p-3 bg-slate-950 border-b border-slate-700 sticky top-0 z-10 rounded-t-xl shrink-0">
           <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
             <Zap size={16} className="text-yellow-500" /> GM Moves
@@ -1520,6 +1495,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       <div
                         key={`${feature.id}-${idx}`}
                         onMouseEnter={(e) => {
+                          if (isTouch) return;
                           if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
                           setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey });
                           if (feature._isRoleMove || feature.featureKey === 'attack') {
@@ -1528,17 +1504,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                           }
                         }}
                         onMouseLeave={() => {
+                          if (isTouch) return;
                           setHoveredFeature(null);
                           if (feature._isRoleMove || feature.featureKey === 'attack') setHoveredCompactTooltip(null);
                           gmHoverHideTimer.current = setTimeout(() => { setGmHoverOverlayActive(false); gmHoverHideTimer.current = null; }, 120);
                         }}
-                        onClick={(category === 'Fear Actions' || canRoll) ? () => {
+                        onClick={(e) => {
                           if (category === 'Fear Actions') {
                             if (setFearCount) setFearCount(prev => Math.max(0, prev - parseFearCost(feature.description)));
                             triggerFearPulse();
                           }
                           if (canRoll) handleRoll(feature);
-                        } : undefined}
+                        }}
                         className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 rounded border transition-all group flex ${(category === 'Fear Actions' || canRoll) ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
                       >
                         {feature._isRoleMove && (
@@ -1610,8 +1587,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 {/* Three color strips indicating which dice results use each move */}
                 <div
                   className="relative w-4 shrink-0 mr-2 cursor-default"
-                  onMouseEnter={() => setShowStripLegend(true)}
-                  onMouseLeave={() => setShowStripLegend(false)}
+                  onMouseEnter={() => { if (!isTouch) setShowStripLegend(true); }}
+                  onMouseLeave={() => { if (!isTouch) setShowStripLegend(false); }}
+                  onClick={() => { if (isTouch) setShowStripLegend(v => !v); }}
                 >
                   <div className="absolute left-0 w-1 rounded-full bg-amber-500/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
                   <div className="absolute left-[5px] w-1 rounded-full bg-violet-400/80" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
@@ -1642,10 +1620,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     <div
                       key={idx}
                       onMouseEnter={(e) => {
+                        if (isTouch) return;
                         const rect = e.currentTarget.getBoundingClientRect();
                         setHoveredDefaultMove({ ...move, top: rect.top, bottom: rect.bottom });
                       }}
-                      onMouseLeave={() => setHoveredDefaultMove(null)}
+                      onMouseLeave={() => { if (!isTouch) setHoveredDefaultMove(null); }}
+                      onClick={(e) => {
+                        if (!isTouch) return;
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setHoveredDefaultMove(prev => prev?.name === move.name ? null : { ...move, top: rect.top, bottom: rect.bottom });
+                      }}
                       className="w-full text-left px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-default"
                     >
                       <span className="text-slate-300 text-xs leading-snug">{move.name}</span>
@@ -1844,7 +1828,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           <div
             className="relative"
             ref={addMenuRef}
-            onMouseLeave={() => setAddMenuOpen(false)}
+            onMouseLeave={() => { if (!isTouch) setAddMenuOpen(false); }}
           >
             <button
               onClick={() => setAddMenuOpen(p => !p)}
@@ -2020,9 +2004,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           </div>
           {/* GM Moves hover trigger */}
           <div
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${showGmMovesOverlay ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
-            onMouseEnter={showGmMoves}
-            onMouseLeave={scheduleHideGmMoves}
+            data-testid="gm-moves-trigger"
+            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${gmMovesOverlay.isOpen ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
+            {...gmMovesOverlay.triggerProps(true)}
           >
             <Zap size={14} className="text-yellow-500 shrink-0" />
             <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">GM Moves</span>
@@ -2040,13 +2024,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               <div
                 key={el.instanceId}
                 className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
-                onMouseEnter={(e) => showTrackerGroup(item, e)}
-                onMouseLeave={scheduleHideTracker}
+                {...trackerOverlay.triggerProps(e => ({ kind: 'environment', element: item.element, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
               >
                 <div className="px-2.5 py-1.5 flex items-center gap-1.5">
                   <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
                   <button
-                    onClick={() => { removeActiveElement(el.instanceId); setHoveredTrackerGroup(null); }}
+                    onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
                     className="hidden group-hover/env:block text-slate-500 hover:text-red-400 transition-colors shrink-0"
                     title="Remove from table"
                   ><X size={12} /></button>
@@ -2062,8 +2045,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               <div
                 key={el.id}
                 className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden group/adv"
-                onMouseEnter={(e) => showTrackerGroup(item, e)}
-                onMouseLeave={scheduleHideTracker}
+                {...trackerOverlay.triggerProps(e => ({ kind: 'adversary', baseElement: item.baseElement, instances: item.instances, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
               >
                 <div className="px-2.5 py-1.5 border-b border-slate-800 flex items-center gap-1.5">
                   <span className="text-xs font-semibold text-slate-200 truncate flex-1">{displayEl.name}</span>
@@ -2080,7 +2062,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         if (count === 1) {
                           if (window.confirm(`Remove ${displayEl.name} from the table?`)) {
                             removeGroup(instances);
-                            setHoveredTrackerGroup(null);
+                            trackerOverlay.close();
                           }
                         } else {
                           removeActiveElement(instances[instances.length - 1].instanceId);
@@ -2618,28 +2600,27 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     )}
 
     {/* Hover overlay for tracker panel (adversary or environment) */}
-    {hoveredTrackerGroup && (
+    {trackerOverlay.isOpen && (
       <div
-        ref={trackerOverlayRef}
+        ref={trackerOverlay.overlayRef}
         className="fixed z-[55]"
-        style={{ right: 'calc(14rem)', paddingRight: '12px', top: (hoveredTrackerGroup.top + hoveredTrackerGroup.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100vh - 16px)' }}
-        onMouseEnter={cancelHideTracker}
-        onMouseLeave={() => setHoveredTrackerGroup(null)}
+        style={{ right: 'calc(14rem)', paddingRight: '12px', top: (trackerOverlay.data.top + trackerOverlay.data.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100dvh - 16px)' }}
+        {...trackerOverlay.overlayHandlers}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100vh - 16px)' }}>
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 16px)' }}>
           <div className="p-5 relative">
-            {hoveredTrackerGroup.kind === 'environment' ? (() => {
-              const el = hoveredTrackerGroup.element;
+            {trackerOverlay.data.kind === 'environment' ? (() => {
+              const el = trackerOverlay.data.element;
               return (
                 <>
                   <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
                     <button
-                      onClick={() => { setHoveredTrackerGroup(null); handleEditClick([el], el, 'environments'); }}
+                      onClick={() => { trackerOverlay.close(); handleEditClick([el], el, 'environments'); }}
                       className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
                       title="Edit"
                     ><Edit size={14} /></button>
                     <button
-                      onClick={() => { removeActiveElement(el.instanceId); setHoveredTrackerGroup(null); }}
+                      onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
                       className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
                       title="Remove from table"
                     ><Trash2 size={14} /></button>
@@ -2660,7 +2641,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     updateCountdown={null}
                     onAddAdversary={handleAddPotentialAdversary}
                     onPotentialAdversaryHover={handlePotentialAdversaryHover}
-                    onPotentialAdversaryLeave={schedulHidePotAdv}
+                    onPotentialAdversaryLeave={potAdvOverlay.scheduleClose}
                   />
                 </>
               );
@@ -2668,20 +2649,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               // Derive live instances from consolidatedElements so the overlay
               // re-renders when HP/stress is updated from the Encounters panel.
               const liveGroup = consolidatedElements.find(
-                g => g.kind === 'adversary-group' && g.baseElement.id === hoveredTrackerGroup.baseElement.id
+                g => g.kind === 'adversary-group' && g.baseElement.id === trackerOverlay.data.baseElement.id
               );
-              const liveInstances = liveGroup?.instances ?? hoveredTrackerGroup.instances;
-              const liveBaseElement = liveGroup?.baseElement ?? hoveredTrackerGroup.baseElement;
+              const liveInstances = liveGroup?.instances ?? trackerOverlay.data.instances;
+              const liveBaseElement = liveGroup?.baseElement ?? trackerOverlay.data.baseElement;
               return (
                 <>
                   <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
                     <button
-                      onClick={() => { setHoveredTrackerGroup(null); handleEditClick(liveInstances, liveBaseElement, 'adversaries'); }}
+                      onClick={() => { trackerOverlay.close(); handleEditClick(liveInstances, liveBaseElement, 'adversaries'); }}
                       className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
                       title="Edit"
                     ><Edit size={14} /></button>
                     <button
-                      onClick={() => { removeGroup(liveInstances); setHoveredTrackerGroup(null); }}
+                      onClick={() => { removeGroup(liveInstances); trackerOverlay.close(); }}
                       className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
                       title="Remove from table"
                     ><Trash2 size={14} /></button>
@@ -2721,33 +2702,32 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     )}
 
     {/* Potential adversary hover card — shown to the left of the environment hover card */}
-    {hoveredPotentialAdversary && (
+    {potAdvOverlay.isOpen && (
       <div
-        ref={potAdvOverlayRef}
+        ref={potAdvOverlay.overlayRef}
         className="fixed z-[56]"
-        style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (hoveredPotentialAdversary.top + hoveredPotentialAdversary.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100vh - 16px)' }}
-        onMouseEnter={cancelHidePotAdv}
-        onMouseLeave={() => setHoveredPotentialAdversary(null)}
+        style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (potAdvOverlay.data.top + potAdvOverlay.data.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100dvh - 16px)' }}
+        {...potAdvOverlay.overlayHandlers}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100vh - 16px)' }}>
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 16px)' }}>
           <div className="p-5 relative">
-            {hoveredPotentialAdversary.element.imageUrl && (
+            {potAdvOverlay.data.element.imageUrl && (
               <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
-                <img src={hoveredPotentialAdversary.element.imageUrl} alt={hoveredPotentialAdversary.element.name} className="w-full h-full object-cover opacity-80" />
+                <img src={potAdvOverlay.data.element.imageUrl} alt={potAdvOverlay.data.element.name} className="w-full h-full object-cover opacity-80" />
               </div>
             )}
-            <h3 className="text-xl font-bold text-white mb-1 pr-16">{hoveredPotentialAdversary.element.name}</h3>
+            <h3 className="text-xl font-bold text-white mb-1 pr-16">{potAdvOverlay.data.element.name}</h3>
             <AdversaryCardContent
-              element={hoveredPotentialAdversary.element}
+              element={potAdvOverlay.data.element}
               hoveredFeature={null}
-              cardKey={hoveredPotentialAdversary.element.id}
+              cardKey={potAdvOverlay.data.element.id}
               count={1}
               instances={[]}
               updateFn={null}
               showInstanceRemove={false}
               featureCountdowns={featureCountdowns}
               updateCountdown={null}
-              onRollAttack={(data) => handleCardRoll(data, hoveredPotentialAdversary.element.name)}
+              onRollAttack={(data) => handleCardRoll(data, potAdvOverlay.data.element.name)}
               damageBoost={null}
               scaledMeta={null}
               onScaledToggle={null}
@@ -2788,10 +2768,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (!displayElement) return null;
       return (
       <div
+        ref={gmFeatureOverlayRef}
         className="fixed z-50"
         style={{ right: 'calc(34rem + 20px)', top: '50%', transform: 'translateY(-50%)', width: '26rem', maxHeight: '80vh' }}
-        onMouseEnter={() => { if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; } setGmHoverOverlayActive(true); }}
-        onMouseLeave={() => { setGmHoverOverlayActive(false); }}
+        onMouseEnter={() => { if (isTouch) return; if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; } setGmHoverOverlayActive(true); }}
+        onMouseLeave={() => { if (!isTouch) setGmHoverOverlayActive(false); }}
       >
         <div ref={overlayScrollRef} className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
           {displayElement.kind === 'environment' ? (
@@ -2881,21 +2862,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     )}
 
     {/* Character hover card overlay — appears to the RIGHT of the Characters panel */}
-    {hoveredCharacter && (() => {
+    {characterOverlay.isOpen && (() => {
       // Look up the live element so CheckboxTrack interactions reflect current state
-      const liveEl = activeElements.find(e => e.instanceId === hoveredCharacter.element.instanceId) || hoveredCharacter.element;
+      const liveEl = activeElements.find(e => e.instanceId === characterOverlay.data.element.instanceId) || characterOverlay.data.element;
       return (
         <div
+          ref={characterOverlay.overlayRef}
           className="fixed z-[55] flex flex-col"
           style={{
             left: 'calc(14rem)',
             paddingLeft: '8px',
             top: 90,
             width: 'calc(22rem + 8px)',
-            height: 'calc(100vh - 98px)',
+            height: 'calc(100dvh - 98px)',
           }}
-          onMouseEnter={cancelHideCharacterCard}
-          onMouseLeave={() => setHoveredCharacter(null)}
+          {...characterOverlay.overlayHandlers}
         >
           <CharacterHoverCard
             el={liveEl}
@@ -2905,8 +2886,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onRoll={!isPlayer ? handleTraitRoll : undefined}
             onSpendHope={!isPlayer ? handleSpendHope : undefined}
             onUseHopeAbility={!isPlayer ? handleUseHopeAbility : undefined}
-            onDebugMouseEnter={cancelHideCharacterCard}
-            onDebugMouseLeave={() => setHoveredCharacter(null)}
+            onDebugMouseEnter={characterOverlay.cancelClose}
+            onDebugMouseLeave={characterOverlay.close}
           />
         </div>
       );
