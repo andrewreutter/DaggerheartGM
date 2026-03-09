@@ -541,10 +541,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
 
   // Called when a player's roll (from playerDiceRollQueue) finishes animating on the GM screen.
+  // Mirrors handleDiceRollComplete: applies side effects and broadcasts ack to all players.
   const handlePlayerRollComplete = (roll) => {
     if (!roll._optimistic) {
       const logEntry = { ...roll, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
       setDiceLog(prev => [...prev.slice(-49), logEntry]);
+      const ackData = computeRollAck(roll.dominant, roll.rollUser);
+      applyRollSideEffects(roll.dominant, roll.rollUser);
+      const dmgPending = pendingDamageRef.current;
+      pendingDamageRef.current = null;
+      if (dmgPending) {
+        ackData.pulses.push({ type: 'damage', instanceId: dmgPending.instanceId });
+        ackData.elementUpdates.push({ instanceId: dmgPending.instanceId, updates: { currentHp: dmgPending.newHp } });
+      }
+      onDiceAckBroadcast?.(ackData);
     }
     setPlayerDiceRollQueue?.(prev => prev.slice(1));
   };
@@ -1633,9 +1643,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 ? handlePlayerRollComplete
                 : handleDiceRollComplete
             }
-            targets={isPlayer ? [] : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? [] : damageTargets}
-            onApplyDamage={isPlayer ? undefined : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? undefined : handleApplyDamage}
-            disableDismiss={isPlayer && !previewAsPlayerEmail && !playerDiceRollQueue[0]?._playerInitiated}
+            targets={isPlayer ? [] : damageTargets}
+            onApplyDamage={isPlayer ? undefined : handleApplyDamage}
+            canApplyDamage={!isPlayer}
           />
           {!iframeSrc ? (
             <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">

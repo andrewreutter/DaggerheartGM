@@ -166,7 +166,7 @@ function Spinner({ lg = false }) {
 
 // ── Result Banner ───────────────────────────────────────────────────────────
 
-function ResultBanner({ roll, hasMore, resolved, onDismiss, targets, onApplyDamage, disableDismiss }) {
+function ResultBanner({ roll, hasMore, resolved, onDismiss, targets, onApplyDamage, disableDismiss, canApplyDamage = true }) {
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = characterName || rollUser || '';
 
@@ -310,7 +310,7 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, targets, onApplyDama
           {/* ── Action row: target badges or Acknowledge ── */}
           {showActions && (
             <div className="mt-2.5 pt-2 border-t border-white/10">
-              {hasDamage ? (
+              {hasDamage && canApplyDamage ? (
                 <>
                   <div className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider">Apply to</div>
                   <div className="flex flex-wrap justify-center gap-1">
@@ -353,7 +353,7 @@ function ResultBanner({ roll, hasMore, resolved, onDismiss, targets, onApplyDama
 
 // ── DiceRoller ──────────────────────────────────────────────────────────────
 
-export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, targets, onApplyDamage, disableDismiss = false }, ref) {
+export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, targets, onApplyDamage, disableDismiss = false, canApplyDamage = true }, ref) {
   const containerRef    = useRef(null);
   const containerIdRef  = useRef(`dice-canvas-container-${Date.now()}`);
   const diceBoxRef      = useRef(null);
@@ -563,6 +563,7 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, tar
           targets={targets}
           onApplyDamage={onApplyDamage}
           disableDismiss={disableDismiss}
+          canApplyDamage={canApplyDamage}
         />
       )}
     </div>
