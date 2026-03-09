@@ -736,6 +736,26 @@ function App() {
     }
   }, [route.gmUid]);
 
+  // GM impersonation: add a character on behalf of the previewed player, directly into activeElements.
+  // Uses the real addToTable (not the no-op shim passed to GMTableView in preview mode).
+  const handleGmImpersonateAddCharacter = (charData) => {
+    const { name, playerName, tier, maxHope, maxHp, maxStress } = charData;
+    addToTable({
+      elementType: 'character',
+      name,
+      playerName,
+      tier: tier ?? 1,
+      hope: maxHope ?? 6,
+      maxHope: maxHope ?? 6,
+      maxHp: maxHp ?? 6,
+      maxStress: maxStress ?? 6,
+      currentHp: maxHp ?? 6,
+      currentStress: 0,
+      conditions: '',
+      assignedPlayerUid: previewPlayerUid || undefined,
+    }, 'characters');
+  };
+
   // GM dice broadcast callbacks
   const handleDiceRollBroadcast = useCallback((rollData) => {
     postDiceRoll({ ...rollData, _clientId: diceClientIdRef.current }).catch(err => console.warn('postDiceRoll failed:', err));
@@ -937,7 +957,7 @@ function App() {
                 playerEmails={playerEmails}
                 setPlayerEmails={effectiveIsPlayer ? () => {} : setPlayerEmails}
                 gmUid={route.gmUid || user?.uid}
-                onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : undefined}
+                onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 playerDiceRollQueue={playerDiceRollQueue}
                 setPlayerDiceRollQueue={setPlayerDiceRollQueue}
                 playerDiceAck={playerDiceAck}

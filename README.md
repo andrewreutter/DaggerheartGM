@@ -73,9 +73,7 @@ DaggerheartGM/
     │   ├── text-parse.js           # Regex-based stat block parser (selftext + OCR output)
     │   ├── ocr-parse.js            # Multi-engine OCR orchestrator + artwork cropping
     │   ├── ocr-engines/            # Per-engine adapters (common contract: name/isAvailable/recognize/terminate)
-    │   │   ├── tesseract.js        # Tesseract.js WASM adapter (always available)
-    │   │   ├── easyocr.js          # EasyOCR Python child_process adapter (optional, Apache 2.0)
-    │   │   └── easyocr_worker.py   # Python worker: image path → JSON {text, detections}
+    │   │   └── tesseract.js        # Tesseract.js WASM adapter (always available)
     │   ├── llm-parse.js            # GPT-4o vision parse — optional LLM fallback for Reddit posts
 │   └── input.css               # Tailwind CSS entry point
 ├── server.js                   # Express server + API routes
@@ -348,25 +346,15 @@ A fixture-based test runner compares OCR engine accuracy on real stat card image
 ```bash
 node test/parse-fixtures.js                    # all available engines
 node test/parse-fixtures.js --engine tesseract # one engine only
-node test/parse-fixtures.js --engine easyocr
 ```
 
 Fixture images live in `test/fixtures/{adversaries,environments}/`. Each image needs a matching `<name>.expected.json` with the fields to validate. Add new fixtures organically whenever a card parses badly in production — drop the image and expected JSON into the folder.
-
-**EasyOCR setup** (optional, significantly improves accuracy on non-standard layouts):
-
-```bash
-pip3 install easyocr
-python3 -c "import easyocr; easyocr.Reader(['en'], gpu=False)"  # pre-download model
-```
-
-With EasyOCR installed, `ocrBuffer()` runs both engines in parallel and picks the winner by parse confidence. Accuracy stats (wins/runs per engine) are persisted to `data/ocr-engine-stats.json`. Engines with 0 wins after 50+ total runs are auto-disabled at startup with a console warning that repeats on every OCR call.
 
 ---
 
 ### Deployment (Fly.io)
 
-A `Dockerfile` and `fly.toml` are included for Fly.io deployment. The image bundles Node.js + Python + EasyOCR (CPU-only) with the English model pre-downloaded at build time.
+A `Dockerfile` and `fly.toml` are included for Fly.io deployment.
 
 ```bash
 fly auth login

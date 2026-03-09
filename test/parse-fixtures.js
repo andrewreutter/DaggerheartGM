@@ -9,10 +9,9 @@
  * Prints a per-engine scorecard showing which fields were correctly extracted.
  *
  * Usage:
- *   node test/parse-fixtures.js [--engine tesseract] [--engine easyocr]
+ *   node test/parse-fixtures.js [--engine tesseract]
  *
  * If no --engine flags are given, all available engines are used.
- * If EasyOCR is not installed, it is automatically skipped.
  */
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
@@ -43,7 +42,6 @@ for (let i = 0; i < args.length; i++) {
 async function loadEngines() {
   const mods = await Promise.all([
     import('../src/ocr-engines/tesseract.js'),
-    import('../src/ocr-engines/easyocr.js'),
   ]);
 
   return mods.filter(e => {

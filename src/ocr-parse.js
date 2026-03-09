@@ -1,10 +1,8 @@
 /**
  * OCR-based image parsing for Daggerheart stat block images.
  *
- * Supports multiple OCR engines simultaneously (Tesseract.js + EasyOCR).
- * Each image is processed by all available engines in parallel; the engine
- * producing the highest-confidence stat block parse wins and provides the
- * text and bounding boxes used for artwork extraction.
+ * Uses Tesseract.js (WASM) for OCR. The engine provides the text and bounding
+ * boxes used for artwork extraction.
  *
  * Engine contract: each engine in src/ocr-engines/ exports:
  *   name:          string
@@ -17,10 +15,7 @@
  * and sharp. All four margins around the text are evaluated; any qualifying
  * region becomes a standalone artwork crop.
  *
- * Accuracy logging: on every invocation (when 2+ engines are active) a JSON
- * line is written to stdout and win counts are persisted to
- * data/ocr-engine-stats.json. Engines with 0 wins after 50+ total runs are
- * automatically disabled and a warning is printed on every OCR call.
+ * Accuracy logging: win counts are persisted to data/ocr-engine-stats.json.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -73,7 +68,6 @@ async function loadEngines() {
 
   const allEngines = await Promise.all([
     import('./ocr-engines/tesseract.js'),
-    import('./ocr-engines/easyocr.js'),
   ]);
 
   const stats = loadStats();
@@ -292,14 +286,8 @@ async function extractArtworkRegions(buf, detections) {
 /**
  * Run OCR on a single image buffer using all available engines.
  *
- * When multiple engines are available, all run in parallel. Each engine's
- * text is independently parsed, then all parse results are merged with
- * mergeResults so the best fields from each engine are combined — e.g.
- * EasyOCR may read a display-font title that Tesseract misses, while
- * Tesseract may extract features that EasyOCR's text ordering confuses.
- *
- * The highest-confidence engine's bounding boxes are used for artwork
- * region extraction. The merged parse result is returned as parsedResult
+ * Runs Tesseract.js on the buffer. The engine's bounding boxes are used for
+ * artwork region extraction. The parse result is returned as parsedResult
  * for callers that want to skip re-parsing the raw text.
  *
  * @param {Buffer} buf

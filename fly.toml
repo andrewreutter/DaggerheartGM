@@ -20,8 +20,6 @@ primary_region = "iad"
     hard_limit = 100
 
 [[vm]]
-  # EasyOCR + PyTorch (CPU) requires a bit more memory than a minimal Node app.
-  # 1GB is sufficient for CPU inference on stat card images.
-  memory = "1gb"
+  memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
