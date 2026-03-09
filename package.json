@@ -14,10 +14,14 @@
     "build": "npm run build:css && npm run build:js",
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
     "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
-    "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --outfile=public/app.js",
-    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --outfile=public/app.js --watch"
+    "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outfile=public/app.js",
+    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outfile=public/app.js --watch",
+    "test": "vitest run && npx playwright test",
+    "test:unit": "vitest run",
+    "test:browser": "npx playwright test"
   },
   "dependencies": {
+    "@3d-dice/dice-box-threejs": "^0.0.12",
     "@huggingface/inference": "^4.13.14",
     "@tanstack/react-virtual": "^3.13.0",
     "compression": "^1.8.1",
@@ -32,8 +36,10 @@
     "undici": "^7.22.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/cli": "^4.2.1",
     "esbuild": "^0.27.3",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "vitest": "^4.0.18"
   }
 }

@@ -1,0 +1,167 @@
+# Testing: Regression Test Suite
+
+## Mandatory Rule: Every Bugfix Requires a Regression Test
+
+**When fixing a bug, you MUST create a test that:**
+1. Fails (or would fail) without the fix applied.
+2. Passes with the fix applied.
+3. Is placed in the correct location (see below).
+
+This is non-negotiable. No exceptions for "trivial" bugs.
+
+---
+
+## Test Framework Overview
+
+| Layer | Framework | Location | Run Command |
+|-------|-----------|----------|-------------|
+| Pure logic (functions, utilities) | Vitest | `test/unit/*.test.js` | `npm run test:unit` |
+| Visual/UI, DOM, browser behavior | Playwright | `test/browser/*.spec.js` | `npm run test:browser` |
+| Both together | — | — | `npm test` |
+
+---
+
+## Choosing Unit vs Browser
+
+**Use a Vitest unit test when:**
+- The bug is in a pure-logic function (no DOM, no browser, no React).
+- Good candidates: `src/client/lib/battle-points.js`, `src/client/lib/helpers.js`, `src/client/lib/router.js` (parseRoute), `src/text-parse.js`, `src/game-constants.js`, `parseRollDice` from `DiceRoller.jsx`.
+
+**Use a Playwright browser test when:**
+- The bug involves rendered output, CSS/layout, visual state, user interaction.
+- The bug requires a running server (API route bugs).
+- The bug manifests as something the user sees in the browser — spacing, color, visibility, element presence/absence.
+
+---
+
+## Writing a Vitest Unit Test
+
+Place tests in `test/unit/`. Files must end in `.test.js`.
+
+```js
+import { describe, it, expect } from 'vitest';
+import { myFunction } from '../../src/client/lib/my-module.js';
+
+describe('myFunction', () => {
+  it('specific behavior that was broken', () => {
+    expect(myFunction(input)).toBe(expectedOutput);
+  });
+});
+```
+
+Run with: `npm run test:unit`
+
+---
+
+## Writing a Playwright Browser Test
+
+Place tests in `test/browser/`. Files must end in `.spec.js`.
+
+### Auth helper
+
+Import `authenticate(page)` from `test/helpers/auth.js`. **Call it before `page.goto()`**.
+
+```js
+import { test, expect } from '@playwright/test';
+import { authenticate } from '../helpers/auth.js';
+
+test('bug description', async ({ page }) => {
+  await authenticate(page);        // mock Firebase + API config
+  await page.goto('/some-route');
+
+  // Assert the bug-free behavior
+  await expect(page.locator('h1')).toContainText('Expected Heading', { timeout: 10000 });
+});
+```
+
+The `authenticate(page)` helper:
+- Intercepts Firebase CDN modules (app + auth) with in-memory stubs.
+- Mocks `/api/config`, `/api/me`, `/api/my-rooms`, `/api/data/table_state`.
+- Signs in as `test@example.com` / uid `test-user-uid` / `displayName: 'Test User'`.
+- All API calls use `Authorization: Bearer test-token` which the server accepts when `NODE_ENV=test`.
+
+### CSS/visual assertions
+
+```js
+// Assert a CSS property
+await expect(page.locator('.my-element')).toHaveCSS('color', 'rgb(255, 0, 0)');
+
+// Assert visibility
+await expect(page.locator('button:has-text("Save")')).toBeVisible();
+await expect(page.locator('.error-banner')).toBeHidden();
+
+// Assert text content
+await expect(page.locator('h1')).toContainText('My Heading');
+```
+
+### Visual snapshot regression (pixel-level)
+
+Use `toHaveScreenshot()` when the bug is a subtle visual regression (spacing, alignment, color):
+
+```js
+// On first run, creates a baseline snapshot file.
+// On subsequent runs, compares pixel-by-pixel.
+await expect(page).toHaveScreenshot('my-feature.png');
+```
+
+Snapshots are stored in `test/browser/__snapshots__/`. Commit them.
+To update snapshots after intentional visual changes: `npx playwright test --update-snapshots`
+
+### Mocking additional API routes in a specific test
+
+```js
+test('my test', async ({ page }) => {
+  await authenticate(page);
+
+  // Add test-specific mocks BEFORE goto
+  await page.route('/api/data/adversaries*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [{ id: 'test-1', name: 'Test Goblin', role: 'minion', tier: 1 }], totalCount: 1 }),
+    });
+  });
+
+  await page.goto('/library/adversaries');
+  await expect(page.locator('text=Test Goblin')).toBeVisible({ timeout: 10000 });
+});
+```
+
+### Selector tips
+
+- Prefer `page.locator('h1')` + `.toContainText(...)` over `page.locator('text=...')` for headings with sibling SVG icons.
+- Use `page.locator('button', { hasText: '...' })` to match a button by its label.
+- Use `page.locator('[data-testid="..."]')` if you add test IDs to components.
+- Avoid brittle selectors that rely on CSS class names (they change).
+
+---
+
+## Development workflow
+
+Run a specific test file to iterate quickly:
+```bash
+# Unit
+npx vitest run test/unit/my-feature.test.js
+
+# Browser (single test by name)
+npx playwright test -g "bug description"
+
+# Browser (single file)
+npx playwright test test/browser/my-feature.spec.js
+```
+
+The Playwright browser test server runs on port 3457 (separate from the dev server on 3456).
+
+---
+
+## What to name the test
+
+Name the test after the bug symptom, not the fix. Good examples:
+- `"HP track overflows card when max HP exceeds 20"`
+- `"Fear counter resets to 0 after page reload"`
+- `"computeBattlePoints returns wrong total for mixed minion and solo groups"`
+
+---
+
+## After adding a test
+
+Run `npm test` to confirm the full suite passes before committing.

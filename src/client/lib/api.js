@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 /** Headers to add when running behind ngrok (bypasses browser warning interstitial). */
 function apiHeaders(extra = {}) {
@@ -447,6 +447,128 @@ export const generateImage = async (prompt) => {
     throw new Error(body.error || `HTTP ${res.status}`);
   }
   return res.json();
+};
+
+/** Returns [{ gmUid, gmName }] for all GMs who have invited the current user. */
+export const fetchMyRooms = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/my-rooms', {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Player: send a runtime update for an assigned character to the GM's room. */
+export const postCharacterUpdate = async (gmUid, instanceId, updates) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${gmUid}/character-update`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ instanceId, updates }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Player: add a new character to the GM's table (auto-assigned to self). */
+export const postAddCharacter = async (gmUid, charData) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${gmUid}/add-character`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(charData),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** GM: broadcast a confirmed dice roll to all players in the room. */
+export const postDiceRoll = async (rollData) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/room/my/dice-roll', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(rollData),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** GM: broadcast dice acknowledgement (pulses + element updates) to all players. */
+export const postDiceAck = async (ackData) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/room/my/dice-ack', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(ackData),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Request the Google contacts.readonly scope via a popup.
+ * Should only be called in response to a user gesture (click).
+ * Returns the OAuth access token string, or null if the user cancelled.
+ */
+export const requestGoogleContactsAccess = async () => {
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/contacts.readonly');
+    const currentUser = auth?.currentUser;
+    if (currentUser?.email) {
+      provider.setCustomParameters({ login_hint: currentUser.email });
+    }
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    return credential?.accessToken ?? null;
+  } catch (err) {
+    if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+      return null;
+    }
+    console.error('requestGoogleContactsAccess failed:', err);
+    return null;
+  }
+};
+
+/**
+ * Search the authenticated user's Google contacts using the People API.
+ * Returns [{ name, email }] — up to 8 results. Returns [] on any error.
+ * accessToken — obtained from requestGoogleContactsAccess()
+ */
+export const searchGoogleContacts = async (query, accessToken) => {
+  if (!query?.trim() || !accessToken) return [];
+  try {
+    const params = new URLSearchParams({
+      query: query.trim(),
+      readMask: 'names,emailAddresses',
+      pageSize: '8',
+    });
+    const res = await fetch(
+      `https://people.googleapis.com/v1/people:searchContacts?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!res.ok) return [];
+    const json = await res.json();
+    const results = [];
+    for (const { person } of (json.results || [])) {
+      const emails = person.emailAddresses || [];
+      if (!emails.length) continue;
+      const name = person.names?.[0]?.displayName || '';
+      for (const { value } of emails) {
+        if (value) results.push({ name, email: value });
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
 };
 
 /**

@@ -74,6 +74,15 @@ function parseDaggerheartRoll(subItems) {
 // Render a compound roll stored in item.items[]:
 // Each sub-item has: pre, input, result, details, post
 // Damage sub-items (pre matches /damage/i) are rendered after the Hope/Fear summary.
+// Per-sub-item accent color: Hope → amber, Fear → purple, damage → red, else default
+function subItemColor(pre) {
+  const p = (pre || '').toLowerCase();
+  if (/hope/.test(p))       return { label: 'text-amber-400',  bracket: 'text-amber-500', expr: 'text-amber-300',  result: 'text-amber-300 font-bold' };
+  if (/fear/.test(p))       return { label: 'text-purple-400', bracket: 'text-purple-500', expr: 'text-purple-300', result: 'text-purple-300 font-bold' };
+  if (/damage|dmg/.test(p)) return { label: 'text-red-400',    bracket: 'text-red-500',    expr: 'text-red-300',    result: 'text-red-300 font-bold' };
+  return { label: 'text-slate-300', bracket: 'text-sky-400', expr: 'text-sky-300', result: 'text-green-400 font-bold' };
+}
+
 function CompoundRoll({ subItems }) {
   const dh = parseDaggerheartRoll(subItems);
   const actionItems = subItems.filter(s => !/damage/i.test(s.pre || ''));
@@ -81,24 +90,27 @@ function CompoundRoll({ subItems }) {
 
   return (
     <span>
-      {actionItems.map((sub, i) => (
-        <span key={i}>
-          {sub.pre
-            ? <span className="text-slate-300">{sub.pre}</span>
-            : (i > 0 && sub.input ? ' ' : null)
-          }
-          {sub.input && (
-            <>
-              <span className="text-sky-400 font-bold">[</span>
-              <span className="text-sky-300">{sub.input} </span>
-              <span className="text-slate-500">= </span>
-              <span className="text-green-400 font-bold">{sub.result}</span>
-              <span className="text-sky-400 font-bold">]</span>
-            </>
-          )}
-          {sub.post && <span className="text-slate-300">{sub.post}</span>}
-        </span>
-      ))}
+      {actionItems.map((sub, i) => {
+        const c = subItemColor(sub.pre);
+        return (
+          <span key={i}>
+            {sub.pre
+              ? <span className={c.label}>{sub.pre}</span>
+              : (i > 0 && sub.input ? ' ' : null)
+            }
+            {sub.input && (
+              <>
+                <span className={`${c.bracket} font-bold`}>[</span>
+                <span className={c.expr}>{sub.input} </span>
+                <span className="text-slate-500">= </span>
+                <span className={c.result}>{sub.result}</span>
+                <span className={`${c.bracket} font-bold`}>]</span>
+              </>
+            )}
+            {sub.post && <span className="text-slate-300">{sub.post}</span>}
+          </span>
+        );
+      })}
       {dh && (
         <span className="ml-1">
           <span className="text-slate-500">= </span>
@@ -113,20 +125,23 @@ function CompoundRoll({ subItems }) {
               </span>
             </>
           )}
-          {damageItems.map((sub, i) => (
-            <span key={i}>
-              <span className="text-slate-400"> for </span>
-              <span className="text-sky-400 font-bold">[</span>
-              <span className="text-sky-300">{sub.input} </span>
-              <span className="text-slate-500">= </span>
-              <span className="text-yellow-300 font-bold">{sub.result}</span>
-              <span className="text-sky-400 font-bold">]</span>
-              {sub.post && <span className="text-slate-400">{sub.post}</span>}
-              <span className="text-slate-400"> damage</span>
-            </span>
-          ))}
         </span>
       )}
+      {damageItems.map((sub, i) => {
+        const c = subItemColor(sub.pre);
+        return (
+          <span key={i}>
+            <span className="text-slate-400"> for </span>
+            <span className={`${c.bracket} font-bold`}>[</span>
+            <span className={c.expr}>{sub.input} </span>
+            <span className="text-slate-500">= </span>
+            <span className={c.result}>{sub.result}</span>
+            <span className={`${c.bracket} font-bold`}>]</span>
+            {sub.post && <span className={c.label}>{sub.post}</span>}
+            <span className={c.label}> damage</span>
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -322,8 +337,10 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
     };
   }, [roomName]);
 
-  // Fire onDaggerheartRoll for newly arrived Hope/Fear rolls.
+  // Fire onDaggerheartRoll for all newly arrived dice rolls (Hope/Fear/Critical or generic).
   // On initial load, mark all existing items as seen without firing.
+  // For DH rolls, callback receives: { dominant, total, hopeResult, fearResult, characterName, rollUser, subItems }
+  // For generic rolls, callback receives: { rollUser, total, subItems } (no dominant/hopeResult/fearResult)
   useEffect(() => {
     if (!items.length) return;
 
@@ -338,18 +355,34 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
       if (processedKeysRef.current.has(key)) continue;
       processedKeysRef.current.add(key);
 
-      if (!Array.isArray(item.items) || item.items.length === 0) continue;
-      const dh = parseDaggerheartRoll(item.items);
-      if (!dh) continue;
-
       const cb = onDaggerheartRollRef.current;
       if (!cb) continue;
 
-      // Prefer the character name extracted from the roll's Hope die pre label
-      // (format: "{characterName} {traitName} Hope"). Fall back to the Rolz account name.
       const fromName = extractCharacterName(item.from_html);
-      const rollUser = dh.characterName || fromName || item.from || '';
-      cb(dh.dominant, rollUser);
+
+      if (Array.isArray(item.items) && item.items.length > 0) {
+        const dh = parseDaggerheartRoll(item.items);
+        if (dh) {
+          const rollUser = dh.characterName || fromName || item.from || '';
+          cb({ ...dh, rollUser, subItems: item.items });
+        } else {
+          // Generic compound roll (e.g. adversary attack)
+          let total = 0;
+          for (const sub of item.items) {
+            if (/damage/i.test(sub.pre || '')) continue;
+            const v = parseInt(sub.result, 10);
+            if (!isNaN(v)) total += v;
+          }
+          const rollUser = fromName || item.from || '';
+          cb({ rollUser, total, subItems: item.items });
+        }
+      } else if (item.type === 'dicemsg' && item.input) {
+        // Simple single dice roll
+        const total = parseInt(item.result, 10) || 0;
+        const rollUser = fromName || item.from || '';
+        const syntheticSubItems = [{ pre: '', input: item.input, result: String(item.result ?? ''), details: item.details, post: '' }];
+        cb({ rollUser, total, subItems: syntheticSubItems });
+      }
     }
   }, [items]);
 
@@ -415,8 +448,8 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
   if (compact) {
     return (
       <div className="shrink-0 flex flex-col border-t border-slate-800 bg-slate-950">
-        {/* Slim strip header */}
-        <div className="flex items-center gap-2 px-3 py-1 border-b border-slate-800/60">
+        {/* Slim strip header — rolls display suppressed, only config bar shown */}
+        <div className="flex items-center gap-2 px-3 py-1">
           <Dices size={11} className="text-red-400 shrink-0" />
           <span className="text-[11px] font-medium text-slate-400 truncate flex-1">{roomName}</span>
           <button
@@ -444,18 +477,6 @@ export function RolzRoomLog({ roomName, pendingRolls = [], compact = false, onCo
               <Settings size={10} />
             </button>
           )}
-        </div>
-        {/* Messages strip — fixed height, chronological, auto-scrolls to bottom */}
-        <div ref={compactScrollRef} className="h-24 overflow-y-auto px-2 py-1 space-y-0.5">
-          {loading && (
-            <div className="text-slate-600 text-xs py-2 text-center">Loading...</div>
-          )}
-          {items.map(item => (
-            <RolzMessage key={item.key || item.time} item={item} />
-          ))}
-          {activePending.map(p => (
-            <PendingRollPlaceholder key={p.id} roll={p} />
-          ))}
         </div>
       </div>
     );

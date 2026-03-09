@@ -6,7 +6,7 @@ import { watchFile } from 'fs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -51,8 +51,14 @@ async function requireAuth(req, res, next) {
   if (!header?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing auth token' });
   }
+  const token = header.slice(7);
+  if (process.env.NODE_ENV === 'test' && token === 'test-token') {
+    req.uid = 'test-user-uid';
+    req.email = 'test@example.com';
+    return next();
+  }
   try {
-    const decoded = await getAuth().verifyIdToken(header.slice(7));
+    const decoded = await getAuth().verifyIdToken(token);
     req.uid = decoded.uid;
     req.email = decoded.email || '';
     next();
@@ -181,6 +187,50 @@ async function getRolzSession(uid, username, password) {
   const cookie = await rolzLogin(username, password);
   rolzSessions.set(uid, { cookie, expiresAt: Date.now() + ROLZ_SESSION_TTL });
   return cookie;
+}
+
+// --- Multi-player room state (in-memory) ---
+// gmUid -> { players: Map<uid, { res, name, email, photoURL }>, gmClients: Set<res> }
+const rooms = new Map();
+
+/** Extract and verify a Firebase JWT from the ?token= query parameter. */
+async function verifyTokenFromQuery(req, res) {
+  const { token } = req.query;
+  if (!token) { res.status(401).json({ error: 'Missing token' }); return null; }
+  try {
+    const decoded = await getAuth().verifyIdToken(token);
+    return { uid: decoded.uid, email: decoded.email || '', name: decoded.name || decoded.email || '', picture: decoded.picture || '' };
+  } catch {
+    res.status(401).json({ error: 'Invalid token' }); return null;
+  }
+}
+
+function getOrCreateRoom(gmUid) {
+  if (!rooms.has(gmUid)) rooms.set(gmUid, { players: new Map(), gmClients: new Set() });
+  return rooms.get(gmUid);
+}
+
+function broadcastPresenceToGm(gmUid) {
+  const room = rooms.get(gmUid);
+  if (!room) return;
+  const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
+  const msg = `event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`;
+  for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
+}
+
+function broadcastToAllRoomClients(gmUid, eventName, data, excludeRes = null) {
+  const room = rooms.get(gmUid);
+  if (!room) return;
+  const msg = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const { res } of room.players.values()) { if (res !== excludeRes) { res.write(msg); res.flush?.(); } }
+  for (const clientRes of room.gmClients) { if (clientRes !== excludeRes) { clientRes.write(msg); clientRes.flush?.(); } }
+}
+
+function broadcastToPlayers(gmUid, eventName, data) {
+  const room = rooms.get(gmUid);
+  if (!room) return;
+  const msg = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const { res } of room.players.values()) { res.write(msg); res.flush?.(); }
 }
 
 // --- Rolz API proxies ---
@@ -862,7 +912,14 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
       }
     }
     await upsertItem(APP_ID, req.uid, collection, id, dataToSave, Boolean(is_public));
-    res.json({ id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' });
+    const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };
+    res.json(saved);
+
+    // Broadcast filtered table_state to all connected room clients (players + other GM windows)
+    if (collection === 'table_state' && rooms.has(req.uid)) {
+      const { rolzUsername: _u, rolzPassword: _p, ...filteredState } = dataToSave;
+      broadcastToAllRoomClients(req.uid, 'state', filteredState);
+    }
   } catch (err) {
     console.error(`PUT /api/data/${collection} error:`, err);
     res.status(500).json({ error: 'Failed to save item' });
@@ -880,6 +937,155 @@ app.delete('/api/data/:collection/:id', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(`DELETE /api/data/${collection}/${id} error:`, err);
     res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+// --- Multi-player room API ---
+
+// GET /api/my-rooms — returns GMs whose table_state includes the user's email
+app.get('/api/my-rooms', requireAuth, async (req, res) => {
+  try {
+    const rows = await getTableStatesByPlayerEmail(APP_ID, req.email);
+    res.json(rows.map(r => ({ gmUid: r.userId, gmName: r.data?.gmDisplayName || '' })));
+  } catch (err) {
+    console.error('GET /api/my-rooms error:', err);
+    res.status(500).json({ error: 'Failed to fetch rooms' });
+  }
+});
+
+// GET /api/room/my/players — GM SSE: receive player presence updates
+app.get('/api/room/my/players', async (req, res) => {
+  const user = await verifyTokenFromQuery(req, res);
+  if (!user) return;
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  req.socket.setTimeout(0);
+  res.flushHeaders();
+
+  const room = getOrCreateRoom(user.uid);
+  room.gmClients.add(res);
+
+  // Send current presence immediately
+  const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
+  res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
+  res.flush?.();
+
+  const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
+  req.on('close', () => { clearInterval(heartbeat); room.gmClients.delete(res); });
+});
+
+// GET /api/room/:gmUid/stream — Player SSE: receive table state and events
+app.get('/api/room/:gmUid/stream', async (req, res) => {
+  const { gmUid } = req.params;
+  const user = await verifyTokenFromQuery(req, res);
+  if (!user) return;
+  try {
+    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+    const tableState = tableStateItems[0] || {};
+    const playerEmails = tableState.playerEmails || [];
+    if (!playerEmails.includes(user.email)) {
+      return res.status(403).json({ error: 'Not invited to this room' });
+    }
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    req.socket.setTimeout(0);
+    res.flushHeaders();
+
+    // Send initial state (credentials stripped)
+    const { rolzUsername: _u, rolzPassword: _p, ...filteredState } = tableState;
+    res.write(`event: state\ndata: ${JSON.stringify(filteredState)}\n\n`);
+
+    // Track player in room
+    const room = getOrCreateRoom(gmUid);
+    room.players.set(user.uid, { res, name: user.name, email: user.email, photoURL: user.picture });
+
+    // Send current presence to this player
+    const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
+    res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
+    res.flush?.();
+
+    // Notify GM of new player
+    broadcastPresenceToGm(gmUid);
+
+    const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      room.players.delete(user.uid);
+      broadcastPresenceToGm(gmUid);
+    });
+  } catch (err) {
+    console.error(`GET /api/room/${gmUid}/stream error:`, err);
+    if (!res.headersSent) res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/dice-roll — GM broadcasts a dice roll to all room clients
+app.post('/api/room/my/dice-roll', requireAuth, (req, res) => {
+  const room = rooms.get(req.uid);
+  broadcastToAllRoomClients(req.uid, 'dice-roll', req.body);
+  res.json({ ok: true });
+});
+
+// POST /api/room/my/dice-ack — GM broadcasts acknowledgement (dismiss + pulses) to all room clients
+app.post('/api/room/my/dice-ack', requireAuth, (req, res) => {
+  broadcastToAllRoomClients(req.uid, 'dice-ack', req.body);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:gmUid/character-update — Player updates their assigned character's runtime state
+app.post('/api/room/:gmUid/character-update', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const { instanceId, updates } = req.body;
+  try {
+    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+    const tableState = tableStateItems[0] || {};
+    if (!(tableState.playerEmails || []).includes(req.email)) {
+      return res.status(403).json({ error: 'Not a player in this room' });
+    }
+    const character = (tableState.elements || []).find(e => e.instanceId === instanceId);
+    if (!character || character.assignedPlayerUid !== req.uid) {
+      return res.status(403).json({ error: 'Not assigned to this character' });
+    }
+    broadcastToAllRoomClients(gmUid, 'character-update', { instanceId, updates });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/character-update error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/add-character — Player adds a character (auto-assigned to themselves)
+app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  try {
+    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+    const tableState = tableStateItems[0] || {};
+    if (!(tableState.playerEmails || []).includes(req.email)) {
+      return res.status(403).json({ error: 'Not invited to this room' });
+    }
+    const { name, playerName, maxHope, maxHp, maxStress, tier } = req.body;
+    const character = {
+      instanceId: crypto.randomUUID(),
+      elementType: 'character',
+      assignedPlayerUid: req.uid,
+      name: name || 'Unnamed',
+      playerName: playerName || req.email,
+      tier: tier || 1,
+      maxHope: maxHope || 6,
+      maxHp: maxHp || 6,
+      maxStress: maxStress || 6,
+      hope: maxHope || 6,
+      currentHp: maxHp || 6,
+      currentStress: 0,
+      conditions: '',
+    };
+    broadcastToAllRoomClients(gmUid, 'character-added', character);
+    res.json({ character });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/add-character error:`, err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

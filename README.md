@@ -4,7 +4,7 @@ A GM tool for the Daggerheart tabletop RPG.
 
 ## Architecture
 
-Express.js server serving a React SPA built from `src/client/`. Authentication is handled by Firebase (Google sign-in). Data persistence is backed by Postgres via Supabase. Client-side routing uses the History API (`src/client/lib/router.js`) so the browser back/forward buttons work across all views. Item detail modals have their own URLs (`/library/:tab/:id`, `/gm-table/:collection/:id`) for back/forward, link sharing, and reload.
+Express.js server serving a React SPA built from `src/client/`. Authentication is handled by Firebase (Google sign-in). Data persistence is backed by Postgres via Supabase. Client-side routing uses the History API (`src/client/lib/router.js`) so the browser back/forward buttons work across all views. Item detail modals have their own URLs (`/library/:tab/:id`, `/gm-table/:gmUid/:collection/:id`) for back/forward, link sharing, and reload. The GM's Game Table URL is `/gm-table/:gmUid` (their Firebase UID), making it directly shareable with players. Players navigating to the URL see a read-only view (unless they have an assigned character); the GM manages which emails can join via a "Manage Invited Players" panel.
 
 Data loading is **lazy and per-collection**: on sign-in the app renders immediately; `table_state` and admin status load in the background. Adversaries and environments are fetched on demand by `LibraryView`'s `useCollectionSearch` hook as the user browses. Scenes and adventures load when the user navigates to those tabs or opens the Add Scene/Adventure picker on the Game Table. The `GET /api/data/:collection` endpoint uses a **unified query** over `items` + `external_item_cache` — no live external API calls. SRD, FCG, and HoD content is pre-loaded: SRD adversaries/environments are loaded into the cache at server startup (`loadSrdIntoDb`); FCG and HoD are synced by a background job (cron at 3 AM, or `npm run crawl` manually). Scene expansion uses a batch `POST /api/data/resolve` call (with `adopt: true`) to look up referenced IDs, auto-cloning any non-own items into the user's library. The resolve endpoint falls back to `external_item_cache`, SRD sub-application, or `fetchHoDFoundryDetail()` for IDs not in the user's DB. **Image optimization**: to avoid slow saves when scenes contain large base64 images, the client strips `imageUrl` and `_additionalImages` from normal PUT payloads; the server merges incoming data while preserving image fields. Image changes (AI generate, import) use a dedicated `PUT /api/data/:collection/:id/image` endpoint.
 
@@ -43,14 +43,16 @@ DaggerheartGM/
 │   ├── 008_remove_popularity_from_items.sql # Drops clone_count, play_count from items
 │   └── 009_create_sync_state.sql # Sync metadata (e.g. SRD hash)
 ├── public/
-│   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked)
-│   └── styles.css              # Generated Tailwind output (do not edit by hand)
+│   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked, @3d-dice/dice-box)
+│   ├── styles.css              # Generated Tailwind output (do not edit by hand)
+│   └── dice-box/               # @3d-dice/dice-box static assets (meshes, textures, WASM physics, worker JS)
 ├── src/
 │   ├── game-constants.js       # Single source of truth: ROLES, ROLE_BP_COST, ENV_TYPES, TIERS
 │   ├── daggerstack-sync.js     # Daggerstack.com character sync — Supabase auth, UUID resolution via SRD map + adapters
 │   ├── client/
 │   │   ├── app.jsx             # React SPA entry point (partySize + partyTier derived from character elements)
-│   │   ├── components/         # UI components (LibraryView, GMTableView, NavBtn, ItemCard, ItemActionButtons, …)
+│   │   ├── components/         # UI components (LibraryView, GMTableView, DiceRoller, NavBtn, ItemCard, ItemActionButtons, …)
+│   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — animates Rolz rolls using @3d-dice/dice-box
 │   │   │   ├── CharacterHoverCard.jsx # Detailed character sheet hover panel (traits, defense, weapons, inventory, features)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
 │   │   │   ├── TierSelector.jsx       # Shared tier 1–4 button bank (multi-select for filters, single-select for character dialog)
@@ -78,6 +80,17 @@ DaggerheartGM/
 │   └── input.css               # Tailwind CSS entry point
 ├── server.js                   # Express server + API routes
 ├── package.json
+├── vitest.config.js            # Vitest unit test config (test/unit/**/*.test.js)
+├── playwright.config.js        # Playwright browser test config (port 3457, NODE_ENV=test)
+├── test/
+│   ├── unit/                   # Vitest unit tests for pure logic modules
+│   │   └── battle-points.test.js
+│   ├── browser/                # Playwright browser/visual regression tests
+│   │   └── smoke.spec.js
+│   ├── helpers/
+│   │   └── auth.js             # Playwright helper: mock Firebase + API for authenticated tests
+│   ├── fixtures/               # OCR parse fixture images + expected JSON
+│   └── parse-fixtures.js       # OCR engine accuracy scorecard (run manually)
 ├── .env                        # Local environment variables (never commit)
 └── .gitignore
 ```
@@ -108,9 +121,11 @@ A **compact/spacious view toggle** (grid icon in the header) switches between a 
 
 ### Rolz.org Dice Room Integration
 
-The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a self-managing Rolz room log strip above a self-managing Zoom whiteboard iframe (each widget shows inline config when unconfigured, and a gear icon when configured to re-open config); an **Encounter panel** (right sidebar, `w-56`) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
+The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a self-managing Rolz room log strip above a self-managing Zoom whiteboard iframe (each widget shows inline config when unconfigured, and a gear icon when configured to re-open config); an **Encounter panel** (right sidebar, `w-56`, GM only) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
 
 The "+ Add Character" button in the Characters panel opens a small dialog. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, **tier** (1–4, default 1; selected via the shared `TierSelector` component), Hope counter (±buttons), HP track, Stress track, and conditions field. A tier badge (`T{n}`) is displayed on each character card header. The highest character tier (`partyTier`) is used as the comparison basis for the "lower-tier adversary" BP budget auto-modifier. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
+
+**Multi-player support**: GMs can invite players by email via the "Manage Invited Players" section in the Characters panel. Invited players sign in and see a dedicated nav tab linking directly to the GM's table. Real-time sync uses **Server-Sent Events (SSE)**: `GET /api/room/my/players` keeps the GM updated on who is connected; `GET /api/room/:gmUid/stream` streams table state and dice roll events to players. When the GM rolls dice, 3D dice animations play on all screens simultaneously; the GM acknowledges the roll (via `POST /api/room/my/dice-ack`), which then applies side effects on all clients. The GM can assign characters to specific players (`assignedPlayerUid`); assigned players can edit their own character's resources (HP, stress, hope) while all other table content is read-only for players.
 - **Zoom Whiteboard** (center) — paste an `<iframe>` embed code in the Embeds config to display a Zoom whiteboard
 - **Rolz Room Log** (center, strip above whiteboard) — a compact live chat-style strip that polls for new messages every 5 seconds, auto-scrolls to the newest message, and includes a slim header with refresh and "open in new tab" links
 
@@ -232,6 +247,15 @@ Firebase is used only for Google sign-in.
 2. `localhost` is included by default for local development.
 3. Add your production domain when you deploy (e.g. `your-app.vercel.app`).
 
+#### 2e. Enable the Google People API (optional — for Contact autocomplete)
+
+The "Manage Invited Players" panel offers a **Google Contacts autocomplete** that lets GMs pick player emails from their contacts. This requires the People API:
+
+1. GCP console → **APIs & Services** → **Library** → search **"People API"** → click **Enable**.
+2. No extra environment variables needed — the client uses the existing Google OAuth flow.
+
+Without this step the contact autocomplete button simply won't appear (or will fail silently); the manual email input always works as a fallback.
+
 ---
 
 ## Supabase Setup (Database)
@@ -291,6 +315,31 @@ npm run refresh:daggerstack          # regenerate Daggerstack UUID map (same as 
 ### Dev Live Reload
 
 `npm run dev` starts esbuild and Tailwind in watch mode. The server exposes `GET /livereload` — an SSE endpoint that watches `public/` for file changes and broadcasts a reload signal. `public/index.html` includes a small inline `EventSource` script that calls `location.reload()` whenever the signal arrives or the connection is re-established after a server restart. No browser extension or extra tooling needed.
+
+### Regression Test Suite
+
+The project has two layers of automated tests:
+
+| Layer | Framework | Location | Command |
+|-------|-----------|----------|---------|
+| Unit (pure logic) | Vitest | `test/unit/*.test.js` | `npm run test:unit` |
+| Browser / visual | Playwright | `test/browser/*.spec.js` | `npm run test:browser` |
+| Both | — | — | `npm test` |
+
+```bash
+npm test              # run unit + browser tests
+npm run test:unit     # Vitest only (fast, no server needed)
+npm run test:browser  # Playwright only (starts server on port 3457)
+```
+
+**Regression test policy**: every bugfix must include a test that fails without the fix and passes with it. See `.cursor/rules/testing.mdc` for detailed guidance, including how to mock Firebase auth and assert CSS properties for visual bug regressions.
+
+The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase auth bypass for `Authorization: Bearer test-token`. The `test/helpers/auth.js` helper sets up all required route mocks in one call.
+
+First-time setup (Playwright Chromium download):
+```bash
+npx playwright install chromium
+```
 
 ### OCR Engine Testing
 

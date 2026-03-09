@@ -6,6 +6,7 @@ import { MarkdownText } from '../lib/markdown.js';
 import { applyDamageBoost } from '../lib/battle-points.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
+const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
 
 /** Apply damage boost to a damage string, returning original if no boost. */
 function boostedDamage(dmg, damageBoost) {
@@ -43,15 +44,16 @@ export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, va
         title = `${label} → ${targetValue + valueOffset}`;
       }
     }
+    const El = onSetFilled ? 'button' : 'div';
     items.push(
-      <button
+      <El
         key={i}
-        onClick={() => onSetFilled(targetValue)}
-        title={title}
+        onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
+        title={onSetFilled ? title : undefined}
         className={`w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${
           isChecked
             ? `${fillColor} border-transparent`
-            : 'border-slate-600 hover:border-slate-400'
+            : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700'
         }`}
       />
     );
@@ -60,7 +62,7 @@ export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, va
   return <div className="flex items-center gap-0.5 flex-wrap">{items}</div>;
 }
 
-export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown, onAddAdversary }) {
+export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown, onAddAdversary, onPotentialAdversaryHover, onPotentialAdversaryLeave }) {
   return (
     <>
       <div className="text-sm text-slate-400 mb-2 capitalize">
@@ -103,6 +105,10 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
                     ? 'bg-slate-800 border border-slate-700 text-slate-300'
                     : 'bg-slate-900 border border-dashed border-slate-600 text-slate-400 italic'
                 }`;
+                const hoverHandlers = isLinked && onPotentialAdversaryHover ? {
+                  onMouseEnter: (e) => onPotentialAdversaryHover(entry.adversaryId, e.currentTarget.getBoundingClientRect()),
+                  onMouseLeave: onPotentialAdversaryLeave,
+                } : {};
                 if (isClickable) {
                   return (
                     <button
@@ -110,6 +116,7 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
                       onClick={() => onAddAdversary(entry.adversaryId)}
                       className={`${baseClass} hover:bg-green-900/60 hover:border-green-700 hover:text-green-200 transition-colors cursor-pointer`}
                       title={`Add ${entry.name} to encounter`}
+                      {...hoverHandlers}
                     >
                       <Link2 size={10} className="text-blue-400 shrink-0" />
                       {entry.name}
@@ -120,6 +127,7 @@ export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featu
                   <span
                     key={idx}
                     className={baseClass}
+                    {...hoverHandlers}
                   >
                     {isLinked && <Link2 size={10} className="text-blue-400 shrink-0" />}
                     {entry.name}
@@ -383,7 +391,10 @@ export function AdversaryCardContent({
             );
             const attackMatch = onRollAttack && feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
             const forceAttack = !attackMatch && onRollAttack && /\bmakes?\b.*?\battack\b/is.test(feat.description || '');
-            const isRollable = !!(attackMatch || forceAttack);
+            const dicePatterns = onRollAttack && !attackMatch && !forceAttack && feat.description
+              ? [...feat.description.matchAll(DICE_PATTERN_RE)].map(m => m[0])
+              : [];
+            const isRollable = !!(attackMatch || forceAttack || dicePatterns.length > 0);
             const displayDesc = dmgBoost ? boostedAttackDesc(feat.description, dmgBoost) : feat.description;
             return (
               <div
@@ -397,8 +408,10 @@ export function AdversaryCardContent({
                 onClick={isRollable ? () => {
                   if (attackMatch) {
                     onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: boostedDamage(attackMatch[3], dmgBoost), trait: attackMatch[4] });
-                  } else {
+                  } else if (forceAttack) {
                     onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: boostedDamage(el.attack?.damage, dmgBoost), trait: el.attack?.trait });
+                  } else {
+                    onRollAttack({ name: feat.name, patterns: dicePatterns });
                   }
                 } : undefined}
                 title={isRollable ? 'Roll to dice room' : undefined}
