@@ -2927,7 +2927,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 updateFn={allowInteract ? updateActiveElement : undefined}
                 onResync={!isPlayer && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
                 isSyncing={resyncingCharId === liveEl.instanceId}
-                onRoll={allowInteract ? handlePlayerOwnRoll : undefined}
+                onRoll={allowInteract ? (!isPlayer ? handleTraitRoll : handlePlayerOwnRoll) : undefined}
                 onSpendHope={allowInteract ? handleSpendHope : undefined}
                 onUseHopeAbility={allowInteract ? handleUseHopeAbility : undefined}
                 onDebugMouseEnter={characterOverlay.cancelClose}
