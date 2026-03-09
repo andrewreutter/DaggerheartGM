@@ -966,10 +966,6 @@ app.get('/api/room/my/players', async (req, res) => {
   const room = getOrCreateRoom(user.uid);
   room.gmClients.add(res);
 
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0ad214'},body:JSON.stringify({sessionId:'0ad214',location:'server.js:967',message:'GM SSE client connected',data:{uid:user.uid,gmClientsCount:room.gmClients.size,playersCount:room.players.size},timestamp:Date.now(),hypothesisId:'H-A H-B'})}).catch(()=>{});
-  // #endregion
-
   // Send current presence immediately
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
@@ -1028,9 +1024,6 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
 // POST /api/room/my/dice-roll — GM broadcasts a dice roll to all room clients
 app.post('/api/room/my/dice-roll', requireAuth, (req, res) => {
   const room = rooms.get(req.uid);
-  // #region agent log
-  fetch('http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0ad214'},body:JSON.stringify({sessionId:'0ad214',location:'server.js:1028',message:'dice-roll broadcast',data:{uid:req.uid,roomExists:!!room,gmClientsCount:room?.gmClients?.size??0,playersCount:room?.players?.size??0},timestamp:Date.now(),hypothesisId:'H-A H-B'})}).catch(()=>{});
-  // #endregion
   broadcastToAllRoomClients(req.uid, 'dice-roll', req.body);
   res.json({ ok: true });
 });

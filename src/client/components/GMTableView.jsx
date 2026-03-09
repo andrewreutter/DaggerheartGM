@@ -259,6 +259,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // Dice roller queue — each entry is a full roll object passed to DiceRoller.
   // New rolls are appended; DiceRoller consumes [0] and calls onComplete to dequeue.
   const [diceRollQueue, setDiceRollQueue] = useState([]);
+  // Track recently-played roll signatures so the Rolz poll doesn't replay an SSE-delivered roll.
+  const ssePlayedRollSigsRef = useRef(new Set());
 
   useEffect(() => {
     setEmbedDraft(whiteboardEmbed);
@@ -535,10 +537,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const handleDaggerheartRoll = (rollData) => {
     // Broadcast confirmed roll to all players (GM only, fire-and-forget)
     onDiceRollBroadcast?.(rollData);
+    // Skip if this roll was already shown via SSE from another window (dedup).
+    const sig = `${rollData.rollUser}|${rollData.dominant}|${rollData.total}`;
+    if (ssePlayedRollSigsRef.current.has(sig)) {
+      ssePlayedRollSigsRef.current.delete(sig);
+      return;
+    }
     setDiceRollQueue(prev => {
       if (prev.length > 0 && prev[0]._optimistic) {
-        // Preserve the optimistic rollUser (constructed with full context at click time)
-        // over the Rolz-derived characterName/rollUser which are lossy text reconstructions.
         const { rollUser } = prev[0];
         return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
       }
@@ -630,6 +636,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     // Trigger local pulse animations for visible elements
     if (Array.isArray(playerDiceAck.pulses)) {
       playerDiceAck.pulses.forEach(pulse => {
+        if (pulse.type === 'hope' && pulse.instanceId) triggerHopePulse(pulse.instanceId);
+        if (pulse.type === 'damage' && pulse.instanceId) triggerDamagePulse(pulse.instanceId);
+      });
+    }
+    setPlayerDiceAck?.(null);
+  }, [playerDiceAck, isPlayer]);
+
+  // GM mode: dismiss the DiceRoller and trigger pulse animations when another
+  // GM window broadcasts dice-ack (element values arrive via table_state SSE).
+  useEffect(() => {
+    if (isPlayer || !playerDiceAck) return;
+    diceRollerRef.current?.dismiss();
+    if (Array.isArray(playerDiceAck.pulses)) {
+      playerDiceAck.pulses.forEach(pulse => {
+        if (pulse.type === 'fear') triggerFearPulse();
         if (pulse.type === 'hope' && pulse.instanceId) triggerHopePulse(pulse.instanceId);
         if (pulse.type === 'damage' && pulse.instanceId) triggerDamagePulse(pulse.instanceId);
       });
@@ -1713,13 +1734,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
           <DiceRoller
             ref={isPlayer ? playerDiceRollerRef : diceRollerRef}
-            roll={isPlayer ? playerDiceRollQueue[0] : diceRollQueue[0]}
+            roll={isPlayer ? playerDiceRollQueue[0] : (diceRollQueue[0] ?? playerDiceRollQueue[0])}
             onComplete={isPlayer
               ? (roll) => setPlayerDiceRollQueue?.(prev => prev.slice(1))
-              : handleDiceRollComplete
+              : (!diceRollQueue[0] && playerDiceRollQueue[0])
+                ? (roll) => {
+                    if (roll.total != null) ssePlayedRollSigsRef.current.add(`${roll.rollUser}|${roll.dominant}|${roll.total}`);
+                    setPlayerDiceRollQueue?.(prev => prev.slice(1));
+                  }
+                : handleDiceRollComplete
             }
-            targets={isPlayer ? [] : damageTargets}
-            onApplyDamage={isPlayer ? undefined : handleApplyDamage}
+            targets={isPlayer ? [] : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? [] : damageTargets}
+            onApplyDamage={isPlayer ? undefined : (!diceRollQueue[0] && playerDiceRollQueue[0]) ? undefined : handleApplyDamage}
             disableDismiss={isPlayer}
           />
           {!iframeSrc ? (

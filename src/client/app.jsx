@@ -72,6 +72,7 @@ function App() {
   const [playerTableState, setPlayerTableState] = useState(null); // table state from SSE
   const [playerDiceRollQueue, setPlayerDiceRollQueue] = useState([]);
   const [playerDiceAck, setPlayerDiceAck] = useState(null);
+  const diceClientIdRef = useRef(crypto.randomUUID());
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -386,14 +387,11 @@ function App() {
       });
       // Dice roll/ack from the primary GM window (so preview-as-player sees dice animations)
       es.addEventListener('dice-roll', (e) => {
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'app.jsx:GM-SSE-dice-roll',message:'GM SSE dice-roll received',data:{previewAsPlayerEmail,isPlayer,playerDiceRollQueueLen:playerDiceRollQueue.length},timestamp:Date.now(),hypothesisId:'H-B H-C'})}).catch(()=>{});
-        // #endregion
         const roll = JSON.parse(e.data);
+        if (roll._clientId === diceClientIdRef.current) return;
         setPlayerDiceRollQueue(prev => {
-          // Confirmed roll arriving after an optimistic one → pass _update:true so DiceRoller
-          // replaces the spinner state with the real animation in-place.
-          if (!roll._optimistic && prev.length > 0 && prev[0]._optimistic) {
+          const willUpdate = !roll._optimistic && prev.length > 0 && prev[0]._optimistic;
+          if (willUpdate) {
             const { rollUser } = prev[0];
             return [{ ...roll, _update: true, _optimistic: false, rollUser: rollUser || roll.rollUser }, ...prev.slice(1)];
           }
@@ -401,9 +399,6 @@ function App() {
         });
       });
       es.addEventListener('dice-ack', (e) => {
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'app.jsx:GM-SSE-dice-ack',message:'GM SSE dice-ack received',data:{previewAsPlayerEmail,isPlayer},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
-        // #endregion
         setPlayerDiceAck(JSON.parse(e.data));
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
@@ -743,7 +738,7 @@ function App() {
 
   // GM dice broadcast callbacks
   const handleDiceRollBroadcast = useCallback((rollData) => {
-    postDiceRoll(rollData).catch(err => console.warn('postDiceRoll failed:', err));
+    postDiceRoll({ ...rollData, _clientId: diceClientIdRef.current }).catch(err => console.warn('postDiceRoll failed:', err));
   }, []);
 
   const handleDiceAckBroadcast = useCallback((ackData) => {
@@ -755,7 +750,7 @@ function App() {
   return (
     <div className="h-screen bg-slate-900 text-slate-200 font-sans flex flex-col overflow-hidden">
       {user && (
-        <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-10">
+        <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-[70]">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
               <Swords size={24} /> DAGGERMIND

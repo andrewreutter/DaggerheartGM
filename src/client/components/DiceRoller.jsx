@@ -369,9 +369,6 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, tar
   const [queueLen, setQueueLen]             = useState(0);
 
   function dismissBanner() {
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:dismissBanner',message:'banner dismissed',data:{disableDismiss,queueLen:queueRef.current.length,bannerResolved:animDoneRef.current},timestamp:Date.now(),hypothesisId:'H-F H-G'})}).catch(()=>{});
-    // #endregion
     const current = queueRef.current[0];
     setBanner(null);
     setBannerResolved(false);
@@ -450,23 +447,14 @@ export const DiceRoller = forwardRef(function DiceRoller({ roll, onComplete, tar
   }
 
   function startAnimation(groups) {
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:startAnimation',message:'animation starting',data:{groupsLen:groups.length,disableDismiss},timestamp:Date.now(),hypothesisId:'H-E H-F'})}).catch(()=>{});
-    // #endregion
     animateGroups(groups)
       .then(() => {
         animDoneRef.current = true;
         const isOpt = !!queueRef.current[0]?._optimistic;
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:animDone',message:'animation complete',data:{isOptimistic:isOpt,willResolve:!isOpt,disableDismiss},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
-        // #endregion
         if (!isOpt) setBannerResolved(true);
         setQueueLen(queueRef.current.length);
       })
       .catch((err) => {
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/6f108ebe-fb37-485b-9cfa-e1e141120511',_debugSessionId:'0ad214',sessionId:'0ad214',location:'DiceRoller.jsx:animError',message:'animation error',data:{err:String(err),disableDismiss},timestamp:Date.now(),hypothesisId:'H-E'})}).catch(()=>{});
-        // #endregion
         animatingRef.current = false;
         setBanner(null);
         setBannerResolved(false);
