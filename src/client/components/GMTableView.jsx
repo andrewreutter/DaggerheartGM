@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff } from 'lucide-react';
+import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle } from 'lucide-react';
 import { DiceLog } from './DiceLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
