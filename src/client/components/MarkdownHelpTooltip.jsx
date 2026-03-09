@@ -1,15 +1,19 @@
 import { HelpCircle } from 'lucide-react';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useTouchDevice } from '../lib/useTouchDevice.js';
 
 const GFM_URL = 'https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax';
 
 /**
  * Small help icon that shows a markdown cheat sheet tooltip on hover.
+ * On touch devices: tap to show, tap outside to dismiss.
  * Intended to appear inline next to textarea labels in forms.
  */
 export function MarkdownHelpTooltip() {
   const [visible, setVisible] = useState(false);
   const hideTimer = useRef(null);
+  const wrapperRef = useRef(null);
+  const isTouch = useTouchDevice();
 
   const show = () => {
     clearTimeout(hideTimer.current);
@@ -21,19 +25,32 @@ export function MarkdownHelpTooltip() {
     hideTimer.current = setTimeout(() => setVisible(false), 120);
   };
 
+  // Touch: dismiss on tap outside
+  useEffect(() => {
+    if (!isTouch || !visible) return;
+    const handler = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setVisible(false);
+      }
+    };
+    document.addEventListener('touchstart', handler, { passive: true });
+    return () => document.removeEventListener('touchstart', handler);
+  }, [isTouch, visible]);
+
   return (
-    <span className="relative inline-flex items-center">
+    <span ref={wrapperRef} className="relative inline-flex items-center">
       <HelpCircle
         size={12}
         className="text-slate-500 hover:text-slate-300 cursor-help transition-colors ml-1"
-        onMouseEnter={show}
-        onMouseLeave={hide}
+        onMouseEnter={() => { if (!isTouch) show(); }}
+        onMouseLeave={() => { if (!isTouch) hide(); }}
+        onClick={() => { if (isTouch) setVisible(v => !v); }}
       />
       {visible && (
         <div
           className="absolute top-0 left-full ml-2 z-50 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-3 text-xs text-slate-300"
-          onMouseEnter={show}
-          onMouseLeave={hide}
+          onMouseEnter={() => { if (!isTouch) show(); }}
+          onMouseLeave={() => { if (!isTouch) hide(); }}
         >
           <p className="font-semibold text-slate-200 mb-2">Markdown supported</p>
           <table className="w-full text-[10px] leading-relaxed">

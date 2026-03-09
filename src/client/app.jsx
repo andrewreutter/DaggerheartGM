@@ -768,7 +768,7 @@ function App() {
   if (loading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Loading...</div>;
 
   return (
-    <div className="h-screen bg-slate-900 text-slate-200 font-sans flex flex-col overflow-hidden">
+    <div className="h-[100dvh] bg-slate-900 text-slate-200 font-sans flex flex-col overflow-hidden">
       {user && (
         <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-[70]">
           <div className="flex items-center gap-6">

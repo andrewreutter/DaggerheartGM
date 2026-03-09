@@ -140,9 +140,13 @@ const broadcastReload = () => {
   }, 150);
 };
 const publicDir = join(__dirname, 'public');
-watchFile(join(publicDir, 'app.js'), { interval: 200 }, broadcastReload);
-watchFile(join(publicDir, 'styles.css'), { interval: 200 }, broadcastReload);
-watchFile(join(publicDir, 'index.html'), { interval: 200 }, broadcastReload);
+// Skip file watchers in test mode — esbuild rebuilds from other dev agents
+// must not trigger live-reload page reloads that would crash test sessions.
+if (process.env.NODE_ENV !== 'test') {
+  watchFile(join(publicDir, 'app.js'), { interval: 200 }, broadcastReload);
+  watchFile(join(publicDir, 'styles.css'), { interval: 200 }, broadcastReload);
+  watchFile(join(publicDir, 'index.html'), { interval: 200 }, broadcastReload);
+}
 
 // --- Rolz session management ---
 
