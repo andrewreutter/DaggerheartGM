@@ -3,7 +3,7 @@ import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle } from 'lucide-react';
 import { DiceLog } from './DiceLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
@@ -73,6 +73,7 @@ const DEFAULT_GM_MOVES = [
   { name: 'Use a PC\u2019s backstory against them.', example: '\u201cYour mentor sighs, drawing their blade. \u2018I wish it didn\u2019t come to this, child. But you still don\u2019t understand what sacrifices are required to maintain the peace.\u2019\u201d' },
   { name: 'Take away an opportunity permanently.', example: '\u201cThe door slams shut, cutting you off from the vault as the temple continues to collapse. You\u2019ll need to find another exit if you want to make it out alive.\u201d' },
 ];
+
 
 const ROLE_MOVES = {
   bruiser:  'The {name} roars in anger, preparing for its next strike. The next time the {name} attacks, it gains an additional 1d4 to its attack roll.',
@@ -309,6 +310,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   }, [lightboxUrl]);
   const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
   const [hoveredCompactTooltip, setHoveredCompactTooltip] = useState(null);
+  const [hoveredTrackTooltip, setHoveredTrackTooltip] = useState(null); // { label, top, bottom, side: 'left'|'right' }
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   const [captureOpen, setCaptureOpen] = useState(false);
@@ -945,7 +947,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           instanceId: el.instanceId,
           name: el.name,
           type: 'character',
-          thresholds: el.armorThresholds,
+          thresholds: effectiveThresholds(el),
           maxHp: el.maxHp ?? 0,
           currentHp: el.currentHp ?? el.maxHp ?? 0,
         });
@@ -1325,7 +1327,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               >
                 {/* Hope track */}
                 {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Hope', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                     <Sparkles size={10} className="text-amber-400 shrink-0" />
                     <CheckboxTrack
                       total={maxHope}
@@ -1345,18 +1347,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         EVA {el.evasion}
                       </span>
                     )}
-                    {el.armorThresholds && (
+                    {(() => { const t = effectiveThresholds(el); return t && (
                       <span className="text-[10px] text-slate-400">
-                        Thresholds <span className="font-bold text-yellow-300">{el.armorThresholds.major}</span>
+                        Thresholds <span className="font-bold text-yellow-300">{t.major}</span>
                         <span className="text-slate-600"> / </span>
-                        <span className="font-bold text-red-300">{el.armorThresholds.severe}</span>
+                        <span className="font-bold text-red-300">{t.severe}</span>
                       </span>
-                    )}
+                    ); })()}
                   </div>
                 )}
                 {/* Armor track */}
                 {(el.maxArmor || 0) > 0 && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Armor', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                     <Shield size={10} className="text-cyan-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxArmor || 0}
@@ -1370,7 +1372,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
                 {/* HP track */}
                 {(el.maxHp || 0) > 0 && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'HP', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                     <Heart size={10} className="text-red-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxHp || 0}
@@ -1384,7 +1386,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
                 {/* Stress track */}
                 {(el.maxStress || 0) > 0 && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Stress', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                     <AlertCircle size={10} className="text-orange-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxStress || 0}
@@ -1891,7 +1893,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           <div
             className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-purple-500 bg-purple-950/60' : 'border-slate-700 bg-slate-900'} ${fearPulsing ? 'fear-pulse-anim' : ''}`}
           >
-            <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="flex items-center gap-1.5 mb-1.5" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Fear', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
               <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-purple-300' : 'text-purple-500'}`} />
               <CheckboxTrack
                 total={6}
@@ -2032,7 +2034,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                           </div>
                         )}
                         {(displayEl.hp_max || 0) > 0 && (
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'HP', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                             <Heart size={10} className="text-red-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.hp_max || 0}
@@ -2052,7 +2054,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                           </div>
                         )}
                         {(displayEl.stress_max || 0) > 0 && (
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Stress', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                             <AlertCircle size={10} className="text-orange-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.stress_max || 0}
@@ -2113,7 +2115,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </h2>
             {/* Fear tracker — read-only */}
             <div className={`rounded-lg border px-2.5 py-2 transition-colors ${fearPulsing ? 'border-purple-500 bg-purple-950/60 fear-pulse-anim' : 'border-slate-700 bg-slate-900'}`}>
-              <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="flex items-center gap-1.5 mb-1.5" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Fear', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
                 <Flame size={12} className={`shrink-0 transition-colors ${fearPulsing ? 'text-purple-300' : 'text-purple-500'}`} />
                 <CheckboxTrack
                   total={6}
@@ -2664,6 +2666,22 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       >
         <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
           <p className="text-sm text-slate-300 italic leading-relaxed">{hoveredDefaultMove.example}</p>
+        </div>
+      </div>
+    )}
+
+    {/* Resource track label tooltips — shown on hover over Hope/Armor/HP/Stress/Fear rows */}
+    {hoveredTrackTooltip && (
+      <div
+        className="fixed z-[65] pointer-events-none"
+        style={
+          hoveredTrackTooltip.side === 'left'
+            ? { left: 'calc(14rem + 10px)', top: (hoveredTrackTooltip.top + hoveredTrackTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '18rem' }
+            : { right: 'calc(14rem + 10px)', top: (hoveredTrackTooltip.top + hoveredTrackTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '18rem' }
+        }
+      >
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl px-4 py-3">
+          <p className="text-sm font-semibold text-slate-200">{hoveredTrackTooltip.label}</p>
         </div>
       </div>
     )}

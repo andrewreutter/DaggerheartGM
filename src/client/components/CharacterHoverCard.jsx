@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { MarkdownText } from '../lib/markdown.js';
+import { effectiveThresholds } from '../lib/helpers.js';
 
 // ─── Gold helpers ─────────────────────────────────────────────────────────────
 
@@ -616,13 +617,13 @@ export function CharacterHoverCard({ el, updateFn, onResync, isSyncing, onRoll, 
                   {el.armorName && <span className="text-slate-500">({el.armorName})</span>}
                 </div>
               )}
-              {el.armorThresholds && (
+              {(() => { const t = effectiveThresholds(el); return t && (
                 <div className="text-slate-400">
-                  Thresholds: <span className="text-yellow-300 font-semibold">{el.armorThresholds.major}</span>
+                  Thresholds: <span className="text-yellow-300 font-semibold">{t.major}</span>
                   <span className="text-slate-500"> / </span>
-                  <span className="text-red-300 font-semibold">{el.armorThresholds.severe}</span>
+                  <span className="text-red-300 font-semibold">{t.severe}</span>
                 </div>
-              )}
+              ); })()}
             </div>
           </Section>
         )}

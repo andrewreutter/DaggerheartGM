@@ -36,6 +36,20 @@ export const parseFeatureCategory = (feature) => {
 
 export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'none'; };
 
+/**
+ * Returns a character's effective damage thresholds with their level added to each value.
+ * Per Daggerheart rules, characters add their level to their armor's base thresholds.
+ * Returns null if the character has no armorThresholds.
+ */
+export const effectiveThresholds = (el) => {
+  if (!el?.armorThresholds) return null;
+  const level = el.level ?? 0;
+  return {
+    major: el.armorThresholds.major + level,
+    severe: el.armorThresholds.severe + level,
+  };
+};
+
 export const stripHtml = (raw) => {
   if (!raw || !/<[a-z][\s\S]*>/i.test(raw)) return raw || '';
   return raw
