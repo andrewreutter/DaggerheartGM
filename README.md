@@ -43,7 +43,7 @@ DaggerheartGM/
 │   ├── 008_remove_popularity_from_items.sql # Drops clone_count, play_count from items
 │   ├── 009_create_sync_state.sql # Sync metadata (e.g. SRD hash)
 │   ├── 010_fix_items_pk.sql    # Fix items table primary key
-│   ├── 011_create_whiteboard_snapshots.sql # TLDraw canvas state per GM room
+│   ├── 011_create_whiteboard_snapshots.sql # Legacy TLDraw snapshot table (no longer written)
 │   └── 012_create_dice_rolls.sql # Persists dice roll history across server restarts
 ├── public/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked, @3d-dice/dice-box)
@@ -56,8 +56,8 @@ DaggerheartGM/
 │   │   ├── app.jsx             # React SPA entry point (partySize + partyTier derived from character elements)
 │   │   ├── components/         # UI components (LibraryView, GMTableView, DiceRoller, NavBtn, ItemCard, ItemActionButtons, …)
 │   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — animates server-rolled dice using @3d-dice/dice-box
-│   │   │   ├── DiceLog.jsx            # Compact dice history strip above the TLDraw canvas (no polling)
-│   │   │   ├── Whiteboard.jsx         # TLDraw collaborative whiteboard (useSync, WebSocket to /api/whiteboard/:gmUid)
+│   │   │   ├── DiceLog.jsx            # Compact dice history strip above the BattleMap (no polling)
+│   │   │   ├── BattleMap.jsx          # Custom battle map with draggable tokens, trays, and click-to-pin detail panels
 │   │   │   ├── CharacterHoverCard.jsx # Detailed character sheet hover panel (traits, defense, weapons, inventory, features)
 │   │   │   ├── CollectionFilters.jsx  # Shared filter bar/panel (bar variant + panel variant)
 │   │   │   ├── TierSelector.jsx       # Shared tier 1–4 button bank (multi-select for filters, single-select for character dialog)
@@ -125,13 +125,13 @@ A **compact/spacious view toggle** (grid icon in the header) switches between a 
 
 ### Built-In Dice System
 
-The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a compact **Dice Log strip** (`DiceLog.jsx`) above a **TLDraw collaborative whiteboard** (`Whiteboard.jsx`); an **Encounter panel** (right sidebar, `w-56`, GM only) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
+The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) with a dedicated "+ Add Character" button and character cards; a **center column** (`flex-1`) with a compact **Dice Log strip** (`DiceLog.jsx`) above the **Battle Map** (`BattleMap.jsx`); an **Encounter panel** (right sidebar, `w-56`, GM only) with Fear counter, GM Moves hover trigger, BP Budget card, Add menu (Adversary/Environment/Scene), environment cards, and adversary HP/stress tracks.
 
 The "+ Add Character" button in the Characters panel opens a small dialog. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, **tier** (1–4, default 1; selected via the shared `TierSelector` component), Hope counter (±buttons), HP track, Stress track, and conditions field. A tier badge (`T{n}`) is displayed on each character card header. The highest character tier (`partyTier`) is used as the comparison basis for the "lower-tier adversary" BP budget auto-modifier. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
 
 **Multi-player support**: GMs can invite players by email via the "Manage Invited Players" section in the Characters panel. Invited players sign in and see a dedicated nav tab linking directly to the GM's table. Real-time sync uses **Server-Sent Events (SSE)**: `GET /api/room/my/players` keeps the GM updated on who is connected; `GET /api/room/:gmUid/stream` streams table state and dice roll events to players. **Operational sync**: each GM mutation (HP toggle, fear change, element add/remove, etc.) broadcasts a lightweight `table-op` SSE event via `POST /api/room/my/op` so other clients see changes instantly. The debounced table_state save (2s) handles DB persistence and provides consistency repair for any lost ops. `CLIENT_ID` (stable per-session UUID) tags both saves and ops for self-echo skip. When the GM rolls dice, 3D dice animations play on all screens simultaneously; the GM acknowledges the roll (via `POST /api/room/my/dice-ack`), which then applies side effects on all clients. The GM can assign characters to specific players (`assignedPlayerUid`); assigned players can edit their own character's resources (HP, stress, hope) while all other table content is read-only for players.
-- **TLDraw Whiteboard** (center) — a full-featured collaborative canvas powered by [TLDraw](https://tldraw.dev/). All table participants (GM and players) can draw simultaneously in real time. State is persisted to Postgres via WebSocket sync (`GET /api/whiteboard/:gmUid`). Images pasted or dropped onto the canvas are uploaded to **Supabase Storage** (`whiteboard-assets` bucket) via `POST /api/whiteboard/assets` and stored as public CDN URLs, keeping the Postgres snapshot lean. Requires `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` env vars and a public bucket named `whiteboard-assets` (see Supabase setup below). Without these the asset store falls back to inline data URLs automatically.
-- **Dice Log** (center, strip above whiteboard) — a compact history of completed rolls for the current session; auto-scrolls to the newest entry
+- **Battle Map** (center) — a custom, purpose-built battle map (`BattleMap.jsx`). The GM can upload a map image (or use a blank area) and configure its real-world size (1–500', default 100'). Character and adversary tokens (5×5' circles) can be dragged onto the map. Unplaced tokens live in side trays outside the scroll area. The map scales so tokens are always at least 44px (touch-friendly for iPad); horizontal/vertical scrolling is added automatically for large maps. Each token has a black border decorated with small SVG dot indicators showing resource state: red (HP damage/remaining), orange (Stress), cyan (Armor — characters only). Dot groups are evenly spaced around the ring; players see only filled (damage-taken) dots on adversaries, hiding the total pool. Clicking a token pins a detail panel for editing HP/Stress/Conditions. Players can only drag their own assigned character's token. Adversary tokens in the right tray are hidden from players (the GM can reveal them by dragging onto the map). Map state syncs in real time over the existing SSE table-op channel (`set-map` op). Map images are uploaded to **Supabase Storage** (`whiteboard-assets` bucket, `map-images/` prefix) via `POST /api/room/my/map-image`. Without Supabase configured, the server returns a data URL directly (no error). Requires `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for CDN hosting; otherwise data URLs are used automatically (see Supabase setup below). **Range band bullseye**: hovering anywhere over the map canvas shows a multi-ring SVG overlay of concentric Daggerheart range bands (Melee, Very Close, Close, Far, Very Far) centered on the cursor. Hovering over a token snaps the center to that token's center. During a token drag, the bullseye freezes at the drag origin so range bands remain visible from the start point. Placed tokens receive a colored outer glow matching their current range band.
+- **Dice Log** (center, strip above battle map) — a compact history of completed rolls for the current session; auto-scrolls to the newest entry
 
 Dice rolling requires no external service or credentials. Attack actions are always clickable:
 - Clicking an action in the **GM Moves** sidebar rolls server-side and briefly flashes green on success
@@ -277,9 +277,9 @@ DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5
 
 > **Tip:** For serverless/edge environments use the **Session pooler** (port 5432) or **Transaction pooler** (port 6543) connection strings instead of the direct connection.
 
-### 3. Enable Supabase Storage for whiteboard images (optional)
+### 3. Enable Supabase Storage for battle map images (optional)
 
-Images pasted or dropped onto the TLDraw whiteboard are uploaded to Supabase Storage so they are served from the CDN rather than bloating the Postgres snapshot. This step is optional — without it the whiteboard still works but images are embedded as data URLs in the canvas state.
+Battle map images uploaded by the GM are stored in Supabase Storage so they are served from the CDN rather than embedded as data URLs in `table_state`. This step is optional — without it the map still works, but images are stored as data URLs which can make `table_state` saves large.
 
 1. Supabase dashboard → **Storage** → **New bucket**.
 2. Name it **`whiteboard-assets`** and enable **Public bucket** (so images can be served directly without signed URLs).
@@ -311,8 +311,8 @@ SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 | `HF_EDIT_MODEL` | No | Hugging Face model ID for image-to-image editing (default: `black-forest-labs/FLUX.1-Kontext-dev`) |
 | `HF_PROVIDER` | No | Hugging Face inference provider (default: `replicate`). Other options: `fal-ai`, `together`, `novita`, etc. — see huggingface.co/docs/inference-providers |
 | `ADMIN_EMAILS` | No | Comma-separated list of email addresses granted admin access (e.g. `alice@example.com,bob@example.com`). |
-| `SUPABASE_URL` | No | Supabase project URL (e.g. `https://xxxx.supabase.co`). Required for whiteboard image asset uploads to Supabase Storage. |
-| `SUPABASE_SERVICE_ROLE_KEY` | No | Supabase `service_role` secret key. Required for whiteboard image asset uploads. Keep this secret — never expose it client-side. |
+| `SUPABASE_URL` | No | Supabase project URL (e.g. `https://xxxx.supabase.co`). Required for battle map image uploads to Supabase Storage. |
+| `SUPABASE_SERVICE_ROLE_KEY` | No | Supabase `service_role` secret key. Required for battle map image uploads. Keep this secret — never expose it client-side. |
 
 ---
 

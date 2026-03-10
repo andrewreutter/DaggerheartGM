@@ -229,8 +229,8 @@
 
   /* CheckboxTrack: expand interactive area for finger tapping without changing visual size */
   button.checkbox-track-item {
-    min-width:  28px;
-    min-height: 28px;
+    min-width:  24px;
+    min-height: 24px;
   }
 
   /* Encounter panel count buttons (+/-) and remove (X) buttons: expand touch area */

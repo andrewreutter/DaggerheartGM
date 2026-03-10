@@ -8,9 +8,7 @@ import { watchFile } from 'fs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { WebSocketServer } from 'ws';
-import { TLSocketRoom, InMemorySyncStorage } from '@tldraw/sync-core';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getWhiteboardSnapshot, saveWhiteboardSnapshot, appendDiceRoll, getRecentDiceRolls } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, appendDiceRoll, getRecentDiceRolls } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -267,49 +265,6 @@ function buildRollData(rollText, displayName, _clientId, extra = {}) {
 // gmUid -> { players: Map<uid, { res, name, email, photoURL }>, gmClients: Set<res> }
 const rooms = new Map();
 
-// --- TLDraw whiteboard rooms (in-memory, one TLSocketRoom per gmUid) ---
-// gmUid -> { room: TLSocketRoom, sessionCount: number, cleanupTimer: NodeJS.Timeout | null }
-const whiteboardRooms = new Map();
-
-async function getOrCreateWhiteboardRoom(gmUid) {
-  if (whiteboardRooms.has(gmUid)) {
-    const entry = whiteboardRooms.get(gmUid);
-    // Cancel any pending cleanup
-    if (entry.cleanupTimer) { clearTimeout(entry.cleanupTimer); entry.cleanupTimer = null; }
-    return entry.room;
-  }
-  const snapshot = await getWhiteboardSnapshot(APP_ID, gmUid);
-  const storage = new InMemorySyncStorage({
-    snapshot: snapshot ?? undefined,
-    onChange() {
-      saveWhiteboardSnapshot(APP_ID, gmUid, storage.getSnapshot()).catch(err =>
-        console.error('[whiteboard] snapshot save failed:', err.message)
-      );
-    },
-  });
-  const room = new TLSocketRoom({ storage });
-  whiteboardRooms.set(gmUid, { room, sessionCount: 0, cleanupTimer: null });
-  return room;
-}
-
-function releaseWhiteboardRoom(gmUid) {
-  const entry = whiteboardRooms.get(gmUid);
-  if (!entry) return;
-  entry.sessionCount = Math.max(0, entry.sessionCount - 1);
-  if (entry.sessionCount === 0 && !entry.cleanupTimer) {
-    entry.cleanupTimer = setTimeout(() => {
-      const e = whiteboardRooms.get(gmUid);
-      if (e && e.sessionCount === 0) {
-        // Persist final snapshot then destroy
-        try {
-          saveWhiteboardSnapshot(APP_ID, gmUid, e.room.getCurrentSnapshot()).catch(() => {});
-        } catch (_) {}
-        e.room.close();
-        whiteboardRooms.delete(gmUid);
-      }
-    }, 60_000);
-  }
-}
 
 /** Extract and verify a Firebase JWT from the ?token= query parameter. */
 async function verifyTokenFromQuery(req, res) {
@@ -741,16 +696,15 @@ app.post('/api/daggerstack/sync', requireAuth, async (req, res) => {
   }
 });
 
-// --- Whiteboard asset upload (Supabase Storage) ---
+// --- Map image upload (Supabase Storage) ---
 
 const MIME_TO_EXT = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
   'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/avif': 'avif',
-  'image/apng': 'apng', 'video/mp4': 'mp4', 'video/webm': 'webm',
-  'video/quicktime': 'mov',
+  'image/apng': 'apng',
 };
 
-const whiteboardAssetUpload = multer({
+const mapImageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, cb) => {
@@ -758,33 +712,28 @@ const whiteboardAssetUpload = multer({
   },
 });
 
-app.post('/api/whiteboard/assets', requireAuth, whiteboardAssetUpload.single('file'), async (req, res) => {
-  if (!supabase) {
-    return res.status(503).json({ error: 'Supabase Storage is not configured (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing)' });
-  }
+app.post('/api/room/my/map-image', requireAuth, mapImageUpload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const gmUid = req.query.gmUid || req.body.gmUid;
-  if (!gmUid) {
-    return res.status(400).json({ error: 'gmUid is required' });
+  const gmUid = req.uid;
+  if (!supabase) {
+    // Fallback: return the raw buffer as a data URL so clients without Supabase still work
+    const b64 = req.file.buffer.toString('base64');
+    const dataUrl = `data:${req.file.mimetype};base64,${b64}`;
+    return res.json({ url: dataUrl });
   }
-  // Use the TLDraw asset ID (stripped of "asset:" prefix) as a deterministic filename
-  // so resolve() can reconstruct the URL without relying on asset.props.src (which the
-  // TLDraw sync protocol intentionally strips from snapshots).
-  const rawAssetId = req.query.assetId || req.body.assetId || '';
-  const safeAssetId = rawAssetId.replace(/^asset:/, '').replace(/[^a-zA-Z0-9_-]/g, '_') || crypto.randomUUID();
   const ext = MIME_TO_EXT[req.file.mimetype] || 'bin';
-  const storagePath = `${gmUid}/${safeAssetId}.${ext}`;
+  const storagePath = `map-images/${gmUid}/${crypto.randomUUID()}.${ext}`;
   try {
     const { error } = await supabase.storage
       .from('whiteboard-assets')
-      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (error) throw error;
     const { data } = supabase.storage.from('whiteboard-assets').getPublicUrl(storagePath);
     res.json({ url: data.publicUrl });
   } catch (err) {
-    console.error('POST /api/whiteboard/assets error:', err);
+    console.error('POST /api/room/my/map-image error:', err);
     res.status(500).json({ error: err.message || 'Upload failed' });
   }
 });
@@ -1318,56 +1267,6 @@ async function startServer() {
     console.warn('[db] DATABASE_URL not set — running without database');
   }
   const httpServer = createServer(app);
-
-  // --- TLDraw whiteboard WebSocket endpoint ---
-  // Path: /api/whiteboard/:gmUid  (auth via ?token= query param, same as SSE endpoints)
-  const wss = new WebSocketServer({ noServer: true });
-
-  httpServer.on('upgrade', async (req, socket, head) => {
-    const url = new URL(req.url, 'http://localhost');
-    const match = url.pathname.match(/^\/api\/whiteboard\/([^/?]+)$/);
-    if (!match) { socket.destroy(); return; }
-
-    const gmUid = match[1];
-    const token = url.searchParams.get('token');
-    if (!token) { socket.destroy(); return; }
-
-    let decoded;
-    try {
-      decoded = await getAuth().verifyIdToken(token);
-    } catch {
-      socket.destroy();
-      return;
-    }
-
-    wss.handleUpgrade(req, socket, head, async (ws) => {
-      const sessionId = `${decoded.uid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-      // Buffer messages that arrive before the room is ready (avoids drops during async load)
-      const buffered = [];
-      const bufferListener = (msg) => buffered.push(msg);
-      ws.on('message', bufferListener);
-
-      let room;
-      try {
-        room = await getOrCreateWhiteboardRoom(gmUid);
-      } catch (err) {
-        console.error('[whiteboard] room load failed:', err.message);
-        ws.close();
-        return;
-      }
-
-      const entry = whiteboardRooms.get(gmUid);
-      if (entry) entry.sessionCount++;
-
-      ws.off('message', bufferListener);
-      room.handleSocketConnect({ sessionId, socket: ws });
-      for (const msg of buffered) ws.emit('message', msg);
-
-      ws.on('close', () => releaseWhiteboardRoom(gmUid));
-    });
-  });
-
   httpServer.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
 }
 

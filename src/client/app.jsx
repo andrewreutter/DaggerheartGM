@@ -47,6 +47,8 @@ function App() {
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
+  const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
+  const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   const tableStateReadyRef = useRef(false);
   // Set to true when table state is received via SSE from another window; suppresses one save cycle
@@ -80,13 +82,13 @@ function App() {
     const timer = setTimeout(() => {
       saveTableState({
         id: 'current', elements: activeElements, featureCountdowns,
-        tableBattleMods, fearCount, playerEmails,
+        tableBattleMods, fearCount, playerEmails, mapConfig,
         gmDisplayName: userRef.current?.displayName || '',
         _clientId: CLIENT_ID,
       });
     }, 2000);
     return () => clearTimeout(timer);
-  }, [activeElements, featureCountdowns, tableBattleMods, fearCount, playerEmails]);
+  }, [activeElements, featureCountdowns, tableBattleMods, fearCount, playerEmails, mapConfig]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   // Multi-player room state
@@ -339,6 +341,7 @@ function App() {
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           if (tableState?.fearCount != null) setFearCount(tableState.fearCount);
           if (Array.isArray(tableState?.playerEmails)) setPlayerEmails(tableState.playerEmails);
+          if (tableState?.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
           tableStateReadyRef.current = true;
         }).catch(err => console.error('Failed to load table state:', err));
         fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
@@ -403,6 +406,10 @@ function App() {
         }));
         break;
       }
+      case 'set-map':
+        setMapConfig({ mapImageUrl: op.mapImageUrl ?? null, mapDimension: op.mapDimension ?? 'width', mapSizeFt: op.mapSizeFt ?? 100, mapImageNaturalWidth: op.mapImageNaturalWidth ?? null, mapImageNaturalHeight: op.mapImageNaturalHeight ?? null });
+        if (op.resetTokenPositions) setActiveElements(prev => prev.map(el => ({ ...el, tokenX: null, tokenY: null })));
+        break;
     }
   }, []);
 
@@ -448,6 +455,7 @@ function App() {
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        if (state.mapConfig != null) setMapConfig(mc => ({ ...mc, ...state.mapConfig }));
       });
       // Real-time table operations from another GM window
       es.addEventListener('table-op', (e) => {
@@ -877,6 +885,13 @@ function App() {
     if (matching) broadcastOp({ op: 'update-base-data', elementId: matching.id, newBaseData });
   };
 
+  const broadcastingSetMapConfig = (newConfig, resetTokenPositions = false) => {
+    const merged = { ...mapConfig, ...newConfig };
+    setMapConfig(merged);
+    if (resetTokenPositions) setActiveElements(prev => prev.map(el => ({ ...el, tokenX: null, tokenY: null })));
+    broadcastOp({ op: 'set-map', ...merged, resetTokenPositions });
+  };
+
   // Player callbacks — send updates to server + apply optimistically
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.gmUid) return;
@@ -1121,6 +1136,8 @@ function App() {
                 onExitPreview={isPreviewMode ? () => setPreviewAsPlayerEmail(null) : undefined}
                 diceLog={diceLog}
                 setDiceLog={setDiceLog}
+                mapConfig={isPlayer ? (playerTableState?.mapConfig ?? DEFAULT_MAP_CONFIG) : mapConfig}
+                onMapConfigChange={effectiveIsPlayer ? () => {} : broadcastingSetMapConfig}
               />
             </div>
           </>
