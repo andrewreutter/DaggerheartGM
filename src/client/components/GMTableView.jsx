@@ -41,7 +41,7 @@ function useViewportClamp(ref, isActive, key) {
     }
     const rect = ref.current.getBoundingClientRect();
     const vh = window.innerHeight;
-    if (rect.top < 8) setAdjust(8 - rect.top);
+    if (rect.top < 102) setAdjust(102 - rect.top);
     else if (rect.bottom > vh - 8) setAdjust(vh - 8 - rect.bottom);
   }, [isActive, key, adjust]);
 
@@ -2524,10 +2524,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <div
         ref={trackerOverlay.overlayRef}
         className="fixed z-[55]"
-        style={{ right: 'calc(14rem)', paddingRight: '12px', top: (trackerOverlay.data.top + trackerOverlay.data.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100dvh - 16px)' }}
+        style={{ right: 'calc(14rem)', paddingRight: '12px', top: (trackerOverlay.data.top + trackerOverlay.data.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100dvh - 110px)' }}
         {...trackerOverlay.overlayHandlers}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 16px)' }}>
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
           <div className="p-5 relative">
             {trackerOverlay.data.kind === 'environment' ? (() => {
               const el = trackerOverlay.data.element;
@@ -2626,10 +2626,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       <div
         ref={potAdvOverlay.overlayRef}
         className="fixed z-[56]"
-        style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (potAdvOverlay.data.top + potAdvOverlay.data.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100dvh - 16px)' }}
+        style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (potAdvOverlay.data.top + potAdvOverlay.data.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100dvh - 110px)' }}
         {...potAdvOverlay.overlayHandlers}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 16px)' }}>
+        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
           <div className="p-5 relative">
             {potAdvOverlay.data.element.imageUrl && (
               <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
