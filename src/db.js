@@ -730,3 +730,24 @@ export async function saveWhiteboardSnapshot(appId, gmUid, snapshot) {
     [appId, gmUid, JSON.stringify(snapshot)]
   );
 }
+
+export async function appendDiceRoll(appId, gmUid, rollData) {
+  const db = getPool();
+  await db.query(
+    'INSERT INTO dice_rolls (app_id, gm_uid, data) VALUES ($1, $2, $3)',
+    [appId, gmUid, JSON.stringify(rollData)]
+  );
+}
+
+export async function getRecentDiceRolls(appId, gmUid, limit = 50) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT data FROM dice_rolls
+     WHERE app_id = $1 AND gm_uid = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [appId, gmUid, limit]
+  );
+  // Reverse so oldest-first order matches client expectations
+  return rows.map(r => r.data).reverse();
+}
