@@ -253,3 +253,50 @@
 .dice-result-banner {
   animation: dice-banner-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
+
+/* Collapsible whiteboard style panel — sits just right of the centered toolbar */
+.dh-style-panel-anchor {
+  position: absolute;
+  /* Vertically centered with the 48px toolbar buttons (8px padding-bottom → center at 32px from bottom;
+     our 40px trigger needs bottom: 12px so its center is also at 32px) */
+  bottom: 12px;
+  /* Toolbar main row (9×48px + 4px padding = 436px) + overflow (40px + 2px = 42px) ≈ 478px total.
+     Half = 239px. Add one icon-width gap (48px) = 287px, then subtract to taste. Using 220px
+     puts us right next to the toolbar with inter-icon-style spacing. */
+  left: calc(50% + 220px);
+  right: auto;
+  top: auto;
+  z-index: var(--tl-layer-panels, 1000);
+  /* Required: the canvas layer uses pointer-events: none by default; panels must re-enable it */
+  pointer-events: all;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+/* No flex-direction override needed when expanded — column + bottom: 12px keeps the trigger
+   pinned at the bottom while the panel grows upward above it. */
+.dh-style-panel-collapsible {
+  transition: box-shadow 0.15s ease;
+}
+.dh-style-panel-trigger {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--tl-radius-3, 6px);
+  background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(56, 189, 248, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+}
+.dh-style-panel-trigger:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 4px 12px rgba(56, 189, 248, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+}
+.dh-style-panel-trigger:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}

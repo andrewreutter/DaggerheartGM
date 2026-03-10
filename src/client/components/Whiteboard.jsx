@@ -1,8 +1,85 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Tldraw } from 'tldraw';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  DefaultStylePanel,
+  DefaultStylePanelContent,
+  Tldraw,
+  useRelevantStyles,
+} from 'tldraw';
 import { useSync } from '@tldraw/sync';
 import { getAuthToken, supabaseStorageBase } from '../lib/api.js';
 import 'tldraw/tldraw.css';
+
+const HOVER_EXPAND_MS = 150;
+const HOVER_COLLAPSE_MS = 200;
+
+function PaletteIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="13.5" cy="6.5" r=".5" />
+      <circle cx="17.5" cy="10.5" r=".5" />
+      <circle cx="8.5" cy="7.5" r=".5" />
+      <circle cx="6.5" cy="12.5" r=".5" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.5 0 1-.5 1-1v-8c0-.5-.5-1-1-1H5c0-4 3.5-7.5 7.5-7.5 1 0 1.5-.5 1.5-1.5 0-.5-.5-1-1-1z" />
+    </svg>
+  );
+}
+
+/**
+ * Style panel that collapses to a hamburger-sized icon and expands on hover.
+ * Uses useRelevantStyles so the panel is hidden when nothing is selected (same as default).
+ */
+function CollapsibleStylePanel(props) {
+  const styles = useRelevantStyles();
+  const [expanded, setExpanded] = useState(false);
+  const expandTimeoutRef = useRef(null);
+  const collapseTimeoutRef = useRef(null);
+
+  const clearTimeouts = useCallback(() => {
+    if (expandTimeoutRef.current) {
+      clearTimeout(expandTimeoutRef.current);
+      expandTimeoutRef.current = null;
+    }
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current);
+      collapseTimeoutRef.current = null;
+    }
+  }, []);
+
+  const onMouseEnter = useCallback(() => {
+    clearTimeouts();
+    expandTimeoutRef.current = setTimeout(() => setExpanded(true), HOVER_EXPAND_MS);
+  }, [clearTimeouts]);
+
+  const onMouseLeave = useCallback(() => {
+    clearTimeouts();
+    collapseTimeoutRef.current = setTimeout(() => setExpanded(false), HOVER_COLLAPSE_MS);
+  }, [clearTimeouts]);
+
+  useEffect(() => () => clearTimeouts(), [clearTimeouts]);
+
+  if (styles == null) return null;
+
+  return (
+    <div
+      className="dh-style-panel-anchor"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      {expanded && (
+        <DefaultStylePanel {...props}>
+          <DefaultStylePanelContent />
+        </DefaultStylePanel>
+      )}
+      <button
+        type="button"
+        className="dh-style-panel-trigger"
+        aria-label="Style options"
+      >
+        <PaletteIcon />
+      </button>
+    </div>
+  );
+}
 
 const MIME_TO_EXT = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
@@ -133,6 +210,7 @@ function TldrawCanvas({ wsUri, assetStore, userInfo, isPlayer }) {
       store={store}
       onMount={handleMount}
       options={{ maxPages: 1 }}
+      components={{ StylePanel: CollapsibleStylePanel }}
       overrides={{
         tools: (_editor, tools) => {
           delete tools.embed;
