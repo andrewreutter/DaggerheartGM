@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { Dices } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Dices, ChevronUp, X } from 'lucide-react';
 
 // Per-sub-item accent colors: Hope → amber, Fear → purple, damage → red, else sky/green
 function subItemColor(pre) {
@@ -110,36 +110,90 @@ function RollEntry({ roll }) {
 }
 
 /**
- * Compact dice history strip. Shows recent rolls from the current session.
+ * Collapsed footer bar that opens dice history as an overlay above itself.
  * rolls — array of roll data objects (maintained by GMTableView)
- * compact — always true in the current layout (strip above whiteboard)
  */
 export function DiceLog({ rolls = [] }) {
+  const [open, setOpen] = useState(false);
   const scrollRef = useRef(null);
+  const overlayRef = useRef(null);
 
+  // Auto-scroll to bottom when overlay opens or new rolls arrive while open
   useEffect(() => {
-    if (!scrollRef.current) return;
+    if (!open || !scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [rolls]);
+  }, [rolls, open]);
+
+  // Close overlay when clicking outside of it
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (overlayRef.current && !overlayRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  const latestRoll = rolls[rolls.length - 1];
 
   return (
-    <div className="shrink-0 flex flex-col border-t border-slate-800 bg-slate-950">
-      <div className="flex items-center gap-2 px-3 py-1 border-b border-slate-800/60">
-        <Dices size={11} className="text-red-400 shrink-0" />
-        <span className="text-[11px] font-medium text-slate-400 flex-1">Dice Log</span>
-      </div>
-      <div
-        ref={scrollRef}
-        className="h-24 overflow-y-auto px-2 py-1.5 space-y-0.5"
-      >
-        {rolls.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-[10px] text-slate-600 italic">
-            No rolls yet this session
+    // Wrapper is relative so the overlay can anchor over the bar
+    <div className="relative shrink-0" ref={overlayRef}>
+      {/* Overlay panel — anchored at bottom:0 so it covers the footer bar itself */}
+      {open && (
+        <div
+          className="absolute bottom-0 left-0 right-0 z-30 bg-slate-950 border border-slate-700 border-b-0 rounded-t-lg shadow-2xl flex flex-col"
+          style={{ height: '400px' }}
+        >
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/60 shrink-0">
+            <Dices size={12} className="text-red-400 shrink-0" />
+            <span className="text-[11px] font-semibold text-slate-300 flex-1">Dice Log</span>
+            <span className="text-[10px] text-slate-500">{rolls.length} roll{rolls.length !== 1 ? 's' : ''}</span>
+            <button
+              onClick={() => setOpen(false)}
+              className="ml-1 text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <X size={12} />
+            </button>
           </div>
-        ) : (
-          rolls.map((roll, i) => <RollEntry key={roll._logId || i} roll={roll} />)
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto px-2 py-1.5 space-y-0.5 min-h-0"
+          >
+            {rolls.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-[10px] text-slate-600 italic">
+                No rolls yet this session
+              </div>
+            ) : (
+              rolls.map((roll, i) => <RollEntry key={roll._logId || i} roll={roll} />)
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Collapsed footer bar — always visible (hidden behind overlay when open) */}
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 border-t border-slate-800 bg-slate-950 hover:bg-slate-900 transition-colors cursor-pointer group"
+      >
+        <Dices size={11} className="text-red-400 shrink-0" />
+        <span className="text-[11px] font-medium text-slate-400 group-hover:text-slate-300 flex-1 text-left">Dice Log</span>
+        {rolls.length > 0 && latestRoll && (
+          <span className="text-[10px] text-slate-500 truncate max-w-[60%] font-mono">
+            {latestRoll.rollUser ? `${latestRoll.rollUser}: ` : ''}
+            {latestRoll.total != null ? latestRoll.total : ''}
+          </span>
         )}
-      </div>
+        {rolls.length > 0 && (
+          <span className="text-[10px] text-slate-600 tabular-nums shrink-0">{rolls.length}</span>
+        )}
+        <ChevronUp
+          size={11}
+          className={`text-slate-600 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
     </div>
   );
 }

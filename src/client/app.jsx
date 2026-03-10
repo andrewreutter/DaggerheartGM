@@ -97,6 +97,7 @@ function App() {
   const [playerTableState, setPlayerTableState] = useState(null); // table state from SSE
   const [playerDiceRollQueue, setPlayerDiceRollQueue] = useState([]);
   const [playerDiceAck, setPlayerDiceAck] = useState(null);
+  const [diceLog, setDiceLog] = useState([]);
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -476,6 +477,12 @@ function App() {
       es.addEventListener('dice-ack', (e) => {
         setPlayerDiceAck(JSON.parse(e.data));
       });
+      es.addEventListener('roll-history', (e) => {
+        const { rolls } = JSON.parse(e.data);
+        if (Array.isArray(rolls) && rolls.length) {
+          setDiceLog(rolls.map(r => ({ ...r, _logId: r._logId || `hist-${r.timestamp || Math.random()}` })));
+        }
+      });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
@@ -518,6 +525,12 @@ function App() {
       });
       es.addEventListener('dice-ack', (e) => {
         setPlayerDiceAck(JSON.parse(e.data));
+      });
+      es.addEventListener('roll-history', (e) => {
+        const { rolls } = JSON.parse(e.data);
+        if (Array.isArray(rolls) && rolls.length) {
+          setDiceLog(rolls.map(r => ({ ...r, _logId: r._logId || `hist-${r.timestamp || Math.random()}` })));
+        }
       });
       // Real-time table operations from the GM
       es.addEventListener('table-op', (e) => {
@@ -1118,6 +1131,8 @@ function App() {
                 previewAsPlayerEmail={isPreviewMode ? previewAsPlayerEmail : null}
                 onPreviewAsPlayer={!effectiveIsPlayer ? setPreviewAsPlayerEmail : undefined}
                 onExitPreview={isPreviewMode ? () => setPreviewAsPlayerEmail(null) : undefined}
+                diceLog={diceLog}
+                setDiceLog={setDiceLog}
               />
             </div>
           </>

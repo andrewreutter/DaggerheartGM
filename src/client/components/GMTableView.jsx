@@ -242,7 +242,7 @@ function computeHpLoss(damage, thresholds) {
   return 1;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog }) {
   const isTouch = useTouchDevice();
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -266,8 +266,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // Dice roller queue — each entry is a full roll object passed to DiceRoller.
   // New rolls are appended; DiceRoller consumes [0] and calls onComplete to dequeue.
   const [diceRollQueue, setDiceRollQueue] = useState([]);
-  // Dice log — completed rolls shown in the DiceLog strip above the whiteboard.
-  const [diceLog, setDiceLog] = useState([]);
 
   useEffect(() => {
     setEmbedDraft(whiteboardEmbed);
@@ -1631,9 +1629,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
       {/* Center Column */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-slate-950 relative">
-        {/* Dice log strip — shows completed rolls for this session */}
-        <DiceLog rolls={diceLog} />
-
         {/* Whiteboard — self-managing; relative so the DiceRoller overlay anchors here */}
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
           <DiceRoller
@@ -1715,6 +1710,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             </div>
           )}
         </div>
+        {/* Dice log footer — collapsed title bar; click to open overlay with roll history */}
+        <DiceLog rolls={diceLog} />
       </div>
 
       {/* Encounter Panel — hidden for players */}
