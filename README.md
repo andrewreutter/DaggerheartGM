@@ -60,7 +60,7 @@ DaggerheartGM/
 │   │   │   ├── ItemActionButtons.jsx  # Shared Add to Table, Clone, Edit, Delete (ItemCard + ItemDetailModal)
 │   │   │   ├── forms/          # Item forms (controlled+uncontrolled); ImageEditor for add/remove images; SceneForm has Battle Budget section
 │   │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay; SceneBudgetBar for scenes)
-│   │   └── lib/                # API client, helpers, constants, battle-points.js, router, hooks, markdown
+│   │   └── lib/                # API client, helpers, constants, battle-points.js, table-ops.js, router, hooks, markdown
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
@@ -83,7 +83,8 @@ DaggerheartGM/
 ├── playwright.config.js        # Playwright browser test config (port 3457, NODE_ENV=test)
 ├── test/
 │   ├── unit/                   # Vitest unit tests for pure logic modules
-│   │   └── battle-points.test.js
+│   │   ├── battle-points.test.js
+│   │   └── table-ops.test.js
 │   ├── browser/                # Playwright browser/visual regression tests
 │   │   └── smoke.spec.js
 │   ├── helpers/
@@ -124,7 +125,7 @@ The **Game Table** tab layout: a **Characters panel** (left sidebar, `w-56`) wit
 
 The "+ Add Character" button in the Characters panel opens a small dialog. Characters are GM-side party tracking cards stored as `elementType: 'character'` entries in `activeElements` (no separate DB collection). Each character has a name, player name, **tier** (1–4, default 1; selected via the shared `TierSelector` component), Hope counter (±buttons), HP track, Stress track, and conditions field. A tier badge (`T{n}`) is displayed on each character card header. The highest character tier (`partyTier`) is used as the comparison basis for the "lower-tier adversary" BP budget auto-modifier. Character cards use sky-blue styling to distinguish them from adversaries (dark) and environments (emerald). The pencil icon reopens the creation dialog pre-filled for mid-session edits. Clear Table preserves character cards — only adversaries and environments are removed.
 
-**Multi-player support**: GMs can invite players by email via the "Manage Invited Players" section in the Characters panel. Invited players sign in and see a dedicated nav tab linking directly to the GM's table. Real-time sync uses **Server-Sent Events (SSE)**: `GET /api/room/my/players` keeps the GM updated on who is connected; `GET /api/room/:gmUid/stream` streams table state and dice roll events to players. When the GM rolls dice, 3D dice animations play on all screens simultaneously; the GM acknowledges the roll (via `POST /api/room/my/dice-ack`), which then applies side effects on all clients. The GM can assign characters to specific players (`assignedPlayerUid`); assigned players can edit their own character's resources (HP, stress, hope) while all other table content is read-only for players.
+**Multi-player support**: GMs can invite players by email via the "Manage Invited Players" section in the Characters panel. Invited players sign in and see a dedicated nav tab linking directly to the GM's table. Real-time sync uses **Server-Sent Events (SSE)**: `GET /api/room/my/players` keeps the GM updated on who is connected; `GET /api/room/:gmUid/stream` streams table state and dice roll events to players. **Operational sync**: each GM mutation (HP toggle, fear change, element add/remove, etc.) broadcasts a lightweight `table-op` SSE event via `POST /api/room/my/op` so other clients see changes instantly. The debounced table_state save (2s) handles DB persistence and provides consistency repair for any lost ops. `CLIENT_ID` (stable per-session UUID) tags both saves and ops for self-echo skip. When the GM rolls dice, 3D dice animations play on all screens simultaneously; the GM acknowledges the roll (via `POST /api/room/my/dice-ack`), which then applies side effects on all clients. The GM can assign characters to specific players (`assignedPlayerUid`); assigned players can edit their own character's resources (HP, stress, hope) while all other table content is read-only for players.
 - **Zoom Whiteboard** (center) — paste an `<iframe>` embed code in the Embeds config to display a Zoom whiteboard
 - **Dice Log** (center, strip above whiteboard) — a compact history of completed rolls for the current session; auto-scrolls to the newest entry
 

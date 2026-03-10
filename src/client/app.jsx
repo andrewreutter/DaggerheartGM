@@ -3,10 +3,11 @@ import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postDiceAck } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postDiceAck, postTableOp } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
+import { RUNTIME_KEYS, applyPlayerTableOp } from './lib/table-ops.js';
 
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures'];
 
@@ -52,15 +53,39 @@ function App() {
   // Set to true when table state is received via SSE from another window; suppresses one save cycle
   // to prevent an infinite broadcast loop (receive -> save -> broadcast -> receive -> ...).
   const sseStateReceivedRef = useRef(false);
+
+  // Serialized table_state saves: only one PUT in flight at a time.
+  const tableStateSaveInProgressRef = useRef(false);
+  const pendingTableStateSaveRef = useRef(null);
+  const saveTableState = async (data) => {
+    if (tableStateSaveInProgressRef.current) {
+      pendingTableStateSaveRef.current = data;
+      return;
+    }
+    tableStateSaveInProgressRef.current = true;
+    try {
+      await apiSaveItem('table_state', data);
+    } finally {
+      tableStateSaveInProgressRef.current = false;
+      const pending = pendingTableStateSaveRef.current;
+      pendingTableStateSaveRef.current = null;
+      if (pending) saveTableState(pending);
+    }
+  };
+
   useEffect(() => {
     if (!tableStateReadyRef.current) return;
-    // Never overwrite the GM's table_state from a player session.
     const r = routeRef.current;
     if (r?.view === 'gm-table' && r?.gmUid && r?.gmUid !== userRef.current?.uid) return;
     if (sseStateReceivedRef.current) { sseStateReceivedRef.current = false; return; }
     const timer = setTimeout(() => {
-      apiSaveItem('table_state', { id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns, tableBattleMods, fearCount, playerEmails, gmDisplayName: userRef.current?.displayName || '' });
-    }, 800);
+      saveTableState({
+        id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns,
+        tableBattleMods, fearCount, playerEmails,
+        gmDisplayName: userRef.current?.displayName || '',
+        _clientId: CLIENT_ID,
+      });
+    }, 2000);
     return () => clearTimeout(timer);
   }, [activeElements, whiteboardEmbed, featureCountdowns, tableBattleMods, fearCount, playerEmails]);
 
@@ -341,6 +366,55 @@ function App() {
     setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
   }, []);
 
+  // Apply a table-op received from another client (GM SSE)
+  const applyOp = useCallback((op) => {
+    switch (op.op) {
+      case 'update-element':
+        setActiveElements(prev => prev.map(el => el.instanceId === op.instanceId ? { ...el, ...op.updates } : el));
+        break;
+      case 'add-elements':
+        setActiveElements(prev => [...prev, ...op.elements]);
+        break;
+      case 'remove-element':
+        setActiveElements(prev => prev.filter(el => el.instanceId !== op.instanceId));
+        break;
+      case 'clear-table':
+        setActiveElements(prev => prev.filter(el => el.elementType === 'character'));
+        setFeatureCountdowns({});
+        break;
+      case 'set-fear':
+        setFearCount(op.fearCount);
+        break;
+      case 'set-countdown':
+        setFeatureCountdowns(prev => ({ ...prev, [op.key]: op.value }));
+        break;
+      case 'set-battle-mods':
+        setTableBattleMods(op.tableBattleMods);
+        break;
+      case 'set-whiteboard':
+        setWhiteboardEmbed(op.whiteboardEmbed);
+        break;
+      case 'set-player-emails':
+        setPlayerEmails(op.playerEmails);
+        break;
+      case 'update-base-data': {
+        const { elementId, newBaseData } = op;
+        setActiveElements(prev => prev.map(el => {
+          if (el.id !== elementId) return el;
+          const runtime = {};
+          RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+          return { ...newBaseData, ...runtime };
+        }));
+        break;
+      }
+    }
+  }, []);
+
+  // Apply a table-op received from the GM (Player SSE)
+  const applyPlayerOp = useCallback((op) => {
+    setPlayerTableState(prev => applyPlayerTableOp(op, prev));
+  }, []);
+
   // Redirect /gm-table (no UID) to /gm-table/:uid after sign-in
   useEffect(() => {
     if (user && route.view === 'gm-table' && !route.gmUid) {
@@ -371,6 +445,7 @@ function App() {
       // Sync table state broadcast from another GM window (e.g. primary window saving changes)
       es.addEventListener('state', (e) => {
         const state = JSON.parse(e.data);
+        if (state._clientId === CLIENT_ID) return;
         sseStateReceivedRef.current = true;
         if (Array.isArray(state.elements)) setActiveElements(state.elements);
         if (state.fearCount != null) setFearCount(state.fearCount);
@@ -378,6 +453,12 @@ function App() {
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+      });
+      // Real-time table operations from another GM window
+      es.addEventListener('table-op', (e) => {
+        const op = JSON.parse(e.data);
+        if (op._clientId === CLIENT_ID) return;
+        applyOp(op);
       });
       // Dice roll from a player or another GM window (skip own rolls — already handled via HTTP response)
       es.addEventListener('dice-roll', (e) => {
@@ -399,7 +480,7 @@ function App() {
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [user?.uid, route.view, isPlayer, updateActiveElement]);
+  }, [user?.uid, route.view, isPlayer, updateActiveElement, applyOp]);
 
   // Player SSE: receive table state and events from GM
   useEffect(() => {
@@ -438,11 +519,17 @@ function App() {
       es.addEventListener('dice-ack', (e) => {
         setPlayerDiceAck(JSON.parse(e.data));
       });
+      // Real-time table operations from the GM
+      es.addEventListener('table-op', (e) => {
+        const op = JSON.parse(e.data);
+        if (op._clientId === CLIENT_ID) return;
+        applyPlayerOp(op);
+      });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, user?.uid, route.gmUid]);
+  }, [isPlayer, user?.uid, route.gmUid, applyPlayerOp]);
 
   // Remember last library tab so we can return there when navigating back from Game Table
   useEffect(() => {
@@ -529,20 +616,6 @@ function App() {
     // LibraryView's hook will refresh after clone via handleClone → search.refresh().
     return cloneItemToLibrary(collectionName, item, { play: false });
   };
-
-  // Runtime fields that must be preserved when base data is updated in-place.
-  // Character-specific fields are included so they survive any future base-data update calls.
-  const RUNTIME_KEYS = [
-    'instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope',
-    'playerName', 'maxHp', 'maxStress', 'name',
-    // Daggerstack-synced character fields
-    'daggerstackUrl', 'daggerstackEmail', 'daggerstackPassword', 'daggerstackCharacterId',
-    'class', 'subclass', 'level', 'pronouns', 'description', 'ancestry', 'community',
-    'domains', 'traits', 'evasion', 'armorScore', 'armorName', 'armorThresholds',
-    'maxArmor', 'currentArmor', 'weapons', 'gold', 'inventory',
-    'classFeatures', 'subclassFeatures', 'ancestryFeatures', 'communityFeatures',
-    'experiences', 'spellcastTrait', 'hopeAbility', 'hopeAbilityName', 'companion', 'tier',
-  ];
 
   const updateActiveElementsBaseData = (predicate, newBaseData) => {
     setActiveElements(prev => prev.map(el => {
@@ -689,6 +762,7 @@ function App() {
     }
 
     setActiveElements(prev => [...prev, ...newElements]);
+    return newElements;
   };
 
   const addToTable = (item, collectionName) => {
@@ -712,6 +786,93 @@ function App() {
   const clearTable = () => {
     setActiveElements(prev => prev.filter(el => el.elementType === 'character'));
     setFeatureCountdowns({});
+  };
+
+  // --- Broadcasting wrappers (Phase 3: operational sync) ---
+  // broadcastOp sends a lightweight op to all room clients via the server.
+  // Only fires in GM mode (not player, not preview).
+  const broadcastOp = (op) => {
+    const r = routeRef.current;
+    if (!r || r.view !== 'gm-table' || !r.gmUid || r.gmUid !== userRef.current?.uid) return;
+    if (previewAsPlayerEmail) return;
+    postTableOp(op);
+  };
+
+  const broadcastingUpdateActiveElement = (instanceId, updates) => {
+    updateActiveElement(instanceId, updates);
+    broadcastOp({ op: 'update-element', instanceId, updates });
+  };
+
+  const broadcastingRemoveActiveElement = (instanceId) => {
+    removeActiveElement(instanceId);
+    broadcastOp({ op: 'remove-element', instanceId });
+  };
+
+  const broadcastingSetFearCount = (valueOrFn) => {
+    let resolved;
+    setFearCount(prev => {
+      resolved = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn;
+      return resolved;
+    });
+    broadcastOp({ op: 'set-fear', fearCount: resolved });
+  };
+
+  const broadcastingSetTableBattleMods = (valueOrFn) => {
+    let resolved;
+    setTableBattleMods(prev => {
+      resolved = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn;
+      return resolved;
+    });
+    broadcastOp({ op: 'set-battle-mods', tableBattleMods: resolved });
+  };
+
+  const broadcastingSetPlayerEmails = (valueOrFn) => {
+    let resolved;
+    setPlayerEmails(prev => {
+      resolved = typeof valueOrFn === 'function' ? valueOrFn(prev) : valueOrFn;
+      return resolved;
+    });
+    broadcastOp({ op: 'set-player-emails', playerEmails: resolved });
+  };
+
+  const broadcastingUpdateCountdown = (cardKey, featureKey, cdIdx, value) => {
+    const key = `${cardKey}|${featureKey}|${cdIdx}`;
+    setFeatureCountdowns(prev => ({ ...prev, [key]: value }));
+    broadcastOp({ op: 'set-countdown', key, value });
+  };
+
+  const broadcastingSetWhiteboardEmbed = (url) => {
+    setWhiteboardEmbed(url);
+    broadcastOp({ op: 'set-whiteboard', whiteboardEmbed: url });
+  };
+
+  const broadcastingClearTable = () => {
+    clearTable();
+    broadcastOp({ op: 'clear-table' });
+  };
+
+  const broadcastingDoAddToTable = async (item, collectionName) => {
+    const newElements = await doAddToTable(item, collectionName);
+    if (newElements?.length) broadcastOp({ op: 'add-elements', elements: newElements });
+    return newElements;
+  };
+
+  const broadcastingAddToTable = (item, collectionName) => {
+    if (collectionName === 'scenes') {
+      const mods = item?.battleMods;
+      const hasActiveMods = mods && (mods.lessDifficult || mods.slightlyMoreDangerous || mods.damageBoostPlusOne || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
+      if (hasActiveMods) {
+        setPendingSceneAdd({ scene: item });
+        return;
+      }
+    }
+    return broadcastingDoAddToTable(item, collectionName);
+  };
+
+  const broadcastingUpdateActiveElementsBaseData = (predicate, newBaseData) => {
+    const matching = activeElements.find(predicate);
+    updateActiveElementsBaseData(predicate, newBaseData);
+    if (matching) broadcastOp({ op: 'update-base-data', elementId: matching.id, newBaseData });
   };
 
   // Player callbacks — send updates to server + apply optimistically
@@ -743,7 +904,7 @@ function App() {
   // Uses the real addToTable (not the no-op shim passed to GMTableView in preview mode).
   const handleGmImpersonateAddCharacter = (charData) => {
     const { name, playerName, tier, maxHope, maxHp, maxStress } = charData;
-    addToTable({
+    broadcastingAddToTable({
       elementType: 'character',
       name,
       playerName,
@@ -778,7 +939,7 @@ function App() {
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
               <NavBtn
                 icon={<LayoutDashboard />}
-                label="Game Table"
+                label="My Game Table"
                 active={route.view === 'gm-table' && (route.gmUid === user?.uid || !route.gmUid)}
                 onClick={() => navigate(`/gm-table/${user?.uid || ''}`)}
                 pulse={tableFlash}
@@ -890,7 +1051,7 @@ function App() {
                 saveImage={saveImage}
                 deleteItem={deleteItem}
                 cloneItem={cloneItem}
-                addToTable={addToTable}
+                addToTable={broadcastingAddToTable}
                 route={
                   route.view === 'library'
                     ? route
@@ -918,37 +1079,35 @@ function App() {
             >
               <GMTableView
                 activeElements={isPlayer ? (playerTableState?.elements || []) : activeElements}
-                updateActiveElement={isPlayer ? handlePlayerCharacterUpdate : updateActiveElement}
-                removeActiveElement={effectiveIsPlayer ? () => {} : removeActiveElement}
-                updateActiveElementsBaseData={effectiveIsPlayer ? () => {} : updateActiveElementsBaseData}
+                updateActiveElement={isPlayer ? handlePlayerCharacterUpdate : broadcastingUpdateActiveElement}
+                removeActiveElement={effectiveIsPlayer ? () => {} : broadcastingRemoveActiveElement}
+                updateActiveElementsBaseData={effectiveIsPlayer ? () => {} : broadcastingUpdateActiveElementsBaseData}
                 data={data}
                 saveItem={effectiveIsPlayer ? () => {} : saveItem}
                 saveImage={effectiveIsPlayer ? () => {} : saveImage}
-                addToTable={effectiveIsPlayer ? () => {} : addToTable}
+                addToTable={effectiveIsPlayer ? () => {} : broadcastingAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
                 whiteboardEmbed={isPlayer ? (playerTableState?.whiteboardEmbed || '') : whiteboardEmbed}
-                setWhiteboardEmbed={effectiveIsPlayer ? () => {} : setWhiteboardEmbed}
+                setWhiteboardEmbed={effectiveIsPlayer ? () => {} : broadcastingSetWhiteboardEmbed}
                 route={route}
                 navigate={navigate}
                 featureCountdowns={isPlayer ? (playerTableState?.featureCountdowns || {}) : featureCountdowns}
-                updateCountdown={effectiveIsPlayer ? () => {} : (cardKey, featureKey, cdIdx, value) =>
-                  setFeatureCountdowns(prev => ({ ...prev, [`${cardKey}|${featureKey}|${cdIdx}`]: value }))
-                }
+                updateCountdown={effectiveIsPlayer ? () => {} : broadcastingUpdateCountdown}
                 partySize={partySize}
                 partyTier={partyTier}
                 characters={characters}
                 tableBattleMods={isPlayer ? (playerTableState?.tableBattleMods || tableBattleMods) : tableBattleMods}
-                setTableBattleMods={effectiveIsPlayer ? () => {} : setTableBattleMods}
+                setTableBattleMods={effectiveIsPlayer ? () => {} : broadcastingSetTableBattleMods}
                 fearCount={isPlayer ? (playerTableState?.fearCount ?? 0) : fearCount}
-                setFearCount={effectiveIsPlayer ? () => {} : setFearCount}
-                clearTable={effectiveIsPlayer ? () => {} : clearTable}
+                setFearCount={effectiveIsPlayer ? () => {} : broadcastingSetFearCount}
+                clearTable={effectiveIsPlayer ? () => {} : broadcastingClearTable}
                 isPlayer={effectiveIsPlayer}
                 playerEmail={effectivePlayerEmail}
                 connectedPlayers={connectedPlayers}
                 playerEmails={playerEmails}
-                setPlayerEmails={effectiveIsPlayer ? () => {} : setPlayerEmails}
+                setPlayerEmails={effectiveIsPlayer ? () => {} : broadcastingSetPlayerEmails}
                 gmUid={route.gmUid || user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 playerDiceRollQueue={playerDiceRollQueue}
@@ -969,12 +1128,12 @@ function App() {
           scene={pendingSceneAdd.scene}
           currentTableMods={tableBattleMods}
           onApply={() => {
-            setTableBattleMods({ ...pendingSceneAdd.scene.battleMods });
-            doAddToTable(pendingSceneAdd.scene, 'scenes');
+            broadcastingSetTableBattleMods({ ...pendingSceneAdd.scene.battleMods });
+            broadcastingDoAddToTable(pendingSceneAdd.scene, 'scenes');
             setPendingSceneAdd(null);
           }}
           onKeep={() => {
-            doAddToTable(pendingSceneAdd.scene, 'scenes');
+            broadcastingDoAddToTable(pendingSceneAdd.scene, 'scenes');
             setPendingSceneAdd(null);
           }}
           onCancel={() => setPendingSceneAdd(null)}

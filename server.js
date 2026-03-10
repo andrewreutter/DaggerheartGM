@@ -913,7 +913,7 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid item body' });
   }
   const id = item.id || crypto.randomUUID();
-  const { id: _id, is_public, _source, _owner, ...incoming } = item;
+  const { id: _id, is_public, _source, _owner, _clientId, ...incoming } = item;
   try {
     let dataToSave = incoming;
     if (id) {
@@ -929,7 +929,7 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
 
     // Broadcast table_state to all connected room clients (players + other GM windows)
     if (collection === 'table_state' && rooms.has(req.uid)) {
-      broadcastToAllRoomClients(req.uid, 'state', dataToSave);
+      broadcastToAllRoomClients(req.uid, 'state', { ...dataToSave, _clientId });
     }
   } catch (err) {
     console.error(`PUT /api/data/${collection} error:`, err);
@@ -1050,6 +1050,18 @@ app.post('/api/room/my/roll', requireAuth, (req, res) => {
   appendRollLog(req.uid, rollData);
   broadcastToAllRoomClients(req.uid, 'dice-roll', rollData);
   res.json(rollData);
+});
+
+// POST /api/room/my/op — GM broadcasts a lightweight table operation to all room clients
+app.post('/api/room/my/op', requireAuth, (req, res) => {
+  const op = req.body;
+  if (!op || typeof op !== 'object' || !op.op) {
+    return res.status(400).json({ error: 'Invalid op' });
+  }
+  if (rooms.has(req.uid)) {
+    broadcastToAllRoomClients(req.uid, 'table-op', op);
+  }
+  res.json({ ok: true });
 });
 
 // POST /api/room/my/dice-ack — GM broadcasts acknowledgement (dismiss + pulses) to all room clients
