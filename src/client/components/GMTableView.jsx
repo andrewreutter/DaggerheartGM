@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle } from 'lucide-react';
-import { Whiteboard } from './Whiteboard.jsx';
+import { BattleMap } from './BattleMap.jsx';
 import { DiceLog } from './DiceLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -235,7 +235,7 @@ function computeHpLoss(damage, thresholds) {
   return 1;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog, mapConfig, onMapConfigChange }) {
   const isTouch = useTouchDevice();
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -1622,7 +1622,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             canApplyDamage={!isPlayer}
           />
-          <Whiteboard gmUid={gmUid} user={user} isPlayer={isPlayer} className="flex-1 min-h-0" />
+          <BattleMap
+            gmUid={gmUid}
+            user={user}
+            isPlayer={isPlayer}
+            activeElements={activeElements}
+            updateActiveElement={updateActiveElement}
+            mapConfig={mapConfig}
+            onMapConfigChange={onMapConfigChange}
+            className="flex-1 min-h-0"
+          />
         </div>
         {/* Dice log footer — collapsed title bar; click to open overlay with roll history */}
         <DiceLog rolls={diceLog} />

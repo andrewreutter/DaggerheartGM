@@ -7,6 +7,7 @@ export const RUNTIME_KEYS = [
   'maxArmor', 'currentArmor', 'weapons', 'gold', 'inventory',
   'classFeatures', 'subclassFeatures', 'ancestryFeatures', 'communityFeatures',
   'experiences', 'spellcastTrait', 'hopeAbility', 'hopeAbilityName', 'companion', 'tier',
+  'tokenX', 'tokenY',
 ];
 
 /**
@@ -42,6 +43,20 @@ export function applyTableOp(op, state) {
         }),
       };
     }
+    case 'set-map':
+      return {
+        mapConfig: {
+          mapImageUrl: op.mapImageUrl ?? null,
+          mapDimension: op.mapDimension ?? 'width',
+          mapSizeFt: op.mapSizeFt ?? 100,
+          mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
+          mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
+        },
+        // When image changes, reset all token positions
+        ...(op.resetTokenPositions ? {
+          activeElements: activeElements.map(el => ({ ...el, tokenX: null, tokenY: null })),
+        } : {}),
+      };
     default:
       return {};
   }
@@ -71,6 +86,19 @@ export function applyPlayerTableOp(op, state) {
       return { ...state, tableBattleMods: op.tableBattleMods };
     case 'set-player-emails':
       return { ...state, playerEmails: op.playerEmails };
+    case 'set-map': {
+      const mapConfig = {
+        mapImageUrl: op.mapImageUrl ?? null,
+        mapDimension: op.mapDimension ?? 'width',
+        mapSizeFt: op.mapSizeFt ?? 100,
+        mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
+        mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
+      };
+      const newElements = op.resetTokenPositions
+        ? elements.map(el => ({ ...el, tokenX: null, tokenY: null }))
+        : elements;
+      return { ...state, mapConfig, elements: newElements };
+    }
     default:
       return state;
   }
