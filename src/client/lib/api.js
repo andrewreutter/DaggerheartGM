@@ -482,6 +482,19 @@ export const postAddCharacter = async (gmUid, charData) => {
   return res.json();
 };
 
+/** GM: broadcast a table operation to all room clients (best-effort, fire-and-forget). */
+export const postTableOp = async (op) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    await fetch('/api/room/my/op', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ ...op, _clientId: CLIENT_ID }),
+    });
+  } catch { /* best-effort */ }
+};
+
 /** GM: broadcast dice acknowledgement (pulses + element updates) to all players. */
 export const postDiceAck = async (ackData) => {
   const token = await getAuthToken();
