@@ -41,7 +41,10 @@ DaggerheartGM/
 │   ├── 006_create_item_popularity.sql # Per-user clone/play tracking
 │   ├── 007_create_external_item_cache.sql # Cache for SRD, FCG, HoD
 │   ├── 008_remove_popularity_from_items.sql # Drops clone_count, play_count from items
-│   └── 009_create_sync_state.sql # Sync metadata (e.g. SRD hash)
+│   ├── 009_create_sync_state.sql # Sync metadata (e.g. SRD hash)
+│   ├── 010_fix_items_pk.sql    # Fix items table primary key
+│   ├── 011_create_whiteboard_snapshots.sql # TLDraw canvas state per GM room
+│   └── 012_create_dice_rolls.sql # Persists dice roll history across server restarts
 ├── public/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked, @3d-dice/dice-box)
 │   ├── styles.css              # Generated Tailwind output (do not edit by hand)

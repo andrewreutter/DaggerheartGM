@@ -10,7 +10,7 @@ import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
 import { WebSocketServer } from 'ws';
 import { TLSocketRoom, InMemorySyncStorage } from '@tldraw/sync-core';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getWhiteboardSnapshot, saveWhiteboardSnapshot } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getWhiteboardSnapshot, saveWhiteboardSnapshot, appendDiceRoll, getRecentDiceRolls } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -334,6 +334,9 @@ function appendRollLog(gmUid, rollData) {
   const room = getOrCreateRoom(gmUid);
   room.rollLog.push(rollData);
   if (room.rollLog.length > ROLL_LOG_SIZE) room.rollLog.shift();
+  appendDiceRoll(APP_ID, gmUid, rollData).catch(err =>
+    console.error('[dice] DB write failed:', err.message)
+  );
 }
 
 function broadcastPresenceToGm(gmUid) {
@@ -1086,9 +1089,17 @@ app.get('/api/room/my/players', async (req, res) => {
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
 
-  // Send recent roll history so reconnecting GM windows see prior rolls
-  if (room.rollLog.length > 0) {
-    res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+  // Send recent roll history from DB so reconnecting GM windows see rolls from before this server started
+  try {
+    const rolls = await getRecentDiceRolls(APP_ID, user.uid);
+    if (rolls.length > 0) {
+      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls })}\n\n`);
+    }
+  } catch (err) {
+    console.error('[dice] roll-history fetch failed:', err.message);
+    if (room.rollLog.length > 0) {
+      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+    }
   }
   res.flush?.();
 
@@ -1125,9 +1136,17 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
     const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
     res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
 
-    // Send recent roll history so late-joining players see prior rolls
-    if (room.rollLog.length > 0) {
-      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+    // Send recent roll history from DB so late-joining players see rolls from before this server started
+    try {
+      const rolls = await getRecentDiceRolls(APP_ID, gmUid);
+      if (rolls.length > 0) {
+        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls })}\n\n`);
+      }
+    } catch (err) {
+      console.error('[dice] roll-history fetch failed:', err.message);
+      if (room.rollLog.length > 0) {
+        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+      }
     }
     res.flush?.();
 

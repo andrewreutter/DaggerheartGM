@@ -96,15 +96,12 @@ function RollEntry({ roll }) {
   const time = roll.timestamp ? new Date(roll.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
-    <div className="px-2 py-1.5 rounded bg-slate-800/60">
-      <div className="flex items-baseline gap-1.5">
-        <span className="font-semibold text-xs text-red-400 truncate max-w-[120px]">{roll.rollUser || 'Unknown'}</span>
-        {time && <span className="text-[10px] text-slate-500 shrink-0 tabular-nums ml-auto">{time}</span>}
-      </div>
-      <div className="mt-0.5 font-mono text-xs">
+    <div className="px-2 py-1 rounded bg-slate-800/60 flex items-baseline gap-2">
+      <div className="flex-1 font-mono text-xs min-w-0">
         {isCompound && <CompoundRoll subItems={roll.subItems} />}
         {!isCompound && <span className="text-slate-400 italic">roll</span>}
       </div>
+      {time && <span className="text-[10px] text-slate-500 shrink-0 tabular-nums">{time}</span>}
     </div>
   );
 }
