@@ -104,9 +104,48 @@ function TldrawCanvas({ wsUri, assetStore, userInfo, isPlayer }) {
         if (!owner || owner !== userInfo.id) return false;
       });
     }
-  }, [isPlayer, userInfo.id]);
 
-  return <Tldraw store={store} onMount={handleMount} />;
+    // TLDraw's sync protocol strips asset.props.src before broadcasting to other clients.
+    // resolve() is called during initial hydration but NOT for assets that arrive incrementally
+    // via real-time sync, so remote users see broken images until they reload.
+    // Fix: watch for remotely-added assets with a missing src and inject the resolved URL.
+    const unlisten = editor.store.listen(({ changes, source }) => {
+      if (source !== 'remote') return;
+      const addedAssets = Object.values(changes.added).filter(
+        r => r.typeName === 'asset' && r.props?.mimeType && !r.props?.src
+      );
+      if (addedAssets.length === 0) return;
+      const updates = [];
+      for (const asset of addedAssets) {
+        const src = assetStore.resolve(asset);
+        if (src) updates.push({ ...asset, props: { ...asset.props, src } });
+      }
+      if (updates.length > 0) {
+        editor.run(() => editor.updateAssets(updates), { history: 'ignore' });
+      }
+    });
+
+    return unlisten;
+  }, [isPlayer, userInfo.id, assetStore]);
+
+  return (
+    <Tldraw
+      store={store}
+      onMount={handleMount}
+      options={{ maxPages: 1 }}
+      overrides={{
+        tools: (_editor, tools) => {
+          delete tools.embed;
+          return tools;
+        },
+        actions: (_editor, actions) => {
+          delete actions['insert-embed'];
+          delete actions['delete-embed'];
+          return actions;
+        },
+      }}
+    />
+  );
 }
 
 export function Whiteboard({ gmUid, user, isPlayer = false, className = '' }) {
