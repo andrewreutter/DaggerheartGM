@@ -387,16 +387,16 @@ function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElemen
         </div>
       </div>
 
-      {/* HP */}
+      {/* HP — filled = damage taken (matches sidebar & token dots) */}
       {hpMax > 0 && (
         <div className="mb-1.5">
           <div className="text-xs text-slate-500 mb-0.5">HP {element.currentHp ?? hpMax}/{hpMax}</div>
           <CheckboxTrack
             total={hpMax}
-            filled={element.currentHp ?? hpMax}
+            filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
             fillColor="bg-red-500"
             onSetFilled={canEdit || canEditAdv
-              ? (v) => updateActiveElement(element.instanceId, isChar ? { currentHp: v } : { currentHp: v })
+              ? (dmg) => updateActiveElement(element.instanceId, { currentHp: hpMax - dmg })
               : undefined}
           />
         </div>
@@ -420,10 +420,10 @@ function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElemen
       {/* Hope (characters only) */}
       {isChar && (element.maxHope ?? 6) > 0 && (
         <div className="mb-1.5">
-          <div className="text-xs text-slate-500 mb-0.5">Hope {element.hope ?? 0}/{element.maxHope ?? 6}</div>
+          <div className="text-xs text-slate-500 mb-0.5">Hope {element.hope ?? (element.maxHope ?? 6)}/{element.maxHope ?? 6}</div>
           <CheckboxTrack
             total={element.maxHope ?? 6}
-            filled={element.hope ?? 0}
+            filled={element.hope ?? (element.maxHope ?? 6)}
             fillColor="bg-amber-400"
             onSetFilled={canEdit ? (v) => updateActiveElement(element.instanceId, { hope: v }) : undefined}
           />
