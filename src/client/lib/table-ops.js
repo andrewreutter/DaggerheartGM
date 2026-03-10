@@ -30,8 +30,6 @@ export function applyTableOp(op, state) {
       return { featureCountdowns: { ...featureCountdowns, [op.key]: op.value } };
     case 'set-battle-mods':
       return { tableBattleMods: op.tableBattleMods };
-    case 'set-whiteboard':
-      return { whiteboardEmbed: op.whiteboardEmbed };
     case 'set-player-emails':
       return { playerEmails: op.playerEmails };
     case 'update-base-data': {
@@ -71,8 +69,6 @@ export function applyPlayerTableOp(op, state) {
       return { ...state, featureCountdowns: { ...(state.featureCountdowns || {}), [op.key]: op.value } };
     case 'set-battle-mods':
       return { ...state, tableBattleMods: op.tableBattleMods };
-    case 'set-whiteboard':
-      return { ...state, whiteboardEmbed: op.whiteboardEmbed };
     case 'set-player-emails':
       return { ...state, playerEmails: op.playerEmails };
     default:

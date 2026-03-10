@@ -12,11 +12,13 @@ function apiHeaders(extra = {}) {
 
 let firebaseConfig;
 export let imageGenEnabled = false;
+export let supabaseStorageBase = null;
 try {
   const res = await fetch('/api/config', { headers: apiHeaders() });
   const json = await res.json();
   firebaseConfig = json.firebaseConfig;
   imageGenEnabled = !!json.imageGenEnabled;
+  supabaseStorageBase = json.supabaseStorageBase || null;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);
 }

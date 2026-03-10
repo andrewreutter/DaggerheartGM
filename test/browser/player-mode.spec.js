@@ -34,7 +34,6 @@ const OTHER_GM_UID = 'other-gm-uid';
 async function mockPlayerStream(page, gmUid, { elements = [] } = {}) {
   const tableState = {
     elements,
-    whiteboardEmbed: '',
     featureCountdowns: {},
     tableBattleMods: {},
     fearCount: 0,

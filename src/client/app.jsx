@@ -33,7 +33,6 @@ function App() {
   const [libraryKey, setLibraryKey] = useState(0);
 
   const [activeElements, setActiveElements] = useState([]);
-  const [whiteboardEmbed, setWhiteboardEmbed] = useState('');
   const [playerEmails, setPlayerEmails] = useState([]); // GM's invited player emails
   const [featureCountdowns, setFeatureCountdowns] = useState({});
   const partySize = useMemo(() => Math.max(1, activeElements.filter(el => el.elementType === 'character').length), [activeElements]);
@@ -80,14 +79,14 @@ function App() {
     if (sseStateReceivedRef.current) { sseStateReceivedRef.current = false; return; }
     const timer = setTimeout(() => {
       saveTableState({
-        id: 'current', elements: activeElements, whiteboardEmbed, featureCountdowns,
+        id: 'current', elements: activeElements, featureCountdowns,
         tableBattleMods, fearCount, playerEmails,
         gmDisplayName: userRef.current?.displayName || '',
         _clientId: CLIENT_ID,
       });
     }, 2000);
     return () => clearTimeout(timer);
-  }, [activeElements, whiteboardEmbed, featureCountdowns, tableBattleMods, fearCount, playerEmails]);
+  }, [activeElements, featureCountdowns, tableBattleMods, fearCount, playerEmails]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   // Multi-player room state
@@ -336,7 +335,6 @@ function App() {
           if (!userRef.current) return;
           const tableState = items?.[0];
           setActiveElements(tableState?.elements || []);
-          setWhiteboardEmbed(tableState?.whiteboardEmbed || '');
           setFeatureCountdowns(tableState?.featureCountdowns || {});
           if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
           if (tableState?.fearCount != null) setFearCount(tableState.fearCount);
@@ -391,9 +389,6 @@ function App() {
         break;
       case 'set-battle-mods':
         setTableBattleMods(op.tableBattleMods);
-        break;
-      case 'set-whiteboard':
-        setWhiteboardEmbed(op.whiteboardEmbed);
         break;
       case 'set-player-emails':
         setPlayerEmails(op.playerEmails);
@@ -450,7 +445,6 @@ function App() {
         sseStateReceivedRef.current = true;
         if (Array.isArray(state.elements)) setActiveElements(state.elements);
         if (state.fearCount != null) setFearCount(state.fearCount);
-        if (state.whiteboardEmbed != null) setWhiteboardEmbed(state.whiteboardEmbed);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
@@ -854,11 +848,6 @@ function App() {
     broadcastOp({ op: 'set-countdown', key, value });
   };
 
-  const broadcastingSetWhiteboardEmbed = (url) => {
-    setWhiteboardEmbed(url);
-    broadcastOp({ op: 'set-whiteboard', whiteboardEmbed: url });
-  };
-
   const broadcastingClearTable = () => {
     clearTable();
     broadcastOp({ op: 'clear-table' });
@@ -1100,10 +1089,9 @@ function App() {
                 saveImage={effectiveIsPlayer ? () => {} : saveImage}
                 addToTable={effectiveIsPlayer ? () => {} : broadcastingAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
+                user={user}
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
-                whiteboardEmbed={isPlayer ? (playerTableState?.whiteboardEmbed || '') : whiteboardEmbed}
-                setWhiteboardEmbed={effectiveIsPlayer ? () => {} : broadcastingSetWhiteboardEmbed}
                 route={route}
                 navigate={navigate}
                 featureCountdowns={isPlayer ? (playerTableState?.featureCountdowns || {}) : featureCountdowns}
