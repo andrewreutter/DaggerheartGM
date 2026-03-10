@@ -14,8 +14,8 @@
     "build": "npm run build:css && npm run build:js",
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
     "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
-    "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outfile=public/app.js",
-    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outfile=public/app.js --watch",
+    "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outdir=public",
+    "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outdir=public --watch",
     "test": "vitest run && npx playwright test",
     "test:unit": "vitest run",
     "test:browser": "npx playwright test"
@@ -23,7 +23,10 @@
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",
     "@huggingface/inference": "^4.13.14",
+    "@supabase/supabase-js": "^2.99.0",
     "@tanstack/react-virtual": "^3.13.0",
+    "@tldraw/sync": "^4.4.1",
+    "@tldraw/sync-core": "^4.4.1",
     "compression": "^1.8.1",
     "express": "^4.18.2",
     "firebase-admin": "^13.7.0",
@@ -33,7 +36,9 @@
     "puppeteer": "^24.37.5",
     "sharp": "^0.34.5",
     "tesseract.js": "^7.0.0",
-    "undici": "^7.22.0"
+    "tldraw": "^4.4.1",
+    "undici": "^7.22.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

@@ -1,7 +1,8 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Monitor, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Settings, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle } from 'lucide-react';
+import { Whiteboard } from './Whiteboard.jsx';
 import { DiceLog } from './DiceLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -122,14 +123,6 @@ function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
   return `${sourceName} ${name} [d20${modStr}] damage [${damage}] ${(trait || 'phy').toLowerCase()} ${range}`;
 }
 
-function extractIframeSrc(embedCode) {
-  try {
-    const match = embedCode.match(/\bsrc=["']([^"']+)["']/i);
-    if (match && match[1].startsWith('https://')) return match[1];
-  } catch (_) {}
-  return null;
-}
-
 function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -242,7 +235,7 @@ function computeHpLoss(damage, thresholds) {
   return 1;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, whiteboardEmbed, setWhiteboardEmbed, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog }) {
   const isTouch = useTouchDevice();
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -259,24 +252,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
 
-  // Embed config state (was WhiteboardTab)
-  const [embedDraft, setEmbedDraft] = useState(whiteboardEmbed);
-  const [whiteboardConfigOpen, setWhiteboardConfigOpen] = useState(false);
-
   // Dice roller queue — each entry is a full roll object passed to DiceRoller.
   // New rolls are appended; DiceRoller consumes [0] and calls onComplete to dequeue.
   const [diceRollQueue, setDiceRollQueue] = useState([]);
-
-  useEffect(() => {
-    setEmbedDraft(whiteboardEmbed);
-  }, [whiteboardEmbed]);
-
-  const iframeSrc = extractIframeSrc(whiteboardEmbed);
-
-  const handleSaveWhiteboardConfig = () => {
-    setWhiteboardEmbed(embedDraft.trim());
-    setWhiteboardConfigOpen(false);
-  };
 
   // Load scenes/adventures when picker opens so it can display the list.
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -1644,71 +1622,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             canApplyDamage={!isPlayer}
           />
-          {!iframeSrc ? (
-            <div className="flex-1 min-h-0 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-3 px-8">
-              <Monitor size={32} className="opacity-40" />
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Zoom Whiteboard</p>
-              {!isPlayer && <>
-                <textarea
-                  className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
-                  placeholder='Paste your <iframe ...> embed code here'
-                  value={embedDraft}
-                  onChange={(e) => setEmbedDraft(e.target.value)}
-                  spellCheck={false}
-                />
-                <button
-                  onClick={handleSaveWhiteboardConfig}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
-                >
-                  Save
-                </button>
-              </>}
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
-              <iframe
-                src={iframeSrc}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-                allowFullScreen
-                title="Zoom Whiteboard"
-              />
-              {!isPlayer && <button
-                className="absolute top-2 right-2 w-7 h-7 rounded bg-slate-900/80 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 transition-colors z-10"
-                onClick={() => { setEmbedDraft(whiteboardEmbed); setWhiteboardConfigOpen(true); }}
-                title="Configure whiteboard"
-              >
-                <Settings size={14} />
-              </button>}
-              {whiteboardConfigOpen && !isPlayer && (
-                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-8 bg-black/60 backdrop-blur-sm">
-                  <Monitor size={32} className="text-slate-400 opacity-60" />
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">Zoom Whiteboard</p>
-                  <textarea
-                    className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-blue-500 resize-none h-20"
-                    placeholder='Paste your <iframe ...> embed code here'
-                    value={embedDraft}
-                    onChange={(e) => setEmbedDraft(e.target.value)}
-                    spellCheck={false}
-                    autoFocus
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => { setEmbedDraft(whiteboardEmbed); setWhiteboardConfigOpen(false); }}
-                      className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition-colors"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSaveWhiteboardConfig}
-                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          <Whiteboard gmUid={gmUid} user={user} className="flex-1 min-h-0" />
         </div>
         {/* Dice log footer — collapsed title bar; click to open overlay with roll history */}
         <DiceLog rolls={diceLog} />
@@ -2818,7 +2732,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               <CharacterHoverCard
                 el={liveEl}
                 updateFn={allowInteract ? updateActiveElement : undefined}
-                onResync={!isPlayer && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
+                onResync={(isMyCharacter || !isPlayer) && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
                 isSyncing={resyncingCharId === liveEl.instanceId}
                 onRoll={allowInteract ? (!isPlayer ? handleTraitRoll : handlePlayerOwnRoll) : undefined}
                 onSpendHope={allowInteract ? handleSpendHope : undefined}

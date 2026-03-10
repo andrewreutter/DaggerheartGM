@@ -72,11 +72,6 @@ describe('applyTableOp', () => {
     expect(result.tableBattleMods).toEqual(mods);
   });
 
-  it('set-whiteboard sets whiteboardEmbed', () => {
-    const result = applyTableOp({ op: 'set-whiteboard', whiteboardEmbed: 'https://example.com' }, {});
-    expect(result.whiteboardEmbed).toBe('https://example.com');
-  });
-
   it('set-player-emails sets playerEmails', () => {
     const result = applyTableOp({ op: 'set-player-emails', playerEmails: ['a@b.com'] }, {});
     expect(result.playerEmails).toEqual(['a@b.com']);
@@ -136,7 +131,6 @@ describe('applyPlayerTableOp', () => {
     fearCount: 0,
     featureCountdowns: {},
     tableBattleMods: {},
-    whiteboardEmbed: '',
     playerEmails: [],
     ...overrides,
   });
@@ -190,12 +184,6 @@ describe('applyPlayerTableOp', () => {
     const mods = { moreDangerous: true };
     const result = applyPlayerTableOp({ op: 'set-battle-mods', tableBattleMods: mods }, state);
     expect(result.tableBattleMods).toEqual(mods);
-  });
-
-  it('set-whiteboard updates whiteboardEmbed', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'set-whiteboard', whiteboardEmbed: 'https://wb.com' }, state);
-    expect(result.whiteboardEmbed).toBe('https://wb.com');
   });
 
   it('set-player-emails updates playerEmails', () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Dices, ChevronUp, X } from 'lucide-react';
+import { Dices, ChevronUp, ChevronDown } from 'lucide-react';
 
 // Per-sub-item accent colors: Hope → amber, Fear → purple, damage → red, else sky/green
 function subItemColor(pre) {
@@ -147,16 +147,19 @@ export function DiceLog({ rolls = [] }) {
           className="absolute bottom-0 left-0 right-0 z-30 bg-slate-950 border border-slate-700 border-b-0 rounded-t-lg shadow-2xl flex flex-col"
           style={{ height: '400px' }}
         >
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/60 shrink-0">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setOpen(false)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(false); } }}
+            className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/60 shrink-0 cursor-pointer"
+          >
             <Dices size={12} className="text-red-400 shrink-0" />
             <span className="text-[11px] font-semibold text-slate-300 flex-1">Dice Log</span>
             <span className="text-[10px] text-slate-500">{rolls.length} roll{rolls.length !== 1 ? 's' : ''}</span>
-            <button
-              onClick={() => setOpen(false)}
-              className="ml-1 text-slate-500 hover:text-slate-300 transition-colors"
-            >
-              <X size={12} />
-            </button>
+            <span className="ml-1 text-slate-500 hover:text-slate-300 transition-colors" aria-hidden>
+              <ChevronDown size={12} />
+            </span>
           </div>
           <div
             ref={scrollRef}
@@ -181,14 +184,12 @@ export function DiceLog({ rolls = [] }) {
         <Dices size={11} className="text-red-400 shrink-0" />
         <span className="text-[11px] font-medium text-slate-400 group-hover:text-slate-300 flex-1 text-left">Dice Log</span>
         {rolls.length > 0 && latestRoll && (
-          <span className="text-[10px] text-slate-500 truncate max-w-[60%] font-mono">
+          <span className="text-[10px] text-slate-500 truncate max-w-[40%] font-mono">
             {latestRoll.rollUser ? `${latestRoll.rollUser}: ` : ''}
             {latestRoll.total != null ? latestRoll.total : ''}
           </span>
         )}
-        {rolls.length > 0 && (
-          <span className="text-[10px] text-slate-600 tabular-nums shrink-0">{rolls.length}</span>
-        )}
+        <span className="text-[10px] text-slate-500 shrink-0">{rolls.length} roll{rolls.length !== 1 ? 's' : ''}</span>
         <ChevronUp
           size={11}
           className={`text-slate-600 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}

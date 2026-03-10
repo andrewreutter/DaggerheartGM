@@ -710,3 +710,23 @@ export async function getTableStatesByPlayerEmail(appId, email) {
   );
   return rows.map(r => ({ userId: r.user_id, data: r.data }));
 }
+
+export async function getWhiteboardSnapshot(appId, gmUid) {
+  const db = getPool();
+  const { rows } = await db.query(
+    'SELECT snapshot FROM whiteboard_snapshots WHERE app_id = $1 AND gm_uid = $2',
+    [appId, gmUid]
+  );
+  return rows[0]?.snapshot ?? null;
+}
+
+export async function saveWhiteboardSnapshot(appId, gmUid, snapshot) {
+  const db = getPool();
+  await db.query(
+    `INSERT INTO whiteboard_snapshots (app_id, gm_uid, snapshot, updated_at)
+     VALUES ($1, $2, $3, now())
+     ON CONFLICT (app_id, gm_uid)
+     DO UPDATE SET snapshot = EXCLUDED.snapshot, updated_at = now()`,
+    [appId, gmUid, JSON.stringify(snapshot)]
+  );
+}
