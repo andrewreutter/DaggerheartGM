@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Tldraw } from 'tldraw';
 import { useSync } from '@tldraw/sync';
 import { getAuthToken, supabaseStorageBase } from '../lib/api.js';
@@ -80,12 +80,36 @@ function makeAssetStore(gmUid) {
 }
 
 // Inner component: only rendered once we have a real URI, so useSync always gets valid args.
-function TldrawCanvas({ wsUri, assetStore, userInfo }) {
+function TldrawCanvas({ wsUri, assetStore, userInfo, isPlayer }) {
   const store = useSync({ uri: wsUri, assets: assetStore, userInfo });
-  return <Tldraw store={store} />;
+
+  const handleMount = useCallback((editor) => {
+    // Tag every newly created shape with the current user's UID so we can enforce ownership later.
+    editor.getInitialMetaForShape = (_shape) => ({ createdBy: userInfo.id });
+
+    if (isPlayer) {
+      // Players may not modify shapes created by others (or shapes with no owner, which are
+      // treated as GM-owned since they predate this feature). Remote sync changes are always
+      // allowed so the GM's edits propagate correctly to all connected clients.
+      editor.sideEffects.registerBeforeChangeHandler('shape', (prev, next, source) => {
+        if (source === 'remote') return next;
+        const owner = next.meta?.createdBy;
+        if (!owner || owner !== userInfo.id) return prev;
+        return next;
+      });
+
+      editor.sideEffects.registerBeforeDeleteHandler('shape', (shape, source) => {
+        if (source === 'remote') return;
+        const owner = shape.meta?.createdBy;
+        if (!owner || owner !== userInfo.id) return false;
+      });
+    }
+  }, [isPlayer, userInfo.id]);
+
+  return <Tldraw store={store} onMount={handleMount} />;
 }
 
-export function Whiteboard({ gmUid, user, className = '' }) {
+export function Whiteboard({ gmUid, user, isPlayer = false, className = '' }) {
   const [wsUri, setWsUri] = useState(null);
 
   useEffect(() => {
@@ -111,7 +135,7 @@ export function Whiteboard({ gmUid, user, className = '' }) {
   return (
     <div className={`relative ${className}`} style={{ colorScheme: 'dark', isolation: 'isolate' }}>
       {wsUri ? (
-        <TldrawCanvas wsUri={wsUri} assetStore={assetStore} userInfo={userInfo} />
+        <TldrawCanvas wsUri={wsUri} assetStore={assetStore} userInfo={userInfo} isPlayer={isPlayer} />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-sm">
           Connecting to whiteboard…

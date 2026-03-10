@@ -1622,7 +1622,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             canApplyDamage={!isPlayer}
           />
-          <Whiteboard gmUid={gmUid} user={user} className="flex-1 min-h-0" />
+          <Whiteboard gmUid={gmUid} user={user} isPlayer={isPlayer} className="flex-1 min-h-0" />
         </div>
         {/* Dice log footer — collapsed title bar; click to open overlay with roll history */}
         <DiceLog rolls={diceLog} />
