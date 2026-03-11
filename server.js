@@ -8,7 +8,7 @@ import { watchFile } from 'fs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, appendDiceRoll, getRecentDiceRolls } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, appendDiceRoll, ackDiceRoll, getRecentDiceRolls } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -22,12 +22,13 @@ import { syncDaggerstackCharacter, invalidateSrdLookupCache } from './src/dagger
 import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.js';
 import compression from 'compression';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { CHARACTER_RUNTIME_KEYS } from './src/client/lib/table-ops.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
-const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'table_state'];
+const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'characters', 'table_state'];
 
 /** Parse query param as array: tier=1&tier=2 → ['1','2'], tier=1,2 → ['1','2'] */
 function parseQueryArray(val) {
@@ -178,28 +179,96 @@ if (process.env.NODE_ENV !== 'production') {
 // --- Server-side dice rolling ---
 
 // Parse NdX±M expression and roll all dice using crypto.randomInt.
+// Also handles pure integer constants (e.g. "3", "-2") used for trait modifiers.
 function rollDice(expr) {
-  const m = /^(\d*)d(\d+)([+-]\d+)?$/i.exec((expr || '').trim());
+  const trimmed = (expr || '').trim();
+  // Pure integer constant (e.g. trait modifier "3" or "-2")
+  const constMatch = /^([+-]?\d+)$/.exec(trimmed);
+  if (constMatch) {
+    const val = parseInt(constMatch[1], 10);
+    return { qty: 0, sides: 0, modifier: val, values: [], result: val, details: `(${val})`, input: expr };
+  }
+  // Extended regex: NdS[kh|kl][!][mN][+/-M]
+  const m = /^(\d*)d(\d+)(kh|kl)?(!)?(?:m(\d+))?([+-]\d+)?$/i.exec(trimmed);
   if (!m) return null;
-  const qty = parseInt(m[1] || '1', 10);
-  const sides = parseInt(m[2], 10);
-  const modifier = m[3] ? parseInt(m[3], 10) : 0;
+  const qty      = parseInt(m[1] || '1', 10);
+  const sides    = parseInt(m[2], 10);
+  const keep     = (m[3] || '').toLowerCase() || null; // 'kh', 'kl', or null
+  const exploding = !!m[4];
+  const minimum  = m[5] ? parseInt(m[5], 10) : null;
+  const modifier = m[6] ? parseInt(m[6], 10) : 0;
   if (sides < 2 || qty < 1 || qty > 100) return null;
-  const values = Array.from({ length: qty }, () => randomInt(1, sides + 1));
-  const sum = values.reduce((a, b) => a + b, 0);
-  const result = sum + modifier;
-  const details = qty > 1 ? `(${values.join('+')})` : `(${values[0]})`;
-  return { qty, sides, modifier, values, result, details, input: expr };
+
+  // Roll initial dice
+  let values = Array.from({ length: qty }, () => randomInt(1, sides + 1));
+
+  // Apply minimum per die
+  if (minimum != null) values = values.map(v => Math.max(v, minimum));
+
+  // Exploding dice: any die = max triggers extra rolls (safety cap: 10 rounds)
+  const extraValues = [];
+  if (exploding) {
+    let toCheck = values.filter(v => v === sides);
+    for (let safety = 0; toCheck.length > 0 && safety < 10; safety++) {
+      const extras = toCheck.map(() => randomInt(1, sides + 1));
+      extraValues.push(...extras);
+      toCheck = extras.filter(v => v === sides);
+    }
+  }
+
+  // Keep highest / lowest: discard all but one
+  let keptValues = values;
+  let discardedValues = [];
+  if (keep === 'kh') {
+    const maxVal = Math.max(...values);
+    const maxIdx = values.indexOf(maxVal);
+    keptValues = [maxVal];
+    discardedValues = values.filter((_, i) => i !== maxIdx);
+  } else if (keep === 'kl') {
+    const minVal = Math.min(...values);
+    const minIdx = values.indexOf(minVal);
+    keptValues = [minVal];
+    discardedValues = values.filter((_, i) => i !== minIdx);
+  }
+
+  const allValues = [...values, ...extraValues];
+  const keptSum = keptValues.reduce((a, b) => a + b, 0) + extraValues.reduce((a, b) => a + b, 0);
+  const result = keptSum + modifier;
+
+  // Build details string.
+  // kh/kl: "(discarded1,discarded2->kept)"
+  // exploding/normal: "(v1+v2+...)"
+  let details;
+  if (keep) {
+    const discStr = discardedValues.join(',');
+    const keptStr = keptValues[0];
+    details = `(${discStr ? discStr + '->' : ''}${keptStr})`;
+  } else {
+    details = allValues.length === 1 ? `(${allValues[0]})` : `(${allValues.join('+')})`;
+  }
+
+  return { qty, sides, modifier, keep, exploding, minimum, values: allValues, keptValues, discardedValues, result, details, input: expr };
 }
 
-// Parse all [expr] bracket expressions from rollText, roll each, return subItems array.
+// Parse all [expr] bracket expressions from rollText, roll each, return { subItems, tags }.
+// {Name: description} feature tags are extracted first and stripped from the text so they
+// don't interfere with [expr] parsing.
 function rollFromText(rollText) {
+  // Extract {Name: text} feature tags.
+  const tags = [];
+  const tagRe = /\{([^}:]+):\s*([^}]+)\}/g;
+  let tagMatch;
+  while ((tagMatch = tagRe.exec(rollText)) !== null) {
+    tags.push({ name: tagMatch[1].trim(), text: tagMatch[2].trim() });
+  }
+  const cleanedText = rollText.replace(/\{[^}]+\}/g, '').trim();
+
   const subItems = [];
   const re = /\[([^\]]+)\]/g;
   let lastEnd = 0;
   let m;
-  while ((m = re.exec(rollText)) !== null) {
-    const pre = rollText.slice(lastEnd, m.index);
+  while ((m = re.exec(cleanedText)) !== null) {
+    const pre = cleanedText.slice(lastEnd, m.index);
     const expr = m[1].trim();
     const rolled = rollDice(expr);
     if (rolled) {
@@ -209,11 +278,14 @@ function rollFromText(rollText) {
     }
     lastEnd = m.index + m[0].length;
   }
-  if (subItems.length > 0 && lastEnd < rollText.length) {
-    subItems[subItems.length - 1].post = rollText.slice(lastEnd);
+  if (subItems.length > 0 && lastEnd < cleanedText.length) {
+    subItems[subItems.length - 1].post = cleanedText.slice(lastEnd);
   }
-  return subItems;
+  return { subItems, tags };
 }
+
+// Extra dice sub-items (feature dice) that should not count toward the action total.
+const EXTRA_PRE_RE = /^\s*(Reload|Invigorate|Lifesteal)\s*$/i;
 
 // Detect Daggerheart Hope/Fear dual-roll from subItems (mirrors client-side parseDaggerheartRoll).
 function parseDaggerheartResult(subItems) {
@@ -223,6 +295,7 @@ function parseDaggerheartResult(subItems) {
   let total = 0;
   for (const sub of subItems) {
     if (/damage/i.test(sub.pre || '')) continue;
+    if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
     const result = parseInt(sub.result, 10);
     if (isNaN(result)) continue;
     total += result;
@@ -242,7 +315,7 @@ function parseDaggerheartResult(subItems) {
 
 // Build a full roll data object from text + displayName.
 function buildRollData(rollText, displayName, _clientId, extra = {}) {
-  const subItems = rollFromText(rollText);
+  const { subItems, tags } = rollFromText(rollText);
   if (!subItems.length) return null;
   const dh = parseDaggerheartResult(subItems);
   let rollData;
@@ -252,11 +325,14 @@ function buildRollData(rollText, displayName, _clientId, extra = {}) {
     let total = 0;
     for (const sub of subItems) {
       if (/damage/i.test(sub.pre || '')) continue;
+      if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
       const v = parseInt(sub.result, 10);
       if (!isNaN(v)) total += v;
     }
     rollData = { rollUser: displayName || '', total, subItems, timestamp: Date.now() };
   }
+  rollData.rollText = rollText;
+  if (tags.length) rollData.tags = tags;
   if (_clientId) rollData._clientId = _clientId;
   return { ...rollData, ...extra };
 }
@@ -285,13 +361,17 @@ function getOrCreateRoom(gmUid) {
   return rooms.get(gmUid);
 }
 
-function appendRollLog(gmUid, rollData) {
+async function appendRollLog(gmUid, rollData) {
   const room = getOrCreateRoom(gmUid);
   room.rollLog.push(rollData);
   if (room.rollLog.length > ROLL_LOG_SIZE) room.rollLog.shift();
-  appendDiceRoll(APP_ID, gmUid, rollData).catch(err =>
-    console.error('[dice] DB write failed:', err.message)
-  );
+  try {
+    const dbId = await appendDiceRoll(APP_ID, gmUid, rollData);
+    // Mutate in place so the caller's reference (and the rollLog entry) carries the DB id
+    rollData._rollDbId = dbId;
+  } catch (err) {
+    console.error('[dice] DB write failed:', err.message);
+  }
 }
 
 function broadcastPresenceToGm(gmUid) {
@@ -308,6 +388,49 @@ function broadcastToAllRoomClients(gmUid, eventName, data, excludeRes = null) {
   const msg = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const { res } of room.players.values()) { if (res !== excludeRes) { res.write(msg); res.flush?.(); } }
   for (const clientRes of room.gmClients) { if (clientRes !== excludeRes) { clientRes.write(msg); clientRes.flush?.(); } }
+}
+
+// Fields persisted for character elements in table_state.
+// All other fields are resolved from the character library at read time.
+const CHARACTER_PERSIST_KEYS = new Set([...CHARACTER_RUNTIME_KEYS, 'id', 'name']);
+
+/**
+ * Resolve character elements in table state against the live character library.
+ * Non-character elements are returned unchanged. Characters not found in the library
+ * fall back to their stored data so nothing disappears if the character is deleted.
+ */
+async function resolveCharacterElements(elements) {
+  if (!elements?.length) return elements;
+  const charIds = elements
+    .filter(el => el.elementType === 'character' && el.id)
+    .map(el => el.id);
+  if (!charIds.length) return elements;
+  const charRows = await getItemsByIds(APP_ID, 'characters', charIds);
+  const libMap = new Map(charRows.map(r => [r.id, r]));
+  return elements.map(el => {
+    if (el.elementType !== 'character' || !el.id) return el;
+    const lib = libMap.get(el.id);
+    if (!lib) return el;
+    const runtime = {};
+    CHARACTER_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+    return { ...lib, ...runtime, elementType: 'character' };
+  });
+}
+
+/**
+ * Strip character elements down to only the persisted keys before writing to the DB.
+ * This prevents stale full snapshots from accumulating in table_state.
+ */
+function stripCharacterElements(elements) {
+  if (!elements?.length) return elements;
+  return elements.map(el => {
+    if (el.elementType !== 'character') return el;
+    const stripped = {};
+    for (const k of CHARACTER_PERSIST_KEYS) {
+      if (k in el) stripped[k] = el[k];
+    }
+    return stripped;
+  });
 }
 
 function broadcastToPlayers(gmUid, eventName, data) {
@@ -372,7 +495,7 @@ app.get('/api/fcg-search', requireAuth, async (req, res) => {
 
 // --- Per-collection paginated route ---
 
-const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures'];
+const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'characters'];
 const UNIFIED_COLLECTIONS = ['adversaries', 'environments'];
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
@@ -406,7 +529,11 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   if (collection === 'table_state') {
     try {
       const rows = await getItems(APP_ID, req.uid, 'table_state');
-      return res.json({ items: rows.map(r => ({ ...r, _source: 'own' })), totalCount: rows.length, dbCount: rows.length });
+      const resolved = await Promise.all(rows.map(async r => {
+        const elements = await resolveCharacterElements(r.elements);
+        return { ...r, elements, _source: 'own' };
+      }));
+      return res.json({ items: resolved, totalCount: resolved.length, dbCount: resolved.length });
     } catch (err) {
       console.error('GET /api/data/table_state error:', err);
       return res.status(500).json({ error: 'Failed to fetch table_state' });
@@ -980,13 +1107,39 @@ app.put('/api/data/:collection', requireAuth, async (req, res) => {
         dataToSave = deepMergePreservingImages(currentData, incoming);
       }
     }
+    // Strip character elements to only persisted keys before writing to DB
+    if (collection === 'table_state' && Array.isArray(dataToSave.elements)) {
+      dataToSave = { ...dataToSave, elements: stripCharacterElements(dataToSave.elements) };
+    }
     await upsertItem(APP_ID, req.uid, collection, id, dataToSave, Boolean(is_public));
     const saved = { id, ...dataToSave, is_public: Boolean(is_public), _source: 'own' };
     res.json(saved);
 
-    // Broadcast table_state to all connected room clients (players + other GM windows)
+    // When a character is saved, broadcast the updated library data to any active room
+    // where the saving user is the GM or a connected player, so all clients resolve
+    // character elements from the latest library record immediately.
+    if (collection === 'characters' && saved.id) {
+      for (const [gmUid, room] of rooms) {
+        if (gmUid === req.uid || room.players.has(req.uid)) {
+          broadcastToAllRoomClients(gmUid, 'table-op', {
+            op: 'character-library-update',
+            characterId: saved.id,
+            newBaseData: saved,
+            _clientId,
+          });
+        }
+      }
+    }
+
+    // Broadcast table_state to all connected room clients (players + other GM windows),
+    // resolving character elements from the library so all clients see fresh base data.
     if (collection === 'table_state' && rooms.has(req.uid)) {
-      broadcastToAllRoomClients(req.uid, 'state', { ...dataToSave, _clientId });
+      resolveCharacterElements(dataToSave.elements).then(resolvedElements => {
+        broadcastToAllRoomClients(req.uid, 'state', { ...dataToSave, elements: resolvedElements, _clientId });
+      }).catch(err => {
+        console.error('[table_state] resolve on broadcast failed, sending unresolved:', err.message);
+        broadcastToAllRoomClients(req.uid, 'state', { ...dataToSave, _clientId });
+      });
     }
   } catch (err) {
     console.error(`PUT /api/data/${collection} error:`, err);
@@ -1074,8 +1227,9 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
     req.socket.setTimeout(0);
     res.flushHeaders();
 
-    // Send initial state
-    res.write(`event: state\ndata: ${JSON.stringify(tableState)}\n\n`);
+    // Send initial state with characters resolved from library
+    const resolvedElements = await resolveCharacterElements(tableState.elements);
+    res.write(`event: state\ndata: ${JSON.stringify({ ...tableState, elements: resolvedElements })}\n\n`);
 
     // Track player in room
     const room = getOrCreateRoom(gmUid);
@@ -1115,14 +1269,45 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
 });
 
 // POST /api/room/my/roll — GM rolls dice server-side; result broadcast to all room clients
-app.post('/api/room/my/roll', requireAuth, (req, res) => {
+app.post('/api/room/my/roll', requireAuth, async (req, res) => {
   const { rollText, displayName, _clientId } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   const rollData = buildRollData(rollText, displayName, _clientId);
   if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
-  appendRollLog(req.uid, rollData);
+  await appendRollLog(req.uid, rollData);
   broadcastToAllRoomClients(req.uid, 'dice-roll', rollData);
   res.json(rollData);
+});
+
+// POST /api/room/my/action — GM broadcasts an action notification banner to all room clients
+// (no dice rolling; used for feature announcements, session cycle notifications, etc.)
+app.post('/api/room/my/action', requireAuth, (req, res) => {
+  const { _clientId, ...notification } = req.body;
+  if (!notification._action) notification._action = true;
+  // Attach _clientId so the sender can skip the echo
+  const payload = { ...notification, _clientId: _clientId || null };
+  broadcastToAllRoomClients(req.uid, 'dice-roll', payload);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:gmUid/action — Player broadcasts an action notification to the GM room
+app.post('/api/room/:gmUid/action', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const { _clientId, ...notification } = req.body;
+  try {
+    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+    const tableState = tableStateItems[0] || {};
+    if (!(tableState.playerEmails || []).includes(req.email)) {
+      return res.status(403).json({ error: 'Not a player in this room' });
+    }
+    if (!notification._action) notification._action = true;
+    const payload = { ...notification, _clientId: _clientId || null };
+    broadcastToAllRoomClients(gmUid, 'dice-roll', payload);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/action error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // POST /api/room/my/op — GM broadcasts a lightweight table operation to all room clients
@@ -1139,6 +1324,8 @@ app.post('/api/room/my/op', requireAuth, (req, res) => {
 
 // POST /api/room/my/dice-ack — GM broadcasts acknowledgement (dismiss + pulses) to all room clients
 app.post('/api/room/my/dice-ack', requireAuth, (req, res) => {
+  const { _rollDbId } = req.body;
+  if (_rollDbId) ackDiceRoll(_rollDbId).catch(err => console.error('[dice] ack DB write failed:', err.message));
   broadcastToAllRoomClients(req.uid, 'dice-ack', req.body);
   res.json({ ok: true });
 });
@@ -1174,24 +1361,46 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
     if (!(tableState.playerEmails || []).includes(req.email)) {
       return res.status(403).json({ error: 'Not invited to this room' });
     }
-    const { name, playerName, maxHope, maxHp, maxStress, tier, ...extraFields } = req.body;
-    const character = {
-      ...extraFields,
-      instanceId: crypto.randomUUID(),
+    const { id: charId, name, playerName, maxHope, maxHp, maxStress, tier,
+      hope, currentHp, currentStress, currentArmor, conditions, tokenX, tokenY,
+      assignedPlayerUid, ...extraFields } = req.body;
+    const instanceId = crypto.randomUUID();
+    const runtimeData = {
+      instanceId,
       elementType: 'character',
       assignedPlayerEmail: req.email,
-      name: name || 'Unnamed',
+      assignedPlayerUid: assignedPlayerUid || req.uid,
       playerName: playerName || req.email,
-      tier: tier || 1,
-      maxHope: maxHope || 6,
-      maxHp: maxHp || 6,
-      maxStress: maxStress || 6,
-      hope: extraFields.hope ?? (maxHope || 6),
-      currentHp: extraFields.currentHp ?? (maxHp || 6),
-      currentStress: extraFields.currentStress ?? 0,
-      currentArmor: extraFields.currentArmor ?? 0,
-      conditions: extraFields.conditions || '',
+      hope: hope ?? (maxHope || 6),
+      currentHp: currentHp ?? (maxHp || 6),
+      currentStress: currentStress ?? 0,
+      currentArmor: currentArmor ?? 0,
+      conditions: conditions || '',
+      tokenX: tokenX ?? null,
+      tokenY: tokenY ?? null,
     };
+
+    // Resolve from library so all clients get the latest character data, not a snapshot.
+    let character;
+    if (charId) {
+      const [libChar] = await getItemsByIds(APP_ID, 'characters', [charId]);
+      if (libChar) {
+        character = { ...libChar, ...runtimeData };
+      }
+    }
+    if (!character) {
+      // Fallback: library record not found, use the full snapshot sent by the player.
+      character = {
+        ...extraFields,
+        id: charId,
+        name: name || 'Unnamed',
+        tier: tier || 1,
+        maxHope: maxHope || 6,
+        maxHp: maxHp || 6,
+        maxStress: maxStress || 6,
+        ...runtimeData,
+      };
+    }
     broadcastToAllRoomClients(gmUid, 'character-added', character);
     res.json({ character });
   } catch (err) {
@@ -1204,17 +1413,20 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
 // broadcasts result to GM + all players via SSE.
 app.post('/api/room/:gmUid/roll', requireAuth, async (req, res) => {
   const { gmUid } = req.params;
-  const { rollText, displayName, _clientId } = req.body;
+  const { rollText, displayName, _clientId, ...rest } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
+  // Forward any _-prefixed meta fields (hopeCost, featureUse, attackerInstanceId, etc.)
+  // so the GM's dice-ack handler can apply resource costs from player feature rolls.
+  const extraMeta = Object.fromEntries(Object.entries(rest).filter(([k]) => k.startsWith('_')));
   try {
     const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
     const tableState = tableStateItems[0] || {};
     if (!(tableState.playerEmails || []).includes(req.email)) {
       return res.status(403).json({ error: 'Not a player in this room' });
     }
-    const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true });
+    const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
-    appendRollLog(gmUid, rollData);
+    await appendRollLog(gmUid, rollData);
     broadcastToAllRoomClients(gmUid, 'dice-roll', rollData);
     res.json(rollData);
   } catch (err) {

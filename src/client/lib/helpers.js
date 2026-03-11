@@ -44,9 +44,10 @@ export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'n
 export const effectiveThresholds = (el) => {
   if (!el?.armorThresholds) return null;
   const level = el.level ?? 0;
+  const reinforced = el.reinforcedActive ? 2 : 0;
   return {
-    major: el.armorThresholds.major + level,
-    severe: el.armorThresholds.severe + level,
+    major: el.armorThresholds.major + level + reinforced,
+    severe: el.armorThresholds.severe + level + reinforced,
   };
 };
 

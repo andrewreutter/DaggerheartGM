@@ -384,14 +384,14 @@ export const CLIENT_ID = crypto.randomUUID();
  * gmUid — pass the GM's uid for player rolls (routes to /api/room/:gmUid/roll);
  *          omit (null) for the GM's own rolls (routes to /api/room/my/roll).
  */
-export const postRoll = async (rollText, displayName, gmUid = null) => {
+export const postRoll = async (rollText, displayName, gmUid = null, rollMeta = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const url = gmUid ? `/api/room/${gmUid}/roll` : '/api/room/my/roll';
   const res = await fetch(url, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ rollText, displayName, _clientId: CLIENT_ID }),
+    body: JSON.stringify({ rollText, displayName, _clientId: CLIENT_ID, ...rollMeta }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -485,6 +485,24 @@ export const postAddCharacter = async (gmUid, charData) => {
 };
 
 /** GM: broadcast a table operation to all room clients (best-effort, fire-and-forget). */
+/**
+ * Broadcast an action notification banner to all room clients via SSE.
+ * gmUid: null = GM mode (POST /api/room/my/action), string = player mode.
+ * Best-effort — errors are swallowed.
+ */
+export const postActionNotification = async (notification, gmUid = null) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  const url = gmUid ? `/api/room/${gmUid}/action` : '/api/room/my/action';
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ ...notification, _clientId: CLIENT_ID }),
+    });
+  } catch { /* best-effort */ }
+};
+
 export const postTableOp = async (op) => {
   const token = await getAuthToken();
   if (!token) return;

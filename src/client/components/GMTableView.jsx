@@ -10,13 +10,17 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRoll, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postActionNotification, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
-import { TierSelector } from './TierSelector.jsx';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
+import { wrapEntity } from '../../features/entity.js';
+import { wrapRoll } from '../../features/roll.js';
+import { runHook, runPipelineHook } from '../../features/hooks.js';
+import { weaponFeatures, armorFeatures } from '../../features/registry.js';
+import { extractDetailsValues } from '../lib/dice-utils.js';
 
 
 /**
@@ -102,20 +106,29 @@ function parseFearCost(description) {
 // text on the last item, and both dice and flat-number expressions included. Results and
 // details are left empty; DiceRoller shows spinners for unknown values.
 function rollTextToSyntheticSubItems(rollText) {
+  // Extract {Name: text} feature tags and strip them before parsing [expr] sub-items.
+  const tags = [];
+  const tagRe = /\{([^}:]+):\s*([^}]+)\}/g;
+  let tagMatch;
+  while ((tagMatch = tagRe.exec(rollText)) !== null) {
+    tags.push({ name: tagMatch[1].trim(), text: tagMatch[2].trim() });
+  }
+  const cleanedText = rollText.replace(/\{[^}]+\}/g, '').trim();
+
   const items = [];
   const re = /\[([^\]]+)\]/g;
   let lastEnd = 0;
   let m;
-  while ((m = re.exec(rollText)) !== null) {
-    const pre = rollText.slice(lastEnd, m.index);
+  while ((m = re.exec(cleanedText)) !== null) {
+    const pre = cleanedText.slice(lastEnd, m.index);
     const expr = m[1].trim();
     items.push({ pre, input: expr, result: '', details: '', post: '' });
     lastEnd = m.index + m[0].length;
   }
-  if (items.length > 0 && lastEnd < rollText.length) {
-    items[items.length - 1].post = rollText.slice(lastEnd);
+  if (items.length > 0 && lastEnd < cleanedText.length) {
+    items[items.length - 1].post = cleanedText.slice(lastEnd);
   }
-  return items;
+  return { items, tags };
 }
 
 function buildAttackRollText(name, modifier, range, damage, trait, sourceName) {
@@ -235,7 +248,7 @@ function computeHpLoss(damage, thresholds) {
   return 1;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog, mapConfig, onMapConfigChange }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, playerDiceRollQueue = [], setPlayerDiceRollQueue, playerDiceAck, setPlayerDiceAck, onDiceAckBroadcast, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, diceLog = [], setDiceLog, mapConfig, onMapConfigChange }) {
   const isTouch = useTouchDevice();
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -252,9 +265,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
 
-  // Dice roller queue — each entry is a full roll object passed to DiceRoller.
-  // New rolls are appended; DiceRoller consumes [0] and calls onComplete to dequeue.
-  const [diceRollQueue, setDiceRollQueue] = useState([]);
+  // Dice roller ref — rolls are added imperatively via diceRollerRef.current?.addRoll()
+  // and updated via updateRoll(). No external queue needed; DiceRoller manages its own banner list.
 
   // Load scenes/adventures when picker opens so it can display the list.
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -273,6 +285,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
       setPickerLoading(true);
       ensureAdventuresLoaded().finally(() => setPickerLoading(false));
+    } else if (modalOpen === 'characters' && ensureCharactersLoaded) {
+      if ((data.characters || []).length > 0) {
+        setPickerLoading(false);
+        return;
+      }
+      setPickerLoading(true);
+      ensureCharactersLoaded().finally(() => setPickerLoading(false));
     } else {
       setPickerLoading(false);
     }
@@ -293,15 +312,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [budgetCardOpen, setBudgetCardOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef(null);
-  const [characterDialog, setCharacterDialog] = useState(null); // null | { editInstanceId?: string, name, playerName, tier, maxHope, maxHp, maxStress, daggerstackUrl?, daggerstackEmail?, daggerstackPassword?, _synced? }
+  // Character dialog removed — characters are now managed through the Library picker
   const [playerEmailInput, setPlayerEmailInput] = useState('');
   const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
   const [contactsToken, setContactsToken] = useState(null);
   const [contactSuggestions, setContactSuggestions] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const contactsDebounceRef = useRef(null);
-  const [dialogSyncing, setDialogSyncing] = useState(false);
-  const [dialogSyncError, setDialogSyncError] = useState('');
+  // dialogSyncing / dialogSyncError removed — character dialog replaced by Library picker
   const overlayScrollRef = useRef(null);
   const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
   // editState: null | { step: 'choice', baseElement, instances, collection }
@@ -337,7 +355,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     try {
       const { character, _debug, _lookupTables } = await syncDaggerstackCharacter(el.daggerstackUrl, el.daggerstackEmail, el.daggerstackPassword);
       // Preserve runtime state (current HP/stress/hope/armor, conditions, playerName)
-      updateActiveElement(el.instanceId, {
+      const updatedCharacter = {
         ...character,
         _daggerstackDebug: _debug,
         _daggerstackLookupTables: _lookupTables,
@@ -349,7 +367,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         currentArmor: el.currentArmor,
         conditions: el.conditions,
         playerName: el.playerName || character.playerName,
-      });
+      };
+      updateActiveElement(el.instanceId, updatedCharacter);
+      // Also save to the library so the resolution layer propagates the re-synced
+      // base data to any future table loads and other table instances.
+      if (el.id) {
+        saveItem('characters', { ...character, id: el.id }).catch(err => console.error('Re-sync library save failed:', err));
+      }
       // Update hover card element reference
       const prevCharData = characterOverlay.data;
       if (prevCharData?.element?.instanceId === el.instanceId) {
@@ -401,13 +425,108 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     });
   };
 
-  // Called from the banner's "Apply to" target badge.
-  const handleApplyDamage = (target, dmgTotal) => {
-    const hpLoss = computeHpLoss(dmgTotal, target.thresholds);
-    const currentHp = target.currentHp ?? target.maxHp ?? 0;
-    const newHp = Math.max(0, currentHp - hpLoss);
-    updateActiveElement(target.instanceId, { currentHp: newHp });
+
+  // Apply HP/Stress changes to a target after optional Parry reduction.
+  // armorOpts: { applyReduction?, markSlot?, feature? }
+  //   applyReduction: reduce hpLoss by 1 (or 2 for Fortified) — set by armor button
+  //   markSlot: actually consume an armor slot — false when Resilient saves it
+  //   feature: armor feature name ('Fortified', 'Painful', 'Reinforced', etc.)
+  // dmgType: 'phy' | 'mag' | '' — damage type from the roll's post tag (Phase 3)
+  const applyDamageToTarget = (target, effectiveDmgTotal, tagNames, roll, armorOpts = {}, dmgType = '') => {
+    const { applyReduction = false, markSlot = false, feature = null } = armorOpts;
+
+    // Wrap target and roll so feature hooks receive clean semantic APIs.
+    const entityTarget = wrapEntity(target, updateActiveElement);
+    const ctx = { target: entityTarget, tagNames, roll: wrapRoll(roll), dmgType };
+
+    // Pre-threshold damage modification (e.g. Warded subtracts armor score from magic damage)
+    const dmgTotalForCalc = runPipelineHook(
+      armorFeatures,
+      target.armorFeatureName ? [target.armorFeatureName] : [],
+      'modifyPreThresholdDamage',
+      effectiveDmgTotal,
+      ctx,
+    );
+
+    let hpLoss = computeHpLoss(dmgTotalForCalc, target.thresholds);
+
+    // HP loss modification (e.g. Deadly adds +1 on Severe)
+    hpLoss = runPipelineHook(weaponFeatures, tagNames, 'modifyHpLoss', hpLoss, ctx);
+
+    // Armor reduction when a slot is used
+    if (applyReduction) {
+      const reduction = armorFeatures[feature]?.armorReduction ?? 1;
+      hpLoss = Math.max(0, hpLoss - reduction);
+    }
+
+    entityTarget.markHp(hpLoss);
+
+    // Post-damage effects (Scary, Burning, etc.)
+    runHook(weaponFeatures, tagNames, 'onDamageApplied', ctx);
+
+    // Armor slot marking and triggered effects (Painful, Reinforced, etc.)
+    // markArmor() runs first so hooks see the post-mark count via target.currentArmor.
+    if (markSlot) {
+      entityTarget.markArmor();
+      runHook(armorFeatures, feature ? [feature] : [], 'onArmorSlotMarked', ctx);
+    }
+
     triggerDamagePulse(target.instanceId);
+    return entityTarget.currentHp;
+  };
+
+  // Called from the banner's "Apply to" target badge.
+  // Async to support Parry (which requires a server roll before applying damage).
+  // dmgType: 'phy' | 'mag' | '' — damage type extracted from the roll (Phase 3)
+  const handleApplyDamage = async (target, dmgTotal, tags = [], roll = null, dmgType = '') => {
+    const tagNames = new Set((tags || []).map(t => t.name));
+    let effectiveDmgTotal = dmgTotal;
+
+    // Parry: if target is a character with a Parry weapon, invoke the Parry hook
+    if (target.type === 'character') {
+      const charEl = activeElements.find(el => el.instanceId === target.instanceId);
+      const parryWeapon = (charEl?.weapons || []).find(w => w.feature?.name === 'Parry');
+      if (parryWeapon && roll?.subItems) {
+        const parryFeature = weaponFeatures['Parry'];
+        if (parryFeature?.onBeforeDamageApplied) {
+          effectiveDmgTotal = await parryFeature.onBeforeDamageApplied(effectiveDmgTotal, {
+            target: { ...target, name: charEl?.name || target.name },
+            roll,
+            parryWeapon,
+            postRoll,
+            addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
+          }) ?? effectiveDmgTotal;
+        }
+      }
+    }
+
+    // Armor usage: when the banner's armor button was clicked
+    let armorOpts = {};
+    if (target.useArmor && (target.currentArmor ?? 0) < (target.maxArmor ?? 0)) {
+      const feature = target.armorFeatureName ?? null;
+      const isLastSlot = (target.currentArmor ?? 0) + 1 >= (target.maxArmor ?? 0);
+      let markSlot = true;
+
+      // Resilient: on the last slot, invoke the Resilient hook which may save the slot
+      if (feature === 'Resilient' && isLastSlot) {
+        const resilientFeature = armorFeatures['Resilient'];
+        if (resilientFeature?.onLastArmorSlot) {
+          const charEl = activeElements.find(el => el.instanceId === target.instanceId);
+          const charName = charEl?.name || target.name;
+          const result = await resilientFeature.onLastArmorSlot({
+            target,
+            charName,
+            postRoll,
+            addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
+          });
+          if (result?.saveSlot) markSlot = false;
+        }
+      }
+
+      armorOpts = { applyReduction: true, markSlot, feature };
+    }
+
+    const newHp = applyDamageToTarget(target, effectiveDmgTotal, tagNames, roll, armorOpts, dmgType);
     pendingDamageRef.current = { instanceId: target.instanceId, newHp };
   };
 
@@ -454,19 +573,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
 
   // Receives confirmed roll data (from server HTTP response).
-  // Adds to the dice log and enqueues for 3D dice animation.
-  // If an optimistic roll is at the front of the queue, replace it with the real data
-  // (marked _update: true for DiceRoller to handle in-place).
-  const handleRollResult = (rollData) => {
+  // Adds to the dice log and resolves the matching optimistic banner (or adds a new one).
+  // optId — the _optId of the optimistic placeholder, if one was created.
+  const handleRollResult = (rollData, optId = null) => {
     const logEntry = { ...rollData, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
     setDiceLog(prev => [...prev.slice(-49), logEntry]);
-    setDiceRollQueue(prev => {
-      if (prev.length > 0 && prev[0]._optimistic) {
-        const { rollUser } = prev[0];
-        return [{ ...rollData, _update: true, rollUser, characterName: null }, ...prev.slice(1)];
-      }
-      return [...prev, rollData];
-    });
+    diceRollerRef.current?.updateRoll(optId, rollData);
   };
 
   // Compute pulse/element-update ack payload for broadcasting to players.
@@ -501,12 +613,183 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     return { pulses, elementUpdates };
   };
 
-  // Called by DiceRoller after animation + banner dismiss. Apply game side-effects now.
+  // Find the attacking character element from a roll user string.
+  const findAttacker = (rollUser) => {
+    const chars = activeElements.filter(el => el.elementType === 'character');
+    const nameLower = (rollUser || '').toLowerCase().trim();
+    let attacker = chars.find(el =>
+      el.name?.toLowerCase() === nameLower || el.playerName?.toLowerCase() === nameLower
+    );
+    if (!attacker) attacker = chars.find(el =>
+      (el.name && nameLower.startsWith(el.name.toLowerCase())) ||
+      (el.playerName && nameLower.startsWith(el.playerName.toLowerCase()))
+    );
+    if (!attacker && chars.length === 1) attacker = chars[0];
+    return attacker || null;
+  };
+
+
+  // Lucky: reroll the same attack, marking 1 Stress on the attacker.
+  // Dismiss the current banner first, then fire a fresh roll.
+  const handleLuckyReroll = async (roll) => {
+    const attacker = findAttacker(roll.rollUser);
+    if (attacker) {
+      const maxStress = attacker.maxStress ?? 6;
+      const newStress = Math.min((attacker.currentStress ?? 0) + 1, maxStress);
+      updateActiveElement(attacker.instanceId, { currentStress: newStress });
+    }
+    const rollText = roll.rollText;
+    if (!rollText) return;
+    // Dismiss only the Lucky banner so the reroll gets its own animation
+    if (roll._bannerId) diceRollerRef.current?.dismissBannerId?.(roll._bannerId);
+    const { items: syntheticSubItems, tags: syntheticTags } = rollTextToSyntheticSubItems(rollText);
+    const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (syntheticSubItems.length > 0) {
+      diceRollerRef.current?.addRoll({ _optimistic: true, _optId: optId, subItems: syntheticSubItems, tags: syntheticTags, rollUser: roll.rollUser });
+    }
+    try {
+      const rollData = await postRoll(rollText, roll.rollUser);
+      handleRollResult(rollData, optId);
+    } catch (err) {
+      console.error('Lucky reroll failed:', err);
+    }
+  };
+
+  // Quick: apply the same damage to a second target, marking 1 Stress on the attacker.
+  const handleQuickTarget = (target, dmgTotal, tags, roll, dmgType = '') => {
+    handleApplyDamage(target, dmgTotal, tags, roll, dmgType);
+    const attacker = findAttacker(roll.rollUser);
+    if (attacker) {
+      const maxStress = attacker.maxStress ?? 6;
+      const newStress = Math.min((attacker.currentStress ?? 0) + 1, maxStress);
+      updateActiveElement(attacker.instanceId, { currentStress: newStress });
+    }
+  };
+
+  // Bouncing: apply damage to an additional target and mark 1 Stress on the attacker.
+  // Does NOT dismiss — banner stays in bouncingPhase for another target if desired.
+  const handleBouncingTarget = (target, dmgTotal, tags, roll, dmgType = '') => {
+    handleApplyDamage(target, dmgTotal, tags, roll, dmgType);
+    const attacker = findAttacker(roll.rollUser);
+    if (attacker) {
+      const maxStress = attacker.maxStress ?? 6;
+      const newStress = Math.min((attacker.currentStress ?? 0) + 1, maxStress);
+      updateActiveElement(attacker.instanceId, { currentStress: newStress });
+    }
+  };
+
+  // Not This Time (Wizard): deduct 3 Hope from a Wizard and reroll the adversary roll.
+  const handleNotThisTime = async (wizard, roll) => {
+    const el = activeElements.find(e => e.instanceId === wizard.instanceId);
+    if (!el) return;
+    const maxHope = el.maxHope ?? 6;
+    const currentHope = el.hope ?? maxHope;
+    if (currentHope < 3) return;
+    updateActiveElement(wizard.instanceId, { hope: currentHope - 3 });
+    triggerHopePulse(wizard.instanceId);
+    const rollText = roll.rollText;
+    if (!rollText) return;
+    // Dismiss the original banner and issue a fresh reroll
+    if (roll._bannerId) diceRollerRef.current?.dismissBannerId?.(roll._bannerId);
+    const { items: syntheticSubItems, tags: syntheticTags } = rollTextToSyntheticSubItems(rollText);
+    const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (syntheticSubItems.length > 0) {
+      diceRollerRef.current?.addRoll({ _optimistic: true, _optId: optId, subItems: syntheticSubItems, tags: syntheticTags, rollUser: roll.rollUser, _notThisTime: true, _wizardName: wizard.name });
+    }
+    try {
+      const rollData = await postRoll(rollText, roll.rollUser);
+      handleRollResult(rollData, optId);
+    } catch (err) {
+      console.error('Not This Time reroll failed:', err);
+    }
+  };
+
+  // Action notification (e.g. Startling): push a synthetic _action entry to the DiceRoller.
+  const handleActionNotification = (notification) => {
+    // Show optimistically on the GM's DiceRoller immediately
+    diceRollerRef.current?.addRoll(notification);
+    // Broadcast to all other room clients (players and other GM windows) via SSE.
+    // Uses _clientId so the sender's own SSE echo is skipped.
+    postActionNotification(notification);
+  };
+
+  // Player action notification — broadcast to GM room (shows on GM + other players).
+  const handlePlayerActionNotification = (notification) => {
+    playerDiceRollerRef.current?.addRoll(notification);
+    postActionNotification(notification, gmUid);
+  };
+
+  // Doubled Up: parse secondary weapon damage from the tag and apply to a second target.
+  const handleDoubledUpTarget = (target, tags, roll) => {
+    const doubledTag = (tags || []).find(t => t.name === 'Doubled Up');
+    if (!doubledTag) return;
+    const dmgMatch = doubledTag.text?.match(/^([^\s]+)/);
+    if (!dmgMatch) return;
+    // Parse the secondary damage dice expression from the tag and resolve it.
+    // For simplicity, use the full damage string (e.g. "d6+3 phy") and just extract the dice part.
+    const fullDmg = doubledTag.text.split('--')[0].trim();
+    const dicePart = fullDmg.match(/^([^\s]+)/)?.[1] || '';
+    // Roll the secondary weapon damage via server.
+    const secRollText = `Doubled Up damage [${dicePart}]`;
+    postRoll(secRollText, `${roll.rollUser} (Doubled Up)`).then(secRollData => {
+      const secDamageSub = (secRollData.subItems || []).find(s => /damage/i.test(s.pre || '') && s.input);
+      const secDmgTotal = secDamageSub ? parseInt(secDamageSub.result, 10) : 0;
+      if (secDmgTotal > 0) {
+        handleApplyDamage(target, secDmgTotal, [], secRollData);
+      }
+    }).catch(err => console.error('Doubled Up roll failed:', err));
+  };
+
+
+  // Called by DiceRoller after a banner is dismissed. Apply game side-effects now.
   // Skip side effects if the roll was dismissed while still optimistic (real data not yet arrived).
+  // Delegates to the player-roll path when roll._isPlayerRoll is true.
   const handleDiceRollComplete = (roll) => {
-    setDiceRollQueue(prev => prev.slice(1));
+    if (roll._isPlayerRoll) {
+      handlePlayerRollComplete(roll);
+      return;
+    }
+    if (roll._action) {
+      // Apply feature costs for _featureUse action notifications
+      if (roll._featureUse && roll._attackerInstanceId) {
+        applyFeatureResources(roll._attackerInstanceId, roll);
+      }
+      // Action notifications: dispatch onRollComplete hook for action tags (Startling, Charged, etc.)
+      if (roll._attackerInstanceId) {
+        const actionTagNames = new Set((roll.tags || []).map(t => t.name));
+        const actionAttackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+        const actionAttacker = actionAttackerEl ? wrapEntity(actionAttackerEl, updateActiveElement) : null;
+        runHook(weaponFeatures, actionTagNames, 'onRollComplete', { attacker: actionAttacker, roll });
+      }
+      return;
+    }
     if (!roll._optimistic) {
+      // Apply feature costs for _featureUse dice rolls
+      if (roll._featureUse && roll._attackerInstanceId) {
+        applyFeatureResources(roll._attackerInstanceId, roll);
+      }
+      // Remove consumed one-shot modifier (e.g. Rally Die) from the character's active modifier bin
+      if (roll._usedModifierId && roll._attackerInstanceId) {
+        const modEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+        if (modEl?.activeModifiers?.length > 0) {
+          const kept = modEl.activeModifiers.filter(m => m.id !== roll._usedModifierId);
+          if (kept.length !== modEl.activeModifiers.length) {
+            updateActiveElement(roll._attackerInstanceId, { activeModifiers: kept });
+          }
+        }
+      }
+      // Dispatch onRollComplete hook for all weapon feature tags.
+      // Attacker is resolved from _attackerInstanceId (precise) or rollUser name (fallback).
+      {
+        const rollTagNames = new Set((roll.tags || []).map(t => t.name));
+        const attackerEl = roll._attackerInstanceId
+          ? activeElements.find(e => e.instanceId === roll._attackerInstanceId)
+          : findAttacker(roll.rollUser);
+        const attacker = attackerEl ? wrapEntity(attackerEl, updateActiveElement) : null;
+        runHook(weaponFeatures, rollTagNames, 'onRollComplete', { attacker, roll });
+      }
       const ackData = computeRollAck(roll.dominant, roll.rollUser);
+      if (roll._rollDbId) ackData._rollDbId = roll._rollDbId;
       applyRollSideEffects(roll.dominant, roll.rollUser);
       const dmgPending = pendingDamageRef.current;
       pendingDamageRef.current = null;
@@ -518,13 +801,52 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
-  // Called when a player's roll (from playerDiceRollQueue) finishes animating on the GM screen.
-  // Mirrors handleDiceRollComplete: applies side effects and broadcasts ack to all players.
+  // Called when a player's roll banner is dismissed on the GM screen.
+  // Applies side effects and broadcasts ack to all players.
+  // Also handles cleanup from playerDiceRollQueue for SSE-originated rolls.
   const handlePlayerRollComplete = (roll) => {
+    if (roll._action) {
+      // Apply feature costs for player action notifications (e.g. Hope ability with no dice)
+      if (roll._featureUse && roll._attackerInstanceId) {
+        applyFeatureResources(roll._attackerInstanceId, roll);
+      }
+      if (roll._attackerInstanceId) {
+        const actionTagNames = new Set((roll.tags || []).map(t => t.name));
+        const actionAttackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+        const actionAttacker = actionAttackerEl ? wrapEntity(actionAttackerEl, updateActiveElement) : null;
+        runHook(weaponFeatures, actionTagNames, 'onRollComplete', { attacker: actionAttacker, roll });
+      }
+      if (roll._rollId) setPlayerDiceRollQueue?.(prev => prev.filter(r => r._rollId !== roll._rollId));
+      return;
+    }
     if (!roll._optimistic) {
       const logEntry = { ...roll, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
       setDiceLog(prev => [...prev.slice(-49), logEntry]);
+      // Apply feature costs for player feature dice rolls
+      if (roll._featureUse && roll._attackerInstanceId) {
+        applyFeatureResources(roll._attackerInstanceId, roll);
+      }
+      // Remove consumed one-shot modifier (e.g. Rally Die) on ack
+      if (roll._usedModifierId && roll._attackerInstanceId) {
+        const modEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+        if (modEl?.activeModifiers?.length > 0) {
+          const kept = modEl.activeModifiers.filter(m => m.id !== roll._usedModifierId);
+          if (kept.length !== modEl.activeModifiers.length) {
+            updateActiveElement(roll._attackerInstanceId, { activeModifiers: kept });
+          }
+        }
+      }
+      // Dispatch onRollComplete hook for all weapon feature tags.
+      {
+        const rollTagNames = new Set((roll.tags || []).map(t => t.name));
+        const attackerEl = roll._attackerInstanceId
+          ? activeElements.find(e => e.instanceId === roll._attackerInstanceId)
+          : findAttacker(roll.rollUser);
+        const attacker = attackerEl ? wrapEntity(attackerEl, updateActiveElement) : null;
+        runHook(weaponFeatures, rollTagNames, 'onRollComplete', { attacker, roll });
+      }
       const ackData = computeRollAck(roll.dominant, roll.rollUser);
+      if (roll._rollDbId) ackData._rollDbId = roll._rollDbId;
       applyRollSideEffects(roll.dominant, roll.rollUser);
       const dmgPending = pendingDamageRef.current;
       pendingDamageRef.current = null;
@@ -534,7 +856,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
       onDiceAckBroadcast?.(ackData);
     }
-    setPlayerDiceRollQueue?.(prev => prev.slice(1));
+    // Clean up SSE-originated rolls from the external queue
+    if (roll._rollId) setPlayerDiceRollQueue?.(prev => prev.filter(r => r._rollId !== roll._rollId));
   };
   const handleSpendHope = (instanceId) => {
     const el = activeElements.find(e => e.instanceId === instanceId);
@@ -556,12 +879,135 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     triggerHopePulse(instanceId);
   };
 
-  // Player: handle dice-ack event — dismiss banner and apply element updates from GM
+  // ── Feature resource application ─────────────────────────────────────────────
+  // Called on banner dismiss when roll._featureUse is true.
+  // Applies Hope/Stress/Armor costs and marks feature as used.
+  const applyFeatureResources = (instanceId, roll) => {
+    const el = activeElements.find(e => e.instanceId === instanceId);
+    if (!el) return;
+    const updates = {};
+
+    if (roll._hopeCost > 0) {
+      const maxHope = el.maxHope ?? 6;
+      const current = el.hope ?? maxHope;
+      updates.hope = Math.max(0, current - roll._hopeCost);
+      triggerHopePulse(instanceId);
+    }
+    if (roll._stressCost > 0) {
+      const maxStress = el.maxStress ?? 6;
+      updates.currentStress = Math.min((el.currentStress ?? 0) + roll._stressCost, maxStress);
+    }
+    if (roll._armorClear > 0) {
+      updates.currentArmor = Math.max(0, (el.currentArmor ?? 0) - roll._armorClear);
+    }
+    if (roll._armorMark > 0) {
+      const maxArmor = el.maxArmor ?? 0;
+      updates.currentArmor = Math.min((el.currentArmor ?? 0) + roll._armorMark, maxArmor);
+    }
+    if (roll._featureKey && roll._frequency) {
+      updates.featureUsage = {
+        ...(el.featureUsage || {}),
+        [roll._featureKey]: { used: true, cycle: roll._frequency },
+      };
+    }
+    // Feature-specific modifier additions — attacker only
+    if (roll._addModifiers?.length > 0 && !roll._distributeModifiersToAll) {
+      updates.activeModifiers = [...(el.activeModifiers || []), ...roll._addModifiers];
+    }
+    if (Object.keys(updates).length > 0) {
+      updateActiveElement(instanceId, updates);
+    }
+    // Distribute modifiers to ALL characters (e.g. Rally Die distributes to whole party)
+    if (roll._distributeModifiersToAll && roll._addModifiers?.length > 0) {
+      const allChars = activeElements.filter(e => e.elementType === 'character');
+      for (const char of allChars) {
+        // Give each character a uniquely-ID'd copy of the modifier
+        const mods = roll._addModifiers.map(m => ({ ...m, id: `${m.id || m.name}-${char.instanceId}` }));
+        updateActiveElement(char.instanceId, {
+          activeModifiers: [...(char.activeModifiers || []), ...mods],
+        });
+      }
+    }
+  };
+
+  // ── Session / Rest cycle handlers ────────────────────────────────────────────
+  // Broadcast an action banner and reset matching featureUsage / activeModifiers.
+  const handleSessionCycle = (cycle) => {
+    const label = cycle === 'session' ? 'Start Session'
+      : cycle === 'rest' ? 'Short Rest'
+      : 'Long Rest';
+    const cyclesToClear = cycle === 'session' ? ['session']
+      : cycle === 'rest' ? ['rest']
+      : ['rest', 'longRest'];
+
+    // Show locally AND broadcast to all room clients
+    const cycleNotification = {
+      _action: true,
+      rollUser: 'GM',
+      actionName: label,
+      actionText: cycle === 'session'
+        ? 'Session started — session-use features refreshed.'
+        : cycle === 'rest'
+          ? 'Short rest — rest-use features refreshed.'
+          : 'Long rest — rest and long-rest features refreshed.',
+    };
+    diceRollerRef.current?.addRoll(cycleNotification);
+    postActionNotification(cycleNotification);
+
+    // Clear matching featureUsage and activeModifiers on all character elements
+    const characters = activeElements.filter(e => e.elementType === 'character');
+    for (const char of characters) {
+      const updates = {};
+      if (char.featureUsage) {
+        const nextUsage = { ...char.featureUsage };
+        let changed = false;
+        for (const [key, val] of Object.entries(nextUsage)) {
+          if (cyclesToClear.includes(val.cycle)) {
+            delete nextUsage[key];
+            changed = true;
+          }
+        }
+        if (changed) updates.featureUsage = nextUsage;
+      }
+      if (char.activeModifiers?.length > 0) {
+        const kept = char.activeModifiers.filter(m => !cyclesToClear.includes(m.refreshOn));
+        if (kept.length !== char.activeModifiers.length) updates.activeModifiers = kept;
+      }
+      if (Object.keys(updates).length > 0) {
+        updateActiveElement(char.instanceId, updates);
+      }
+    }
+  };
+
+  // Forward SSE dice-roll items from playerDiceRollQueue to the right DiceRoller imperatively.
+  // Player's own rolls are already sent via addRoll in handlePlayerOwnRoll; only SSE items
+  // (marked _fromSSE: true) and history items (marked _fromHistory: true) arrive here.
   const playerDiceRollerRef = useRef(null);
+  const forwardedRollIds = useRef(new Set());
+  useEffect(() => {
+    const diceRef = isPlayer ? playerDiceRollerRef : diceRollerRef;
+    for (const roll of playerDiceRollQueue) {
+      if (!roll._rollId || forwardedRollIds.current.has(roll._rollId)) continue;
+      forwardedRollIds.current.add(roll._rollId);
+      diceRef.current?.addRoll({
+        ...roll,
+        // History rolls carry _playerInitiated on their data; use it to route correctly.
+        // SSE rolls from players also carry _playerInitiated: true; others do not.
+        _isPlayerRoll: roll._playerInitiated === true,
+      });
+    }
+    // Prune forwarded IDs that are no longer in the queue
+    const currentIds = new Set(playerDiceRollQueue.map(r => r._rollId).filter(Boolean));
+    for (const id of forwardedRollIds.current) {
+      if (!currentIds.has(id)) forwardedRollIds.current.delete(id);
+    }
+  }, [playerDiceRollQueue]);
+
+  // Player: handle dice-ack event — dismiss banner and apply element updates from GM
   useEffect(() => {
     if (!isPlayer || !playerDiceAck) return;
-    // Dismiss the player's banner
-    playerDiceRollerRef.current?.dismiss();
+    // Dismiss only the oldest banner (one ack = one roll acknowledged), not all
+    playerDiceRollerRef.current?.dismissFirst?.();
     // Apply element updates (hope, stress, hp changes)
     if (Array.isArray(playerDiceAck.elementUpdates)) {
       playerDiceAck.elementUpdates.forEach(({ instanceId, updates }) => {
@@ -742,7 +1188,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       );
     } else {
       await saveItem(collection, itemWithId);
-      updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+      // Characters are resolved at render-time from the library, so no manual
+      // activeElements update is needed — saveItem already updated data.characters.
+      if (collection !== 'characters') {
+        updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+      }
     }
   };
 
@@ -781,18 +1231,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
     const displayName = `${feature.sourceName} ${feature.name}`;
     const key = `${feature.cardKey}|${feature.featureKey}`;
-    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const { items: syntheticSubItems, tags: syntheticTags } = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
+      diceRollerRef.current?.addRoll({ _optimistic: true, _optId: optId, subItems: syntheticSubItems, tags: syntheticTags, rollUser: displayName });
     }
     try {
       const rollData = await postRoll(rollText, displayName);
-      handleRollResult(rollData);
+      handleRollResult(rollData, optId);
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     } catch (err) {
-      if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Roll failed:', err);
     }
   };
@@ -809,32 +1258,30 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
     }
     const displayName = `${sourceName} ${name}`;
-    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const { items: syntheticSubItems, tags: syntheticTags } = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName }]);
+      diceRollerRef.current?.addRoll({ _optimistic: true, _optId: optId, subItems: syntheticSubItems, tags: syntheticTags, rollUser: displayName });
     }
     try {
       const rollData = await postRoll(rollText, displayName);
-      handleRollResult(rollData);
+      handleRollResult(rollData, optId);
     } catch (err) {
-      if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Roll failed:', err);
     }
   };
 
-  const handleTraitRoll = async (rollText, displayName) => {
+  const handleTraitRoll = async (rollText, displayName, rollMeta = {}) => {
     dismissAllHoverCards();
-    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const { items: syntheticSubItems, tags: syntheticTags } = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (syntheticSubItems.length > 0) {
-      setDiceRollQueue(prev => [...prev, { _optimistic: true, _optId: optId, subItems: syntheticSubItems, rollUser: displayName || rollText }]);
+      diceRollerRef.current?.addRoll({ _optimistic: true, _optId: optId, subItems: syntheticSubItems, tags: syntheticTags, rollUser: displayName || rollText, ...rollMeta });
     }
     try {
       const rollData = await postRoll(rollText, displayName || rollText);
-      handleRollResult(rollData);
+      handleRollResult({ ...rollData, ...rollMeta }, optId);
     } catch (err) {
-      if (syntheticSubItems.length > 0) setDiceRollQueue(prev => prev.filter(r => r._optId !== optId));
       console.error('Trait roll failed:', err);
     }
   };
@@ -842,28 +1289,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // Roll handler for a player acting on their own character.
   // Routes through POST /api/room/:gmUid/roll (validated server-side, real dice).
   // GM preview mode uses the GM roll route (null gmUid → /api/room/my/roll).
-  const handlePlayerOwnRoll = async (rollText, displayName) => {
+  const handlePlayerOwnRoll = async (rollText, displayName, rollMeta = {}) => {
     dismissAllHoverCards();
-    const syntheticSubItems = rollTextToSyntheticSubItems(rollText);
+    const { items: syntheticSubItems, tags: syntheticTags } = rollTextToSyntheticSubItems(rollText);
     const optId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // In player mode use playerDiceRollerRef; in GM preview mode use diceRollerRef
+    const diceRef = isPlayer ? playerDiceRollerRef : diceRollerRef;
     if (syntheticSubItems.length > 0) {
-      const optimisticRoll = { _optimistic: true, _optId: optId, _playerInitiated: true, subItems: syntheticSubItems, rollUser: displayName || rollText };
-      setPlayerDiceRollQueue?.(prev => [...prev, optimisticRoll]);
+      const optimisticRoll = { _optimistic: true, _optId: optId, _playerInitiated: true, subItems: syntheticSubItems, tags: syntheticTags, rollUser: displayName || rollText, ...rollMeta };
+      diceRef.current?.addRoll(optimisticRoll);
     }
     // Real player mode uses the player route; GM preview uses the GM route (null)
     const targetGmUid = (isPlayer && !previewAsPlayerEmail) ? gmUid : null;
     try {
-      const rollData = await postRoll(rollText, displayName || rollText, targetGmUid);
-      setPlayerDiceRollQueue?.(prev => {
-        if (prev.length > 0 && prev[0]._optimistic) {
-          const { rollUser } = prev[0];
-          return [{ ...rollData, _update: true, rollUser, characterName: null, _playerInitiated: true }, ...prev.slice(1)];
-        }
-        return [...prev, { ...rollData, _playerInitiated: true }];
-      });
+      const rollData = await postRoll(rollText, displayName || rollText, targetGmUid, rollMeta);
+      diceRef.current?.updateRoll(optId, { ...rollData, _playerInitiated: true, ...rollMeta });
       setDiceLog(prev => [...prev.slice(-49), { ...rollData, _logId: `${Date.now()}-${Math.random().toString(36).slice(2)}` }]);
     } catch (err) {
-      if (syntheticSubItems.length > 0) setPlayerDiceRollQueue?.(prev => prev.filter(r => r._optId !== optId));
       console.error('Player roll failed:', err);
     }
   };
@@ -926,6 +1368,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           thresholds: effectiveThresholds(el),
           maxHp: el.maxHp ?? 0,
           currentHp: el.currentHp ?? el.maxHp ?? 0,
+          currentStress: el.currentStress ?? 0,
+          maxStress: el.maxStress ?? 6,
+          currentArmor: el.currentArmor ?? 0,
+          maxArmor: el.maxArmor ?? 0,
+          armorFeatureName: el.armorMods?.feature?.name ?? null,
+          armorScore: el.armorScore ?? 0,
         });
       } else if (item.kind === 'adversary-group') {
         const { baseElement, instances } = item;
@@ -937,6 +1385,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             thresholds: baseElement.hp_thresholds,
             maxHp: baseElement.hp_max ?? 0,
             currentHp: inst.currentHp ?? baseElement.hp_max ?? 0,
+            currentStress: inst.currentStress ?? 0,
+            maxStress: baseElement.stress_max ?? 0,
           });
         });
       }
@@ -1051,6 +1501,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
   const tableCharacters = activeElements.filter(e => e.elementType === 'character');
+  const wizardsWithHope = tableCharacters.filter(c => {
+    const cls = (c.class || '').toLowerCase();
+    const hope = c.hope ?? (c.maxHope ?? 6);
+    return cls === 'wizard' && hope >= 3;
+  });
 
   const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
@@ -1230,17 +1685,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
 
         <div className="p-2 space-y-3">
-          {/* + Add Character button */}
+          {/* + Add Character button — opens the character picker */}
           <button
-            onClick={() => {
-              if (isPlayer && onPlayerAddCharacter) {
-                setDialogSyncError('');
-                setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6, daggerstackUrl: '', daggerstackEmail: '', daggerstackPassword: '', _synced: false, _playerMode: true });
-              } else if (!isPlayer) {
-                setDialogSyncError('');
-                setCharacterDialog({ name: '', playerName: '', tier: 1, maxHope: 6, maxHp: 6, maxStress: 6, daggerstackUrl: '', daggerstackEmail: '', daggerstackPassword: '', _synced: false });
-              }
-            }}
+            onClick={() => setModalOpen('characters')}
             className="w-full rounded-lg border border-dashed border-sky-900/50 bg-sky-950/20 hover:border-sky-700/60 hover:bg-sky-950/40 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
             <Plus size={12} className="text-sky-500" />
@@ -1254,7 +1701,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             <div
               key={el.instanceId}
               className={`rounded-lg border overflow-hidden group/char transition-colors ${isMyCharacter ? 'bg-green-950/30 border-green-700/50' : 'bg-sky-950/30'} ${hopePulsingId === el.instanceId ? 'border-amber-400 hope-pulse-anim' : isMyCharacter ? '' : 'border-sky-900/40'}`}
-              {...(el.daggerstackUrl ? characterOverlay.triggerProps(e => ({ element: el, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom })) : {})}
+              {...characterOverlay.triggerProps(e => ({ element: el, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
             >
               <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
                 <User size={10} className={isMyCharacter ? 'text-green-400 shrink-0' : 'text-sky-400 shrink-0'} />
@@ -1263,11 +1710,22 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 {el.playerName && (
                   <span className="text-[10px] text-sky-300/60 truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
                 )}
-                {/* GM: edit/remove + assignment dropdown */}
+                {/* GM: edit/remove */}
                 {!isPlayer && (
                   <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
                     <button
-                      onClick={() => { setDialogSyncError(''); setCharacterDialog({ editInstanceId: el.instanceId, name: el.name, playerName: el.playerName || '', tier: el.tier ?? 1, maxHope: el.maxHope ?? 6, maxHp: el.maxHp, maxStress: el.maxStress, daggerstackUrl: el.daggerstackUrl || '', daggerstackEmail: el.daggerstackEmail || '', daggerstackPassword: el.daggerstackPassword || '', _synced: !!el.daggerstackUrl }); }}
+                      onClick={() => {
+                        if (el.id) {
+                          // Characters are stored by reference — always edit the library original
+                          // directly (no "edit copy" option) so changes propagate to the table.
+                          const libraryItem = data.characters?.find(i => i.id === el.id) || el;
+                          navigate(gmUid ? `/gm-table/${gmUid}/characters/${el.id}` : `/gm-table/characters/${el.id}`);
+                          setEditState({ step: 'form', item: libraryItem, collection: 'characters', mode: 'original', instances: [el], baseElement: el });
+                        } else {
+                          navigate(gmUid ? `/gm-table/${gmUid}/characters/${el.instanceId}` : `/gm-table/characters/${el.instanceId}`);
+                          setEditState({ step: 'form', item: el, collection: 'characters', mode: 'copy', instances: [el], baseElement: el });
+                        }
+                      }}
                       className="text-slate-500 hover:text-sky-400 transition-colors"
                       title="Edit character"
                     ><Pencil size={11} /></button>
@@ -1339,7 +1797,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     <CheckboxTrack
                       total={el.maxArmor || 0}
                       filled={el.currentArmor || 0}
-                      onSetFilled={isAssigned ? (v) => updateActiveElement(el.instanceId, { currentArmor: v }) : undefined}
+                      onSetFilled={isAssigned ? (v) => {
+                        const upd = { currentArmor: v };
+                        if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                        updateActiveElement(el.instanceId, upd);
+                      } : undefined}
                       fillColor="bg-cyan-500"
                       label="Armor"
                       verbs={['Mark', 'Clear']}
@@ -1611,16 +2073,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
           <DiceRoller
             ref={isPlayer ? playerDiceRollerRef : diceRollerRef}
-            roll={isPlayer ? playerDiceRollQueue[0] : (diceRollQueue[0] ?? playerDiceRollQueue[0])}
+            isPlayer={isPlayer}
             onComplete={isPlayer
-              ? (roll) => setPlayerDiceRollQueue?.(prev => prev.slice(1))
-              : (!diceRollQueue[0] && playerDiceRollQueue[0])
-                ? handlePlayerRollComplete
-                : handleDiceRollComplete
+              ? (roll) => {
+                  // Clean up SSE rolls from the external queue; own rolls have no queue entry.
+                  if (roll._rollId) setPlayerDiceRollQueue?.(prev => prev.filter(r => r._rollId !== roll._rollId));
+                }
+              : handleDiceRollComplete
             }
             targets={isPlayer ? [] : damageTargets}
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             canApplyDamage={!isPlayer}
+            onLuckyReroll={isPlayer ? undefined : handleLuckyReroll}
+            onQuickTarget={isPlayer ? undefined : handleQuickTarget}
+            onDoubledUpTarget={isPlayer ? undefined : handleDoubledUpTarget}
+            onBouncingTarget={isPlayer ? undefined : handleBouncingTarget}
+            wizardsWithHope={isPlayer ? [] : wizardsWithHope}
+            onNotThisTime={isPlayer ? undefined : handleNotThisTime}
           />
           <BattleMap
             gmUid={gmUid}
@@ -1808,6 +2277,24 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 )}
               </div>
             )}
+          </div>
+          {/* Session / Rest cycle buttons */}
+          <div className="flex items-center gap-1">
+            <button
+              title="Start Session — refresh session-use features for all characters"
+              onClick={() => handleSessionCycle('session')}
+              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+            >▶ Session</button>
+            <button
+              title="Short Rest — refresh rest-use features for all characters"
+              onClick={() => handleSessionCycle('rest')}
+              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+            >⏸ Short</button>
+            <button
+              title="Long Rest — refresh rest and long-rest features for all characters"
+              onClick={() => handleSessionCycle('longRest')}
+              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-violet-800/60 bg-violet-950/30 text-violet-400 hover:bg-violet-900/40 hover:border-violet-700 transition-colors"
+            >⏹ Long</button>
           </div>
           {/* Fear tracker */}
           <div
@@ -2129,264 +2616,22 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         </div>
       )}
 
-    {characterDialog && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setCharacterDialog(null)}>
-        <div className="bg-slate-800 border border-sky-900/60 rounded-xl shadow-2xl w-96 p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center gap-2">
-            <User size={16} className="text-sky-400 shrink-0" />
-            <h3 className="text-sm font-bold text-sky-200">
-              {characterDialog.editInstanceId ? 'Edit Character' : 'Add Character'}
-            </h3>
-          </div>
-
-          {/* Daggerstack sync section */}
-          <div className="rounded-lg border border-sky-900/40 bg-sky-950/20 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setCharacterDialog(d => ({ ...d, _dsOpen: !d._dsOpen }))}
-              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-sky-950/30 transition-colors"
-            >
-              <ExternalLink size={12} className="text-sky-500 shrink-0" />
-              <span className="text-[11px] font-semibold text-sky-300 flex-1">Sync from Daggerstack</span>
-              {characterDialog._synced && (
-                <span className="text-[9px] bg-sky-900/60 text-sky-300 rounded px-1.5 py-0.5">synced</span>
-              )}
-              {characterDialog._dsOpen ? <ChevronDown size={11} className="text-slate-500" /> : <ChevronRight size={11} className="text-slate-500" />}
-            </button>
-            {characterDialog._dsOpen && (
-              <div className="px-3 pb-3 space-y-2 border-t border-sky-900/30">
-                <div className="pt-2">
-                  <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Character URL</label>
-                  <input
-                    type="text"
-                    placeholder="https://daggerstack.com/character/12345"
-                    value={characterDialog.daggerstackUrl || ''}
-                    onChange={e => setCharacterDialog(d => ({ ...d, daggerstackUrl: e.target.value }))}
-                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Daggerstack Email</label>
-                  <input
-                    type="email"
-                    placeholder="you@example.com"
-                    value={characterDialog.daggerstackEmail || ''}
-                    onChange={e => setCharacterDialog(d => ({ ...d, daggerstackEmail: e.target.value }))}
-                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Daggerstack Password</label>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    value={characterDialog.daggerstackPassword || ''}
-                    onChange={e => setCharacterDialog(d => ({ ...d, daggerstackPassword: e.target.value }))}
-                    className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-500"
-                  />
-                </div>
-                {dialogSyncError && (
-                  <p className="text-[11px] text-red-400 leading-tight">{dialogSyncError}</p>
-                )}
-                <button
-                  type="button"
-                  disabled={dialogSyncing || !characterDialog.daggerstackUrl?.trim() || !characterDialog.daggerstackEmail?.trim() || !characterDialog.daggerstackPassword?.trim()}
-                  onClick={async () => {
-                    setDialogSyncError('');
-                    setDialogSyncing(true);
-                    try {
-                      const { character, _debug, _lookupTables } = await syncDaggerstackCharacter(
-                        characterDialog.daggerstackUrl,
-                        characterDialog.daggerstackEmail,
-                        characterDialog.daggerstackPassword,
-                      );
-                      setCharacterDialog(d => ({
-                        ...d,
-                        name: character.name || d.name,
-                        playerName: d.playerName || '',
-                        tier: character.tier ?? d.tier,
-                        maxHope: character.maxHope ?? d.maxHope,
-                        maxHp: character.maxHp ?? d.maxHp,
-                        maxStress: character.maxStress ?? d.maxStress,
-                        _syncedData: { ...character, _daggerstackDebug: _debug, _daggerstackLookupTables: _lookupTables },
-                        _synced: true,
-                      }));
-                    } catch (err) {
-                      setDialogSyncError(err.message);
-                    } finally {
-                      setDialogSyncing(false);
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-sky-100 text-xs font-semibold transition-colors"
-                >
-                  <RefreshCw size={11} className={dialogSyncing ? 'animate-spin' : ''} />
-                  {dialogSyncing ? 'Syncing…' : 'Sync Character'}
-                </button>
-                <p className="text-[10px] text-slate-500 leading-tight">
-                  Credentials are stored with the character and used to re-sync later. Stats (HP, Stress, etc.) are overwritten from Daggerstack on each sync.
-                </p>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <div>
-              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Character Name *</label>
-              <input
-                autoFocus
-                type="text"
-                placeholder="e.g. Thorn"
-                value={characterDialog.name}
-                onChange={e => setCharacterDialog(d => ({ ...d, name: e.target.value }))}
-                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.form?.requestSubmit?.(); }}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500 placeholder-slate-500"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Player Name</label>
-              <input
-                type="text"
-                placeholder="e.g. Alice"
-                value={characterDialog.playerName}
-                onChange={e => setCharacterDialog(d => ({ ...d, playerName: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500 placeholder-slate-500"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Tier</label>
-              <TierSelector
-                value={characterDialog.tier ?? 1}
-                onChange={t => setCharacterDialog(d => ({ ...d, tier: t }))}
-                activeClass="bg-sky-700 border-sky-500 text-sky-100"
-                inactiveClass="bg-slate-700 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-200"
-              />
-            </div>
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Max Hope</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="99"
-                  value={characterDialog.maxHope}
-                  onChange={e => setCharacterDialog(d => ({ ...d, maxHope: Math.max(0, parseInt(e.target.value) || 0) }))}
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Max HP</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="99"
-                  value={characterDialog.maxHp}
-                  onChange={e => setCharacterDialog(d => ({ ...d, maxHp: Math.max(0, parseInt(e.target.value) || 0) }))}
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-[10px] uppercase tracking-wider text-slate-400 mb-1">Max Stress</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="99"
-                  value={characterDialog.maxStress}
-                  onChange={e => setCharacterDialog(d => ({ ...d, maxStress: Math.max(0, parseInt(e.target.value) || 0) }))}
-                  className="w-full bg-slate-700 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white outline-none focus:border-sky-500"
-                />
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            {characterDialog.editInstanceId && (
-              <button
-                onClick={() => {
-                  if (window.confirm(`Remove ${characterDialog.name} from the table?`)) {
-                    removeActiveElement(characterDialog.editInstanceId);
-                    setCharacterDialog(null);
-                  }
-                }}
-                className="px-3 py-1.5 rounded-lg bg-red-900/70 hover:bg-red-800 text-red-300 text-xs font-medium transition-colors"
-              >Remove</button>
-            )}
-            <button
-              onClick={() => setCharacterDialog(null)}
-              className="flex-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium transition-colors"
-            >Cancel</button>
-            <button
-              disabled={!characterDialog.name.trim()}
-              onClick={() => {
-                if (!characterDialog.name.trim()) return;
-                const dsFields = characterDialog._syncedData || {};
-                const dsCredentials = {
-                  daggerstackUrl: characterDialog.daggerstackUrl || undefined,
-                  daggerstackEmail: characterDialog.daggerstackEmail || undefined,
-                  daggerstackPassword: characterDialog.daggerstackPassword || undefined,
-                  daggerstackCharacterId: dsFields.daggerstackCharacterId,
-                };
-                // Strip internal-only dialog keys
-                const cleanDsFields = { ...dsFields };
-                delete cleanDsFields.conditions;
-                delete cleanDsFields.playerName;
-                delete cleanDsFields.elementType;
-                if (characterDialog.editInstanceId) {
-                  updateActiveElement(characterDialog.editInstanceId, {
-                    name: characterDialog.name.trim(),
-                    playerName: characterDialog.playerName.trim(),
-                    tier: characterDialog.tier ?? 1,
-                    maxHope: characterDialog.maxHope,
-                    maxHp: characterDialog.maxHp,
-                    maxStress: characterDialog.maxStress,
-                    ...cleanDsFields,
-                    ...dsCredentials,
-                  });
-                } else if (isPlayer && onPlayerAddCharacter) {
-                  onPlayerAddCharacter({
-                    name: characterDialog.name.trim(),
-                    playerName: characterDialog.playerName.trim(),
-                    tier: characterDialog.tier ?? 1,
-                    maxHope: characterDialog.maxHope,
-                    maxHp: characterDialog.maxHp,
-                    maxStress: characterDialog.maxStress,
-                    ...cleanDsFields,
-                    ...dsCredentials,
-                  });
-                } else {
-                  addToTable({
-                    elementType: 'character',
-                    name: characterDialog.name.trim(),
-                    playerName: characterDialog.playerName.trim(),
-                    tier: characterDialog.tier ?? 1,
-                    hope: dsFields.hope ?? characterDialog.maxHope,
-                    maxHope: characterDialog.maxHope,
-                    maxHp: characterDialog.maxHp,
-                    maxStress: characterDialog.maxStress,
-                    currentHp: dsFields.currentHp ?? characterDialog.maxHp,
-                    currentStress: dsFields.currentStress ?? 0,
-                    currentArmor: dsFields.currentArmor ?? 0,
-                    conditions: '',
-                    ...cleanDsFields,
-                    ...dsCredentials,
-                  }, 'characters');
-                }
-                setCharacterDialog(null);
-              }}
-              className="flex-1 px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors"
-            >{characterDialog.editInstanceId ? 'Save' : 'Add to Table'}</button>
-          </div>
-        </div>
-      </div>
-    )}
-
     {modalOpen && (
       <ItemPickerModal
         collection={modalOpen}
         data={data}
         onClose={() => setModalOpen(null)}
         onSelect={(item) => {
-          addToTable(item, modalOpen);
+          if (modalOpen === 'characters' && isPlayer && onPlayerAddCharacter) {
+            const { is_public, _source, ...charData } = item;
+            onPlayerAddCharacter({ ...charData, elementType: 'character' });
+          } else {
+            addToTable(item, modalOpen);
+          }
+          setModalOpen(null);
         }}
-        isLoading={['scenes', 'adventures'].includes(modalOpen) ? pickerLoading : undefined}
+        isLoading={['scenes', 'adventures', 'characters'].includes(modalOpen) ? pickerLoading : undefined}
+        excludeIds={modalOpen === 'characters' ? activeElements.filter(el => el.elementType === 'character').map(el => el.id) : undefined}
       />
     )}
 
@@ -2428,7 +2673,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             if (saveImage && (editedData.imageUrl != null || editedData._additionalImages != null)) {
               await saveImage(editState.collection, itemWithId.id, editedData.imageUrl ?? '', { _additionalImages: editedData._additionalImages });
             }
-            updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+            // Characters are resolved at render-time from the library; no manual
+            // activeElements update needed — saveItem already updated data.characters.
+            if (editState.collection !== 'characters') {
+              updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+            }
           }
         }}
         onClose={closeEditModal}
@@ -2746,8 +2995,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                 onRoll={allowInteract ? (!isPlayer ? handleTraitRoll : handlePlayerOwnRoll) : undefined}
                 onSpendHope={allowInteract ? handleSpendHope : undefined}
                 onUseHopeAbility={allowInteract ? handleUseHopeAbility : undefined}
+                onEdit={isMyCharacter && liveEl.id ? () => {
+                  const libraryItem = data.characters?.find(i => i.id === liveEl.id) || liveEl;
+                  navigate(gmUid ? `/gm-table/${gmUid}/characters/${liveEl.id}` : `/gm-table/characters/${liveEl.id}`);
+                  setEditState({ step: 'form', item: libraryItem, collection: 'characters', mode: 'original', instances: [liveEl], baseElement: liveEl });
+                } : undefined}
                 onDebugMouseEnter={characterOverlay.cancelClose}
                 onDebugMouseLeave={characterOverlay.close}
+                onActionNotification={allowInteract ? (isPlayer ? handlePlayerActionNotification : handleActionNotification) : undefined}
               />
             );
           })()}

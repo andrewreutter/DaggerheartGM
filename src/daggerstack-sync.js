@@ -14,6 +14,7 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getCollection } from './srd/index.js';
+import { computeWeaponModifiers, computeArmorModifiers } from './client/lib/character-calc.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -97,6 +98,7 @@ function adaptArmor(srd) {
     majorThreshold: parts[0] || 0,
     severeThreshold: parts[1] || 0,
     tier: srd.tier,
+    features: srd.features || [],
     feature: firstFeature ? {
       name: firstFeature.name,
       description: firstFeature.description,
@@ -164,11 +166,14 @@ async function loadSrdLookupTables() {
   }
 
   // Build byId: Daggerstack UUID → adapted SRD item
+  // Build byIdSrd: Daggerstack UUID → { srdId, collection } for reference IDs
   const byId = {};
+  const byIdSrd = {};
   for (const [uuid, entry] of Object.entries(uuidMap)) {
     const item = bySrdId[entry.srdId];
     if (item) {
       byId[uuid] = item;
+      byIdSrd[uuid] = { srdId: entry.srdId, collection: entry.collection };
     } else {
       console.warn(`[daggerstack-sync] SRD item not found for UUID ${uuid}: ${entry.collection}/${entry.srdId}`);
     }
@@ -176,6 +181,7 @@ async function loadSrdLookupTables() {
 
   const tables = {
     byId,
+    byIdSrd,
     classes:     (classes     || []).map(adaptClass),
     subclasses:  (subclasses  || []).map(adaptSubclass),
     ancestries:  (ancestries  || []).map(adaptAncestry),
@@ -190,9 +196,8 @@ async function loadSrdLookupTables() {
 
 // ─── Stat derivation ─────────────────────────────────────────────────────────
 
-function deriveEvasion(classData, armorData, ancestryFeatures) {
+function deriveEvasion(classData, ancestryFeatures) {
   let evasion = classData?.evasion ?? 10;
-  if (armorData?.feature?.modify?.evasion) evasion += armorData.feature.modify.evasion;
   for (const feature of (ancestryFeatures || [])) {
     if (feature?.modify?.evasion) evasion += feature.modify.evasion;
   }
@@ -248,10 +253,11 @@ export async function syncDaggerstackCharacter(url, email, password) {
     tables = await loadSrdLookupTables();
   } catch (err) {
     console.warn('[daggerstack-sync] Could not load lookup tables:', err.message);
-    tables = { byId: {}, classes: [], subclasses: [], ancestries: [], communities: [], armors: [], weapons: [] };
+    tables = { byId: {}, byIdSrd: {}, classes: [], subclasses: [], ancestries: [], communities: [], armors: [], weapons: [] };
   }
 
   const resolve = (id) => (id ? tables.byId[id] : null);
+  const resolveSrdId = (id) => (id ? tables.byIdSrd?.[id]?.srdId ?? null : null);
 
   // Resolve UUIDs
   const classData = resolve(raw.baseClass);
@@ -283,8 +289,14 @@ export async function syncDaggerstackCharacter(url, email, password) {
   const ancestryFeatures = ancestryItems.flatMap(a => a.features || []);
 
   // Compute derived stats
-  const evasion = deriveEvasion(classData, armorData, ancestryFeatures);
+  const baseEvasion = deriveEvasion(classData, ancestryFeatures);
   const tier = deriveTier(raw.level ?? 1);
+
+  // Apply armor feature modifiers (e.g. Flexible +1 Evasion, Difficult -1 all traits)
+  const armorMods = computeArmorModifiers(armorData);
+
+  // Apply weapon property modifiers (e.g. Cumbersome -1 Finesse, Heavy -1 Evasion)
+  const weaponMods = computeWeaponModifiers(weapons);
 
   const maxHp = classData?.startingHitPoints ?? 6;
   const maxStress = 6; // global constant in Daggerstack
@@ -296,7 +308,8 @@ export async function syncDaggerstackCharacter(url, email, password) {
   const currentStress = resources.stress ?? 0;
   const hope = resources.hope ?? maxHope;
   const currentArmor = resources.armor ?? 0;
-  const maxArmor = armorData?.score ?? 0;
+  // maxArmor computed after weaponMods are available (set to 0 here; patched in return below)
+  const baseMaxArmor = armorData?.score ?? 0;
 
   // Inventory
   const gold = raw.inventory?.gold ?? 0;
@@ -365,6 +378,15 @@ export async function syncDaggerstackCharacter(url, email, password) {
     description: raw.description || '',
     level: raw.level ?? 1,
 
+    // SRD reference IDs
+    classId: resolveSrdId(raw.baseClass),
+    subclassId: resolveSrdId(subclassId),
+    ancestryIds: ancestryIds.map(id => resolveSrdId(id)).filter(Boolean),
+    communityId: resolveSrdId(raw.community),
+    armorId: resolveSrdId(armorItemId),
+    primaryWeaponId: resolveSrdId((raw.inventory?.weapons || [])[0]?.itemId),
+    secondaryWeaponId: resolveSrdId((raw.inventory?.weapons || [])[1]?.itemId),
+
     // Class info
     class: classData?.name || null,
     subclass: subclassData?.name || null,
@@ -372,29 +394,38 @@ export async function syncDaggerstackCharacter(url, email, password) {
     spellcastTrait: subclassData?.foundation?.spellcast || null,
     hopeAbility: classData?.hopeAbility || null,
     hopeAbilityName: classData?.hopeAbility?.name || null,
+    hopeFeature: classData?.hopeAbility ? { name: classData.hopeAbility.name, description: classData.hopeAbility.description || classData.hopeAbility.text || '' } : null,
 
     // Ancestry & community
     ancestry: ancestryItems.map(a => a.name),
     community: communityData?.name || null,
 
-    // Traits
+    // Traits (final computed; baseTraits not available from Daggerstack) + armor + weapon modifiers
     traits: {
-      agility:   raw.agility?.score ?? 0,
-      strength:  raw.strength?.score ?? 0,
-      finesse:   raw.finesse?.score ?? 0,
-      instinct:  raw.instinct?.score ?? 0,
-      presence:  raw.presence?.score ?? 0,
-      knowledge: raw.knowledge?.score ?? 0,
+      agility:   (raw.agility?.score ?? 0)   + (armorMods.traits.agility   ?? 0) + (weaponMods.traits.agility   ?? 0),
+      strength:  (raw.strength?.score ?? 0)  + (armorMods.traits.strength  ?? 0) + (weaponMods.traits.strength  ?? 0),
+      finesse:   (raw.finesse?.score ?? 0)   + (armorMods.traits.finesse   ?? 0) + (weaponMods.traits.finesse   ?? 0),
+      instinct:  (raw.instinct?.score ?? 0)  + (armorMods.traits.instinct  ?? 0) + (weaponMods.traits.instinct  ?? 0),
+      presence:  (raw.presence?.score ?? 0)  + (armorMods.traits.presence  ?? 0) + (weaponMods.traits.presence  ?? 0),
+      knowledge: (raw.knowledge?.score ?? 0) + (armorMods.traits.knowledge ?? 0) + (weaponMods.traits.knowledge ?? 0),
     },
+    baseTraits: null,
+
+    // Modifier metadata (for display layer)
+    armorMods,
+    weaponMods,
 
     // Tier (derived from level)
     tier,
 
-    // Defense
-    evasion,
-    armorScore: armorData?.score ?? 0,
+    // Proficiency
+    proficiency: 1 + Math.floor((raw.level ?? 1) / 4),
+
+    // Defense (with armor + weapon modifiers applied)
+    evasion: baseEvasion + (armorMods.evasion ?? 0) + (weaponMods.evasion ?? 0),
+    armorScore: (armorData?.score ?? 0) + (weaponMods.armorScore ?? 0),
     armorName: armorData?.name || (raw.inventory?.armor?.name) || null,
-    armorThresholds: armorData ? { major: armorData.majorThreshold, severe: armorData.severeThreshold } : null,
+    armorThresholds: armorData ? { major: armorData.majorThreshold, severe: armorData.severeThreshold + (weaponMods.severeThreshold ?? 0) } : null,
 
     // Resources (current state)
     maxHp,
@@ -403,7 +434,7 @@ export async function syncDaggerstackCharacter(url, email, password) {
     currentStress,
     maxHope,
     hope,
-    maxArmor,
+    maxArmor: baseMaxArmor + (weaponMods.armorScore ?? 0),
     currentArmor,
 
     // Equipment
@@ -420,6 +451,11 @@ export async function syncDaggerstackCharacter(url, email, password) {
     // Experiences
     experiences: (raw.experience || []).map(e => ({ name: e.name, score: e.score })),
 
+    // Advancements (not available from Daggerstack)
+    advancements: null,
+    abilityIds: [],
+    abilities: [],
+
     // Companion (if any)
     companion: raw.companion?.name ? {
       name: raw.companion.name,
@@ -432,6 +468,5 @@ export async function syncDaggerstackCharacter(url, email, password) {
     // Carry-over runtime fields (blank by default, populated from existing element on re-sync)
     conditions: '',
     playerName: '',
-    elementType: 'character',
   } };
 }

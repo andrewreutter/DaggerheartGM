@@ -733,21 +733,27 @@ export async function saveWhiteboardSnapshot(appId, gmUid, snapshot) {
 
 export async function appendDiceRoll(appId, gmUid, rollData) {
   const db = getPool();
-  await db.query(
-    'INSERT INTO dice_rolls (app_id, gm_uid, data) VALUES ($1, $2, $3)',
+  const { rows } = await db.query(
+    'INSERT INTO dice_rolls (app_id, gm_uid, data) VALUES ($1, $2, $3) RETURNING id',
     [appId, gmUid, JSON.stringify(rollData)]
   );
+  return rows[0].id;
+}
+
+export async function ackDiceRoll(id) {
+  const db = getPool();
+  await db.query('UPDATE dice_rolls SET acked = true WHERE id = $1', [id]);
 }
 
 export async function getRecentDiceRolls(appId, gmUid, limit = 50) {
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT data FROM dice_rolls
+    `SELECT id, data, acked FROM dice_rolls
      WHERE app_id = $1 AND gm_uid = $2
      ORDER BY created_at DESC
      LIMIT $3`,
     [appId, gmUid, limit]
   );
-  // Reverse so oldest-first order matches client expectations
-  return rows.map(r => r.data).reverse();
+  // Reverse so oldest-first order matches client expectations; merge id and acked into data
+  return rows.reverse().map(r => ({ ...r.data, _rollDbId: r.id, _acked: r.acked }));
 }

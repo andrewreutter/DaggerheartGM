@@ -1,0 +1,29 @@
+---
+description: Rules for maintaining the SRD Implementation Burndown documentation
+alwaysApply: true
+---
+
+# SRD Implementation Tracking
+
+The file `docs/srd-implementation.md` is the single source of truth for tracking how much of the Daggerheart SRD has been implemented in DaggerheartGM. It must be kept current.
+
+## When to Update
+
+Update `docs/srd-implementation.md` in these situations:
+
+1. **Planning a feature**: Before building a plan, consult the burndown to understand current status. Reference it when proposing what to work on next.
+2. **After implementing an SRD-related feature**: Update the relevant row's Status column (e.g. `None` → `Done`, `Display` → `Done`). Update the Summary table counts and feature ratios. If the feature was listed in Priority Recommendations, remove or update it.
+3. **After adding SRD content**: If the `daggerheart-srd` submodule is updated with new elements, add them to the appropriate section with their initial status.
+
+## What Counts as "Implemented"
+
+- **Done**: The element's mechanical effect is automated in the app (stat modifiers applied, dice rolls integrated, UI interactions wired up).
+- **Display**: The element is shown on the character sheet or in the Library but its mechanical effect is not automated. For purely narrative features (most ancestry/community features), Display is the correct final state.
+- **Partial**: Some aspects are automated but others are not.
+- **None**: Not present in the UI at all.
+
+## Structure Rules
+
+- Shared features (e.g. weapon features, armor features) have their own sub-list within the element type section to avoid duplicating status across multiple elements that share the feature.
+- Non-shared features (e.g. class features, subclass features) have their status inline on the element's row.
+- The Summary table at the top must always reflect current counts and overall status per collection.

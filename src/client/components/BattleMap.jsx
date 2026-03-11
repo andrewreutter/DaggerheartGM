@@ -8,11 +8,11 @@ const DRAG_THRESHOLD_PX = 8;
 
 // Daggerheart range bands — Melee (≤5') through Very Far (≤300')
 const RANGE_BANDS = [
-  { name: 'Melee',      maxFt: 5,   fillColor: 'rgba(34,197,94,0.14)',  ringColor: 'rgba(34,197,94,0.6)',   tokenGlow: 'rgba(34,197,94,0.7)'   },
-  { name: 'Very Close', maxFt: 10,  fillColor: 'rgba(56,189,248,0.11)', ringColor: 'rgba(56,189,248,0.5)',  tokenGlow: 'rgba(56,189,248,0.65)' },
-  { name: 'Close',      maxFt: 30,  fillColor: 'rgba(250,204,21,0.08)', ringColor: 'rgba(250,204,21,0.45)', tokenGlow: 'rgba(250,204,21,0.6)'  },
-  { name: 'Far',        maxFt: 100, fillColor: 'rgba(251,146,60,0.06)', ringColor: 'rgba(251,146,60,0.4)',  tokenGlow: 'rgba(251,146,60,0.55)' },
-  { name: 'Very Far',   maxFt: 300, fillColor: 'rgba(239,68,68,0.04)',  ringColor: 'rgba(239,68,68,0.30)',  tokenGlow: 'rgba(239,68,68,0.45)'  },
+  { name: 'Melee',      maxFt: 5,   fillColor: 'rgba(34,197,94,0.14)',  ringColor: 'rgba(34,197,94,0.6)',   tokenGlow: 'rgba(34,197,94,0.85)',  tokenRing: 'rgba(34,197,94,0.95)'   },
+  { name: 'Very Close', maxFt: 10,  fillColor: 'rgba(56,189,248,0.11)', ringColor: 'rgba(56,189,248,0.5)',  tokenGlow: 'rgba(56,189,248,0.8)',  tokenRing: 'rgba(56,189,248,0.95)'  },
+  { name: 'Close',      maxFt: 30,  fillColor: 'rgba(251,146,60,0.06)', ringColor: 'rgba(251,146,60,0.4)',  tokenGlow: 'rgba(251,146,60,0.7)',  tokenRing: 'rgba(251,146,60,0.95)'  },
+  { name: 'Far',        maxFt: 100, fillColor: 'rgba(250,204,21,0.08)', ringColor: 'rgba(250,204,21,0.45)', tokenGlow: 'rgba(250,204,21,0.75)', tokenRing: 'rgba(250,204,21,0.95)'  },
+  { name: 'Very Far',   maxFt: 300, fillColor: 'rgba(239,68,68,0.04)',  ringColor: 'rgba(239,68,68,0.30)',  tokenGlow: 'rgba(239,68,68,0.65)',  tokenRing: 'rgba(239,68,68,0.9)'    },
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
 
 // ─── TokenCircle ─────────────────────────────────────────────────────────────
 
-function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDragging, isGhost, isPinned, isProxy, rangeBandGlow }) {
+function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDragging, isGhost, isPinned, isProxy, rangeBand }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
 
@@ -271,8 +271,10 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
     }
   }
 
-  // Range-band outer glow (preserved)
-  const glowStyle = rangeBandGlow ? { boxShadow: `0 0 10px 3px ${rangeBandGlow}` } : {};
+  // Range-band decoration: solid ring + intense outer glow
+  const glowStyle = rangeBand
+    ? { boxShadow: `0 0 0 3px ${rangeBand.tokenRing}, 0 0 18px 6px ${rangeBand.tokenGlow}` }
+    : {};
 
   const bgClass = isChar
     ? (isMyCharacter ? 'bg-green-700' : 'bg-sky-700')
@@ -438,7 +440,11 @@ function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElemen
             total={element.maxArmor ?? 0}
             filled={element.currentArmor ?? element.maxArmor ?? 0}
             fillColor="bg-cyan-600"
-            onSetFilled={canEdit ? (v) => updateActiveElement(element.instanceId, { currentArmor: v }) : undefined}
+            onSetFilled={canEdit ? (v) => {
+              const upd = { currentArmor: v };
+              if (element.reinforcedActive && v < (element.currentArmor ?? element.maxArmor ?? 0)) upd.reinforcedActive = false;
+              updateActiveElement(element.instanceId, upd);
+            } : undefined}
           />
         </div>
       )}
@@ -683,7 +689,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     // Snap to token center if hovering over a placed token
     const snapTarget = findTokenAtClient(e.clientX, e.clientY);
     if (snapTarget) {
-      setBullseyeFt({ x: snapTarget.tokenX + 2.5, y: snapTarget.tokenY + 2.5 });
+      setBullseyeFt({ x: snapTarget.tokenX + 2.5, y: snapTarget.tokenY + 2.5, excludeInstanceId: snapTarget.instanceId });
     } else {
       const ft = clientToFt(e.clientX, e.clientY);
       if (ft) setBullseyeFt(ft);
@@ -700,9 +706,11 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     const result = {};
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
+      if (element.instanceId === bullseyeFt.excludeInstanceId) continue;
       const dx = (element.tokenX + 2.5) - bullseyeFt.x;
       const dy = (element.tokenY + 2.5) - bullseyeFt.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Use nearest-edge distance: subtract token radius so any overlap with a band counts
+      const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
       const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
       result[element.instanceId] = bandIdx; // -1 means Out of Range
     }
@@ -717,6 +725,23 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
 
+    const tokenSize = fromTray ? trayTokenSizePx : tokenSizePx;
+
+    // Compute where on the token the user grabbed, so the ghost stays aligned
+    // and the drop lands exactly where the ghost was.
+    let grabOffsetX = tokenSize / 2;
+    let grabOffsetY = tokenSize / 2;
+    if (!fromTray && element.tokenX != null) {
+      const container = scrollContainerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const tokenClientX = element.tokenX * pxPerFt - container.scrollLeft + rect.left;
+        const tokenClientY = element.tokenY * pxPerFt - container.scrollTop + rect.top;
+        grabOffsetX = Math.max(0, Math.min(tokenSize, e.clientX - tokenClientX));
+        grabOffsetY = Math.max(0, Math.min(tokenSize, e.clientY - tokenClientY));
+      }
+    }
+
     dragRef.current = {
       instanceId: element.instanceId,
       element,
@@ -727,8 +752,11 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       pointerId: e.pointerId,
       instanceNum: instanceNumbers[element.instanceId],
       myChar: isMyCharacter(element),
+      tokenSize,
+      grabOffsetX,
+      grabOffsetY,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter]);
+  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -740,12 +768,12 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       // Freeze bullseye at the dragged token's origin center
       const el = ds.element;
       if (el.tokenX != null) {
-        frozenBullseyeRef.current = { x: el.tokenX + 2.5, y: el.tokenY + 2.5 };
+        frozenBullseyeRef.current = { x: el.tokenX + 2.5, y: el.tokenY + 2.5, excludeInstanceId: el.instanceId };
         setBullseyeFt(frozenBullseyeRef.current);
       }
     }
     if (ds.isDragging) {
-      setDragGhost({ element: ds.element, clientX: e.clientX, clientY: e.clientY, instanceNum: ds.instanceNum, isMyChar: ds.myChar });
+      setDragGhost({ element: ds.element, clientX: e.clientX, clientY: e.clientY, instanceNum: ds.instanceNum, isMyChar: ds.myChar, tokenSize: ds.tokenSize, grabOffsetX: ds.grabOffsetX, grabOffsetY: ds.grabOffsetY });
       setHighlightLeftTray(pointInRect(e.clientX, e.clientY, leftTrayRef.current));
       setHighlightRightTray(!isPlayer && pointInRect(e.clientX, e.clientY, rightTrayRef.current));
     }
@@ -787,8 +815,10 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     const container = scrollContainerRef.current;
     if (container) {
       const rect = container.getBoundingClientRect();
-      const mapX = e.clientX - rect.left + container.scrollLeft;
-      const mapY = e.clientY - rect.top + container.scrollTop;
+      // Subtract grab offset so the token's top-left lands where the ghost was,
+      // not where the raw cursor was.
+      const mapX = e.clientX - rect.left + container.scrollLeft - (ds.grabOffsetX ?? ds.tokenSize / 2);
+      const mapY = e.clientY - rect.top + container.scrollTop - (ds.grabOffsetY ?? ds.tokenSize / 2);
       const ftX = mapX / pxPerFt;
       const ftY = mapY / pxPerFt;
 
@@ -976,7 +1006,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
               {/* Placed character tokens */}
               {charMapTokens.map(({ element, isMyCharacter: myChar }) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
-                const rangeBandGlow = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx].tokenGlow : null;
+                const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
                 return (
                 <div
                   key={element.instanceId}
@@ -1001,7 +1031,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
                     isPlayer={isPlayer}
                     isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
-                    rangeBandGlow={rangeBandGlow}
+                    rangeBand={rangeBand}
                   />
                 </div>
                 );
@@ -1010,7 +1040,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
               {/* Placed adversary tokens */}
               {advMapTokens.map(({ element, instanceNum }) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
-                const rangeBandGlow = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx].tokenGlow : null;
+                const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
                 return (
                 <div
                   key={element.instanceId}
@@ -1035,7 +1065,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
                     isPlayer={isPlayer}
                     isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
-                    rangeBandGlow={rangeBandGlow}
+                    rangeBand={rangeBand}
                   />
                 </div>
                 );
@@ -1065,18 +1095,18 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
           <div ref={rightTrayRef} className="hidden" />
         )}
 
-        {/* Drag ghost — follows cursor globally */}
+        {/* Drag ghost — follows cursor globally, same size as the source token */}
         {dragGhost && (
           <div
             className="fixed pointer-events-none z-50"
             style={{
-              left: dragGhost.clientX - trayTokenSizePx / 2,
-              top: dragGhost.clientY - trayTokenSizePx / 2,
+              left: dragGhost.clientX - (dragGhost.grabOffsetX ?? dragGhost.tokenSize / 2),
+              top: dragGhost.clientY - (dragGhost.grabOffsetY ?? dragGhost.tokenSize / 2),
             }}
           >
             <TokenCircle
               element={dragGhost.element}
-              size={trayTokenSizePx}
+              size={dragGhost.tokenSize ?? trayTokenSizePx}
               instanceNum={dragGhost.instanceNum}
               isMyCharacter={dragGhost.isMyChar}
               isPlayer={isPlayer}
