@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ShieldAlert, Map, Play, BookOpen, Plus } from 'lucide-react';
+import { ShieldAlert, Map, Play, BookOpen, Plus, User, X } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
 import { ImageImportModal } from './modals/ImageImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters } from './CollectionFilters.jsx';
+import { DaggerstackImport } from './DaggerstackImport.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
 import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { enrichItems, enrichSingleItem } from '../lib/api.js';
+import { generateId } from '../lib/helpers.js';
 
 const CARD_WIDTH = 360;
 const CARD_HEIGHT = 176;
@@ -24,6 +26,7 @@ const SINGULAR_NAMES = {
   environments: 'Environment',
   scenes: 'Scene',
   adventures: 'Adventure',
+  characters: 'Character',
 };
 
 const TABS = [
@@ -31,12 +34,14 @@ const TABS = [
   { id: 'environments', label: 'Environments', Icon: Map },
   { id: 'scenes', label: 'Scenes', Icon: Play },
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
+  { id: 'characters', label: 'Characters', Icon: User },
 ];
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
 
-export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 1, partyTier = 1, characters = [], ensureScenesLoaded, ensureAdventuresLoaded }) {
+export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 1, partyTier = 1, characters = [], ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded }) {
   const [showImageImport, setShowImageImport] = useState(false);
+  const [showDaggerstackImport, setShowDaggerstackImport] = useState(false);
   const [modalState, setModalState] = useState(null);
   const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
 
@@ -59,10 +64,17 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
       }
       setNonPaginatedLoading(true);
       ensureAdventuresLoaded().finally(() => setNonPaginatedLoading(false));
+    } else if (activeTab === 'characters' && ensureCharactersLoaded) {
+      if ((data.characters || []).length > 0) {
+        setNonPaginatedLoading(false);
+        return;
+      }
+      setNonPaginatedLoading(true);
+      ensureCharactersLoaded().finally(() => setNonPaginatedLoading(false));
     } else {
       setNonPaginatedLoading(false);
     }
-  }, [activeTab, ensureScenesLoaded, ensureAdventuresLoaded, data.scenes?.length, data.adventures?.length]);
+  }, [activeTab, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, data.scenes?.length, data.adventures?.length, data.characters?.length]);
 
   const search = useCollectionSearch(activeTab, {
     limit: 20,
@@ -339,6 +351,34 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
         />
       )}
 
+      {showDaggerstackImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 p-5 relative">
+            <button
+              onClick={() => setShowDaggerstackImport(false)}
+              className="absolute top-3 right-3 text-slate-400 hover:text-white transition-colors"
+            >
+              <X size={18} />
+            </button>
+            <h3 className="text-base font-semibold text-white mb-4">Import Character from Daggerstack</h3>
+            <DaggerstackImport
+              compact
+              onImported={async (character) => {
+                const charToSave = { ...character, id: generateId() };
+                delete charToSave.elementType;
+                delete charToSave.conditions;
+                delete charToSave.playerName;
+                const saved = await saveItem('characters', charToSave);
+                if (saved) {
+                  setShowDaggerstackImport(false);
+                  navigate(`/library/characters/${saved.id}`);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Item Detail / Edit Modal */}
       {modalState && resolvedModalItem !== undefined && (
         <ItemDetailModal
@@ -373,7 +413,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
 
             <div className="flex items-center gap-3 flex-wrap">
               <button
-                onClick={() => setShowImageImport(true)}
+                onClick={() => activeTab === 'characters' ? setShowDaggerstackImport(true) : setShowImageImport(true)}
                 className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
               >
                 Import

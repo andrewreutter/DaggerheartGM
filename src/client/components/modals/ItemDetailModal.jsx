@@ -8,6 +8,8 @@ import { AdversaryForm } from '../forms/AdversaryForm.jsx';
 import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
 import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
+import { CharacterForm } from '../forms/CharacterForm.jsx';
+import { CharacterDetailPane } from '../CharacterDisplay.jsx';
 import { ExpandedTablePreview } from '../ItemDetailView.jsx';
 import { SOURCE_BADGE, isOwnItem } from '../../lib/constants.js';
 import { MarkdownText } from '../../lib/markdown.js';
@@ -20,6 +22,7 @@ const COLLECTION_LABELS = {
   environments: 'Environment',
   scenes: 'Scene',
   adventures: 'Adventure',
+  characters: 'Character',
 };
 
 /**
@@ -199,7 +202,9 @@ export function ItemDetailModal({
         ...baseline,
         attack: { name: '', range: 'Melee', trait: 'Phy', ...baseline?.attack },
       };
-    })() : {};
+    })() : !raw.id && collection === 'characters' ? {
+      level: 1, baseTraits: {}, experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+    } : {};
     initialRef.current = {
       ...defaultsForNew,
       ...raw,
@@ -207,7 +212,7 @@ export function ItemDetailModal({
       // upserts the same row instead of creating a new one on each debounce fire.
       id: raw.id || generateId(),
       features: ensureIds(raw.features),
-      experiences: ensureIds(raw.experiences),
+      ...(raw.experiences ? { experiences: ensureIds(raw.experiences) } : {}),
     };
   }
 
@@ -392,6 +397,9 @@ export function ItemDetailModal({
         {collection === 'adventures' && displayItem.description && (
           <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300" />
         )}
+        {collection === 'characters' && (
+          <CharacterDetailPane item={displayItem} />
+        )}
 
         </div>
       </div>
@@ -418,6 +426,7 @@ export function ItemDetailModal({
         {collection === 'environments' && <EnvironmentForm {...sharedProps} />}
         {collection === 'scenes' && <SceneForm {...sharedProps} />}
         {collection === 'adventures' && <AdventureForm {...sharedProps} />}
+        {collection === 'characters' && <CharacterForm {...sharedProps} />}
       </div>
     );
   };
@@ -427,12 +436,12 @@ export function ItemDetailModal({
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 overflow-hidden"
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 pt-[4.5rem] overflow-hidden"
       onClick={handleOverlayClick}
     >
       <div className={`flex gap-3 items-start w-full ${maxWidth}`}>
         {/* Main modal card */}
-        <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 2rem)' }}>
+        <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden" style={{ height: 'calc(100dvh - 5.5rem)' }}>
 
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 shrink-0">
@@ -473,6 +482,7 @@ export function ItemDetailModal({
               <ItemActionButtons
                 variant="header"
                 isOwn={isOwn}
+                itemName={displayItem?.name}
                 onAddToTable={onAddToTable}
                 onClone={onClone ? handleClone : undefined}
                 onEdit={onEdit}
@@ -519,7 +529,7 @@ export function ItemDetailModal({
           <div
             ref={setLibraryPortal}
             className="w-72 shrink-0 rounded-xl"
-            style={{ height: 'calc(100dvh - 2rem)' }}
+            style={{ height: 'calc(100dvh - 5.5rem)' }}
           />
         )}
       </div>

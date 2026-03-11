@@ -1,7 +1,8 @@
-import { Flame } from 'lucide-react';
+import { Flame, AlertTriangle } from 'lucide-react';
 import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { computeSceneTier, computeBattlePoints, collectSceneAdversaries } from '../lib/battle-points.js';
 import { ItemActionButtons } from './ItemActionButtons.jsx';
+import { isCharacterComplete } from '../lib/character-calc.js';
 
 export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, onAddToTable, partySize = 4, partyTier = 1, showSourceBadge = true }) {
   const isOwn = isOwnItem(item);
@@ -63,6 +64,7 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
               variant="card"
               stopPropagation
               isOwn={isOwn}
+              itemName={item.name}
               onAddToTable={onAddToTable ? () => onAddToTable(item, tab) : undefined}
               onClone={onClone ? () => onClone(item) : undefined}
               onEdit={isOwn && onEdit ? () => onEdit(item) : undefined}
@@ -117,6 +119,41 @@ export function ItemCard({ item, tab, data, onView, onEdit, onDelete, onClone, o
               : <span className="text-xs italic text-slate-500">Empty scene</span>;
           })()}
           {tab === 'adventures' && `${item.scenes?.length || 0} scenes`}
+          {tab === 'characters' && (() => {
+            const { complete, missing } = isCharacterComplete(item);
+            return (
+              <>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="relative inline-flex items-center justify-center w-5 h-5 shrink-0" title={`Tier ${item.tier ?? 1}`}>
+                    <svg viewBox="0 0 20 22" className="absolute inset-0 w-full h-full" fill="none">
+                      <path d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z" fill="#0c2340" stroke="#38bdf8" strokeWidth="1.5" />
+                    </svg>
+                    <span className="relative text-[10px] font-bold text-sky-200 leading-none mt-0.5">{item.tier ?? 1}</span>
+                  </span>
+                  <span className="capitalize">{[item.class, item.subclass].filter(Boolean).join(' · ') || 'No class'}</span>
+                  {item.level != null && <span className="text-[10px] text-slate-500">Lvl {item.level}</span>}
+                  {!complete && (
+                    <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 border border-amber-700/60" title={`Missing: ${missing.join(', ')}`}>
+                      <AlertTriangle size={9} />
+                      Incomplete
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                  {item.pronouns && <span className="text-[9px] text-slate-500">{item.pronouns}</span>}
+                  {(Array.isArray(item.ancestry) ? item.ancestry : item.ancestry ? [item.ancestry] : []).map(a => (
+                    <span key={a} className="text-[9px] bg-amber-900/40 border border-amber-800/40 text-amber-300 rounded px-1">{a}</span>
+                  ))}
+                  {item.community && (
+                    <span className="text-[9px] bg-emerald-900/40 border border-emerald-800/40 text-emerald-300 rounded px-1">{item.community}</span>
+                  )}
+                  {(item.domains || []).map(d => (
+                    <span key={d} className="text-[9px] bg-violet-900/40 border border-violet-800/40 text-violet-300 rounded px-1">{d}</span>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
 
           {item.motive && <p className="mt-0.5 text-[10px] italic text-slate-400 line-clamp-3 pr-24">{item.motive}</p>}
           {item.description && <p className="mt-0.5 text-[10px] opacity-80 line-clamp-3 pr-24">{item.description}</p>}

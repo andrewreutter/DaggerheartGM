@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const VALID_TABS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
-const VALID_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures']);
+const VALID_TABS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
+const VALID_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
 
 /**
  * Parses a pathname into a structured route descriptor.

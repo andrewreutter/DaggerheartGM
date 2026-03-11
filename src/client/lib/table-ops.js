@@ -1,3 +1,18 @@
+// Runtime fields that are local to the Game Table and NOT overwritten by library data.
+// Used when resolving characters by reference: library base data is merged in, but
+// these fields are preserved from the stored activeElement.
+export const CHARACTER_RUNTIME_KEYS = [
+  'instanceId', 'elementType',
+  'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
+  'tokenX', 'tokenY',
+  'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
+  'expandedFeatures',
+  'reinforcedActive',
+  // Feature interaction state
+  'featureUsage',      // { [featureKey]: { used: boolean, cycle: 'session'|'rest'|'longRest' } }
+  'activeModifiers',   // [{ id, name, dice?, value?, mode?, bonus?, trait?, type, refreshOn }]
+];
+
 export const RUNTIME_KEYS = [
   'instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope',
   'playerName', 'maxHp', 'maxStress', 'name',
@@ -8,6 +23,11 @@ export const RUNTIME_KEYS = [
   'classFeatures', 'subclassFeatures', 'ancestryFeatures', 'communityFeatures',
   'experiences', 'spellcastTrait', 'hopeAbility', 'hopeAbilityName', 'companion', 'tier',
   'tokenX', 'tokenY',
+  'classId', 'subclassId', 'ancestryIds', 'communityId',
+  'armorId', 'primaryWeaponId', 'secondaryWeaponId',
+  'abilityIds', 'abilities', 'baseTraits', 'advancements', 'proficiency',
+  'background', 'connectionText', 'hopeFeature',
+  'weaponMods', 'armorMods',
 ];
 
 /**
@@ -40,6 +60,16 @@ export function applyTableOp(op, state) {
           const runtime = {};
           RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
           return { ...op.newBaseData, ...runtime };
+        }),
+      };
+    }
+    case 'character-library-update': {
+      return {
+        activeElements: activeElements.map(el => {
+          if (el.elementType !== 'character' || el.id !== op.characterId) return el;
+          const runtime = {};
+          CHARACTER_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+          return { ...op.newBaseData, ...runtime, elementType: 'character' };
         }),
       };
     }
@@ -86,6 +116,17 @@ export function applyPlayerTableOp(op, state) {
       return { ...state, tableBattleMods: op.tableBattleMods };
     case 'set-player-emails':
       return { ...state, playerEmails: op.playerEmails };
+    case 'character-library-update': {
+      return {
+        ...state,
+        elements: elements.map(el => {
+          if (el.elementType !== 'character' || el.id !== op.characterId) return el;
+          const runtime = {};
+          CHARACTER_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+          return { ...op.newBaseData, ...runtime, elementType: 'character' };
+        }),
+      };
+    }
     case 'set-map': {
       const mapConfig = {
         mapImageUrl: op.mapImageUrl ?? null,

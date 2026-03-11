@@ -7,9 +7,9 @@ import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveI
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
-import { RUNTIME_KEYS, applyPlayerTableOp } from './lib/table-ops.js';
+import { RUNTIME_KEYS, CHARACTER_RUNTIME_KEYS, applyPlayerTableOp } from './lib/table-ops.js';
 
-const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures'];
+const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
@@ -26,7 +26,8 @@ function App() {
     adversaries: [],
     environments: [],
     scenes: [],
-    adventures: []
+    adventures: [],
+    characters: [],
   });
 
   // Incremented to force LibraryView to remount (e.g. after bulk delete).
@@ -35,14 +36,31 @@ function App() {
   const [activeElements, setActiveElements] = useState([]);
   const [playerEmails, setPlayerEmails] = useState([]); // GM's invited player emails
   const [featureCountdowns, setFeatureCountdowns] = useState({});
-  const partySize = useMemo(() => Math.max(1, activeElements.filter(el => el.elementType === 'character').length), [activeElements]);
+
+  // Resolve character elements against the library so that library edits (leveling up, etc.)
+  // propagate to the table automatically. Only CHARACTER_RUNTIME_KEYS are preserved from the
+  // stored element; everything else comes from the live library record.
+  // Non-character elements and characters not found in the library pass through unchanged.
+  const resolvedActiveElements = useMemo(() => {
+    const libraryById = new Map((data.characters || []).map(c => [c.id, c]));
+    return activeElements.map(el => {
+      if (el.elementType !== 'character' || !el.id) return el;
+      const libraryChar = libraryById.get(el.id);
+      if (!libraryChar) return el;
+      const runtime = {};
+      CHARACTER_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+      return { ...libraryChar, ...runtime };
+    });
+  }, [activeElements, data.characters]);
+
+  const partySize = useMemo(() => Math.max(1, resolvedActiveElements.filter(el => el.elementType === 'character').length), [resolvedActiveElements]);
   const partyTier = useMemo(() => {
-    const chars = activeElements.filter(el => el.elementType === 'character');
+    const chars = resolvedActiveElements.filter(el => el.elementType === 'character');
     return chars.length > 0 ? Math.max(...chars.map(c => c.tier ?? 1)) : 1;
-  }, [activeElements]);
+  }, [resolvedActiveElements]);
   const characters = useMemo(
-    () => activeElements.filter(el => el.elementType === 'character').map(c => ({ name: c.name, tier: c.tier ?? 1 })),
-    [activeElements]
+    () => resolvedActiveElements.filter(el => el.elementType === 'character').map(c => ({ name: c.name, tier: c.tier ?? 1 })),
+    [resolvedActiveElements]
   );
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
@@ -238,10 +256,14 @@ function App() {
   const lastLibraryPathRef = useRef('/library/adversaries');
   const scenesLoadedRef = useRef(false);
   const adventuresLoadedRef = useRef(false);
+  const charactersLoadedRef = useRef(false);
   const scenesLoadPromiseRef = useRef(null);
   const adventuresLoadPromiseRef = useRef(null);
+  const charactersLoadPromiseRef = useRef(null);
   const scenesCacheRef = useRef([]);
   const adventuresCacheRef = useRef([]);
+  const charactersCacheRef = useRef([]);
+  const charLoadResolversRef = useRef([]);
 
   // Load scenes on demand; resolve adversary/env IDs for scene chips.
   // Returns the scenes array (from cache if already loaded, or freshly loaded).
@@ -321,6 +343,17 @@ function App() {
     return promise;
   }, []);
 
+  // ensureCharactersLoaded does NOT fetch on its own — the uid effect is the sole owner
+  // of data.characters. This avoids getAuthToken() picking up the wrong Firebase user
+  // during initialization. Callers that need data immediately (ItemPickerModal, LibraryView)
+  // either get the cache or wait for the uid effect to complete.
+  const ensureCharactersLoaded = useCallback(async () => {
+    if (charactersLoadedRef.current) return charactersCacheRef.current;
+    return new Promise(resolve => {
+      charLoadResolversRef.current.push(resolve);
+    });
+  }, []);
+
   useEffect(() => {
     if (!auth) { setLoading(false); return; }
 
@@ -353,6 +386,38 @@ function App() {
 
   // Keep routeRef current
   useEffect(() => { routeRef.current = route; }, [route]);
+
+  // Load characters once auth settles. Uses user.getIdToken() directly (NOT getAuthToken())
+  // because during Firebase init, auth.currentUser may briefly be a different user (e.g. the
+  // GM whose table this player is on). By getting the token from the React-state `user` object,
+  // we guarantee the request matches the settled UID.
+  useEffect(() => {
+    if (!user?.uid) return;
+    let cancelled = false;
+    const thisUser = user;
+    (async () => {
+      try {
+        const token = await thisUser.getIdToken();
+        if (cancelled) return;
+        const params = new URLSearchParams({ offset: '0', limit: '1000', sort: 'popularity' });
+        const res = await fetch(`/api/data/characters?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (cancelled || !res.ok) return;
+        const result = await res.json();
+        const chars = result.items || [];
+        setData(prev => ({ ...prev, characters: chars }));
+        charactersLoadedRef.current = true;
+        charactersCacheRef.current = chars;
+        // Resolve any ensureCharactersLoaded callers waiting for this data.
+        charLoadResolversRef.current.forEach(r => r(chars));
+        charLoadResolversRef.current = [];
+      } catch (err) {
+        if (!cancelled) console.error('Failed to load characters:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.uid]);
 
   // Derive whether the current user is viewing someone else's GM table (player mode)
   const isPlayer = route.view === 'gm-table' && !!route.gmUid && route.gmUid !== user?.uid;
@@ -467,22 +532,31 @@ function App() {
       es.addEventListener('dice-roll', (e) => {
         const roll = JSON.parse(e.data);
         if (roll._clientId === CLIENT_ID) return;
-        setPlayerDiceRollQueue(prev => {
-          const willUpdate = !roll._optimistic && prev.length > 0 && prev[0]._optimistic;
-          if (willUpdate) {
-            const { rollUser } = prev[0];
-            return [{ ...roll, _update: true, _optimistic: false, rollUser: rollUser || roll.rollUser }, ...prev.slice(1)];
-          }
-          return [...prev, roll];
-        });
+        setPlayerDiceRollQueue(prev => [
+          ...prev,
+          { ...roll, _fromSSE: true, _rollId: `sse-${Date.now()}-${Math.random().toString(36).slice(2)}` },
+        ]);
       });
       es.addEventListener('dice-ack', (e) => {
-        setPlayerDiceAck(JSON.parse(e.data));
+        const ack = JSON.parse(e.data);
+        if (ack._clientId === CLIENT_ID) return; // Skip own ack echo
+        setPlayerDiceAck(ack);
       });
       es.addEventListener('roll-history', (e) => {
         const { rolls } = JSON.parse(e.data);
         if (Array.isArray(rolls) && rolls.length) {
           setDiceLog(rolls.map(r => ({ ...r, _logId: r._logId || `hist-${r.timestamp || Math.random()}` })));
+          // Restore unacked rolls as banners so the GM can still acknowledge them after reload
+          const unacked = rolls.filter(r => !r._acked && r._rollDbId);
+          if (unacked.length) {
+            setPlayerDiceRollQueue(prev => {
+              const existingIds = new Set(prev.map(r => r._rollId).filter(Boolean));
+              const toAdd = unacked
+                .filter(r => !existingIds.has(`hist-${r._rollDbId}`))
+                .map(r => ({ ...r, _fromHistory: true, _rollId: `hist-${r._rollDbId}` }));
+              return toAdd.length ? [...prev, ...toAdd] : prev;
+            });
+          }
         }
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
@@ -523,7 +597,10 @@ function App() {
       es.addEventListener('dice-roll', (e) => {
         const roll = JSON.parse(e.data);
         if (roll._clientId === CLIENT_ID) return; // Skip own roll (already handled via HTTP response)
-        setPlayerDiceRollQueue(prev => [...prev, roll]);
+        setPlayerDiceRollQueue(prev => [
+          ...prev,
+          { ...roll, _fromSSE: true, _rollId: `sse-${Date.now()}-${Math.random().toString(36).slice(2)}` },
+        ]);
       });
       es.addEventListener('dice-ack', (e) => {
         setPlayerDiceAck(JSON.parse(e.data));
@@ -532,6 +609,17 @@ function App() {
         const { rolls } = JSON.parse(e.data);
         if (Array.isArray(rolls) && rolls.length) {
           setDiceLog(rolls.map(r => ({ ...r, _logId: r._logId || `hist-${r.timestamp || Math.random()}` })));
+          // Restore unacked rolls as banners so players can still see pending rolls after reconnect
+          const unacked = rolls.filter(r => !r._acked && r._rollDbId);
+          if (unacked.length) {
+            setPlayerDiceRollQueue(prev => {
+              const existingIds = new Set(prev.map(r => r._rollId).filter(Boolean));
+              const toAdd = unacked
+                .filter(r => !existingIds.has(`hist-${r._rollDbId}`))
+                .map(r => ({ ...r, _fromHistory: true, _rollId: `hist-${r._rollDbId}` }));
+              return toAdd.length ? [...prev, ...toAdd] : prev;
+            });
+          }
         }
       });
       // Real-time table operations from the GM
@@ -750,7 +838,8 @@ function App() {
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
       newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
     } else if (collectionName === 'characters') {
-      newElements.push({ ...item, instanceId: generateId() });
+      const { is_public, _source, ...charData } = item;
+      newElements.push({ ...charData, instanceId: generateId(), elementType: 'character' });
     } else if (collectionName === 'adventures') {
       const scenes = await ensureScenesLoaded();
       await ensureAdventuresLoaded();
@@ -937,9 +1026,9 @@ function App() {
     }, 'characters');
   };
 
-  // GM dice broadcast callbacks
+  // GM dice broadcast callbacks — include _clientId so the sender can skip its own echo
   const handleDiceAckBroadcast = useCallback((ackData) => {
-    postDiceAck(ackData).catch(err => console.warn('postDiceAck failed:', err));
+    postDiceAck({ ...ackData, _clientId: CLIENT_ID }).catch(err => console.warn('postDiceAck failed:', err));
   }, []);
 
   if (loading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Loading...</div>;
@@ -1087,6 +1176,7 @@ function App() {
                 characters={characters}
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
+                ensureCharactersLoaded={ensureCharactersLoaded}
               />
             </div>
             <div
@@ -1095,18 +1185,19 @@ function App() {
               aria-hidden={route.view !== 'gm-table'}
             >
               <GMTableView
-                activeElements={isPlayer ? (playerTableState?.elements || []) : activeElements}
+                activeElements={isPlayer ? (playerTableState?.elements || []) : resolvedActiveElements}
                 updateActiveElement={isPlayer ? handlePlayerCharacterUpdate : broadcastingUpdateActiveElement}
                 removeActiveElement={effectiveIsPlayer ? () => {} : broadcastingRemoveActiveElement}
                 updateActiveElementsBaseData={effectiveIsPlayer ? () => {} : broadcastingUpdateActiveElementsBaseData}
                 data={data}
-                saveItem={effectiveIsPlayer ? () => {} : saveItem}
-                saveImage={effectiveIsPlayer ? () => {} : saveImage}
+                saveItem={effectiveIsPlayer ? (col, item) => col === 'characters' ? saveItem(col, item) : undefined : saveItem}
+                saveImage={effectiveIsPlayer ? (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, opts) : undefined : saveImage}
                 addToTable={effectiveIsPlayer ? () => {} : broadcastingAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
                 user={user}
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
+                ensureCharactersLoaded={ensureCharactersLoaded}
                 route={route}
                 navigate={navigate}
                 featureCountdowns={isPlayer ? (playerTableState?.featureCountdowns || {}) : featureCountdowns}

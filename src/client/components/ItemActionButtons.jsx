@@ -28,6 +28,7 @@ export function ItemActionButtons({
   onEdit,
   onDelete,
   isOwn,
+  itemName = '',
   cloningStatus = '',
   variant = 'card',
   stopPropagation = false,
@@ -44,6 +45,13 @@ export function ItemActionButtons({
   const handleClone = () => {
     if (!onClone || cloningStatus) return;
     onClone();
+  };
+
+  const handleDelete = () => {
+    if (!onDelete) return;
+    const label = itemName ? `"${itemName}"` : 'this item';
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    onDelete();
   };
 
   const base = variant === 'header' ? 'p-1.5 rounded' : '';
@@ -99,7 +107,7 @@ export function ItemActionButtons({
       {isOwn && onDelete && (
         <Tooltip label="Delete">
           <button
-            onClick={onDelete}
+            onClick={handleDelete}
             aria-label="Delete"
             className={`${base} ${deleteClass} transition-colors`}
           >

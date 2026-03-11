@@ -1,13 +1,18 @@
 import { useMemo, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, AlertTriangle } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
+import { DaggerstackImport } from '../DaggerstackImport.jsx';
+import { saveItem } from '../../lib/api.js';
+import { generateId } from '../../lib/helpers.js';
+import { isCharacterComplete } from '../../lib/character-calc.js';
 
 export const ITEM_PICKER_SINGULAR = {
   adversaries: 'Adversary',
   environments: 'Environment',
   scenes: 'Scene',
   adventures: 'Adventure',
+  characters: 'Character',
 };
 
 /**
@@ -24,7 +29,7 @@ export const ITEM_PICKER_SINGULAR = {
  *   onClose       — called when the modal is dismissed
  *   onSelect      — called with the selected item; modal closes itself after
  */
-export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect, isLoading }) {
+export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect, isLoading, excludeIds }) {
   const isPaginated = collection === 'adversaries' || collection === 'environments';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
@@ -40,12 +45,15 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const excludeSet = useMemo(() => new Set(excludeIds || []), [excludeIds]);
+
   const clientItems = useMemo(() => {
-    if (isPaginated) return search.items;
+    if (isPaginated) return excludeSet.size ? search.items.filter(item => !excludeSet.has(item.id)) : search.items;
     const list = data[collection] || [];
     const lowerSearch = search.filters.search.trim().toLowerCase();
-    return lowerSearch ? list.filter(item => item.name?.toLowerCase().includes(lowerSearch)) : list;
-  }, [isPaginated, search.items, search.filters.search, data, collection]);
+    const filtered = lowerSearch ? list.filter(item => item.name?.toLowerCase().includes(lowerSearch)) : list;
+    return excludeSet.size ? filtered.filter(item => !excludeSet.has(item.id)) : filtered;
+  }, [isPaginated, search.items, search.filters.search, data, collection, excludeSet]);
 
   useEffect(() => {
     const handleKey = (e) => {
@@ -120,6 +128,26 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
           </div>
         )}
 
+        {/* Daggerstack import — only for characters */}
+        {collection === 'characters' && (
+          <div className="px-5 py-3 border-b border-slate-800 shrink-0">
+            <DaggerstackImport
+              compact
+              onImported={async (character) => {
+                const charToSave = { ...character, id: generateId() };
+                delete charToSave.elementType;
+                delete charToSave.conditions;
+                delete charToSave.playerName;
+                const saved = await saveItem('characters', charToSave);
+                if (saved) {
+                  onSelect(saved);
+                  onClose();
+                }
+              }}
+            />
+          </div>
+        )}
+
         {/* Results */}
         <div ref={resultsRef} className="flex-1 overflow-y-auto min-h-0">
           {(search.loading || showNonPaginatedLoading) && !search.isLoadingMore && (
@@ -128,20 +156,39 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
           {!search.loading && !showNonPaginatedLoading && clientItems.length === 0 && (
             <div className="text-center text-slate-500 text-sm py-10">No results</div>
           )}
-          {clientItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => { onSelect(item); onClose(); }}
-              className="w-full text-left px-5 py-3 hover:bg-slate-800 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4"
-            >
-              <span className="text-white font-medium text-sm truncate">{item.name}</span>
-              <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1.5">
-                {item.tier != null && <span>Tier {item.tier}</span>}
-                {item.tier != null && (item.role || item.type) && <span>·</span>}
-                {(item.role || item.type) && <span className="capitalize">{item.role || item.type}</span>}
-              </span>
-            </button>
-          ))}
+          {clientItems.map(item => {
+            const charCheck = collection === 'characters' ? isCharacterComplete(item) : null;
+            const incomplete = charCheck && !charCheck.complete;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  if (incomplete) return;
+                  onSelect(item); onClose();
+                }}
+                disabled={incomplete}
+                className={`w-full text-left px-5 py-3 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4 ${
+                  incomplete ? 'opacity-60 cursor-not-allowed' : 'hover:bg-slate-800'
+                }`}
+                title={incomplete ? `Incomplete — missing: ${charCheck.missing.join(', ')}. Edit this character first.` : undefined}
+              >
+                <span className={`font-medium text-sm truncate ${incomplete ? 'text-slate-400' : 'text-white'}`}>{item.name}</span>
+                <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1.5">
+                  {incomplete && (
+                    <span className="flex items-center gap-0.5 text-amber-400" title={`Missing: ${charCheck.missing.join(', ')}`}>
+                      <AlertTriangle size={10} />
+                      <span className="text-[10px]">Incomplete</span>
+                    </span>
+                  )}
+                  {item.tier != null && <span>Tier {item.tier}</span>}
+                  {item.tier != null && (item.role || item.type || item.class) && <span>·</span>}
+                  {(item.role || item.type) && <span className="capitalize">{item.role || item.type}</span>}
+                  {collection === 'characters' && item.class && <span>{item.class}</span>}
+                  {collection === 'characters' && item.level != null && <span>Lvl {item.level}</span>}
+                </span>
+              </button>
+            );
+          })}
           {search.isLoadingMore && (
             <div className="text-center text-slate-500 text-xs py-3 animate-pulse">
               Loading more of the {search.totalCount.toLocaleString()} entries…

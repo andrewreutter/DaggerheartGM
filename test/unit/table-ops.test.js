@@ -1,11 +1,13 @@
 /**
- * Unit tests for src/client/lib/table-ops.js
+ * Unit tests for src/client/lib/table-ops.js and src/client/lib/character-calc.js
  *
- * Pure-logic tests for the table operation state transformations.
+ * Pure-logic tests for the table operation state transformations and
+ * character calculation utilities.
  * No browser, no DOM, no Firebase needed.
  */
 import { describe, it, expect } from 'vitest';
-import { applyTableOp, applyPlayerTableOp, RUNTIME_KEYS } from '../../src/client/lib/table-ops.js';
+import { applyTableOp, applyPlayerTableOp, RUNTIME_KEYS, CHARACTER_RUNTIME_KEYS } from '../../src/client/lib/table-ops.js';
+import { computeArmorModifiers } from '../../src/client/lib/character-calc.js';
 
 // ---------------------------------------------------------------------------
 // applyTableOp — GM-side state transformations
@@ -112,6 +114,50 @@ describe('applyTableOp', () => {
     expect(result.activeElements[1].id).toBe('adv-2');
   });
 
+  it('character-library-update replaces base data while preserving runtime keys', () => {
+    const char = {
+      id: 'char-1', instanceId: 'inst-c', elementType: 'character',
+      name: 'Stale Name', tier: 1, maxHp: 6, weapons: [{ name: 'Hand Runes' }],
+      currentHp: 4, currentStress: 1, hope: 3, currentArmor: 1,
+      conditions: 'dazed', tokenX: 10, tokenY: 20,
+      assignedPlayerEmail: 'p@example.com', assignedPlayerUid: 'uid-p', playerName: 'Player',
+    };
+    const state = { activeElements: [mkElement(), char] };
+    const newBaseData = {
+      id: 'char-1', name: 'Fresh Name', tier: 2, maxHp: 8,
+      weapons: [{ name: 'Dualstaff' }], class: 'Ranger', _source: 'own',
+    };
+    const result = applyTableOp({ op: 'character-library-update', characterId: 'char-1', newBaseData }, state);
+    const updated = result.activeElements[1];
+
+    // Base data replaced from newBaseData
+    expect(updated.name).toBe('Fresh Name');
+    expect(updated.tier).toBe(2);
+    expect(updated.maxHp).toBe(8);
+    expect(updated.weapons[0].name).toBe('Dualstaff');
+    expect(updated.class).toBe('Ranger');
+
+    // Runtime keys preserved
+    expect(updated.instanceId).toBe('inst-c');
+    expect(updated.elementType).toBe('character');
+    expect(updated.currentHp).toBe(4);
+    expect(updated.currentStress).toBe(1);
+    expect(updated.hope).toBe(3);
+    expect(updated.currentArmor).toBe(1);
+    expect(updated.conditions).toBe('dazed');
+    expect(updated.tokenX).toBe(10);
+    expect(updated.tokenY).toBe(20);
+    expect(updated.assignedPlayerEmail).toBe('p@example.com');
+    expect(updated.assignedPlayerUid).toBe('uid-p');
+    expect(updated.playerName).toBe('Player');
+  });
+
+  it('character-library-update does not affect non-matching elements', () => {
+    const state = { activeElements: [mkElement({ id: 'adv-1', instanceId: 'inst-1' })] };
+    const result = applyTableOp({ op: 'character-library-update', characterId: 'char-1', newBaseData: { id: 'char-1' } }, state);
+    expect(result.activeElements[0]).toBe(state.activeElements[0]);
+  });
+
   it('unknown op returns empty object', () => {
     const result = applyTableOp({ op: 'nonexistent' }, {});
     expect(result).toEqual({});
@@ -192,6 +238,53 @@ describe('applyPlayerTableOp', () => {
     expect(result.playerEmails).toEqual(['x@y.com']);
   });
 
+  it('character-library-update replaces base data while preserving runtime keys', () => {
+    const state = mkState({
+      elements: [
+        { instanceId: 'inst-1', elementType: 'adversary', name: 'Goblin', currentHp: 5 },
+        {
+          id: 'char-1', instanceId: 'char-1', elementType: 'character',
+          name: 'Stale Name', tier: 1, maxHp: 6, weapons: [{ name: 'Hand Runes' }],
+          currentHp: 4, currentStress: 1, hope: 3, currentArmor: 1,
+          conditions: 'dazed', tokenX: 5, tokenY: 10,
+          assignedPlayerEmail: 'p@example.com', assignedPlayerUid: 'uid-p', playerName: 'Player',
+        },
+      ],
+    });
+    const newBaseData = {
+      id: 'char-1', name: 'Fresh Name', tier: 2, maxHp: 8,
+      weapons: [{ name: 'Dualstaff' }], class: 'Ranger',
+    };
+    const result = applyPlayerTableOp({ op: 'character-library-update', characterId: 'char-1', newBaseData }, state);
+    const updated = result.elements[1];
+
+    expect(updated.name).toBe('Fresh Name');
+    expect(updated.tier).toBe(2);
+    expect(updated.maxHp).toBe(8);
+    expect(updated.weapons[0].name).toBe('Dualstaff');
+    expect(updated.class).toBe('Ranger');
+
+    expect(updated.instanceId).toBe('char-1');
+    expect(updated.elementType).toBe('character');
+    expect(updated.currentHp).toBe(4);
+    expect(updated.currentStress).toBe(1);
+    expect(updated.hope).toBe(3);
+    expect(updated.currentArmor).toBe(1);
+    expect(updated.conditions).toBe('dazed');
+    expect(updated.tokenX).toBe(5);
+    expect(updated.tokenY).toBe(10);
+    expect(updated.assignedPlayerEmail).toBe('p@example.com');
+    expect(updated.assignedPlayerUid).toBe('uid-p');
+    expect(updated.playerName).toBe('Player');
+  });
+
+  it('character-library-update does not affect non-matching or non-character elements', () => {
+    const state = mkState();
+    const result = applyPlayerTableOp({ op: 'character-library-update', characterId: 'nobody', newBaseData: {} }, state);
+    expect(result.elements[0]).toBe(state.elements[0]);
+    expect(result.elements[1]).toBe(state.elements[1]);
+  });
+
   it('unknown op returns state unchanged', () => {
     const state = mkState();
     const result = applyPlayerTableOp({ op: 'nonexistent' }, state);
@@ -210,5 +303,231 @@ describe('RUNTIME_KEYS', () => {
     expect(RUNTIME_KEYS).toContain('currentHp');
     expect(RUNTIME_KEYS).toContain('name');
     expect(RUNTIME_KEYS).toContain('tier');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CHARACTER_RUNTIME_KEYS — keys preserved per-element when resolving characters
+// ---------------------------------------------------------------------------
+
+describe('CHARACTER_RUNTIME_KEYS', () => {
+  it('contains the expected table-local keys', () => {
+    expect(CHARACTER_RUNTIME_KEYS).toContain('instanceId');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('elementType');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('currentHp');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('currentStress');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('hope');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('currentArmor');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('conditions');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('tokenX');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('tokenY');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerEmail');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerUid');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('playerName');
+  });
+
+  it('does NOT contain base-data keys that should come from the library', () => {
+    // These fields should come from the library record, not the stored element.
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('name');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('tier');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('maxHp');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('maxStress');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('maxHope');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('maxArmor');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('evasion');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('traits');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('class');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('weapons');
+    expect(CHARACTER_RUNTIME_KEYS).not.toContain('classFeatures');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Character resolution logic — simulates the resolvedActiveElements useMemo
+// ---------------------------------------------------------------------------
+
+describe('character resolution logic', () => {
+  // Pure function that mirrors the app.jsx useMemo logic.
+  const resolveElements = (activeElements, libraryCharacters) => {
+    const libraryById = new Map(libraryCharacters.map(c => [c.id, c]));
+    return activeElements.map(el => {
+      if (el.elementType !== 'character' || !el.id) return el;
+      const libraryChar = libraryById.get(el.id);
+      if (!libraryChar) return el;
+      const runtime = {};
+      CHARACTER_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+      return { ...libraryChar, ...runtime };
+    });
+  };
+
+  it('merges library base data onto a character element', () => {
+    const stored = {
+      id: 'char-1', instanceId: 'inst-1', elementType: 'character',
+      name: 'Old Name', tier: 1, maxHp: 6,
+      currentHp: 4, currentStress: 1, hope: 3,
+      conditions: 'dazed', tokenX: 10, tokenY: 20,
+    };
+    const library = [{ id: 'char-1', name: 'Updated Name', tier: 2, maxHp: 8, class: 'Bard' }];
+    const [resolved] = resolveElements([stored], library);
+
+    // Base data comes from library
+    expect(resolved.name).toBe('Updated Name');
+    expect(resolved.tier).toBe(2);
+    expect(resolved.maxHp).toBe(8);
+    expect(resolved.class).toBe('Bard');
+
+    // Runtime state preserved from stored element
+    expect(resolved.currentHp).toBe(4);
+    expect(resolved.currentStress).toBe(1);
+    expect(resolved.hope).toBe(3);
+    expect(resolved.conditions).toBe('dazed');
+    expect(resolved.tokenX).toBe(10);
+    expect(resolved.tokenY).toBe(20);
+    expect(resolved.instanceId).toBe('inst-1');
+    expect(resolved.elementType).toBe('character');
+  });
+
+  it('falls back to stored data when library character is not found', () => {
+    const stored = {
+      id: 'char-99', instanceId: 'inst-1', elementType: 'character',
+      name: 'Orphan', maxHp: 6, currentHp: 5,
+    };
+    const library = [{ id: 'char-1', name: 'Someone Else' }];
+    const [resolved] = resolveElements([stored], library);
+
+    expect(resolved).toBe(stored); // exact same reference
+  });
+
+  it('passes through non-character elements unchanged', () => {
+    const adversary = { id: 'adv-1', instanceId: 'inst-a', elementType: 'adversary', name: 'Goblin' };
+    const library = [];
+    const [resolved] = resolveElements([adversary], library);
+    expect(resolved).toBe(adversary);
+  });
+
+  it('falls through for characters without an id (manually created)', () => {
+    const stored = {
+      instanceId: 'inst-manual', elementType: 'character', name: 'Manual Hero', currentHp: 5,
+    };
+    const library = [{ id: 'char-1', name: 'Library Hero' }];
+    const [resolved] = resolveElements([stored], library);
+    expect(resolved).toBe(stored);
+  });
+
+  it('resolves multiple instances of the same library character independently', () => {
+    const el1 = { id: 'char-1', instanceId: 'inst-1', elementType: 'character', currentHp: 3, conditions: 'hurt' };
+    const el2 = { id: 'char-1', instanceId: 'inst-2', elementType: 'character', currentHp: 6, conditions: '' };
+    const library = [{ id: 'char-1', name: 'Hero', maxHp: 8 }];
+    const resolved = resolveElements([el1, el2], library);
+
+    expect(resolved[0].instanceId).toBe('inst-1');
+    expect(resolved[0].currentHp).toBe(3);
+    expect(resolved[0].conditions).toBe('hurt');
+    expect(resolved[1].instanceId).toBe('inst-2');
+    expect(resolved[1].currentHp).toBe(6);
+    // Both pick up library base data
+    expect(resolved[0].name).toBe('Hero');
+    expect(resolved[1].name).toBe('Hero');
+    expect(resolved[0].maxHp).toBe(8);
+    expect(resolved[1].maxHp).toBe(8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeArmorModifiers — armor feature stat/roll modifier extraction
+// ---------------------------------------------------------------------------
+
+describe('computeArmorModifiers', () => {
+  it('returns empty result for null armor', () => {
+    const result = computeArmorModifiers(null);
+    expect(result.traits).toEqual({});
+    expect(result.evasion).toBe(0);
+    expect(result.rollModifiers).toEqual([]);
+    expect(result.feature).toBeNull();
+    expect(result.sources).toEqual([]);
+  });
+
+  it('returns empty result for armor without features', () => {
+    const result = computeArmorModifiers({ name: 'Leather Armor', features: [] });
+    expect(result.traits).toEqual({});
+    expect(result.evasion).toBe(0);
+    expect(result.feature).toBeNull();
+  });
+
+  it('parses Flexible: +1 to Evasion', () => {
+    const armor = { name: 'Gambeson Armor', features: [{ name: 'Flexible', description: '+1 to Evasion' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.evasion).toBe(1);
+    expect(result.feature).toEqual({ name: 'Flexible', description: '+1 to Evasion' });
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]).toMatchObject({ armor: 'Gambeson Armor', feature: 'Flexible', stat: 'evasion', value: 1 });
+  });
+
+  it('parses Heavy: -1 to Evasion', () => {
+    const armor = { name: 'Chainmail Armor', features: [{ name: 'Heavy', description: '-1 to Evasion' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.evasion).toBe(-1);
+    expect(result.sources[0].value).toBe(-1);
+  });
+
+  it('parses Very Heavy: -2 to Evasion; -1 to Agility', () => {
+    const armor = { name: 'Full Plate Armor', features: [{ name: 'Very Heavy', description: '-2 to Evasion; -1 to Agility' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.evasion).toBe(-2);
+    expect(result.traits.agility).toBe(-1);
+    expect(result.sources).toHaveLength(2);
+  });
+
+  it('parses Gilded: +1 to Presence', () => {
+    const armor = { name: 'Bellamoi Fine Armor', features: [{ name: 'Gilded', description: '+1 to Presence' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.traits.presence).toBe(1);
+    expect(result.evasion).toBe(0);
+    expect(result.sources).toHaveLength(1);
+  });
+
+  it('parses Difficult: -1 to all character traits and Evasion', () => {
+    const armor = { name: 'Savior Chainmail', features: [{ name: 'Difficult', description: '-1 to all character traits and Evasion' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.traits.agility).toBe(-1);
+    expect(result.traits.strength).toBe(-1);
+    expect(result.traits.finesse).toBe(-1);
+    expect(result.traits.instinct).toBe(-1);
+    expect(result.traits.presence).toBe(-1);
+    expect(result.traits.knowledge).toBe(-1);
+    expect(result.evasion).toBe(-1);
+    expect(result.sources).toHaveLength(7);
+  });
+
+  it('parses Channeling: +1 to Spellcast Rolls as a roll modifier', () => {
+    const armor = { name: 'Channeling Armor', features: [{ name: 'Channeling', description: '+1 to Spellcast Rolls' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.evasion).toBe(0);
+    expect(result.traits).toEqual({});
+    expect(result.rollModifiers).toHaveLength(1);
+    expect(result.rollModifiers[0]).toMatchObject({ name: 'Channeling', score: 1, rollType: 'spellcast' });
+  });
+
+  it('parses Quiet: +2 bonus to rolls to move silently as a roll modifier', () => {
+    const armor = { name: 'Tyris Soft Armor', features: [{ name: 'Quiet', description: 'You gain a +2 bonus to rolls you make to move silently.' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.rollModifiers).toHaveLength(1);
+    expect(result.rollModifiers[0]).toMatchObject({ name: 'Quiet', score: 2, rollType: 'stealth' });
+  });
+
+  it('stores feature info for display-only features like Truthseeking', () => {
+    const armor = { name: 'Veritas Opal Armor', features: [{ name: 'Truthseeking', description: 'This armor glows when another creature within Close range tells a lie.' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.feature).toEqual({ name: 'Truthseeking', description: 'This armor glows when another creature within Close range tells a lie.' });
+    expect(result.evasion).toBe(0);
+    expect(result.traits).toEqual({});
+    expect(result.rollModifiers).toEqual([]);
+  });
+
+  it('handles armor with feature using text field instead of description', () => {
+    const armor = { name: 'Gambeson', features: [{ name: 'Flexible', text: '+1 to Evasion' }] };
+    const result = computeArmorModifiers(armor);
+    expect(result.evasion).toBe(1);
+    expect(result.feature.description).toBe('+1 to Evasion');
   });
 });
