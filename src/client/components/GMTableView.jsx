@@ -706,6 +706,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   // Action notification (e.g. Startling): push a synthetic _action entry to the DiceRoller.
   const handleActionNotification = (notification) => {
+    dismissAllHoverCards();
     // Show optimistically on the GM's DiceRoller immediately
     diceRollerRef.current?.addRoll(notification);
     // Broadcast to all other room clients (players and other GM windows) via SSE.
@@ -715,6 +716,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   // Player action notification — broadcast to GM room (shows on GM + other players).
   const handlePlayerActionNotification = (notification) => {
+    dismissAllHoverCards();
     playerDiceRollerRef.current?.addRoll(notification);
     postActionNotification(notification, gmUid);
   };

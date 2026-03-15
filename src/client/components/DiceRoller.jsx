@@ -266,7 +266,7 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onDismiss, targets, onApplyDamage, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime }) {
+function ResultBanner({ roll, resolved, onDismiss, onCancel, targets, onApplyDamage, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = characterName || rollUser || '';
@@ -620,12 +620,22 @@ function ResultBanner({ roll, resolved, onDismiss, targets, onApplyDamage, disab
                   </div>
                 </>
               ) : (
-                <button
-                  onClick={onDismiss}
-                  className="w-full px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                >
-                  Acknowledge
-                </button>
+                <div className="flex items-center justify-center gap-1.5">
+                  <button
+                    onClick={onDismiss}
+                    className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    Acknowledge
+                  </button>
+                  {onCancel != null && (
+                    <button
+                      onClick={onCancel}
+                      className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           );
@@ -804,7 +814,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
 
   // ── Banner management ──────────────────────────────────────────────────────
 
-  function dismissBannerById(bannerId) {
+  /** @param {{ skipComplete?: boolean }} opts - skipComplete: dismiss without firing onComplete (e.g. Cancel) */
+  function dismissBannerById(bannerId, opts = {}) {
     const entry = activeBannersRef.current.find(b => b._bannerId === bannerId);
     if (!entry) return;
     // If this banner was animating, clear dice and reset
@@ -816,8 +827,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
     // Remove from banner list
     syncBanners(activeBannersRef.current.filter(b => b._bannerId !== bannerId));
 
-    // Fire side-effect callback
-    onCompleteRef.current?.(entry.roll);
+    // Fire side-effect callback unless Cancel (dismiss without ack)
+    if (!opts.skipComplete) onCompleteRef.current?.(entry.roll);
 
     // Process next dice animation
     processNextDice();
@@ -1043,6 +1054,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 roll={{ ...entry.roll, _bannerId: entry._bannerId }}
                 resolved={entry.resolved}
                 onDismiss={() => dismissBannerById(entry._bannerId)}
+                onCancel={() => dismissBannerById(entry._bannerId, { skipComplete: true })}
                 targets={targets}
                 onApplyDamage={onApplyDamage}
                 disableDismiss={false}
