@@ -8,6 +8,7 @@ export const CHARACTER_RUNTIME_KEYS = [
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'expandedFeatures',
   'reinforcedActive',
+  'selectedExperienceIndex',  // which experience is selected for the next roll (+2)
   // Feature interaction state
   'featureUsage',      // { [featureKey]: { used: boolean, cycle: 'session'|'rest'|'longRest' } }
   'activeModifiers',   // [{ id, name, dice?, value?, mode?, bonus?, trait?, type, refreshOn }]
