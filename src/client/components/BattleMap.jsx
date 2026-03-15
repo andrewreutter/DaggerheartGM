@@ -235,7 +235,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
 
 // ─── TokenCircle ─────────────────────────────────────────────────────────────
 
-function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDragging, isGhost, isPinned, isProxy, rangeBand }) {
+function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDragging, isGhost, isPinned, isProxy, rangeBand, rangeBandGlowScale }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
 
@@ -271,9 +271,10 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
     }
   }
 
-  // Range-band decoration: solid ring + intense outer glow
+  // Range-band decoration: solid ring + intense outer glow (scale widens ring and blur, e.g. 3 for drag ghost)
+  const glowScale = rangeBandGlowScale ?? 1;
   const glowStyle = rangeBand
-    ? { boxShadow: `0 0 0 3px ${rangeBand.tokenRing}, 0 0 18px 6px ${rangeBand.tokenGlow}` }
+    ? { boxShadow: `0 0 0 ${3 * glowScale}px ${rangeBand.tokenRing}, 0 0 ${18 * glowScale}px ${6 * glowScale}px ${rangeBand.tokenGlow}` }
     : {};
 
   const bgClass = isChar
@@ -530,6 +531,8 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y } in feet, null when off-map
   // Frozen bullseye position during drag (feet coords of dragged token's origin)
   const frozenBullseyeRef = useRef(null);
+  // Second bullseye that follows the dragged token during drag (only when frozen bullseye is set)
+  const [followBullseyeFt, setFollowBullseyeFt] = useState(null);
 
   // Track scroll container width for pxPerFt calculation
   useLayoutEffect(() => {
@@ -700,22 +703,34 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     if (!frozenBullseyeRef.current) setBullseyeFt(null);
   }, []);
 
-  // Compute range band index (0–4) for each placed token based on distance to bullseye
+  // Compute range band index (0–4) for each placed token based on distance to bullseye.
+  // During drag from map, use the follow bullseye (moving) so highlights reflect the token being moved.
   const tokenRangeBands = useMemo(() => {
-    if (!bullseyeFt) return {};
+    const center = followBullseyeFt ?? bullseyeFt;
+    if (!center) return {};
     const result = {};
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
-      if (element.instanceId === bullseyeFt.excludeInstanceId) continue;
-      const dx = (element.tokenX + 2.5) - bullseyeFt.x;
-      const dy = (element.tokenY + 2.5) - bullseyeFt.y;
+      if (element.instanceId === center.excludeInstanceId) continue;
+      const dx = (element.tokenX + 2.5) - center.x;
+      const dy = (element.tokenY + 2.5) - center.y;
       // Use nearest-edge distance: subtract token radius so any overlap with a band counts
       const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
       const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
       result[element.instanceId] = bandIdx; // -1 means Out of Range
     }
     return result;
-  }, [bullseyeFt, allMapTokens]);
+  }, [bullseyeFt, followBullseyeFt, allMapTokens]);
+
+  // Dragged token's range band relative to the static (left-behind) bullseye, for ghost highlight
+  const draggedTokenRangeBandFromStatic = useMemo(() => {
+    if (!bullseyeFt || !followBullseyeFt) return null;
+    const dx = followBullseyeFt.x - bullseyeFt.x;
+    const dy = followBullseyeFt.y - bullseyeFt.y;
+    const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
+    const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
+    return bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
+  }, [bullseyeFt, followBullseyeFt]);
 
   // ─── Drag handlers ──────────────────────────────────────────────────────
 
@@ -776,8 +791,22 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       setDragGhost({ element: ds.element, clientX: e.clientX, clientY: e.clientY, instanceNum: ds.instanceNum, isMyChar: ds.myChar, tokenSize: ds.tokenSize, grabOffsetX: ds.grabOffsetX, grabOffsetY: ds.grabOffsetY });
       setHighlightLeftTray(pointInRect(e.clientX, e.clientY, leftTrayRef.current));
       setHighlightRightTray(!isPlayer && pointInRect(e.clientX, e.clientY, rightTrayRef.current));
+      // Update follow bullseye at ghost center when we have a frozen origin (drag from map)
+      if (frozenBullseyeRef.current) {
+        const ghostCenterX = e.clientX - ds.grabOffsetX + ds.tokenSize / 2;
+        const ghostCenterY = e.clientY - ds.grabOffsetY + ds.tokenSize / 2;
+        let ft = clientToFt(ghostCenterX, ghostCenterY);
+        if (ft) {
+          ft = {
+            x: Math.max(0, Math.min(mapWidthFt, ft.x)),
+            y: Math.max(0, Math.min(mapHeightFt, ft.y)),
+            excludeInstanceId: ds.element.instanceId,
+          };
+        }
+        setFollowBullseyeFt(ft);
+      }
     }
-  }, [isPlayer]);
+  }, [isPlayer, clientToFt, mapWidthFt, mapHeightFt]);
 
   const handlePointerUp = useCallback((e) => {
     const ds = dragRef.current;
@@ -785,7 +814,8 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     setDragGhost(null);
     setHighlightLeftTray(false);
     setHighlightRightTray(false);
-    // Unfreeze bullseye after drag ends
+    setFollowBullseyeFt(null);
+    // Unfreeze bullseye after drag end
     frozenBullseyeRef.current = null;
 
     if (!ds) return;
@@ -1003,6 +1033,61 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
                 </svg>
               )}
 
+              {/* Second bullseye: follows dragged token during drag */}
+              {followBullseyeFt && (
+                <svg
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 6 }}
+                  overflow="visible"
+                >
+                  {[...RANGE_BANDS].reverse().map((band) => {
+                    const cx = followBullseyeFt.x * pxPerFt;
+                    const cy = followBullseyeFt.y * pxPerFt;
+                    const r = band.maxFt * pxPerFt;
+                    const labelY = cy - r + 14;
+                    return (
+                      <g key={`follow-${band.name}`}>
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={r}
+                          fill={band.fillColor}
+                          stroke={band.ringColor}
+                          strokeWidth={1.5}
+                        />
+                        <text
+                          x={cx}
+                          y={labelY}
+                          textAnchor="middle"
+                          fill={band.ringColor}
+                          fontSize={Math.max(10, Math.min(13, r * 0.12))}
+                          fontWeight="600"
+                          style={{ userSelect: 'none', pointerEvents: 'none' }}
+                        >
+                          {band.name}
+                        </text>
+                      </g>
+                    );
+                  })}
+                  <line
+                    x1={followBullseyeFt.x * pxPerFt - 6}
+                    y1={followBullseyeFt.y * pxPerFt}
+                    x2={followBullseyeFt.x * pxPerFt + 6}
+                    y2={followBullseyeFt.y * pxPerFt}
+                    stroke="rgba(255,255,255,0.7)"
+                    strokeWidth={1}
+                  />
+                  <line
+                    x1={followBullseyeFt.x * pxPerFt}
+                    y1={followBullseyeFt.y * pxPerFt - 6}
+                    x2={followBullseyeFt.x * pxPerFt}
+                    y2={followBullseyeFt.y * pxPerFt + 6}
+                    stroke="rgba(255,255,255,0.7)"
+                    strokeWidth={1}
+                  />
+                </svg>
+              )}
+
               {/* Placed character tokens */}
               {charMapTokens.map(({ element, isMyCharacter: myChar }) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
@@ -1111,6 +1196,8 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
               isMyCharacter={dragGhost.isMyChar}
               isPlayer={isPlayer}
               isGhost
+              rangeBand={draggedTokenRangeBandFromStatic}
+              rangeBandGlowScale={3}
             />
           </div>
         )}
