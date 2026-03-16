@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } fr
 import { Upload, X, Map, ArrowLeftToLine, Pencil } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
+import { isAdversaryDefeated } from '../lib/helpers.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
@@ -277,9 +278,10 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
     ? { boxShadow: `0 0 0 ${3 * glowScale}px ${rangeBand.tokenRing}, 0 0 ${18 * glowScale}px ${6 * glowScale}px ${rangeBand.tokenGlow}` }
     : {};
 
+  const advDefeated = isAdv && isAdversaryDefeated(element);
   const bgClass = isChar
     ? (isMyCharacter ? 'bg-green-700' : 'bg-sky-700')
-    : 'bg-amber-800';
+    : (advDefeated ? 'bg-black' : 'bg-amber-800');
 
   return (
     <div

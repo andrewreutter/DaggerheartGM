@@ -67,3 +67,42 @@ export const stripHtml = (raw) => {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 };
+
+/**
+ * Format HP/Stress/Conditions summary for a damage target (character or adversary).
+ * Used by target selection popups in ResultBanner and CharacterHoverCard.
+ * When opts.hideMax is true (e.g. player view), shows only marked counts (damage taken, stress marked), never max — like the Encounter panel for players.
+ * @param {{ currentHp?: number, maxHp?: number, currentStress?: number, maxStress?: number, conditions?: string }} t
+ * @param {{ hideMax?: boolean }} [opts]
+ * @returns {{ hp: string, stress: string, conditions: string }}
+ */
+export const formatTargetSummary = (t, opts = {}) => {
+  const maxHp = t.maxHp ?? 0;
+  const currentHp = t.currentHp ?? maxHp;
+  const maxStress = t.maxStress ?? 0;
+  const currentStress = t.currentStress ?? 0;
+  const raw = (t.conditions ?? '').trim();
+  const conditions = raw.length > 40 ? raw.slice(0, 37) + '...' : raw;
+
+  if (opts.hideMax) {
+    const hpMarked = Math.max(0, maxHp - currentHp);
+    const hp = `${hpMarked} HP`;
+    const stress = maxStress > 0 ? `${currentStress} Stress` : '';
+    return { hp, stress, conditions };
+  }
+
+  const hp = `${currentHp}/${maxHp} HP`;
+  const stress = maxStress > 0 ? `${currentStress}/${maxStress} Stress` : '';
+  return { hp, stress, conditions };
+};
+
+/**
+ * True when an adversary instance has all HP marked (defeated).
+ * Uses hp_max and currentHp (currentHp defaults to hp_max when omitted).
+ * @param {{ hp_max?: number, currentHp?: number }} element - adversary base or instance with hp_max; instance has currentHp
+ */
+export function isAdversaryDefeated(element) {
+  const maxHp = element.hp_max ?? 0;
+  const currentHp = element.currentHp ?? element.hp_max ?? 0;
+  return maxHp > 0 && currentHp <= 0;
+}

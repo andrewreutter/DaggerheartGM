@@ -5,7 +5,7 @@ import { CustomSelect } from './CustomSelect.jsx';
 import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 import {
   recomputeCharacter, tierFromLevel, TRAIT_KEYS, TRAIT_POOL,
-  resolveWeapon, resolveArmor, parseArmorThresholds,
+  resolveWeapon, resolveArmor, parseArmorThresholds, getEffectiveWeaponRange,
 } from '../../lib/character-calc.js';
 import { generateId } from '../../lib/helpers.js';
 
@@ -32,8 +32,9 @@ function highestTraitNames(traits) {
   return TRAIT_KEYS_ORDER.filter(k => (traits[k] ?? 0) === max);
 }
 
-function WeaponOption({ weapon, isRecommended, showBurden }) {
+function WeaponOption({ weapon, isRecommended, showBurden, ancestryFeatures }) {
   const featureNames = (weapon.features || []).map(f => f.name).filter(Boolean);
+  const displayRange = getEffectiveWeaponRange(weapon, ancestryFeatures) || weapon.range;
   return (
     <div className="flex items-center gap-1.5 w-full min-w-0">
       {isRecommended && <Star size={10} className="text-emerald-400 shrink-0 fill-emerald-400" />}
@@ -42,7 +43,7 @@ function WeaponOption({ weapon, isRecommended, showBurden }) {
         isRecommended ? 'bg-emerald-900/60 border-emerald-600/60 text-emerald-200' : 'bg-slate-800 border-slate-700 text-slate-400'
       }`}>{weapon.trait}</span>
       <span className="text-[11px] text-yellow-300/80 tabular-nums shrink-0">{weapon.damage}</span>
-      <span className="text-[11px] text-slate-500 shrink-0">{weapon.range}</span>
+      {displayRange && <span className="text-[11px] text-slate-500 shrink-0">{displayRange}</span>}
       {featureNames.length > 0 && featureNames.map(fn => (
         <span key={fn} className="text-[9px] rounded px-1 py-0.5 bg-violet-900/50 border border-violet-700/50 text-violet-300 shrink-0">{fn}</span>
       ))}
@@ -69,7 +70,7 @@ function WeaponValueChip({ weapon, isRecommended, showBurden }) {
   );
 }
 
-function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled, showBurden }) {
+function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled, showBurden, ancestryFeatures }) {
   const best = highestTraitNames(traits);
   const sorted = useMemo(() => {
     const copy = [...weapons];
@@ -109,7 +110,7 @@ function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled,
       getOptionDescription={getWeaponDescription}
       renderOption={(id) => {
         const w = weaponById[id];
-        return w ? <WeaponOption weapon={w} isRecommended={isRec(w)} showBurden={showBurden} /> : id;
+        return w ? <WeaponOption weapon={w} isRecommended={isRec(w)} showBurden={showBurden} ancestryFeatures={ancestryFeatures} /> : id;
       }}
       renderValue={(id) => {
         const w = weaponById[id];
@@ -570,6 +571,8 @@ export function CharacterForm({ value, onChange }) {
       {(() => {
         const selectedPrimary = srdData?.weaponsById?.[formData.primaryWeaponId];
         const isTwoHanded = selectedPrimary?.burden === 'Two-Handed';
+        const formAncestryFeatures = (formData.ancestryIds || [])
+          .flatMap(id => (srdData?.ancestriesById?.[id]?.features || []).map(f => ({ name: f.name })));
         return (
           <div className="grid grid-cols-2 gap-3">
             <FormRow label="Primary Weapon">
@@ -585,6 +588,7 @@ export function CharacterForm({ value, onChange }) {
                 traits={formData.traits}
                 placeholder="Select primary..."
                 showBurden
+                ancestryFeatures={formAncestryFeatures}
               />
             </FormRow>
             <FormRow label="Secondary Weapon">
@@ -595,6 +599,7 @@ export function CharacterForm({ value, onChange }) {
                 traits={formData.traits}
                 placeholder={isTwoHanded ? 'N/A (two-handed)' : 'Select secondary...'}
                 disabled={isTwoHanded}
+                ancestryFeatures={formAncestryFeatures}
               />
               {isTwoHanded && (
                 <div className="mt-1 text-[10px] text-slate-500">Two-handed primary uses both hands</div>

@@ -20,7 +20,8 @@
  *   cycle         — alias for frequency (for rest-cycle tracking)
  *   isActive      — true when any cost, dice, or frequency is present
  *   impliesTarget — true when description mentions a target
- *   targetType    — 'adversary' | 'character' | null
+ *   targetType         — 'adversary' | 'character' | null
+ *   advantageCondition — full sentence containing "have/gain advantage on..." (e.g. "You have advantage on rolls to intimidate hostile creatures."), for tooltip; null when no match
  */
 export function parseFeatureAction(description) {
   if (!description) return { isActive: false };
@@ -93,6 +94,11 @@ export function parseFeatureAction(description) {
     targetType = 'adversary';
   }
 
+  // ── Advantage on rolls ───────────────────────────────────────────────────────
+  // Capture the entire sentence (for tooltip); matches "have/gain advantage on rolls to/that involve/..." etc.
+  const advMatch = description.match(/([^.]*(?:have|gain) advantage on[^.]+)(?:\.|$)/i);
+  const advantageCondition = advMatch ? advMatch[1].trim().replace(/\.$/, '') : null;
+
   const isActive =
     hopeCost > 0 || stressCost > 0 || armorMark > 0 || armorClear > 0 ||
     dice.length > 0 || spellcastDC != null || frequency != null;
@@ -102,6 +108,7 @@ export function parseFeatureAction(description) {
     dice, spellcastDC,
     frequency, cycle: frequency,
     isActive, impliesTarget, targetType,
+    advantageCondition,
   };
 }
 
@@ -128,9 +135,18 @@ export function parseSubFeatures(description) {
       const nameMatch = boldTokens[i].match(/\*\*([^*]+?)\*\*/);
       if (!nameMatch) continue;
       const name = nameMatch[1].replace(/:$/, '').trim();
-      const desc = boldTokens[i + 1].trim();
-      // Require at least 20 chars of description so inline emphasis doesn't count
-      if (name && desc.length >= 20) boldItems.push({ name, description: desc, ...parseFeatureAction(desc) });
+      const rawSegment = boldTokens[i + 1].trim();
+      // Trim at the next bold header so we don't pull the next option's cost into this one
+      // (e.g. "Attack 2 targets. **Ranger's Focus (4 Hope):** ..." → "Attack 2 targets.")
+      const desc = rawSegment.replace(/\s*\*\*[^*\n]+\*\*.*$/s, '').trim();
+      const parsed = parseFeatureAction(desc);
+      // Sub-feature name may include cost, e.g. "Hold Them Off (3 Hope)" — prefer that over parsed
+      const hopeInName = name.match(/\((\d+)\s*[Hh]ope\)/);
+      if (hopeInName) parsed.hopeCost = parseInt(hopeInName[1], 10);
+      // Require at least 20 chars of raw segment so inline emphasis doesn't count
+      if (name && rawSegment.length >= 20) {
+        boldItems.push({ name, description: desc, ...parsed });
+      }
     }
     if (boldItems.length >= 2) return boldItems;
   }

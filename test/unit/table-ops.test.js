@@ -6,8 +6,8 @@
  * No browser, no DOM, no Firebase needed.
  */
 import { describe, it, expect } from 'vitest';
-import { applyTableOp, applyPlayerTableOp, RUNTIME_KEYS, CHARACTER_RUNTIME_KEYS } from '../../src/client/lib/table-ops.js';
-import { computeArmorModifiers } from '../../src/client/lib/character-calc.js';
+import { applyTableOp, RUNTIME_KEYS, CHARACTER_RUNTIME_KEYS } from '../../src/client/lib/table-ops.js';
+import { computeArmorModifiers, getEffectiveWeaponRange } from '../../src/client/lib/character-calc.js';
 
 // ---------------------------------------------------------------------------
 // applyTableOp — GM-side state transformations
@@ -77,6 +77,29 @@ describe('applyTableOp', () => {
   it('set-player-emails sets playerEmails', () => {
     const result = applyTableOp({ op: 'set-player-emails', playerEmails: ['a@b.com'] }, {});
     expect(result.playerEmails).toEqual(['a@b.com']);
+  });
+
+  it('life-support-select sets selection for roll', () => {
+    const result = applyTableOp(
+      { op: 'life-support-select', _rollDbId: 42, selectedLifeSupportTargetInstanceId: 'char-1' },
+      {}
+    );
+    expect(result.lifeSupportSelections).toEqual({ '42': 'char-1' });
+  });
+
+  it('life-support-select with null clears selection', () => {
+    const state = { lifeSupportSelections: { '42': 'char-1' } };
+    const result = applyTableOp(
+      { op: 'life-support-select', _rollDbId: 42, selectedLifeSupportTargetInstanceId: null },
+      state
+    );
+    expect(result.lifeSupportSelections).toEqual({});
+  });
+
+  it('life-support-clear removes roll from selections', () => {
+    const state = { lifeSupportSelections: { '42': 'char-1', '43': 'char-2' } };
+    const result = applyTableOp({ op: 'life-support-clear', _rollDbId: 42 }, state);
+    expect(result.lifeSupportSelections).toEqual({ '43': 'char-2' });
   });
 
   it('update-base-data preserves runtime keys while replacing base data', () => {
@@ -164,133 +187,6 @@ describe('applyTableOp', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// applyPlayerTableOp — Player-side state transformations
-// ---------------------------------------------------------------------------
-
-describe('applyPlayerTableOp', () => {
-  const mkState = (overrides = {}) => ({
-    elements: [
-      { instanceId: 'inst-1', elementType: 'adversary', name: 'Goblin', currentHp: 5 },
-      { instanceId: 'char-1', elementType: 'character', name: 'Hero' },
-    ],
-    fearCount: 0,
-    featureCountdowns: {},
-    tableBattleMods: {},
-    playerEmails: [],
-    ...overrides,
-  });
-
-  it('returns null state as-is', () => {
-    expect(applyPlayerTableOp({ op: 'set-fear', fearCount: 1 }, null)).toBeNull();
-  });
-
-  it('update-element updates matching element', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'update-element', instanceId: 'inst-1', updates: { currentHp: 2 } }, state);
-    expect(result.elements[0].currentHp).toBe(2);
-    expect(result.elements[1].name).toBe('Hero');
-  });
-
-  it('add-elements appends elements', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'add-elements', elements: [{ instanceId: 'new-1', name: 'New' }] }, state);
-    expect(result.elements).toHaveLength(3);
-  });
-
-  it('remove-element removes matching element', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'remove-element', instanceId: 'inst-1' }, state);
-    expect(result.elements).toHaveLength(1);
-    expect(result.elements[0].instanceId).toBe('char-1');
-  });
-
-  it('clear-table keeps only characters', () => {
-    const state = mkState({ featureCountdowns: { 'x|y|0': 1 } });
-    const result = applyPlayerTableOp({ op: 'clear-table' }, state);
-    expect(result.elements).toHaveLength(1);
-    expect(result.elements[0].elementType).toBe('character');
-    expect(result.featureCountdowns).toEqual({});
-  });
-
-  it('set-fear updates fearCount', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'set-fear', fearCount: 7 }, state);
-    expect(result.fearCount).toBe(7);
-  });
-
-  it('set-countdown merges countdown', () => {
-    const state = mkState({ featureCountdowns: { 'a|b|0': 1 } });
-    const result = applyPlayerTableOp({ op: 'set-countdown', key: 'c|d|0', value: 2 }, state);
-    expect(result.featureCountdowns).toEqual({ 'a|b|0': 1, 'c|d|0': 2 });
-  });
-
-  it('set-battle-mods replaces mods', () => {
-    const state = mkState();
-    const mods = { moreDangerous: true };
-    const result = applyPlayerTableOp({ op: 'set-battle-mods', tableBattleMods: mods }, state);
-    expect(result.tableBattleMods).toEqual(mods);
-  });
-
-  it('set-player-emails updates playerEmails', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'set-player-emails', playerEmails: ['x@y.com'] }, state);
-    expect(result.playerEmails).toEqual(['x@y.com']);
-  });
-
-  it('character-library-update replaces base data while preserving runtime keys', () => {
-    const state = mkState({
-      elements: [
-        { instanceId: 'inst-1', elementType: 'adversary', name: 'Goblin', currentHp: 5 },
-        {
-          id: 'char-1', instanceId: 'char-1', elementType: 'character',
-          name: 'Stale Name', tier: 1, maxHp: 6, weapons: [{ name: 'Hand Runes' }],
-          currentHp: 4, currentStress: 1, hope: 3, currentArmor: 1,
-          conditions: 'dazed', tokenX: 5, tokenY: 10,
-          assignedPlayerEmail: 'p@example.com', assignedPlayerUid: 'uid-p', playerName: 'Player',
-        },
-      ],
-    });
-    const newBaseData = {
-      id: 'char-1', name: 'Fresh Name', tier: 2, maxHp: 8,
-      weapons: [{ name: 'Dualstaff' }], class: 'Ranger',
-    };
-    const result = applyPlayerTableOp({ op: 'character-library-update', characterId: 'char-1', newBaseData }, state);
-    const updated = result.elements[1];
-
-    expect(updated.name).toBe('Fresh Name');
-    expect(updated.tier).toBe(2);
-    expect(updated.maxHp).toBe(8);
-    expect(updated.weapons[0].name).toBe('Dualstaff');
-    expect(updated.class).toBe('Ranger');
-
-    expect(updated.instanceId).toBe('char-1');
-    expect(updated.elementType).toBe('character');
-    expect(updated.currentHp).toBe(4);
-    expect(updated.currentStress).toBe(1);
-    expect(updated.hope).toBe(3);
-    expect(updated.currentArmor).toBe(1);
-    expect(updated.conditions).toBe('dazed');
-    expect(updated.tokenX).toBe(5);
-    expect(updated.tokenY).toBe(10);
-    expect(updated.assignedPlayerEmail).toBe('p@example.com');
-    expect(updated.assignedPlayerUid).toBe('uid-p');
-    expect(updated.playerName).toBe('Player');
-  });
-
-  it('character-library-update does not affect non-matching or non-character elements', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'character-library-update', characterId: 'nobody', newBaseData: {} }, state);
-    expect(result.elements[0]).toBe(state.elements[0]);
-    expect(result.elements[1]).toBe(state.elements[1]);
-  });
-
-  it('unknown op returns state unchanged', () => {
-    const state = mkState();
-    const result = applyPlayerTableOp({ op: 'nonexistent' }, state);
-    expect(result).toBe(state);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // RUNTIME_KEYS sanity check
@@ -529,5 +425,33 @@ describe('computeArmorModifiers', () => {
     const result = computeArmorModifiers(armor);
     expect(result.evasion).toBe(1);
     expect(result.feature.description).toBe('+1 to Evasion');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getEffectiveWeaponRange — Giant Reach: Melee → Very Close
+// ---------------------------------------------------------------------------
+
+describe('getEffectiveWeaponRange', () => {
+  const reachFeatures = [{ name: 'Reach' }];
+
+  it('returns Very Close for Melee weapon when character has Reach (Giant)', () => {
+    expect(getEffectiveWeaponRange({ range: 'Melee' }, reachFeatures)).toBe('Very Close');
+  });
+
+  it('returns weapon range unchanged when no Reach', () => {
+    expect(getEffectiveWeaponRange({ range: 'Melee' }, [])).toBe('Melee');
+    expect(getEffectiveWeaponRange({ range: 'Very Close' }, [])).toBe('Very Close');
+    expect(getEffectiveWeaponRange({ range: 'Far' }, reachFeatures)).toBe('Far');
+  });
+
+  it('does not upgrade non-Melee when character has Reach', () => {
+    expect(getEffectiveWeaponRange({ range: 'Very Close' }, reachFeatures)).toBe('Very Close');
+    expect(getEffectiveWeaponRange({ range: 'Close' }, reachFeatures)).toBe('Close');
+  });
+
+  it('returns empty string for weapon without range', () => {
+    expect(getEffectiveWeaponRange({}, reachFeatures)).toBe('');
+    expect(getEffectiveWeaponRange(null, reachFeatures)).toBe('');
   });
 });

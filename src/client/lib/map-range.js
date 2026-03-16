@@ -1,0 +1,188 @@
+/**
+ * Map range utilities for game mechanics that depend on token positions.
+ *
+ * Range bands (in feet) match the constants in BattleMap.jsx.
+ * Distance uses nearest-edge logic: center-to-center distance minus one
+ * token radius (2.5'), so any overlap with a band boundary counts.
+ */
+
+/** Maximum feet for each Daggerheart range band. */
+export const RANGE_BANDS_FT = {
+  MELEE:      5,
+  VERY_CLOSE: 10,
+  CLOSE:      30,
+  FAR:        100,
+  VERY_FAR:   300,
+};
+
+export const FAR_RANGE_FT = RANGE_BANDS_FT.FAR;
+export const CLOSE_RANGE_FT = RANGE_BANDS_FT.CLOSE;
+
+/** Daggerheart range band display names (case-insensitive) to max feet. */
+const RANGE_BAND_NAME_TO_FT = {
+  melee: RANGE_BANDS_FT.MELEE,
+  'very close': RANGE_BANDS_FT.VERY_CLOSE,
+  close: RANGE_BANDS_FT.CLOSE,
+  far: RANGE_BANDS_FT.FAR,
+  'very far': RANGE_BANDS_FT.VERY_FAR,
+};
+
+/**
+ * Map a range band name (e.g. "Melee", "Far") to max distance in feet.
+ * Case-insensitive; returns undefined for unknown or empty input.
+ *
+ * @param {string} rangeName - e.g. "Melee", "Very Close", "Close", "Far", "Very Far"
+ * @returns {number | undefined}
+ */
+export function rangeBandNameToFt(rangeName) {
+  if (rangeName == null || typeof rangeName !== 'string') return undefined;
+  const key = rangeName.trim().toLowerCase();
+  return key ? RANGE_BAND_NAME_TO_FT[key] : undefined;
+}
+
+/** Display label for each standard range band (feet → label). */
+const RANGE_FT_TO_LABEL = {
+  [RANGE_BANDS_FT.MELEE]: 'Melee',
+  [RANGE_BANDS_FT.VERY_CLOSE]: 'Very Close',
+  [RANGE_BANDS_FT.CLOSE]: 'Close',
+  [RANGE_BANDS_FT.FAR]: 'Far',
+  [RANGE_BANDS_FT.VERY_FAR]: 'Very Far',
+};
+
+/**
+ * Format a max range in feet as a display label for UI (e.g. "Apply within Melee").
+ * Standard Daggerheart bands use band names; other values use "X ft".
+ *
+ * @param {number} maxFt - max distance in feet (e.g. from _weaponRangeFt)
+ * @returns {string} e.g. "Melee", "Close", "30 ft"
+ */
+export function rangeFtToLabel(maxFt) {
+  if (maxFt == null || typeof maxFt !== 'number') return '';
+  return RANGE_FT_TO_LABEL[maxFt] ?? `${maxFt} ft`;
+}
+
+/**
+ * Token center in feet given the token's top-left position.
+ * Daggerheart tokens occupy a 5×5' square; their center is +2.5' from origin.
+ */
+const TOKEN_HALF_FT = 2.5;
+
+/**
+ * Nearest-edge distance in feet between two placed tokens.
+ * Matches the distance formula used in BattleMap.jsx for range band highlighting.
+ *
+ * @param {number} ax - Token A's tokenX (feet, top-left)
+ * @param {number} ay - Token A's tokenY (feet, top-left)
+ * @param {number} bx - Token B's tokenX (feet, top-left)
+ * @param {number} by - Token B's tokenY (feet, top-left)
+ * @returns {number} nearest-edge distance in feet (≥ 0)
+ */
+export function tokenDistanceFt(ax, ay, bx, by) {
+  const dx = (ax + TOKEN_HALF_FT) - (bx + TOKEN_HALF_FT);
+  const dy = (ay + TOKEN_HALF_FT) - (by + TOKEN_HALF_FT);
+  return Math.max(0, Math.sqrt(dx * dx + dy * dy) - TOKEN_HALF_FT);
+}
+
+/**
+ * Returns all character elements (other than the source) that are within
+ * Far range of the source character on the battle map.
+ *
+ * Characters not placed on the map (tokenX/tokenY null) are excluded.
+ * If the source character is not placed on the map, returns [].
+ *
+ * @param {Array} activeElements - the full resolvedActiveElements array
+ * @param {string} sourceInstanceId - instanceId of the character using the feature
+ * @returns {Array<{ instanceId: string, name: string }>}
+ */
+export function getCharactersWithinFarRange(activeElements, sourceInstanceId) {
+  const source = activeElements.find(e => e.instanceId === sourceInstanceId);
+  if (!source || source.tokenX == null || source.tokenY == null) return [];
+
+  return activeElements
+    .filter(e =>
+      e.elementType === 'character' &&
+      e.instanceId !== sourceInstanceId &&
+      e.tokenX != null &&
+      e.tokenY != null &&
+      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= FAR_RANGE_FT
+    )
+    .map(e => ({ instanceId: e.instanceId, name: e.name }));
+}
+
+/**
+ * Returns adversary elements (or minimal { instanceId, name }) within Melee range (5')
+ * of the source character on the battle map.
+ *
+ * Adversaries not placed on the map (tokenX/tokenY null) are excluded.
+ * If the source character is not placed on the map, returns [].
+ *
+ * @param {Array} activeElements - the full activeElements array (characters + adversaries)
+ * @param {string} sourceInstanceId - instanceId of the character (attacker)
+ * @returns {Array<{ instanceId: string, name: string }>}
+ */
+export function getAdversariesWithinMeleeRange(activeElements, sourceInstanceId) {
+  const source = activeElements.find(e => e.instanceId === sourceInstanceId);
+  if (!source || source.tokenX == null || source.tokenY == null) return [];
+
+  return activeElements
+    .filter(e =>
+      e.elementType === 'adversary' &&
+      e.tokenX != null &&
+      e.tokenY != null &&
+      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= RANGE_BANDS_FT.MELEE
+    )
+    .map(e => ({ instanceId: e.instanceId, name: e.name ?? '' }));
+}
+
+/**
+ * Returns adversary elements within the given max distance (feet) of the source.
+ * Adversaries not on the map are excluded. If the source is not on the map, returns [].
+ *
+ * @param {Array} activeElements - the full activeElements array (characters + adversaries)
+ * @param {string} sourceInstanceId - instanceId of the character (attacker)
+ * @param {number} maxFt - maximum nearest-edge distance in feet (e.g. from rangeBandNameToFt)
+ * @returns {Array<{ instanceId: string, name: string }>}
+ */
+export function getAdversariesWithinRangeFt(activeElements, sourceInstanceId, maxFt) {
+  const source = activeElements.find(e => e.instanceId === sourceInstanceId);
+  if (!source || source.tokenX == null || source.tokenY == null) return [];
+  if (typeof maxFt !== 'number' || maxFt < 0) return [];
+
+  return activeElements
+    .filter(e =>
+      e.elementType === 'adversary' &&
+      e.tokenX != null &&
+      e.tokenY != null &&
+      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= maxFt
+    )
+    .map(e => ({ instanceId: e.instanceId, name: e.name ?? '' }));
+}
+
+/**
+ * Returns all character elements (other than the source) that are within
+ * Close range of the source and have at least one marked hit point
+ * (currentHp < maxHp).
+ *
+ * Characters not placed on the map are excluded.
+ * If the source character is not placed on the map, returns [].
+ *
+ * @param {Array} activeElements - the full resolvedActiveElements array
+ * @param {string} sourceInstanceId - instanceId of the character using the feature
+ * @returns {Array<{ instanceId: string, name: string }>}
+ */
+export function getCharactersWithinCloseRangeWithMarkedHp(activeElements, sourceInstanceId) {
+  const source = activeElements.find(e => e.instanceId === sourceInstanceId);
+  if (!source || source.tokenX == null || source.tokenY == null) return [];
+
+  return activeElements
+    .filter(e => {
+      if (e.elementType !== 'character' || e.instanceId === sourceInstanceId) return false;
+      if (e.tokenX == null || e.tokenY == null) return false;
+      const dist = tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY);
+      if (dist > CLOSE_RANGE_FT) return false;
+      const maxHp = e.maxHp ?? 0;
+      const currentHp = e.currentHp ?? maxHp;
+      return maxHp > 0 && currentHp < maxHp;
+    })
+    .map(e => ({ instanceId: e.instanceId, name: e.name }));
+}

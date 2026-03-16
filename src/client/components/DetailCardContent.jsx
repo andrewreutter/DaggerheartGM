@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import { Heart, AlertCircle, X, Dices, Link2, Zap } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
@@ -23,7 +24,26 @@ function boostedAttackDesc(desc, damageBoost) {
   );
 }
 
-export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, fillColor, label, valueOffset = 0, verbs, currentAbsoluteValue, targetToAbsolute }) {
+export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, fillColor, label, valueOffset = 0, verbs, currentAbsoluteValue, targetToAbsolute, pulseOnDecreaseOnly = false }) {
+  const [pulsing, setPulsing] = useState(false);
+  const prevFilledRef = useRef(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (prevFilledRef.current === null) { prevFilledRef.current = filled; return; }
+    if (filled !== prevFilledRef.current) {
+      const increased = filled > prevFilledRef.current;
+      prevFilledRef.current = filled;
+      if (pulseOnDecreaseOnly && increased) return;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setPulsing(false);
+      requestAnimationFrame(() => {
+        setPulsing(true);
+        timerRef.current = setTimeout(() => setPulsing(false), 400);
+      });
+    }
+  }, [filled, pulseOnDecreaseOnly]);
+
   if (!total || total <= 0) return <span className="text-slate-500 text-xs">-</span>;
 
   const pendingStart = filled;
@@ -64,7 +84,7 @@ export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, f
     );
   }
 
-  return <div className="flex items-center gap-0.5 flex-wrap">{items}</div>;
+  return <div className={`flex items-center gap-0.5 flex-wrap${pulsing ? ' stat-pulse-anim' : ''}`}>{items}</div>;
 }
 
 export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown, onAddAdversary, onPotentialAdversaryHover, onPotentialAdversaryLeave }) {

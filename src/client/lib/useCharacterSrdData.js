@@ -19,7 +19,7 @@ function buildLookup(items) {
 }
 
 async function loadAllSrdData() {
-  const [classes, subclasses, ancestries, communities, armor, weapons, abilities, domains] = await Promise.all([
+  const [classes, subclasses, ancestries, communities, armor, weapons, abilities, domains, beastforms] = await Promise.all([
     fetchSrdCollection('classes'),
     fetchSrdCollection('subclasses'),
     fetchSrdCollection('ancestries'),
@@ -28,6 +28,7 @@ async function loadAllSrdData() {
     fetchSrdCollection('weapons'),
     fetchSrdCollection('abilities'),
     fetchSrdCollection('domains'),
+    fetchSrdCollection('beastforms'),
   ]);
 
   return {
@@ -39,6 +40,7 @@ async function loadAllSrdData() {
     weapons,
     abilities,
     domains,
+    beastforms,
     classesById: buildLookup(classes),
     subclassesById: buildLookup(subclasses),
     ancestriesById: buildLookup(ancestries),
@@ -47,6 +49,7 @@ async function loadAllSrdData() {
     weaponsById: buildLookup(weapons),
     abilitiesById: buildLookup(abilities),
     domainsById: buildLookup(domains),
+    beastformsById: buildLookup(beastforms),
   };
 }
 

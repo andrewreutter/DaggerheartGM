@@ -6,8 +6,9 @@ import { useState } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons } from '../lib/character-calc.js';
+import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, getRetractingClawsWeapon } from '../lib/character-calc.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
+import { CustomSelect } from './forms/CustomSelect.jsx';
 
 // ─── Gold helpers ─────────────────────────────────────────────────────────────
 
@@ -103,6 +104,183 @@ export const WEAPON_TAG_DESCRIPTIONS = {
   Bonded: 'Gain a bonus to your damage rolls equal to your level.',
 };
 
+// ─── Beastform helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Parse a beastform stat bonus string like "Agility +1" or "Evasion +2".
+ * Returns { stat, bonus } or null if parsing fails.
+ */
+export function parseBeastformBonus(str) {
+  if (!str) return null;
+  const m = str.trim().match(/^(\w+)\s*([+-]\d+)$/i);
+  if (!m) return null;
+  return { stat: m[1].toLowerCase(), bonus: parseInt(m[2], 10) };
+}
+
+// ─── Beastform feature card ────────────────────────────────────────────────────
+
+/** Build a markdown description string for a beastform's tooltip in the selector. */
+function buildBeastformDescription(b) {
+  const lines = [];
+  if (b.examples) lines.push(`_${b.examples}_`);
+  if (b.trait_bonus) lines.push(`**Trait:** ${b.trait_bonus}`);
+  if (b.evasion_bonus) lines.push(`**Evasion:** ${b.evasion_bonus}`);
+  if (b.attack) lines.push(`**Attack:** ${b.attack}`);
+  if (b.advantages) lines.push(`**Advantages:** ${b.advantages}`);
+  if (b.features?.length) {
+    lines.push('');
+    for (const f of b.features) {
+      lines.push(`**${f.name}:** ${f.description || ''}`);
+    }
+  }
+  return lines.join('\n\n');
+}
+
+/**
+ * Collapsible card for the Druid's Beastform class feature.
+ * Replaces the generic FeatureChip — same look but with beastform selector
+ * and Use / Drop Out controls inside the expanded body.
+ *
+ * Receives `open` + `onToggle` from CharacterFeatureList (controlled mode)
+ * plus beastformProps spread from the parent.
+ */
+function BeastformFeatureCard({
+  el,
+  feature,
+  open: openProp,
+  onToggle,
+  beastforms = [],
+  selectedBeastformId,
+  onBeastformSelect,
+  activeBeastform,
+  onUseBeastform,
+  onDropOutBeastform,
+}) {
+  const [openLocal, setOpenLocal] = useState(false);
+  const open = openProp !== undefined ? openProp : openLocal;
+  const toggle = onToggle ?? (() => setOpenLocal(o => !o));
+
+  const characterTier = el.tier || 1;
+  const available = beastforms.filter(b => b.tier <= characterTier);
+  const selected = available.find(b => b.id === selectedBeastformId) || available[0] || null;
+  // Can only transform if there is at least one Stress slot remaining to mark
+  const stressMaxed = (el.currentStress ?? 0) >= (el.maxStress ?? 6);
+
+  // Synthetic action object for CostBadgeStrip (1 Stress cost, no frequency limit)
+  const syntheticAction = { stressCost: 1, hopeCost: 0, armorMark: 0, armorClear: 0 };
+
+  return (
+    <div className="rounded border border-emerald-700/50 bg-slate-800/60 overflow-hidden">
+      {/* ── Collapsible header ── */}
+      <button
+        onClick={toggle}
+        className="w-full px-2 py-1 flex items-center gap-1 text-left hover:bg-emerald-900/20 transition-colors"
+      >
+        {open
+          ? <ChevronDown size={9} className="text-emerald-600 shrink-0" />
+          : <ChevronRight size={9} className="text-emerald-600 shrink-0" />}
+        <span className="text-[11px] font-semibold text-emerald-200 leading-tight truncate">{feature.name}</span>
+        {!open && activeBeastform && (
+          <span className="ml-1 text-[9px] rounded px-1 border bg-emerald-950/50 border-emerald-700/50 text-emerald-400 shrink-0">
+            {activeBeastform.name}
+          </span>
+        )}
+        {!open && !activeBeastform && (
+          <span className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
+            stressMaxed
+              ? 'bg-slate-800 border-slate-600 text-slate-500'
+              : 'bg-emerald-950/50 border-emerald-700/50 text-emerald-400'
+          }`}>
+            {stressMaxed ? 'Stress full' : 'active'}
+          </span>
+        )}
+        {feature.sourceType && (
+          <span className={`ml-auto text-[9px] rounded px-1 shrink-0 ${
+            feature.sourceType === 'class'    ? 'bg-violet-900/60 text-violet-300' :
+            feature.sourceType === 'subclass' ? 'bg-sky-900/60 text-sky-300' :
+            feature.sourceType === 'ancestry' ? 'bg-amber-900/60 text-amber-300' :
+            'bg-emerald-900/60 text-emerald-300'
+          }`}>{feature.source}</span>
+        )}
+      </button>
+
+      {/* ── Widgetry: always visible ── */}
+      <div className="px-2 pb-2 pt-1 border-t border-emerald-700/30 space-y-1.5">
+        {!activeBeastform && (
+          <>
+            <CostBadgeStrip action={syntheticAction} />
+            {available.length > 0 ? (
+              <CustomSelect
+                value={selected}
+                onChange={(b) => onBeastformSelect?.(b?.id ?? null)}
+                options={available}
+                getOptionLabel={(b) => `${b.name} (Tier ${b.tier})`}
+                getOptionKey={(b) => b.id}
+                getOptionDescription={(b) => buildBeastformDescription(b)}
+                renderOption={(b, { isSelected }) => (
+                  <div>
+                    <span className={`font-medium ${isSelected ? 'text-white' : 'text-slate-200'}`}>{b.name}</span>
+                    <span className="text-[10px] text-slate-500 ml-1">T{b.tier}</span>
+                    {b.attack && <div className="text-[10px] text-slate-400 mt-0.5">{b.attack}</div>}
+                  </div>
+                )}
+                renderValue={(b) => (
+                  <span className="text-sm text-slate-200">{b.name} <span className="text-slate-500">(T{b.tier})</span></span>
+                )}
+                placeholder="Select a beastform…"
+                className="text-xs"
+                fixedDropdown
+              />
+            ) : (
+              <div className="text-[10px] text-slate-500 italic">No beastforms available at your tier</div>
+            )}
+            {onUseBeastform && selected && !stressMaxed && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onUseBeastform(selected); }}
+                className="w-full rounded border border-emerald-700/60 bg-emerald-900/40 hover:bg-emerald-800/50 text-[10px] font-semibold text-emerald-200 py-1 transition-colors"
+              >
+                Transform ({selected.name})
+              </button>
+            )}
+            {stressMaxed && (
+              <p className="text-[10px] text-orange-500/70 italic">Cannot transform — Stress is full</p>
+            )}
+          </>
+        )}
+
+        {activeBeastform && (
+          <>
+            <div className="rounded border border-emerald-700/40 bg-emerald-950/30 px-2 py-1.5 text-[11px]">
+              <div className="font-semibold text-emerald-200 mb-0.5">{activeBeastform.name}</div>
+              {activeBeastform.attack && (
+                <div className="text-emerald-400/70 text-[10px]">Attack: {activeBeastform.attack}</div>
+              )}
+              {activeBeastform.advantages && (
+                <div className="text-slate-400 text-[10px]">Advantages: {activeBeastform.advantages}</div>
+              )}
+            </div>
+            {onDropOutBeastform && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDropOutBeastform(); }}
+                className="w-full rounded border border-slate-600 bg-slate-800/60 hover:bg-slate-700/60 text-[10px] font-semibold text-slate-300 py-1 transition-colors"
+              >
+                Drop out of Beastform
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Expanded: description only ── */}
+      {open && feature.description && (
+        <div className="px-2 pb-2 text-[11px] text-slate-300 leading-relaxed border-t border-emerald-700/30 pt-1">
+          <MarkdownText text={feature.description} className="dh-md" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Section header ───────────────────────────────────────────────────────────
 
 export function Section({ label, children, labelUppercase = true }) {
@@ -121,7 +299,8 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
   const positive = score > 0;
   const negative = score < 0;
   const display = positive ? `+${score}` : String(score);
-  const hasWeaponMod = mod != null && mod !== 0;
+  const hasModifier = (mod != null && mod !== 0) || !!modSource;
+  const showModLine = mod != null && mod !== 0;
   const verbs = TRAIT_VERBS[trait] || [];
   const clickable = !!onClick;
   const handleClick = clickable ? (e) => {
@@ -131,7 +310,7 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
     setJustRolled(true);
     setTimeout(() => setJustRolled(false), 1200);
   } : undefined;
-  const title = hasWeaponMod && modSource
+  const title = (hasModifier && modSource)
     ? modSource
     : clickable ? `Roll ${TRAIT_FULL[trait]}` : undefined;
   return (
@@ -143,7 +322,7 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
       title={title}
       className={`flex flex-col items-center rounded px-1 py-1 border select-none
         ${justRolled ? 'border-green-500/70 bg-green-900/40' :
-          hasWeaponMod ? 'border-amber-600/70 bg-amber-950/30' :
+          hasModifier ? 'border-amber-600/70 bg-amber-950/30' :
           positive ? 'border-sky-700/60 bg-sky-900/40' : negative ? 'border-slate-600 bg-slate-800/40' : 'border-slate-700 bg-slate-800/20'}
         ${clickable ? 'cursor-pointer hover:brightness-125 hover:border-sky-500/70 group transition-all' : ''}`}
     >
@@ -151,13 +330,13 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
         {label}
         {clickable && <Dices size={7} className={`transition-colors ${justRolled ? 'text-green-400' : 'text-slate-600 group-hover:text-sky-400'}`} />}
       </span>
-      <span className={`text-sm font-bold tabular-nums leading-tight ${hasWeaponMod ? 'text-amber-200' : positive ? 'text-sky-300' : negative ? 'text-slate-400' : 'text-slate-200'}`}>{display}</span>
-      {hasWeaponMod && (
+      <span className={`text-sm font-bold tabular-nums leading-tight ${hasModifier ? 'text-amber-200' : positive ? 'text-sky-300' : negative ? 'text-slate-400' : 'text-slate-200'}`}>{display}</span>
+      {showModLine && (
         <span className={`text-[9px] font-semibold tabular-nums leading-none ${mod > 0 ? 'text-amber-400' : 'text-amber-500'}`}>
           {mod > 0 ? `+${mod}` : String(mod)}
         </span>
       )}
-      {!hasWeaponMod && verbs.length > 0 && (
+      {!showModLine && verbs.length > 0 && (
         <div className="flex flex-col items-center mt-0.5 gap-px">
           {verbs.map(v => (
             <span key={v} className="text-[8px] text-slate-500 leading-tight">{v}</span>
@@ -215,7 +394,7 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
   const handleClick = clickable ? (e) => {
     e.stopPropagation();
     e.preventDefault();
-    onClick();
+    onClick(e);
     setJustRolled(true);
     setTimeout(() => setJustRolled(false), 1200);
   } : undefined;
@@ -265,8 +444,8 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
         {weapon.damageType && (
           <span className={`shrink-0 ${damageTypeColor}`}>{weapon.damageType}</span>
         )}
-        {weapon.range && (
-          <span className="text-slate-500 shrink-0">{weapon.range}</span>
+        {(weapon.effectiveRange ?? weapon.range) && (
+          <span className="text-slate-500 shrink-0">{weapon.effectiveRange ?? weapon.range}</span>
         )}
         {traitLabel && (
           <span className={`text-[9px] rounded px-1 py-0.5 border shrink-0 tabular-nums font-bold
@@ -383,7 +562,7 @@ function SubFeatureCard({ sub, onUse, disabled }) {
  *   featureUsage   — { [key]: { used, cycle } } map from element state
  *   featureKey     — unique key for usage tracking (default: feature.name)
  */
-function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey }) {
+function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle }) {
   const [openLocal, setOpenLocal] = useState(false);
   const open = openProp !== undefined ? openProp : openLocal;
   const toggle = onToggle ?? (() => setOpenLocal(o => !o));
@@ -438,20 +617,11 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
         )}
       </button>
 
-      {open && (
-        <div className="px-2 pb-2 text-[11px] text-slate-300 leading-relaxed border-t border-slate-700 pt-1">
-          {feature.description && (
-            <MarkdownText text={feature.description} className="dh-md" />
-          )}
-          {feature.charge && (
-            <span className="block mt-0.5 text-[10px] text-slate-500 italic">
-              {feature.charge.max} charge{feature.charge.max !== 1 ? 's' : ''} · recharges on {feature.charge.recharge?.on || 'rest'}
-            </span>
-          )}
-
-          {/* ── Sub-feature cards (choose-one / multiple options) ── */}
+      {/* ── Widgetry: always visible ── */}
+      {(subFeatures.length >= 2 || (action.isActive && subFeatures.length < 2) || passiveStats.length > 0 || (!action.isActive && passiveStats.length === 0 && onFeatureUse) || !!rangerFocusToggle) && (
+        <div className="px-2 pb-2 pt-1 border-t border-slate-700 space-y-1.5">
           {subFeatures.length >= 2 && (
-            <div className="mt-2 space-y-1">
+            <div className="space-y-1">
               {subFeatures.map((sub, i) => (
                 <SubFeatureCard
                   key={i}
@@ -468,11 +638,10 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
             </div>
           )}
 
-          {/* ── Single active feature: cost badges + Use button ── */}
           {action.isActive && subFeatures.length < 2 && (
-            <div className="mt-2 pt-1.5 border-t border-slate-700/60">
+            <div className="pt-1 border-t border-slate-700/60 space-y-1">
               <CostBadgeStrip action={action} />
-              {onFeatureUse ? (
+              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' ? (
                 isUsed ? (
                   <p className="text-[10px] text-slate-500 italic">
                     Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
@@ -490,9 +659,23 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
             </div>
           )}
 
-          {/* ── Passive stat badges ── */}
+          {rangerFocusToggle && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); rangerFocusToggle.onChange(!rangerFocusToggle.value); }}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                rangerFocusToggle.value
+                  ? 'bg-amber-950/50 border-amber-600/70 text-amber-200 hover:bg-amber-900/50'
+                  : 'border-slate-600/60 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+              }`}
+              title={rangerFocusToggle.value ? 'Next weapon attack will spend 1 Hope and attempt Ranger\'s Focus' : 'Enable to use Ranger\'s Focus on next attack'}
+            >
+              Use on next attack
+            </button>
+          )}
+
           {passiveStats.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1">
               {passiveStats.map((ps, i) => (
                 <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-slate-800/80 border border-slate-700 text-slate-400">
                   {ps.label}
@@ -501,9 +684,8 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
             </div>
           )}
 
-          {/* ── Comms-only / narrative feature: Announce button ── */}
           {!action.isActive && passiveStats.length === 0 && onFeatureUse && (
-            <div className="mt-1.5 pt-1 border-t border-slate-700/40">
+            <div className="pt-1 border-t border-slate-700/40">
               <button
                 onClick={(e) => { e.stopPropagation(); onFeatureUse(feature); }}
                 className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-slate-600/60 text-slate-400 hover:border-slate-500 hover:text-slate-300 transition-colors"
@@ -512,6 +694,20 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
                 Announce
               </button>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Expanded: description + charge only ── */}
+      {open && (
+        <div className="px-2 pb-2 text-[11px] text-slate-300 leading-relaxed border-t border-slate-700 pt-1">
+          {feature.description && (
+            <MarkdownText text={feature.description} className="dh-md" />
+          )}
+          {feature.charge && (
+            <span className="block mt-0.5 text-[10px] text-slate-500 italic">
+              {feature.charge.max} charge{feature.charge.max !== 1 ? 's' : ''} · recharges on {feature.charge.recharge?.on || 'rest'}
+            </span>
           )}
         </div>
       )}
@@ -584,6 +780,7 @@ export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selected
   if (!TRAIT_ORDER.some(t => traits[t] != null)) return null;
   const weaponMods = el.weaponMods || {};
   const armorMods = el.armorMods || {};
+  const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
   return (
     <Section label={onTraitClick ? 'Traits — click to roll' : 'Traits'}>
       <div className="grid grid-cols-6 gap-1">
@@ -591,7 +788,8 @@ export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selected
           const score = traits[t] ?? 0;
           const wMod = weaponMods.traits?.[t] ?? 0;
           const aMod = armorMods.traits?.[t] ?? 0;
-          const mod = wMod + aMod;
+          const bfMod = beastformTraitBonus?.stat === t ? beastformTraitBonus.bonus : 0;
+          const mod = wMod + aMod + bfMod;
           const sources = [];
           if (wMod !== 0) {
             sources.push(...(weaponMods.sources || [])
@@ -603,15 +801,20 @@ export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selected
               .filter(s => s.stat === t)
               .map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to ${TRAIT_FULL[t]}`));
           }
+          if (bfMod !== 0) {
+            sources.push(`Beastform (${el.activeBeastform.name}): ${bfMod > 0 ? '+' : ''}${bfMod} to ${TRAIT_FULL[t]}`);
+          }
           const modSource = sources.length ? sources.join('; ') : null;
+          // Show effective trait (base + all mods) as the main number so e.g. beastform "+1" reads as the trait being +3, not "+2 with +1 under it"
+          const effectiveScore = score + mod;
           return (
             <TraitChip
               key={t}
               trait={t}
               label={TRAIT_LABELS[t]}
-              score={score}
+              score={effectiveScore}
               onClick={onTraitClick ? () => onTraitClick(t) : undefined}
-              mod={mod || undefined}
+              mod={undefined}
               modSource={modSource || undefined}
             />
           );
@@ -647,10 +850,13 @@ export function CharacterDefenseRow({ el }) {
   const thresholds = effectiveThresholds(el);
   const wm = el.weaponMods || {};
   const am = el.armorMods || {};
-  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0);
+  const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
+  const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
+  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + bfEvasionMod;
   const evasionSources = [];
   if (wm.evasion) evasionSources.push(...(wm.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
   if (am.evasion) evasionSources.push(...(am.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
+  if (bfEvasionMod) evasionSources.push(`Beastform (${el.activeBeastform.name}): ${bfEvasionMod > 0 ? '+' : ''}${bfEvasionMod} to Evasion`);
   const evasionModTooltip = evasionSources.length ? evasionSources.join('; ') : null;
   const armorModTooltip = wm.armorScore
     ? (wm.sources || []).filter(s => s.stat === 'armor score').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Armor Score`).join('; ')
@@ -711,123 +917,204 @@ export function CharacterDefenseRow({ el }) {
  *   onSelect(i)               — selection callback; when absent, renders static chips
  *   hope / maxHope            — current Hope values for gating
  */
-export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility }) {
+export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility, advantageChips, selectedAdvIds, onSelectAdv, beastformAdvantages, selectedBeastformAdvantage, onSelectBeastformAdvantage }) {
   const experiences = el.experiences || [];
   const hasRollMods = rollModifiers?.length > 0;
   const activeModifiers = el.activeModifiers || [];
-  if (!experiences.length && !hasRollMods && !activeModifiers.length) return null;
+  const hasAdvantageChips = advantageChips?.length > 0;
+  const hasBeastformAdvantages = beastformAdvantages?.length > 0;
+  const hasModifiers = hasRollMods || activeModifiers.length > 0 || hasAdvantageChips || hasBeastformAdvantages;
+  if (!experiences.length && !hasModifiers) return null;
 
   if (!onSelect) {
     return (
-      <Section label="Experiences">
-        <div className="flex flex-wrap gap-1">
-          {experiences.map((exp, i) => (
-            <span
-              key={i}
-              className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
-            >
-              {exp.name}
-              {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
-            </span>
-          ))}
-          {hasRollMods && rollModifiers.map((rm, i) => (
-            <span
-              key={`rm-${i}`}
-              title={rm.autoApply ? `Always applied to ${rm.rollType} rolls` : rm.description}
-              className={`text-[11px] rounded px-1.5 py-0.5 border ${
-                rm.autoApply
-                  ? 'bg-teal-950/40 border-teal-700/50 text-teal-300'
-                  : 'bg-amber-950/30 border-amber-700/50 text-amber-300'
-              }`}
-            >
-              {rm.name}
-              <span className={`font-bold ml-1 ${rm.autoApply ? 'text-teal-400' : 'text-amber-400'}`}>+{rm.score}</span>
-            </span>
-          ))}
-          {activeModifiers.map((mod, i) => (
-            <ModifierChip key={mod.id || i} mod={mod} />
-          ))}
-        </div>
-      </Section>
+      <>
+        {experiences.length > 0 && (
+          <Section label="Experiences">
+            <div className="flex flex-wrap gap-1">
+              {experiences.map((exp, i) => (
+                <span
+                  key={i}
+                  className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
+                >
+                  {exp.name}
+                  {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
+                </span>
+              ))}
+            </div>
+          </Section>
+        )}
+        {hasModifiers && (
+          <Section label="Modifiers">
+            <div className="flex flex-wrap gap-1">
+              {hasRollMods && rollModifiers.map((rm, i) => (
+                <span
+                  key={`rm-${i}`}
+                  title={rm.autoApply ? `Always applied to ${rm.rollType} rolls` : rm.description}
+                  className={`text-[11px] rounded px-1.5 py-0.5 border ${
+                    rm.autoApply
+                      ? 'bg-teal-950/40 border-teal-700/50 text-teal-300'
+                      : 'bg-amber-950/30 border-amber-700/50 text-amber-300'
+                  }`}
+                >
+                  {rm.name}
+                  <span className={`font-bold ml-1 ${rm.autoApply ? 'text-teal-400' : 'text-amber-400'}`}>+{rm.score}</span>
+                </span>
+              ))}
+              {activeModifiers.map((mod, i) => (
+                <ModifierChip key={mod.id || i} mod={mod} />
+              ))}
+              {hasAdvantageChips && advantageChips.map((adv) => (
+                <span
+                  key={adv.id}
+                  title={adv.condition}
+                  className="text-[11px] rounded px-1.5 py-0.5 border bg-green-950/40 border-green-700/60 text-green-300"
+                >
+                  {adv.name} (d6)
+                </span>
+              ))}
+              {hasBeastformAdvantages && beastformAdvantages.map((adv) => (
+                <span
+                  key={adv}
+                  title="Beastform advantage"
+                  className={`text-[11px] rounded px-1.5 py-0.5 border ${
+                    selectedBeastformAdvantage === adv
+                      ? 'bg-emerald-900/40 border-emerald-700 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-400'
+                  }`}
+                >
+                  {adv}
+                  {selectedBeastformAdvantage === adv && <span className="ml-1 text-emerald-400">+d6</span>}
+                </span>
+              ))}
+            </div>
+          </Section>
+        )}
+      </>
     );
   }
 
   const currentHope = hope ?? (maxHope ?? 6);
   return (
-    <Section label="EXPERIENCES (Spend a Hope to add to an action roll)" labelUppercase={false}>
-      <div className="flex flex-wrap gap-1">
-        {experiences.map((exp, i) => {
-          const selected = selectedIndex === i;
-          const noHope = currentHope === 0;
-          const disabled = noHope && !selected;
-          return (
-            <button
-              key={i}
-              type="button"
-              disabled={disabled}
-              onClick={() => onSelect(selected ? null : i)}
-              className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors
-                ${disabled
-                  ? 'opacity-35 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500'
-                  : selected
-                    ? 'bg-sky-900/60 border-sky-600 text-sky-200 ring-1 ring-sky-500/50 cursor-pointer'
-                    : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-slate-600 cursor-pointer'}`}
-            >
-              <span>{exp.name}</span>
-              {exp.score != null && (
-                <span className={`font-bold ml-1 ${disabled ? 'text-slate-500' : 'text-sky-400'}`}>+{exp.score}</span>
-              )}
-            </button>
-          );
-        })}
-        {hasRollMods && rollModifiers.map((rm, i) => {
-          if (rm.autoApply) {
-            return (
-              <span
-                key={`rm-${i}`}
-                title={`Always applied to ${rm.rollType} rolls`}
-                className="text-[11px] rounded px-1.5 py-0.5 border bg-teal-950/40 border-teal-700/50 text-teal-300"
-              >
-                {rm.name}
-                <span className="font-bold ml-1 text-teal-400">+{rm.score}</span>
-              </span>
-            );
-          }
-          if (!onSelectRollMod) return null;
-          const selected = selectedRollModIndex === i;
-          return (
-            <button
-              key={`rm-${i}`}
-              type="button"
-              title={rm.description}
-              onClick={() => onSelectRollMod(selected ? null : i)}
-              className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
-                ${selected
-                  ? 'bg-amber-900/60 border-amber-600 text-amber-200 ring-1 ring-amber-500/50'
-                  : 'bg-amber-950/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/40 hover:border-amber-600'}`}
-            >
-              <span>{rm.name}</span>
-              <span className="font-bold ml-1 text-amber-400">+{rm.score}</span>
-            </button>
-          );
-        })}
-        {activeModifiers.map((mod, i) => (
-          <ModifierChip
-            key={mod.id || i}
-            mod={mod}
-            selected={selectedModId === mod.id}
-            onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
-            onUse={onUseMod && (mod.mode === 'clearStress' || mod.name === 'Prayer Die') ? () => onUseMod(mod) : undefined}
-            onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
-            onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
-            eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
-          />
-        ))}
-      </div>
-      {currentHope === 0 && !activeModifiers.length && (
-        <p className="text-[9px] text-red-500/70 mt-0.5">No Hope — cannot use Experiences</p>
+    <>
+      {experiences.length > 0 && (
+        <Section label="EXPERIENCES (Spend a Hope to add to an action roll)" labelUppercase={false}>
+          <div className="flex flex-wrap gap-1">
+            {experiences.map((exp, i) => {
+              const selected = selectedIndex === i;
+              const noHope = currentHope === 0;
+              const disabled = noHope && !selected;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onSelect(selected ? null : i)}
+                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors
+                    ${disabled
+                      ? 'opacity-35 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500'
+                      : selected
+                        ? 'bg-sky-900/60 border-sky-600 text-sky-200 ring-1 ring-sky-500/50 cursor-pointer'
+                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-slate-600 cursor-pointer'}`}
+                >
+                  <span>{exp.name}</span>
+                  {exp.score != null && (
+                    <span className={`font-bold ml-1 ${disabled ? 'text-slate-500' : 'text-sky-400'}`}>+{exp.score}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {currentHope === 0 && (
+            <p className="text-[9px] text-red-500/70 mt-0.5">No Hope — cannot use Experiences</p>
+          )}
+        </Section>
       )}
-    </Section>
+      {hasModifiers && (
+        <Section label="Modifiers">
+          <div className="flex flex-wrap gap-1">
+            {hasRollMods && rollModifiers.map((rm, i) => {
+              if (rm.autoApply) {
+                return (
+                  <span
+                    key={`rm-${i}`}
+                    title={`Always applied to ${rm.rollType} rolls`}
+                    className="text-[11px] rounded px-1.5 py-0.5 border bg-teal-950/40 border-teal-700/50 text-teal-300"
+                  >
+                    {rm.name}
+                    <span className="font-bold ml-1 text-teal-400">+{rm.score}</span>
+                  </span>
+                );
+              }
+              if (!onSelectRollMod) return null;
+              const selected = selectedRollModIndex === i;
+              return (
+                <button
+                  key={`rm-${i}`}
+                  type="button"
+                  title={rm.description}
+                  onClick={() => onSelectRollMod(selected ? null : i)}
+                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
+                    ${selected
+                      ? 'bg-amber-900/60 border-amber-600 text-amber-200 ring-1 ring-amber-500/50'
+                      : 'bg-amber-950/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/40 hover:border-amber-600'}`}
+                >
+                  <span>{rm.name}</span>
+                  <span className="font-bold ml-1 text-amber-400">+{rm.score}</span>
+                </button>
+              );
+            })}
+            {activeModifiers.map((mod, i) => (
+              <ModifierChip
+                key={mod.id || i}
+                mod={mod}
+                selected={selectedModId === mod.id}
+                onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
+                onUse={onUseMod && (mod.mode === 'clearStress' || mod.name === 'Prayer Die') ? () => onUseMod(mod) : undefined}
+                onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
+                onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
+                eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
+              />
+            ))}
+            {hasAdvantageChips && advantageChips.map((adv) => {
+              const selected = (selectedAdvIds || []).includes(adv.id);
+              return (
+                <button
+                  key={adv.id}
+                  type="button"
+                  title={adv.condition}
+                  onClick={onSelectAdv ? () => onSelectAdv(adv.id) : undefined}
+                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
+                    ${selected
+                      ? 'bg-green-800/70 border-green-500 text-green-100 ring-1 ring-green-500/50'
+                      : 'bg-green-950/40 border-green-700/60 text-green-300 hover:bg-green-900/40 hover:border-green-600'}`}
+                >
+                  {adv.name} (d6)
+                </button>
+              );
+            })}
+            {hasBeastformAdvantages && beastformAdvantages.map((adv) => {
+              const isSelected = selectedBeastformAdvantage === adv;
+              return (
+                <button
+                  key={adv}
+                  type="button"
+                  title={isSelected ? 'Advantage active — +d6 to next beastform attack' : 'Click to activate this beastform advantage'}
+                  onClick={onSelectBeastformAdvantage ? () => onSelectBeastformAdvantage(isSelected ? null : adv) : undefined}
+                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'bg-emerald-800/70 border-emerald-500 text-emerald-100 ring-1 ring-emerald-500/50'
+                      : 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-600'
+                  }`}
+                >
+                  {adv}{isSelected && <span className="ml-1 text-emerald-300">+d6</span>}
+                </button>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+    </>
   );
 }
 
@@ -844,8 +1131,9 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
  *   onUseMode   — (mode) called when a usageModes button is clicked
  *   onRemove    — deselect / remove hover
  *   eligible    — whether the chip is eligible (e.g. Sneak Attack auto-detect); defaults true
+ *   tooltip     — optional override for title (e.g. advantage condition text)
  */
-function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eligible = true }) {
+function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eligible = true, tooltip }) {
   const isRollMod = mod.mode === 'roll' || (mod.bonus != null && !mod.mode);
   const isClearStress = mod.mode === 'clearStress';
   const isPersistent = mod.type === 'persistent';
@@ -894,10 +1182,13 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
     );
   }
 
+  const defaultTitle = !eligible ? `${mod.name} — not eligible right now` : isPersistent ? `${mod.name} (active until ${mod.refreshOn === 'session' ? 'session end' : mod.refreshOn === 'longRest' ? 'long rest' : 'rest'})` : `${mod.name} — click to ${isRollMod ? 'include in next roll' : isClearStress ? 'roll to clear Stress' : 'use'}`;
+  const title = tooltip != null && tooltip !== '' ? tooltip : defaultTitle;
+
   return (
     <button
       type="button"
-      title={!eligible ? `${mod.name} — not eligible right now` : isPersistent ? `${mod.name} (active until ${mod.refreshOn === 'session' ? 'session end' : mod.refreshOn === 'longRest' ? 'long rest' : 'rest'})` : `${mod.name} — click to ${isRollMod ? 'include in next roll' : isClearStress ? 'roll to clear Stress' : 'use'}`}
+      title={title}
       onClick={clickable ? (onUse || onSelect) : undefined}
       className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${clickable ? 'cursor-pointer' : 'cursor-default'} ${colorCls} ${ineligibleCls}`}
     >
@@ -927,10 +1218,18 @@ export function CharacterWeaponList({
   stressMaxed: stressMaxedProp,
   onActionNotification,
   selectedExperienceHint,
+  onBeastformAttack,
 }) {
-  const weapons = el.weapons || [];
-  if (!weapons.length) return null;
+  const ancestryFeatures = el.ancestryFeatures || [];
+  // Enrich weapons with effectiveRange at render time so the correct range is
+  // shown even for characters loaded from the DB (where effectiveRange may not
+  // be stored yet). Giant Reach: Melee → Very Close.
+  const weapons = (el.weapons || []).map(w =>
+    w.effectiveRange != null ? w : { ...w, effectiveRange: getEffectiveWeaponRange(w, ancestryFeatures) }
+  );
+  const activeBeastform = el.activeBeastform;
 
+  // Always run detection so disabled weapons can be shown in beastform mode
   const traits = el.traits || {};
   const isStressMaxed = stressMaxedProp !== undefined
     ? stressMaxedProp
@@ -946,11 +1245,12 @@ export function CharacterWeaponList({
       name: 'Paired Weapons',
       damage: applyDamageBonus(primaryWeapon.damage, bonus),
       damageType: primaryWeapon.damageType,
-      range: primaryWeapon.range,
+      range: primaryWeapon.effectiveRange || primaryWeapon.range,
       trait: primaryWeapon.trait,
     };
   }
 
+  const retractingClawsWeapon = getRetractingClawsWeapon(el.ancestryFeatures);
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
@@ -971,8 +1271,52 @@ export function CharacterWeaponList({
     const rollMeta = { ...extraMeta };
     if (w.feature?.name === 'Devastating' && devastatingActive) rollMeta.devastating = true;
     if (w.feature?.name === 'Doubled Up' && secondaryDamageStr) rollMeta.secondaryDamage = secondaryDamageStr;
-    return () => onWeaponClick(w, rollMeta);
+    return (e) => onWeaponClick(w, rollMeta, e);
   };
+
+  // ── Beastform mode: show beastform attack then disabled weapons ──────────────
+  if (activeBeastform) {
+    return (
+      <Section label={onBeastformAttack ? 'Attacks — click to roll' : 'Attacks'}>
+        <div className="space-y-1.5">
+          {/* Beastform attack card */}
+          <div
+            role={onBeastformAttack ? 'button' : undefined}
+            tabIndex={onBeastformAttack ? 0 : undefined}
+            onClick={onBeastformAttack || undefined}
+            onKeyDown={onBeastformAttack ? (e) => { if (e.key === 'Enter' || e.key === ' ') onBeastformAttack(); } : undefined}
+            className={`rounded border px-2 py-1.5 text-[11px] transition-all ${
+              onBeastformAttack
+                ? 'border-emerald-700/60 bg-emerald-950/30 cursor-pointer hover:brightness-125 hover:border-emerald-500/70'
+                : 'border-emerald-700/40 bg-emerald-950/20'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Swords size={10} className="text-emerald-500/70 shrink-0" />
+              <span className="font-semibold text-emerald-200 flex-1">{activeBeastform.name}</span>
+              <span className="text-[9px] text-emerald-400/70">{activeBeastform.attack}</span>
+            </div>
+          </div>
+
+          {/* Disabled normal weapons */}
+          {weapons.length > 0 && (
+            <div className="opacity-35 pointer-events-none select-none space-y-1">
+              <div className="text-[9px] text-slate-600 uppercase tracking-wide pl-0.5">Normal attacks (disabled)</div>
+              {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => (
+                <WeaponCard
+                  key={i}
+                  weapon={w}
+                  traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </Section>
+    );
+  }
+
+  if (!weapons.length && !retractingClawsWeapon) return null;
 
   return (
     <Section label={onWeaponClick ? 'Weapons — click to roll' : 'Weapons'}>
@@ -987,11 +1331,21 @@ export function CharacterWeaponList({
           />
         )}
 
+        {/* Retracting Claws (Katari ancestry) virtual weapon */}
+        {retractingClawsWeapon && (
+          <WeaponCard
+            weapon={{ ...retractingClawsWeapon, effectiveRange: getEffectiveWeaponRange(retractingClawsWeapon, el.ancestryFeatures) }}
+            traitScore={traits[(retractingClawsWeapon.trait || '').toLowerCase()] ?? 0}
+            onClick={makeClick(retractingClawsWeapon)}
+            isVirtual
+          />
+        )}
+
         {/* Versatile alternate cards */}
         {versatilePairs.map(({ alternate }, i) => (
           <WeaponCard
             key={`versatile-${i}`}
-            weapon={alternate}
+            weapon={{ ...alternate, effectiveRange: getEffectiveWeaponRange(alternate, el.ancestryFeatures) }}
             traitScore={traits[(alternate.trait || '').toLowerCase()] ?? 0}
             onClick={makeClick(alternate)}
             isVirtual
@@ -1002,13 +1356,13 @@ export function CharacterWeaponList({
         {otherworldlyPairs.map(({ physicalVariant, magicalVariant }, i) => (
           <div key={`otherworldly-${i}`} className="space-y-1">
             <WeaponCard
-              weapon={physicalVariant}
+              weapon={{ ...physicalVariant, effectiveRange: getEffectiveWeaponRange(physicalVariant, el.ancestryFeatures) }}
               traitScore={traits[(physicalVariant.trait || '').toLowerCase()] ?? 0}
               onClick={makeClick(physicalVariant)}
               isVirtual
             />
             <WeaponCard
-              weapon={magicalVariant}
+              weapon={{ ...magicalVariant, effectiveRange: getEffectiveWeaponRange(magicalVariant, el.ancestryFeatures) }}
               traitScore={traits[(magicalVariant.trait || '').toLowerCase()] ?? 0}
               onClick={makeClick(magicalVariant)}
               purple
@@ -1020,7 +1374,7 @@ export function CharacterWeaponList({
         {chargedPairs.map(({ chargedVariant }, i) => (
           <div key={`charged-${i}`}>
             <WeaponCard
-              weapon={chargedVariant}
+              weapon={{ ...chargedVariant, effectiveRange: getEffectiveWeaponRange(chargedVariant, el.ancestryFeatures) }}
               traitScore={traits[(chargedVariant.trait || '').toLowerCase()] ?? 0}
               onClick={makeClick(chargedVariant, { _attackerInstanceId: el.instanceId })}
               isVirtual
@@ -1109,7 +1463,7 @@ export function CharacterWeaponList({
  *   featureUsage              — { [key]: { used, cycle } } usage state map
  *   currentHope               — for gating the Hope ability button
  */
-export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope }) {
+export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
   const allFeatures = [
@@ -1200,6 +1554,21 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
         })()}
         {allFeatures.map((f, i) => {
           const key = `${f.name}-${i}`;
+          if (f.name === 'Beastform' && el.class === 'Druid' && beastformProps) {
+            return (
+              <BeastformFeatureCard
+                key={key}
+                el={el}
+                feature={f}
+                open={isOpen(key)}
+                onToggle={() => toggle(key)}
+                {...beastformProps}
+              />
+            );
+          }
+          const rangerFocusToggle = (f.name === "Ranger's Focus" && el.class === 'Ranger' && updateFn)
+            ? { value: !!el.rangerFocusOnNextAttack, onChange: (v) => updateFn(el.instanceId, { rangerFocusOnNextAttack: v }) }
+            : undefined;
           return (
             <FeatureChip
               key={key}
@@ -1209,6 +1578,7 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
               onFeatureUse={onFeatureUse}
               featureUsage={featureUsage}
               featureKey={key}
+              rangerFocusToggle={rangerFocusToggle}
             />
           );
         })}
@@ -1220,9 +1590,16 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
 export function CharacterAbilityList({ el }) {
   const abilities = el.abilities || [];
   if (!abilities.length) return null;
+  const inBeastform = !!el.activeBeastform;
   return (
     <Section label="Domain Cards">
-      <div className="space-y-1">
+      {inBeastform && (
+        <div className="flex items-center gap-1 text-[10px] text-amber-500/80 bg-amber-950/30 border border-amber-700/40 rounded px-2 py-1 mb-1">
+          <X size={9} className="shrink-0" />
+          <span>Domain cards disabled while in Beastform</span>
+        </div>
+      )}
+      <div className={`space-y-1 ${inBeastform ? 'opacity-30 pointer-events-none select-none' : ''}`}>
         {abilities.map((a, i) => (
           <div key={a.id || i} className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-1.5">
             <div className="flex items-center gap-2 text-[11px]">
