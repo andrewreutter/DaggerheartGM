@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   AlertCircle, Sparkles, Heart, Shield,
   ChevronDown, ChevronRight, ExternalLink, RefreshCw, Bug, Pencil,
 } from 'lucide-react';
+import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import {
   Section,
@@ -18,15 +19,39 @@ import {
   TRAIT_FULL,
   WEAPON_TAG_DESCRIPTIONS,
   formatGold,
+  parseBeastformBonus,
 } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
-import { weaponFeatures } from '../../features/registry.js';
-import { runPipelineHook } from '../../features/hooks.js';
+import { weaponFeatures, classFeatures } from '../../features/registry.js';
+import { runPipelineHook, runHook } from '../../features/hooks.js';
+import { wrapEntity } from '../../features/entity.js';
+import { getEffectiveWeaponRange } from '../lib/character-calc.js';
+import { rangeBandNameToFt } from '../lib/map-range.js';
+import { formatTargetSummary } from '../lib/helpers.js';
 
 // formatGold is re-exported from CharacterDisplay; re-export it for callers that
 // already import it from here (keeps backwards-compatibility during migration).
 export { formatGold };
+
+/**
+ * Append "Vulnerable Target" advantage d6 to rollText, in the same keep-highest pool
+ * as any existing advantage dice (last [d6] or [Nd6kh] in the string).
+ */
+function appendVulnerableTargetToRollText(rollText) {
+  const idxD6 = rollText.lastIndexOf(' [d6]');
+  const khMatches = [...rollText.matchAll(/ \[\d+d6kh\]/g)];
+  const idxKh = khMatches.length > 0 ? khMatches[khMatches.length - 1].index : -1;
+  const lastIdx = Math.max(idxD6, idxKh);
+  if (lastIdx === -1) {
+    return rollText + ' Vulnerable Target [d6]';
+  }
+  const bracketStart = rollText.indexOf(' [', lastIdx);
+  const label = rollText.substring(lastIdx + 1, bracketStart);
+  const bracket = rollText.substring(bracketStart);
+  const n = bracket === ' [d6]' ? 1 : parseInt(bracket.match(/\d+/)[0], 10);
+  return rollText.substring(0, lastIdx) + ' ' + label + ' and Vulnerable Target [' + (n + 1) + 'd6kh]';
+}
 
 // ─── Roll text builders ───────────────────────────────────────────────────────
 
@@ -232,6 +257,8 @@ function getRollModBonus(rollModifiers, activeRollMod, rollType) {
 export function CharacterHoverCard({
   el,
   updateFn,
+  expandedKeys,
+  onToggleFeature,
   onResync,
   isSyncing,
   onRoll,
@@ -242,11 +269,34 @@ export function CharacterHoverCard({
   onDebugMouseEnter,
   onDebugMouseLeave,
   onActionNotification,
+  activeElements,
+  mapConfig,
+  hideCompanionSection = false,
+  pendingResourceCosts = {},
+  isPlayer = false,
+  getValidTargets,
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
   const [selectedRollModIndex, setSelectedRollModIndex] = useState(null);
   const [selectedModId, setSelectedModId] = useState(null);
+  const [selectedAdvIds, setSelectedAdvIds] = useState(() => []);
+  // For features that requiresInputForFeature (e.g. Sorcerer Channel Raw Power)
+  const [featureInputPending, setFeatureInputPending] = useState(null); // { feature, subFeature, action, spec }
+  const [featureInputValue, setFeatureInputValue] = useState('');
+  // Druid beastform selection (shared by Beastform class feature and Evolution hope ability)
+  const [selectedBeastformId, setSelectedBeastformId] = useState(null);
+  // In-place target menu before sending roll: { type: 'weapon'|'beastform', rollText, displayName, rollMeta, validTargets, opts?, anchorRect? }
+  const [targetMenuPending, setTargetMenuPending] = useState(null);
+
+  useEffect(() => {
+    if (!targetMenuPending) return;
+    const onKey = (e) => { if (e.key === 'Escape') setTargetMenuPending(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [targetMenuPending]);
+
+  const { srdData } = useCharacterSrdData();
 
   const traits = el.traits || {};
   const hasDaggerstack = !!el.daggerstackUrl;
@@ -254,6 +304,54 @@ export function CharacterHoverCard({
   const activeRollMod = selectedRollModIndex != null ? rollModifiers[selectedRollModIndex] : null;
   const activeModifiers = el.activeModifiers || [];
   const selectedMod = selectedModId != null ? activeModifiers.find(m => m.id === selectedModId) : null;
+
+  // Compute modifier eligibility for class features that auto-enable/disable chips
+  // (e.g. Rogue's Sneak Attack requires Cloaked or ally-in-Melee proximity).
+  const modifierEligibility = useMemo(() => {
+    const classFeat = classFeatures[el.class];
+    if (!classFeat?.computeModifierEligibility) return {};
+    return classFeat.computeModifierEligibility({
+      el,
+      activeElements: activeElements ?? [],
+      mapConfig: mapConfig ?? {},
+    }) || {};
+  }, [el, activeElements, mapConfig]);
+
+  // Advantage chips: features with "You have advantage on rolls to..." (parsed at render time)
+  const advantageChips = useMemo(() => {
+    const chips = [];
+    let idx = 0;
+    const featureArrays = [
+      ...(el.classFeatures || []),
+      ...(el.subclassFeatures || []),
+      ...(el.ancestryFeatures || []),
+      ...(el.communityFeatures || []),
+    ];
+    for (const f of featureArrays) {
+      const desc = f.description || f.text || '';
+      const parsed = parseFeatureAction(desc);
+      if (parsed.advantageCondition) {
+        chips.push({ id: `adv-${f.name}-${idx++}`, name: f.name, condition: parsed.advantageCondition, dice: 'd6', mode: 'advantage' });
+      }
+      const subFeatures = parseSubFeatures(desc);
+      for (const sub of subFeatures) {
+        const subParsed = parseFeatureAction(sub.description || '');
+        if (subParsed.advantageCondition) {
+          chips.push({ id: `adv-${sub.name}-${idx++}`, name: sub.name, condition: subParsed.advantageCondition, dice: 'd6', mode: 'advantage' });
+        }
+      }
+    }
+    for (const w of el.weapons || []) {
+      const feat = w.feature;
+      if (!feat) continue;
+      const desc = feat.description || feat.text || '';
+      const parsed = parseFeatureAction(desc);
+      if (parsed.advantageCondition) {
+        chips.push({ id: `adv-${feat.name || w.name}-${idx++}`, name: feat.name || w.name, condition: parsed.advantageCondition, dice: 'd6', mode: 'advantage' });
+      }
+    }
+    return chips;
+  }, [el]);
 
   // ── Feature roll text builder ────────────────────────────────────────────────
   // Builds the roll text string for a feature that has dice or a spellcast roll.
@@ -263,14 +361,17 @@ export function CharacterHoverCard({
     const parts = [];
 
     if (action.spellcastDC != null) {
-      // Spellcast roll: Hope [d12] Fear [d12] + spellcast trait
+      // Spellcast roll: Hope [d12] Fear [d12] + spellcast trait (include beastform bonus)
       const traitKey = (el.spellcastTrait || 'presence').toLowerCase();
+      const bfForSpellcast = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+      const beastformBonus = bfForSpellcast?.stat === traitKey ? bfForSpellcast.bonus : 0;
       const baseScore = traits[traitKey] ?? 0;
       const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, 'spellcast');
       const modBonus = selectedMod?.mode === 'roll' && selectedMod.dice ? 0 : (selectedMod?.bonus ?? 0);
+      const effectiveScore = baseScore + beastformBonus + rollModBonus + modBonus;
       parts.push(`${charName} ${featName} Hope [d12] Fear [d12]`);
-      if (baseScore + rollModBonus + modBonus !== 0) {
-        parts.push(`${TRAIT_FULL[traitKey] || traitKey} [${baseScore + rollModBonus + modBonus}]`);
+      if (effectiveScore !== 0) {
+        parts.push(`${TRAIT_FULL[traitKey] || traitKey} [${effectiveScore}]`);
       }
       parts.push(`{${featName}: Spellcast Roll DC ${action.spellcastDC}}`);
     } else if (action.dice.length > 0) {
@@ -303,8 +404,28 @@ export function CharacterHoverCard({
   // ── Feature use handler ──────────────────────────────────────────────────────
   // Called when user clicks Use on a feature or a SubFeatureCard.
   const handleFeatureUse = onRoll || onActionNotification ? (feature, subFeature = null) => {
+    // Sorcerer Channel Raw Power (and any future class feature) requires an input value
+    // before dispatch. Show an inline prompt and defer actual dispatch until submitted.
+    const classFeat = classFeatures[el.class];
+    const requiredInputSpec = classFeat?.requiresInputForFeature?.[feature.name];
+    if (requiredInputSpec && !featureInputPending) {
+      const action = subFeature
+        ? parseFeatureAction(subFeature.description || '')
+        : parseFeatureAction(feature.description || '');
+      setFeatureInputPending({ feature, subFeature, action, spec: requiredInputSpec });
+      setFeatureInputValue(String(requiredInputSpec.default ?? 1));
+      return;
+    }
+
     const activeDesc = subFeature ? (subFeature.description || '') : (feature.description || '');
+    const parentAction = subFeature ? parseFeatureAction(feature.description || '') : null;
     const action = subFeature ? parseFeatureAction(subFeature.description || '') : parseFeatureAction(feature.description || '');
+    if (parentAction) {
+      if (action.stressCost === 0) action.stressCost = parentAction.stressCost;
+      if (action.hopeCost === 0) action.hopeCost = parentAction.hopeCost;
+    }
+    // Sub-feature cost may come from name, e.g. "Hold Them Off (3 Hope)" — prefer that over re-parsed description
+    if (subFeature && typeof subFeature.hopeCost === 'number') action.hopeCost = subFeature.hopeCost;
     const featName = subFeature ? subFeature.name : feature.name;
 
     // Feature-level key for usage tracking (uses parent feature name)
@@ -315,6 +436,28 @@ export function CharacterHoverCard({
       ...(el.communityFeatures || []),
     ].findIndex(f => f.name === feature.name);
     const featureKey = `${feature.name}-${featureKeyIdx >= 0 ? featureKeyIdx : 0}`;
+
+    // ── Prayer Dice: roll Nd4, chips are created from results on banner dismiss ──
+    // Bypass the target-picker path entirely — the description mentions "ally" but
+    // clicking Prayer Dice is just rolling, not spending a specific die yet.
+    if (feature.name === 'Prayer Dice') {
+      const spellcastCount = (el.spellcastTrait && el.traits?.[el.spellcastTrait])
+        ? el.traits[el.spellcastTrait]
+        : 2;
+      const diceExprs = Array(Math.max(1, spellcastCount)).fill('[d4]').join(' ');
+      const rollText = `${el.name} Prayer Dice ${diceExprs}`;
+      const displayName = `${el.name} Prayer Dice`;  // shown as banner header
+      const prayerRollMeta = {
+        _featureUse: true,
+        _isPrayerDiceRoll: true,
+        _attackerInstanceId: el.instanceId,
+        _featureName: 'Prayer Dice',
+        _featureKey: featureKey,
+        _frequency: 'session',
+      };
+      onRoll?.(rollText, displayName, prayerRollMeta);
+      return;
+    }
 
     // ── Feature-specific modifier additions ──────────────────────────────────
     // Rally: give all party members a Rally Die
@@ -330,17 +473,15 @@ export function CharacterHoverCard({
     }] : [];
     const _distributeModifiersToAll = isRally;
 
-    // Dread Visage: adds an advantage chip to the activator's modifier bin
-    const isDreadVisage = feature.name === 'Dread Visage';
-    if (isDreadVisage) {
-      _addModifiers.push({
-        id: `dread-visage-${el.instanceId}-${Date.now()}`,
-        name: 'Dread Visage',
-        mode: 'advantage',
-        refreshOn: 'session',
-      });
-    }
+    // _inputValue carries card level / numeric inputs (e.g. Sorcerer Channel Raw Power)
+    const inputVal = featureInputPending?.feature?.name === feature.name
+      ? (parseFloat(featureInputValue) || (featureInputPending.spec?.default ?? 1))
+      : null;
+    if (featureInputPending) setFeatureInputPending(null);
 
+    const forceAction = classFeat?.forceActionNotificationFeatures?.includes(feature.name);
+    const hasDice = !forceAction && (action.dice.length > 0 || action.spellcastDC != null);
+    // Only add experience Hope cost when this feature use involves a roll (experience is used in the roll)
     const rollMeta = {
       _featureUse: true,
       _attackerInstanceId: el.instanceId,
@@ -353,23 +494,25 @@ export function CharacterHoverCard({
       _frequency: action.frequency,
       _featureKey: featureKey,
       _targetType: action.targetType,
+      ...(inputVal !== null ? { _inputValue: inputVal } : {}),
       ...(_addModifiers.length > 0 ? { _addModifiers, _distributeModifiersToAll } : {}),
+      ...(el.selectedExperienceIndex != null && hasDice ? { _experienceHopeCost: 1 } : {}),
+      // Druid Evolution: inject the selected beastform so onFeatureActivated can set activeBeastform
+      ...(el.class === 'Druid' && feature.name === 'Evolution' && selectedBeastform
+        ? { _beastform: selectedBeastform }
+        : {}),
     };
 
-    const hasDice = action.dice.length > 0 || action.spellcastDC != null;
-
     if (hasDice) {
-      // Dice roll path
-      const rollText = buildFeatureRollText(feature, subFeature, action);
+      // Dice roll path — experience Hope cost applied on GM ack, not here
+      let rollText = buildFeatureRollText(feature, subFeature, action);
       if (!rollText) return;
+      const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
+      if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
       const displayName = subFeature ? `${el.name} ${feature.name}: ${subFeature.name}` : `${el.name} ${feature.name}`;
       onRoll?.(rollText, displayName, rollMeta);
-      // Consume selected experience (if any) and selected modifier
-      if (el.selectedExperienceIndex != null) {
-        if (onSpendHope) onSpendHope(el.instanceId);
-        else updateFn?.(el.instanceId, { selectedExperienceIndex: null });
-      }
       if (selectedMod) setSelectedModId(null);
+      if (selectedAdvs.length) setSelectedAdvIds([]);
     } else {
       // Action notification path (costs but no dice, or comms-only)
       const truncDesc = activeDesc.length > 150 ? activeDesc.slice(0, 150) + '…' : activeDesc;
@@ -389,6 +532,11 @@ export function CharacterHoverCard({
     }
   } : undefined;
 
+  // Beastform trait bonus for rolls (must match display in CharacterTraitGrid)
+  const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+  const getBeastformTraitBonus = (traitKey) =>
+    (beastformTraitBonus?.stat === traitKey ? beastformTraitBonus.bonus : 0);
+
   // ── Trait click handler ──────────────────────────────────────────────────────
   const handleTraitClick = onRoll ? (traitKey) => {
     const activeExp = el.selectedExperienceIndex != null
@@ -396,22 +544,27 @@ export function CharacterHoverCard({
       : null;
     const baseScore = traits[traitKey] ?? 0;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
-    let rollText = buildTraitRollText(el.name, traitKey, baseScore + rollModBonus, activeExp?.name);
+    const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
+    let rollText = buildTraitRollText(el.name, traitKey, effectiveScore, activeExp?.name);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
+    // Air (Elemental Incarnation): auto-apply d6 advantage on Agility rolls
+    if (traitKey === 'agility' && el.activeChanneledElement === 'air') {
+      rollText += ' Air [d6]';
+    }
+    const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
+    if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
     const displayName = `${el.name} ${TRAIT_FULL[traitKey]}`;
-    const traitRollMeta = { _attackerInstanceId: el.instanceId };
+    const traitRollMeta = { _attackerInstanceId: el.instanceId, _traitKey: traitKey };
     if (selectedMod?.consumeOnUse) traitRollMeta._usedModifierId = selectedMod.id;
+    if (el.selectedExperienceIndex != null) traitRollMeta._experienceHopeCost = 1;
     // #region agent log
     console.log('[3e4b6d] handleTraitClick rollMeta:', JSON.stringify(traitRollMeta), 'selectedMod:', selectedMod ? { id: selectedMod.id, consumeOnUse: selectedMod.consumeOnUse } : null);
     // #endregion
     onRoll(rollText, displayName, traitRollMeta);
-    if (activeExp) {
-      if (onSpendHope) onSpendHope(el.instanceId);
-      else updateFn(el.instanceId, { selectedExperienceIndex: null });
-    }
     if (selectedMod) setSelectedModId(null);
+    if (selectedAdvs.length) setSelectedAdvIds([]);
   } : undefined;
 
   const selectedExpHint = el.selectedExperienceIndex != null
@@ -426,25 +579,39 @@ export function CharacterHoverCard({
       ? (el.experiences || [])[el.selectedExperienceIndex]
       : null;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, 'spellcast');
-    let rollText = buildTraitRollText(el.name + ' Spellcast', traitKey, baseScore + rollModBonus, activeExp?.name);
+    const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
+    let rollText = buildTraitRollText(el.name + ' Spellcast', traitKey, effectiveScore, activeExp?.name);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
+    const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
+    if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
     const displayName = `${el.name} Spellcast`;
-    const spellcastRollMeta = { _attackerInstanceId: el.instanceId };
+    const spellcastRollMeta = { _attackerInstanceId: el.instanceId, _traitKey: traitKey };
     if (selectedMod?.consumeOnUse) spellcastRollMeta._usedModifierId = selectedMod.id;
+    if (el.selectedExperienceIndex != null) spellcastRollMeta._experienceHopeCost = 1;
     onRoll(rollText, displayName, spellcastRollMeta);
-    if (activeExp) {
-      if (onSpendHope) onSpendHope(el.instanceId);
-      else updateFn(el.instanceId, { selectedExperienceIndex: null });
-    }
     if (selectedMod) setSelectedModId(null);
+    if (selectedAdvs.length) setSelectedAdvIds([]);
   } : undefined;
 
+  // Send roll (used after target selection or when no target menu needed)
+  const sendWeaponRoll = (rollText, displayName, rollMeta, opts) => {
+    onRoll(rollText, displayName, rollMeta);
+    if (selectedMod) setSelectedModId(null);
+    if ((selectedAdvIds || []).length) setSelectedAdvIds([]);
+    if (opts?.devastating) {
+      const maxStress = el.maxStress ?? 6;
+      const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
+      updateFn(el.instanceId, { currentStress: newStress });
+      setDevastatingActive(false);
+    }
+  };
+
   // ── Weapon click handler ─────────────────────────────────────────────────────
-  const handleWeaponClick = onRoll ? (weapon, rollMeta = {}) => {
+  const handleWeaponClick = onRoll ? (weapon, rollMeta = {}, event = null) => {
     const traitKey = (weapon.trait || '').toLowerCase();
-    const traitScore = traits[traitKey] ?? 0;
+    const baseTrait = traits[traitKey] ?? 0;
     const activeExp = el.selectedExperienceIndex != null
       ? (el.experiences || [])[el.selectedExperienceIndex]
       : null;
@@ -452,29 +619,187 @@ export function CharacterHoverCard({
     if (rollMeta.devastating) opts.devastating = true;
     if (rollMeta.secondaryDamage) opts.secondaryDamage = rollMeta.secondaryDamage;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
+    const effectiveTrait = baseTrait + getBeastformTraitBonus(traitKey) + rollModBonus;
     let rollText = buildWeaponRollText(
-      el.name, weapon.name, traitKey, traitScore + rollModBonus,
+      el.name, weapon.name, traitKey, effectiveTrait,
       activeExp?.name, weapon.damage, weapon.feature, traits, el.level, opts,
     );
+    const rangeStr = (weapon.effectiveRange ?? getEffectiveWeaponRange(weapon, el.ancestryFeatures)) || weapon.range;
+    if (rangeStr) rollText += ` ${rangeStr}`;
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    const displayName = `${el.name} ${weapon.name}`;
+    const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
+    if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
+    let displayName = `${el.name} ${weapon.name}`;
     rollMeta._attackerInstanceId = el.instanceId;
+    rollMeta._traitKey = (weapon.trait || '').toLowerCase();
+    if (rangeStr) {
+      const ft = rangeBandNameToFt(rangeStr);
+      if (ft != null) rollMeta._weaponRangeFt = ft;
+    }
     if (selectedMod?.consumeOnUse) rollMeta._usedModifierId = selectedMod.id;
-    onRoll(rollText, displayName, rollMeta);
-    if (activeExp) {
-      if (onSpendHope) onSpendHope(el.instanceId);
-      else updateFn(el.instanceId, { selectedExperienceIndex: null });
+    if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
+    if (weapon._retractingClaws) rollMeta._retractingClaws = true;
+    // Ranger's Focus: use on next attack (toggle adds Hope cost and title suffix)
+    if (el.rangerFocusOnNextAttack && updateFn) {
+      rollMeta._rangerFocusAttempt = true;
+      rollMeta._hopeCost = (rollMeta._hopeCost || 0) + 1;
+      displayName = `${el.name} ${weapon.name} with Ranger's Focus attempt`;
     }
-    if (selectedMod) setSelectedModId(null);
-    if (opts.devastating) {
-      const maxStress = el.maxStress ?? 6;
-      const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
-      updateFn(el.instanceId, { currentStress: newStress });
-      setDevastatingActive(false);
+
+    if (getValidTargets && (rollMeta._weaponRangeFt != null || rollMeta._retractingClaws)) {
+      const validTargets = getValidTargets(el.instanceId, {
+        weaponRangeFt: rollMeta._weaponRangeFt,
+        retractingClaws: rollMeta._retractingClaws,
+      }) ?? [];
+      const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+      setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
+      if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
+      return;
     }
+    sendWeaponRoll(rollText, displayName, rollMeta, opts);
+    if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
   } : undefined;
+
+  const handleTargetMenuSelect = (target) => {
+    if (!targetMenuPending) return;
+    let { type, rollText, displayName, rollMeta, opts } = targetMenuPending;
+    if (target.type === 'adversary' && target.vulnerable) {
+      rollText = appendVulnerableTargetToRollText(rollText);
+    }
+    onRoll(rollText, displayName, { ...rollMeta, _selectedTargetInstanceId: target.instanceId });
+    if (type === 'weapon') {
+      if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+      if (selectedMod) setSelectedModId(null);
+      if ((selectedAdvIds || []).length) setSelectedAdvIds([]);
+      if (opts?.devastating) {
+        const maxStress = el.maxStress ?? 6;
+        const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
+        updateFn(el.instanceId, { currentStress: newStress });
+        setDevastatingActive(false);
+      }
+    }
+    setTargetMenuPending(null);
+  };
+
+  const handleTargetMenuCancel = () => {
+    setTargetMenuPending(null);
+  };
+
+  // ── Beastform helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Parse a beastform attack string like "Melee Agility d4 phy" into parts.
+   * Returns { range, traitKey, damage, dmgType } or null.
+   */
+  const parseBeastformAttack = (attackStr) => {
+    const parts = (attackStr || '').trim().split(/\s+/);
+    if (parts.length < 3) return null;
+    return {
+      range: parts[0],
+      traitKey: parts[1].toLowerCase(),
+      damage: parts[2],
+      dmgType: parts[3] || '',
+    };
+  };
+
+  // Resolved beastforms filtered to character's tier
+  const availableBeastforms = useMemo(() => {
+    const allBf = srdData?.beastforms || [];
+    const tier = el.tier || 1;
+    return allBf.filter(b => b.tier <= tier);
+  }, [srdData, el.tier]);
+
+  // Currently selected beastform object (for Beastform card and Evolution)
+  const selectedBeastform = useMemo(() => {
+    if (!srdData) return null;
+    if (selectedBeastformId) return srdData.beastformsById?.[selectedBeastformId] || null;
+    return availableBeastforms[0] || null;
+  }, [srdData, selectedBeastformId, availableBeastforms]);
+
+  // Use Beastform (1 Stress, once per rest)
+  const handleUseBeastform = onActionNotification ? (beastform) => {
+    const featureKeyIdx = (el.classFeatures || []).findIndex(f => f.name === 'Beastform');
+    const featureKey = `Beastform-${featureKeyIdx >= 0 ? featureKeyIdx : 0}`;
+    onActionNotification({
+      _action: true,
+      rollUser: el.name,
+      actionName: 'Beastform',
+      actionText: `${el.name} transforms into ${beastform.name}!`,
+      tags: [{ name: 'StressCost', text: 'Mark 1 Stress' }],
+      _featureUse: true,
+      _attackerInstanceId: el.instanceId,
+      _featureName: 'Beastform',
+      _stressCost: 1,
+      _frequency: 'rest',
+      _featureKey: featureKey,
+      _beastform: beastform,
+    });
+  } : undefined;
+
+  // Drop Out of Beastform (no cost, broadcasts announcement)
+  const handleDropOutBeastform = (onActionNotification || updateFn) ? () => {
+    onActionNotification?.({
+      _action: true,
+      rollUser: el.name,
+      actionName: 'Drop out of Beastform',
+      actionText: `${el.name} drops out of Beastform.`,
+    });
+    updateFn?.(el.instanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
+  } : undefined;
+
+  // Click to set/clear the selected beastform advantage (mutually exclusive)
+  const handleBeastformAdvantageSelect = updateFn ? (adv) => {
+    updateFn(el.instanceId, { selectedBeastformAdvantage: adv });
+  } : undefined;
+
+  // Build and fire a beastform attack roll
+  const handleBeastformAttack = onRoll && el.activeBeastform ? (event = null) => {
+    const bf = el.activeBeastform;
+    const parsed = parseBeastformAttack(bf.attack);
+    if (!parsed) return;
+    const { range, traitKey, damage, dmgType } = parsed;
+    const traitScore = traits[traitKey] ?? 0;
+    const bfBonus = parseBeastformBonus(bf.trait_bonus);
+    const effectiveScore = traitScore + (bfBonus?.stat === traitKey ? bfBonus.bonus : 0);
+    const traitName = TRAIT_FULL[traitKey] || traitKey;
+    const profBonus = el.proficiency ? `+${el.proficiency}` : '';
+    const dmgStr = profBonus ? `${damage}${profBonus}` : damage;
+    let rollText = `${el.name} ${bf.name} ${traitName} Hope [d12] Fear [d12]`;
+    if (effectiveScore !== 0) rollText += ` ${traitName} [${effectiveScore}]`;
+    rollText += ` damage [${dmgStr}]`;
+    if (dmgType) rollText += ` ${dmgType}`;
+    if (range) rollText += ` ${range}`;
+    if (el.selectedBeastformAdvantage) rollText += ` ${el.selectedBeastformAdvantage} [d6]`;
+    const displayName = `${el.name} ${bf.name}`;
+    const beastformRollMeta = { _attackerInstanceId: el.instanceId };
+    if (range) {
+      const ft = rangeBandNameToFt(range);
+      if (ft != null) beastformRollMeta._weaponRangeFt = ft;
+    }
+    if (getValidTargets && beastformRollMeta._weaponRangeFt != null) {
+      const validTargets = getValidTargets(el.instanceId, {
+        weaponRangeFt: beastformRollMeta._weaponRangeFt,
+        retractingClaws: false,
+      }) ?? [];
+      const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+      setTargetMenuPending({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
+      if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
+      return;
+    }
+    onRoll(rollText, displayName, beastformRollMeta);
+  } : undefined;
+
+  // beastformProps — passed into CharacterFeatureList and CharacterWeaponList
+  const beastformProps = el.class === 'Druid' ? {
+    beastforms: availableBeastforms,
+    selectedBeastformId: selectedBeastformId || availableBeastforms[0]?.id || null,
+    onBeastformSelect: setSelectedBeastformId,
+    activeBeastform: el.activeBeastform || null,
+    onUseBeastform: handleUseBeastform,
+    onDropOutBeastform: handleDropOutBeastform,
+  } : null;
 
   // ── Header action buttons ────────────────────────────────────────────────────
   const headerActions = (
@@ -526,6 +851,65 @@ export function CharacterHoverCard({
 
   return (
     <div className="relative flex flex-col flex-1 min-h-0">
+
+    {/* ── Target selection popover (fixed, anchored to clicked weapon card) ── */}
+    {targetMenuPending && (() => {
+      const rect = targetMenuPending.anchorRect;
+      const top = rect ? Math.min(rect.bottom + 4, window.innerHeight - 160) : window.innerHeight / 2;
+      const left = rect ? Math.min(rect.left, window.innerWidth - 200) : window.innerWidth / 2;
+      return (
+        <>
+          {/* Transparent backdrop — click to dismiss */}
+          <div
+            className="fixed inset-0 z-[200]"
+            onClick={handleTargetMenuCancel}
+          />
+          {/* Popover */}
+          <div
+            className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+            style={{ top, left, minWidth: '140px', maxWidth: '220px' }}
+          >
+            <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">
+              {targetMenuPending.validTargets.length > 0 ? 'Choose target' : 'No targets in range'}
+            </div>
+            <div className="space-y-1">
+              {targetMenuPending.validTargets.length === 0 ? (
+                <p className="text-[11px] text-slate-400 italic px-1 py-1">No valid targets are in range of this attack.</p>
+              ) : targetMenuPending.validTargets.map((t) => {
+                const sum = formatTargetSummary(t, { hideMax: isPlayer });
+                return (
+                  <button
+                    key={t.instanceId}
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleTargetMenuSelect(t); }}
+                    className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
+                  >
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span>{t.name}</span>
+                      {t.vulnerable && (
+                        <span className="text-[10px] font-medium px-1 py-0.5 rounded bg-amber-900/60 border border-amber-600/70 text-amber-200" title="Attacker gains advantage die: Vulnerable Target">Vulnerable</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">
+                      {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
+                      {sum.conditions ? ` · ${sum.conditions}` : ''}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleTargetMenuCancel(); }}
+              className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      );
+    })()}
+
     <div className="w-[22rem] bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col flex-1 min-h-0">
 
       {/* ── Header ── */}
@@ -555,6 +939,52 @@ export function CharacterHoverCard({
           onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
           selectedModId={selectedModId}
           onSelectMod={onRoll ? setSelectedModId : undefined}
+          advantageChips={advantageChips}
+          selectedAdvIds={selectedAdvIds}
+          onSelectAdv={onRoll ? (id) => setSelectedAdvIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]) : undefined}
+          modifierEligibility={modifierEligibility}
+          beastformAdvantages={el.activeBeastform?.advantages
+            ? el.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
+            : undefined}
+          selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
+          onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
+          onUseMod={updateFn ? (mod) => {
+            // clearStress mode (existing behavior)
+            if (mod.mode === 'clearStress' && mod.dice) {
+              const stress = Math.max(0, (el.currentStress ?? 0) - 1);
+              updateFn(el.instanceId, { currentStress: stress });
+              const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+              updateFn(el.instanceId, { activeModifiers: kept });
+              return;
+            }
+            // Prayer Die chip: broadcast usage message with the pre-rolled value, then remove
+            if (mod.name === 'Prayer Die') {
+              onActionNotification?.({
+                _action: true,
+                rollUser: el.name,
+                actionName: 'Prayer Die',
+                actionText: `Uses a Prayer Die — value **${mod.value}**.`,
+                tags: [],
+              });
+              const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+              updateFn(el.instanceId, { activeModifiers: kept });
+            }
+          } : undefined}
+          onUseMode={updateFn ? (mod, mode) => {
+            // Dispatch class feature onModifierUsed hook
+            if (el.class) {
+              const selfEl = wrapEntity(el, updateFn);
+              runHook(classFeatures, [el.class], 'onModifierUsed', {
+                modifier: mod,
+                mode,
+                selfEl,
+                updateActiveElement: updateFn,
+              });
+            }
+            // Consume the modifier chip after use
+            const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+            updateFn(el.instanceId, { activeModifiers: kept });
+          } : undefined}
         />
 
         {/* ── Defense ── */}
@@ -564,21 +994,28 @@ export function CharacterHoverCard({
         {showResources && (
           <Section label="Resources">
             <div className="space-y-1.5">
-              {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={11} className="text-amber-400 shrink-0" />
-                  <span className="text-[11px] text-slate-400 w-10 shrink-0">Hope</span>
-                  <CheckboxTrack
-                    total={maxHope}
-                    filled={el.hope ?? maxHope}
-                    onSetFilled={(h) => updateFn(el.instanceId, { hope: h })}
-                    fillColor="bg-amber-400"
-                    label="Hope"
-                    verbs={['Gain', 'Spend']}
-                  />
-                  <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.hope ?? maxHope}/{maxHope}</span>
-                </div>
-              ); })()}
+              {(() => {
+                const maxHope = el.maxHope ?? 6;
+                const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
+                const currentHope = el.hope ?? maxHope;
+                return maxHope > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={11} className="text-amber-400 shrink-0" />
+                    <span className="text-[11px] text-slate-400 w-10 shrink-0">Hope</span>
+                    <CheckboxTrack
+                      total={maxHope}
+                      filled={Math.max(0, currentHope - hopePending)}
+                      pendingFilled={hopePending}
+                      onSetFilled={(h) => updateFn(el.instanceId, { hope: h })}
+                      fillColor="bg-amber-400"
+                      label="Hope"
+                      verbs={['Gain', 'Spend']}
+                      pulseOnDecreaseOnly
+                    />
+                    <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.hope ?? maxHope}/{maxHope}</span>
+                  </div>
+                );
+              })()}
               {(el.maxArmor || 0) > 0 && (
                 <div className="flex items-center gap-1.5">
                   <Shield size={11} className="text-cyan-500 shrink-0" />
@@ -586,6 +1023,7 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxArmor}
                     filled={el.currentArmor || 0}
+                    pendingFilled={pendingResourceCosts[el.instanceId]?.armorMark ?? 0}
                     onSetFilled={(v) => {
                       const upd = { currentArmor: v };
                       if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
@@ -620,6 +1058,7 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxStress}
                     filled={el.currentStress || 0}
+                    pendingFilled={pendingResourceCosts[el.instanceId]?.stress ?? 0}
                     onSetFilled={(s) => updateFn(el.instanceId, { currentStress: s })}
                     fillColor="bg-orange-500"
                     label="Stress"
@@ -632,7 +1071,7 @@ export function CharacterHoverCard({
           </Section>
         )}
 
-        {/* ── Weapons ── */}
+        {/* ── Weapons (or Beastform Attack when transformed) ── */}
         <CharacterWeaponList
           el={el}
           onWeaponClick={handleWeaponClick}
@@ -643,6 +1082,7 @@ export function CharacterHoverCard({
           selectedExperienceHint={el.selectedExperienceIndex != null
             ? `+2 from \u201c${(el.experiences || [])[el.selectedExperienceIndex]?.name}\u201d included`
             : undefined}
+          onBeastformAttack={handleBeastformAttack}
         />
 
         {/* ── Inventory ── */}
@@ -651,24 +1091,31 @@ export function CharacterHoverCard({
         {/* ── Features ── */}
         <CharacterFeatureList
           el={el}
-          expandedKeys={el.expandedFeatures}
-          onToggleFeature={updateFn ? (key) => {
-            const current = el.expandedFeatures || [];
-            const isOpen = current.includes(key);
-            const next = isOpen ? current.filter(k => k !== key) : [...current, key];
-            updateFn(el.instanceId, { expandedFeatures: next });
-          } : undefined}
+          expandedKeys={expandedKeys}
+          onToggleFeature={onToggleFeature}
           onUseHopeAbility={onUseHopeAbility}
           onFeatureUse={handleFeatureUse}
           featureUsage={el.featureUsage}
           currentHope={currentHope}
+          beastformProps={beastformProps}
+          updateFn={updateFn}
+          activeChanneledElement={el.activeChanneledElement ?? null}
+          onWingsPickUpCarry={onActionNotification ? (characterEl) => onActionNotification({
+            _action: true,
+            _featureName: 'Wings of Light',
+            _wingsOfLightPickUpCarry: true,
+            _attackerInstanceId: characterEl.instanceId,
+            rollUser: characterEl.name,
+            actionName: 'Wings of Light: Pick up and carry',
+            tags: [{ name: 'Wings of Light', text: 'Mark 1 Stress' }],
+          }) : undefined}
         />
 
         {/* ── Domain Cards ── */}
         <CharacterAbilityList el={el} />
 
-        {/* ── Companion ── */}
-        <CharacterCompanion el={el} />
+        {/* ── Companion (hidden when shown as second card in overlay) ── */}
+        {!hideCompanionSection && <CharacterCompanion el={el} />}
 
         {/* ── Description ── */}
         {el.description && (
@@ -701,6 +1148,38 @@ export function CharacterHoverCard({
             </div>
           </div>
         ))}
+      </div>
+    )}
+
+    {/* ── Feature input overlay (e.g. Sorcerer Channel Raw Power card level) ── */}
+    {featureInputPending && (
+      <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/80 rounded-xl">
+        <div className="bg-slate-900 border border-amber-600/60 rounded-lg p-4 shadow-2xl w-56 text-center">
+          <div className="text-[11px] font-bold text-amber-300 mb-1">{featureInputPending.feature.name}</div>
+          {featureInputPending.subFeature && (
+            <div className="text-[10px] text-slate-400 mb-2">{featureInputPending.subFeature.name}</div>
+          )}
+          <label className="text-[10px] text-slate-400 block mb-1">{featureInputPending.spec.label}</label>
+          <input
+            type="number"
+            min={featureInputPending.spec.min ?? 1}
+            max={featureInputPending.spec.max ?? 10}
+            value={featureInputValue}
+            onChange={e => setFeatureInputValue(e.target.value)}
+            className="w-full text-center bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white mb-3 focus:outline-none focus:border-amber-500"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFeatureInputPending(null)}
+              className="flex-1 px-2 py-1 rounded text-[11px] border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors"
+            >Cancel</button>
+            <button
+              onClick={() => handleFeatureUse(featureInputPending.feature, featureInputPending.subFeature)}
+              className="flex-1 px-2 py-1 rounded text-[11px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 transition-colors"
+            >Use</button>
+          </div>
+        </div>
       </div>
     )}
 

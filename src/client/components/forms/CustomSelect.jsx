@@ -26,9 +26,10 @@ const TOOLTIP_BOTTOM_PAD = 16;
  * @param {string} [props.className]
  * @param {string} [props.dropdownClassName] - Extra classes for the dropdown panel
  */
-export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, placeholder, disabled, className = '', dropdownClassName = '' }) {
+export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, placeholder, disabled, className = '', dropdownClassName = '', fixedDropdown = false }) {
   const [open, setOpen] = useState(false);
   const [tooltip, setTooltip] = useState(null); // { label, description, x, y }
+  const [fixedPos, setFixedPos] = useState(null); // { top|bottom, left, width } for fixedDropdown
   const ref = useRef(null);
   const tooltipRef = useRef(null);
 
@@ -42,6 +43,21 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
       setTooltip(t => t ? { ...t, y: Math.max(TOOLTIP_BOTTOM_PAD, t.y - overflow) } : null);
     }
   }, [tooltip?.description]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compute fixed-position coordinates for the dropdown panel when fixedDropdown=true
+  useEffect(() => {
+    if (!fixedDropdown || !open || !ref.current) { setFixedPos(null); return; }
+    const btn = ref.current.querySelector('button');
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    if (spaceBelow >= 120 || spaceBelow >= spaceAbove) {
+      setFixedPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    } else {
+      setFixedPos({ bottom: window.innerHeight - rect.top + 2, left: rect.left, width: rect.width, maxHeight: Math.min(288, spaceAbove - 8) });
+    }
+  }, [open, fixedDropdown]);
 
   useEffect(() => {
     if (!open) {
@@ -96,7 +112,10 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
       </button>
 
       {open && !disabled && (
-        <div className={`absolute z-20 mt-1 w-full bg-slate-900 border border-slate-700 rounded shadow-xl max-h-72 overflow-y-auto ${dropdownClassName}`}>
+        <div
+          className={`bg-slate-900 border border-slate-700 rounded shadow-xl max-h-72 overflow-y-auto ${fixedDropdown ? 'fixed z-50' : 'absolute z-20 mt-1 w-full'} ${dropdownClassName}`}
+          style={fixedDropdown && fixedPos ? { top: fixedPos.top, bottom: fixedPos.bottom, left: fixedPos.left, width: fixedPos.width, maxHeight: fixedPos.maxHeight } : undefined}
+        >
           {placeholder && (
             <button
               type="button"

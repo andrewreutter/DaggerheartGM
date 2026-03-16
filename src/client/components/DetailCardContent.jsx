@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import { Heart, AlertCircle, X, Dices, Link2, Zap } from 'lucide-react';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
@@ -23,12 +24,34 @@ function boostedAttackDesc(desc, damageBoost) {
   );
 }
 
-export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, valueOffset = 0, verbs, currentAbsoluteValue, targetToAbsolute }) {
+export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, fillColor, label, valueOffset = 0, verbs, currentAbsoluteValue, targetToAbsolute, pulseOnDecreaseOnly = false }) {
+  const [pulsing, setPulsing] = useState(false);
+  const prevFilledRef = useRef(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (prevFilledRef.current === null) { prevFilledRef.current = filled; return; }
+    if (filled !== prevFilledRef.current) {
+      const increased = filled > prevFilledRef.current;
+      prevFilledRef.current = filled;
+      if (pulseOnDecreaseOnly && increased) return;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setPulsing(false);
+      requestAnimationFrame(() => {
+        setPulsing(true);
+        timerRef.current = setTimeout(() => setPulsing(false), 400);
+      });
+    }
+  }, [filled, pulseOnDecreaseOnly]);
+
   if (!total || total <= 0) return <span className="text-slate-500 text-xs">-</span>;
 
+  const pendingStart = filled;
+  const pendingEnd = Math.min(filled + pendingFilled, total);
   const items = [];
   for (let i = 0; i < total; i++) {
     const isChecked = i < filled;
+    const isPending = i >= pendingStart && i < pendingEnd;
     const targetValue = isChecked ? i : i + 1;
     const delta = (currentAbsoluteValue != null && typeof targetToAbsolute === 'function')
       ? Math.abs(targetToAbsolute(targetValue) - currentAbsoluteValue)
@@ -44,22 +67,24 @@ export function CheckboxTrack({ total, filled, onSetFilled, fillColor, label, va
         title = `${label} → ${targetValue + valueOffset}`;
       }
     }
-    const El = onSetFilled ? 'button' : 'div';
+    if (isPending) title = title ? `${title} (pending GM ack)` : 'Pending GM ack';
+    const El = onSetFilled && !isPending ? 'button' : 'div';
+    const style = isChecked
+      ? `${fillColor} border-transparent`
+      : isPending
+        ? `${fillColor} border-amber-400/60 border-dashed opacity-60`
+        : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700';
     items.push(
       <El
         key={i}
-        onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
-        title={onSetFilled ? title : undefined}
-        className={`checkbox-track-item w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${
-          isChecked
-            ? `${fillColor} border-transparent`
-            : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700'
-        }`}
+        onClick={onSetFilled && !isPending ? () => onSetFilled(targetValue) : undefined}
+        title={onSetFilled || isPending ? title : undefined}
+        className={`checkbox-track-item w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${style}`}
       />
     );
   }
 
-  return <div className="flex items-center gap-0.5 flex-wrap">{items}</div>;
+  return <div className={`flex items-center gap-0.5 flex-wrap${pulsing ? ' stat-pulse-anim' : ''}`}>{items}</div>;
 }
 
 export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown, onAddAdversary, onPotentialAdversaryHover, onPotentialAdversaryLeave }) {
@@ -368,7 +393,7 @@ export function AdversaryCardContent({
                 ? 'border-yellow-500'
                 : 'border-transparent'
             } ${onRollAttack ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/atk' : ''}`}
-            onClick={onRollAttack ? () => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: boostedDamage(el.attack.damage, dmgBoost), trait: el.attack.trait }) : undefined}
+            onClick={onRollAttack ? (e) => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: boostedDamage(el.attack.damage, dmgBoost), trait: el.attack.trait }, e) : undefined}
             title={onRollAttack ? 'Roll to dice room' : undefined}
           >
             <span className="font-bold text-slate-200">{el.attack.name}:</span>
@@ -405,13 +430,13 @@ export function AdversaryCardContent({
                     ? 'border-yellow-500'
                     : 'border-transparent'
                 } ${isRollable ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/feat' : ''}`}
-                onClick={isRollable ? () => {
+                onClick={isRollable ? (e) => {
                   if (attackMatch) {
-                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: boostedDamage(attackMatch[3], dmgBoost), trait: attackMatch[4] });
+                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: boostedDamage(attackMatch[3], dmgBoost), trait: attackMatch[4] }, e);
                   } else if (forceAttack) {
-                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: boostedDamage(el.attack?.damage, dmgBoost), trait: el.attack?.trait });
+                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: boostedDamage(el.attack?.damage, dmgBoost), trait: el.attack?.trait }, e);
                   } else {
-                    onRollAttack({ name: feat.name, patterns: dicePatterns });
+                    onRollAttack({ name: feat.name, patterns: dicePatterns }, e);
                   }
                 } : undefined}
                 title={isRollable ? 'Roll to dice room' : undefined}

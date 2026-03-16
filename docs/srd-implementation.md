@@ -16,13 +16,13 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display            | **Done**    |
 | [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 22/38 automated    | **Partial** |
 | [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated    | **Partial** |
-| [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable (Phase 1) | **Partial** |
-| [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 0/18 features auto | **Display** |
-| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 0/36 features auto | **Display** |
+| [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks | **Partial** |
+| [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 1+ features partial (e.g. Wings of Light, Elemental Incarnation) | **Partial** |
+| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 2/36 features auto | **Partial** |
 | [Communities](#communities-9)             | 9     | N/A       | Done        | 0/9 features auto  | **Display** |
 | [Abilities](#abilities--domain-cards-189) | 189   | N/A       | Done        | Display            | **Display** |
 | [Domains](#domains-9)                     | 9     | N/A       | Indirect    | Filtering only     | **Partial** |
-| [Beastforms](#beastforms-24)              | 24    | API only  | None        | None               | **None**    |
+| [Beastforms](#beastforms-24)              | 24    | API only  | Done        | Partial            | **Partial** |
 | [Items](#items-60)                        | 60    | API only  | None        | None               | **None**    |
 | [Consumables](#consumables-60)            | 60    | API only  | None        | None               | **None**    |
 
@@ -143,7 +143,7 @@ Applied in `handleApplyDamage` / banner dismiss in `GMTableView`.
 | Feature   | Behavior                                   | Status   |
 | --------- | ------------------------------------------ | -------- |
 | Startling | Action notification card; 1 Stress         | **Done** |
-| Parry     | Defensive dice cancel matching attack dice | **Done** |
+| Parry     | Defensive dice cancel matching attack dice | **Broken** — original implementation relied on the old `handleDiceRollComplete`/`dice-ack` path, which was removed in the banner-queue refactor. Needs reimplementation as a linked child banner (`_parentBannerId`). See `parry-linked-banners` in `.cursor/plans/banner_queue_architecture_ac326660.plan.md`. |
 
 
 #### Display Only — No Automation Needed
@@ -273,18 +273,18 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 | Class        | Class Features                                  | Hope Feature                                         | Feature Status                                                    |
 | ------------ | ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| **Bard**     | Rally                                           | Make a Scene (3 Hope: Distract target -2 Difficulty) | **Partial** — clickable; Rally adds modifier chips; Make a Scene deducts Hope |
-| **Druid**    | Beastform, Wildtouch                            | Evolution (3 Hope: free Beastform + trait boost)     | **Partial** — Wildtouch announce; Beastform announce (full mechanics deferred); Evolution deducts Hope |
-| **Guardian** | Unstoppable                                     | Frontline Tank (3 Hope: clear 2 Armor Slots)         | **Partial** — Unstoppable announce (once/long rest); Frontline Tank deducts Hope + clears Armor |
-| **Ranger**   | Ranger's Focus                                  | Hold Them Off (3 Hope: attack 2 extra targets)       | **Partial** — Ranger's Focus rolls dice; Hold Them Off deducts Hope |
-| **Rogue**    | Cloaked, Sneak Attack                           | Rogue's Dodge (3 Hope: +2 Evasion)                   | **Partial** — all clickable; Sneak Attack chip in modifier bin; Rogue's Dodge adds modifier chip |
-| **Seraph**   | Prayer Dice                                     | Life Support (3 Hope: clear 1 HP on ally)            | **Partial** — Prayer Dice rolls d4s; Life Support deducts Hope |
-| **Sorcerer** | Arcane Sense, Minor Illusion, Channel Raw Power | Volatile Magic (3 Hope: reroll damage dice)          | **Partial** — Arcane Sense announce; Minor Illusion rolls Spellcast; Channel Raw Power sub-features; Volatile Magic deducts Hope |
+| **Bard**     | Rally                                           | Make a Scene (3 Hope: Distract target -2 Difficulty) | **Partial** — clickable; Rally adds modifier chips; Make a Scene sets `difficultyMod` on target via ActionBanner target picker + `onFeatureActivated` hook; badge shown on adversary card |
+| **Druid**    | Beastform, Wildtouch                            | Evolution (3 Hope: free Beastform + trait boost)     | **Done** — Beastform: tier-filtered selector, Use (1 Stress/once-per-rest), Drop Out, auto-drop on last HP or Fragile; in-beastform: attack roll (Hope+Fear+Trait+proficiency), mutually-exclusive advantage chips (+d6), weapons disabled, domain cards disabled, trait/evasion bonuses shown. Evolution (hope ability): 3 Hope, same activeBeastform state + shared selector. Wildtouch: announce only. |
+| **Guardian** | Unstoppable                                     | Frontline Tank (3 Hope: clear 2 Armor Slots)         | **Partial** — Unstoppable die chip: `onHpDealt` ratchets d4→d6→d8→d10; `modifyPreThresholdDamage` reduces incoming damage by one tier while chip active; Frontline Tank deducts Hope + clears Armor |
+| **Ranger**   | Ranger's Focus                                  | Hold Them Off (3 Hope: attack 2 extra targets)       | **Done** — Ranger's Focus: "Use on next attack" toggle; weapon attack with toggle adds 1 Hope cost and title suffix; on damage apply target gets "Focused by X" (badge with clear); `onFeatureActivated` sets `focusTargetId`; `onHpDealt` marks Stress on Ranger when they deal HP to focus target. Focused-by effects: when Ranger deals damage to Focus target, target marks 1 Stress (banner note "Target will mark 1 Stress (Focused)"); on Fear result vs Focus target, GM/Ranger can end Focus to reroll Duality dice (request flow for player). Hold Them Off: banner shows "Spend 3 Hope to select two more targets" toggle (visible to GM and initiating player); toggle state stored on roll (`_holdThemOffActive`) and synced via banners subscription; when on, target selector allows multi-select up to 3 targets; damage/effects applied to all selected on Acknowledge; 3 Hope deducted when 2–3 targets selected. |
+| **Rogue**    | Cloaked, Sneak Attack                           | Rogue's Dodge (3 Hope: +2 Evasion)                   | **Partial** — Sneak Attack: `computeModifierEligibility` auto-enables chip when Cloaked or ally within Melee of adversary; Rogue's Dodge: `onDamageReceived` auto-clears modifier chip when Rogue takes HP damage |
+| **Seraph**   | Prayer Dice                                     | Life Support (3 Hope: clear 1 HP on ally)            | **Partial** — Prayer Dice chips have `usageModes: ['roll','gainHope']`; ModifierChip shows mode buttons; `onModifierUsed` immediately gains Hope equal to die value; Life Support: action banner with chips for allies within Close range with ≥1 marked HP, single selection (GM or player may click); on GM Acknowledge target clears 1 HP and feature marked used |
+| **Sorcerer** | Arcane Sense, Minor Illusion, Channel Raw Power | Volatile Magic (3 Hope: reroll damage dice)          | **Partial** — Channel Raw Power: `requiresInputForFeature` prompts for card level before dispatch; inline number input overlay in CharacterHoverCard; `onFeatureActivated` gains Hope or adds +2×level damage modifier; Volatile Magic deducts Hope |
 | **Warrior**  | Attack of Opportunity, Combat Training          | No Mercy (3 Hope: +1 attack until rest)              | **Partial** — Attack of Opportunity sub-features; Combat Training passive badge; No Mercy adds modifier chip |
 | **Wizard**   | Prestidigitation, Strange Patterns              | Not This Time (3 Hope: force adversary reroll)       | **Partial** — all clickable; Not This Time button on adversary ResultBanners |
 
 
-**Phase 2 (Close all gaps to 5/5):** See `.cursor/plans/clickable_character_features_6686c77f.plan.md`.
+**Phase 2 complete.** All class hooks (Bard, Guardian, Ranger, Rogue, Seraph, Sorcerer) implemented via the IoC class feature system. See `.cursor/plans/clickable_character_features_6686c77f.plan.md` for Phase 3 roadmap.
 
 ---
 
@@ -296,17 +296,17 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 | Subclass                   | Class    | Key Features                                                                              | Status                                   |
 | -------------------------- | -------- | ----------------------------------------------------------------------------------------- | ---------------------------------------- |
 | **Troubadour**             | Bard     | Gifted Performer, Virtuoso, Maestro                                                       | Display                                  |
-| **Wordsmith**              | Bard     | Rousing Speech, Heart of a Poet, Epic Poetry, Eloquent                                    | Display                                  |
-| **Warden of the Elements** | Druid    | Elemental Incarnation, Elemental Dominion, Elemental Aura                                 | Display                                  |
+| **Wordsmith**              | Bard     | Rousing Speech, Heart of a Poet, Epic Poetry, Eloquent                                    | Partial — Rousing Speech: action banner with in-range character chips (Far range), clears 2 Stress per target on GM Acknowledge, marks feature used; other features: Display |
+| **Warden of the Elements** | Druid    | Elemental Incarnation, Elemental Dominion, Elemental Aura                                 | Partial — Elemental Incarnation: Done (Fire: 1d10 retaliation auto-posted when Melee adversary deals HP damage, banner notice shown before Ack; Earth: +Proficiency to thresholds with breakdown display; Water: Stress on Very Close adversaries from attacker's position when Melee damage dealt, banner notice lists targets before Ack; Air: d6 auto-appended to Agility rolls; state cleared on Severe damage or rest). Elemental Dominion, Elemental Aura: Display |
 | **Warden of Renewal**      | Druid    | Clarity of Nature, Regeneration, Defender, Regenerative Reach, Warden's Protection        | Display                                  |
 | **Stalwart**               | Guardian | Unwavering, Iron Will, Undaunted, Loyal Protector, Unrelenting, Partners-in-Arms          | Display                                  |
 | **Vengeance**              | Guardian | At Ease, Revenge, Nemesis, Act of Reprisal                                                | Display                                  |
-| **Beastbound**             | Ranger   | Companion, Advanced Training, Loyal Friend, Expert Training, Battle-Bonded                | Display — Companion is a subsystem       |
+| **Beastbound**             | Ranger   | Companion, Advanced Training, Loyal Friend, Expert Training, Battle-Bonded                | Display + Library edit — Companion: Name/Species editable in form (between Class and Subclass); evasion/maxStress static; companion stress on table card; companion card stacked in Library, second card to right of hover on Game Table |
 | **Wayfinder**              | Ranger   | Ruthless Predator, Path Forward, Apex Predator, Elusive Predator                          | Display                                  |
 | **Nightwalker**            | Rogue    | Shadow Stepper, Fleeting Shadow, Vanishing Act, Dark Cloud, Adrenaline                    | Display                                  |
 | **Syndicate**              | Rogue    | Well-Connected, Reliable Backup, Contacts Everywhere                                      | Display                                  |
 | **Divine Wielder**         | Seraph   | Spirit Weapon, Sparing Touch, Sacred Resonance, Devout                                    | Display                                  |
-| **Winged Sentinel**        | Seraph   | Wings of Light, Ascendant, Power of the Gods, Ethereal Visage                             | Display                                  |
+| **Winged Sentinel**        | Seraph   | Wings of Light, Ascendant, Power of the Gods, Ethereal Visage                             | Partial — Wings of Light: persisted flying toggle; "Pick up and carry" action banner (marks 1 Stress on GM ack, disabled when stress maxed); "Spend a Hope to add a d8 to damage" toggle on character attack banners (shared state; GM click spends Hope and rolls d8; player toggle applied at ack). Other features: Display |
 | **Elemental Origin**       | Sorcerer | Elementalist, Transcendence, Natural Evasion                                              | Display — Natural Evasion could automate |
 | **Primal Origin**          | Sorcerer | Manipulate Magic, Arcane Charge, Enchanted Aid                                            | Display                                  |
 | **Call of the Brave**      | Warrior  | Courage, Battle Ritual, Camaraderie, Rise to the Challenge                                | Display                                  |
@@ -335,12 +335,12 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 | **Firbolg**  | Charge            | Unshakable          | Display |
 | **Fungril**  | Fungril Network   | Death Connection    | Display |
 | **Galapa**   | Shell             | Retract             | Display |
-| **Giant**    | Endurance         | Reach               | Display |
+| **Giant**    | Endurance         | Reach               | **Done** — Melee weapons display and roll as Very Close; carries through to map range bands (10') |
 | **Goblin**   | Surefooted        | Danger Sense        | Display |
 | **Halfling** | Luckbringer       | Internal Compass    | Display |
 | **Human**    | High Stamina      | Adaptability        | Display |
-| **Infernis** | Fearless          | Dread Visage        | Display |
-| **Katari**   | Feline Instincts  | Retracting Claws    | Display |
+| **Infernis** | Fearless          | Dread Visage        | **Done** — Use button hidden; on character Fear rolls GM and the character's own player see a toggle button "Mark 2 stress to change Fear to Hope"; toggle stores `_fearlessToggle` on the element (synced to all clients); stress (+2) and Hope (+1) are applied on Acknowledge; button shows three states: inactive (canConvert), active/amber (converted — click to revert), disabled (not enough stress) |
+| **Katari**   | Feline Instincts  | Retracting Claws    | **Done** — Feline Instincts: on Agility rolls with ≥2 Hope, banner shows "Spend 2 Hope to reroll Hope Die"; player click requests (button animates for GM); GM click deducts 2 Hope immediately, cancels banner, creates new banner with Hope die rerolled; second banner has no deferred Hope cost. Retracting Claws: virtual weapon (Agility, Melee) on sheet; on success GM selects adversary target and app applies Vulnerable; Vulnerable badge shown and clearable on adversary card. When the selected target of an attack has Vulnerable, the attacker gains an advantage d6 "Vulnerable Target" (same keep-highest pool as other advantage dice). |
 | **Orc**      | Sturdy            | Tusks               | Display |
 | **Ribbet**   | Amphibious        | Long Tongue         | Display |
 | **Simiah**   | Natural Climber   | Nimble              | Display |
@@ -404,9 +404,9 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 ## Beastforms (24)
 
-**Status: None.** The SRD parser normalizes beastforms and they are served via `GET /api/srd/beastforms`, but they are not used anywhere in the client. The Druid class feature "Beastform" is displayed as text only.
+**Status: Partial.** All 24 beastforms are served via `GET /api/srd/beastforms` and loaded by `useCharacterSrdData`. When a Druid character has the Beastform class feature or Evolution hope ability, the Game Table hover card shows a tier-filtered selector, a Transform/Drop Out button, and full in-beastform UI (attack rolls with Hope+Fear+Trait, mutually-exclusive advantage chips, trait/evasion bonus display, weapons disabled, domain cards disabled). Auto-drop triggers on last HP or Fragile damage. State is persisted via `activeBeastform` and `selectedBeastformAdvantage` in `CHARACTER_RUNTIME_KEYS`.
 
-To implement: add beastform selection to the Druid character builder, track beastform state on the Game Table (transformed vs normal), apply beastform stats (evasion, damage, features) when transformed.
+Not yet implemented: beastform stats in the Library browser (display-only), character builder integration (selecting a beastform from the builder is unimplemented).
 
 
 | Tier | Beastforms                                                                                               | Status |
@@ -451,7 +451,7 @@ To implement: add a consumable tracker to the character sheet or Game Table, int
 
 ### Large Effort (new subsystems)
 
-1. **Beastforms**: Full Druid beastform subsystem (selection, state tracking, stat swap)
+1. **Beastforms in Library browser**: Show beastform stats in a browsable Library tab (currently API-only)
 2. **Prayer Dice**: Seraph prayer dice pool mechanic
 3. **Ability automation**: Per-ability effects (189 abilities — could be incremental)
 

@@ -1,55 +1,76 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 
 /**
  * Instant tooltip (no browser delay). Shows on mouseEnter, hides on mouseLeave.
  * On touch devices: tap to show, tap anywhere outside to dismiss.
  *
+ * Uses a React portal to render at document.body — this escapes overflow:hidden
+ * ancestors so the tooltip is never clipped.
+ *
  * @param {Object} props
  * @param {React.ReactNode} props.children
- * @param {string} props.label - Tooltip text (also use as aria-label on icon-only buttons)
- * @param {'top'|'bottom'|'bottom-right'} [props.placement='bottom-right'] - bottom-right: below, right-aligned (avoids card overflow cutoff)
+ * @param {string} [props.label] - Tooltip text (also use as aria-label on icon-only buttons)
+ * @param {React.ReactNode} [props.content] - Rich content (e.g. Markdown); when set, tooltip is wider and wraps
+ * @param {'top'|'bottom'|'bottom-right'} [props.placement='bottom-right']
  */
-export function Tooltip({ children, label, placement = 'bottom-right' }) {
-  const [visible, setVisible] = useState(false);
+export function Tooltip({ children, label, content, placement = 'bottom-right' }) {
+  const [tooltipStyle, setTooltipStyle] = useState(null);
   const isTouch = useTouchDevice();
   const wrapperRef = useRef(null);
+  const hasContent = (label != null && label !== '') || content != null;
 
-  const positionClass =
-    placement === 'top'
-      ? 'bottom-full left-1/2 -translate-x-1/2 mb-1.5'
-      : placement === 'bottom'
-        ? 'top-full left-1/2 -translate-x-1/2 mt-1.5'
-        : 'top-full right-0 mt-1.5';
+  const show = () => {
+    if (!wrapperRef.current || !hasContent) return;
+    const rect = wrapperRef.current.getBoundingClientRect();
+    const GAP = 6;
+    let style = { position: 'fixed', zIndex: 9999 };
+    if (placement === 'top') {
+      style = { ...style, bottom: window.innerHeight - rect.top + GAP, left: rect.left + rect.width / 2, transform: 'translateX(-50%)' };
+    } else if (placement === 'bottom') {
+      style = { ...style, top: rect.bottom + GAP, left: rect.left + rect.width / 2, transform: 'translateX(-50%)' };
+    } else {
+      // bottom-right: align right edge with trigger
+      style = { ...style, top: rect.bottom + GAP, right: window.innerWidth - rect.right };
+    }
+    setTooltipStyle(style);
+  };
+
+  const hide = () => setTooltipStyle(null);
 
   // Touch: dismiss on tap outside
   useEffect(() => {
-    if (!isTouch || !visible) return;
+    if (!isTouch || !tooltipStyle) return;
     const handler = (e) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
-        setVisible(false);
-      }
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) hide();
     };
     document.addEventListener('touchstart', handler, { passive: true });
     return () => document.removeEventListener('touchstart', handler);
-  }, [isTouch, visible]);
+  }, [isTouch, tooltipStyle]);
+
+  const tooltip = tooltipStyle && hasContent && createPortal(
+    <span
+      style={tooltipStyle}
+      className={`px-2 py-1.5 bg-slate-800 text-slate-200 text-xs rounded pointer-events-none border border-slate-700 shadow-xl ${
+        content ? 'max-w-[280px] whitespace-normal text-left' : 'whitespace-nowrap'
+      }`}
+    >
+      {content ?? label}
+    </span>,
+    document.body
+  );
 
   return (
     <span
       ref={wrapperRef}
       className="relative inline-flex"
-      onMouseEnter={() => { if (!isTouch) setVisible(true); }}
-      onMouseLeave={() => { if (!isTouch) setVisible(false); }}
-      onClick={() => { if (isTouch) setVisible(v => !v); }}
+      onMouseEnter={() => { if (!isTouch) show(); }}
+      onMouseLeave={() => { if (!isTouch) hide(); }}
+      onClick={() => { if (isTouch) (tooltipStyle ? hide() : show()); }}
     >
       {children}
-      {visible && label && (
-        <span
-          className={`absolute ${positionClass} px-2 py-1 bg-slate-800 text-slate-200 text-xs rounded whitespace-nowrap z-50 pointer-events-none border border-slate-700 shadow-lg`}
-        >
-          {label}
-        </span>
-      )}
+      {tooltip}
     </span>
   );
 }

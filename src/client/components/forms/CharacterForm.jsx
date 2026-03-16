@@ -5,7 +5,7 @@ import { CustomSelect } from './CustomSelect.jsx';
 import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 import {
   recomputeCharacter, tierFromLevel, TRAIT_KEYS, TRAIT_POOL,
-  resolveWeapon, resolveArmor, parseArmorThresholds,
+  resolveWeapon, resolveArmor, parseArmorThresholds, getEffectiveWeaponRange,
 } from '../../lib/character-calc.js';
 import { generateId } from '../../lib/helpers.js';
 
@@ -32,8 +32,9 @@ function highestTraitNames(traits) {
   return TRAIT_KEYS_ORDER.filter(k => (traits[k] ?? 0) === max);
 }
 
-function WeaponOption({ weapon, isRecommended, showBurden }) {
+function WeaponOption({ weapon, isRecommended, showBurden, ancestryFeatures }) {
   const featureNames = (weapon.features || []).map(f => f.name).filter(Boolean);
+  const displayRange = getEffectiveWeaponRange(weapon, ancestryFeatures) || weapon.range;
   return (
     <div className="flex items-center gap-1.5 w-full min-w-0">
       {isRecommended && <Star size={10} className="text-emerald-400 shrink-0 fill-emerald-400" />}
@@ -42,7 +43,7 @@ function WeaponOption({ weapon, isRecommended, showBurden }) {
         isRecommended ? 'bg-emerald-900/60 border-emerald-600/60 text-emerald-200' : 'bg-slate-800 border-slate-700 text-slate-400'
       }`}>{weapon.trait}</span>
       <span className="text-[11px] text-yellow-300/80 tabular-nums shrink-0">{weapon.damage}</span>
-      <span className="text-[11px] text-slate-500 shrink-0">{weapon.range}</span>
+      {displayRange && <span className="text-[11px] text-slate-500 shrink-0">{displayRange}</span>}
       {featureNames.length > 0 && featureNames.map(fn => (
         <span key={fn} className="text-[9px] rounded px-1 py-0.5 bg-violet-900/50 border border-violet-700/50 text-violet-300 shrink-0">{fn}</span>
       ))}
@@ -69,7 +70,7 @@ function WeaponValueChip({ weapon, isRecommended, showBurden }) {
   );
 }
 
-function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled, showBurden }) {
+function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled, showBurden, ancestryFeatures }) {
   const best = highestTraitNames(traits);
   const sorted = useMemo(() => {
     const copy = [...weapons];
@@ -109,7 +110,7 @@ function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled,
       getOptionDescription={getWeaponDescription}
       renderOption={(id) => {
         const w = weaponById[id];
-        return w ? <WeaponOption weapon={w} isRecommended={isRec(w)} showBurden={showBurden} /> : id;
+        return w ? <WeaponOption weapon={w} isRecommended={isRec(w)} showBurden={showBurden} ancestryFeatures={ancestryFeatures} /> : id;
       }}
       renderValue={(id) => {
         const w = weaponById[id];
@@ -161,7 +162,7 @@ export function CharacterForm({ value, onChange }) {
     classId: null, subclassId: null, ancestryIds: [], communityId: null,
     baseTraits: {}, armorId: null, primaryWeaponId: null, secondaryWeaponId: null,
     experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-    abilityIds: [], advancements: {}, background: '', connectionText: '',
+    abilityIds: [], advancements: {}, background: '', connectionText: '', companion: null,
   });
 
   const formData = isControlled ? value : localData;
@@ -207,6 +208,17 @@ export function CharacterForm({ value, onChange }) {
     return (srdData.subclasses || []).filter(sc => subNames.includes(sc.name));
   }, [selectedClass, srdData]);
   const selectedSubclass = srdData?.subclassesById?.[formData.subclassId] || null;
+
+  // Beastbound companion always has at least two experience slots (two blank rows).
+  useEffect(() => {
+    if (selectedSubclass?.name !== 'Beastbound' || !formData.companion) return;
+    const comp = formData.companion;
+    const exps = comp.experiences || [];
+    if (exps.length >= 2) return;
+    const padded = [...exps];
+    while (padded.length < 2) padded.push({ name: '', score: 2, id: generateId() });
+    update({ ...formData, companion: { ...comp, experiences: padded } });
+  }, [selectedSubclass?.name, formData.companion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ancestry options
   const ancestryOptions = useMemo(() => (srdData?.ancestries || []).sort((a, b) => a.name.localeCompare(b.name)), [srdData]);
@@ -350,11 +362,112 @@ export function CharacterForm({ value, onChange }) {
         )}
       </FormRow>
 
+      {/* ── Companion (Beastbound only) ── */}
+      {selectedSubclass?.name === 'Beastbound' && (() => {
+        const comp = formData.companion ?? {
+          name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
+          experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+        };
+        const compExps = comp.experiences || [];
+        return (
+          <FormRow label="Companion">
+            <div className="space-y-2">
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Name</label>
+                <input
+                  type="text"
+                  value={comp.name || ''}
+                  onChange={e => set({ companion: { ...comp, name: e.target.value } })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                  placeholder="Companion name"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Species</label>
+                <input
+                  type="text"
+                  value={comp.species || ''}
+                  onChange={e => set({ companion: { ...comp, species: e.target.value } })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                  placeholder="e.g. Wolf, Hawk"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Attack name</label>
+                <input
+                  type="text"
+                  value={comp.attackName || ''}
+                  onChange={e => set({ companion: { ...comp, attackName: e.target.value } })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                  placeholder="e.g. Bite, Claw (default d6 Melee)"
+                />
+                <p className="text-[10px] text-slate-500 mt-0.5">Defaults to d6 Melee</p>
+              </div>
+              <div className="text-[11px] text-slate-400">
+                EVA {comp.evasion ?? 10} · Max Stress {comp.maxStress ?? 3}
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-1">Experiences (need 2)</label>
+                <div className="space-y-1.5">
+                  {compExps.map((exp, i) => (
+                    <div key={exp.id || i} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={exp.name || ''}
+                        onChange={e => {
+                          const exps = [...compExps];
+                          exps[i] = { ...exps[i], name: e.target.value };
+                          set({ companion: { ...comp, experiences: exps } });
+                        }}
+                        className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"
+                        placeholder="Experience name"
+                      />
+                      <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0">
+                        +{exp.score ?? 2}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const exps = compExps.filter((_, j) => j !== i);
+                          set({ companion: { ...comp, experiences: exps } });
+                        }}
+                        disabled={compExps.length <= 2}
+                        className="text-slate-500 hover:text-red-400 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >×</button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => set({
+                      companion: {
+                        ...comp,
+                        experiences: [...compExps, { name: '', score: 2, id: generateId() }],
+                      },
+                    })}
+                    className="text-xs text-sky-400 hover:text-sky-300"
+                  >+ Add Experience</button>
+                </div>
+              </div>
+            </div>
+          </FormRow>
+        );
+      })()}
+
       {/* ── Subclass ── */}
       <FormRow label="Subclass">
         <CustomSelect
           value={formData.subclassId || null}
-          onChange={id => set({ subclassId: id })}
+          onChange={id => {
+            const newSub = id ? srdData?.subclassesById?.[id] : null;
+            const patch = { subclassId: id };
+            if (newSub?.name === 'Beastbound' && (formData.companion == null)) {
+              patch.companion = {
+                name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
+                experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+              };
+            }
+            set(patch);
+          }}
           options={subclassOptions.map(sc => sc.id)}
           getOptionKey={id => id}
           getOptionLabel={id => srdData?.subclassesById?.[id]?.name || id}
@@ -458,6 +571,8 @@ export function CharacterForm({ value, onChange }) {
       {(() => {
         const selectedPrimary = srdData?.weaponsById?.[formData.primaryWeaponId];
         const isTwoHanded = selectedPrimary?.burden === 'Two-Handed';
+        const formAncestryFeatures = (formData.ancestryIds || [])
+          .flatMap(id => (srdData?.ancestriesById?.[id]?.features || []).map(f => ({ name: f.name })));
         return (
           <div className="grid grid-cols-2 gap-3">
             <FormRow label="Primary Weapon">
@@ -473,6 +588,7 @@ export function CharacterForm({ value, onChange }) {
                 traits={formData.traits}
                 placeholder="Select primary..."
                 showBurden
+                ancestryFeatures={formAncestryFeatures}
               />
             </FormRow>
             <FormRow label="Secondary Weapon">
@@ -483,6 +599,7 @@ export function CharacterForm({ value, onChange }) {
                 traits={formData.traits}
                 placeholder={isTwoHanded ? 'N/A (two-handed)' : 'Select secondary...'}
                 disabled={isTwoHanded}
+                ancestryFeatures={formAncestryFeatures}
               />
               {isTwoHanded && (
                 <div className="mt-1 text-[10px] text-slate-500">Two-handed primary uses both hands</div>

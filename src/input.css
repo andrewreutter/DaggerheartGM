@@ -2,6 +2,9 @@
 @source "../src/client/**/*.{jsx,js}";
 @source "../public/index.html";
 
+/* Clickable elements use pointer cursor */
+a, button, input[type="submit"], input[type="button"], input[type="checkbox"], input[type="radio"], select, [role="button"], label { cursor: pointer; }
+
 /* Scoped typography for rendered Daggerheart Markdown content (feature descriptions, item descriptions, etc.) */
 .dh-md p {
   margin-bottom: 0.5em;
@@ -156,24 +159,15 @@
   margin: 0.6em 0;
 }
 
-/* Fear tracker pulse animation — triggered when a Fear Action is clicked or a roll with Fear arrives */
-@keyframes fear-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.8); }
-  20%  { box-shadow: 0 0 0 10px rgba(168, 85, 247, 0.5); }
-  100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+/* Stat value change pulse — CheckboxTrack self-animates when filled count changes */
+@keyframes stat-pulse {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(2); }
+  65%  { transform: scale(0.92); }
+  100% { transform: scale(1); }
 }
-.fear-pulse-anim {
-  animation: fear-pulse 2.5s ease-out forwards;
-}
-
-/* Hope tracker pulse animation — triggered when a roll with Hope arrives */
-@keyframes hope-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.8); }
-  20%  { box-shadow: 0 0 0 10px rgba(251, 191, 36, 0.5); }
-  100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
-}
-.hope-pulse-anim {
-  animation: hope-pulse 2.5s ease-out forwards;
+.stat-pulse-anim {
+  animation: stat-pulse 350ms ease-out 3;
 }
 
 /* Pending dice roll pulse */
@@ -186,15 +180,7 @@
   animation: pending-pulse 0.65s ease-out infinite alternate;
 }
 
-/* Damage applied pulse — triggered when a roll banner is dropped on a target */
-@keyframes damage-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.9); background-color: rgba(127, 29, 29, 0.5); }
-  20%  { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0.4); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); background-color: transparent; }
-}
-.damage-pulse-anim {
-  animation: damage-pulse 1.8s ease-out forwards;
-}
+
 
 
 /* ── Touch / coarse-pointer devices (iPad, etc.) ──────────────────────────

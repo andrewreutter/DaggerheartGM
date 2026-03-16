@@ -91,31 +91,59 @@ function CompoundRoll({ subItems }) {
   );
 }
 
-function RollEntry({ roll }) {
+function LogEntry({ roll }) {
+  const isAction = !!roll._action;
   const isCompound = Array.isArray(roll.subItems) && roll.subItems.length > 0;
   const time = roll.timestamp ? new Date(roll.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
     <div className="px-2 py-1 rounded bg-slate-800/60 flex items-baseline gap-2">
       <div className="flex-1 font-mono text-xs min-w-0">
-        {isCompound && <CompoundRoll subItems={roll.subItems} />}
-        {!isCompound && <span className="text-slate-400 italic">roll</span>}
+        {isAction && (
+          <span>
+            <span className="text-slate-300">{(roll.rollUser || roll.characterName || '').trim() || '—'}</span>
+            <span className="text-slate-500">: </span>
+            <span className="text-amber-200 font-medium">{roll.actionName || 'Action'}</span>
+            {roll.actionText && (
+              <span className="block text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
+                {roll.actionText.length > 80 ? roll.actionText.slice(0, 80) + '…' : roll.actionText}
+              </span>
+            )}
+          </span>
+        )}
+        {!isAction && isCompound && <CompoundRoll subItems={roll.subItems} />}
+        {!isAction && !isCompound && <span className="text-slate-400 italic">roll</span>}
       </div>
       {time && <span className="text-[10px] text-slate-500 shrink-0 tabular-nums">{time}</span>}
     </div>
   );
 }
 
+const DIE_SIZES = [6, 8, 10, 12, 20];
+
+function buildRollText(dualityOn, counts) {
+  const parts = [];
+  if (dualityOn) parts.push('Hope [d12] Fear [d12]');
+  for (const size of DIE_SIZES) {
+    const n = Number(counts[size]) || 0;
+    if (n > 0) parts.push(` [${n}d${size}]`);
+  }
+  return parts.join('').trim();
+}
+
 /**
- * Collapsed footer bar that opens dice history as an overlay above itself.
- * rolls — array of roll data objects (maintained by GMTableView)
+ * Collapsed footer bar that opens action/roll history as an overlay above itself.
+ * rolls — array of roll and action notification objects (maintained by GMTableView)
+ * rollBuilder — optional { onRoll(rollText, displayName), displayName }; when present, shows dice builder (GM and players)
  */
-export function DiceLog({ rolls = [] }) {
+export function ActionLog({ rolls = [], rollBuilder }) {
   const [open, setOpen] = useState(false);
   const scrollRef = useRef(null);
   const overlayRef = useRef(null);
+  const [dualityOn, setDualityOn] = useState(true);
+  const [counts, setCounts] = useState(() => ({ 6: 0, 8: 0, 10: 0, 12: 0, 20: 0 }));
 
-  // Auto-scroll to bottom when overlay opens or new rolls arrive while open
+  // Auto-scroll to bottom when overlay opens or new entries arrive while open
   useEffect(() => {
     if (!open || !scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -133,7 +161,11 @@ export function DiceLog({ rolls = [] }) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
-  const latestRoll = rolls[rolls.length - 1];
+  const latest = rolls[rolls.length - 1];
+  const isLatestAction = latest && (latest._action || (latest.actionName != null && latest.total == null));
+  const footerPreview = latest && (isLatestAction
+    ? `${(latest.rollUser || latest.characterName || '').trim() || '—'}: ${latest.actionName || 'Action'}`
+    : `${latest.rollUser ? `${latest.rollUser}: ` : ''}${latest.total != null ? latest.total : ''}`);
 
   return (
     // Wrapper is relative so the overlay can anchor over the bar
@@ -152,22 +184,66 @@ export function DiceLog({ rolls = [] }) {
             className="flex items-center gap-2 px-3 py-2 border-b border-slate-800/60 shrink-0 cursor-pointer"
           >
             <Dices size={12} className="text-red-400 shrink-0" />
-            <span className="text-[11px] font-semibold text-slate-300 flex-1">Dice Log</span>
-            <span className="text-[10px] text-slate-500">{rolls.length} roll{rolls.length !== 1 ? 's' : ''}</span>
+            <span className="text-[11px] font-semibold text-slate-300 flex-1">Action Log and Dice Roller</span>
+            <span className="text-[10px] text-slate-500">{rolls.length} entr{rolls.length === 1 ? 'y' : 'ies'}</span>
             <span className="ml-1 text-slate-500 hover:text-slate-300 transition-colors" aria-hidden>
               <ChevronDown size={12} />
             </span>
           </div>
+          {rollBuilder && (
+            <div className="px-3 py-2 border-b border-slate-800 bg-slate-900/50 shrink-0">
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={dualityOn}
+                    onChange={(e) => setDualityOn(e.target.checked)}
+                    className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500"
+                  />
+                  <span className="text-[11px] text-slate-300">Duality Dice (d12)</span>
+                </label>
+                {DIE_SIZES.map((size) => (
+                  <label key={size} className="flex items-center gap-0.5 mr-1">
+                    <span className="text-[10px] text-slate-500 shrink-0">d{size}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={99}
+                      value={counts[size] || 0}
+                      onChange={(e) => {
+                        const v = Math.max(0, Math.min(99, parseInt(e.target.value, 10) || 0));
+                        setCounts((c) => ({ ...c, [size]: v }));
+                      }}
+                      className="w-10 rounded border border-slate-600 bg-slate-800 px-1 py-0.5 text-[11px] text-slate-200 text-center tabular-nums"
+                    />
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  disabled={!dualityOn && DIE_SIZES.every((s) => !(counts[s] || 0))}
+                  onClick={() => {
+                    const rollText = buildRollText(dualityOn, counts);
+                    if (!rollText) return;
+                    rollBuilder.onRoll(rollText, rollBuilder.displayName);
+                    setOpen(false);
+                  }}
+                  className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-medium text-slate-900"
+                >
+                  Roll
+                </button>
+              </div>
+            </div>
+          )}
           <div
             ref={scrollRef}
             className="flex-1 overflow-y-auto px-2 py-1.5 space-y-0.5 min-h-0"
           >
             {rolls.length === 0 ? (
               <div className="flex items-center justify-center h-full text-[10px] text-slate-600 italic">
-                No rolls yet this session
+                No actions yet this session
               </div>
             ) : (
-              rolls.map((roll, i) => <RollEntry key={roll._logId || i} roll={roll} />)
+              rolls.map((roll, i) => <LogEntry key={roll._logId || i} roll={roll} />)
             )}
           </div>
         </div>
@@ -179,14 +255,13 @@ export function DiceLog({ rolls = [] }) {
         className="w-full flex items-center gap-2 px-3 py-2 border-t border-slate-800 bg-slate-950 hover:bg-slate-900 transition-colors cursor-pointer group"
       >
         <Dices size={11} className="text-red-400 shrink-0" />
-        <span className="text-[11px] font-medium text-slate-400 group-hover:text-slate-300 flex-1 text-left">Dice Log</span>
-        {rolls.length > 0 && latestRoll && (
+        <span className="text-[11px] font-medium text-slate-400 group-hover:text-slate-300 flex-1 text-left">Action Log and Dice Roller</span>
+        {rolls.length > 0 && footerPreview && (
           <span className="text-[10px] text-slate-500 truncate max-w-[40%] font-mono">
-            {latestRoll.rollUser ? `${latestRoll.rollUser}: ` : ''}
-            {latestRoll.total != null ? latestRoll.total : ''}
+            {footerPreview}
           </span>
         )}
-        <span className="text-[10px] text-slate-500 shrink-0">{rolls.length} roll{rolls.length !== 1 ? 's' : ''}</span>
+        <span className="text-[10px] text-slate-500 shrink-0">{rolls.length} entr{rolls.length === 1 ? 'y' : 'ies'}</span>
         <ChevronUp
           size={11}
           className={`text-slate-600 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}

@@ -731,6 +731,71 @@ export async function saveWhiteboardSnapshot(appId, gmUid, snapshot) {
   );
 }
 
+// CHARACTER_PERSIST_KEYS mirrors the set in server.js. Kept here to avoid a circular import.
+const CHARACTER_RUNTIME_KEYS_DB = [
+  'instanceId', 'elementType',
+  'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
+  'tokenX', 'tokenY',
+  'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
+  'reinforcedActive', 'selectedExperienceIndex',
+  'featureUsage', 'activeModifiers', 'focusTargetId', 'rangerFocusOnNextAttack', 'companion',
+  'activeBeastform', 'selectedBeastformAdvantage', '_fearlessToggle',
+  'wingsOfLightFlying', 'activeChanneledElement',
+];
+const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
+
+/**
+ * Resolve character elements against the live character library.
+ * Non-character elements are returned unchanged. Characters not found
+ * fall back to their stored data.
+ */
+export async function resolveCharacterElements(appId, elements) {
+  if (!elements?.length) return elements;
+  const charIds = elements
+    .filter(el => el.elementType === 'character' && el.id)
+    .map(el => el.id);
+  if (!charIds.length) return elements;
+  const charRows = await getItemsByIds(appId, 'characters', charIds);
+  const libMap = new Map(charRows.map(r => [r.id, r]));
+  return elements.map(el => {
+    if (el.elementType !== 'character' || !el.id) return el;
+    const lib = libMap.get(el.id);
+    if (!lib) return el;
+    const runtime = {};
+    CHARACTER_RUNTIME_KEYS_DB.forEach(k => { if (k in el) runtime[k] = el[k]; });
+    return { ...lib, ...runtime, elementType: 'character' };
+  });
+}
+
+/**
+ * Strip character elements to only persisted keys before writing to the DB.
+ */
+export function stripCharacterElementsForDb(elements) {
+  if (!elements?.length) return elements;
+  return elements.map(el => {
+    if (el.elementType !== 'character') return el;
+    const stripped = {};
+    for (const k of CHARACTER_PERSIST_KEYS_DB) {
+      if (k in el) stripped[k] = el[k];
+    }
+    return stripped;
+  });
+}
+
+/**
+ * Fetch and resolve the current table state for a GM.
+ * Used by the 'table_state' subscription channel.
+ */
+export async function getResolvedTableState(appId, gmUid) {
+  const rows = await getItems(appId, gmUid, 'table_state');
+  if (!rows.length) return null;
+  const state = rows[0] || {};
+  const { id: _id, is_public: _ip, _source: _src, ...stateData } = state;
+  const elements = stateData.elements || [];
+  const resolved = await resolveCharacterElements(appId, elements);
+  return { ...stateData, elements: resolved };
+}
+
 export async function appendDiceRoll(appId, gmUid, rollData) {
   const db = getPool();
   const { rows } = await db.query(
@@ -740,20 +805,67 @@ export async function appendDiceRoll(appId, gmUid, rollData) {
   return rows[0].id;
 }
 
-export async function ackDiceRoll(id) {
+/** Set the status ('acknowledged' | 'cancelled') for a banner queue entry. */
+export async function setBannerStatus(id, status) {
   const db = getPool();
-  await db.query('UPDATE dice_rolls SET acked = true WHERE id = $1', [id]);
+  await db.query('UPDATE dice_rolls SET status = $1 WHERE id = $2', [status, id]);
 }
 
+/** @deprecated Use setBannerStatus instead. Kept for any external callers during migration. */
+export async function ackDiceRoll(id) {
+  return setBannerStatus(id, 'acknowledged');
+}
+
+/** Returns last N rolls (all statuses) oldest-first — used for the Action Log history strip. */
 export async function getRecentDiceRolls(appId, gmUid, limit = 50) {
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT id, data, acked FROM dice_rolls
+    `SELECT id, data, acked, status FROM dice_rolls
      WHERE app_id = $1 AND gm_uid = $2
      ORDER BY created_at DESC
      LIMIT $3`,
     [appId, gmUid, limit]
   );
-  // Reverse so oldest-first order matches client expectations; merge id and acked into data
-  return rows.reverse().map(r => ({ ...r.data, _rollDbId: r.id, _acked: r.acked }));
+  // Reverse so oldest-first order matches client expectations; merge id, acked, status into data
+  return rows.reverse().map(r => ({ ...r.data, _rollDbId: r.id, _acked: r.acked, _status: r.status }));
+}
+
+/** Returns only pending banners (status = 'pending') oldest-first — used for the initial banner queue on SSE connect. */
+export async function getPendingBanners(appId, gmUid) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, data, status FROM dice_rolls
+     WHERE app_id = $1 AND gm_uid = $2 AND status = 'pending'
+     ORDER BY created_at ASC`,
+    [appId, gmUid]
+  );
+  return rows.map(r => ({ ...r.data, _rollDbId: r.id, _status: r.status }));
+}
+
+/** Returns a single dice roll by id and room (for player self-cancel verification). */
+export async function getDiceRollById(appId, gmUid, id) {
+  const db = getPool();
+  const { rows } = await db.query(
+    'SELECT id, data, status FROM dice_rolls WHERE app_id = $1 AND gm_uid = $2 AND id = $3',
+    [appId, gmUid, id]
+  );
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  return { id: r.id, data: r.data, status: r.status };
+}
+
+/** Merge a patch into a pending dice roll's data (e.g. _felineRerollRequestedBy). */
+export async function updateDiceRollData(appId, gmUid, id, dataPatch) {
+  const db = getPool();
+  const { rows } = await db.query(
+    'SELECT data FROM dice_rolls WHERE app_id = $1 AND gm_uid = $2 AND id = $3 AND status = $4',
+    [appId, gmUid, id, 'pending']
+  );
+  if (rows.length === 0) return false;
+  const merged = { ...rows[0].data, ...dataPatch };
+  await db.query(
+    'UPDATE dice_rolls SET data = $1 WHERE id = $2 AND app_id = $3 AND gm_uid = $4',
+    [JSON.stringify(merged), id, appId, gmUid]
+  );
+  return true;
 }

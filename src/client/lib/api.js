@@ -492,17 +492,23 @@ export const postAddCharacter = async (gmUid, charData) => {
  */
 export const postActionNotification = async (notification, gmUid = null) => {
   const token = await getAuthToken();
-  if (!token) return;
+  if (!token) return null;
   const url = gmUid ? `/api/room/${gmUid}/action` : '/api/room/my/action';
   try {
-    await fetch(url, {
+    const resp = await fetch(url, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ ...notification, _clientId: CLIENT_ID }),
     });
-  } catch { /* best-effort */ }
+    return resp.ok ? resp.json() : null;
+  } catch { return null; }
 };
 
+/**
+ * Send a table operation to the server. The server applies the op to the DB
+ * and notifies all connected clients via the table_state subscription channel.
+ * Fire-and-forget — errors are swallowed.
+ */
 export const postTableOp = async (op) => {
   const token = await getAuthToken();
   if (!token) return;
@@ -511,6 +517,211 @@ export const postTableOp = async (op) => {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ ...op, _clientId: CLIENT_ID }),
+    });
+  } catch { /* best-effort */ }
+};
+
+/**
+ * GM: acknowledge or cancel a banner in the server-authoritative queue.
+ * action: 'acknowledge' | 'cancel'
+ * options: { wingsOfLightD8?: true } — when acknowledge and wingsOfLightD8, server deducts Hope, rolls d8, returns wingsOfLightD8Result.
+ * Returns the response JSON when options are passed (so caller can read wingsOfLightD8Result); otherwise best-effort, errors swallowed.
+ */
+export const postBannerAck = async (bannerId, action, options = {}) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-ack', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, action, ...options }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM: reroll only the Hope die (Feline Instincts). Sends current roll data; server returns new roll.
+ * Cost (2 Hope) is applied by the client before calling this. Do not pass _felineInstinctsHopeCost.
+ */
+export const postRerollHopeDie = async (roll) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const preserved = {};
+  for (const k of Object.keys(roll)) {
+    if (k.startsWith('_') || k === 'tags') preserved[k] = roll[k];
+  }
+  const res = await fetch('/api/room/my/reroll-hope-die', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({
+      rollText: roll.rollText,
+      displayName: roll.rollUser || roll.characterName || roll.displayName || '',
+      previousSubItems: roll.subItems,
+      ...preserved,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * Player: toggle Feline Instincts reroll request on a banner (set or clear _felineRerollRequestedBy).
+ * Returns { ok: true, requested: boolean } on success, or undefined on failure.
+ */
+export const postBannerFelineRerollRequest = async (gmUid, bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-feline-reroll-request`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM: reroll Hope and Fear dice only (Ranger's Focus). Focus is cleared by the client before calling.
+ */
+export const postRerollDualityDice = async (roll) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const preserved = {};
+  for (const k of Object.keys(roll)) {
+    if (k.startsWith('_') || k === 'tags') preserved[k] = roll[k];
+  }
+  const res = await fetch('/api/room/my/reroll-duality-dice', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({
+      rollText: roll.rollText,
+      displayName: roll.rollUser || roll.characterName || roll.displayName || '',
+      previousSubItems: roll.subItems,
+      ...preserved,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * Player: toggle Ranger's Focus reroll request on a banner (set or clear _rangerFocusRerollRequestedBy).
+ * Returns { ok: true, requested: boolean } on success, or undefined on failure.
+ */
+export const postBannerRangerFocusRerollRequest = async (gmUid, bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-ranger-focus-reroll-request`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM: Wings of Light — spend 1 Hope and roll 1d8, patch banner with _wingsOfLightAddD8 and _wingsOfLightD8Result.
+ * Returns { ok: true, d8Result: number } on success.
+ */
+export const postBannerWingsD8 = async (bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-wings-d8', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * Player: Wings of Light — toggle _wingsOfLightAddD8 on a banner (shared state; no Hope spend or roll).
+ * Returns { ok: true, value: boolean } on success.
+ */
+export const postBannerWingsD8Toggle = async (gmUid, bannerId, value) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-wings-d8-toggle`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, value }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM or player: toggle Hold Them Off (3 Hope, select up to 3 targets) on a banner.
+ * Syncs _holdThemOffActive to the roll; all clients receive updated banner via subscription.
+ * Returns { ok: true, active: boolean } on success.
+ */
+export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-hold-them-off`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, active }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    console.error('Hold Them Off toggle failed:', err);
+    return undefined;
+  }
+};
+
+/**
+ * Player: cancel own pending banner (only if GM has not acked/cancelled yet).
+ * gmUid — the GM's room UID. Fails if the banner was not initiated by the current user.
+ */
+export const postBannerCancel = async (gmUid, bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    await fetch(`/api/room/${gmUid}/banner-cancel`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+  } catch { /* best-effort */ }
+};
+
+/**
+ * Set Life Support banner target selection; syncs to all room clients.
+ * gmUid: when in player mode, the GM's UID; when GM mode, pass null (uses postTableOp).
+ * selectedInstanceId: null to clear the selection.
+ */
+export const postLifeSupportSelect = async (gmUid, rollDbId, selectedInstanceId) => {
+  if (!gmUid) {
+    return selectedInstanceId
+      ? postTableOp({ op: 'life-support-select', _rollDbId: rollDbId, selectedLifeSupportTargetInstanceId: selectedInstanceId })
+      : postTableOp({ op: 'life-support-clear', _rollDbId: rollDbId });
+  }
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    await fetch(`/api/room/${gmUid}/life-support-select`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ _rollDbId: rollDbId, selectedLifeSupportTargetInstanceId: selectedInstanceId ?? null }),
     });
   } catch { /* best-effort */ }
 };

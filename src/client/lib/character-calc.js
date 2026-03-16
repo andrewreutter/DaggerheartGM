@@ -246,6 +246,21 @@ export function resolveWeapon(weaponItem) {
 }
 
 /**
+ * Effective range for display and rolls when ancestry/features modify range.
+ * Giant ancestry Reach: Melee weapons become Very Close (carries through to map range bands).
+ *
+ * @param {{ range?: string }} weapon - weapon object with at least range
+ * @param {Array<{ name: string }>} ancestryFeatures - character's ancestry features
+ * @returns {string} range string to use (e.g. 'Very Close' for Giant's Melee)
+ */
+export function getEffectiveWeaponRange(weapon, ancestryFeatures) {
+  if (!weapon?.range) return '';
+  const hasReach = (ancestryFeatures || []).some(f => f.name === 'Reach');
+  if (hasReach && weapon.range === 'Melee') return 'Very Close';
+  return weapon.range;
+}
+
+/**
  * Resolve features from an SRD ancestry item, tagging each with source info.
  */
 function resolveFeatures(items, sourceType, sourceName) {
@@ -376,6 +391,10 @@ export function recomputeCharacter(data, srdData) {
   const secondaryWeapon = srdData.weaponsById?.[data.secondaryWeaponId];
   if (primaryWeapon) weapons.push(resolveWeapon(primaryWeapon));
   if (secondaryWeapon) weapons.push(resolveWeapon(secondaryWeapon));
+  // Giant Reach: Melee → Very Close for display and map
+  for (const w of weapons) {
+    w.effectiveRange = getEffectiveWeaponRange(w, result.ancestryFeatures);
+  }
   result.weapons = weapons;
 
   // Apply weapon property modifiers (e.g. Cumbersome -1 Finesse, Heavy -1 Evasion)
@@ -592,6 +611,24 @@ export function detectChargedWeapons(weapons) {
 }
 
 /**
+ * Katari ancestry: virtual weapon for Retracting Claws (Agility, Melee, no damage; on success apply Vulnerable to target).
+ * Returns the virtual weapon object or null if the character does not have the feature.
+ *
+ * @param {Array<{ name: string }>} ancestryFeatures - character's ancestry features
+ * @returns {{ name: string, trait: string, range: string, feature: object, _retractingClaws: true } | null}
+ */
+export function getRetractingClawsWeapon(ancestryFeatures) {
+  if (!(ancestryFeatures || []).some(f => f.name === 'Retracting Claws')) return null;
+  return {
+    name: 'Retracting Claws',
+    trait: 'Agility',
+    range: 'Melee',
+    feature: { name: 'Retracting Claws', description: 'On success, target becomes Vulnerable' },
+    _retractingClaws: true,
+  };
+}
+
+/**
  * Check if a character has all required fields filled in.
  * Returns { complete: boolean, missing: string[] }.
  */
@@ -612,6 +649,14 @@ export function isCharacterComplete(data) {
   const abilityCount = Math.max(allIds.length, (data.abilities || []).length);
 
   if (abilityCount < 2) missing.push('Domain Cards (need 2)');
+  // Beastbound requires companion name, species, attack name, and two experiences
+  if (data.subclass === 'Beastbound') {
+    if (!data.companion?.name?.trim()) missing.push('Companion name');
+    if (!data.companion?.species?.trim()) missing.push('Companion species');
+    if (!data.companion?.attackName?.trim()) missing.push('Companion attack name');
+    const companionExpCount = (data.companion?.experiences || []).filter(e => e.name?.trim()).length;
+    if (companionExpCount < 2) missing.push('Companion experiences (need 2)');
+  }
   return { complete: missing.length === 0, missing };
 }
 

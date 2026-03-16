@@ -5,13 +5,6 @@ export default {
    * "Rally" — the Bard's Hope ability grants Rally Die modifiers to allies.
    * These are stored as `activeModifiers` on the character element and render
    * as amber toggle chips in `CharacterExperiences`.
-   *
-   * Activating a Rally Die modifier costs Hope (via `onUseHopeAbility` in
-   * `CharacterFeatureList` / `handleFeatureUse` in `CharacterHoverCard`).
-   * The modifier adds bonus dice to the next action roll.
-   *
-   * This descriptor documents the mechanic; the actual modifier handling is
-   * in the `activeModifiers` system in CharacterDisplay + CharacterHoverCard.
    */
   hopeAbility: {
     name: 'Rally',
@@ -23,5 +16,19 @@ export default {
       label: 'Rally Die',
       refreshOn: 'use',
     },
+  },
+
+  /**
+   * "Make a Scene" (Hope ability) — reduces target adversary's effective
+   * difficulty by 2 by applying a `difficultyMod` field on its active element.
+   *
+   * Called from GMTableView via `runHook(classFeatures, ['Bard'], 'onFeatureActivated', ctx)`.
+   * Stacks if used multiple times on the same adversary.
+   */
+  onFeatureActivated({ featureName, targetEl, updateActiveElement }) {
+    if (featureName !== 'Make a Scene') return;
+    if (!targetEl?.instanceId) return;
+    const current = targetEl.difficultyMod ?? 0;
+    updateActiveElement(targetEl.instanceId, { difficultyMod: current - 2 });
   },
 };

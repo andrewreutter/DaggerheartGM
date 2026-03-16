@@ -101,6 +101,33 @@ describe('parseFeatureAction', () => {
     expect(a.spellcastDC).toBe(10);
     expect(a.isActive).toBe(true);
   });
+
+  it('extracts advantageCondition as full sentence from "You have advantage on rolls to..."', () => {
+    const dreadVisage = 'You have advantage on rolls to intimidate hostile creatures.';
+    expect(parseFeatureAction(dreadVisage).advantageCondition).toBe('You have advantage on rolls to intimidate hostile creatures');
+    const scoundrel = 'You have advantage on rolls to negotiate with criminals, detect lies, or find a safe place to hide.';
+    expect(parseFeatureAction(scoundrel).advantageCondition).toBe('You have advantage on rolls to negotiate with criminals, detect lies, or find a safe place to hide');
+  });
+
+  it('extracts advantageCondition from "gain advantage on your attack roll"', () => {
+    const dueling = 'When there are no other creatures within Close range of the target, gain advantage on your attack roll against them.';
+    expect(parseFeatureAction(dueling).advantageCondition).toBe('When there are no other creatures within Close range of the target, gain advantage on your attack roll against them');
+  });
+
+  it('extracts advantageCondition from "have advantage on Agility Rolls..."', () => {
+    const naturalClimber = 'You have advantage on Agility Rolls that involve balancing and climbing.';
+    expect(parseFeatureAction(naturalClimber).advantageCondition).toBe('You have advantage on Agility Rolls that involve balancing and climbing');
+  });
+
+  it('extracts advantageCondition from Well-Read (Loreborne) "rolls that involve..."', () => {
+    const wellRead = 'You have advantage on rolls that involve the history, culture, or politics of a prominent person or place.';
+    expect(parseFeatureAction(wellRead).advantageCondition).toBe('You have advantage on rolls that involve the history, culture, or politics of a prominent person or place');
+  });
+
+  it('returns advantageCondition null when no advantage phrase present', () => {
+    expect(parseFeatureAction('Spend 3 Hope to clear 2 Armor Slots.').advantageCondition).toBe(null);
+    expect(parseFeatureAction('A narrative description.').advantageCondition).toBe(null);
+  });
 });
 
 // ── parseSubFeatures ────────────────────────────────────────────────────────
