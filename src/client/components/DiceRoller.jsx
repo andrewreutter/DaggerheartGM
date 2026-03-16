@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
-import { rangeFtToLabel } from '../lib/map-range.js';
+import { rangeFtToLabel, RANGE_BANDS_FT } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
 import { weaponFeatures } from '../../features/registry.js';
 import { wrapRoll } from '../../features/roll.js';
@@ -356,7 +356,7 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, isPlayer = false }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, onResolveInstantly }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
@@ -368,8 +368,22 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Damage banners: target chips are selectors only; selection is applied when Acknowledge is pressed.
   const [selectedDamageTargetId, setSelectedDamageTargetId] = useState(() => roll._selectedTargetInstanceId ?? null);
   const [useArmorForSelected, setUseArmorForSelected] = useState(false);
+  // Hold Them Off (Ranger): multi-select up to 3 targets; per-target armor.
+  const holdThemOffActive = !!roll._holdThemOffActive;
+  const [selectedDamageTargetIds, setSelectedDamageTargetIds] = useState(() =>
+    roll._holdThemOffActive ? [roll._selectedTargetInstanceId].filter(Boolean) : []
+  );
+  const [useArmorByTargetId, setUseArmorByTargetId] = useState(() => ({}));
   // Popup menu for target selection (same UX as initiating player's "Choose target" menu).
   const [targetMenuAnchorRect, setTargetMenuAnchorRect] = useState(null);
+
+  // When Hold Them Off is toggled on, seed multi-select from current single selection if empty.
+  useEffect(() => {
+    if (holdThemOffActive && selectedDamageTargetIds.length === 0 && (selectedDamageTargetId || roll._selectedTargetInstanceId)) {
+      const id = selectedDamageTargetId || roll._selectedTargetInstanceId;
+      setSelectedDamageTargetIds([id]);
+    }
+  }, [holdThemOffActive, selectedDamageTargetIds.length, selectedDamageTargetId, roll._selectedTargetInstanceId]);
 
   useEffect(() => {
     if (!targetMenuAnchorRect) return;
@@ -433,13 +447,15 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       : { card: 'bg-purple-950/90 border-2 border-purple-500/60 text-purple-100', detail: 'text-purple-200/60' };
 
   // Character rolls target adversaries; adversary/other rolls target characters.
-  // Use getTargetsForRoll when Retracting Claws (Melee only) or any character attack with damage (weapon range filter).
-  const useGetTargetsForRoll = !!(getTargetsForRoll && (roll._retractingClaws || (hasDamage && roll._attackerInstanceId)));
+  // Use getTargetsForRoll when Retracting Claws, character attack with weapon range, or adversary attack with range.
+  const useGetTargetsForRoll = !!(getTargetsForRoll && (
+    roll._retractingClaws ||
+    (hasDamage && roll._attackerInstanceId && (roll._weaponRangeFt != null || roll._retractingClaws || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)))
+  ));
   const allTargets = useGetTargetsForRoll ? (getTargetsForRoll(roll) || []) : (targets || []);
   const rollSrc = (rollUser || characterName || '').toLowerCase().trim();
-  // Character rolls target adversaries. Treat as character roll when the attacker is a character (_attackerInstanceId)
-  // or when roll user name matches a character in targets (legacy when allTargets includes both types).
-  const isCharacterRoll = roll._attackerInstanceId != null || (rollSrc
+  // Character rolls target adversaries. Treat as character roll when the attacker is a character (not adversary).
+  const isCharacterRoll = (roll._attackerInstanceId != null && roll._attackerType !== 'adversary') || (rollSrc
     ? allTargets.some(t => t.type === 'character' && (
         t.name.toLowerCase() === rollSrc ||
         rollSrc.startsWith(t.name.toLowerCase())
@@ -452,12 +468,17 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       ? allTargets.filter(t => t.type === 'adversary')
       : allTargets.filter(t => t.type === 'character');
 
-  // Selected target for banner title (damage or Retracting Claws)
-  const selectedTargetIdForTitle = roll._retractingClaws ? retractingClawsSelectedId : selectedDamageTargetId;
+  // Selected target(s) for banner title (damage or Retracting Claws). Hold Them Off: up to 3 targets.
+  const selectedTargetIdForTitle = roll._retractingClaws ? retractingClawsSelectedId : (holdThemOffActive ? null : selectedDamageTargetId);
+  const selectedTargetsForTitle = holdThemOffActive && selectedDamageTargetIds.length > 0
+    ? selectedDamageTargetIds.map(id => filteredTargets.find(t => t.instanceId === id)).filter(Boolean)
+    : [];
   const selectedTargetForTitle = selectedTargetIdForTitle
     ? filteredTargets.find(t => t.instanceId === selectedTargetIdForTitle)
     : null;
-  const bannerTitle = selectedTargetForTitle ? `${displayName} → ${selectedTargetForTitle.name}` : displayName;
+  const bannerTitle = holdThemOffActive && selectedTargetsForTitle.length > 0
+    ? `${displayName} → ${selectedTargetsForTitle.map(t => t.name).join(', ')}`
+    : selectedTargetForTitle ? `${displayName} → ${selectedTargetForTitle.name}` : displayName;
 
   // Fearless character lookup — done in component body so it's accessible outside showActions IIFE.
   // Does NOT require isCharacterRoll so it works for players (who receive targets=[]).
@@ -478,6 +499,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Stress note: visible to everyone — show whenever the attacker is focused on the target being attacked.
   const focusedByStressNote = !!rangerFocusRerollChar;
 
+  // Hold Them Off (Ranger): character attack with damage, attacker has feature and ≥3 Hope.
+  const holdThemOffChar = hasDamage && roll._attackerInstanceId
+    ? holdThemOffChars.find(c => c.instanceId === roll._attackerInstanceId)
+    : null;
+
   const fearlessChar = dominant === 'fear' && roll._rollDbId != null
     ? fearlessChars.find(c =>
         (roll._attackerInstanceId && c.instanceId === roll._attackerInstanceId) ||
@@ -487,6 +513,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         ))
       )
     : null;
+
+  const handleResolveClick = !resolved && onResolveInstantly
+    ? (e) => { e.stopPropagation(); onResolveInstantly(); }
+    : undefined;
 
   return (
     <div
@@ -498,7 +528,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         pointerEvents: 'auto',
         maxWidth: '280px',
         minWidth: '200px',
+        cursor: handleResolveClick ? 'pointer' : undefined,
       }}
+      onClick={handleResolveClick}
+      title={handleResolveClick ? 'Click to show result immediately' : undefined}
     >
       <div
         className={`px-5 py-3 rounded-xl shadow-2xl text-center ${scheme.card}`}
@@ -570,10 +603,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               {dmg.modifier !== 0 && (
                 <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
               )}
+              {roll._wingsOfLightD8Result != null && (
+                <> + d8({roll._wingsOfLightD8Result})</>
+              )}
               {' ='}
             </span>
             <span className="text-lg font-black tabular-nums text-red-300 ml-1">
-              {resolved ? dmg.total : <Spinner />}
+              {resolved ? (roll._wingsOfLightD8Result != null ? dmg.total + roll._wingsOfLightD8Result : dmg.total) : <Spinner />}
             </span>
             {dmg.type && (
               <span className="text-sm font-semibold text-red-300/80 ml-0.5">{dmg.type}</span>
@@ -776,17 +812,30 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   </button>
                 );
               })()}
-              {(hasDamage || roll._retractingClaws) && canApplyDamage && (filteredTargets.length > 0 || roll._retractingClaws) ? (
+              {/* Hold Them Off (Ranger): Spend 3 Hope to select two more targets — visible to GM and initiating player */}
+              {holdThemOffChar && onHoldThemOffToggle && roll._rollDbId && (
+                <button
+                  onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
+                  className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                  title={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}
+                >
+                  {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
+                  Spend 3 Hope to select two more targets
+                </button>
+              )}
+              {(hasDamage || roll._retractingClaws) && canApplyDamage && (filteredTargets.length > 0 || roll._retractingClaws || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)) ? (
                 <>
                   <div className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider">
                     {(() => {
-                      const rangeLabel = roll._retractingClaws ? 'Melee' : (roll._weaponRangeFt != null ? rangeFtToLabel(roll._weaponRangeFt) : null);
+                      const rangeLabel = roll._retractingClaws ? 'Melee' : (roll._weaponRangeFt != null ? rangeFtToLabel(roll._weaponRangeFt) : (roll._attackerType === 'adversary' && roll._attackRangeFt != null ? rangeFtToLabel(roll._attackRangeFt) : null));
                       return rangeLabel ? `Apply within ${rangeLabel}` : 'Apply to';
                     })()}
                   </div>
                   <div className="flex flex-col gap-2">
                     <div className="flex flex-wrap justify-center items-center gap-1">
-                      {roll._retractingClaws ? (
+                      {roll._attackerType === 'adversary' && roll._attackRangeFt != null && filteredTargets.length === 0 ? (
+                        <span className="text-[10px] text-slate-500 italic">No characters in range</span>
+                      ) : roll._retractingClaws ? (
                         filteredTargets.length === 0 ? (
                           <span className="text-[10px] text-slate-500 italic">No adversaries in Melee range</span>
                         ) : (
@@ -854,6 +903,94 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                             )}
                           </>
                         )
+                      ) : holdThemOffActive ? (
+                        filteredTargets.length === 0 ? (
+                          <span className="text-[10px] text-slate-500 italic">No valid targets</span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                                selectedDamageTargetIds.length > 0
+                                  ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
+                                  : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                              }`}
+                              title="Select up to 3 targets"
+                            >
+                              {selectedDamageTargetIds.length > 0
+                                ? (selectedDamageTargetIds.length === 1
+                                  ? (filteredTargets.find(t => t.instanceId === selectedDamageTargetIds[0])?.name ?? '1 target')
+                                  : `${selectedDamageTargetIds.length} targets`)
+                                : 'Select targets (1–3)'}
+                              <ChevronDown size={10} className="opacity-70" />
+                            </button>
+                            {selectedDamageTargetIds.map((id) => {
+                              const t = filteredTargets.find(x => x.instanceId === id);
+                              if (!t) return null;
+                              const dmgType = dmg?.type || '';
+                              const armorBlockedByType = (t.armorFeatureName === 'Physical' && dmgType === 'mag') || (t.armorFeatureName === 'Magic' && dmgType === 'phy');
+                              const hasArmor = t.type === 'character' && (t.maxArmor ?? 0) > 0 && (t.currentArmor ?? 0) < (t.maxArmor ?? 0) && !armorBlockedByType;
+                              return hasArmor ? (
+                                <label key={id} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50 transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!useArmorByTargetId[id]}
+                                    onChange={(e) => setUseArmorByTargetId(prev => ({ ...prev, [id]: e.target.checked }))}
+                                    className="rounded border-cyan-600"
+                                  />
+                                  <Shield size={9} />
+                                  {t.name}
+                                </label>
+                              ) : null;
+                            })}
+                            {targetMenuAnchorRect != null && createPortal(
+                              <>
+                                <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
+                                <div
+                                  className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+                                  style={{
+                                    bottom: typeof window !== 'undefined' ? window.innerHeight - targetMenuAnchorRect.top + 4 : 8,
+                                    left: Math.min(targetMenuAnchorRect.left, typeof window !== 'undefined' ? window.innerWidth - 220 : 0),
+                                    minWidth: '140px',
+                                  }}
+                                >
+                                  <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Select targets (1–3)</div>
+                                  <div className="space-y-1 max-w-[220px]">
+                                    {filteredTargets.map((t) => {
+                                      const sum = formatTargetSummary(t, { hideMax: isPlayer });
+                                      const isSelected = selectedDamageTargetIds.includes(t.instanceId);
+                                      return (
+                                        <button
+                                          key={t.instanceId}
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedDamageTargetIds(prev => {
+                                              if (prev.includes(t.instanceId)) return prev.filter(x => x !== t.instanceId);
+                                              if (prev.length >= 3) return prev;
+                                              return [...prev, t.instanceId];
+                                            });
+                                            setTargetMenuAnchorRect(null);
+                                          }}
+                                          className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-amber-500 bg-amber-800/60 text-amber-100' : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'}`}
+                                        >
+                                          <div>{isSelected ? <Check size={10} className="inline mr-1" /> : null}{t.name}</div>
+                                          <div className="text-[10px] text-slate-400 mt-0.5">
+                                            {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
+                                            {sum.conditions ? ` · ${sum.conditions}` : ''}
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }} className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+                                </div>
+                              </>,
+                              document.body
+                            )}
+                          </>
+                        )
                       ) : (
                         filteredTargets.length === 0 ? (
                           <span className="text-[10px] text-slate-500 italic">No valid targets</span>
@@ -882,18 +1019,46 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 (selectedTarget.armorFeatureName === 'Magic' && dmgType === 'phy')
                               );
                               const selectedHasArmor = selectedTarget && selectedTarget.type === 'character' && (selectedTarget.maxArmor ?? 0) > 0 && (selectedTarget.currentArmor ?? 0) < (selectedTarget.maxArmor ?? 0) && !armorBlockedByType;
-                              return selectedHasArmor ? (
-                                <label className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50 transition-colors">
-                                  <input
-                                    type="checkbox"
-                                    checked={useArmorForSelected}
-                                    onChange={(e) => setUseArmorForSelected(e.target.checked)}
-                                    className="rounded border-cyan-600"
-                                  />
-                                  <Shield size={9} />
-                                  Use armor
-                                </label>
-                              ) : null;
+                              const showWingsD8 = wingsOfLightFlyingInstanceIds?.has(roll._attackerInstanceId);
+                              const wingsActive = !!roll._wingsOfLightAddD8;
+                              const wingsD8Result = roll._wingsOfLightD8Result;
+                              return (
+                                <>
+                                  {selectedHasArmor ? (
+                                    <label className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50 transition-colors">
+                                      <input
+                                        type="checkbox"
+                                        checked={useArmorForSelected}
+                                        onChange={(e) => setUseArmorForSelected(e.target.checked)}
+                                        className="rounded border-cyan-600"
+                                      />
+                                      <Shield size={9} />
+                                      Use armor
+                                    </label>
+                                  ) : null}
+                                  {showWingsD8 && (onWingsD8Toggle || onWingsD8ToggleRequest) && roll._rollDbId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (onWingsD8Toggle) {
+                                          if (!(wingsActive && wingsD8Result != null)) onWingsD8Toggle(roll._rollDbId);
+                                        } else if (onWingsD8ToggleRequest) {
+                                          onWingsD8ToggleRequest(roll._rollDbId, !wingsActive);
+                                        }
+                                      }}
+                                      disabled={!!onWingsD8Toggle && wingsActive && wingsD8Result != null}
+                                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                                        wingsActive
+                                          ? 'border-amber-500 bg-amber-900/50 text-amber-200'
+                                          : 'border-amber-700/60 text-amber-300/90 hover:bg-amber-950/40'
+                                      } disabled:opacity-60 disabled:cursor-default`}
+                                      title={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result}` : 'Spend 1 Hope to add d8 to damage (applied on Acknowledge)') : 'Spend a Hope to add a d8 to damage'}
+                                    >
+                                      {wingsD8Result != null ? `+d8: ${wingsD8Result}` : '+1 Hope → d8'}
+                                    </button>
+                                  )}
+                                </>
+                              );
                             })()}
                             {targetMenuAnchorRect != null && (() => {
                               return createPortal(
@@ -948,6 +1113,28 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         )
                       )}
                     </div>
+                    {/* Elemental Incarnation notices — shown before Acknowledge so GM can anticipate side effects */}
+                    {(() => {
+                      const notes = [];
+                      // Fire: adversary Melee attack on a Fire-channeling character → retaliation 1d10
+                      if (roll._attackerType === 'adversary' && roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE) {
+                        const fireTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
+                        if (fireTarget?.activeChanneledElement === 'fire') {
+                          notes.push(<div key="fire" className="text-[10px] text-orange-300/90 mt-1">🔥 Fire: {fireTarget.name} retaliates 1d10 magic damage.</div>);
+                        }
+                      }
+                      // Water: character Melee attack on adversary → other nearby adversaries mark Stress
+                      if (hasDamage && isCharacterRoll && roll._attackerInstanceId && getWaterRetaliationNames) {
+                        const waterTargetId = selectedDamageTargetId;
+                        if (waterTargetId) {
+                          const waterNames = getWaterRetaliationNames(roll._attackerInstanceId, waterTargetId);
+                          if (waterNames.length > 0) {
+                            notes.push(<div key="water" className="text-[10px] text-cyan-300/90 mt-1">💧 Water: {waterNames.join(', ')} will mark Stress.</div>);
+                          }
+                        }
+                      }
+                      return notes.length > 0 ? <div className="mt-1">{notes}</div> : null;
+                    })()}
                     <div className="flex flex-wrap justify-center gap-1.5">
                       {roll._retractingClaws ? (
                         <>
@@ -970,18 +1157,64 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                             </button>
                           )}
                         </>
+                      ) : holdThemOffActive ? (
+                        <>
+                          <button
+                            onClick={async () => {
+                              const dmgType = dmg?.type || '';
+                              if (selectedDamageTargetIds.length > 0 && hasDamage && onApplyDamage) {
+                                for (const id of selectedDamageTargetIds) {
+                                  const target = filteredTargets.find(t => t.instanceId === id);
+                                  if (target) await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id] }, dmg.total, tags, roll, dmgType);
+                                }
+                              }
+                              if (selectedDamageTargetIds.length >= 2 && roll._attackerInstanceId) {
+                                onAcknowledge?.({ holdThemOffHopeCost: 3, attackerInstanceId: roll._attackerInstanceId });
+                              } else {
+                                onAcknowledge?.();
+                              }
+                            }}
+                            disabled={selectedDamageTargetIds.length === 0}
+                            className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                            title={selectedDamageTargetIds.length === 0 ? 'Select at least one target' : selectedDamageTargetIds.length >= 2 ? 'Acknowledge and apply damage (3 Hope)' : 'Acknowledge and apply damage'}
+                          >
+                            Acknowledge
+                          </button>
+                          <button
+                            onClick={() => onAcknowledge?.()}
+                            className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                            title="Acknowledge without applying damage"
+                          >
+                            Skip
+                          </button>
+                          {onCancel != null && (
+                            <button
+                              onClick={onCancel}
+                              className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <>
                           <button
                             onClick={async () => {
+                              let d8Extra = 0;
+                              let alreadyAcked = false;
+                              if (hasDamage && roll._wingsOfLightAddD8 && onGetWingsD8Extra) {
+                                d8Extra = roll._wingsOfLightD8Result ?? (await onGetWingsD8Extra(roll)) ?? 0;
+                                if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
+                              }
+                              const totalDamage = (hasDamage ? dmg.total : 0) + d8Extra;
                               if (selectedDamageTargetId && hasDamage && onApplyDamage) {
                                 const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
                                 if (selectedTarget) {
                                   const dmgType = dmg?.type || '';
-                                  await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected }, dmg.total, tags, roll, dmgType);
+                                  await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected }, totalDamage, tags, roll, dmgType);
                                 }
                               }
-                              onAcknowledge?.();
+                              onAcknowledge?.(alreadyAcked ? { alreadyAcked: true } : undefined);
                             }}
                             disabled={filteredTargets.length > 0 && !selectedDamageTargetId}
                             className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
@@ -1073,6 +1306,44 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             </div>
           );
         })()}
+        {/* Hold Them Off (Ranger): toggle — visible to player when not showActions so they can toggle before GM acknowledges */}
+        {!showActions && resolved && holdThemOffChar && onHoldThemOffToggle && roll._rollDbId && (
+          <div className="mt-2.5 pt-2 border-t border-white/10">
+            <button
+              onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
+              className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+              title={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}
+            >
+              {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
+              Spend 3 Hope to select two more targets
+            </button>
+          </div>
+        )}
+        {/* Wings of Light (Winged Sentinel): d8 toggle — visible to player so they can signal intent before GM acknowledges */}
+        {!showActions && resolved && hasDamage && wingsOfLightFlyingInstanceIds?.has(roll._attackerInstanceId) && onWingsD8ToggleRequest && roll._rollDbId && (
+          <div className="mt-2.5 pt-2 border-t border-white/10">
+            {(() => {
+              const wingsActive = !!roll._wingsOfLightAddD8;
+              const wingsD8Result = roll._wingsOfLightD8Result;
+              return (
+                <button
+                  type="button"
+                  onClick={() => onWingsD8ToggleRequest(roll._rollDbId, !wingsActive)}
+                  disabled={wingsActive && wingsD8Result != null}
+                  className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${
+                    wingsActive
+                      ? 'border-amber-500 bg-amber-800/80 text-amber-100'
+                      : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
+                  } disabled:opacity-60 disabled:cursor-default`}
+                  title={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result} — already applied` : 'Spend 1 Hope to add d8 to damage (applied on GM Acknowledge)') : 'Spend a Hope to add a d8 to damage'}
+                >
+                  {wingsActive ? <Check size={12} className="shrink-0" /> : null}
+                  {wingsD8Result != null ? `+d8: ${wingsD8Result} (Spend 1 Hope)` : 'Spend 1 Hope to add d8 to damage'}
+                </button>
+              );
+            })()}
+          </div>
+        )}
         {/* Fearless (Infernis): toggle button — visible to both GM and character's own player */}
         {resolved && fearlessChar && onFearlessConvert && (
           <div className={showActions ? '' : 'mt-2.5 pt-2 border-t border-white/10'}>
@@ -1141,6 +1412,13 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onRangerFocusReroll,
   onRangerFocusRerollRequest,
   rangerFocusRequestedBannerIds,
+  holdThemOffChars = [],
+  onHoldThemOffToggle,
+  wingsOfLightFlyingInstanceIds,
+  onWingsD8Toggle,
+  onWingsD8ToggleRequest,
+  onGetWingsD8Extra,
+  getWaterRetaliationNames,
 }, ref) {
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
@@ -1375,6 +1653,17 @@ export const DiceRoller = forwardRef(function DiceRoller({
     ));
   }
 
+  /** Resolve a single banner instantly when clicked while its dice are rolling (show result, stop animation). */
+  function resolveBannerInstantly(bannerId) {
+    if (animatingIdRef.current !== bannerId) return;
+    diceBoxRef.current?.clearDice();
+    animatingIdRef.current = null;
+    syncBanners(activeBannersRef.current.map(b =>
+      b._bannerId === bannerId ? { ...b, resolved: true } : b
+    ));
+    processNextDice();
+  }
+
   // ── Public API (imperative) ────────────────────────────────────────────────
 
   function addRoll(roll) {
@@ -1577,7 +1866,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
             gap: '0.5rem',
             padding: '0 0.75rem',
             overflow: 'hidden',
-            pointerEvents: 'none',
+            pointerEvents: 'auto',
           }}
         >
           {activeBanners.map(entry => (
@@ -1634,7 +1923,15 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onRangerFocusReroll={onRangerFocusReroll}
                 onRangerFocusRerollRequest={onRangerFocusRerollRequest}
                 rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
+                holdThemOffChars={holdThemOffChars}
+                onHoldThemOffToggle={onHoldThemOffToggle}
+                wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
+                onWingsD8Toggle={onWingsD8Toggle}
+                onWingsD8ToggleRequest={onWingsD8ToggleRequest}
+                onGetWingsD8Extra={onGetWingsD8Extra}
+                getWaterRetaliationNames={getWaterRetaliationNames}
                 isPlayer={isPlayer}
+                onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}
               />
             )
           ))}

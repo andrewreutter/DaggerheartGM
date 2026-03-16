@@ -57,6 +57,16 @@ function App() {
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   // tableStateReadyRef is set once initial state is loaded from the server (via REST or SSE).
   const tableStateReadyRef = useRef(false);
+  const scenesLoadedRef = useRef(false);
+  const adventuresLoadedRef = useRef(false);
+  const charactersLoadedRef = useRef(false);
+  const scenesLoadPromiseRef = useRef(null);
+  const adventuresLoadPromiseRef = useRef(null);
+  const charactersLoadPromiseRef = useRef(null);
+  const scenesCacheRef = useRef([]);
+  const adventuresCacheRef = useRef([]);
+  const charactersCacheRef = useRef([]);
+  const charLoadResolversRef = useRef([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
   // Multi-player room state
@@ -207,16 +217,6 @@ function App() {
   const userRef = useRef(null);
   const routeRef = useRef(null);
   const lastLibraryPathRef = useRef('/library/adversaries');
-  const scenesLoadedRef = useRef(false);
-  const adventuresLoadedRef = useRef(false);
-  const charactersLoadedRef = useRef(false);
-  const scenesLoadPromiseRef = useRef(null);
-  const adventuresLoadPromiseRef = useRef(null);
-  const charactersLoadPromiseRef = useRef(null);
-  const scenesCacheRef = useRef([]);
-  const adventuresCacheRef = useRef([]);
-  const charactersCacheRef = useRef([]);
-  const charLoadResolversRef = useRef([]);
 
   // Load scenes on demand; resolve adversary/env IDs for scene chips.
   // Returns the scenes array (from cache if already loaded, or freshly loaded).

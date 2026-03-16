@@ -156,6 +156,8 @@ export function parseSubFeatures(description) {
   if (italicTokens.length >= 5) {
     const italicItems = [];
     for (let i = 1; i < italicTokens.length - 1; i += 2) {
+      // Only sub-option headers like _Fire:_ (colon inside) — skip decorative italics like _Channel_
+      if (!italicTokens[i].includes(':')) continue;
       const nameMatch = italicTokens[i].match(/_([^_]+?)_/);
       if (!nameMatch) continue;
       const name = nameMatch[1].replace(/:$/, '').trim();

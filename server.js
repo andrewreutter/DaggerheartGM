@@ -1399,17 +1399,43 @@ app.post('/api/room/:gmUid/action', requireAuth, async (req, res) => {
 
 // POST /api/room/my/banner-ack — GM acknowledges or cancels a banner.
 // Updates DB status; the subscription manager pushes an updated banners snapshot to all clients.
-// Element/state side-effects arrive via the table_state subscription; pulse animations are
-// self-driven by CheckboxTrack components.
+// When action is 'acknowledge' and wingsOfLightD8 is true, server deducts 1 Hope from the roll's
+// _attackerInstanceId, rolls 1d8, and returns wingsOfLightD8Result (banner is also marked acknowledged).
 app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
-  const { bannerId, action } = req.body;
+  const { bannerId, action, wingsOfLightD8 } = req.body;
+  let wingsOfLightD8Result = null;
+
+  if (action === 'acknowledge' && wingsOfLightD8 && bannerId && process.env.DATABASE_URL) {
+    try {
+      const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+      if (row && row.status === 'pending' && row.data?._wingsOfLightAddD8 && row.data._wingsOfLightD8Result == null && row.data._attackerInstanceId) {
+        const tableRows = await getItems(APP_ID, req.uid, 'table_state');
+        const state = tableRows[0] || {};
+        const elements = state.elements || [];
+        const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
+        const maxHope = charEl?.maxHope ?? 6;
+        const currentHope = charEl?.hope ?? maxHope;
+        if (currentHope >= 1) {
+          const newHope = Math.max(0, currentHope - 1);
+          await applyOpToTableState(req.uid, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
+          wingsOfLightD8Result = randomInt(1, 9);
+        }
+      }
+    } catch (err) {
+      console.error('[banner-ack] wingsOfLightD8 error:', err.message);
+    }
+  }
+
   if (bannerId) {
     const status = action === 'cancel' ? 'cancelled' : 'acknowledged';
     setBannerStatus(bannerId, status)
       .then(() => subscriptionManager.notifyChange('banners', req.uid))
       .catch(err => console.error('[banner] DB status update failed:', err.message));
   }
-  res.json({ ok: true });
+
+  const payload = { ok: true };
+  if (wingsOfLightD8Result != null) payload.wingsOfLightD8Result = wingsOfLightD8Result;
+  res.json(payload);
 });
 
 // POST /api/room/my/reroll-hope-die — GM: Feline Instincts — reroll only the Hope die; cost already applied by client.
@@ -1536,6 +1562,101 @@ app.post('/api/room/:gmUid/banner-ranger-focus-reroll-request', requireAuth, asy
     res.json({ ok: true, requested });
   } catch (err) {
     console.error(`POST /api/room/${gmUid}/banner-ranger-focus-reroll-request error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/banner-wings-d8 — GM: Wings of Light — spend 1 Hope and roll 1d8, patch banner with _wingsOfLightAddD8 and _wingsOfLightD8Result.
+app.post('/api/room/my/banner-wings-d8', requireAuth, async (req, res) => {
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  if (bannerId == null || Number.isNaN(bannerId) || !process.env.DATABASE_URL) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  try {
+    const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+    if (!row || row.status !== 'pending' || !row.data?._attackerInstanceId) {
+      return res.status(404).json({ error: 'Banner not found or not a character attack' });
+    }
+    const tableRows = await getItems(APP_ID, req.uid, 'table_state');
+    const state = tableRows[0] || {};
+    const elements = state.elements || [];
+    const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
+    const maxHope = charEl?.maxHope ?? 6;
+    const currentHope = charEl?.hope ?? maxHope;
+    if (currentHope < 1) {
+      return res.status(400).json({ error: 'Character has no Hope to spend' });
+    }
+    const newHope = Math.max(0, currentHope - 1);
+    await applyOpToTableState(req.uid, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
+    const d8Result = randomInt(1, 9);
+    await updateDiceRollData(APP_ID, req.uid, bannerId, { _wingsOfLightAddD8: true, _wingsOfLightD8Result: d8Result });
+    subscriptionManager.notifyChange('banners', req.uid);
+    res.json({ ok: true, d8Result });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-wings-d8 error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/banner-wings-d8-toggle — Player: toggle _wingsOfLightAddD8 on a banner (shared state; no Hope spend or roll).
+app.post('/api/room/:gmUid/banner-wings-d8-toggle', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const value = req.body?.value === true;
+  if (req.uid === gmUid || bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+    const tableState = tableStateItems[0] || {};
+    if (!(tableState.playerEmails || []).includes(req.email)) {
+      return res.status(403).json({ error: 'Not a player in this room' });
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    await updateDiceRollData(APP_ID, gmUid, bannerId, { _wingsOfLightAddD8: value });
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true, value });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-wings-d8-toggle error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/banner-hold-them-off — GM or player: toggle Hold Them Off (3 Hope, select up to 3 targets) on a banner.
+app.post('/api/room/:gmUid/banner-hold-them-off', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const active = req.body?.active === true;
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const isGm = req.uid === gmUid;
+    if (!isGm) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    await updateDiceRollData(APP_ID, gmUid, bannerId, { _holdThemOffActive: active });
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true, active });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-hold-them-off error:`, err);
     res.status(500).json({ error: 'Server error' });
   }
 });

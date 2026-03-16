@@ -45,9 +45,10 @@ export const effectiveThresholds = (el) => {
   if (!el?.armorThresholds) return null;
   const level = el.level ?? 0;
   const reinforced = el.reinforcedActive ? 2 : 0;
+  const elementalBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
   return {
-    major: el.armorThresholds.major + level + reinforced,
-    severe: el.armorThresholds.severe + level + reinforced,
+    major: el.armorThresholds.major + level + reinforced + elementalBonus,
+    severe: el.armorThresholds.severe + level + reinforced + elementalBonus,
   };
 };
 

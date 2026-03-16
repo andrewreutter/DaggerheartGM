@@ -16,7 +16,9 @@ export const CHARACTER_RUNTIME_KEYS = [
   'companion',         // Beastbound: { name, species, evasion, maxStress, currentStress }; table stress preserved
   'activeBeastform',           // Druid: current beastform object or null
   'selectedBeastformAdvantage', // Druid: currently selected beastform advantage label or null
+  'activeChanneledElement',   // Warden of the Elements: 'fire'|'earth'|'water'|'air' or null
   '_fearlessToggle',           // Fearless (Infernis): _rollDbId of the converted banner, or null
+  'wingsOfLightFlying',        // Winged Sentinel: whether the character is currently flying
 ];
 
 export const RUNTIME_KEYS = [

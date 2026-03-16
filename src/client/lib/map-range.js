@@ -159,6 +159,61 @@ export function getAdversariesWithinRangeFt(activeElements, sourceInstanceId, ma
 }
 
 /**
+ * Returns character elements within the given max distance (feet) of the source token.
+ * Used for adversary attacks: source is the adversary instance; targets are characters.
+ * Source can be any element type (adversary or character). Characters not on the map are excluded.
+ * If the source is not on the map, returns [].
+ *
+ * @param {Array} activeElements - the full activeElements array (characters + adversaries)
+ * @param {string} sourceInstanceId - instanceId of the source token (e.g. adversary attacker)
+ * @param {number} maxFt - maximum nearest-edge distance in feet (e.g. from rangeBandNameToFt)
+ * @returns {Array<{ instanceId: string, name: string }>}
+ */
+export function getCharactersWithinRangeFt(activeElements, sourceInstanceId, maxFt) {
+  const source = activeElements.find(e => e.instanceId === sourceInstanceId);
+  if (!source || source.tokenX == null || source.tokenY == null) return [];
+  if (typeof maxFt !== 'number' || maxFt < 0) return [];
+
+  return activeElements
+    .filter(e =>
+      e.elementType === 'character' &&
+      e.instanceId !== sourceInstanceId &&
+      e.tokenX != null &&
+      e.tokenY != null &&
+      tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= maxFt
+    )
+    .map(e => ({ instanceId: e.instanceId, name: e.name ?? '' }));
+}
+
+/**
+ * Returns character elements within maxFt of any of the given source instance IDs (union, deduplicated).
+ * Used when multiple adversary instances can make the attack (e.g. 3 goblins); valid targets are
+ * characters in range of any of them.
+ *
+ * @param {Array} activeElements - the full activeElements array
+ * @param {string[]} sourceInstanceIds - instanceIds of source tokens (e.g. adversary instances)
+ * @param {number} maxFt - maximum nearest-edge distance in feet
+ * @returns {Array<{ instanceId: string, name: string }>}
+ */
+export function getCharactersWithinRangeOfAny(activeElements, sourceInstanceIds, maxFt) {
+  if (!Array.isArray(sourceInstanceIds) || sourceInstanceIds.length === 0) return [];
+  if (typeof maxFt !== 'number' || maxFt < 0) return [];
+
+  const seen = new Set();
+  const result = [];
+  for (const id of sourceInstanceIds) {
+    const inRange = getCharactersWithinRangeFt(activeElements, id, maxFt);
+    for (const c of inRange) {
+      if (!seen.has(c.instanceId)) {
+        seen.add(c.instanceId);
+        result.push(c);
+      }
+    }
+  }
+  return result;
+}
+
+/**
  * Returns all character elements (other than the source) that are within
  * Close range of the source and have at least one marked hit point
  * (currentHp < maxHp).

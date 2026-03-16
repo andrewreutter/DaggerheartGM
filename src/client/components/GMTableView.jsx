@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle } from 'lucide-react';
@@ -10,7 +11,7 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerWingsD8, postBannerWingsD8Toggle, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
@@ -22,7 +23,7 @@ import { wrapRoll } from '../../features/roll.js';
 import { runHook, runPipelineHook } from '../../features/hooks.js';
 import { weaponFeatures, armorFeatures, classFeatures } from '../../features/registry.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt } from '../lib/map-range.js';
 
 
 /**
@@ -290,11 +291,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [lightboxUrl]);
+
   const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
   const [hoveredCompactTooltip, setHoveredCompactTooltip] = useState(null);
   const [hoveredTrackTooltip, setHoveredTrackTooltip] = useState(null); // { label, top, bottom, side: 'left'|'right' }
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
+  // In-place target picker for adversary attacks (shown before rolling when attackers are on the map with a range).
+  const [adversaryTargetMenu, setAdversaryTargetMenu] = useState(null);
+
+  useEffect(() => {
+    if (!adversaryTargetMenu) return;
+    const handler = (e) => { if (e.key === 'Escape') setAdversaryTargetMenu(null); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [adversaryTargetMenu]);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [budgetCardOpen, setBudgetCardOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -496,6 +507,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
     }
 
+    // Dispatch onDamageReceived for class features (e.g. Elemental Incarnation Severe drop)
+    if (target.elementType === 'character' && hpLoss >= 1) {
+      const targetClassFeat = classFeatures[target.class];
+      if (targetClassFeat?.onDamageReceived) {
+        targetClassFeat.onDamageReceived({ character: entityTarget, dmgTotal: dmgTotalForCalc, hpLoss, updateActiveElement });
+      }
+    }
+
     return entityTarget.currentHp;
   };
 
@@ -551,6 +570,55 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
 
     const newHp = applyDamageToTarget(target, effectiveDmgTotal, tagNames, roll, armorOpts, dmgType);
+    const hpApplied = (target.currentHp ?? target.maxHp ?? 0) - newHp;
+
+    // Fire: retaliation when adversary within Melee range deals HP damage to channeling Druid
+    const charEl = target.type === 'character'
+      ? activeElements.find(e => e.instanceId === target.instanceId) : null;
+    if (hpApplied >= 1 && charEl?.activeChanneledElement === 'fire'
+        && roll?._attackerType === 'adversary') {
+      const attackerIds = roll._attackerInstanceIds ?? (roll._attackerInstanceId ? [roll._attackerInstanceId] : []);
+      const isMelee = charEl.tokenX != null
+        ? getAdversariesWithinMeleeRange(activeElements, charEl.instanceId).some(a => attackerIds.includes(a.instanceId))
+        : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
+      if (isMelee && attackerIds.length > 0) {
+        const fireTargetId = attackerIds[0];
+        postRoll(`${charEl.name} Fire Retaliation damage [1d10]`, charEl.name, null, {
+          _attackerInstanceId: charEl.instanceId,
+          _selectedTargetInstanceId: fireTargetId,
+        }).catch(() => {});
+      }
+    }
+
+    // Water: adversaries in Very Close range of the target mark Stress
+    if (hpApplied >= 1 && target.type === 'adversary' && roll?._attackerInstanceId) {
+      const waterChar = activeElements.find(e => e.instanceId === roll._attackerInstanceId
+        && e.elementType === 'character' && e.activeChanneledElement === 'water');
+      if (waterChar) {
+        const isMeleeHit = roll._weaponRangeFt != null
+          ? roll._weaponRangeFt <= RANGE_BANDS_FT.MELEE
+          : (() => {
+              const adv = activeElements.find(e => e.instanceId === target.instanceId);
+              return waterChar.tokenX != null && adv?.tokenX != null
+                && tokenDistanceFt(waterChar.tokenX, waterChar.tokenY, adv.tokenX, adv.tokenY) <= RANGE_BANDS_FT.MELEE;
+            })();
+        if (isMeleeHit) {
+          const veryCloseAdvs = getAdversariesWithinRangeFt(activeElements, waterChar.instanceId, RANGE_BANDS_FT.VERY_CLOSE)
+            .filter(a => a.instanceId !== target.instanceId);
+          for (const adv of veryCloseAdvs) {
+            const advEl = activeElements.find(e => e.instanceId === adv.instanceId);
+            if (advEl) {
+              updateActiveElement(adv.instanceId, { currentStress: Math.min((advEl.currentStress ?? 0) + 1, advEl.maxStress ?? 6) });
+            }
+          }
+          if (veryCloseAdvs.length > 0) {
+            handleActionNotification({ _action: true, rollUser: waterChar.name,
+              actionName: 'Water Retaliation', actionText: `Water: ${veryCloseAdvs.length} nearby adversary/adversaries marked Stress.` });
+          }
+        }
+      }
+    }
+
     // Ranger's Focus: on hit, mark target as "Focused by X" and clear previous focus for this Ranger
     const isAdversaryTarget = target.elementType === 'adversary' || target.type === 'adversary';
     let attackerName = null;
@@ -790,6 +858,30 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
+  // Hold Them Off (Ranger): GM or player toggles "Spend 3 Hope to select two more targets" on the banner.
+  const handleHoldThemOffToggle = (bannerId, active) => {
+    if (gmUid) {
+      postBannerHoldThemOff(gmUid, bannerId, active).catch(() => {});
+    }
+  };
+
+  // Wings of Light (Winged Sentinel): GM clicks toggle — spend 1 Hope and roll 1d8, patch banner.
+  const handleWingsD8Toggle = (bannerId) => {
+    postBannerWingsD8(bannerId).catch(() => {});
+  };
+
+  // Wings of Light: Player toggles _wingsOfLightAddD8 on banner (shared state).
+  const handleWingsD8ToggleRequest = (bannerId, value) => {
+    if (gmUid) postBannerWingsD8Toggle(gmUid, bannerId, value).catch(() => {});
+  };
+
+  // Wings of Light: When applying damage and roll had _wingsOfLightAddD8 but no _wingsOfLightD8Result (player toggled), ack with wingsOfLightD8 to get d8 and return it.
+  const getWingsD8Extra = async (roll) => {
+    if (roll._wingsOfLightD8Result != null) return roll._wingsOfLightD8Result;
+    const res = await postBannerAck(roll._rollDbId, 'acknowledge', { wingsOfLightD8: true });
+    return res?.wingsOfLightD8Result ?? 0;
+  };
+
   // Doubled Up: parse secondary weapon damage from the tag and apply to a second target.
   const handleDoubledUpTarget = (target, tags, roll) => {
     const doubledTag = (tags || []).find(t => t.name === 'Doubled Up');
@@ -824,6 +916,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
 
     if (roll._action) {
+      // Wings of Light (Winged Sentinel): Pick up and carry — mark 1 Stress on the character when GM acks.
+      if (roll._featureName === 'Wings of Light' && roll._wingsOfLightPickUpCarry && roll._attackerInstanceId) {
+        const charEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+        if (charEl) {
+          const maxStress = charEl.maxStress ?? 6;
+          const newStress = Math.min((charEl.currentStress ?? 0) + 1, maxStress);
+          updateActiveElement(roll._attackerInstanceId, { currentStress: newStress });
+        }
+      }
       // Apply feature costs for _featureUse action notifications
       let resourceAck = null;
       if (roll._featureUse && roll._attackerInstanceId) {
@@ -913,6 +1014,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         updateActiveElement(roll._wizardInstanceId, { hope: newHope });
       }
     }
+    // Hold Them Off (Ranger): 3 Hope when 2–3 targets selected (passed via options from ResultBanner).
+    if (options.holdThemOffHopeCost > 0 && options.attackerInstanceId) {
+      const attackerEl = activeElements.find(e => e.instanceId === options.attackerInstanceId);
+      if (attackerEl) {
+        const maxHope = attackerEl.maxHope ?? 6;
+        const newHope = Math.max(0, (attackerEl.hope ?? maxHope) - options.holdThemOffHopeCost);
+        updateActiveElement(options.attackerInstanceId, { hope: newHope });
+      }
+    }
     // Ranger's Focus: weapon roll with "Use on next attack" — deduct Hope
     if (roll._rangerFocusAttempt && roll._hopeCost > 0 && roll._attackerInstanceId) {
       const rangerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
@@ -949,7 +1059,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (dmgPending) {
       updateActiveElement(dmgPending.instanceId, { currentHp: dmgPending.newHp });
     }
-    postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
+    if (!options?.alreadyAcked) postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
   };
 
   // GM cancels a banner: dismiss without any effects.
@@ -1075,6 +1185,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (char.activeModifiers?.length > 0) {
         const kept = char.activeModifiers.filter(m => !cyclesToClear.includes(m.refreshOn));
         if (kept.length !== char.activeModifiers.length) updates.activeModifiers = kept;
+      }
+      if (char.activeChanneledElement && cyclesToClear.includes('rest')) {
+        updates.activeChanneledElement = null;
       }
       if (Object.keys(updates).length > 0) {
         updateActiveElement(char.instanceId, updates);
@@ -1319,7 +1432,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     setGmHoverOverlayActive(false);
   };
 
-  const handleRoll = (feature) => {
+  const handleRoll = (feature, event) => {
     if (!feature._rollData && !feature._diceRoll) return;
     dismissAllHoverCards();
     let rollText;
@@ -1341,6 +1454,27 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       rollText = parts.join(' ');
     }
     const displayName = `${feature.sourceName} ${feature.name}`;
+    // For GM Moves adversary attacks with a range: show in-place target picker if instances are on the map.
+    if (feature._rollData?.range) {
+      const instances = activeElements.filter(e => e.elementType === 'adversary' && e.id === feature.cardKey);
+      const onMap = instances.filter(i => i.tokenX != null && i.tokenY != null);
+      if (onMap.length >= 1) {
+        const rangeFt = rangeBandNameToFt(feature._rollData.range);
+        if (rangeFt != null) {
+          const rollMeta = { _attackerType: 'adversary', _attackRangeFt: rangeFt };
+          if (onMap.length === 1) rollMeta._attackerInstanceId = onMap[0].instanceId;
+          else rollMeta._attackerInstanceIds = onMap.map(i => i.instanceId);
+          const inRange = rollMeta._attackerInstanceIds?.length > 0
+            ? getCharactersWithinRangeOfAny(activeElements, rollMeta._attackerInstanceIds, rangeFt)
+            : getCharactersWithinRangeFt(activeElements, rollMeta._attackerInstanceId, rangeFt);
+          const ids = new Set(inRange.map(c => c.instanceId));
+          const validTargets = damageTargets.filter(t => t.type === 'character' && ids.has(t.instanceId));
+          const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+          setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets, rolledKey: `${feature.cardKey}|${feature.featureKey}` });
+          return;
+        }
+      }
+    }
     const key = `${feature.cardKey}|${feature.featureKey}`;
     postRoll(rollText, displayName).then(() => {
       setRolledKey(key);
@@ -1348,7 +1482,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }).catch(err => console.error('Roll failed:', err));
   };
 
-  const handleCardRoll = (attackData, sourceName) => {
+  const handleCardRoll = (attackData, sourceName, attackerInstances, event) => {
     dismissAllHoverCards();
     const { name, modifier, range, damage, trait, patterns } = attackData;
     let rollText;
@@ -1360,7 +1494,33 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
     }
     const displayName = `${sourceName} ${name}`;
-    postRoll(rollText, displayName).catch(err => console.error('Roll failed:', err));
+    let rollMeta = {};
+    if (Array.isArray(attackerInstances) && attackerInstances.length > 0 && range) {
+      const onMap = attackerInstances.filter(i => i.tokenX != null && i.tokenY != null);
+      if (onMap.length >= 1) {
+        const rangeFt = rangeBandNameToFt(range);
+        if (rangeFt != null) {
+          rollMeta._attackerType = 'adversary';
+          rollMeta._attackRangeFt = rangeFt;
+          if (onMap.length === 1) {
+            rollMeta._attackerInstanceId = onMap[0].instanceId;
+          } else {
+            rollMeta._attackerInstanceIds = onMap.map(i => i.instanceId);
+          }
+        }
+      }
+    }
+    if (rollMeta._attackRangeFt != null) {
+      const inRange = rollMeta._attackerInstanceIds?.length > 0
+        ? getCharactersWithinRangeOfAny(activeElements, rollMeta._attackerInstanceIds, rollMeta._attackRangeFt)
+        : getCharactersWithinRangeFt(activeElements, rollMeta._attackerInstanceId, rollMeta._attackRangeFt);
+      const ids = new Set(inRange.map(c => c.instanceId));
+      const validTargets = damageTargets.filter(t => t.type === 'character' && ids.has(t.instanceId));
+      const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+      setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets });
+      return;
+    }
+    postRoll(rollText, displayName, null, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => console.error('Roll failed:', err));
   };
 
   const handleTraitRoll = (rollText, displayName, rollMeta = {}) => {
@@ -1434,6 +1594,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           instanceId: el.instanceId,
           name: el.name,
           type: 'character',
+          activeChanneledElement: el.activeChanneledElement ?? null,
           thresholds: effectiveThresholds(el),
           maxHp: el.maxHp ?? 0,
           currentHp: el.currentHp ?? el.maxHp ?? 0,
@@ -1468,7 +1629,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     return targets;
   }, [consolidatedElements]);
 
-  // For Retracting Claws: targets are only adversaries within Melee range. For other character attacks with damage, filter by weapon range when _weaponRangeFt is set.
+  // Returns names of adversaries within Very Close of the Water Druid attacker that will mark Stress.
+  const getWaterRetaliationNames = useCallback((attackerInstanceId, targetInstanceId) => {
+    const attacker = activeElements.find(e => e.instanceId === attackerInstanceId && e.activeChanneledElement === 'water');
+    if (!attacker) return [];
+    const advTarget = activeElements.find(e => e.instanceId === targetInstanceId);
+    if (attacker.tokenX != null && advTarget?.tokenX != null) {
+      if (tokenDistanceFt(attacker.tokenX, attacker.tokenY, advTarget.tokenX, advTarget.tokenY) > RANGE_BANDS_FT.MELEE) return [];
+    }
+    return getAdversariesWithinRangeFt(activeElements, attacker.instanceId, RANGE_BANDS_FT.VERY_CLOSE)
+      .filter(a => a.instanceId !== targetInstanceId)
+      .map(a => activeElements.find(e => e.instanceId === a.instanceId)?.name || 'Unknown');
+  }, [activeElements]);
+
+  // For Retracting Claws: targets are only adversaries within Melee range. For other character attacks with damage, filter by weapon range when _weaponRangeFt is set. For adversary attacks with range, filter to characters within range of attacker(s).
   const getTargetsForRoll = useCallback((roll) => {
     if (roll._retractingClaws && roll._attackerInstanceId) {
       const melee = getAdversariesWithinMeleeRange(activeElements, roll._attackerInstanceId);
@@ -1479,6 +1653,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       const inRange = getAdversariesWithinRangeFt(activeElements, roll._attackerInstanceId, roll._weaponRangeFt);
       const ids = new Set(inRange.map(m => m.instanceId));
       return damageTargets.filter(t => t.type === 'adversary' && ids.has(t.instanceId));
+    }
+    if (roll._attackerType === 'adversary' && roll._attackRangeFt != null && (roll._attackerInstanceId || (roll._attackerInstanceIds && roll._attackerInstanceIds.length > 0))) {
+      const inRange = roll._attackerInstanceIds?.length > 0
+        ? getCharactersWithinRangeOfAny(activeElements, roll._attackerInstanceIds, roll._attackRangeFt)
+        : getCharactersWithinRangeFt(activeElements, roll._attackerInstanceId, roll._attackRangeFt);
+      const ids = new Set(inRange.map(c => c.instanceId));
+      return damageTargets.filter(t => t.type === 'character' && ids.has(t.instanceId));
     }
     return damageTargets;
   }, [activeElements, damageTargets]);
@@ -1642,6 +1823,28 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       return { instanceId: c.instanceId, name: c.name, focusedAdversaryInstanceId: focusedAdv?.instanceId ?? null };
     })
     .filter(c => c.focusedAdversaryInstanceId != null);
+
+  // Hold Them Off (Ranger): All Rangers have this as their hope ability. Show toggle when ≥3 Hope.
+  // Hold Them Off is a hope ability (in hopeAbility/hopeFeature), NOT a classFeature entry.
+  const holdThemOffChars = tableCharacters
+    .filter(c =>
+      (c.class || '').toLowerCase() === 'ranger' &&
+      (c.hope ?? (c.maxHope ?? 6)) >= 3 &&
+      (!isPlayer || c.assignedPlayerEmail === playerEmail)
+    )
+    .map(c => ({ instanceId: c.instanceId, name: c.name }));
+
+  // Wings of Light (Winged Sentinel): characters currently flying — show "Spend Hope for d8" on their attack banners.
+  const wingsOfLightFlyingInstanceIds = useMemo(() => {
+    const set = new Set();
+    for (const c of tableCharacters) {
+      if (!c.wingsOfLightFlying) continue;
+      const hasWings = (c.subclass === 'Winged Sentinel') ||
+        (c.subclassFeatures || []).some(f => f.name === 'Wings of Light');
+      if (hasWings && (!isPlayer || c.assignedPlayerEmail === playerEmail)) set.add(c.instanceId);
+    }
+    return set;
+  }, [tableCharacters, isPlayer, playerEmail]);
 
   const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
@@ -1921,13 +2124,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                         EVA {el.evasion}
                       </span>
                     )}
-                    {(() => { const t = effectiveThresholds(el); return t && (
-                      <span className="text-[10px] text-slate-400">
-                        Thresholds <span className="font-bold text-yellow-300">{t.major}</span>
-                        <span className="text-slate-600"> / </span>
-                        <span className="font-bold text-red-300">{t.severe}</span>
-                      </span>
-                    ); })()}
+                    {(() => {
+                      const t = effectiveThresholds(el);
+                      if (!t) return null;
+                      const eb = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
+                      return (
+                        <span className="text-[10px] text-slate-400">
+                          Thresholds{' '}
+                          {eb > 0 ? <><span className="font-bold text-yellow-300/50">{t.major - eb}</span><span className="text-slate-600"> +{eb} =</span>{' '}</> : null}
+                          <span className="font-bold text-yellow-300">{t.major}</span>
+                          <span className="text-slate-600"> / </span>
+                          {eb > 0 ? <><span className="font-bold text-red-300/50">{t.severe - eb}</span><span className="text-slate-600"> +{eb} =</span>{' '}</> : null}
+                          <span className="font-bold text-red-300">{t.severe}</span>
+                        </span>
+                      );
+                    })()}
                   </div>
                 )}
                 {/* Armor track */}
@@ -2078,7 +2289,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                           if (category === 'Fear Actions') {
                             if (setFearCount) setFearCount(prev => Math.max(0, prev - parseFearCost(feature.description)));
                           }
-                          if (canRoll) handleRoll(feature);
+                          if (canRoll) handleRoll(feature, e);
                         }}
                         className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 rounded border transition-all group flex ${(category === 'Fear Actions' || canRoll) ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
                       >
@@ -2244,6 +2455,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onRangerFocusReroll={isPlayer ? undefined : handleRangerFocusReroll}
             onRangerFocusRerollRequest={isPlayer ? handleRangerFocusRerollRequest : undefined}
             rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
+            holdThemOffChars={holdThemOffChars}
+            onHoldThemOffToggle={gmUid ? handleHoldThemOffToggle : undefined}
+            wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
+            onWingsD8Toggle={!isPlayer ? handleWingsD8Toggle : undefined}
+            onWingsD8ToggleRequest={isPlayer && gmUid ? handleWingsD8ToggleRequest : undefined}
+            onGetWingsD8Extra={!isPlayer ? getWingsD8Extra : undefined}
+            getWaterRetaliationNames={!isPlayer ? getWaterRetaliationNames : undefined}
           />
           <BattleMap
             gmUid={gmUid}
@@ -2968,7 +3186,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                     showInstanceRemove={false}
                     featureCountdowns={featureCountdowns}
                     updateCountdown={null}
-                    onRollAttack={(data) => handleCardRoll(data, liveBaseElement.name)}
+                    onRollAttack={(data, e) => handleCardRoll(data, liveBaseElement.name, liveInstances, e)}
                     damageBoost={tableDamageBoost || liveBaseElement._damageBoost || null}
                     scaledMeta={null}
                     onScaledToggle={null}
@@ -3007,7 +3225,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               showInstanceRemove={false}
               featureCountdowns={featureCountdowns}
               updateCountdown={null}
-              onRollAttack={(data) => handleCardRoll(data, potAdvOverlay.data.element.name)}
+              onRollAttack={(data, e) => handleCardRoll(data, potAdvOverlay.data.element.name, [], e)}
               damageBoost={null}
               scaledMeta={null}
               onScaledToggle={null}
@@ -3125,7 +3343,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   showInstanceRemove={false}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}
-                  onRollAttack={(data) => handleCardRoll(data, el.name)}
+                  onRollAttack={(data, e) => handleCardRoll(data, el.name, displayElement.instances, e)}
                   scaledMeta={scaledMeta}
                   onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
                 />
@@ -3137,6 +3355,71 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       </div>
       );
     })()}
+    {/* Adversary attack in-place target picker — shown before rolling when attacker(s) are on the map */}
+    {adversaryTargetMenu && createPortal(
+      <>
+        <div className="fixed inset-0 z-[200]" onClick={() => setAdversaryTargetMenu(null)} />
+        <div
+          className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+          style={{
+            top: adversaryTargetMenu.anchorRect
+              ? Math.min(adversaryTargetMenu.anchorRect.bottom + 4, window.innerHeight - 200)
+              : window.innerHeight / 2 - 80,
+            left: adversaryTargetMenu.anchorRect
+              ? Math.min(adversaryTargetMenu.anchorRect.left, window.innerWidth - 220)
+              : window.innerWidth / 2 - 80,
+            minWidth: '160px',
+            maxWidth: '240px',
+          }}
+        >
+          <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">
+            {adversaryTargetMenu.validTargets.length > 0 ? 'Choose target' : 'No targets in range'}
+          </div>
+          <div className="space-y-1">
+            {adversaryTargetMenu.validTargets.length === 0 ? (
+              <p className="text-[11px] text-slate-400 italic px-1 py-1">No characters are in range of this attack.</p>
+            ) : adversaryTargetMenu.validTargets.map((t) => (
+              <button
+                key={t.instanceId}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const { rollText, displayName, rollMeta, rolledKey: rk } = adversaryTargetMenu;
+                  postRoll(rollText, displayName, null, { ...rollMeta, _selectedTargetInstanceId: t.instanceId })
+                    .then(() => {
+                      if (rk) {
+                        setRolledKey(rk);
+                        setTimeout(() => setRolledKey(prev => prev === rk ? null : prev), 1500);
+                      }
+                    })
+                    .catch(err => console.error('Roll failed:', err));
+                  setAdversaryTargetMenu(null);
+                }}
+                className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
+              >
+                <div>{t.name}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5">
+                  {[
+                    t.maxHp > 0 ? `HP ${t.currentHp ?? t.maxHp}/${t.maxHp}` : null,
+                    t.maxStress > 0 ? `Stress ${t.currentStress ?? 0}/${t.maxStress}` : null,
+                  ].filter(Boolean).join(' · ')}
+                  {t.conditions ? ` · ${t.conditions}` : ''}
+                </div>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setAdversaryTargetMenu(null)}
+            className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors w-full text-center"
+          >
+            Cancel (roll without target)
+          </button>
+        </div>
+      </>,
+      document.body
+    )}
+
     {lightboxUrl && (
       <div
         className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"

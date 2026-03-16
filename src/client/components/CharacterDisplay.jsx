@@ -1,9 +1,10 @@
 import {
   User, Shield, Heart, AlertCircle, AlertTriangle, Sparkles, Swords, Package,
-  ChevronDown, ChevronRight, Dices, Zap, Megaphone, X,
+  ChevronDown, ChevronRight, Dices, Zap, Megaphone, X, Flame, Mountain, Droplets, Wind,
 } from 'lucide-react';
 import { useState } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
+import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, getRetractingClawsWeapon } from '../lib/character-calc.js';
@@ -509,9 +510,12 @@ function CostBadgeStrip({ action }) {
   );
 }
 
+// Elemental Incarnation: element name -> Lucide icon
+const ELEMENT_ICONS = { Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
+
 // ─── Sub-feature card ─────────────────────────────────────────────────────────
 
-function SubFeatureCard({ sub, onUse, disabled }) {
+function SubFeatureCard({ sub, onUse, disabled, isActive }) {
   const badges = buildCostBadges(sub);
   const hasDice = sub.dice?.length > 0 || sub.spellcastDC != null;
   return (
@@ -521,16 +525,23 @@ function SubFeatureCard({ sub, onUse, disabled }) {
       onClick={onUse && !disabled ? onUse : undefined}
       onKeyDown={onUse && !disabled ? (e) => { if (e.key === 'Enter' || e.key === ' ') onUse(); } : undefined}
       className={`rounded border px-2 py-1.5 text-[11px] select-none transition-all ${
-        disabled
-          ? 'border-slate-700/40 bg-slate-800/20 opacity-40 cursor-not-allowed'
-          : onUse
-            ? 'border-amber-700/50 bg-amber-950/20 cursor-pointer hover:brightness-125 hover:border-amber-500/70'
-            : 'border-slate-700/50 bg-slate-800/40'
+        isActive
+          ? 'border-emerald-600/70 bg-emerald-950/30 ring-1 ring-emerald-700/40'
+          : disabled
+            ? 'border-slate-700/40 bg-slate-800/20 opacity-40 cursor-not-allowed'
+            : onUse
+              ? 'border-amber-700/50 bg-amber-950/20 cursor-pointer hover:brightness-125 hover:border-amber-500/70'
+              : 'border-slate-700/50 bg-slate-800/40'
       }`}
     >
       <div className="flex items-center gap-1.5 flex-wrap">
         {hasDice && <Dices size={9} className="text-amber-500/70 shrink-0" />}
-        <span className="font-semibold text-slate-200 flex-1">{sub.name}</span>
+        <span className={`font-semibold flex-1 ${isActive ? 'text-emerald-200' : 'text-slate-200'}`}>{sub.name}</span>
+        {isActive && (
+          <span className="text-[9px] rounded px-1 py-0.5 border font-semibold shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300">
+            Channeling
+          </span>
+        )}
         {badges.map((b, i) => (
           <span
             key={i}
@@ -546,7 +557,7 @@ function SubFeatureCard({ sub, onUse, disabled }) {
         ))}
       </div>
       {sub.description && (
-        <div className="mt-0.5 text-[10px] text-slate-400 leading-snug line-clamp-2">{sub.description}</div>
+        <div className={`mt-0.5 text-[10px] leading-snug line-clamp-2 ${isActive ? 'text-emerald-300/80' : 'text-slate-400'}`}>{sub.description}</div>
       )}
     </div>
   );
@@ -561,8 +572,9 @@ function SubFeatureCard({ sub, onUse, disabled }) {
  *   onFeatureUse(feature, subFeature?)  — when provided, renders interactive controls
  *   featureUsage   — { [key]: { used, cycle } } map from element state
  *   featureKey     — unique key for usage tracking (default: feature.name)
+ *   activeChanneledElement — 'fire'|'earth'|'water'|'air'|null for Elemental Incarnation
  */
-function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle }) {
+function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle, wingsOfLightProps, activeChanneledElement, stressMaxed }) {
   const [openLocal, setOpenLocal] = useState(false);
   const open = openProp !== undefined ? openProp : openLocal;
   const toggle = onToggle ?? (() => setOpenLocal(o => !o));
@@ -585,8 +597,14 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
       >
         {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
         <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{feature.name}</span>
+        {/* Elemental Incarnation: channeling indicator in header */}
+        {activeChanneledElement && (
+          <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300 font-semibold">
+            {activeChanneledElement === 'fire' ? '🔥' : activeChanneledElement === 'earth' ? '🪨' : activeChanneledElement === 'water' ? '💧' : '💨'} {activeChanneledElement.charAt(0).toUpperCase() + activeChanneledElement.slice(1)}
+          </span>
+        )}
         {/* Active feature indicator in header */}
-        {action.isActive && !open && (
+        {action.isActive && !open && !activeChanneledElement && (
           <span className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
             action.frequency
               ? isUsed
@@ -618,9 +636,45 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
       </button>
 
       {/* ── Widgetry: always visible ── */}
-      {(subFeatures.length >= 2 || (action.isActive && subFeatures.length < 2) || passiveStats.length > 0 || (!action.isActive && passiveStats.length === 0 && onFeatureUse) || !!rangerFocusToggle) && (
+      {(subFeatures.length >= 2 || (action.isActive && subFeatures.length < 2) || passiveStats.length > 0 || (!action.isActive && passiveStats.length === 0 && onFeatureUse) || !!rangerFocusToggle || !!wingsOfLightProps) && (
         <div className="px-2 pb-2 pt-1 border-t border-slate-700 space-y-1.5">
-          {subFeatures.length >= 2 && (
+          {subFeatures.length >= 2 && feature.name === 'Elemental Incarnation' && subFeatures.length === 4 && (
+            <div className="flex flex-wrap gap-1.5">
+              {subFeatures.map((sub, i) => {
+                const Icon = ELEMENT_ICONS[sub.name] || Zap;
+                const isActive = !!activeChanneledElement && sub.name.toLowerCase() === activeChanneledElement;
+                const cantUse = isUsed || (stressMaxed && !isActive);
+                const chip = (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={cantUse}
+                    onClick={(e) => { e.stopPropagation(); if (onFeatureUse && !cantUse) onFeatureUse(feature, sub); }}
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
+                      isActive
+                        ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
+                        : cantUse
+                          ? 'border-slate-600/50 bg-slate-800/30 text-slate-500 opacity-60 cursor-not-allowed'
+                          : 'border-amber-700/50 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600/70 cursor-pointer'
+                    }`}
+                    aria-label={`Channel ${sub.name}`}
+                  >
+                    <Icon size={12} className="shrink-0" />
+                    <span>{sub.name}</span>
+                  </button>
+                );
+                return (
+                  <Tooltip key={i} content={<MarkdownText text={sub.description || ''} className="text-[11px] leading-relaxed dh-md" />} placement="bottom">
+                    {chip}
+                  </Tooltip>
+                );
+              })}
+              {stressMaxed && !activeChanneledElement && (
+                <p className="text-[10px] text-orange-500/70 italic">Cannot channel — Stress is full</p>
+              )}
+            </div>
+          )}
+          {subFeatures.length >= 2 && !(feature.name === 'Elemental Incarnation' && subFeatures.length === 4) && (
             <div className="space-y-1">
               {subFeatures.map((sub, i) => (
                 <SubFeatureCard
@@ -628,6 +682,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
                   sub={sub}
                   onUse={onFeatureUse && !isUsed ? () => onFeatureUse(feature, sub) : undefined}
                   disabled={isUsed}
+                  isActive={!!activeChanneledElement && sub.name.toLowerCase() === activeChanneledElement}
                 />
               ))}
               {action.frequency && isUsed && (
@@ -641,7 +696,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           {action.isActive && subFeatures.length < 2 && (
             <div className="pt-1 border-t border-slate-700/60 space-y-1">
               <CostBadgeStrip action={action} />
-              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' ? (
+              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' && !wingsOfLightProps ? (
                 isUsed ? (
                   <p className="text-[10px] text-slate-500 italic">
                     Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
@@ -672,6 +727,35 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
             >
               Use on next attack
             </button>
+          )}
+
+          {wingsOfLightProps && (
+            <div className="pt-1 border-t border-slate-700/60 space-y-1.5">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!wingsOfLightProps.flying}
+                  onChange={(e) => wingsOfLightProps.onFlyingChange(e.target.checked)}
+                  className="rounded border-slate-600"
+                />
+                <span className="text-[10px] font-medium text-slate-300">Flying</span>
+              </label>
+              {wingsOfLightProps.flying && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); wingsOfLightProps.onPickUpCarry?.(); }}
+                  disabled={!wingsOfLightProps.canPickUpCarry}
+                  title={wingsOfLightProps.canPickUpCarry ? 'Mark 1 Stress when GM acknowledges' : 'No empty stress boxes'}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                    wingsOfLightProps.canPickUpCarry
+                      ? 'border-amber-600/60 text-amber-200 hover:bg-amber-900/40 bg-amber-950/30'
+                      : 'border-slate-600/50 text-slate-500 opacity-60 cursor-not-allowed'
+                  }`}
+                >
+                  Pick up and carry
+                </button>
+              )}
+            </div>
           )}
 
           {passiveStats.length > 0 && (
@@ -853,6 +937,7 @@ export function CharacterDefenseRow({ el }) {
   const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
   const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
   const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + bfEvasionMod;
+  const earthBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
   const evasionSources = [];
   if (wm.evasion) evasionSources.push(...(wm.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
   if (am.evasion) evasionSources.push(...(am.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
@@ -897,9 +982,16 @@ export function CharacterDefenseRow({ el }) {
         )}
         {thresholds && (
           <div className="text-slate-400">
-            Thresholds: <span className="text-yellow-300 font-semibold">{thresholds.major}</span>
+            Thresholds:{' '}
+            {earthBonus > 0 ? (
+              <><span className="text-yellow-300/50 font-semibold">{thresholds.major - earthBonus}</span><span className="text-slate-500"> +{earthBonus} =</span>{' '}</>
+            ) : null}
+            <span className="text-yellow-300 font-semibold">{thresholds.major}</span>
             <span className="text-slate-500"> / </span>
             <span className={`font-semibold ${wm.severeThreshold ? 'text-amber-300' : 'text-red-300'}`} title={severeModTooltip || undefined}>
+              {earthBonus > 0 ? (
+                <><span className="opacity-50">{thresholds.severe - earthBonus}</span><span className="text-slate-500 font-normal"> +{earthBonus} =</span>{' '}</>
+              ) : null}
               {thresholds.severe}{wm.severeThreshold ? <span className="text-[10px] text-amber-400"> ({wm.severeThreshold > 0 ? '+' : ''}{wm.severeThreshold})</span> : null}
             </span>
           </div>
@@ -1463,7 +1555,7 @@ export function CharacterWeaponList({
  *   featureUsage              — { [key]: { used, cycle } } usage state map
  *   currentHope               — for gating the Hope ability button
  */
-export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn }) {
+export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
   const allFeatures = [
@@ -1569,6 +1661,14 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
           const rangerFocusToggle = (f.name === "Ranger's Focus" && el.class === 'Ranger' && updateFn)
             ? { value: !!el.rangerFocusOnNextAttack, onChange: (v) => updateFn(el.instanceId, { rangerFocusOnNextAttack: v }) }
             : undefined;
+          const wingsOfLightProps = (f.name === 'Wings of Light' && (el.subclass === 'Winged Sentinel' || f.source === 'Winged Sentinel') && updateFn && onWingsPickUpCarry)
+            ? {
+                flying: !!el.wingsOfLightFlying,
+                onFlyingChange: (v) => updateFn(el.instanceId, { wingsOfLightFlying: v }),
+                onPickUpCarry: () => onWingsPickUpCarry(el),
+                canPickUpCarry: (el.currentStress ?? 0) < (el.maxStress ?? 0),
+              }
+            : undefined;
           return (
             <FeatureChip
               key={key}
@@ -1579,6 +1679,9 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
               featureUsage={featureUsage}
               featureKey={key}
               rangerFocusToggle={rangerFocusToggle}
+              wingsOfLightProps={wingsOfLightProps}
+              activeChanneledElement={f.name === 'Elemental Incarnation' ? (activeChanneledElement ?? null) : undefined}
+              stressMaxed={f.name === 'Elemental Incarnation' ? (el.currentStress ?? 0) >= (el.maxStress ?? 6) : undefined}
             />
           );
         })}

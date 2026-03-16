@@ -740,6 +740,7 @@ const CHARACTER_RUNTIME_KEYS_DB = [
   'reinforcedActive', 'selectedExperienceIndex',
   'featureUsage', 'activeModifiers', 'focusTargetId', 'rangerFocusOnNextAttack', 'companion',
   'activeBeastform', 'selectedBeastformAdvantage', '_fearlessToggle',
+  'wingsOfLightFlying', 'activeChanneledElement',
 ];
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 

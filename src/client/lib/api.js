@@ -524,18 +524,20 @@ export const postTableOp = async (op) => {
 /**
  * GM: acknowledge or cancel a banner in the server-authoritative queue.
  * action: 'acknowledge' | 'cancel'
- * Best-effort — errors are swallowed by caller.
+ * options: { wingsOfLightD8?: true } — when acknowledge and wingsOfLightD8, server deducts Hope, rolls d8, returns wingsOfLightD8Result.
+ * Returns the response JSON when options are passed (so caller can read wingsOfLightD8Result); otherwise best-effort, errors swallowed.
  */
-export const postBannerAck = async (bannerId, action) => {
+export const postBannerAck = async (bannerId, action, options = {}) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    await fetch('/api/room/my/banner-ack', {
+    const res = await fetch('/api/room/my/banner-ack', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, action }),
+      body: JSON.stringify({ bannerId, action, ...options }),
     });
-  } catch { /* best-effort */ }
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
 };
 
 /**
@@ -625,6 +627,65 @@ export const postBannerRangerFocusRerollRequest = async (gmUid, bannerId) => {
     });
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
+};
+
+/**
+ * GM: Wings of Light — spend 1 Hope and roll 1d8, patch banner with _wingsOfLightAddD8 and _wingsOfLightD8Result.
+ * Returns { ok: true, d8Result: number } on success.
+ */
+export const postBannerWingsD8 = async (bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-wings-d8', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * Player: Wings of Light — toggle _wingsOfLightAddD8 on a banner (shared state; no Hope spend or roll).
+ * Returns { ok: true, value: boolean } on success.
+ */
+export const postBannerWingsD8Toggle = async (gmUid, bannerId, value) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-wings-d8-toggle`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, value }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM or player: toggle Hold Them Off (3 Hope, select up to 3 targets) on a banner.
+ * Syncs _holdThemOffActive to the roll; all clients receive updated banner via subscription.
+ * Returns { ok: true, active: boolean } on success.
+ */
+export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-hold-them-off`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, active }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    console.error('Hold Them Off toggle failed:', err);
+    return undefined;
+  }
 };
 
 /**

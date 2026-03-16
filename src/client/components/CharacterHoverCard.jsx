@@ -418,7 +418,12 @@ export function CharacterHoverCard({
     }
 
     const activeDesc = subFeature ? (subFeature.description || '') : (feature.description || '');
+    const parentAction = subFeature ? parseFeatureAction(feature.description || '') : null;
     const action = subFeature ? parseFeatureAction(subFeature.description || '') : parseFeatureAction(feature.description || '');
+    if (parentAction) {
+      if (action.stressCost === 0) action.stressCost = parentAction.stressCost;
+      if (action.hopeCost === 0) action.hopeCost = parentAction.hopeCost;
+    }
     // Sub-feature cost may come from name, e.g. "Hold Them Off (3 Hope)" — prefer that over re-parsed description
     if (subFeature && typeof subFeature.hopeCost === 'number') action.hopeCost = subFeature.hopeCost;
     const featName = subFeature ? subFeature.name : feature.name;
@@ -474,7 +479,8 @@ export function CharacterHoverCard({
       : null;
     if (featureInputPending) setFeatureInputPending(null);
 
-    const hasDice = action.dice.length > 0 || action.spellcastDC != null;
+    const forceAction = classFeat?.forceActionNotificationFeatures?.includes(feature.name);
+    const hasDice = !forceAction && (action.dice.length > 0 || action.spellcastDC != null);
     // Only add experience Hope cost when this feature use involves a roll (experience is used in the roll)
     const rollMeta = {
       _featureUse: true,
@@ -542,6 +548,10 @@ export function CharacterHoverCard({
     let rollText = buildTraitRollText(el.name, traitKey, effectiveScore, activeExp?.name);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
+    }
+    // Air (Elemental Incarnation): auto-apply d6 advantage on Agility rolls
+    if (traitKey === 'agility' && el.activeChanneledElement === 'air') {
+      rollText += ' Air [d6]';
     }
     const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
     if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
@@ -642,12 +652,11 @@ export function CharacterHoverCard({
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: rollMeta._weaponRangeFt,
         retractingClaws: rollMeta._retractingClaws,
-      });
-      if (validTargets?.length > 0) {
-        const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
-        setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
-        return;
-      }
+      }) ?? [];
+      const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+      setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
+      if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
+      return;
     }
     sendWeaponRoll(rollText, displayName, rollMeta, opts);
     if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
@@ -773,12 +782,11 @@ export function CharacterHoverCard({
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: beastformRollMeta._weaponRangeFt,
         retractingClaws: false,
-      });
-      if (validTargets?.length > 0) {
-        const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
-        setTargetMenuPending({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
-        return;
-      }
+      }) ?? [];
+      const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+      setTargetMenuPending({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
+      if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
+      return;
     }
     onRoll(rollText, displayName, beastformRollMeta);
   } : undefined;
@@ -861,9 +869,13 @@ export function CharacterHoverCard({
             className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
             style={{ top, left, minWidth: '140px', maxWidth: '220px' }}
           >
-            <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Choose target</div>
+            <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">
+              {targetMenuPending.validTargets.length > 0 ? 'Choose target' : 'No targets in range'}
+            </div>
             <div className="space-y-1">
-              {targetMenuPending.validTargets.map((t) => {
+              {targetMenuPending.validTargets.length === 0 ? (
+                <p className="text-[11px] text-slate-400 italic px-1 py-1">No valid targets are in range of this attack.</p>
+              ) : targetMenuPending.validTargets.map((t) => {
                 const sum = formatTargetSummary(t, { hideMax: isPlayer });
                 return (
                   <button
@@ -1087,6 +1099,16 @@ export function CharacterHoverCard({
           currentHope={currentHope}
           beastformProps={beastformProps}
           updateFn={updateFn}
+          activeChanneledElement={el.activeChanneledElement ?? null}
+          onWingsPickUpCarry={onActionNotification ? (characterEl) => onActionNotification({
+            _action: true,
+            _featureName: 'Wings of Light',
+            _wingsOfLightPickUpCarry: true,
+            _attackerInstanceId: characterEl.instanceId,
+            rollUser: characterEl.name,
+            actionName: 'Wings of Light: Pick up and carry',
+            tags: [{ name: 'Wings of Light', text: 'Mark 1 Stress' }],
+          }) : undefined}
         />
 
         {/* ── Domain Cards ── */}

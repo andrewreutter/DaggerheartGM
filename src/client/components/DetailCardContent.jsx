@@ -393,7 +393,7 @@ export function AdversaryCardContent({
                 ? 'border-yellow-500'
                 : 'border-transparent'
             } ${onRollAttack ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/atk' : ''}`}
-            onClick={onRollAttack ? () => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: boostedDamage(el.attack.damage, dmgBoost), trait: el.attack.trait }) : undefined}
+            onClick={onRollAttack ? (e) => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: boostedDamage(el.attack.damage, dmgBoost), trait: el.attack.trait }, e) : undefined}
             title={onRollAttack ? 'Roll to dice room' : undefined}
           >
             <span className="font-bold text-slate-200">{el.attack.name}:</span>
@@ -430,13 +430,13 @@ export function AdversaryCardContent({
                     ? 'border-yellow-500'
                     : 'border-transparent'
                 } ${isRollable ? 'cursor-pointer hover:bg-slate-800/40 py-0.5 pr-1 group/feat' : ''}`}
-                onClick={isRollable ? () => {
+                onClick={isRollable ? (e) => {
                   if (attackMatch) {
-                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: boostedDamage(attackMatch[3], dmgBoost), trait: attackMatch[4] });
+                    onRollAttack({ name: feat.name, modifier: parseInt(attackMatch[1]), range: attackMatch[2], damage: boostedDamage(attackMatch[3], dmgBoost), trait: attackMatch[4] }, e);
                   } else if (forceAttack) {
-                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: boostedDamage(el.attack?.damage, dmgBoost), trait: el.attack?.trait });
+                    onRollAttack({ name: feat.name, modifier: el.attack?.modifier ?? 0, range: el.attack?.range || 'Melee', damage: boostedDamage(el.attack?.damage, dmgBoost), trait: el.attack?.trait }, e);
                   } else {
-                    onRollAttack({ name: feat.name, patterns: dicePatterns });
+                    onRollAttack({ name: feat.name, patterns: dicePatterns }, e);
                   }
                 } : undefined}
                 title={isRollable ? 'Roll to dice room' : undefined}
