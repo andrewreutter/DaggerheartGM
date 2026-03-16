@@ -12,6 +12,8 @@ export const CHARACTER_RUNTIME_KEYS = [
   // Feature interaction state
   'featureUsage',      // { [featureKey]: { used: boolean, cycle: 'session'|'rest'|'longRest' } }
   'activeModifiers',   // [{ id, name, dice?, value?, mode?, bonus?, trait?, type, refreshOn }]
+  'focusTargetId',     // Ranger's Focus: instanceId of the currently focused adversary
+  'companion',         // Beastbound: { name, species, evasion, maxStress, currentStress }; table stress preserved
 ];
 
 export const RUNTIME_KEYS = [
@@ -29,6 +31,7 @@ export const RUNTIME_KEYS = [
   'abilityIds', 'abilities', 'baseTraits', 'advancements', 'proficiency',
   'background', 'connectionText', 'hopeFeature',
   'weaponMods', 'armorMods',
+  'difficultyMod',     // Make a Scene: cumulative difficulty modifier applied by Bard feature
 ];
 
 /**
@@ -69,8 +72,15 @@ export function applyTableOp(op, state) {
         activeElements: activeElements.map(el => {
           if (el.elementType !== 'character' || el.id !== op.characterId) return el;
           const runtime = {};
-          CHARACTER_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
-          return { ...op.newBaseData, ...runtime, elementType: 'character' };
+          CHARACTER_RUNTIME_KEYS.forEach(k => {
+            if (k === 'companion') return;
+            if (k in el) runtime[k] = el[k];
+          });
+          const merged = { ...op.newBaseData, ...runtime, elementType: 'character' };
+          if (op.newBaseData.companion || el.companion) {
+            merged.companion = { ...(op.newBaseData.companion || {}), currentStress: el.companion?.currentStress };
+          }
+          return merged;
         }),
       };
     }

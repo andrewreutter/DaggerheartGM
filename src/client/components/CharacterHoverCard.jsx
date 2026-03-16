@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   AlertCircle, Sparkles, Heart, Shield,
   ChevronDown, ChevronRight, ExternalLink, RefreshCw, Bug, Pencil,
@@ -21,8 +21,9 @@ import {
 } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
-import { weaponFeatures } from '../../features/registry.js';
-import { runPipelineHook } from '../../features/hooks.js';
+import { weaponFeatures, classFeatures } from '../../features/registry.js';
+import { runPipelineHook, runHook } from '../../features/hooks.js';
+import { wrapEntity } from '../../features/entity.js';
 
 // formatGold is re-exported from CharacterDisplay; re-export it for callers that
 // already import it from here (keeps backwards-compatibility during migration).
@@ -242,11 +243,18 @@ export function CharacterHoverCard({
   onDebugMouseEnter,
   onDebugMouseLeave,
   onActionNotification,
+  activeElements,
+  mapConfig,
+  hideCompanionSection = false,
+  pendingResourceCosts = {},
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
   const [selectedRollModIndex, setSelectedRollModIndex] = useState(null);
   const [selectedModId, setSelectedModId] = useState(null);
+  // For features that requiresInputForFeature (e.g. Sorcerer Channel Raw Power)
+  const [featureInputPending, setFeatureInputPending] = useState(null); // { feature, subFeature, action, spec }
+  const [featureInputValue, setFeatureInputValue] = useState('');
 
   const traits = el.traits || {};
   const hasDaggerstack = !!el.daggerstackUrl;
@@ -254,6 +262,18 @@ export function CharacterHoverCard({
   const activeRollMod = selectedRollModIndex != null ? rollModifiers[selectedRollModIndex] : null;
   const activeModifiers = el.activeModifiers || [];
   const selectedMod = selectedModId != null ? activeModifiers.find(m => m.id === selectedModId) : null;
+
+  // Compute modifier eligibility for class features that auto-enable/disable chips
+  // (e.g. Rogue's Sneak Attack requires Cloaked or ally-in-Melee proximity).
+  const modifierEligibility = useMemo(() => {
+    const classFeat = classFeatures[el.class];
+    if (!classFeat?.computeModifierEligibility) return {};
+    return classFeat.computeModifierEligibility({
+      el,
+      activeElements: activeElements ?? [],
+      mapConfig: mapConfig ?? {},
+    }) || {};
+  }, [el, activeElements, mapConfig]);
 
   // ── Feature roll text builder ────────────────────────────────────────────────
   // Builds the roll text string for a feature that has dice or a spellcast roll.
@@ -303,6 +323,19 @@ export function CharacterHoverCard({
   // ── Feature use handler ──────────────────────────────────────────────────────
   // Called when user clicks Use on a feature or a SubFeatureCard.
   const handleFeatureUse = onRoll || onActionNotification ? (feature, subFeature = null) => {
+    // Sorcerer Channel Raw Power (and any future class feature) requires an input value
+    // before dispatch. Show an inline prompt and defer actual dispatch until submitted.
+    const classFeat = classFeatures[el.class];
+    const requiredInputSpec = classFeat?.requiresInputForFeature?.[feature.name];
+    if (requiredInputSpec && !featureInputPending) {
+      const action = subFeature
+        ? parseFeatureAction(subFeature.description || '')
+        : parseFeatureAction(feature.description || '');
+      setFeatureInputPending({ feature, subFeature, action, spec: requiredInputSpec });
+      setFeatureInputValue(String(requiredInputSpec.default ?? 1));
+      return;
+    }
+
     const activeDesc = subFeature ? (subFeature.description || '') : (feature.description || '');
     const action = subFeature ? parseFeatureAction(subFeature.description || '') : parseFeatureAction(feature.description || '');
     const featName = subFeature ? subFeature.name : feature.name;
@@ -315,6 +348,28 @@ export function CharacterHoverCard({
       ...(el.communityFeatures || []),
     ].findIndex(f => f.name === feature.name);
     const featureKey = `${feature.name}-${featureKeyIdx >= 0 ? featureKeyIdx : 0}`;
+
+    // ── Prayer Dice: roll Nd4, chips are created from results on banner dismiss ──
+    // Bypass the target-picker path entirely — the description mentions "ally" but
+    // clicking Prayer Dice is just rolling, not spending a specific die yet.
+    if (feature.name === 'Prayer Dice') {
+      const spellcastCount = (el.spellcastTrait && el.traits?.[el.spellcastTrait])
+        ? el.traits[el.spellcastTrait]
+        : 2;
+      const diceExprs = Array(Math.max(1, spellcastCount)).fill('[d4]').join(' ');
+      const rollText = `${el.name} Prayer Dice ${diceExprs}`;
+      const displayName = `${el.name} Prayer Dice`;  // shown as banner header
+      const prayerRollMeta = {
+        _featureUse: true,
+        _isPrayerDiceRoll: true,
+        _attackerInstanceId: el.instanceId,
+        _featureName: 'Prayer Dice',
+        _featureKey: featureKey,
+        _frequency: 'session',
+      };
+      onRoll?.(rollText, displayName, prayerRollMeta);
+      return;
+    }
 
     // ── Feature-specific modifier additions ──────────────────────────────────
     // Rally: give all party members a Rally Die
@@ -341,6 +396,12 @@ export function CharacterHoverCard({
       });
     }
 
+    // _inputValue carries card level / numeric inputs (e.g. Sorcerer Channel Raw Power)
+    const inputVal = featureInputPending?.feature?.name === feature.name
+      ? (parseFloat(featureInputValue) || (featureInputPending.spec?.default ?? 1))
+      : null;
+    if (featureInputPending) setFeatureInputPending(null);
+
     const rollMeta = {
       _featureUse: true,
       _attackerInstanceId: el.instanceId,
@@ -353,22 +414,19 @@ export function CharacterHoverCard({
       _frequency: action.frequency,
       _featureKey: featureKey,
       _targetType: action.targetType,
+      ...(inputVal !== null ? { _inputValue: inputVal } : {}),
       ...(_addModifiers.length > 0 ? { _addModifiers, _distributeModifiersToAll } : {}),
+      ...(el.selectedExperienceIndex != null ? { _experienceHopeCost: 1 } : {}),
     };
 
     const hasDice = action.dice.length > 0 || action.spellcastDC != null;
 
     if (hasDice) {
-      // Dice roll path
+      // Dice roll path — experience Hope cost applied on GM ack, not here
       const rollText = buildFeatureRollText(feature, subFeature, action);
       if (!rollText) return;
       const displayName = subFeature ? `${el.name} ${feature.name}: ${subFeature.name}` : `${el.name} ${feature.name}`;
       onRoll?.(rollText, displayName, rollMeta);
-      // Consume selected experience (if any) and selected modifier
-      if (el.selectedExperienceIndex != null) {
-        if (onSpendHope) onSpendHope(el.instanceId);
-        else updateFn?.(el.instanceId, { selectedExperienceIndex: null });
-      }
       if (selectedMod) setSelectedModId(null);
     } else {
       // Action notification path (costs but no dice, or comms-only)
@@ -403,14 +461,11 @@ export function CharacterHoverCard({
     const displayName = `${el.name} ${TRAIT_FULL[traitKey]}`;
     const traitRollMeta = { _attackerInstanceId: el.instanceId };
     if (selectedMod?.consumeOnUse) traitRollMeta._usedModifierId = selectedMod.id;
+    if (el.selectedExperienceIndex != null) traitRollMeta._experienceHopeCost = 1;
     // #region agent log
     console.log('[3e4b6d] handleTraitClick rollMeta:', JSON.stringify(traitRollMeta), 'selectedMod:', selectedMod ? { id: selectedMod.id, consumeOnUse: selectedMod.consumeOnUse } : null);
     // #endregion
     onRoll(rollText, displayName, traitRollMeta);
-    if (activeExp) {
-      if (onSpendHope) onSpendHope(el.instanceId);
-      else updateFn(el.instanceId, { selectedExperienceIndex: null });
-    }
     if (selectedMod) setSelectedModId(null);
   } : undefined;
 
@@ -433,11 +488,8 @@ export function CharacterHoverCard({
     const displayName = `${el.name} Spellcast`;
     const spellcastRollMeta = { _attackerInstanceId: el.instanceId };
     if (selectedMod?.consumeOnUse) spellcastRollMeta._usedModifierId = selectedMod.id;
+    if (el.selectedExperienceIndex != null) spellcastRollMeta._experienceHopeCost = 1;
     onRoll(rollText, displayName, spellcastRollMeta);
-    if (activeExp) {
-      if (onSpendHope) onSpendHope(el.instanceId);
-      else updateFn(el.instanceId, { selectedExperienceIndex: null });
-    }
     if (selectedMod) setSelectedModId(null);
   } : undefined;
 
@@ -462,11 +514,8 @@ export function CharacterHoverCard({
     const displayName = `${el.name} ${weapon.name}`;
     rollMeta._attackerInstanceId = el.instanceId;
     if (selectedMod?.consumeOnUse) rollMeta._usedModifierId = selectedMod.id;
+    if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
     onRoll(rollText, displayName, rollMeta);
-    if (activeExp) {
-      if (onSpendHope) onSpendHope(el.instanceId);
-      else updateFn(el.instanceId, { selectedExperienceIndex: null });
-    }
     if (selectedMod) setSelectedModId(null);
     if (opts.devastating) {
       const maxStress = el.maxStress ?? 6;
@@ -555,6 +604,44 @@ export function CharacterHoverCard({
           onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
           selectedModId={selectedModId}
           onSelectMod={onRoll ? setSelectedModId : undefined}
+          modifierEligibility={modifierEligibility}
+          onUseMod={updateFn ? (mod) => {
+            // clearStress mode (existing behavior)
+            if (mod.mode === 'clearStress' && mod.dice) {
+              const stress = Math.max(0, (el.currentStress ?? 0) - 1);
+              updateFn(el.instanceId, { currentStress: stress });
+              const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+              updateFn(el.instanceId, { activeModifiers: kept });
+              return;
+            }
+            // Prayer Die chip: broadcast usage message with the pre-rolled value, then remove
+            if (mod.name === 'Prayer Die') {
+              onActionNotification?.({
+                _action: true,
+                rollUser: el.name,
+                actionName: 'Prayer Die',
+                actionText: `Uses a Prayer Die — value **${mod.value}**.`,
+                tags: [],
+              });
+              const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+              updateFn(el.instanceId, { activeModifiers: kept });
+            }
+          } : undefined}
+          onUseMode={updateFn ? (mod, mode) => {
+            // Dispatch class feature onModifierUsed hook
+            if (el.class) {
+              const selfEl = wrapEntity(el, updateFn);
+              runHook(classFeatures, [el.class], 'onModifierUsed', {
+                modifier: mod,
+                mode,
+                selfEl,
+                updateActiveElement: updateFn,
+              });
+            }
+            // Consume the modifier chip after use
+            const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+            updateFn(el.instanceId, { activeModifiers: kept });
+          } : undefined}
         />
 
         {/* ── Defense ── */}
@@ -564,21 +651,27 @@ export function CharacterHoverCard({
         {showResources && (
           <Section label="Resources">
             <div className="space-y-1.5">
-              {(() => { const maxHope = el.maxHope ?? 6; return maxHope > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <Sparkles size={11} className="text-amber-400 shrink-0" />
-                  <span className="text-[11px] text-slate-400 w-10 shrink-0">Hope</span>
-                  <CheckboxTrack
-                    total={maxHope}
-                    filled={el.hope ?? maxHope}
-                    onSetFilled={(h) => updateFn(el.instanceId, { hope: h })}
-                    fillColor="bg-amber-400"
-                    label="Hope"
-                    verbs={['Gain', 'Spend']}
-                  />
-                  <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.hope ?? maxHope}/{maxHope}</span>
-                </div>
-              ); })()}
+              {(() => {
+                const maxHope = el.maxHope ?? 6;
+                const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
+                const currentHope = el.hope ?? maxHope;
+                return maxHope > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles size={11} className="text-amber-400 shrink-0" />
+                    <span className="text-[11px] text-slate-400 w-10 shrink-0">Hope</span>
+                    <CheckboxTrack
+                      total={maxHope}
+                      filled={Math.max(0, currentHope - hopePending)}
+                      pendingFilled={hopePending}
+                      onSetFilled={(h) => updateFn(el.instanceId, { hope: h })}
+                      fillColor="bg-amber-400"
+                      label="Hope"
+                      verbs={['Gain', 'Spend']}
+                    />
+                    <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.hope ?? maxHope}/{maxHope}</span>
+                  </div>
+                );
+              })()}
               {(el.maxArmor || 0) > 0 && (
                 <div className="flex items-center gap-1.5">
                   <Shield size={11} className="text-cyan-500 shrink-0" />
@@ -586,6 +679,7 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxArmor}
                     filled={el.currentArmor || 0}
+                    pendingFilled={pendingResourceCosts[el.instanceId]?.armorMark ?? 0}
                     onSetFilled={(v) => {
                       const upd = { currentArmor: v };
                       if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
@@ -620,6 +714,7 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxStress}
                     filled={el.currentStress || 0}
+                    pendingFilled={pendingResourceCosts[el.instanceId]?.stress ?? 0}
                     onSetFilled={(s) => updateFn(el.instanceId, { currentStress: s })}
                     fillColor="bg-orange-500"
                     label="Stress"
@@ -667,8 +762,8 @@ export function CharacterHoverCard({
         {/* ── Domain Cards ── */}
         <CharacterAbilityList el={el} />
 
-        {/* ── Companion ── */}
-        <CharacterCompanion el={el} />
+        {/* ── Companion (hidden when shown as second card in overlay) ── */}
+        {!hideCompanionSection && <CharacterCompanion el={el} />}
 
         {/* ── Description ── */}
         {el.description && (
@@ -701,6 +796,38 @@ export function CharacterHoverCard({
             </div>
           </div>
         ))}
+      </div>
+    )}
+
+    {/* ── Feature input overlay (e.g. Sorcerer Channel Raw Power card level) ── */}
+    {featureInputPending && (
+      <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/80 rounded-xl">
+        <div className="bg-slate-900 border border-amber-600/60 rounded-lg p-4 shadow-2xl w-56 text-center">
+          <div className="text-[11px] font-bold text-amber-300 mb-1">{featureInputPending.feature.name}</div>
+          {featureInputPending.subFeature && (
+            <div className="text-[10px] text-slate-400 mb-2">{featureInputPending.subFeature.name}</div>
+          )}
+          <label className="text-[10px] text-slate-400 block mb-1">{featureInputPending.spec.label}</label>
+          <input
+            type="number"
+            min={featureInputPending.spec.min ?? 1}
+            max={featureInputPending.spec.max ?? 10}
+            value={featureInputValue}
+            onChange={e => setFeatureInputValue(e.target.value)}
+            className="w-full text-center bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white mb-3 focus:outline-none focus:border-amber-500"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFeatureInputPending(null)}
+              className="flex-1 px-2 py-1 rounded text-[11px] border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors"
+            >Cancel</button>
+            <button
+              onClick={() => handleFeatureUse(featureInputPending.feature, featureInputPending.subFeature)}
+              className="flex-1 px-2 py-1 rounded text-[11px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 transition-colors"
+            >Use</button>
+          </div>
+        </div>
       </div>
     )}
 

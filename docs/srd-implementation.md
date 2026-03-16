@@ -16,7 +16,7 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display            | **Done**    |
 | [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 22/38 automated    | **Partial** |
 | [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated    | **Partial** |
-| [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable (Phase 1) | **Partial** |
+| [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 6/9 Phase 2 hooks | **Partial** |
 | [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 0/18 features auto | **Display** |
 | [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 0/36 features auto | **Display** |
 | [Communities](#communities-9)             | 9     | N/A       | Done        | 0/9 features auto  | **Display** |
@@ -273,18 +273,18 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 | Class        | Class Features                                  | Hope Feature                                         | Feature Status                                                    |
 | ------------ | ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| **Bard**     | Rally                                           | Make a Scene (3 Hope: Distract target -2 Difficulty) | **Partial** — clickable; Rally adds modifier chips; Make a Scene deducts Hope |
+| **Bard**     | Rally                                           | Make a Scene (3 Hope: Distract target -2 Difficulty) | **Partial** — clickable; Rally adds modifier chips; Make a Scene sets `difficultyMod` on target via ActionBanner target picker + `onFeatureActivated` hook; badge shown on adversary card |
 | **Druid**    | Beastform, Wildtouch                            | Evolution (3 Hope: free Beastform + trait boost)     | **Partial** — Wildtouch announce; Beastform announce (full mechanics deferred); Evolution deducts Hope |
-| **Guardian** | Unstoppable                                     | Frontline Tank (3 Hope: clear 2 Armor Slots)         | **Partial** — Unstoppable announce (once/long rest); Frontline Tank deducts Hope + clears Armor |
-| **Ranger**   | Ranger's Focus                                  | Hold Them Off (3 Hope: attack 2 extra targets)       | **Partial** — Ranger's Focus rolls dice; Hold Them Off deducts Hope |
-| **Rogue**    | Cloaked, Sneak Attack                           | Rogue's Dodge (3 Hope: +2 Evasion)                   | **Partial** — all clickable; Sneak Attack chip in modifier bin; Rogue's Dodge adds modifier chip |
-| **Seraph**   | Prayer Dice                                     | Life Support (3 Hope: clear 1 HP on ally)            | **Partial** — Prayer Dice rolls d4s; Life Support deducts Hope |
-| **Sorcerer** | Arcane Sense, Minor Illusion, Channel Raw Power | Volatile Magic (3 Hope: reroll damage dice)          | **Partial** — Arcane Sense announce; Minor Illusion rolls Spellcast; Channel Raw Power sub-features; Volatile Magic deducts Hope |
+| **Guardian** | Unstoppable                                     | Frontline Tank (3 Hope: clear 2 Armor Slots)         | **Partial** — Unstoppable die chip: `onHpDealt` ratchets d4→d6→d8→d10; `modifyPreThresholdDamage` reduces incoming damage by one tier while chip active; Frontline Tank deducts Hope + clears Armor |
+| **Ranger**   | Ranger's Focus                                  | Hold Them Off (3 Hope: attack 2 extra targets)       | **Partial** — Ranger's Focus: `onFeatureActivated` sets `focusTargetId`; `onHpDealt` marks Stress when attacker hits focus target; "Focus" badge on adversary card; Hold Them Off deducts Hope |
+| **Rogue**    | Cloaked, Sneak Attack                           | Rogue's Dodge (3 Hope: +2 Evasion)                   | **Partial** — Sneak Attack: `computeModifierEligibility` auto-enables chip when Cloaked or ally within Melee of adversary; Rogue's Dodge: `onDamageReceived` auto-clears modifier chip when Rogue takes HP damage |
+| **Seraph**   | Prayer Dice                                     | Life Support (3 Hope: clear 1 HP on ally)            | **Partial** — Prayer Dice chips have `usageModes: ['roll','gainHope']`; ModifierChip shows mode buttons; `onModifierUsed` immediately gains Hope equal to die value; Life Support deducts Hope |
+| **Sorcerer** | Arcane Sense, Minor Illusion, Channel Raw Power | Volatile Magic (3 Hope: reroll damage dice)          | **Partial** — Channel Raw Power: `requiresInputForFeature` prompts for card level before dispatch; inline number input overlay in CharacterHoverCard; `onFeatureActivated` gains Hope or adds +2×level damage modifier; Volatile Magic deducts Hope |
 | **Warrior**  | Attack of Opportunity, Combat Training          | No Mercy (3 Hope: +1 attack until rest)              | **Partial** — Attack of Opportunity sub-features; Combat Training passive badge; No Mercy adds modifier chip |
 | **Wizard**   | Prestidigitation, Strange Patterns              | Not This Time (3 Hope: force adversary reroll)       | **Partial** — all clickable; Not This Time button on adversary ResultBanners |
 
 
-**Phase 2 (Close all gaps to 5/5):** See `.cursor/plans/clickable_character_features_6686c77f.plan.md`.
+**Phase 2 complete.** All class hooks (Bard, Guardian, Ranger, Rogue, Seraph, Sorcerer) implemented via the IoC class feature system. See `.cursor/plans/clickable_character_features_6686c77f.plan.md` for Phase 3 roadmap.
 
 ---
 
@@ -301,7 +301,7 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 | **Warden of Renewal**      | Druid    | Clarity of Nature, Regeneration, Defender, Regenerative Reach, Warden's Protection        | Display                                  |
 | **Stalwart**               | Guardian | Unwavering, Iron Will, Undaunted, Loyal Protector, Unrelenting, Partners-in-Arms          | Display                                  |
 | **Vengeance**              | Guardian | At Ease, Revenge, Nemesis, Act of Reprisal                                                | Display                                  |
-| **Beastbound**             | Ranger   | Companion, Advanced Training, Loyal Friend, Expert Training, Battle-Bonded                | Display — Companion is a subsystem       |
+| **Beastbound**             | Ranger   | Companion, Advanced Training, Loyal Friend, Expert Training, Battle-Bonded                | Display + Library edit — Companion: Name/Species editable in form (between Class and Subclass); evasion/maxStress static; companion stress on table card; companion card stacked in Library, second card to right of hover on Game Table |
 | **Wayfinder**              | Ranger   | Ruthless Predator, Path Forward, Apex Predator, Elusive Predator                          | Display                                  |
 | **Nightwalker**            | Rogue    | Shadow Stepper, Fleeting Shadow, Vanishing Act, Dark Cloud, Adrenaline                    | Display                                  |
 | **Syndicate**              | Rogue    | Well-Connected, Reliable Backup, Contacts Everywhere                                      | Display                                  |

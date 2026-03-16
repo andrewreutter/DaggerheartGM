@@ -207,11 +207,9 @@ function getConditionalTagStatus(tag, roll) {
   return null;
 }
 
-function ActionBanner({ roll, onDismiss, disableDismiss }) {
+function ActionBanner({ roll, onDismiss, onCancel, disableDismiss }) {
   const visible = useBannerVisible();
   const displayName = roll.rollUser || roll.characterName || '';
-
-  // Action notifications require explicit acknowledgement — no auto-dismiss.
 
   return (
     <div
@@ -249,12 +247,22 @@ function ActionBanner({ roll, onDismiss, disableDismiss }) {
           </div>
         )}
         {!disableDismiss && (
-          <button
-            onClick={onDismiss}
-            className="w-full px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors"
-          >
-            OK
-          </button>
+          <div className="flex items-center justify-center gap-1.5">
+            <button
+              onClick={onDismiss}
+              className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors"
+            >
+              Acknowledge
+            </button>
+            {onCancel != null && (
+              <button
+                onClick={onCancel}
+                className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -1046,7 +1054,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 key={entry._bannerId}
                 roll={entry.roll}
                 onDismiss={() => dismissBannerById(entry._bannerId)}
-                disableDismiss={false}
+                onCancel={!isPlayer ? () => dismissBannerById(entry._bannerId, { skipComplete: true }) : undefined}
+                disableDismiss={isPlayer}
               />
             ) : (
               <ResultBanner

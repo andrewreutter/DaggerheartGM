@@ -5,6 +5,7 @@ import {
 import { useState } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { effectiveThresholds } from '../lib/helpers.js';
+import { CheckboxTrack } from './DetailCardContent.jsx';
 import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons } from '../lib/character-calc.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 
@@ -710,7 +711,7 @@ export function CharacterDefenseRow({ el }) {
  *   onSelect(i)               — selection callback; when absent, renders static chips
  *   hope / maxHope            — current Hope values for gating
  */
-export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod }) {
+export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility }) {
   const experiences = el.experiences || [];
   const hasRollMods = rollModifiers?.length > 0;
   const activeModifiers = el.activeModifiers || [];
@@ -816,8 +817,10 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
             mod={mod}
             selected={selectedModId === mod.id}
             onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
-            onUse={onUseMod && mod.mode === 'clearStress' ? () => onUseMod(mod) : undefined}
+            onUse={onUseMod && (mod.mode === 'clearStress' || mod.name === 'Prayer Die') ? () => onUseMod(mod) : undefined}
+            onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
             onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
+            eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
           />
         ))}
       </div>
@@ -830,10 +833,23 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
 
 // ─── Modifier chip ─────────────────────────────────────────────────────────────
 
-function ModifierChip({ mod, selected, onSelect, onUse, onRemove }) {
+/**
+ * Modifier chip — renders a single active modifier from the character's modifier bin.
+ *
+ * Props:
+ *   mod         — modifier object { id, name, dice?, value?, bonus?, mode, usageModes?, type, refreshOn }
+ *   selected    — whether the chip is selected for inclusion in the next roll
+ *   onSelect    — toggle selection
+ *   onUse       — called for clearStress mode chips
+ *   onUseMode   — (mode) called when a usageModes button is clicked
+ *   onRemove    — deselect / remove hover
+ *   eligible    — whether the chip is eligible (e.g. Sneak Attack auto-detect); defaults true
+ */
+function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eligible = true }) {
   const isRollMod = mod.mode === 'roll' || (mod.bonus != null && !mod.mode);
   const isClearStress = mod.mode === 'clearStress';
   const isPersistent = mod.type === 'persistent';
+  const hasUsageModes = Array.isArray(mod.usageModes) && mod.usageModes.length > 1;
 
   const baseLabel = mod.name + (mod.dice ? ` (${mod.dice})` : mod.value != null ? ` (${mod.value})` : mod.bonus != null ? ` +${mod.bonus}` : '');
 
@@ -847,14 +863,43 @@ function ModifierChip({ mod, selected, onSelect, onUse, onRemove }) {
   else if (mod.name === 'Dread Visage') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
   else colorCls = selected ? 'bg-sky-800/70 border-sky-500 text-sky-100 ring-1 ring-sky-500/50' : 'bg-sky-950/40 border-sky-700/60 text-sky-300 hover:bg-sky-900/40';
 
-  const clickable = !!(onSelect || onUse);
+  const ineligibleCls = !eligible ? 'opacity-40 cursor-not-allowed' : '';
+  const clickable = !!(onSelect || onUse) && eligible;
+
+  if (hasUsageModes && onUseMode) {
+    const modeLabels = { roll: 'Roll', gainHope: '+Hope', reduceDamage: '-Dmg' };
+    return (
+      <div className={`flex items-center rounded border text-[11px] overflow-hidden ${colorCls.split(' ').filter(c => c.startsWith('border') || c.startsWith('bg')).join(' ')} ${ineligibleCls}`}>
+        <span className="px-1.5 py-0.5 shrink-0">{baseLabel}</span>
+        {mod.usageModes.filter(m => m !== 'roll').map(mode => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onUseMode(mode)}
+            className="px-1.5 py-0.5 border-l border-current/30 text-[9px] font-semibold hover:bg-white/10 transition-colors"
+            title={`Use as: ${modeLabels[mode] ?? mode}`}
+          >
+            {modeLabels[mode] ?? mode}
+          </button>
+        ))}
+        {onSelect && (
+          <button
+            type="button"
+            onClick={() => onSelect()}
+            className="px-1.5 py-0.5 border-l border-current/30 text-[9px] hover:bg-white/10 transition-colors"
+            title="Include in next roll"
+          >Roll</button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <button
       type="button"
-      title={isPersistent ? `${mod.name} (active until ${mod.refreshOn === 'session' ? 'session end' : mod.refreshOn === 'longRest' ? 'long rest' : 'rest'})` : `${mod.name} — click to ${isRollMod ? 'include in next roll' : isClearStress ? 'roll to clear Stress' : 'use'}`}
+      title={!eligible ? `${mod.name} — not eligible right now` : isPersistent ? `${mod.name} (active until ${mod.refreshOn === 'session' ? 'session end' : mod.refreshOn === 'longRest' ? 'long rest' : 'rest'})` : `${mod.name} — click to ${isRollMod ? 'include in next roll' : isClearStress ? 'roll to clear Stress' : 'use'}`}
       onClick={clickable ? (onUse || onSelect) : undefined}
-      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${clickable ? 'cursor-pointer' : 'cursor-default'} ${colorCls}`}
+      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${clickable ? 'cursor-pointer' : 'cursor-default'} ${colorCls} ${ineligibleCls}`}
     >
       <span>{baseLabel}</span>
       {isClearStress && <span className="text-[9px] opacity-70">→ clr Stress</span>}
@@ -1242,45 +1287,161 @@ export function CharacterCompanion({ el }) {
 }
 
 /**
+ * Card-style companion sheet for hover second card and stacked Library display.
+ * Props: companion (object), onStressChange (optional), onAttackRoll (optional), onActRoll (optional — Spellcast roll, no damage),
+ *   selectedExperienceIndex (optional), onSelectExperience (optional), characterHope (optional — chips disabled when 0).
+ */
+export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActRoll, selectedExperienceIndex, onSelectExperience, characterHope }) {
+  if (!companion) return null;
+  const maxStress = companion.maxStress ?? 3;
+  const currentStress = companion.currentStress ?? 0;
+  const experiences = companion.experiences || [];
+  const hasAttack = !!(companion.attackName?.trim());
+  return (
+    <div className="bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col min-w-[14rem]">
+      <div className="px-3 py-2 border-b border-sky-900/30 bg-sky-950/30 shrink-0">
+        <p className="text-[10px] uppercase tracking-widest text-sky-400/80 font-semibold">Companion</p>
+        <div className="font-semibold text-slate-200 truncate">{companion.name || '—'}</div>
+        {companion.species && <div className="text-[11px] text-slate-500">{companion.species}</div>}
+      </div>
+      <div className="p-3 space-y-2 flex-1 min-h-0">
+        <div className="flex gap-2 text-[11px] text-slate-400">
+          <span className="font-bold text-cyan-400/80">EVA {companion.evasion ?? 10}</span>
+        </div>
+        {(hasAttack || companion.attackName != null) && (
+          <Section label="Attack">
+            {onAttackRoll && hasAttack ? (
+              <button
+                type="button"
+                onClick={onAttackRoll}
+                className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-sky-600 cursor-pointer flex items-center gap-1 transition-colors"
+              >
+                <Swords size={10} className="text-sky-400 shrink-0" />
+                <span>{companion.attackName}</span>
+                <span className="text-slate-500">— d6 Melee</span>
+              </button>
+            ) : (
+              <div className="text-[11px] text-slate-300">
+                {hasAttack ? `${companion.attackName} — d6 Melee` : '—'}
+              </div>
+            )}
+          </Section>
+        )}
+        <Section label="Act">
+          {onActRoll ? (
+            <button
+              type="button"
+              onClick={onActRoll}
+              className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-sky-600 cursor-pointer flex items-center gap-1 transition-colors"
+            >
+              <Swords size={10} className="text-sky-400 shrink-0" />
+              Take an action
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-400">Take an action — Spellcast roll</span>
+          )}
+        </Section>
+        {experiences.length > 0 && (
+          <Section label={onSelectExperience ? 'Experiences (click to add to attack)' : 'Experiences'} labelUppercase={!onSelectExperience}>
+            <div className="flex flex-wrap gap-1">
+              {experiences.map((exp, i) => {
+                const selected = selectedExperienceIndex === i;
+                const noHope = (characterHope ?? 1) === 0;
+                const disabled = onSelectExperience && noHope && !selected;
+                if (onSelectExperience) {
+                  return (
+                    <button
+                      key={exp.id || i}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onSelectExperience(selected ? null : i)}
+                      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors
+                        ${disabled ? 'opacity-35 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500' : 'cursor-pointer'}
+                        ${!disabled && selected ? 'bg-sky-900/60 border-sky-600 text-sky-200 ring-1 ring-sky-500/50' : ''}
+                        ${!disabled && !selected ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-slate-600' : ''}`}
+                    >
+                      {exp.name}
+                      {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
+                    </button>
+                  );
+                }
+                return (
+                  <span
+                    key={exp.id || i}
+                    className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
+                  >
+                    {exp.name}
+                    {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
+                  </span>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+        {maxStress > 0 && (
+          <div className="flex items-center gap-1">
+            <AlertCircle size={10} className="text-orange-500 shrink-0" />
+            {onStressChange ? (
+              <CheckboxTrack
+                total={maxStress}
+                filled={currentStress}
+                onSetFilled={onStressChange}
+                fillColor="bg-orange-500"
+                label="Stress"
+                verbs={['Mark', 'Clear']}
+              />
+            ) : (
+              <span className="text-[11px] text-slate-400">Stress {currentStress}/{maxStress}</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Full character detail pane for use in ItemDetailModal display side.
  */
 export function CharacterDetailPane({ item }) {
   const el = item || {};
   const { complete, missing } = isCharacterComplete(el);
   return (
-    <div className="bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col">
-      <CharacterIdentityHeader el={el} />
-      {!complete && (
-        <div className="mx-3 mt-2 flex items-center gap-2 px-2.5 py-1.5 rounded border border-amber-700/60 bg-amber-950/40 text-amber-300 text-[11px]">
-          <AlertTriangle size={12} className="shrink-0" />
-          <span>Incomplete — missing: {missing.join(', ')}</span>
+    <div className="flex flex-col gap-3">
+      <div className="bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+        <CharacterIdentityHeader el={el} />
+        {!complete && (
+          <div className="mx-3 mt-2 flex items-center gap-2 px-2.5 py-1.5 rounded border border-amber-700/60 bg-amber-950/40 text-amber-300 text-[11px]">
+            <AlertTriangle size={12} className="shrink-0" />
+            <span>Incomplete — missing: {missing.join(', ')}</span>
+          </div>
+        )}
+        <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+          <CharacterTraitGrid el={el} />
+          <CharacterExperiences el={el} />
+          <CharacterDefenseRow el={el} />
+          <CharacterWeaponList el={el} />
+          <CharacterFeatureList el={el} />
+          <CharacterAbilityList el={el} />
+          <CharacterInventory el={el} />
+          {el.background && (
+            <Section label="Background">
+              <p className="text-[11px] text-slate-400 leading-relaxed">{el.background}</p>
+            </Section>
+          )}
+          {el.connectionText && (
+            <Section label="Connections">
+              <p className="text-[11px] text-slate-400 leading-relaxed">{el.connectionText}</p>
+            </Section>
+          )}
+          {el.description && (
+            <Section label="Description">
+              <p className="text-[11px] text-slate-400 leading-relaxed italic">{el.description}</p>
+            </Section>
+          )}
         </div>
-      )}
-      <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-0">
-        <CharacterTraitGrid el={el} />
-        <CharacterExperiences el={el} />
-        <CharacterDefenseRow el={el} />
-        <CharacterWeaponList el={el} />
-        <CharacterFeatureList el={el} />
-        <CharacterAbilityList el={el} />
-        <CharacterInventory el={el} />
-        <CharacterCompanion el={el} />
-        {el.background && (
-          <Section label="Background">
-            <p className="text-[11px] text-slate-400 leading-relaxed">{el.background}</p>
-          </Section>
-        )}
-        {el.connectionText && (
-          <Section label="Connections">
-            <p className="text-[11px] text-slate-400 leading-relaxed">{el.connectionText}</p>
-          </Section>
-        )}
-        {el.description && (
-          <Section label="Description">
-            <p className="text-[11px] text-slate-400 leading-relaxed italic">{el.description}</p>
-          </Section>
-        )}
       </div>
+      {el.companion && <CompanionSheet companion={el.companion} />}
     </div>
   );
 }

@@ -161,7 +161,7 @@ export function CharacterForm({ value, onChange }) {
     classId: null, subclassId: null, ancestryIds: [], communityId: null,
     baseTraits: {}, armorId: null, primaryWeaponId: null, secondaryWeaponId: null,
     experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-    abilityIds: [], advancements: {}, background: '', connectionText: '',
+    abilityIds: [], advancements: {}, background: '', connectionText: '', companion: null,
   });
 
   const formData = isControlled ? value : localData;
@@ -207,6 +207,17 @@ export function CharacterForm({ value, onChange }) {
     return (srdData.subclasses || []).filter(sc => subNames.includes(sc.name));
   }, [selectedClass, srdData]);
   const selectedSubclass = srdData?.subclassesById?.[formData.subclassId] || null;
+
+  // Beastbound companion always has at least two experience slots (two blank rows).
+  useEffect(() => {
+    if (selectedSubclass?.name !== 'Beastbound' || !formData.companion) return;
+    const comp = formData.companion;
+    const exps = comp.experiences || [];
+    if (exps.length >= 2) return;
+    const padded = [...exps];
+    while (padded.length < 2) padded.push({ name: '', score: 2, id: generateId() });
+    update({ ...formData, companion: { ...comp, experiences: padded } });
+  }, [selectedSubclass?.name, formData.companion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Ancestry options
   const ancestryOptions = useMemo(() => (srdData?.ancestries || []).sort((a, b) => a.name.localeCompare(b.name)), [srdData]);
@@ -350,11 +361,112 @@ export function CharacterForm({ value, onChange }) {
         )}
       </FormRow>
 
+      {/* ── Companion (Beastbound only) ── */}
+      {selectedSubclass?.name === 'Beastbound' && (() => {
+        const comp = formData.companion ?? {
+          name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
+          experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+        };
+        const compExps = comp.experiences || [];
+        return (
+          <FormRow label="Companion">
+            <div className="space-y-2">
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Name</label>
+                <input
+                  type="text"
+                  value={comp.name || ''}
+                  onChange={e => set({ companion: { ...comp, name: e.target.value } })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                  placeholder="Companion name"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Species</label>
+                <input
+                  type="text"
+                  value={comp.species || ''}
+                  onChange={e => set({ companion: { ...comp, species: e.target.value } })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                  placeholder="e.g. Wolf, Hawk"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">Attack name</label>
+                <input
+                  type="text"
+                  value={comp.attackName || ''}
+                  onChange={e => set({ companion: { ...comp, attackName: e.target.value } })}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                  placeholder="e.g. Bite, Claw (default d6 Melee)"
+                />
+                <p className="text-[10px] text-slate-500 mt-0.5">Defaults to d6 Melee</p>
+              </div>
+              <div className="text-[11px] text-slate-400">
+                EVA {comp.evasion ?? 10} · Max Stress {comp.maxStress ?? 3}
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-1">Experiences (need 2)</label>
+                <div className="space-y-1.5">
+                  {compExps.map((exp, i) => (
+                    <div key={exp.id || i} className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={exp.name || ''}
+                        onChange={e => {
+                          const exps = [...compExps];
+                          exps[i] = { ...exps[i], name: e.target.value };
+                          set({ companion: { ...comp, experiences: exps } });
+                        }}
+                        className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"
+                        placeholder="Experience name"
+                      />
+                      <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0">
+                        +{exp.score ?? 2}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const exps = compExps.filter((_, j) => j !== i);
+                          set({ companion: { ...comp, experiences: exps } });
+                        }}
+                        disabled={compExps.length <= 2}
+                        className="text-slate-500 hover:text-red-400 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >×</button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => set({
+                      companion: {
+                        ...comp,
+                        experiences: [...compExps, { name: '', score: 2, id: generateId() }],
+                      },
+                    })}
+                    className="text-xs text-sky-400 hover:text-sky-300"
+                  >+ Add Experience</button>
+                </div>
+              </div>
+            </div>
+          </FormRow>
+        );
+      })()}
+
       {/* ── Subclass ── */}
       <FormRow label="Subclass">
         <CustomSelect
           value={formData.subclassId || null}
-          onChange={id => set({ subclassId: id })}
+          onChange={id => {
+            const newSub = id ? srdData?.subclassesById?.[id] : null;
+            const patch = { subclassId: id };
+            if (newSub?.name === 'Beastbound' && (formData.companion == null)) {
+              patch.companion = {
+                name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
+                experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+              };
+            }
+            set(patch);
+          }}
           options={subclassOptions.map(sc => sc.id)}
           getOptionKey={id => id}
           getOptionLabel={id => srdData?.subclassesById?.[id]?.name || id}

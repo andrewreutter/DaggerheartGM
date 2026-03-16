@@ -612,6 +612,14 @@ export function isCharacterComplete(data) {
   const abilityCount = Math.max(allIds.length, (data.abilities || []).length);
 
   if (abilityCount < 2) missing.push('Domain Cards (need 2)');
+  // Beastbound requires companion name, species, attack name, and two experiences
+  if (data.subclass === 'Beastbound') {
+    if (!data.companion?.name?.trim()) missing.push('Companion name');
+    if (!data.companion?.species?.trim()) missing.push('Companion species');
+    if (!data.companion?.attackName?.trim()) missing.push('Companion attack name');
+    const companionExpCount = (data.companion?.experiences || []).filter(e => e.name?.trim()).length;
+    if (companionExpCount < 2) missing.push('Companion experiences (need 2)');
+  }
   return { complete: missing.length === 0, missing };
 }
 
