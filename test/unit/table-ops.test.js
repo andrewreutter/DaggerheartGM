@@ -102,6 +102,29 @@ describe('applyTableOp', () => {
     expect(result.lifeSupportSelections).toEqual({ '43': 'char-2' });
   });
 
+  it('rest-move-select sets move for character and slot', () => {
+    const result = applyTableOp(
+      { op: 'rest-move-select', rollDbId: 10, instanceId: 'c1', slot: 1, moveId: 'tend-to-wounds' },
+      {}
+    );
+    expect(result.restMovesSelections).toEqual({ '10': { c1: { move1: 'tend-to-wounds' } } });
+  });
+
+  it('rest-move-select merges move2 for same character', () => {
+    const state = { restMovesSelections: { '10': { c1: { move1: 'tend-to-wounds' } } } };
+    const result = applyTableOp(
+      { op: 'rest-move-select', rollDbId: 10, instanceId: 'c1', slot: 2, moveId: 'prepare' },
+      state
+    );
+    expect(result.restMovesSelections['10'].c1).toEqual({ move1: 'tend-to-wounds', move2: 'prepare' });
+  });
+
+  it('rest-move-clear removes roll from rest moves', () => {
+    const state = { restMovesSelections: { '10': { c1: { move1: 'x', move2: 'y' } }, '11': { c2: { move1: 'z' } } } };
+    const result = applyTableOp({ op: 'rest-move-clear', _rollDbId: 10 }, state);
+    expect(result.restMovesSelections).toEqual({ '11': { c2: { move1: 'z' } } });
+  });
+
   it('update-base-data preserves runtime keys while replacing base data', () => {
     const el = mkElement({
       id: 'adv-1', instanceId: 'inst-1', elementType: 'adversary',

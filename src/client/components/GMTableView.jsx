@@ -11,7 +11,7 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postBannerRallyToggle, postBannerRallyAck, postBannerHeartD4Ack, postBannerHeartD4Toggle, postBannerChipResolve, postBannerAddDamage, postBannerRerollDie, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postBannerRallyToggle, postBannerRallyAck, postBannerHeartD4Ack, postBannerHeartD4Toggle, postBannerChipResolve, postBannerAddDamage, postBannerRerollDie, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
@@ -226,7 +226,7 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear }) {
+export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
   const isTouch = useTouchDevice();
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -987,6 +987,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
+  // Multi-target selection: GM or player changes selected targets or armor toggles (synced across clients).
+  const handleBannerTargetsChange = (bannerId, patch) => {
+    if (gmUid) postBannerTargets(gmUid, bannerId, patch).catch(() => {});
+  };
+
   // Rally Die: GM or player toggles "Add Rally Die to roll/damage" on the banner (shared state).
   const handleRallyDieToggle = (bannerId, field, value) => {
     if (gmUid) {
@@ -1057,6 +1062,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // options: { selectedLifeSupportTargetInstanceId?: string, selectedRetractingClawsTargetInstanceId?: string } for single-target selection.
   const handleBannerAcknowledge = (bannerId, roll, options = {}) => {
     removePendingCosts(roll);
+
+    // Rest banner: server already applied fear on ack; clear rest-move state and run feature/rest cycle clear.
+    if (roll._rest && roll._rollDbId) {
+      postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
+      if (onRestMoveClear) onRestMoveClear(roll._rollDbId);
+      const cyclesToClear = roll._restDuration === 'long' ? ['rest', 'longRest'] : ['rest'];
+      runRestCycleClear(cyclesToClear);
+      return;
+    }
 
     // Rally Die banner toggle: cancel original, remove modifier, create copy banner with die added.
     // Skip all other processing — the copy banner goes through normal ack.
@@ -1371,6 +1385,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // GM cancels a banner: dismiss without any effects.
   const handleBannerCancel = (bannerId, roll) => {
     if (roll._lifeSupportTargets != null && onLifeSupportClear) onLifeSupportClear(roll._rollDbId);
+    if (roll._rest && roll._rollDbId != null && onRestMoveClear) onRestMoveClear(roll._rollDbId);
     removePendingCosts(roll);
     pendingDamageRef.current = null;
     // Generic ancestry banner reaction cancel: run chip.onBannerReject (or legacy cancel)
@@ -1473,7 +1488,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
 
   // ── Session / Rest cycle handlers ────────────────────────────────────────────
-  // Broadcast an action banner and reset matching featureUsage / activeModifiers.
+  // Start Session: action notification + clear session-only. Short/Long Rest: post 1d4 roll → RestBanner; clear runs on ack.
   const handleSessionCycle = (cycle) => {
     const label = cycle === 'session' ? 'Start Session'
       : cycle === 'rest' ? 'Short Rest'
@@ -1482,22 +1497,32 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       : cycle === 'rest' ? ['rest']
       : ['rest', 'longRest'];
 
-    // Show locally AND broadcast to all room clients (handleActionNotification does both)
+    if (cycle === 'rest' || cycle === 'longRest') {
+      const displayName = user?.displayName || user?.email || 'GM';
+      const actionText = cycle === 'rest'
+        ? 'Short rest — choose two moves per character, then acknowledge to add Fear and refresh rest-use features.'
+        : 'Long rest — choose two moves per character, then acknowledge to add Fear and refresh rest and long-rest features.';
+      postRoll('1d4', displayName, isPlayer ? gmUid : null, {
+        _action: true,
+        _rest: true,
+        _restDuration: cycle === 'rest' ? 'short' : 'long',
+        actionName: label,
+        actionText,
+      }).catch(err => console.error('Rest roll failed:', err));
+      return;
+    }
+
+    // Start Session: broadcast action banner and clear session-only featureUsage / activeModifiers
     const cycleNotification = {
       _action: true,
       rollUser: 'GM',
       actionName: label,
-      actionText: cycle === 'session'
-        ? 'Session started — session-use features refreshed.'
-        : cycle === 'rest'
-          ? 'Short rest — rest-use features refreshed.'
-          : 'Long rest — rest and long-rest features refreshed.',
+      actionText: 'Session started — session-use features refreshed.',
     };
     handleActionNotification(cycleNotification);
 
-    // Clear matching featureUsage and activeModifiers on all character elements
-    const characters = activeElements.filter(e => e.elementType === 'character');
-    for (const char of characters) {
+    const charactersList = activeElements.filter(e => e.elementType === 'character');
+    for (const char of charactersList) {
       const updates = {};
       if (char.featureUsage) {
         const nextUsage = { ...char.featureUsage };
@@ -1520,6 +1545,37 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (Object.keys(updates).length > 0) {
         updateActiveElement(char.instanceId, updates);
       }
+    }
+  };
+
+  // Run the same character clear as session cycle (used when rest banner is acknowledged).
+  const runRestCycleClear = (cyclesToClear) => {
+    const charactersList = activeElements.filter(e => e.elementType === 'character');
+    const batchMap = {};
+    for (const char of charactersList) {
+      const updates = {};
+      if (char.featureUsage) {
+        const nextUsage = { ...char.featureUsage };
+        let changed = false;
+        for (const [key, val] of Object.entries(nextUsage)) {
+          if (cyclesToClear.includes(val.cycle)) {
+            delete nextUsage[key];
+            changed = true;
+          }
+        }
+        if (changed) updates.featureUsage = nextUsage;
+      }
+      if (char.activeModifiers?.length > 0) {
+        const kept = char.activeModifiers.filter(m => !cyclesToClear.includes(m.refreshOn));
+        if (kept.length !== char.activeModifiers.length) updates.activeModifiers = kept;
+      }
+      if (char.activeChanneledElement && cyclesToClear.includes('rest')) {
+        updates.activeChanneledElement = null;
+      }
+      if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
+    }
+    if (Object.keys(batchMap).length > 0) {
+      postTableOp({ op: 'update-elements', updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })) });
     }
   };
 
@@ -2940,6 +2996,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             lifeSupportSelections={lifeSupportSelections}
             onLifeSupportSelect={onLifeSupportSelect}
             onLifeSupportClear={onLifeSupportClear}
+            restMovesSelections={restMovesSelections}
+            onRestMoveSelect={onRestMoveSelect}
+            onRestMoveClear={onRestMoveClear}
+            restTableCharacters={isPlayer ? [] : activeElements.filter(e => e.elementType === 'character')}
+            restCanEditColumn={isPlayer ? (instanceId) => {
+              const el = activeElements.find(e => e.instanceId === instanceId);
+              return el?.assignedPlayerUid === user?.uid;
+            } : () => true}
             makeASceneSelections={makeASceneSelections}
             onMakeASceneSelect={(rollDbId, instanceId) => {
               setMakeASceneSelections(prev => ({ ...prev, [rollDbId]: instanceId }));
@@ -2969,6 +3033,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
             holdThemOffChars={holdThemOffChars}
             onHoldThemOffToggle={gmUid ? handleHoldThemOffToggle : undefined}
+            onBannerTargetsChange={gmUid ? handleBannerTargetsChange : undefined}
             wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
             onWingsD8Toggle={!isPlayer ? handleWingsD8Toggle : undefined}
             onWingsD8ToggleRequest={isPlayer && gmUid ? handleWingsD8ToggleRequest : undefined}

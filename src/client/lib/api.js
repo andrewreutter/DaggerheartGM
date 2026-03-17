@@ -888,6 +888,24 @@ export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
 };
 
 /**
+ * GM or player: set multi-target selection on a pending banner (synced across clients).
+ * patch: { selectedTargetInstanceIds?: string[], useArmorByTargetId?: Record<string, boolean> }
+ */
+export const postBannerTargets = async (gmUid, bannerId, patch = {}) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-targets`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, ...patch }),
+    });
+    if (!res.ok) return;
+    return res.json();
+  } catch { return undefined; }
+};
+
+/**
  * GM or player: set the Make a Scene target adversary on a pending banner.
  * Patches _selectedTargetInstanceId; all clients receive an updated banners snapshot.
  */
@@ -945,6 +963,24 @@ export const postLifeSupportSelect = async (gmUid, rollDbId, selectedInstanceId)
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ _rollDbId: rollDbId, selectedLifeSupportTargetInstanceId: selectedInstanceId ?? null }),
+    });
+  } catch { /* best-effort */ }
+};
+
+/**
+ * Set rest banner move selection for a character; syncs to all room clients.
+ * GM can set any character; player can set only their assigned character.
+ * gmUid: room owner (GM's uid when on GM table, or GM's uid when player in that room).
+ */
+export const postRestMoveSelect = async (gmUid, rollDbId, instanceId, slot, moveId) => {
+  if (!gmUid) return;
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    await fetch(`/api/room/${gmUid}/rest-move-select`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ rollDbId, instanceId, slot, moveId: moveId ?? null }),
     });
   } catch { /* best-effort */ }
 };

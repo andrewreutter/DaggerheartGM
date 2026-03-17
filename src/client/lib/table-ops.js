@@ -133,6 +133,22 @@ export function applyTableOp(op, state) {
       delete next[String(op._rollDbId)];
       return { lifeSupportSelections: next };
     }
+    case 'rest-move-select': {
+      const prev = state.restMovesSelections || {};
+      const key = String(op.rollDbId);
+      const perRoll = prev[key] ? { ...prev[key] } : {};
+      const perChar = perRoll[op.instanceId] ? { ...perRoll[op.instanceId] } : {};
+      perChar[op.slot === 2 ? 'move2' : 'move1'] = op.moveId ?? null;
+      perRoll[op.instanceId] = perChar;
+      const next = { ...prev, [key]: perRoll };
+      return { restMovesSelections: next };
+    }
+    case 'rest-move-clear': {
+      const prev = state.restMovesSelections || {};
+      const next = { ...prev };
+      delete next[String(op._rollDbId)];
+      return { restMovesSelections: next };
+    }
     default:
       return {};
   }

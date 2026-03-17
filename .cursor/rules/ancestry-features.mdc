@@ -138,7 +138,7 @@ Only include fields that the chip actually uses:
 ### Key `ctx` helpers in `onCharacterRender`
 
 - `ctx.addStatMod(stat, value)` — e.g. `ctx.addStatMod('maxHp', 1)`
-- `ctx.addVirtualWeapon({ trait, range, damage, description, onAcknowledge? })` — adds a weapon card; `onAcknowledge({ target })` receives a wrapped target entity
+- `ctx.addVirtualWeapon({ trait, range, damage, description, onAcknowledge?, damageType?, damageProficiency?, multiTarget?, multiTargetMax? })` — adds a weapon card; `onAcknowledge({ target })` receives a wrapped target entity. Optional `damageType` (e.g. `'Mag'`) and `damageProficiency: true` are used by the roll builder to add type and +Proficiency to damage (e.g. Elemental Breath). When `multiTarget: true`, the banner shows multi-target selection within range; optional `multiTargetMax` (default 10) caps the number of selectable targets.
 - `ctx.addAdvantageTrigger(condition)` — declares an advantage chip with the given condition text
 - `ctx.weapons` — mutable array of character weapons (for range rewrites, etc.)
 
@@ -182,7 +182,7 @@ After removing legacy code, confirm:
 
 ## Principles
 
-- **Imitate, don't invent.** Before writing a new feature, find the closest existing example and copy its structure. Fearless (Infernis) for fear→hope conversion, Feline Instincts (Katari) for rerolls, Kick (Faun) for addDamage + narration, Thick Skin (Dwarf) for target chips, Endurance (Giant) for stat mods, Reach (Giant) for weapon mutation, Retracting Claws (Katari) for virtual weapons, Dread Visage (Infernis) for advantage triggers, Caprine Leap (Faun) for narrative-only features.
+- **Imitate, don't invent.** Before writing a new feature, find the closest existing example and copy its structure. Fearless (Infernis) for fear→hope conversion, Feline Instincts (Katari) for rerolls, Kick (Faun) for addDamage + narration, Thick Skin (Dwarf) for target chips, Scales (Drakona) for Severe-damage Stress-for-HP reduction, Endurance (Giant) for stat mods, Reach (Giant) for weapon mutation, Retracting Claws (Katari) for virtual weapons, Elemental Breath (Drakona) for virtual weapon with damage + proficiency + damage type, Dread Visage (Infernis) for advantage triggers, Caprine Leap (Faun) for narrative-only features.
 - **Prefer anonymous one-liners.** When a hook or chip field is a single expression, use an arrow function. Reserve method shorthand for multi-statement bodies. This keeps files short and scannable. **Exception**: `onBanner` is always method shorthand — the chip descriptor object is multi-line even when there is only one `addChip()` call, so a one-liner arrow adds no readability benefit.
 - **Be terse.** No boilerplate beyond the JSDoc header, the export shape, and the feature calls. No helper functions, no extra variables, no abstraction layers.
 - **Descriptions come from the SRD.** Use the SRD text for both the ancestry `description` and each feature description. Bold the resource cost phrases with `**...**` to match existing conventions.

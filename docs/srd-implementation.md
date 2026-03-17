@@ -18,7 +18,7 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated    | **Partial** |
 | [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks | **Partial** |
 | [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 1+ features partial (e.g. Wings of Light, Elemental Incarnation) | **Partial** |
-| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 3/36 features auto | **Partial** |
+| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 6 ancestries automated (11 features) | **Partial** |
 | [Communities](#communities-9)             | 9     | N/A       | Done        | 0/9 features auto  | **Display** |
 | [Abilities](#abilities--domain-cards-189) | 189   | N/A       | Done        | Display            | **Display** |
 | [Domains](#domains-9)                     | 9     | N/A       | Indirect    | Filtering only     | **Partial** |
@@ -327,7 +327,7 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 | Ancestry     | Feature 1         | Feature 2           | Status  |
 | ------------ | ----------------- | ------------------- | ------- |
 | **Clank**    | Purposeful Design | Efficient           | Display |
-| **Drakona**  | Scales            | Elemental Breath    | Display |
+| **Drakona**  | Scales            | Elemental Breath    | **Done** — Scales: target chip on Severe damage (mark 1 Stress to mark 1 fewer HP). Elemental Breath: virtual weapon (Instinct, Very Close, d8 magic + Proficiency) via `src/features/ancestries/Drakona.js`; roll builder adds proficiency and magic tag for Warded etc.; multi-target (target or group within Very Close) via `multiTarget: true`. |
 | **Dwarf**    | Thick Skin        | Increased Fortitude | **Done** — Thick Skin: target chip on Minor damage (mark 2 Stress instead of 1 HP). Increased Fortitude: target chip on physical damage (spend 3 Hope to halve damage). Both via `src/features/ancestries/Dwarf.js` and target-chip pipeline in GMTableView/DiceRoller. |
 | **Elf**      | Quick Reactions   | Celestial Trance    | Display |
 | **Faerie**   | Luckbender        | Wings               | Display |

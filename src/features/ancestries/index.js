@@ -19,8 +19,9 @@ import Katari   from './Katari.js';
 import Giant    from './Giant.js';
 import Faun     from './Faun.js';
 import Dwarf    from './Dwarf.js';
+import Drakona  from './Drakona.js';
 
-const builders = [Infernis, Katari, Giant, Faun, Dwarf];
+const builders = [Infernis, Katari, Giant, Faun, Dwarf, Drakona];
 
 /** @type {Record<string, object>} feature name → full feature descriptor */
 const featureMap = {};

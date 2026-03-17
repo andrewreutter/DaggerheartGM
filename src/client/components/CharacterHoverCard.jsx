@@ -649,9 +649,17 @@ export function CharacterHoverCard({
     if (rollMeta.secondaryDamage) opts.secondaryDamage = rollMeta.secondaryDamage;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
     const effectiveTrait = baseTrait + getBeastformTraitBonus(traitKey) + rollModBonus;
+    // Virtual weapons (e.g. Elemental Breath) can add Proficiency to damage and a damage type for the roll.
+    let damageStr = weapon.damage;
+    if (weapon.damageProficiency && el.proficiency != null) {
+      const base = weapon.damage || 'd8';
+      const prof = el.proficiency ? `+${el.proficiency}` : '';
+      const type = (weapon.damageType || '').toLowerCase();
+      damageStr = `${base}${prof}${type ? ' ' + type : ''}`;
+    }
     let rollText = buildWeaponRollText(
       el.name, weapon.name, traitKey, effectiveTrait,
-      activeExp?.name, weapon.damage, weapon.feature, traits, el.level, opts,
+      activeExp?.name, damageStr, weapon.feature, traits, el.level, opts,
     );
     const rangeStr = (weapon.effectiveRange ?? getEffectiveWeaponRange(weapon, el.ancestryFeatures)) || weapon.range;
     if (rangeStr) rollText += ` ${rangeStr}`;
@@ -671,6 +679,10 @@ export function CharacterHoverCard({
     if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
     if (weapon._featureName) rollMeta._featureName = weapon._featureName;
     if (weapon._featureName && weapon.onAcknowledge) rollMeta._featureNeedsTarget = true;
+    if (weapon.multiTarget) {
+      rollMeta._multiTarget = true;
+      if (weapon.multiTargetMax != null) rollMeta._multiTargetMax = weapon.multiTargetMax;
+    }
     if (weapon._kick) rollMeta._stressCost = 1;
     // Ranger's Focus: use on next attack (toggle adds Hope cost and title suffix)
     if (el.rangerFocusOnNextAttack && updateFn) {
@@ -683,9 +695,15 @@ export function CharacterHoverCard({
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: rollMeta._weaponRangeFt,
       }) ?? [];
+      if (validTargets.length === 0) return; // don't send roll; popup would show "No targets in range"
+      // Multi-target weapons: send roll immediately; target selection happens on the banner.
+      if (weapon.multiTarget) {
+        sendWeaponRoll(rollText, displayName, rollMeta, opts);
+        if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+        return;
+      }
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
       setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
-      if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
       return;
     }
     sendWeaponRoll(rollText, displayName, rollMeta, opts);

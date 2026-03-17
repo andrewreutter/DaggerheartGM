@@ -1508,6 +1508,26 @@ app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
     }
   }
 
+  // Rest banner: apply fear before marking acknowledged (short = d4 total, long = d4 total + character count).
+  if (action === 'acknowledge' && bannerId && process.env.DATABASE_URL) {
+    try {
+      const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+      if (row && row.status === 'pending' && row.data?._rest === true) {
+        const tableRows = await getItems(APP_ID, req.uid, 'table_state');
+        const state = tableRows[0] || {};
+        const elements = state.elements || state.activeElements || [];
+        const characterCount = elements.filter(e => e.elementType === 'character').length;
+        const total = typeof row.data.total === 'number' ? row.data.total : 0;
+        const fearDelta = row.data._restDuration === 'long' ? total + characterCount : total;
+        const currentFear = state.fearCount ?? 0;
+        const newFear = Math.min(12, currentFear + fearDelta);
+        await applyOpToTableState(req.uid, { op: 'set-fear', fearCount: newFear });
+      }
+    } catch (err) {
+      console.error('[banner-ack] rest fear error:', err.message);
+    }
+  }
+
   if (bannerId) {
     const status = action === 'cancel' ? 'cancelled' : 'acknowledged';
     setBannerStatus(bannerId, status)
@@ -1739,6 +1759,43 @@ app.post('/api/room/:gmUid/banner-hold-them-off', requireAuth, async (req, res) 
     res.json({ ok: true, active });
   } catch (err) {
     console.error(`POST /api/room/${gmUid}/banner-hold-them-off error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/banner-targets — GM or player: set multi-target selection on a pending banner (synced across clients).
+app.post('/api/room/:gmUid/banner-targets', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const { selectedTargetInstanceIds, useArmorByTargetId } = req.body || {};
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const isGm = req.uid === gmUid;
+    if (!isGm) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const patch = {};
+    if (Array.isArray(selectedTargetInstanceIds)) patch._selectedTargetInstanceIds = selectedTargetInstanceIds;
+    if (useArmorByTargetId != null && typeof useArmorByTargetId === 'object') patch._useArmorByTargetId = useArmorByTargetId;
+    if (Object.keys(patch).length === 0) return res.json({ ok: true });
+    await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-targets error:`, err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -2293,6 +2350,52 @@ app.post('/api/room/:gmUid/life-support-select', requireAuth, async (req, res) =
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/room/:gmUid/life-support-select error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/rest-move-select — GM or player sets a rest move for a character (syncs to all clients).
+// GM can set any character; player can set only their assigned character.
+app.post('/api/room/:gmUid/rest-move-select', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const { rollDbId, instanceId, slot, moveId } = req.body || {};
+  if (rollDbId == null || !instanceId || !slot || (slot !== 1 && slot !== 2)) {
+    return res.status(400).json({ error: 'rollDbId, instanceId, and slot (1 or 2) required' });
+  }
+  try {
+    if (req.uid === gmUid) {
+      await applyOpToTableState(gmUid, {
+        op: 'rest-move-select',
+        rollDbId,
+        instanceId,
+        slot,
+        moveId: moveId ?? null,
+      });
+    } else {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+      const elements = tableState.elements || [];
+      const character = elements.find(e => e.elementType === 'character' && e.instanceId === instanceId);
+      if (!character) {
+        return res.status(404).json({ error: 'Character not found' });
+      }
+      if (character.assignedPlayerUid !== req.uid) {
+        return res.status(403).json({ error: 'Not assigned to this character' });
+      }
+      await applyOpToTableState(gmUid, {
+        op: 'rest-move-select',
+        rollDbId,
+        instanceId,
+        slot,
+        moveId: moveId ?? null,
+      });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/room/:gmUid/rest-move-select error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

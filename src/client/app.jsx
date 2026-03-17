@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, normalizeRoll } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
@@ -54,6 +54,7 @@ function App() {
   const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
+  const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2 } } }
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   // tableStateReadyRef is set once initial state is loaded from the server (via REST or SSE).
   const tableStateReadyRef = useRef(false);
@@ -330,6 +331,7 @@ function App() {
           if (Array.isArray(tableState?.playerEmails)) setPlayerEmails(tableState.playerEmails);
           if (tableState?.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
           if (tableState?.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
+          if (tableState?.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
           tableStateReadyRef.current = true;
         }).catch(err => console.error('Failed to load table state:', err));
         fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
@@ -419,6 +421,7 @@ function App() {
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
+        if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         tableStateReadyRef.current = true;
       });
       es.addEventListener('roll-history', (e) => {
@@ -460,6 +463,7 @@ function App() {
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
+        if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         // Ensure a nav tab exists for this GM's room now that we've confirmed access.
         setMyRooms(prev => {
           if (prev.some(r => r.gmUid === route.gmUid)) return prev;
@@ -842,6 +846,14 @@ function App() {
     postTableOp({ op: 'life-support-clear', _rollDbId: rollDbId });
   };
 
+  const gmUidForRest = route.gmUid || user?.uid;
+  const sendRestMoveSelect = (rollDbId, instanceId, slot, moveId) => {
+    if (gmUidForRest) postRestMoveSelect(gmUidForRest, rollDbId, instanceId, slot, moveId);
+  };
+  const sendRestMoveClear = (rollDbId) => {
+    postTableOp({ op: 'rest-move-clear', _rollDbId: rollDbId });
+  };
+
   // Player callback — sends update to server; state arrives via table_state SSE snapshot.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.gmUid) return;
@@ -1085,6 +1097,9 @@ function App() {
                 lifeSupportSelections={lifeSupportSelections}
                 onLifeSupportSelect={sendLifeSupportSelect}
                 onLifeSupportClear={effectiveIsPlayer ? () => {} : sendLifeSupportClear}
+                restMovesSelections={restMovesSelections}
+                onRestMoveSelect={sendRestMoveSelect}
+                onRestMoveClear={effectiveIsPlayer ? () => {} : sendRestMoveClear}
               />
             </div>
           </>
