@@ -14,9 +14,7 @@ export default {
       'Endurance',
       'Gain an additional Hit Point slot at character creation.',
       {
-        onCharacterRender(ctx) {
-          ctx.addStatMod('maxHp', 1);
-        },
+        onCharacterRender: (ctx) => ctx.addStatMod('maxHp', 1),
       }
     );
 
