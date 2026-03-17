@@ -687,6 +687,93 @@ export const postBannerPrayerDieSelect = async (gmUid, bannerId, opts = {}) => {
   } catch { return undefined; }
 };
 
+/**
+ * GM or player: toggle Rally Die "add to roll" or "add to damage" on a pending banner.
+ * field: '_rallyDieAddToRoll' | '_rallyDieAddToDamage'; value: boolean.
+ * All clients receive updated banner via subscription.
+ */
+export const postBannerRallyToggle = async (gmUid, bannerId, field, value) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-rally-toggle`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, field, value }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM: acknowledge a Rally Die banner toggle — cancel the current banner, remove the Rally Die,
+ * create a copy banner with the die added to roll/damage.
+ * Returns { ok: true } on success.
+ */
+export const postBannerRallyAck = async (bannerId, opts = {}) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-rally-ack', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, ...opts }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM: Heart of a Poet (Wordsmith) — acknowledge a Heart of a Poet banner toggle.
+ * Cancels original banner, decrements 1 Hope, rolls 1d4, creates copy banner with d4 added.
+ */
+export const postBannerHeartD4Ack = async (bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-heart-d4-ack', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * GM: Heart of a Poet (Wordsmith) — spend 1 Hope and roll 1d4 for a non-attack action roll banner.
+ * Patches _heartOfAPoetAddD4 and _heartOfAPoetD4Result on the roll; notifies banners + table_state.
+ * @deprecated Use postBannerHeartD4Ack for the Ack-intercept pattern.
+ */
+export const postBannerHeartD4 = async (bannerId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch('/api/room/my/banner-heart-d4', {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
+/**
+ * Player: Heart of a Poet — toggle intent to add d4 on a non-attack action roll banner (shared state).
+ */
+export const postBannerHeartD4Toggle = async (gmUid, bannerId, value) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-heart-d4-toggle`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, value }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
 export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
   const token = await getAuthToken();
   if (!token) return;

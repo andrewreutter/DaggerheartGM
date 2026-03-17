@@ -23,6 +23,8 @@ export default {
       type: 'rally',
       dice: 'd6',
       label: 'Rally Die',
+      mode: 'clearStress',
+      consumeOnUse: true,
       refreshOn: 'use',
     },
   },

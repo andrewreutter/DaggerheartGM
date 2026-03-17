@@ -434,7 +434,7 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, onResolveInstantly, prayerDiceChars = [], onPrayerDieSelect }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, onResolveInstantly, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
@@ -592,6 +592,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     ? holdThemOffChars.find(c => c.instanceId === roll._attackerInstanceId)
     : null;
 
+  // Heart of a Poet (Wordsmith): non-attack action roll (has _traitKey, no damage, isDaggerheart, not the die-copy banner).
+  const heartOfAPoetChar = resolved && !hasDamage && roll._attackerInstanceId && roll._traitKey && isDaggerheart && !roll._heartOfAPoetApplied
+    ? heartOfAPoetChars.find(c => c.instanceId === roll._attackerInstanceId)
+    : null;
+
+  // Rally Die: character has a Rally Die modifier and this is an attack/action roll (not the clear-stress roll itself).
+  const hasRallyDie = resolved && !roll._rallyClearStress && !roll._rallyDieApplied
+    && roll._rollDbId != null && roll._attackerInstanceId
+    && rallyDieInstanceIds?.has(roll._attackerInstanceId)
+    && (actionItems.length > 0 || hasDamage);
+  const rallyAddToRoll = !!roll._rallyDieAddToRoll;
+  const rallyAddToDamage = !!roll._rallyDieAddToDamage;
+
   const fearlessChar = dominant === 'fear' && roll._rollDbId != null
     ? fearlessChars.find(c =>
         (roll._attackerInstanceId && c.instanceId === roll._attackerInstanceId) ||
@@ -663,10 +676,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 </span>
               )}
               <span className="text-2xl font-black tabular-nums ml-1">
-                {resolved ? (total + (selectedAddRollDie?.value ?? 0)) : <Spinner lg />}
+                {resolved ? (total + (selectedAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0)) : <Spinner lg />}
               </span>
               {selectedAddRollDie && resolved && (
                 <span className="text-[10px] text-teal-400/80 ml-0.5">+{selectedAddRollDie.value} Prayer Die</span>
+              )}
+              {roll._heartOfAPoetD4Result != null && resolved && (
+                <span className="text-[10px] text-violet-400/80 ml-0.5">+{roll._heartOfAPoetD4Result} Heart of a Poet</span>
               )}
               <span className="text-sm font-semibold opacity-80 ml-0.5">
                 {resolved
@@ -724,7 +740,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         {dmg && (() => {
           const dmgReduction = selectedDmgReduceDie?.value ?? 0;
           const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-          const baseDmg = dmg.total + wingsBonus;
+          const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+          const baseDmg = dmg.total + wingsBonus + rallyDmgBonus;
           const displayDmg = Math.max(0, baseDmg - dmgReduction);
           return (
             <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
@@ -743,6 +760,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 )}
                 {roll._wingsOfLightD8Result != null && (
                   <> + d8({roll._wingsOfLightD8Result})</>
+                )}
+                {roll._rallyDieDamageResult != null && (
+                  <> + Rally({roll._rallyDieDamageResult})</>
                 )}
                 {dmgReduction > 0 && (
                   <> <span className="text-teal-400/80">− Prayer Die({dmgReduction})</span></>
@@ -964,6 +984,31 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
                   Spend 3 Hope to select two more targets
                 </button>
+              )}
+              {/* Rally Die: add to roll / damage — visible to GM and player; state shared across windows */}
+              {hasRallyDie && onRallyDieToggle && roll._rollDbId && (
+                <>
+                  {actionItems.length > 0 && (
+                    <button
+                      onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
+                      className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                      title={rallyAddToRoll ? 'Rally Die will be added to roll on Acknowledge — click to cancel' : 'Add Rally Die result to roll total on Acknowledge'}
+                    >
+                      {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
+                      {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
+                    </button>
+                  )}
+                  {hasDamage && (
+                    <button
+                      onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
+                      className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                      title={rallyAddToDamage ? 'Rally Die will be added to damage on Acknowledge — click to cancel' : 'Add Rally Die result to damage on Acknowledge'}
+                    >
+                      {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
+                      {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
+                    </button>
+                  )}
+                </>
               )}
               {(hasDamage || roll._retractingClaws) && canApplyDamage && (filteredTargets.length > 0 || roll._retractingClaws || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)) ? (
                 <>
@@ -1370,8 +1415,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
                               }
                               const dmgReduction = selectedDmgReduceDie?.value ?? 0;
-                              const totalDamage = Math.max(0, (hasDamage ? dmg.total : 0) + d8Extra - dmgReduction);
-                              if (selectedDamageTargetId && hasDamage && onApplyDamage) {
+                              const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                              const totalDamage = Math.max(0, (hasDamage ? dmg.total : 0) + d8Extra + rallyDmgBonus - dmgReduction);
+                              // Skip damage application when a rally toggle is active — the copy banner handles it.
+                              const rallyPending = rallyAddToRoll || rallyAddToDamage;
+                              if (!rallyPending && selectedDamageTargetId && hasDamage && onApplyDamage) {
                                 const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
                                 if (selectedTarget) {
                                   const dmgType = dmg?.type || '';
@@ -1409,21 +1457,46 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   </div>
                 </>
               ) : (
-                <div className="flex items-center justify-center gap-1.5">
-                  <button
-                    onClick={() => onAcknowledge?.()}
-                    className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                  >
-                    Acknowledge
-                  </button>
-                  {onCancel != null && (
+                <div className="flex flex-col gap-1.5">
+                  {/* Heart of a Poet (Wordsmith): toggle to add d4 on Acknowledge — GM view */}
+                  {heartOfAPoetChar && onHeartD4Toggle && roll._rollDbId && (() => {
+                    const heartActive = !!roll._heartOfAPoetAddD4;
+                    const noHope = (heartOfAPoetChar?.hope ?? 1) < 1;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => { if (!noHope) onHeartD4Toggle(roll._rollDbId, !heartActive); }}
+                        disabled={noHope}
+                        className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
+                          noHope
+                            ? 'border-violet-900/40 bg-violet-950/20 text-violet-400/50 cursor-not-allowed'
+                            : heartActive
+                              ? 'border-violet-500 bg-violet-800/80 text-violet-100'
+                              : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
+                        } disabled:cursor-default`}
+                        title={noHope ? 'No Hope remaining to spend' : heartActive ? 'Heart of a Poet d4 will be added on Acknowledge — click to cancel' : 'Add Heart of a Poet d4 to roll on Acknowledge (spend 1 Hope)'}
+                      >
+                        {heartActive ? <Check size={12} className="shrink-0" /> : null}
+                        {heartActive ? 'Heart of a Poet → roll (on Ack)' : 'Add Heart of a Poet d4'}
+                      </button>
+                    );
+                  })()}
+                  <div className="flex items-center justify-center gap-1.5">
                     <button
-                      onClick={onCancel}
-                      className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                      onClick={() => onAcknowledge?.()}
+                      className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                     >
-                      Cancel
+                      Acknowledge
                     </button>
-                  )}
+                    {onCancel != null && (
+                      <button
+                        onClick={onCancel}
+                        className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1510,6 +1583,60 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             })()}
           </div>
         )}
+        {/* Heart of a Poet (Wordsmith): toggle intent to add d4 — visible to player when not showActions */}
+        {!showActions && heartOfAPoetChar && onHeartD4ToggleRequest && roll._rollDbId && (
+          <div className="mt-2.5 pt-2 border-t border-white/10">
+            {(() => {
+              const heartActive = !!roll._heartOfAPoetAddD4;
+              const heartResult = roll._heartOfAPoetD4Result;
+              return (
+                <button
+                  type="button"
+                  onClick={() => { if (heartResult == null) onHeartD4ToggleRequest(roll._rollDbId, !heartActive); }}
+                  disabled={heartResult != null}
+                  className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
+                    heartResult != null
+                      ? 'border-violet-500 bg-violet-900/60 text-violet-100 opacity-80 cursor-default'
+                      : heartActive
+                        ? 'border-violet-500 bg-violet-800/80 text-violet-100'
+                        : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
+                  } disabled:cursor-default`}
+                  title={heartResult != null ? `+d4: ${heartResult} (Heart of a Poet, applied on GM Acknowledge)` : heartActive ? 'Intent set — waiting for GM to apply' : 'Spend 1 Hope to add d4 (Heart of a Poet) — GM will apply'}
+                >
+                  {heartActive || heartResult != null ? <Check size={12} className="shrink-0" /> : null}
+                  {heartResult != null ? `+d4: ${heartResult} (Heart of a Poet)` : 'Spend 1 Hope → d4 (Heart of a Poet)'}
+                </button>
+              );
+            })()}
+          </div>
+        )}
+        {/* Rally Die: add to roll / damage — visible to player (GM sees same buttons inside showActions) */}
+        {!showActions && hasRallyDie && onRallyDieToggle && roll._rollDbId && (
+          <div className="mt-2.5 pt-2 border-t border-white/10 space-y-1">
+            {actionItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
+                className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                title={rallyAddToRoll ? 'Rally Die will be added to roll on GM Acknowledge — click to cancel' : 'Add Rally Die result to roll total (applied on GM Acknowledge)'}
+              >
+                {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
+                {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
+              </button>
+            )}
+            {hasDamage && (
+              <button
+                type="button"
+                onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
+                className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                title={rallyAddToDamage ? 'Rally Die will be added to damage on GM Acknowledge — click to cancel' : 'Add Rally Die result to damage (applied on GM Acknowledge)'}
+              >
+                {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
+                {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
+              </button>
+            )}
+          </div>
+        )}
         {/* Prayer Die: damage-reduction display for players (GM sees it in the target area above) */}
         {!showActions && resolved && hasDamage && prayerDiceChars.length > 0 && (
           <div className="mt-2.5 pt-2 border-t border-white/10">
@@ -1539,8 +1666,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             )}
           </div>
         )}
-        {/* Fearless (Infernis): toggle button — visible to both GM and character's own player */}
-        {resolved && fearlessChar && onFearlessConvert && (
+        {/* Fearless (Infernis): toggle button — visible to character's own player only; GM sees banner color update optimistically */}
+        {resolved && fearlessChar && onFearlessConvert && isPlayer && (
           <div className={showActions ? '' : 'mt-2.5 pt-2 border-t border-white/10'}>
             <button
               onClick={isConverted || fearlessChar.canConvert ? () => onFearlessConvert(roll, fearlessChar.instanceId) : undefined}
@@ -1619,6 +1746,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
   getWaterRetaliationNames,
   prayerDiceChars = [],
   onPrayerDieSelect,
+  rallyDieInstanceIds,
+  onRallyDieToggle,
+  heartOfAPoetChars = [],
+  onHeartD4Toggle,
+  onHeartD4ToggleRequest,
 }, ref) {
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
@@ -2135,6 +2267,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onGetWingsD8Extra={onGetWingsD8Extra}
                 prayerDiceChars={prayerDiceChars}
                 onPrayerDieSelect={onPrayerDieSelect}
+                rallyDieInstanceIds={rallyDieInstanceIds}
+                onRallyDieToggle={onRallyDieToggle}
+                heartOfAPoetChars={heartOfAPoetChars}
+                onHeartD4Toggle={onHeartD4Toggle}
+                onHeartD4ToggleRequest={onHeartD4ToggleRequest}
                 getWaterRetaliationNames={getWaterRetaliationNames}
                 isPlayer={isPlayer}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}

@@ -1732,6 +1732,316 @@ app.post('/api/room/:gmUid/banner-prayer-die-select', requireAuth, async (req, r
   }
 });
 
+// POST /api/room/:gmUid/banner-rally-toggle — GM or player: toggle Rally Die add-to-roll or add-to-damage on a banner.
+// Patches _rallyDieAddToRoll or _rallyDieAddToDamage on the pending roll; pushes updated banners to all clients.
+app.post('/api/room/:gmUid/banner-rally-toggle', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const field = req.body?.field;
+  const value = req.body?.value === true;
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (field !== '_rallyDieAddToRoll' && field !== '_rallyDieAddToDamage') {
+    return res.status(400).json({ error: 'field must be _rallyDieAddToRoll or _rallyDieAddToDamage' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const isGm = req.uid === gmUid;
+    if (!isGm) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    // Mutual exclusivity: enabling one toggle clears the other.
+    const oppositeField = field === '_rallyDieAddToRoll' ? '_rallyDieAddToDamage' : '_rallyDieAddToRoll';
+    const patch = value ? { [field]: true, [oppositeField]: false } : { [field]: false };
+    await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true, field, value });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-rally-toggle error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/banner-rally-ack — GM: acknowledge a Rally Die banner toggle.
+// Cancels the original banner, removes the Rally Die modifier from the attacker, rolls the die,
+// and creates a copy banner with the extra die added to roll and/or damage.
+app.post('/api/room/my/banner-rally-ack', requireAuth, async (req, res) => {
+  const gmUid = req.uid;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const addToRoll = req.body?.addToRoll === true;
+  const addToDamage = req.body?.addToDamage === true;
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const originalData = row.data || {};
+
+    // 1. Cancel the original banner.
+    await setBannerStatus(bannerId, 'cancelled');
+
+    // 2. Find the Rally Die modifier on the attacker and remove it.
+    const attackerInstanceId = originalData._attackerInstanceId;
+    let rallyDieSize = 'd6';
+    if (attackerInstanceId) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      const elements = tableState.elements || tableState.activeElements || [];
+      const attacker = elements.find(e => e.instanceId === attackerInstanceId);
+      if (attacker?.activeModifiers?.length > 0) {
+        const rallyMod = attacker.activeModifiers.find(m => m.name === 'Rally Die');
+        if (rallyMod) {
+          rallyDieSize = rallyMod.dice || 'd6';
+          const newMods = attacker.activeModifiers.filter(m => m.id !== rallyMod.id);
+          await applyOpToTableState(gmUid, {
+            op: 'update-element',
+            instanceId: attackerInstanceId,
+            updates: { activeModifiers: newMods },
+          });
+        }
+      }
+    }
+
+    // 3. Roll the Rally Die.
+    const sides = parseInt((rallyDieSize || 'd6').replace('d', ''), 10) || 6;
+    const rallyRoll = randomInt(1, sides + 1);
+
+    // 4. Build the copy banner's subItems.
+    const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+    let newSubItems = [...origSubItems];
+
+    if (addToRoll) {
+      // Insert Rally sub-item after the Fear sub-item (before damage/extras).
+      const fearIdx = newSubItems.findIndex(s => /fear/i.test(s.pre || ''));
+      const insertIdx = fearIdx >= 0 ? fearIdx + 1 : newSubItems.findIndex(s => /damage/i.test(s.pre || ''));
+      const rallySubItem = {
+        pre: 'Rally',
+        input: rallyDieSize,
+        result: String(rallyRoll),
+        details: `(${rallyRoll})`,
+        post: '',
+      };
+      if (insertIdx >= 0) {
+        newSubItems = [...newSubItems.slice(0, insertIdx), rallySubItem, ...newSubItems.slice(insertIdx)];
+      } else {
+        newSubItems = [...newSubItems, rallySubItem];
+      }
+    }
+
+    // 5. Recompute roll totals from the new subItems.
+    const dh = parseDaggerheartResult(newSubItems);
+    let copyData;
+    if (dh) {
+      copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+    } else {
+      let total = 0;
+      for (const sub of newSubItems) {
+        if (/damage/i.test(sub.pre || '')) continue;
+        if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+        const v = parseInt(sub.result, 10);
+        if (!isNaN(v)) total += v;
+      }
+      copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+    }
+
+    // 6. Preserve all original metadata (_-prefixed keys), clear rally toggle fields, mark as applied.
+    for (const k of Object.keys(originalData)) {
+      if (k.startsWith('_') && !(k in copyData)) copyData[k] = originalData[k];
+    }
+    copyData._rallyDieApplied = true;
+    delete copyData._rallyDieAddToRoll;
+    delete copyData._rallyDieAddToDamage;
+    if (originalData.rollText) copyData.rollText = originalData.rollText;
+    if (originalData.displayName) copyData.displayName = originalData.displayName;
+    if (originalData.tags) copyData.tags = originalData.tags;
+
+    // 7. For damage: set _rallyDieDamageResult so the banner annotates damage.
+    if (addToDamage) copyData._rallyDieDamageResult = rallyRoll;
+
+    // 8. Append the copy banner and notify.
+    const dbId = await appendDiceRoll(APP_ID, gmUid, copyData);
+    copyData._rollDbId = dbId;
+    subscriptionManager.notifyChange('banners', gmUid);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-rally-ack error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/banner-heart-d4 — GM: Heart of a Poet (Wordsmith) — spend 1 Hope and roll 1d4 on a non-attack action roll banner.
+app.post('/api/room/my/banner-heart-d4', requireAuth, async (req, res) => {
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  if (bannerId == null || Number.isNaN(bannerId) || !process.env.DATABASE_URL) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  try {
+    const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+    if (!row || row.status !== 'pending' || !row.data?._attackerInstanceId) {
+      return res.status(404).json({ error: 'Banner not found or not a character action roll' });
+    }
+    const tableRows = await getItems(APP_ID, req.uid, 'table_state');
+    const state = tableRows[0] || {};
+    const elements = state.elements || [];
+    const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
+    const maxHope = charEl?.maxHope ?? 6;
+    const currentHope = charEl?.hope ?? maxHope;
+    if (currentHope < 1) {
+      return res.status(400).json({ error: 'Character has no Hope to spend' });
+    }
+    const newHope = Math.max(0, currentHope - 1);
+    await applyOpToTableState(req.uid, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
+    const d4Result = randomInt(1, 5);
+    await updateDiceRollData(APP_ID, req.uid, bannerId, { _heartOfAPoetAddD4: true, _heartOfAPoetD4Result: d4Result });
+    subscriptionManager.notifyChange('banners', req.uid);
+    res.json({ ok: true, d4Result });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-heart-d4 error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/banner-heart-d4-ack — GM: acknowledge a Heart of a Poet banner toggle.
+// Cancels the original banner, decrements 1 Hope, rolls 1d4, creates copy banner with d4 added.
+app.post('/api/room/my/banner-heart-d4-ack', requireAuth, async (req, res) => {
+  const gmUid = req.uid;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const originalData = row.data || {};
+
+    // 1. Cancel the original banner.
+    await setBannerStatus(bannerId, 'cancelled');
+
+    // 2. Decrement 1 Hope from the attacker.
+    const attackerInstanceId = originalData._attackerInstanceId;
+    if (attackerInstanceId) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const state = tableStateItems[0] || {};
+      const elements = state.elements || state.activeElements || [];
+      const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === attackerInstanceId);
+      const currentHope = charEl?.hope ?? (charEl?.maxHope ?? 6);
+      if (currentHope >= 1) {
+        await applyOpToTableState(gmUid, {
+          op: 'update-element',
+          instanceId: attackerInstanceId,
+          updates: { hope: Math.max(0, currentHope - 1) },
+        });
+      }
+    }
+
+    // 3. Roll 1d4.
+    const d4Result = randomInt(1, 5);
+
+    // 4. Build the copy banner's subItems — insert d4 after Fear sub-item.
+    const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+    const d4SubItem = { pre: 'Heart of a Poet', input: '1d4', result: String(d4Result), details: `(${d4Result})`, post: '' };
+    const fearIdx = origSubItems.findIndex(s => /fear/i.test(s.pre || ''));
+    const insertIdx = fearIdx >= 0 ? fearIdx + 1 : origSubItems.findIndex(s => /damage/i.test(s.pre || ''));
+    let newSubItems;
+    if (insertIdx >= 0) {
+      newSubItems = [...origSubItems.slice(0, insertIdx), d4SubItem, ...origSubItems.slice(insertIdx)];
+    } else {
+      newSubItems = [...origSubItems, d4SubItem];
+    }
+
+    // 5. Recompute roll totals from the new subItems.
+    const dh = parseDaggerheartResult(newSubItems);
+    let copyData;
+    if (dh) {
+      copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+    } else {
+      let total = 0;
+      for (const sub of newSubItems) {
+        if (/damage/i.test(sub.pre || '')) continue;
+        if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+        const v = parseInt(sub.result, 10);
+        if (!isNaN(v)) total += v;
+      }
+      copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+    }
+
+    // 6. Preserve original metadata, clear toggle fields, mark as applied.
+    for (const k of Object.keys(originalData)) {
+      if (k.startsWith('_') && !(k in copyData)) copyData[k] = originalData[k];
+    }
+    copyData._heartOfAPoetApplied = true;
+    delete copyData._heartOfAPoetAddD4;
+    copyData._heartOfAPoetD4Result = d4Result;
+    if (originalData.rollText) copyData.rollText = originalData.rollText;
+    if (originalData.displayName) copyData.displayName = originalData.displayName;
+    if (originalData.tags) copyData.tags = originalData.tags;
+
+    // 7. Append the copy banner and notify.
+    await appendDiceRoll(APP_ID, gmUid, copyData);
+    subscriptionManager.notifyChange('banners', gmUid);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-heart-d4-ack error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/banner-heart-d4-toggle — GM or player: toggle intent to add d4 on a Heart of a Poet banner.
+app.post('/api/room/:gmUid/banner-heart-d4-toggle', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const value = req.body?.value === true;
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    if (req.uid !== gmUid) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    await updateDiceRollData(APP_ID, gmUid, bannerId, { _heartOfAPoetAddD4: value });
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true, value });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-heart-d4-toggle error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /api/room/:gmUid/banner-cancel — Player cancels their own pending banner (GM has not acked/cancelled yet).
 app.post('/api/room/:gmUid/banner-cancel', requireAuth, async (req, res) => {
   const { gmUid } = req.params;

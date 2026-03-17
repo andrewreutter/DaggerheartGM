@@ -467,7 +467,7 @@ export function CharacterHoverCard({
       id: `rally-die-${el.instanceId}-${Date.now()}`,
       name: 'Rally Die',
       dice: rallyDieSize,
-      mode: 'roll',
+      mode: 'clearStress',
       consumeOnUse: true,
       refreshOn: 'session',
     }] : [];
@@ -518,7 +518,7 @@ export function CharacterHoverCard({
       const truncDesc = activeDesc.length > 150 ? activeDesc.slice(0, 150) + '…' : activeDesc;
       // Rally (Bard): banner message for whole party
       const actionText = isRally
-        ? 'Everyone gets a Rally Die to add to their next action roll, or to clear Stress equal to the result.'
+        ? 'Everyone gets a Rally Die. It can be added to any action, reaction, or damage roll, or used to clear Stress equal to its result.'
         : truncDesc;
       const notification = {
         _action: true,
@@ -985,6 +985,17 @@ export function CharacterHoverCard({
           onUseMod={updateFn ? (mod) => {
             // clearStress mode chips (Rally Die, Rogue's Dodge, etc.)
             if (mod.mode === 'clearStress' && mod.dice) {
+              // Rally Die: roll the die and clear stress equal to the result on GM ack
+              if (mod.name === 'Rally Die' && onRoll) {
+                const rollText = `${el.name} Rally clear stress [${mod.dice}]`;
+                onRoll(rollText, `${el.name} Rally clear stress`, {
+                  _attackerInstanceId: el.instanceId,
+                  _rallyClearStress: true,
+                  _rallyDieModId: mod.id,
+                });
+                return;
+              }
+              // Other clearStress chips (e.g. Rogue's Dodge): immediately clear 1 stress
               const stress = Math.max(0, (el.currentStress ?? 0) - 1);
               updateFn(el.instanceId, { currentStress: stress });
               const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);

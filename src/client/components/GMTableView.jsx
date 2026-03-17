@@ -11,7 +11,7 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postBannerRallyToggle, postBannerRallyAck, postBannerHeartD4Ack, postBannerHeartD4Toggle, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
@@ -869,6 +869,25 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
   };
 
+  // Rally Die: GM or player toggles "Add Rally Die to roll/damage" on the banner (shared state).
+  const handleRallyDieToggle = (bannerId, field, value) => {
+    if (gmUid) {
+      postBannerRallyToggle(gmUid, bannerId, field, value).catch(() => {});
+    }
+  };
+
+  // Heart of a Poet (Wordsmith): toggle intent to add d4 — both GM and player use the same toggle endpoint.
+  // On Ack with toggle enabled, handleBannerAcknowledge intercepts and calls postBannerHeartD4Ack.
+  const handleHeartD4Toggle = (bannerId, value) => {
+    const roomUid = gmUid || user?.uid;
+    if (roomUid) postBannerHeartD4Toggle(roomUid, bannerId, value).catch(() => {});
+  };
+
+  // Kept for backward compat — player path still uses gmUid (the room owner's UID).
+  const handleHeartD4ToggleRequest = (bannerId, value) => {
+    if (gmUid) postBannerHeartD4Toggle(gmUid, bannerId, value).catch(() => {});
+  };
+
   // Wings of Light (Winged Sentinel): GM clicks toggle — spend 1 Hope and roll 1d8, patch banner.
   const handleWingsD8Toggle = (bannerId) => {
     postBannerWingsD8(bannerId).catch(() => {});
@@ -920,6 +939,23 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // options: { selectedLifeSupportTargetInstanceId?: string, selectedRetractingClawsTargetInstanceId?: string } for single-target selection.
   const handleBannerAcknowledge = (bannerId, roll, options = {}) => {
     removePendingCosts(roll);
+
+    // Rally Die banner toggle: cancel original, remove modifier, create copy banner with die added.
+    // Skip all other processing — the copy banner goes through normal ack.
+    if ((roll._rallyDieAddToRoll || roll._rallyDieAddToDamage) && roll._rollDbId) {
+      postBannerRallyAck(roll._rollDbId, {
+        addToRoll: !!roll._rallyDieAddToRoll,
+        addToDamage: !!roll._rallyDieAddToDamage,
+      }).catch(err => console.error('Rally Die ack failed:', err));
+      return;
+    }
+
+    // Heart of a Poet banner toggle: cancel original, decrement 1 Hope, create copy banner with d4 added.
+    // Skip all other processing — the copy banner goes through normal ack.
+    if (roll._heartOfAPoetAddD4 && roll._rollDbId) {
+      postBannerHeartD4Ack(roll._rollDbId).catch(err => console.error('Heart of a Poet ack failed:', err));
+      return;
+    }
 
     // Retracting Claws (Katari): apply Vulnerable to the selected adversary (selection required before Acknowledge).
     if (roll._retractingClaws && options.selectedRetractingClawsTargetInstanceId) {
@@ -1063,7 +1099,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (roll._attackerInstanceId && (roll._featureUse || (roll._stressCost > 0) || (roll._hopeCost > 0) || (roll._armorMark > 0) || (roll._armorClear > 0))) {
       resourceAck = applyFeatureResources(roll._attackerInstanceId, roll);
     }
-    // Remove consumed one-shot modifier (e.g. Rally Die)
+    // Remove consumed one-shot modifier (e.g. used via _usedModifierId in roll meta)
     if (roll._usedModifierId && roll._attackerInstanceId) {
       const modEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
       if (modEl?.activeModifiers?.length > 0) {
@@ -1071,6 +1107,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         if (kept.length !== modEl.activeModifiers.length) {
           updateActiveElement(roll._attackerInstanceId, { activeModifiers: kept });
         }
+      }
+    }
+    // Rally Die clear-stress: roll total clears that many stress from the character, then remove the die.
+    if (roll._rallyClearStress && roll._attackerInstanceId) {
+      const rallyEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      if (rallyEl) {
+        const rollTotal = roll.total ?? parseInt(roll.subItems?.[0]?.result, 10) ?? 0;
+        const newStress = Math.max(0, (rallyEl.currentStress ?? 0) - rollTotal);
+        const newMods = (rallyEl.activeModifiers || []).filter(m => m.id !== roll._rallyDieModId);
+        updateActiveElement(roll._attackerInstanceId, { currentStress: newStress, activeModifiers: newMods });
       }
     }
     // Apply deferred costs from Lucky reroll (1 Stress) and Not This Time (3 Hope)
@@ -1979,6 +2025,27 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       )
   ), [tableCharacters]);
 
+  // Rally Die: characters that currently have a Rally Die modifier — shown as banner toggles.
+  const rallyDieInstanceIds = useMemo(() => {
+    const set = new Set();
+    for (const c of tableCharacters) {
+      if ((c.activeModifiers || []).some(m => m.name === 'Rally Die')) set.add(c.instanceId);
+    }
+    return set;
+  }, [tableCharacters]);
+
+  // Heart of a Poet (Wordsmith subclass): characters eligible for "+1 Hope → d4 on non-attack action rolls".
+  // In player mode: only the player's own assigned character(s).
+  const heartOfAPoetChars = useMemo(() => (
+    tableCharacters
+      .filter(c =>
+        (c.subclass || '').toLowerCase() === 'wordsmith' &&
+        (c.subclassFeatures || []).some(f => f.name === 'Heart of a Poet') &&
+        (!isPlayer || c.assignedPlayerEmail === playerEmail)
+      )
+      .map(c => ({ instanceId: c.instanceId, name: c.name, hope: c.hope ?? (c.maxHope ?? 6) }))
+  ), [tableCharacters, isPlayer, playerEmail]);
+
   const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
 
@@ -2604,6 +2671,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             getWaterRetaliationNames={!isPlayer ? getWaterRetaliationNames : undefined}
             prayerDiceChars={prayerDiceChars}
             onPrayerDieSelect={gmUid ? handlePrayerDieSelect : undefined}
+            rallyDieInstanceIds={rallyDieInstanceIds}
+            onRallyDieToggle={gmUid ? handleRallyDieToggle : undefined}
+            heartOfAPoetChars={heartOfAPoetChars}
+            onHeartD4Toggle={!isPlayer && gmUid ? handleHeartD4Toggle : undefined}
+            onHeartD4ToggleRequest={isPlayer && gmUid ? handleHeartD4ToggleRequest : undefined}
           />
           <BattleMap
             gmUid={gmUid}
