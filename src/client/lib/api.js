@@ -380,24 +380,47 @@ export const deleteItem = async (collectionName, id) => {
 export const CLIENT_ID = crypto.randomUUID();
 
 /**
+ * Normalize a roll from the server so callers can use attackerId/targetId.
+ * Adds attackerId/targetId from _attackerInstanceId/_selectedTargetInstanceId when not already set.
+ */
+export function normalizeRoll(roll) {
+  if (!roll || typeof roll !== 'object') return roll;
+  return {
+    ...roll,
+    attackerId: roll.attackerId ?? roll._attackerInstanceId,
+    targetId: roll.targetId ?? roll._selectedTargetInstanceId,
+  };
+}
+
+/**
  * Roll dice server-side. Returns full roll data including subItems.
  * gmUid — pass the GM's uid for player rolls (routes to /api/room/:gmUid/roll);
  *          omit (null) for the GM's own rolls (routes to /api/room/my/roll).
+ * rollMeta may use attackerId/targetId; they are sent as _attackerInstanceId/_selectedTargetInstanceId.
  */
 export const postRoll = async (rollText, displayName, gmUid = null, rollMeta = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const url = gmUid ? `/api/room/${gmUid}/roll` : '/api/room/my/roll';
+  const { attackerId, targetId, ...rest } = rollMeta;
+  const body = {
+    rollText,
+    displayName,
+    _clientId: CLIENT_ID,
+    ...rest,
+    _attackerInstanceId: rest._attackerInstanceId ?? attackerId,
+    _selectedTargetInstanceId: rest._selectedTargetInstanceId ?? targetId,
+  };
   const res = await fetch(url, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ rollText, displayName, _clientId: CLIENT_ID, ...rollMeta }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `HTTP ${res.status}`);
   }
-  return res.json();
+  return normalizeRoll(await res.json());
 };
 
 /** Returns { isAdmin } for the currently signed-in user. */
@@ -569,7 +592,8 @@ export const postRerollHopeDie = async (roll) => {
 };
 
 /**
- * Player: toggle Feline Instincts reroll request on a banner (set or clear _felineRerollRequestedBy).
+ * Player: toggle ancestry feature reroll request on a banner (set or clear _felineRerollRequestedBy).
+ * Generic alias: postBannerFeatureRequest. Endpoint: POST /api/room/:gmUid/banner-feline-reroll-request.
  * Returns { ok: true, requested: boolean } on success, or undefined on failure.
  */
 export const postBannerFelineRerollRequest = async (gmUid, bannerId) => {
@@ -584,6 +608,9 @@ export const postBannerFelineRerollRequest = async (gmUid, bannerId) => {
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
 };
+
+/** Generic alias for postBannerFelineRerollRequest (ancestry feature IoC system). */
+export const postBannerFeatureRequest = postBannerFelineRerollRequest;
 
 /**
  * GM: reroll Hope and Fear dice only (Ranger's Focus). Focus is cleared by the client before calling.
@@ -610,6 +637,72 @@ export const postRerollDualityDice = async (roll) => {
     throw new Error(body.error || `HTTP ${res.status}`);
   }
   return res.json();
+};
+
+/**
+ * GM or player in room: set _chipResolved[stateKey] = 'ack' | 'reject' for an ancestry chip (onChipAck/onChipReject).
+ * Returns { ok: true } on success.
+ */
+export const postBannerChipResolve = async (gmUid, { bannerId, stateKey, action, extraPatch }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${gmUid}/banner-chip-resolve`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ bannerId, stateKey, action, extraPatch }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * GM: add extra damage to current roll (e.g. Faun Kick). Cancels original banner and returns new roll data.
+ * Body: { bannerId, extraDamage, extraDamageLabel?, narration?, suppressAncestryFeature? }.
+ * When suppressAncestryFeature is set (e.g. 'Kick'), only that feature's chip is hidden on the new banner.
+ * Returns { roll } with _rollDbId.
+ */
+export const postBannerAddDamage = async (bannerId, { extraDamage, extraDamageLabel, narration, suppressAncestryFeature }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const body = { bannerId, extraDamage, extraDamageLabel: extraDamageLabel || 'Kick', narration };
+  if (suppressAncestryFeature != null) body.suppressAncestryFeature = suppressAncestryFeature;
+  const res = await fetch('/api/room/my/banner-add-damage', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.roll;
+};
+
+/**
+ * GM: reroll one duality die (e.g. Feline Instincts roll.reroll('Hope')). Cancels original banner and returns new roll data.
+ * Body: { bannerId, dieType: 'Hope'|'Fear', suppressAncestryFeature? }. New banner has that die rerolled, others preset; only that chip is hidden.
+ * Returns { roll } with _rollDbId.
+ */
+export const postBannerRerollDie = async (bannerId, { dieType, suppressAncestryFeature }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const body = { bannerId, dieType };
+  if (suppressAncestryFeature != null) body.suppressAncestryFeature = suppressAncestryFeature;
+  const res = await fetch('/api/room/my/banner-reroll-die', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.roll;
 };
 
 /**

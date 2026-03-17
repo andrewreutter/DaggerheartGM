@@ -421,6 +421,88 @@ function buildRollData(rollText, displayName, _clientId, extra = {}) {
   return { ...rollData, ...extra };
 }
 
+// Build augmented roll: copy original subItems with _preset: true, roll extra damage, append new sub-item. For Kick etc.
+// When suppressAncestryFeature is set, only that feature's chip is hidden on the new banner (client-side).
+function buildAugmentedRollWithExtraDamage(originalData, extraDamageExpr, extraDamageLabel, narration, suppressAncestryFeature) {
+  const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+  const presetSubItems = origSubItems.map(sub => ({ ...sub, _preset: true }));
+  const rolled = rollDice(extraDamageExpr);
+  if (!rolled) return null;
+  // Use full sum for extra damage (e.g. Kick 2d6). Do not apply "keep highest" — that rule
+  // applies only to the initial weapon damage in rollFromText, not to added damage dice.
+  const newSubItem = {
+    pre: `${extraDamageLabel || 'Extra'} ${extraDamageExpr} damage`, // <name> <dice>; must match /damage/i so it's summed as damage
+    input: rolled.input,
+    result: String(rolled.result),
+    details: rolled.details,
+    post: '',
+  };
+  const newSubItems = [...presetSubItems, newSubItem];
+  const dh = parseDaggerheartResult(newSubItems);
+  let copyData;
+  if (dh) {
+    copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+  } else {
+    let total = 0;
+    for (const sub of newSubItems) {
+      if (/damage/i.test(sub.pre || '')) continue;
+      if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+      const v = parseInt(sub.result, 10);
+      if (!isNaN(v)) total += v;
+    }
+    copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+  }
+  for (const k of Object.keys(originalData)) {
+    if (k.startsWith('_') && k !== '_presetSubIndexes' && !(k in copyData)) copyData[k] = originalData[k];
+  }
+  if (originalData.rollText) copyData.rollText = originalData.rollText;
+  if (originalData.displayName) copyData.displayName = originalData.displayName;
+  if (originalData.tags) copyData.tags = originalData.tags;
+  if (narration) copyData._narration = narration;
+  if (suppressAncestryFeature != null) copyData._suppressAncestryFeature = suppressAncestryFeature;
+  return copyData;
+}
+
+// Build replacement roll that rerolls only one duality die (Hope or Fear). All other subItems get _preset: true.
+// Used by roll.reroll('Hope') / roll.reroll('Fear') (e.g. Feline Instincts).
+function buildRerollDieRoll(originalData, dieType, suppressAncestryFeature) {
+  const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+  const preRe = dieType === 'Hope' ? /hope/i : /fear/i;
+  const newSubItems = origSubItems.map((sub) => {
+    if (preRe.test(sub.pre || '')) {
+      const expr = (sub.input || '').trim() || 'd12';
+      const rolled = rollDice(expr);
+      if (rolled) {
+        return { ...sub, input: rolled.input, result: String(rolled.result), details: rolled.details, post: sub.post || '' };
+      }
+      return { ...sub, post: sub.post || '' };
+    }
+    return { ...sub, _preset: true, post: sub.post || '' };
+  });
+  const dh = parseDaggerheartResult(newSubItems);
+  let copyData;
+  if (dh) {
+    copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+  } else {
+    let total = 0;
+    for (const sub of newSubItems) {
+      if (/damage/i.test(sub.pre || '')) continue;
+      if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+      const v = parseInt(sub.result, 10);
+      if (!isNaN(v)) total += v;
+    }
+    copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+  }
+  for (const k of Object.keys(originalData)) {
+    if (k.startsWith('_') && k !== '_presetSubIndexes' && !(k in copyData)) copyData[k] = originalData[k];
+  }
+  if (originalData.rollText) copyData.rollText = originalData.rollText;
+  if (originalData.displayName) copyData.displayName = originalData.displayName;
+  if (originalData.tags) copyData.tags = originalData.tags;
+  if (suppressAncestryFeature != null) copyData._suppressAncestryFeature = suppressAncestryFeature;
+  return copyData;
+}
+
 // --- Multi-player room state (in-memory) ---
 // gmUid -> { players: Map<uid, { res, name, email, photoURL }>, gmClients: Set<res> }
 const rooms = new Map();
@@ -2073,6 +2155,110 @@ app.post('/api/room/:gmUid/banner-cancel', requireAuth, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error(`POST /api/room/${gmUid}/banner-cancel error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/banner-chip-resolve — GM or player in room: set _chipResolved[stateKey] = 'ack' | 'reject' for ancestry chip (onChipAck/onChipReject).
+app.post('/api/room/:gmUid/banner-chip-resolve', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const stateKey = req.body?.stateKey;
+  const action = req.body?.action; // 'ack' | 'reject'
+  if (!gmUid || bannerId == null || Number.isNaN(bannerId) || !stateKey || (action !== 'ack' && action !== 'reject')) {
+    return res.status(400).json({ error: 'gmUid, bannerId, stateKey, and action (ack|reject) required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    if (req.uid !== gmUid) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const resolved = { ...(row.data._chipResolved || {}), [stateKey]: action };
+    const extraPatch = req.body?.extraPatch && typeof req.body.extraPatch === 'object' ? req.body.extraPatch : {};
+    const allowedExtra = {};
+    if (extraPatch._damageTotalOverride != null) allowedExtra._damageTotalOverride = extraPatch._damageTotalOverride;
+    if (extraPatch._hpLossReduction != null) allowedExtra._hpLossReduction = extraPatch._hpLossReduction;
+    await updateDiceRollData(APP_ID, gmUid, bannerId, { _chipResolved: resolved, ...allowedExtra });
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/room/:gmUid/banner-chip-resolve error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/banner-add-damage — GM: ancestry chip added extra damage (e.g. Faun Kick). Cancel original, append augmented roll.
+app.post('/api/room/my/banner-add-damage', requireAuth, async (req, res) => {
+  const gmUid = req.uid;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const extraDamage = req.body?.extraDamage; // e.g. '2d6'
+  const extraDamageLabel = req.body?.extraDamageLabel || 'Kick';
+  const narration = req.body?.narration;
+  const suppressAncestryFeature = req.body?.suppressAncestryFeature; // e.g. 'Kick' — only that chip is hidden on new banner
+  if (bannerId == null || Number.isNaN(bannerId) || !extraDamage) {
+    return res.status(400).json({ error: 'bannerId and extraDamage required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const copyData = buildAugmentedRollWithExtraDamage(row.data, extraDamage, extraDamageLabel, narration, suppressAncestryFeature);
+    if (!copyData) {
+      return res.status(400).json({ error: 'Invalid extraDamage expression' });
+    }
+    copyData._replacedRollDbId = bannerId;
+    await setBannerStatus(bannerId, 'cancelled');
+    const dbId = await appendDiceRoll(APP_ID, gmUid, copyData);
+    copyData._rollDbId = dbId;
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ roll: copyData });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-add-damage error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/my/banner-reroll-die — GM: ancestry chip requested reroll of one duality die (e.g. Feline Instincts roll.reroll('Hope')).
+// Cancel original, append replacement roll with that die rerolled and others preset; suppress only the triggering chip.
+app.post('/api/room/my/banner-reroll-die', requireAuth, async (req, res) => {
+  const gmUid = req.uid;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const dieType = req.body?.dieType; // 'Hope' | 'Fear'
+  const suppressAncestryFeature = req.body?.suppressAncestryFeature;
+  if (bannerId == null || Number.isNaN(bannerId) || !dieType || (dieType !== 'Hope' && dieType !== 'Fear')) {
+    return res.status(400).json({ error: 'bannerId and dieType (Hope or Fear) required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const copyData = buildRerollDieRoll(row.data, dieType, suppressAncestryFeature ?? null);
+    copyData._replacedRollDbId = bannerId;
+    await setBannerStatus(bannerId, 'cancelled');
+    const dbId = await appendDiceRoll(APP_ID, gmUid, copyData);
+    copyData._rollDbId = dbId;
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ roll: copyData });
+  } catch (err) {
+    console.error('POST /api/room/my/banner-reroll-die error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

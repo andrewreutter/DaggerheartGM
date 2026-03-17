@@ -13,7 +13,7 @@ import { useTouchDevice } from '../lib/useTouchDevice.js';
  * @param {React.ReactNode} props.children
  * @param {string} [props.label] - Tooltip text (also use as aria-label on icon-only buttons)
  * @param {React.ReactNode} [props.content] - Rich content (e.g. Markdown); when set, tooltip is wider and wraps
- * @param {'top'|'bottom'|'bottom-right'} [props.placement='bottom-right']
+ * @param {'top'|'bottom'|'bottom-right'|'bottom-left'} [props.placement='bottom-right']
  */
 export function Tooltip({ children, label, content, placement = 'bottom-right' }) {
   const [tooltipStyle, setTooltipStyle] = useState(null);
@@ -30,6 +30,8 @@ export function Tooltip({ children, label, content, placement = 'bottom-right' }
       style = { ...style, bottom: window.innerHeight - rect.top + GAP, left: rect.left + rect.width / 2, transform: 'translateX(-50%)' };
     } else if (placement === 'bottom') {
       style = { ...style, top: rect.bottom + GAP, left: rect.left + rect.width / 2, transform: 'translateX(-50%)' };
+    } else if (placement === 'bottom-left') {
+      style = { ...style, top: rect.bottom + GAP, left: rect.left };
     } else {
       // bottom-right: align right edge with trigger
       style = { ...style, top: rect.bottom + GAP, right: window.innerWidth - rect.right };
@@ -49,11 +51,12 @@ export function Tooltip({ children, label, content, placement = 'bottom-right' }
     return () => document.removeEventListener('touchstart', handler);
   }, [isTouch, tooltipStyle]);
 
+  const labelHasNewlines = typeof label === 'string' && label.includes('\n');
   const tooltip = tooltipStyle && hasContent && createPortal(
     <span
       style={tooltipStyle}
       className={`px-2 py-1.5 bg-slate-800 text-slate-200 text-xs rounded pointer-events-none border border-slate-700 shadow-xl ${
-        content ? 'max-w-[280px] whitespace-normal text-left' : 'whitespace-nowrap'
+        content ? 'max-w-[280px] whitespace-normal text-left' : labelHasNewlines ? 'max-w-[280px] whitespace-pre-line text-left' : 'whitespace-nowrap'
       }`}
     >
       {content ?? label}

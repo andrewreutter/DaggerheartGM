@@ -1,13 +1,15 @@
 import {
   User, Shield, Heart, AlertCircle, AlertTriangle, Sparkles, Swords, Package,
   ChevronDown, ChevronRight, Dices, Zap, Megaphone, X, Flame, Mountain, Droplets, Wind,
+  Share2,
 } from 'lucide-react';
 import { useState } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, getRetractingClawsWeapon, getKickWeapon } from '../lib/character-calc.js';
+import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runAncestryRender } from '../lib/character-calc.js';
+import { ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 import { CustomSelect } from './forms/CustomSelect.jsx';
 
@@ -563,6 +565,58 @@ function SubFeatureCard({ sub, onUse, disabled, isActive }) {
   );
 }
 
+// ─── IoC ancestry feature card (minimal, expandable) ──────────────────────────
+
+/**
+ * Dedicated card for ancestry features from the IoC registry (char.addFeature()).
+ * Expandable: title bar shows feature name + right-floated source badge (ancestry)
+ * and optional share icon (posts banner with feature name + description).
+ * Expanded body shows description with Markdown. No Use/cost/action parsing.
+ */
+function AncestryFeatureCard({ feature, open: openProp, onToggle, onShareFeature }) {
+  const [openLocal, setOpenLocal] = useState(false);
+  const open = openProp !== undefined ? openProp : openLocal;
+  const toggle = onToggle ?? (() => setOpenLocal(o => !o));
+
+  return (
+    <div className="rounded border border-slate-700 bg-slate-800/60 overflow-hidden">
+      <div className="px-2 py-1 flex items-center gap-1 min-w-0">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex-1 min-w-0 flex items-center gap-1 text-left hover:bg-slate-700/40 transition-colors rounded -m-1 p-1"
+        >
+          {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
+          <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{feature.name}</span>
+          {feature.source && (
+            <span className="ml-auto text-[9px] rounded px-1 shrink-0 bg-amber-900/60 text-amber-300">{feature.source}</span>
+          )}
+        </button>
+        {onShareFeature && (
+          <Tooltip content="Share Feature Text" placement="top">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onShareFeature(feature);
+              }}
+              className="shrink-0 p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
+              aria-label="Share Feature Text"
+            >
+              <Share2 size={12} />
+            </button>
+          </Tooltip>
+        )}
+      </div>
+      {open && (feature.description != null && feature.description !== '') && (
+        <div className="px-2 pb-2 pt-1 border-t border-slate-700">
+          <MarkdownText text={feature.description} className="text-[11px] text-slate-300 leading-relaxed dh-md" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Feature chip (collapsible) ───────────────────────────────────────────────
 
 /**
@@ -696,7 +750,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           {action.isActive && subFeatures.length < 2 && (
             <div className="pt-1 border-t border-slate-700/60 space-y-1">
               <CostBadgeStrip action={action} />
-              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' && feature.name !== 'Kick' && !wingsOfLightProps ? (
+              {onFeatureUse && (!ancestryFeaturesRegistry[feature.name] || !!ancestryFeaturesRegistry[feature.name]?.onUse) && !wingsOfLightProps ? (
                 isUsed ? (
                   <p className="text-[10px] text-slate-500 italic">
                     Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
@@ -1366,8 +1420,9 @@ export function CharacterWeaponList({
     };
   }
 
-  const retractingClawsWeapon = getRetractingClawsWeapon(el.ancestryFeatures);
-  const kickWeapon = getKickWeapon(el.ancestryFeatures);
+  // Use pre-computed virtual weapons (from recomputeCharacter in builder mode)
+  // or compute on-the-fly for Daggerstack-synced characters.
+  const ancestryVirtualWeapons = el._virtualWeapons || runAncestryRender(el).virtualWeapons;
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
@@ -1433,7 +1488,7 @@ export function CharacterWeaponList({
     );
   }
 
-  if (!weapons.length && !retractingClawsWeapon && !kickWeapon) return null;
+  if (!weapons.length && !ancestryVirtualWeapons.length) return null;
 
   return (
     <Section label={onWeaponClick ? 'Weapons — click to roll' : 'Weapons'}>
@@ -1448,25 +1503,16 @@ export function CharacterWeaponList({
           />
         )}
 
-        {/* Retracting Claws (Katari ancestry) virtual weapon */}
-        {retractingClawsWeapon && (
+        {/* Ancestry virtual weapons (Retracting Claws, Kick, etc.) */}
+        {ancestryVirtualWeapons.map((vw, i) => (
           <WeaponCard
-            weapon={{ ...retractingClawsWeapon, effectiveRange: getEffectiveWeaponRange(retractingClawsWeapon, el.ancestryFeatures) }}
-            traitScore={traits[(retractingClawsWeapon.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(retractingClawsWeapon)}
+            key={`ancestry-vw-${i}`}
+            weapon={{ ...vw, effectiveRange: vw.effectiveRange || vw.range || '' }}
+            traitScore={traits[(vw.trait || '').toLowerCase()] ?? 0}
+            onClick={makeClick(vw)}
             isVirtual
           />
-        )}
-
-        {/* Kick (Faun ancestry) virtual weapon */}
-        {kickWeapon && (
-          <WeaponCard
-            weapon={{ ...kickWeapon, effectiveRange: getEffectiveWeaponRange(kickWeapon, el.ancestryFeatures) }}
-            traitScore={traits[(kickWeapon.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(kickWeapon)}
-            isVirtual
-          />
-        )}
+        ))}
 
         {/* Versatile alternate cards */}
         {versatilePairs.map(({ alternate }, i) => (
@@ -1590,7 +1636,7 @@ export function CharacterWeaponList({
  *   featureUsage              — { [key]: { used, cycle } } usage state map
  *   currentHope               — for gating the Hope ability button
  */
-export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement, prayerDice, onPrayerDieGainHope }) {
+export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement, prayerDice, onPrayerDieGainHope, onShareFeature }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
   const allFeatures = [
@@ -1690,6 +1736,17 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
                 open={isOpen(key)}
                 onToggle={() => toggle(key)}
                 {...beastformProps}
+              />
+            );
+          }
+          if (ancestryFeaturesRegistry[f.name]) {
+            return (
+              <AncestryFeatureCard
+                key={key}
+                feature={f}
+                open={isOpen(key)}
+                onToggle={() => toggle(key)}
+                onShareFeature={onShareFeature}
               />
             );
           }

@@ -23,7 +23,7 @@ import {
 } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
-import { weaponFeatures, classFeatures } from '../../features/registry.js';
+import { weaponFeatures, classFeatures, ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
 import { runPipelineHook, runHook } from '../../features/hooks.js';
 import { wrapEntity } from '../../features/entity.js';
 import { getEffectiveWeaponRange } from '../lib/character-calc.js';
@@ -317,7 +317,8 @@ export function CharacterHoverCard({
     }) || {};
   }, [el, activeElements, mapConfig]);
 
-  // Advantage chips: features with "You have advantage on rolls to..." (parsed at render time)
+  // Advantage chips: declared via addAdvantageTrigger for implemented ancestry features;
+  // parsed from description text for all other features.
   const advantageChips = useMemo(() => {
     const chips = [];
     let idx = 0;
@@ -328,6 +329,15 @@ export function CharacterHoverCard({
       ...(el.communityFeatures || []),
     ];
     for (const f of featureArrays) {
+      const ancestryDescriptor = ancestryFeaturesRegistry[f.name];
+      // Fully-implemented ancestry features: use the declared advantageTrigger (skip text parsing).
+      if (ancestryDescriptor) {
+        if (ancestryDescriptor.advantageTrigger) {
+          chips.push({ id: `adv-${f.name}-${idx++}`, name: f.name, condition: ancestryDescriptor.advantageTrigger, dice: 'd6', mode: 'advantage' });
+        }
+        continue;
+      }
+      // All other features: parse advantage condition from description text.
       const desc = f.description || f.text || '';
       const parsed = parseFeatureAction(desc);
       if (parsed.advantageCondition) {
@@ -659,7 +669,8 @@ export function CharacterHoverCard({
     }
     if (selectedMod?.consumeOnUse) rollMeta._usedModifierId = selectedMod.id;
     if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
-    if (weapon._retractingClaws) rollMeta._retractingClaws = true;
+    if (weapon._featureName) rollMeta._featureName = weapon._featureName;
+    if (weapon._featureName && weapon.onAcknowledge) rollMeta._featureNeedsTarget = true;
     if (weapon._kick) rollMeta._stressCost = 1;
     // Ranger's Focus: use on next attack (toggle adds Hope cost and title suffix)
     if (el.rangerFocusOnNextAttack && updateFn) {
@@ -668,10 +679,9 @@ export function CharacterHoverCard({
       displayName = `${el.name} ${weapon.name} with Ranger's Focus attempt`;
     }
 
-    if (getValidTargets && (rollMeta._weaponRangeFt != null || rollMeta._retractingClaws)) {
+    if (getValidTargets && rollMeta._weaponRangeFt != null) {
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: rollMeta._weaponRangeFt,
-        retractingClaws: rollMeta._retractingClaws,
       }) ?? [];
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
       setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
@@ -815,7 +825,6 @@ export function CharacterHoverCard({
     if (getValidTargets && beastformRollMeta._weaponRangeFt != null) {
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: beastformRollMeta._weaponRangeFt,
-        retractingClaws: false,
       }) ?? [];
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
       setTargetMenuPending({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
@@ -1162,6 +1171,12 @@ export function CharacterHoverCard({
             rollUser: characterEl.name,
             actionName: 'Wings of Light: Pick up and carry',
             tags: [{ name: 'Wings of Light', text: 'Mark 1 Stress' }],
+          }) : undefined}
+          onShareFeature={onActionNotification ? (feature) => onActionNotification({
+            _action: true,
+            rollUser: el.name,
+            actionName: feature.name,
+            actionText: feature.description ?? '',
           }) : undefined}
         />
 

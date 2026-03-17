@@ -29,6 +29,7 @@ export function wrapEntity(el, updateActiveElement) {
 
     // ── Stable identity and max values with safe defaults ─────────────────────
     instanceId:  el.instanceId,
+    id:          el.instanceId,  // alias for clean feature-hook APIs
     name:        el.name,
     class:       el.class,
     maxStress:   el.maxStress   ?? 6,
@@ -87,12 +88,25 @@ export function wrapEntity(el, updateActiveElement) {
       updateActiveElement(el.instanceId, { hope: snapshot.hope });
     },
 
+    /** True when at least n stress boxes are empty (i.e. the character can absorb n more stress). */
+    hasStress(n = 1) {
+      return entity.maxStress - snapshot.currentStress >= n;
+    },
+
     /**
      * Persist an arbitrary flag on the element (e.g. feature-specific state
      * like reinforcedActive). Triggers a React state update immediately.
      */
     setFlag(key, value) {
       updateActiveElement(el.instanceId, { [key]: value });
+    },
+
+    /** Append a condition string to the element's conditions list. */
+    addCondition(name) {
+      const existing = el.conditions || '';
+      const trimmed = existing.trim();
+      const updated = trimmed ? `${trimmed}, ${name}` : name;
+      updateActiveElement(el.instanceId, { conditions: updated });
     },
   };
 

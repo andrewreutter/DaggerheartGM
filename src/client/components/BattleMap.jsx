@@ -3,6 +3,7 @@ import { Upload, X, Map, ArrowLeftToLine, Pencil } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
+import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
@@ -716,9 +717,9 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       if (element.instanceId === center.excludeInstanceId) continue;
       const dx = (element.tokenX + 2.5) - center.x;
       const dy = (element.tokenY + 2.5) - center.y;
-      // Use nearest-edge distance: subtract token radius so any overlap with a band counts
+      // Use nearest-edge distance: subtract token radius so any overlap with a band counts (shared with map-range)
       const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
-      const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
+      const bandIdx = getRangeBandIndexForDistanceFt(dist);
       result[element.instanceId] = bandIdx; // -1 means Out of Range
     }
     return result;
@@ -730,7 +731,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     const dx = followBullseyeFt.x - bullseyeFt.x;
     const dy = followBullseyeFt.y - bullseyeFt.y;
     const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
-    const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
+    const bandIdx = getRangeBandIndexForDistanceFt(dist);
     return bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
   }, [bullseyeFt, followBullseyeFt]);
 

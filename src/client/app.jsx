@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
@@ -74,7 +74,7 @@ function App() {
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
-  // Player-only: banner IDs for which Feline Instincts reroll was requested (optimistic feedback until subscription pushes)
+  // Player-only: banner IDs for which Feline Instincts reroll was requested (optimistic feedback)
   const [felineRequestedBannerIds, setFelineRequestedBannerIds] = useState(() => new Set());
   // Player-only: banner IDs for which Ranger's Focus reroll was requested
   const [rangerFocusRequestedBannerIds, setRangerFocusRequestedBannerIds] = useState(() => new Set());
@@ -377,11 +377,6 @@ function App() {
   // Derive whether the current user is viewing someone else's GM table (player mode)
   const isPlayer = route.view === 'gm-table' && !!route.gmUid && route.gmUid !== user?.uid;
 
-  // Fearless (Infernis): derived from character elements; set of _rollDbIds converted from Fear to Hope.
-  const fearlessConvertedIds = useMemo(() => {
-    return new Set(activeElements.filter(el => el._fearlessToggle).map(el => el._fearlessToggle));
-  }, [activeElements]);
-
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'gm-table';
   const effectiveIsPlayer = isPlayer || isPreviewMode;
@@ -434,7 +429,8 @@ function App() {
         }
       });
       es.addEventListener('banners', (e) => {
-        setPendingBanners(JSON.parse(e.data));
+        const data = JSON.parse(e.data);
+        setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
@@ -479,7 +475,8 @@ function App() {
         }
       });
       es.addEventListener('banners', (e) => {
-        setPendingBanners(JSON.parse(e.data));
+        const data = JSON.parse(e.data);
+        setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
@@ -1073,8 +1070,6 @@ function App() {
                 gmUid={route.gmUid || user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
-                fearlessConvertedIds={fearlessConvertedIds}
-                felineRequestedBannerIds={felineRequestedBannerIds}
                 onFelineRerollRequestSuccess={effectiveIsPlayer ? (bannerId) => setFelineRequestedBannerIds(prev => new Set([...prev, bannerId])) : undefined}
                 onFelineRerollRequestCancel={effectiveIsPlayer ? (bannerId) => setFelineRequestedBannerIds(prev => { const next = new Set(prev); next.delete(bannerId); return next; }) : undefined}
                 rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}

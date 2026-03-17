@@ -731,17 +731,19 @@ export async function saveWhiteboardSnapshot(appId, gmUid, snapshot) {
   );
 }
 
-// CHARACTER_PERSIST_KEYS mirrors the set in server.js. Kept here to avoid a circular import.
-const CHARACTER_RUNTIME_KEYS_DB = [
+// CHARACTER_PERSIST_KEYS mirrors the set in table-ops.js. Kept here to avoid a circular import.
+// Any _ prefixed key on a character element is also preserved automatically
+// (ancestry/class feature state uses _ prefix by convention, e.g. _fearlessToggle).
+const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
   'tokenX', 'tokenY',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive', 'selectedExperienceIndex',
   'featureUsage', 'activeModifiers', 'focusTargetId', 'rangerFocusOnNextAttack', 'companion',
-  'activeBeastform', 'selectedBeastformAdvantage', '_fearlessToggle',
+  'activeBeastform', 'selectedBeastformAdvantage',
   'wingsOfLightFlying', 'activeChanneledElement',
-];
+]);
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 
 /**
@@ -763,6 +765,8 @@ export async function resolveCharacterElements(appId, elements) {
     if (!lib) return el;
     const runtime = {};
     CHARACTER_RUNTIME_KEYS_DB.forEach(k => { if (k in el) runtime[k] = el[k]; });
+    // Auto-preserve any _ prefixed keys (ancestry/class feature toggle state).
+    Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
     return { ...lib, ...runtime, elementType: 'character' };
   });
 }
@@ -775,8 +779,8 @@ export function stripCharacterElementsForDb(elements) {
   return elements.map(el => {
     if (el.elementType !== 'character') return el;
     const stripped = {};
-    for (const k of CHARACTER_PERSIST_KEYS_DB) {
-      if (k in el) stripped[k] = el[k];
+    for (const k of Object.keys(el)) {
+      if (CHARACTER_PERSIST_KEYS_DB.has(k) || k.startsWith('_')) stripped[k] = el[k];
     }
     return stripped;
   });

@@ -83,6 +83,41 @@ export function tokenDistanceFt(ax, ay, bx, by) {
   return Math.max(0, Math.sqrt(dx * dx + dy * dy) - TOKEN_HALF_FT);
 }
 
+/** Ordered range bands (name + maxFt) for distance → band logic. Same edge rule as BattleMap token highlighting. */
+export const RANGE_BANDS_ORDERED = [
+  { name: 'Melee', maxFt: RANGE_BANDS_FT.MELEE },
+  { name: 'Very Close', maxFt: RANGE_BANDS_FT.VERY_CLOSE },
+  { name: 'Close', maxFt: RANGE_BANDS_FT.CLOSE },
+  { name: 'Far', maxFt: RANGE_BANDS_FT.FAR },
+  { name: 'Very Far', maxFt: RANGE_BANDS_FT.VERY_FAR },
+];
+
+/**
+ * Given a nearest-edge distance in feet, return the range band name.
+ * Uses the same edge logic as BattleMap (first band where dist <= maxFt).
+ *
+ * @param {number} distanceFt - nearest-edge distance in feet (e.g. from tokenDistanceFt)
+ * @returns {string|null} 'Melee' | 'Very Close' | 'Close' | 'Far' | 'Very Far', or null if invalid
+ */
+export function distanceFtToRangeBandName(distanceFt) {
+  if (distanceFt == null || typeof distanceFt !== 'number' || distanceFt < 0) return null;
+  const band = RANGE_BANDS_ORDERED.find(b => distanceFt <= b.maxFt);
+  return band ? band.name : null;
+}
+
+/**
+ * Given a nearest-edge distance in feet, return the range band index (0–4).
+ * Same edge logic as BattleMap. Use with RANGE_BANDS_ORDERED or BattleMap's RANGE_BANDS.
+ *
+ * @param {number} distanceFt - nearest-edge distance in feet
+ * @returns {number} 0–4 for Melee..Very Far, or -1 if out of range / invalid
+ */
+export function getRangeBandIndexForDistanceFt(distanceFt) {
+  if (distanceFt == null || typeof distanceFt !== 'number' || distanceFt < 0) return -1;
+  const idx = RANGE_BANDS_ORDERED.findIndex(b => distanceFt <= b.maxFt);
+  return idx >= 0 ? idx : -1;
+}
+
 /**
  * Returns all character elements (other than the source) that are within
  * Far range of the source character on the battle map.

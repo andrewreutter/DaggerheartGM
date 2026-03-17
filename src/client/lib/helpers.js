@@ -37,6 +37,30 @@ export const parseFeatureCategory = (feature) => {
 export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'none'; };
 
 /**
+ * Daggerheart damage threshold resolution.
+ * Returns the number of HP boxes to mark given a raw damage total and thresholds.
+ *   < major             → 1 (Minor)
+ *   >= major < severe   → 2 (Major)
+ *   >= severe           → 3 (Severe), +1 for each doubling beyond severe
+ */
+export function computeHpLoss(damage, thresholds) {
+  const major = thresholds?.major;
+  const severe = thresholds?.severe;
+  if (severe != null && major != null && severe <= 0 && major <= 0) return damage > 0 ? 1 : 0;
+  if (severe != null && damage >= severe) {
+    let hp = 3;
+    let threshold = severe * 2;
+    while (damage >= threshold) {
+      hp++;
+      threshold *= 2;
+    }
+    return hp;
+  }
+  if (major != null && damage >= major) return 2;
+  return 1;
+}
+
+/**
  * Returns a character's effective damage thresholds with their level added to each value.
  * Per Daggerheart rules, characters add their level to their armor's base thresholds.
  * Returns null if the character has no armorThresholds.

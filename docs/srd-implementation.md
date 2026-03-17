@@ -18,7 +18,7 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated    | **Partial** |
 | [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks | **Partial** |
 | [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 1+ features partial (e.g. Wings of Light, Elemental Incarnation) | **Partial** |
-| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 2/36 features auto | **Partial** |
+| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 3/36 features auto | **Partial** |
 | [Communities](#communities-9)             | 9     | N/A       | Done        | 0/9 features auto  | **Display** |
 | [Abilities](#abilities--domain-cards-189) | 189   | N/A       | Done        | Display            | **Display** |
 | [Domains](#domains-9)                     | 9     | N/A       | Indirect    | Filtering only     | **Partial** |
@@ -321,26 +321,26 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 ## Ancestries (18)
 
-**Status: Display.** All 18 ancestries are selectable in the character builder (single ancestry only — multi-ancestry supported in data model but not in form UI). Features are displayed on the character sheet but none are automated.
+**Status: Display.** All 18 ancestries are selectable in the character builder (single ancestry only — multi-ancestry supported in data model but not in form UI). Features are displayed on the character sheet but none are automated. Ancestry banner reactions may declare optional `hopeCost` and `stressCost`; the system gates isEnabled on resources and applies costs before calling acknowledge.
 
 
 | Ancestry     | Feature 1         | Feature 2           | Status  |
 | ------------ | ----------------- | ------------------- | ------- |
 | **Clank**    | Purposeful Design | Efficient           | Display |
 | **Drakona**  | Scales            | Elemental Breath    | Display |
-| **Dwarf**    | Thick Skin        | Increased Fortitude | Display |
+| **Dwarf**    | Thick Skin        | Increased Fortitude | **Done** — Thick Skin: target chip on Minor damage (mark 2 Stress instead of 1 HP). Increased Fortitude: target chip on physical damage (spend 3 Hope to halve damage). Both via `src/features/ancestries/Dwarf.js` and target-chip pipeline in GMTableView/DiceRoller. |
 | **Elf**      | Quick Reactions   | Celestial Trance    | Display |
 | **Faerie**   | Luckbender        | Wings               | Display |
-| **Faun**     | Caprine Leap      | Kick                | Display |
+| **Faun**     | Caprine Leap      | Kick                | **Done** — Caprine Leap: narrative only (Display final). Kick: chip Ack on successful Melee attack adds +2d6 to **current** attack (mark 1 Stress), knockback narration; banner replaced with augmented roll |
 | **Firbolg**  | Charge            | Unshakable          | Display |
 | **Fungril**  | Fungril Network   | Death Connection    | Display |
 | **Galapa**   | Shell             | Retract             | Display |
-| **Giant**    | Endurance         | Reach               | **Done** — Melee weapons display and roll as Very Close; carries through to map range bands (10') |
+| **Giant**    | Endurance         | Reach               | **Done** — Endurance: +1 HP slot via ancestry IoC. Reach: Melee weapons display and roll as Very Close; carries through to map range bands (10'). Both automated via `src/features/ancestries/` |
 | **Goblin**   | Surefooted        | Danger Sense        | Display |
 | **Halfling** | Luckbringer       | Internal Compass    | Display |
 | **Human**    | High Stamina      | Adaptability        | Display |
-| **Infernis** | Fearless          | Dread Visage        | **Done** — Use button hidden; on character Fear rolls **only the character's own player** sees the toggle "Mark 2 stress to change Fear to Hope" (GM does not see toggle); toggling stores `_fearlessToggle` on the element, which the GM's banner picks up as optimistic banner color change (Fear→Hope styling); stress (+2) and Hope (+1) are applied on GM Acknowledge; cancel clears toggle; button shows three states: inactive (canConvert), active/amber (converted — click to revert), disabled (not enough stress) |
-| **Katari**   | Feline Instincts  | Retracting Claws    | **Done** — Feline Instincts: on Agility rolls with ≥2 Hope, banner shows "Spend 2 Hope to reroll Hope Die"; player click requests (button animates for GM); GM click deducts 2 Hope immediately, cancels banner, creates new banner with Hope die rerolled; second banner has no deferred Hope cost. Retracting Claws: virtual weapon (Agility, Melee) on sheet; on success GM selects adversary target and app applies Vulnerable; Vulnerable badge shown and clearable on adversary card. When the selected target of an attack has Vulnerable, the attacker gains an advantage d6 "Vulnerable Target" (same keep-highest pool as other advantage dice). |
+| **Infernis** | Fearless          | Dread Visage        | **Done** — All automated via `src/features/ancestries/` IoC. Fearless: `onBannerRender` calls `roll.setHope()` for pre-ack banner color; on Acknowledge, stress applied via character, hope via `grantHopeToAttacker` return. Dread Visage: advantage condition parsed from description text. |
+| **Katari**   | Feline Instincts  | Retracting Claws    | **Done** — All automated via `src/features/ancestries/` IoC. Feline Instincts: banner reaction for Hope die reroll (2 Hope cost, player request flow). Retracting Claws: virtual weapon via `onCharacterRender` / `addVirtualWeapon`; on Acknowledge applies Vulnerable via `onAcknowledge`. |
 | **Orc**      | Sturdy            | Tusks               | Display |
 | **Ribbet**   | Amphibious        | Long Tongue         | Display |
 | **Simiah**   | Natural Climber   | Nimble              | Display |

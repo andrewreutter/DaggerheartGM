@@ -3,6 +3,8 @@
  * Pure functions that compute derived stats from character selections + SRD data.
  */
 
+import ancestryFeaturesRegistry, { ancestryMap } from '../../features/ancestries/index.js';
+
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 
 export function tierFromLevel(level) {
@@ -261,6 +263,53 @@ export function getEffectiveWeaponRange(weapon, ancestryFeatures) {
 }
 
 /**
+ * Run all registered ancestry features' onCharacterRender hooks against a character.
+ * Returns { statMods, virtualWeapons } — the caller merges these into the character result.
+ *
+ * @param {object} charData - the partially-built character result (with ancestryFeatures, traits, weapons, etc.)
+ * @param {Record<string, object>} [registry] - ancestry features registry (defaults to module-level import)
+ * @returns {{ statMods: Array<{stat: string, value: number, source: string}>, virtualWeapons: object[] }}
+ */
+export function runAncestryRender(charData, registry = ancestryFeaturesRegistry) {
+  const featureNames = (charData.ancestryFeatures || []).map(f => f.name);
+  const statMods = [];
+  const virtualWeapons = [];
+  const weaponsCopy = (charData.weapons || []).map(w => ({ ...w }));
+
+  const ctx = {
+    ...charData,
+    weapons: weaponsCopy,
+
+    addStatMod(stat, value) {
+      statMods.push({ stat, value, source: ctx._currentFeatureName });
+    },
+
+    addVirtualWeapon(weapon) {
+      virtualWeapons.push({
+        ...weapon,
+        name: weapon.name || ctx._currentFeatureName,
+        _featureName: ctx._currentFeatureName,
+        feature: weapon.feature || { name: ctx._currentFeatureName, description: weapon.description || '' },
+      });
+    },
+
+    // Advantage triggers are captured at barrel load time (index.js mock run); no-op during live computation.
+    addAdvantageTrigger() {},
+
+    _currentFeatureName: null,
+  };
+
+  for (const name of featureNames) {
+    const feature = registry[name];
+    if (!feature?.onCharacterRender) continue;
+    ctx._currentFeatureName = name;
+    feature.onCharacterRender(ctx);
+  }
+
+  return { statMods, virtualWeapons, weapons: weaponsCopy };
+}
+
+/**
  * Resolve features from an SRD ancestry item, tagging each with source info.
  */
 function resolveFeatures(items, sourceType, sourceName) {
@@ -335,14 +384,26 @@ export function recomputeCharacter(data, srdData) {
     result.subclass = data.subclass || null;
   }
 
-  // Resolve ancestries
+  // Resolve ancestries — prefer the builder registry over SRD data when available
   const ancestryIds = data.ancestryIds || [];
   const ancestryNames = [];
   const ancestryFeatures = [];
   for (const aId of ancestryIds) {
     const srdAnc = srdData.ancestriesById?.[aId];
-    if (srdAnc) {
-      ancestryNames.push(srdAnc.name);
+    if (!srdAnc) continue;
+    ancestryNames.push(srdAnc.name);
+    const builder = ancestryMap[srdAnc.name];
+    if (builder) {
+      // Fully-implemented ancestry: use embedded descriptions, skip SRD JSON
+      ancestryFeatures.push(...builder.features.map(f => ({
+        id: `${aId}-feat-${f.name.toLowerCase().replace(/\s+/g, '-')}`,
+        name: f.name,
+        description: f.description,
+        type: 'ancestry',
+        sourceType: 'ancestry',
+        source: srdAnc.name,
+      })));
+    } else {
       ancestryFeatures.push(...resolveFeatures(srdAnc.features, 'ancestry', srdAnc.name));
     }
   }
@@ -391,11 +452,35 @@ export function recomputeCharacter(data, srdData) {
   const secondaryWeapon = srdData.weaponsById?.[data.secondaryWeaponId];
   if (primaryWeapon) weapons.push(resolveWeapon(primaryWeapon));
   if (secondaryWeapon) weapons.push(resolveWeapon(secondaryWeapon));
-  // Giant Reach: Melee → Very Close for display and map
+  // Set effectiveRange fallback before ancestry render
   for (const w of weapons) {
-    w.effectiveRange = getEffectiveWeaponRange(w, result.ancestryFeatures);
+    w.effectiveRange = w.effectiveRange || w.range || '';
   }
   result.weapons = weapons;
+
+  // Run ancestry feature onCharacterRender hooks (Reach, Endurance, Retracting Claws, Kick, etc.)
+  const ancestryRender = runAncestryRender(result);
+  result.weapons = ancestryRender.weapons;
+  result._virtualWeapons = ancestryRender.virtualWeapons;
+  // Apply ancestry stat mods
+  const ancestryMods = { traits: {}, maxHp: 0, evasion: 0 };
+  for (const mod of ancestryRender.statMods) {
+    if (TRAIT_KEYS.includes(mod.stat)) {
+      ancestryMods.traits[mod.stat] = (ancestryMods.traits[mod.stat] || 0) + mod.value;
+      if (result.traits && mod.stat in result.traits) result.traits[mod.stat] += mod.value;
+    } else if (mod.stat === 'maxHp') {
+      ancestryMods.maxHp += mod.value;
+      result.maxHp = (result.maxHp ?? 0) + mod.value;
+    } else if (mod.stat === 'evasion') {
+      ancestryMods.evasion += mod.value;
+      result.evasion = (result.evasion ?? 0) + mod.value;
+    }
+  }
+  result.ancestryMods = { ...ancestryMods, statMods: ancestryRender.statMods };
+  // Refresh effectiveRange for weapons mutated by ancestry features
+  for (const w of result.weapons) {
+    w.effectiveRange = w.effectiveRange || w.range || '';
+  }
 
   // Apply weapon property modifiers (e.g. Cumbersome -1 Finesse, Heavy -1 Evasion)
   const weaponMods = computeWeaponModifiers(result.weapons || []);
@@ -608,43 +693,6 @@ export function detectChargedWeapons(weapons) {
     }
   }
   return result;
-}
-
-/**
- * Katari ancestry: virtual weapon for Retracting Claws (Agility, Melee, no damage; on success apply Vulnerable to target).
- * Returns the virtual weapon object or null if the character does not have the feature.
- *
- * @param {Array<{ name: string }>} ancestryFeatures - character's ancestry features
- * @returns {{ name: string, trait: string, range: string, feature: object, _retractingClaws: true } | null}
- */
-export function getRetractingClawsWeapon(ancestryFeatures) {
-  if (!(ancestryFeatures || []).some(f => f.name === 'Retracting Claws')) return null;
-  return {
-    name: 'Retracting Claws',
-    trait: 'Agility',
-    range: 'Melee',
-    feature: { name: 'Retracting Claws', description: 'On success, target becomes Vulnerable' },
-    _retractingClaws: true,
-  };
-}
-
-/**
- * Faun ancestry: virtual weapon for Kick (Agility, Melee, 2d6 damage; mark 1 Stress, knock target or self to Very Close).
- * Returns the virtual weapon object or null if the character does not have the feature.
- *
- * @param {Array<{ name: string }>} ancestryFeatures - character's ancestry features
- * @returns {{ name: string, trait: string, range: string, damage: string, feature: object, _kick: true } | null}
- */
-export function getKickWeapon(ancestryFeatures) {
-  if (!(ancestryFeatures || []).some(f => f.name === 'Kick')) return null;
-  return {
-    name: 'Kick',
-    trait: 'Agility',
-    range: 'Melee',
-    damage: '2d6',
-    _kick: true,
-    feature: { name: 'Kick', description: 'Mark 1 Stress: knock target or self to Very Close range' },
-  };
 }
 
 /**

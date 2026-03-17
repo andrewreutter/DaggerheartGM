@@ -1,0 +1,193 @@
+---
+description: Guide for building ancestry feature files in src/features/ancestries/
+globs: src/features/ancestries/**/*.js
+alwaysApply: false
+---
+
+# Building Ancestry Features
+
+When creating or modifying ancestry files, follow the patterns established by existing implementations. **Be terse.** Study the existing files and imitate their shape exactly — don't invent new patterns or add unnecessary abstraction.
+
+## File shape
+
+Every ancestry file exports a single default object: `{ name, description, onCharacterBuild(char) }`. The `onCharacterBuild` callback calls `char.addFeature(name, description, hooks?)` for each feature.
+
+```js
+/**
+ * <AncestryName> ancestry builder.
+ *
+ * Features:
+ *   FeatureA — One-line summary of what it does.
+ *   FeatureB — One-line summary of what it does.
+ */
+export default {
+  name: '<AncestryName>',
+  description: '...SRD description text...',
+  onCharacterBuild(char) {
+    char.addFeature('FeatureA', '...SRD markdown description...', { /* hooks */ });
+    char.addFeature('FeatureB', '...SRD markdown description...');
+  },
+};
+```
+
+## Hook catalog (use only what you need)
+
+- **No hooks** — Narrative/display-only feature. Just pass name and description.
+- **`onUse(ctx)`** — Presence of this function shows a Use button on the FeatureChip. Absence hides it. Used for features with an active "use" action outside of banner context.
+- **`onCharacterRender(ctx)`** — Passive stat mods, virtual weapons, advantage triggers, weapon mutations. Runs during character computation.
+- **`onBanner(banner)`** — Dice roll banner chips. Call `banner.addChip(descriptor)` one or more times.
+
+### Prefer anonymous one-liners
+
+When a hook body is a single expression, use an arrow function directly. Multi-statement hooks use the method shorthand.
+
+**Exception: `onBanner` is never a one-liner.** Even when it contains a single `banner.addChip(descriptor)` call, the chip descriptor object spans many lines — collapsing the whole thing into an arrow expression hurts readability without saving space. Always write `onBanner(banner) { banner.addChip({ ... }); }` in method-shorthand form.
+
+Examples from existing ancestries:
+
+```js
+// One-liner hooks — arrow function, no braces
+onCharacterRender: (ctx) => ctx.addAdvantageTrigger('intimidate hostile creatures'),
+onCharacterRender: (ctx) => ctx.addStatMod('maxHp', 1),
+
+// One-liner chip fields — arrow function, no braces
+isVisible: (roll) => roll.isMine && roll.isWithFear,
+onChipAck: (roll) => roll.setWithHope(),
+onChipAck: (roll) => roll.reduceHPLoss(1),
+onChipAck: (roll) => roll.setDamageTotal(roll.damageTotal / 2),
+
+// Multi-statement hook — method shorthand with braces
+onCharacterRender(ctx) {
+  for (const w of ctx.weapons) {
+    if (w.range === 'Melee') { w.range = 'Very Close'; w.effectiveRange = 'Very Close'; }
+  }
+},
+
+// Multi-statement chip — method shorthand with braces
+onChipAck(roll, character, ctx) {
+  ctx.addDamage('2d6');
+  ctx.addNarration(`${character.name} or ${roll.target.name} is knocked back to Very Close range`);
+},
+```
+
+### Banner chip descriptor fields
+
+Only include fields that the chip actually uses:
+
+| Field | When to include |
+|---|---|
+| `label` | Always — tooltip text |
+| `hopeCost` / `stressCost` | When the chip has a resource cost (system applies automatically before `onChipAck`) |
+| `isVisible(roll, character)` | Always — controls when chip appears (default: `roll.isMine`) |
+| `getDisabledMessage(roll, character)` | When the chip can be disabled beyond resource costs; return falsey = enabled, return string = disabled with that tooltip |
+| `onChipAck(roll, character, ctx)` | When the chip does something on accept |
+| `onChipReject(roll, character, ctx)` | Only if rejecting has a distinct side-effect |
+| `toggleKey` | Only to override the auto-generated `_toggle.<ancestry>.<feature>` state key |
+| `render(roll, character)` | Display-time side-effect when toggled on (e.g. `roll.setWithHope()` for hope color) |
+| `renderWhenOff(roll, character)` | Display-time side-effect when toggled off |
+| `acknowledgeWhenOff(roll, character, ctx)` | Runs on banner Acknowledge when chip is toggled off |
+| `activate(roll, character, ctx)` | Veto hook on toggle-on; return `{ cancel: true }` to abort |
+| `isActive(roll, character)` | Custom active-state check for chips without a toggle key |
+| `derivedState(activeElements)` | Custom derived state for chips without a toggle key |
+
+### Key `roll` properties available in hooks
+
+- `roll.isMine` — this character initiated the roll
+- `roll.isWithFear` / `roll.isWithHope` — duality result
+- `roll.hasDuality` — true when duality dice were used
+- `roll.hasDamage` — true when the roll has a damage sub-item
+- `roll.isSuccess` — whether the roll hit (enriched by system)
+- `roll.attacker` — `{ id, name, isMe }` (attacker info)
+- `roll.target` — `{ id, name, isMe }` (selected damage target)
+- `roll.attackRange` — e.g. `'Melee'` (enriched by system)
+- `roll.trait` — `{ name }` e.g. `{ name: 'Agility' }` (when `_traitKey` set)
+- `roll.hpLoss` — HP damage to selected target (enriched by system for target chips)
+- `roll.dmgType` — `'phy'` or `'mag'` (enriched by system)
+- `roll.damageTotal` — total damage value (enriched by system)
+- `roll.sub(pattern)` — find a sub-item by label pattern; returns `{ values(), hasValue(n), ...sub }` or null
+
+### Key `roll` mutators in `onChipAck`
+
+- `roll.setWithHope()` — convert the result to Hope (skips fear increment, grants 1 hope)
+- `roll.reroll('Hope')` / `roll.reroll('Fear')` — reroll one duality die (cancels + replaces banner)
+- `roll.reduceHPLoss(n)` — reduce HP loss applied on acknowledge
+- `roll.setDamageTotal(n)` — override damage total used for threshold comparison
+
+### Key `ctx` helpers in `onChipAck`
+
+- `ctx.addDamage(expr)` — add extra damage dice (cancels + replaces banner)
+- `ctx.addNarration(text)` — add narration text to the banner (prefixed with feature name automatically)
+- `ctx.characterRaw` — the raw element object (for reading non-wrapped properties)
+
+### Key `character` (wrapped entity) properties and mutators
+
+- `character.name` — display name (guaranteed by system, fallback: roll.rollUser / 'Character')
+- `character.instanceId` / `character.id` — stable identity
+- `character.hope` / `character.maxHope` — current/max hope (snapshot getters reflect chained mutations)
+- `character.currentStress` / `character.maxStress` — current/max stress
+- `character.currentHp` / `character.maxHp` — current/max HP
+- `character.currentArmor` / `character.maxArmor` — current/max armor
+- `character.hasStress(n)` — true when n stress boxes are empty
+- `character.markStress(n)` / `character.clearStress(n)` — mutate stress
+- `character.markHp(n)` / `character.clearHp(n)` — mutate HP
+- `character.spendHope(n)` / `character.gainHope(n)` — mutate hope
+- `character.markArmor(n)` / `character.clearArmor(n)` — mutate armor
+- `character.setFlag(key, value)` — persist arbitrary state on element
+- `character.addCondition(name)` — append to conditions string
+
+### Key `ctx` helpers in `onCharacterRender`
+
+- `ctx.addStatMod(stat, value)` — e.g. `ctx.addStatMod('maxHp', 1)`
+- `ctx.addVirtualWeapon({ trait, range, damage, description, onAcknowledge? })` — adds a weapon card; `onAcknowledge({ target })` receives a wrapped target entity
+- `ctx.addAdvantageTrigger(condition)` — declares an advantage chip with the given condition text
+- `ctx.weapons` — mutable array of character weapons (for range rewrites, etc.)
+
+## Checklist for a new ancestry
+
+1. Create `src/features/ancestries/<AncestryName>.js` following the file shape above.
+2. Add `import <AncestryName> from './<AncestryName>.js';` to `index.js`.
+3. Add the import to the `builders` array in `index.js`.
+4. **Remove ALL legacy/hardcoded implementations** of the same features from the core system (see below).
+5. Update `docs/srd-implementation.md` status for the ancestry and each feature.
+
+## MANDATORY: Remove legacy code when implementing features
+
+The entire point of the IoC ancestry system is to replace hardcoded feature logic scattered across core files. When a feature moves into an ancestry builder file, **every trace of the old implementation must be deleted in the same change**. There is no transition period and no "both paths" coexistence.
+
+### What to search for and remove
+
+For each feature you implement in a builder file, grep the entire codebase for:
+- The feature name as a string literal (e.g. `'Thick Skin'`, `'Increased Fortitude'`)
+- Any `use<FeatureName>` flags on target objects (e.g. `useThickSkin`, `useIncreasedFortitude`)
+- Any `_<featureName>` roll metadata keys (e.g. `_fearlessToggle`, `_felineRerollRequestedBy`)
+- Any hardcoded `if` blocks in `GMTableView.jsx`, `DiceRoller.jsx`, or other core files that check for the feature by name
+- Any feature-specific props threading (passing feature flags through component props)
+
+### Where legacy code typically hides
+
+- **`DiceRoller.jsx` ResultBanner** — manually checking `bannerReactions` for feature names and setting flags on target objects before calling `onApplyDamage`
+- **`GMTableView.jsx` handleApplyDamage** — `if (target.useXxx)` blocks that duplicate what `onChipAck` now does
+- **`GMTableView.jsx` handleDiceRollComplete** — feature-name checks for state mutations
+- **`CharacterHoverCard.jsx`** — feature-specific roll text modifications
+- **`table-ops.js` RUNTIME_KEYS / CHARACTER_RUNTIME_KEYS** — feature-specific state keys that are now handled by the chip toggle system
+
+### Validation step
+
+After removing legacy code, confirm:
+1. No file outside `src/features/ancestries/` references the feature name in behavioral logic (display/description text is fine).
+2. No `use<FeatureName>` flags remain on any target or roll object.
+3. The feature works end-to-end through the IoC chip system only.
+
+**A feature is not done until the old code is gone.** Leaving legacy implementations alongside IoC implementations creates silent double-application bugs and makes the codebase harder to reason about.
+
+## Principles
+
+- **Imitate, don't invent.** Before writing a new feature, find the closest existing example and copy its structure. Fearless (Infernis) for fear→hope conversion, Feline Instincts (Katari) for rerolls, Kick (Faun) for addDamage + narration, Thick Skin (Dwarf) for target chips, Endurance (Giant) for stat mods, Reach (Giant) for weapon mutation, Retracting Claws (Katari) for virtual weapons, Dread Visage (Infernis) for advantage triggers, Caprine Leap (Faun) for narrative-only features.
+- **Prefer anonymous one-liners.** When a hook or chip field is a single expression, use an arrow function. Reserve method shorthand for multi-statement bodies. This keeps files short and scannable. **Exception**: `onBanner` is always method shorthand — the chip descriptor object is multi-line even when there is only one `addChip()` call, so a one-liner arrow adds no readability benefit.
+- **Be terse.** No boilerplate beyond the JSDoc header, the export shape, and the feature calls. No helper functions, no extra variables, no abstraction layers.
+- **Descriptions come from the SRD.** Use the SRD text for both the ancestry `description` and each feature description. Bold the resource cost phrases with `**...**` to match existing conventions.
+- **One file per ancestry.** All features for an ancestry live in the same file.
+
+## Self-maintenance
+
+This rule should evolve as new ancestry patterns emerge. When a correction is made during ancestry work — a new hook, a naming convention change, a better example — absorb it into this rule as part of the same task. Keep the Hook catalog, Key roll properties, and Principles sections current.
