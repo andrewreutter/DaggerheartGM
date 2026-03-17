@@ -248,9 +248,6 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
     const extra = {};
     if (isLifeSupport && selectedLifeSupportInstanceId) extra.selectedLifeSupportTargetInstanceId = selectedLifeSupportInstanceId;
     if (isMakeAScene && selectedMakeASceneInstanceId) extra.selectedMakeASceneTargetInstanceId = selectedMakeASceneInstanceId;
-    // #region agent log
-    if (isMakeAScene) console.error('[2c0840] ActionBanner.handleAcknowledge', JSON.stringify({isMakeAScene,selectedMakeASceneInstanceId,selectedMakeASceneTargetInstanceId:extra.selectedMakeASceneTargetInstanceId,rollFeatureName:roll._featureName,rollSelectedTargetId:roll._selectedTargetInstanceId,rollFeatureUse:roll._featureUse,rollAttackerId:roll._attackerInstanceId,extraKeys:Object.keys(extra)}));
-    // #endregion
     onAcknowledge?.(Object.keys(extra).length ? extra : undefined);
   };
 

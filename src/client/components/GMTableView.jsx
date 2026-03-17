@@ -593,16 +593,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
 
     // Water: adversaries in Very Close range of the target mark Stress
-    // #region agent log
-    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-outer',message:'Water block entry',runId:'post-fix',data:{hpApplied,targetType:target.type,attackerInstanceId:roll?._attackerInstanceId,weaponRangeFt:roll?._weaponRangeFt},timestamp:Date.now(),hypothesisId:'H-A-B-C'})}).catch(()=>{});
-    // #endregion
     if (hpApplied >= 1 && target.type === 'adversary' && roll?._attackerInstanceId) {
       const waterChar = activeElements.find(e => e.instanceId === roll._attackerInstanceId
         && e.elementType === 'character' && e.activeChanneledElement === 'water');
-      // #region agent log
-      const _dbgWaterEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
-      fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-char',message:'waterChar lookup',data:{waterCharFound:!!waterChar,attackerElFound:!!_dbgWaterEl,attackerElementType:_dbgWaterEl?.elementType,activeChanneledElement:_dbgWaterEl?.activeChanneledElement},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
-      // #endregion
       if (waterChar) {
         const isMeleeHit = (() => {
           const adv = activeElements.find(e => e.instanceId === target.instanceId);
@@ -613,15 +606,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           // Either token off-map: assume melee-range is possible (matches preview behavior)
           return true;
         })();
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-melee',message:'isMeleeHit check',data:{isMeleeHit,weaponRangeFt:roll._weaponRangeFt,waterCharTokenX:waterChar.tokenX},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
-        // #endregion
         if (isMeleeHit) {
           const veryCloseAdvs = getAdversariesWithinRangeFt(activeElements, waterChar.instanceId, RANGE_BANDS_FT.VERY_CLOSE)
             .filter(a => a.instanceId !== target.instanceId);
-          // #region agent log
-          fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-advs',message:'veryCloseAdvs',data:{count:veryCloseAdvs.length,names:veryCloseAdvs.map(a=>a.instanceId)},timestamp:Date.now(),hypothesisId:'H-D'})}).catch(()=>{});
-          // #endregion
           for (const adv of veryCloseAdvs) {
             const advEl = activeElements.find(e => e.instanceId === adv.instanceId);
             if (advEl) {
@@ -953,9 +940,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       let resourceAck = null;
       if (roll._featureUse && roll._attackerInstanceId) {
         const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
-        // #region agent log
-        console.error('[2c0840] handleBannerAck featureUse', JSON.stringify({featureName:roll._featureName,featureUse:roll._featureUse,attackerInstanceId:roll._attackerInstanceId,attackerElFound:!!attackerEl,attackerClass:attackerEl?.class,hasClassFeat:!!(attackerEl&&classFeatures[attackerEl.class]),hasOnFeatureActivated:!!(attackerEl&&classFeatures[attackerEl.class]?.onFeatureActivated),optKeys:Object.keys(options||{}),selectedMakeASceneTargetId:options?.selectedMakeASceneTargetInstanceId,rollSelectedTargetId:roll._selectedTargetInstanceId}));
-        // #endregion
 
         // Batch all updates from resource deduction + class feature activation into a single
         // update-elements op to avoid a race condition where two concurrent postTableOp calls
@@ -975,9 +959,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             const targetEl = makeASceneTargetId
               ? activeElements.find(e => e.instanceId === makeASceneTargetId) ?? null
               : null;
-            // #region agent log
-            console.error('[2c0840] onFeatureActivated', JSON.stringify({featureName:roll._featureName,makeASceneTargetId,targetElFound:!!targetEl,targetElElementType:targetEl?.elementType}));
-            // #endregion
             classFeat.onFeatureActivated({
               featureName: roll._featureName ?? null,
               subFeatureName: roll._subFeatureName ?? null,
