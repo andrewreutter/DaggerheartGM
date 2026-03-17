@@ -11,7 +11,7 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerWingsD8, postBannerWingsD8Toggle, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postCharacterUpdate, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
@@ -310,6 +310,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [budgetCardOpen, setBudgetCardOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef(null);
+  // Make a Scene (Bard): { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
+  const [makeASceneSelections, setMakeASceneSelections] = useState({});
   // Character dialog removed — characters are now managed through the Library picker
   const [playerEmailInput, setPlayerEmailInput] = useState('');
   const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
@@ -591,20 +593,35 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
 
     // Water: adversaries in Very Close range of the target mark Stress
+    // #region agent log
+    fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-outer',message:'Water block entry',runId:'post-fix',data:{hpApplied,targetType:target.type,attackerInstanceId:roll?._attackerInstanceId,weaponRangeFt:roll?._weaponRangeFt},timestamp:Date.now(),hypothesisId:'H-A-B-C'})}).catch(()=>{});
+    // #endregion
     if (hpApplied >= 1 && target.type === 'adversary' && roll?._attackerInstanceId) {
       const waterChar = activeElements.find(e => e.instanceId === roll._attackerInstanceId
         && e.elementType === 'character' && e.activeChanneledElement === 'water');
+      // #region agent log
+      const _dbgWaterEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-char',message:'waterChar lookup',data:{waterCharFound:!!waterChar,attackerElFound:!!_dbgWaterEl,attackerElementType:_dbgWaterEl?.elementType,activeChanneledElement:_dbgWaterEl?.activeChanneledElement},timestamp:Date.now(),hypothesisId:'H-A'})}).catch(()=>{});
+      // #endregion
       if (waterChar) {
-        const isMeleeHit = roll._weaponRangeFt != null
-          ? roll._weaponRangeFt <= RANGE_BANDS_FT.MELEE
-          : (() => {
-              const adv = activeElements.find(e => e.instanceId === target.instanceId);
-              return waterChar.tokenX != null && adv?.tokenX != null
-                && tokenDistanceFt(waterChar.tokenX, waterChar.tokenY, adv.tokenX, adv.tokenY) <= RANGE_BANDS_FT.MELEE;
-            })();
+        const isMeleeHit = (() => {
+          const adv = activeElements.find(e => e.instanceId === target.instanceId);
+          // If both tokens are on the map, use actual distance
+          if (waterChar.tokenX != null && adv?.tokenX != null) {
+            return tokenDistanceFt(waterChar.tokenX, waterChar.tokenY, adv.tokenX, adv.tokenY) <= RANGE_BANDS_FT.MELEE;
+          }
+          // Either token off-map: assume melee-range is possible (matches preview behavior)
+          return true;
+        })();
+        // #region agent log
+        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-melee',message:'isMeleeHit check',data:{isMeleeHit,weaponRangeFt:roll._weaponRangeFt,waterCharTokenX:waterChar.tokenX},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
+        // #endregion
         if (isMeleeHit) {
           const veryCloseAdvs = getAdversariesWithinRangeFt(activeElements, waterChar.instanceId, RANGE_BANDS_FT.VERY_CLOSE)
             .filter(a => a.instanceId !== target.instanceId);
+          // #region agent log
+          fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'ebde1e',sessionId:'ebde1e',location:'GMTableView.jsx:water-advs',message:'veryCloseAdvs',data:{count:veryCloseAdvs.length,names:veryCloseAdvs.map(a=>a.instanceId)},timestamp:Date.now(),hypothesisId:'H-D'})}).catch(()=>{});
+          // #endregion
           for (const adv of veryCloseAdvs) {
             const advEl = activeElements.find(e => e.instanceId === adv.instanceId);
             if (advEl) {
@@ -882,6 +899,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     return res?.wingsOfLightD8Result ?? 0;
   };
 
+  // Prayer Dice: GM or player selects/deselects a prayer die for add-to-roll or damage-reduction.
+  // Uses the GM's uid (gmUid) as room identifier for both parties.
+  const handlePrayerDieSelect = (bannerId, opts) => {
+    if (!gmUid) return;
+    postBannerPrayerDieSelect(gmUid, bannerId, opts).catch(() => {});
+  };
+
   // Doubled Up: parse secondary weapon damage from the tag and apply to a second target.
   const handleDoubledUpTarget = (target, tags, roll) => {
     const doubledTag = (tags || []).find(t => t.name === 'Doubled Up');
@@ -928,23 +952,54 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       // Apply feature costs for _featureUse action notifications
       let resourceAck = null;
       if (roll._featureUse && roll._attackerInstanceId) {
-        resourceAck = applyFeatureResources(roll._attackerInstanceId, roll);
-        // Dispatch class feature activation hook (e.g. Druid Beastform / Evolution)
         const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+        // #region agent log
+        console.error('[2c0840] handleBannerAck featureUse', JSON.stringify({featureName:roll._featureName,featureUse:roll._featureUse,attackerInstanceId:roll._attackerInstanceId,attackerElFound:!!attackerEl,attackerClass:attackerEl?.class,hasClassFeat:!!(attackerEl&&classFeatures[attackerEl.class]),hasOnFeatureActivated:!!(attackerEl&&classFeatures[attackerEl.class]?.onFeatureActivated),optKeys:Object.keys(options||{}),selectedMakeASceneTargetId:options?.selectedMakeASceneTargetInstanceId,rollSelectedTargetId:roll._selectedTargetInstanceId}));
+        // #endregion
+
+        // Batch all updates from resource deduction + class feature activation into a single
+        // update-elements op to avoid a race condition where two concurrent postTableOp calls
+        // each read the same initial state and the last write overwrites the other.
+        const batchMap = {}; // { instanceId: updates }
+        const batchCollect = (id, upd) => { batchMap[id] = { ...(batchMap[id] || {}), ...upd }; };
+
+        resourceAck = applyFeatureResources(roll._attackerInstanceId, roll, batchCollect);
+
+        // Dispatch class feature activation hook (e.g. Druid Beastform / Evolution, Bard Make a Scene)
         if (attackerEl) {
           const classFeat = classFeatures[attackerEl.class];
           if (classFeat?.onFeatureActivated) {
-            const selfEl = wrapEntity(attackerEl, updateActiveElement);
+            const selfEl = wrapEntity(attackerEl, batchCollect);
+            // Make a Scene (Bard): pass selected adversary so difficultyMod is applied
+            const makeASceneTargetId = options?.selectedMakeASceneTargetInstanceId ?? roll._selectedTargetInstanceId ?? null;
+            const targetEl = makeASceneTargetId
+              ? activeElements.find(e => e.instanceId === makeASceneTargetId) ?? null
+              : null;
+            // #region agent log
+            console.error('[2c0840] onFeatureActivated', JSON.stringify({featureName:roll._featureName,makeASceneTargetId,targetElFound:!!targetEl,targetElElementType:targetEl?.elementType}));
+            // #endregion
             classFeat.onFeatureActivated({
               featureName: roll._featureName ?? null,
               subFeatureName: roll._subFeatureName ?? null,
               inputValue: roll._inputValue ?? null,
-              targetEl: null,
+              targetEl,
               selfEl,
-              updateActiveElement,
+              updateActiveElement: batchCollect,
               roll,
             });
+            if (roll._featureName === 'Make a Scene' && roll._rollDbId != null) {
+              setMakeASceneSelections(prev => {
+                const next = { ...prev };
+                delete next[roll._rollDbId];
+                return next;
+              });
+            }
           }
+        }
+        // Send all batched updates (resource costs + class feature effects) as one atomic op
+        const batchEntries = Object.entries(batchMap);
+        if (batchEntries.length > 0) {
+          postTableOp({ op: 'update-elements', updates: batchEntries.map(([id, upd]) => ({ instanceId: id, updates: upd })) });
         }
       }
       if (roll._attackerInstanceId) {
@@ -980,13 +1035,51 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
 
       if (roll._lifeSupportTargets != null && onLifeSupportClear) onLifeSupportClear(roll._rollDbId);
+
+      // Prayer Die: +Hope via ActionBanner — gain Hope and consume the die on GM ack.
+      if (roll._prayerDieGainHope) {
+        const { modId, value, instanceId } = roll._prayerDieGainHope;
+        const charEl = activeElements.find(e => e.instanceId === instanceId);
+        if (charEl) {
+          const maxHope = charEl.maxHope ?? 6;
+          const newHope = Math.min((charEl.hope ?? maxHope) + value, maxHope);
+          const newMods = (charEl.activeModifiers || []).filter(m => m.id !== modId);
+          updateActiveElement(instanceId, { hope: newHope, activeModifiers: newMods });
+        }
+      }
+
       postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
       return;
     }
 
-    // Apply feature costs for dice rolls
+    // Prayer Dice: build _addModifiers from roll subItems — one chip per d4 result.
+    // Chips have usageModes: ['gainHope']:
+    //   'gainHope' → click +Hope to post ActionBanner; GM acks to gain Hope equal to die value.
+    // Adding to a roll or reducing damage is handled directly in roll/damage banners via the
+    // availablePrayerDice prop — no usageMode needed for those cases.
+    if (roll._isPrayerDiceRoll && roll._attackerInstanceId && Array.isArray(roll.subItems) && roll.subItems.length > 0) {
+      const baseId = `prayer-${roll._attackerInstanceId}-${Date.now()}`;
+      roll._addModifiers = roll.subItems
+        .map((sub, i) => {
+          const val = parseInt(sub.result, 10);
+          if (Number.isNaN(val)) return null;
+          return {
+            id: `${baseId}-${i}`,
+            name: 'Prayer Die',
+            value: val,
+            dice: String(val),
+            mode: 'roll',
+            usageModes: ['gainHope'],
+            consumeOnUse: true,
+            refreshOn: 'session',
+          };
+        })
+        .filter(Boolean);
+    }
+
+    // Apply feature costs for dice rolls (feature-use rolls and weapon rolls with costs e.g. Kick)
     let resourceAck = null;
-    if (roll._featureUse && roll._attackerInstanceId) {
+    if (roll._attackerInstanceId && (roll._featureUse || (roll._stressCost > 0) || (roll._hopeCost > 0) || (roll._armorMark > 0) || (roll._armorClear > 0))) {
       resourceAck = applyFeatureResources(roll._attackerInstanceId, roll);
     }
     // Remove consumed one-shot modifier (e.g. Rally Die)
@@ -1032,6 +1125,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         updateActiveElement(roll._attackerInstanceId, { hope: Math.max(0, current - roll._hopeCost) });
       }
     }
+    // Experience: deduct 1 Hope and clear selected experience when an experience was used in the roll.
+    if (roll._experienceHopeCost > 0 && roll._attackerInstanceId) {
+      const expAttackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      if (expAttackerEl) {
+        const maxHope = expAttackerEl.maxHope ?? 6;
+        const current = expAttackerEl.hope ?? maxHope;
+        updateActiveElement(roll._attackerInstanceId, {
+          hope: Math.max(0, current - roll._experienceHopeCost),
+          selectedExperienceIndex: null,
+        });
+      }
+    }
     // Dispatch onRollComplete hook for all weapon feature tags
     {
       const rollTagNames = new Set((roll.tags || []).map(t => t.name));
@@ -1058,6 +1163,18 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     pendingDamageRef.current = null;
     if (dmgPending) {
       updateActiveElement(dmgPending.instanceId, { currentHp: dmgPending.newHp });
+    }
+    // Consume prayer dies selected in this roll — read from roll (server-authoritative shared state).
+    // Deduplicate in case the same die was selected for both +Roll and -Dmg (rare but possible).
+    const prayerDiesToConsume = [roll._prayerAddRollDie, roll._prayerDmgReduceDie]
+      .filter(Boolean)
+      .filter((die, idx, arr) => arr.findIndex(d => d.id === die.id) === idx);
+    for (const die of prayerDiesToConsume) {
+      const charEl = activeElements.find(e => e.instanceId === die.ownerInstanceId);
+      if (charEl) {
+        const newMods = (charEl.activeModifiers || []).filter(m => m.id !== die.id);
+        updateActiveElement(die.ownerInstanceId, { activeModifiers: newMods });
+      }
     }
     if (!options?.alreadyAcked) postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
   };
@@ -1096,7 +1213,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // Called on banner dismiss when roll._featureUse is true.
   // Applies Hope/Stress/Armor costs and marks feature as used.
   // Returns { instanceId, updates } when updates were applied (for including in dice-ack).
-  const applyFeatureResources = (instanceId, roll) => {
+  // updateFn defaults to updateActiveElement (fire-and-forget postTableOp).
+  // Pass a custom collector function to batch all updates into a single op.
+  const applyFeatureResources = (instanceId, roll, updateFn = updateActiveElement) => {
     const el = activeElements.find(e => e.instanceId === instanceId);
     if (!el) return null;
     const updates = {};
@@ -1128,7 +1247,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       updates.activeModifiers = [...(el.activeModifiers || []), ...roll._addModifiers];
     }
     if (Object.keys(updates).length > 0) {
-      updateActiveElement(instanceId, updates);
+      updateFn(instanceId, updates);
     }
     // Distribute modifiers to ALL characters (e.g. Rally Die distributes to whole party)
     if (roll._distributeModifiersToAll && roll._addModifiers?.length > 0) {
@@ -1136,7 +1255,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       for (const char of allChars) {
         // Give each character a uniquely-ID'd copy of the modifier
         const mods = roll._addModifiers.map(m => ({ ...m, id: `${m.id || m.name}-${char.instanceId}` }));
-        updateActiveElement(char.instanceId, {
+        updateFn(char.instanceId, {
           activeModifiers: [...(char.activeModifiers || []), ...mods],
         });
       }
@@ -1227,6 +1346,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (pendingBannerDbIdsRef.current.has(dbId)) {
         // Already showing this banner — merge server snapshot so GM/player see _felineRerollRequestedBy etc.
         diceRollerRef.current?.updateBannerRollByDbId?.(dbId, banner);
+        // Also sync Make a Scene selection when it changes via a player/GM server update
+        if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId != null) {
+          setMakeASceneSelections(prev => ({ ...prev, [dbId]: banner._selectedTargetInstanceId }));
+        }
         continue;
       }
       pendingBannerDbIdsRef.current.add(dbId);
@@ -1241,7 +1364,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (banner._action && banner._featureName === 'Life Support' && banner._attackerInstanceId) {
         lifeSupportTargets = getCharactersWithinCloseRangeWithMarkedHp(activeElements, banner._attackerInstanceId);
       }
-
+      // Make a Scene (Bard): pre-populate selection from player's in-place pick.
+      // Targets are derived live inside ActionBanner from the `targets` prop (no stale closure).
+      if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
+        setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
+      }
       diceRollerRef.current?.addRoll({
         ...banner,
         ...(rousingSpeechTargets !== undefined ? { _rousingSpeechTargets: rousingSpeechTargets } : {}),
@@ -1584,6 +1711,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }, [hoveredFeature]);
 
+  // Minimal adversary list for Make a Scene banner picker — safe for both GM and player views.
+  const makeASceneAdversaries = useMemo(() =>
+    consolidatedElements
+      .filter(item => item.kind === 'adversary-group')
+      .flatMap(item =>
+        item.instances
+          .filter(inst => !isAdversaryDefeated({ ...item.baseElement, currentHp: inst.currentHp }))
+          .map((inst, idx) => ({
+            instanceId: inst.instanceId,
+            name: item.instances.length > 1 ? `${item.baseElement.name} #${idx + 1}` : item.baseElement.name,
+            type: 'adversary',
+          }))
+      ),
+    [consolidatedElements]);
+
   // Flat list of all hittable targets for the damage banner: characters + adversary instances.
   const damageTargets = useMemo(() => {
     const targets = [];
@@ -1845,6 +1987,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
     return set;
   }, [tableCharacters, isPlayer, playerEmail]);
+
+  // Prayer dice available for banner use (add-to-roll, reduce-damage).
+  // Passed to both GM and player DiceRoller so prayer die options are visible to all.
+  const prayerDiceChars = useMemo(() => (
+    tableCharacters
+      .flatMap(c => (c.activeModifiers || [])
+        .filter(m => m.name === 'Prayer Die')
+        .map(m => ({ ...m, ownerInstanceId: c.instanceId, ownerName: c.name }))
+      )
+  ), [tableCharacters]);
 
   const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
@@ -2432,6 +2584,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             lifeSupportSelections={lifeSupportSelections}
             onLifeSupportSelect={onLifeSupportSelect}
             onLifeSupportClear={onLifeSupportClear}
+            makeASceneSelections={makeASceneSelections}
+            onMakeASceneSelect={(rollDbId, instanceId) => {
+              setMakeASceneSelections(prev => ({ ...prev, [rollDbId]: instanceId }));
+              // Sync selection to server so all clients (GM + player) see the same choice
+              postBannerMakeASceneTarget(gmUid, rollDbId, instanceId).catch(() => {});
+            }}
+            makeASceneAdversaries={makeASceneAdversaries}
             targets={isPlayer ? [] : damageTargets}
             getTargetsForRoll={getTargetsForRoll}
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
@@ -2462,6 +2621,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             onWingsD8ToggleRequest={isPlayer && gmUid ? handleWingsD8ToggleRequest : undefined}
             onGetWingsD8Extra={!isPlayer ? getWingsD8Extra : undefined}
             getWaterRetaliationNames={!isPlayer ? getWaterRetaliationNames : undefined}
+            prayerDiceChars={prayerDiceChars}
+            onPrayerDieSelect={gmUid ? handlePrayerDieSelect : undefined}
           />
           <BattleMap
             gmUid={gmUid}
@@ -2836,6 +2997,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                             </button>
                           </div>
                         )}
+                        {inst.difficultyMod != null && inst.difficultyMod !== 0 && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Make a Scene: difficulty reduced">
+                              {inst.difficultyMod > 0 ? '+' : ''}{inst.difficultyMod} Difficulty
+                            </span>
+                            <button
+                              onClick={() => updateActiveElement(inst.instanceId, { difficultyMod: 0 })}
+                              className="p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+                              title="Clear difficulty modifier"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        )}
                         {isAdversaryDefeated({ hp_max: displayEl.hp_max, currentHp: inst.currentHp }) && (
                           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/80 border border-slate-600 text-slate-300">Defeated</span>
                         )}
@@ -3004,6 +3179,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                           )}
                           {inst.focusedBy && (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/50 border border-emerald-600/60 text-emerald-200">Focused by {inst.focusedBy}</span>
+                          )}
+                          {inst.difficultyMod != null && inst.difficultyMod !== 0 && (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Make a Scene: difficulty reduced">
+                              {inst.difficultyMod > 0 ? '+' : ''}{inst.difficultyMod} Difficulty
+                            </span>
                           )}
                           {isAdversaryDefeated({ hp_max: displayEl.hp_max, currentHp: inst.currentHp }) && (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/80 border border-slate-600 text-slate-300">Defeated</span>

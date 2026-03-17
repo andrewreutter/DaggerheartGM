@@ -50,6 +50,14 @@ export function applyTableOp(op, state) {
   switch (op.op) {
     case 'update-element':
       return { activeElements: activeElements.map(el => el.instanceId === op.instanceId ? { ...el, ...op.updates } : el) };
+    case 'update-elements': {
+      // Batch update: op.updates is [{ instanceId, updates }] — all applied atomically in one server round-trip.
+      const map = {};
+      for (const { instanceId, updates } of (op.updates || [])) {
+        map[instanceId] = { ...(map[instanceId] || {}), ...updates };
+      }
+      return { activeElements: activeElements.map(el => map[el.instanceId] ? { ...el, ...map[el.instanceId] } : el) };
+    }
     case 'add-elements':
       return { activeElements: [...activeElements, ...op.elements] };
     case 'remove-element':

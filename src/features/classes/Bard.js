@@ -2,6 +2,15 @@ export default {
   name: 'Bard',
 
   /**
+   * Force Rally through the action-notification path instead of the dice-roll path.
+   * Rally's description mentions "d6" and "d8" (the die sizes for the modifier chips),
+   * which causes parseFeatureAction to detect dice and route it as a roll. Forcing it
+   * as an action ensures the banner shows "Rally" (not "0") and the Rally Die modifiers
+   * are distributed to all characters on GM acknowledge.
+   */
+  forceActionNotificationFeatures: ['Rally'],
+
+  /**
    * "Rally" — the Bard's Hope ability grants Rally Die modifiers to allies.
    * These are stored as `activeModifiers` on the character element and render
    * as amber toggle chips in `CharacterExperiences`.

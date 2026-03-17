@@ -403,7 +403,7 @@ export function CharacterHoverCard({
 
   // ── Feature use handler ──────────────────────────────────────────────────────
   // Called when user clicks Use on a feature or a SubFeatureCard.
-  const handleFeatureUse = onRoll || onActionNotification ? (feature, subFeature = null) => {
+  const handleFeatureUse = onRoll || onActionNotification ? (feature, subFeature = null, event = null) => {
     // Sorcerer Channel Raw Power (and any future class feature) requires an input value
     // before dispatch. Show an inline prompt and defer actual dispatch until submitted.
     const classFeat = classFeatures[el.class];
@@ -516,11 +516,15 @@ export function CharacterHoverCard({
     } else {
       // Action notification path (costs but no dice, or comms-only)
       const truncDesc = activeDesc.length > 150 ? activeDesc.slice(0, 150) + '…' : activeDesc;
-      onActionNotification?.({
+      // Rally (Bard): banner message for whole party
+      const actionText = isRally
+        ? 'Everyone gets a Rally Die to add to their next action roll, or to clear Stress equal to the result.'
+        : truncDesc;
+      const notification = {
         _action: true,
         rollUser: el.name,
         actionName: featName,
-        actionText: truncDesc,
+        actionText,
         tags: [
           ...(action.hopeCost > 0  ? [{ name: 'HopeCost',  text: `Spend ${action.hopeCost} Hope` }]  : []),
           ...(action.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${action.stressCost} Stress` }] : []),
@@ -528,7 +532,25 @@ export function CharacterHoverCard({
           ...(action.armorMark > 0  ? [{ name: 'ArmorMark',  text: `Mark ${action.armorMark} Armor slot` }]  : []),
         ],
         ...rollMeta,
-      });
+      };
+
+      // Features that require an adversary target: show in-place picker at click time,
+      // like weapon attacks. Picker appears before the notification is sent so both
+      // GM and players select the target when initiating the action.
+      // Skip picker for force-action features (e.g. Elemental Incarnation Fire/Water) where target is unused.
+      if (action.targetType === 'adversary' && getValidTargets && onActionNotification && !forceAction) {
+        const closeFt = rangeBandNameToFt('Close') ?? 30;
+        let validTargets = getValidTargets(el.instanceId, { weaponRangeFt: closeFt }) ?? [];
+        if (validTargets.length === 0) {
+          // Attacker not on map or no targets in range: fall back to ALL adversaries
+          validTargets = (getValidTargets(el.instanceId, {}) ?? []).filter(t => t.type === 'adversary');
+        }
+        const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+        setTargetMenuPending({ type: 'feature_action', notification, validTargets, anchorRect });
+        return;
+      }
+
+      onActionNotification?.(notification);
     }
   } : undefined;
 
@@ -559,9 +581,6 @@ export function CharacterHoverCard({
     const traitRollMeta = { _attackerInstanceId: el.instanceId, _traitKey: traitKey };
     if (selectedMod?.consumeOnUse) traitRollMeta._usedModifierId = selectedMod.id;
     if (el.selectedExperienceIndex != null) traitRollMeta._experienceHopeCost = 1;
-    // #region agent log
-    console.log('[3e4b6d] handleTraitClick rollMeta:', JSON.stringify(traitRollMeta), 'selectedMod:', selectedMod ? { id: selectedMod.id, consumeOnUse: selectedMod.consumeOnUse } : null);
-    // #endregion
     onRoll(rollText, displayName, traitRollMeta);
     if (selectedMod) setSelectedModId(null);
     if (selectedAdvs.length) setSelectedAdvIds([]);
@@ -641,6 +660,7 @@ export function CharacterHoverCard({
     if (selectedMod?.consumeOnUse) rollMeta._usedModifierId = selectedMod.id;
     if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
     if (weapon._retractingClaws) rollMeta._retractingClaws = true;
+    if (weapon._kick) rollMeta._stressCost = 1;
     // Ranger's Focus: use on next attack (toggle adds Hope cost and title suffix)
     if (el.rangerFocusOnNextAttack && updateFn) {
       rollMeta._rangerFocusAttempt = true;
@@ -664,7 +684,19 @@ export function CharacterHoverCard({
 
   const handleTargetMenuSelect = (target) => {
     if (!targetMenuPending) return;
-    let { type, rollText, displayName, rollMeta, opts } = targetMenuPending;
+    let { type, rollText, displayName, rollMeta, opts, notification } = targetMenuPending;
+
+    // Action notification with pre-selected target (e.g. Make a Scene, Bard)
+    if (type === 'feature_action') {
+      onActionNotification?.({
+        ...notification,
+        _selectedTargetInstanceId: target.instanceId,
+        _selectedTargetName: target.name,
+      });
+      setTargetMenuPending(null);
+      return;
+    }
+
     if (target.type === 'adversary' && target.vulnerable) {
       rollText = appendVulnerableTargetToRollText(rollText);
     }
@@ -738,15 +770,17 @@ export function CharacterHoverCard({
     });
   } : undefined;
 
-  // Drop Out of Beastform (no cost, broadcasts announcement)
-  const handleDropOutBeastform = (onActionNotification || updateFn) ? () => {
-    onActionNotification?.({
+  // Drop Out of Beastform (no cost; GM ack applies state via Druid.onFeatureActivated)
+  const handleDropOutBeastform = onActionNotification ? () => {
+    onActionNotification({
       _action: true,
       rollUser: el.name,
       actionName: 'Drop out of Beastform',
       actionText: `${el.name} drops out of Beastform.`,
+      _featureUse: true,
+      _attackerInstanceId: el.instanceId,
+      _featureName: 'Drop out of Beastform',
     });
-    updateFn?.(el.instanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
   } : undefined;
 
   // Click to set/clear the selected beastform advantage (mutually exclusive)
@@ -949,7 +983,7 @@ export function CharacterHoverCard({
           selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
           onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
           onUseMod={updateFn ? (mod) => {
-            // clearStress mode (existing behavior)
+            // clearStress mode chips (Rally Die, Rogue's Dodge, etc.)
             if (mod.mode === 'clearStress' && mod.dice) {
               const stress = Math.max(0, (el.currentStress ?? 0) - 1);
               updateFn(el.instanceId, { currentStress: stress });
@@ -957,20 +991,20 @@ export function CharacterHoverCard({
               updateFn(el.instanceId, { activeModifiers: kept });
               return;
             }
-            // Prayer Die chip: broadcast usage message with the pre-rolled value, then remove
-            if (mod.name === 'Prayer Die') {
+          } : undefined}
+          onUseMode={updateFn ? (mod, mode) => {
+            // Prayer Die: gainHope → post ActionBanner for GM ack (not direct apply)
+            if (mod.name === 'Prayer Die' && mode === 'gainHope') {
               onActionNotification?.({
                 _action: true,
                 rollUser: el.name,
                 actionName: 'Prayer Die',
-                actionText: `Uses a Prayer Die — value **${mod.value}**.`,
-                tags: [],
+                actionText: `Use Prayer Die to gain ${mod.value} Hope`,
+                _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
+                _attackerInstanceId: el.instanceId,
               });
-              const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
-              updateFn(el.instanceId, { activeModifiers: kept });
+              return; // Die is consumed on GM ack, not here
             }
-          } : undefined}
-          onUseMode={updateFn ? (mod, mode) => {
             // Dispatch class feature onModifierUsed hook
             if (el.class) {
               const selfEl = wrapEntity(el, updateFn);
@@ -1100,6 +1134,15 @@ export function CharacterHoverCard({
           beastformProps={beastformProps}
           updateFn={updateFn}
           activeChanneledElement={el.activeChanneledElement ?? null}
+          prayerDice={(el.activeModifiers || []).filter(m => m.name === 'Prayer Die')}
+          onPrayerDieGainHope={onActionNotification ? (mod) => onActionNotification({
+            _action: true,
+            rollUser: el.name,
+            actionName: 'Prayer Die',
+            actionText: `Use Prayer Die to gain ${mod.value} Hope`,
+            _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
+            _attackerInstanceId: el.instanceId,
+          }) : undefined}
           onWingsPickUpCarry={onActionNotification ? (characterEl) => onActionNotification({
             _action: true,
             _featureName: 'Wings of Light',

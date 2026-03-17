@@ -7,7 +7,7 @@ import { MarkdownText } from '../lib/markdown.js';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, getRetractingClawsWeapon } from '../lib/character-calc.js';
+import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, getRetractingClawsWeapon, getKickWeapon } from '../lib/character-calc.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 import { CustomSelect } from './forms/CustomSelect.jsx';
 
@@ -574,7 +574,7 @@ function SubFeatureCard({ sub, onUse, disabled, isActive }) {
  *   featureKey     — unique key for usage tracking (default: feature.name)
  *   activeChanneledElement — 'fire'|'earth'|'water'|'air'|null for Elemental Incarnation
  */
-function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle, wingsOfLightProps, activeChanneledElement, stressMaxed }) {
+function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle, wingsOfLightProps, activeChanneledElement, stressMaxed, prayerDiceProps }) {
   const [openLocal, setOpenLocal] = useState(false);
   const open = openProp !== undefined ? openProp : openLocal;
   const toggle = onToggle ?? (() => setOpenLocal(o => !o));
@@ -636,7 +636,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
       </button>
 
       {/* ── Widgetry: always visible ── */}
-      {(subFeatures.length >= 2 || (action.isActive && subFeatures.length < 2) || passiveStats.length > 0 || (!action.isActive && passiveStats.length === 0 && onFeatureUse) || !!rangerFocusToggle || !!wingsOfLightProps) && (
+      {(subFeatures.length >= 2 || (action.isActive && subFeatures.length < 2) || passiveStats.length > 0 || (!action.isActive && passiveStats.length === 0 && onFeatureUse) || !!rangerFocusToggle || !!wingsOfLightProps || prayerDiceProps?.dice?.length > 0) && (
         <div className="px-2 pb-2 pt-1 border-t border-slate-700 space-y-1.5">
           {subFeatures.length >= 2 && feature.name === 'Elemental Incarnation' && subFeatures.length === 4 && (
             <div className="flex flex-wrap gap-1.5">
@@ -649,7 +649,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
                     key={i}
                     type="button"
                     disabled={cantUse}
-                    onClick={(e) => { e.stopPropagation(); if (onFeatureUse && !cantUse) onFeatureUse(feature, sub); }}
+                    onClick={(e) => { e.stopPropagation(); if (onFeatureUse && !cantUse) onFeatureUse(feature, sub, e); }}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
                       isActive
                         ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
@@ -680,7 +680,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
                 <SubFeatureCard
                   key={i}
                   sub={sub}
-                  onUse={onFeatureUse && !isUsed ? () => onFeatureUse(feature, sub) : undefined}
+                  onUse={onFeatureUse && !isUsed ? (e) => onFeatureUse(feature, sub, e) : undefined}
                   disabled={isUsed}
                   isActive={!!activeChanneledElement && sub.name.toLowerCase() === activeChanneledElement}
                 />
@@ -696,14 +696,14 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           {action.isActive && subFeatures.length < 2 && (
             <div className="pt-1 border-t border-slate-700/60 space-y-1">
               <CostBadgeStrip action={action} />
-              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' && !wingsOfLightProps ? (
+              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' && feature.name !== 'Kick' && !wingsOfLightProps ? (
                 isUsed ? (
                   <p className="text-[10px] text-slate-500 italic">
                     Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
                   </p>
                 ) : (
                   <button
-                    onClick={(e) => { e.stopPropagation(); onFeatureUse(feature); }}
+                    onClick={(e) => { e.stopPropagation(); onFeatureUse(feature, null, e); }}
                     className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold border bg-amber-900/40 border-amber-700/60 text-amber-200 hover:bg-amber-800/60 hover:border-amber-600 transition-colors"
                   >
                     {hasDice ? <Dices size={10} /> : <Zap size={10} />}
@@ -771,12 +771,36 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           {!action.isActive && passiveStats.length === 0 && onFeatureUse && (
             <div className="pt-1 border-t border-slate-700/40">
               <button
-                onClick={(e) => { e.stopPropagation(); onFeatureUse(feature); }}
+                onClick={(e) => { e.stopPropagation(); onFeatureUse(feature, null, e); }}
                 className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-slate-600/60 text-slate-400 hover:border-slate-500 hover:text-slate-300 transition-colors"
               >
                 <Megaphone size={9} />
                 Announce
               </button>
+            </div>
+          )}
+
+          {prayerDiceProps?.dice?.length > 0 && (
+            <div className="pt-1.5 border-t border-slate-700/40 space-y-1">
+              <p className="text-[10px] text-teal-400/70">Active Prayer Dice</p>
+              <div className="flex flex-wrap gap-1">
+                {prayerDiceProps.dice.map(mod => (
+                  <div key={mod.id} className="flex items-center rounded border border-teal-700/60 bg-teal-950/40 text-teal-200 text-[10px] overflow-hidden">
+                    <span className="px-1.5 py-0.5 font-semibold">{mod.value}</span>
+                    {prayerDiceProps.onGainHope && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); prayerDiceProps.onGainHope(mod); }}
+                        className="px-1.5 py-0.5 border-l border-teal-700/40 text-[9px] font-semibold hover:bg-teal-900/40 transition-colors"
+                        title={`Post banner to gain ${mod.value} Hope (requires GM acknowledge)`}
+                      >
+                        +Hope
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[9px] text-slate-500">Use +Roll / −Dmg in roll/damage banners</p>
             </div>
           )}
         </div>
@@ -1053,7 +1077,7 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
                   <span className={`font-bold ml-1 ${rm.autoApply ? 'text-teal-400' : 'text-amber-400'}`}>+{rm.score}</span>
                 </span>
               ))}
-              {activeModifiers.map((mod, i) => (
+              {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
                 <ModifierChip key={mod.id || i} mod={mod} />
               ))}
               {hasAdvantageChips && advantageChips.map((adv) => (
@@ -1156,13 +1180,13 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
                 </button>
               );
             })}
-            {activeModifiers.map((mod, i) => (
+            {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
               <ModifierChip
                 key={mod.id || i}
                 mod={mod}
                 selected={selectedModId === mod.id}
                 onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
-                onUse={onUseMod && (mod.mode === 'clearStress' || mod.name === 'Prayer Die') ? () => onUseMod(mod) : undefined}
+                onUse={onUseMod && mod.mode === 'clearStress' ? () => onUseMod(mod) : undefined}
                 onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
                 onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
                 eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
@@ -1229,7 +1253,7 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
   const isRollMod = mod.mode === 'roll' || (mod.bonus != null && !mod.mode);
   const isClearStress = mod.mode === 'clearStress';
   const isPersistent = mod.type === 'persistent';
-  const hasUsageModes = Array.isArray(mod.usageModes) && mod.usageModes.length > 1;
+  const hasUsageModes = Array.isArray(mod.usageModes) && mod.usageModes.length >= 1;
 
   const baseLabel = mod.name + (mod.dice ? ` (${mod.dice})` : mod.value != null ? ` (${mod.value})` : mod.bonus != null ? ` +${mod.bonus}` : '');
 
@@ -1262,7 +1286,7 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
             {modeLabels[mode] ?? mode}
           </button>
         ))}
-        {onSelect && (
+        {onSelect && mod.name !== 'Prayer Die' && (
           <button
             type="button"
             onClick={() => onSelect()}
@@ -1343,6 +1367,7 @@ export function CharacterWeaponList({
   }
 
   const retractingClawsWeapon = getRetractingClawsWeapon(el.ancestryFeatures);
+  const kickWeapon = getKickWeapon(el.ancestryFeatures);
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
@@ -1408,7 +1433,7 @@ export function CharacterWeaponList({
     );
   }
 
-  if (!weapons.length && !retractingClawsWeapon) return null;
+  if (!weapons.length && !retractingClawsWeapon && !kickWeapon) return null;
 
   return (
     <Section label={onWeaponClick ? 'Weapons — click to roll' : 'Weapons'}>
@@ -1429,6 +1454,16 @@ export function CharacterWeaponList({
             weapon={{ ...retractingClawsWeapon, effectiveRange: getEffectiveWeaponRange(retractingClawsWeapon, el.ancestryFeatures) }}
             traitScore={traits[(retractingClawsWeapon.trait || '').toLowerCase()] ?? 0}
             onClick={makeClick(retractingClawsWeapon)}
+            isVirtual
+          />
+        )}
+
+        {/* Kick (Faun ancestry) virtual weapon */}
+        {kickWeapon && (
+          <WeaponCard
+            weapon={{ ...kickWeapon, effectiveRange: getEffectiveWeaponRange(kickWeapon, el.ancestryFeatures) }}
+            traitScore={traits[(kickWeapon.trait || '').toLowerCase()] ?? 0}
+            onClick={makeClick(kickWeapon)}
             isVirtual
           />
         )}
@@ -1555,7 +1590,7 @@ export function CharacterWeaponList({
  *   featureUsage              — { [key]: { used, cycle } } usage state map
  *   currentHope               — for gating the Hope ability button
  */
-export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement }) {
+export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement, prayerDice, onPrayerDieGainHope }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
   const allFeatures = [
@@ -1609,7 +1644,7 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
             // Fall back to direct onUseHopeAbility for legacy callers that don't provide onFeatureUse.
             const hopeFeat = { name: name || 'Hope Ability', description: desc || '' };
             const handleClick = onFeatureUse
-              ? () => canUse && onFeatureUse(hopeFeat)
+              ? (e) => canUse && onFeatureUse(hopeFeat, null, e)
               : () => canUse && onUseHopeAbility(el.instanceId);
             return (
               <button
@@ -1669,6 +1704,9 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
                 canPickUpCarry: (el.currentStress ?? 0) < (el.maxStress ?? 0),
               }
             : undefined;
+          const prayerDiceProps = (f.name === 'Prayer Dice' && prayerDice?.length > 0)
+            ? { dice: prayerDice, onGainHope: onPrayerDieGainHope }
+            : undefined;
           return (
             <FeatureChip
               key={key}
@@ -1682,6 +1720,7 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
               wingsOfLightProps={wingsOfLightProps}
               activeChanneledElement={f.name === 'Elemental Incarnation' ? (activeChanneledElement ?? null) : undefined}
               stressMaxed={f.name === 'Elemental Incarnation' ? (el.currentStress ?? 0) >= (el.maxStress ?? 6) : undefined}
+              prayerDiceProps={prayerDiceProps}
             />
           );
         })}

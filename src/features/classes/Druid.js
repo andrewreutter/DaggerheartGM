@@ -26,6 +26,11 @@ export default {
       updateActiveElement(selfEl.instanceId, { activeBeastform: roll._beastform });
       return;
     }
+    if (featureName === 'Drop out of Beastform') {
+      if (!selfEl?.instanceId) return;
+      updateActiveElement(selfEl.instanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
+      return;
+    }
     if (featureName === 'Elemental Incarnation') {
       if (!selfEl?.instanceId) return;
       const sub = (subFeatureName ?? '').toLowerCase();

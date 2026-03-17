@@ -629,6 +629,25 @@ export function getRetractingClawsWeapon(ancestryFeatures) {
 }
 
 /**
+ * Faun ancestry: virtual weapon for Kick (Agility, Melee, 2d6 damage; mark 1 Stress, knock target or self to Very Close).
+ * Returns the virtual weapon object or null if the character does not have the feature.
+ *
+ * @param {Array<{ name: string }>} ancestryFeatures - character's ancestry features
+ * @returns {{ name: string, trait: string, range: string, damage: string, feature: object, _kick: true } | null}
+ */
+export function getKickWeapon(ancestryFeatures) {
+  if (!(ancestryFeatures || []).some(f => f.name === 'Kick')) return null;
+  return {
+    name: 'Kick',
+    trait: 'Agility',
+    range: 'Melee',
+    damage: '2d6',
+    _kick: true,
+    feature: { name: 'Kick', description: 'Mark 1 Stress: knock target or self to Very Close range' },
+  };
+}
+
+/**
  * Check if a character has all required fields filled in.
  * Returns { complete: boolean, missing: string[] }.
  */

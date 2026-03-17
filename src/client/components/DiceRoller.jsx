@@ -224,22 +224,40 @@ function getConditionalTagStatus(tag, roll) {
   return null;
 }
 
-function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSupportSelectedId, onLifeSupportSelect }) {
+function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSupportSelectedId, onLifeSupportSelect, makeASceneSelectedId, onMakeASceneSelect, makeASceneAdversaries = [], targets = [] }) {
   const visible = useBannerVisible();
   const displayName = roll.rollUser || roll.characterName || '';
   const lifeSupportTargets = roll._lifeSupportTargets;
   const isLifeSupport = lifeSupportTargets != null;
   const selectedLifeSupportInstanceId = lifeSupportSelectedId ?? null;
 
+  // Make a Scene: use the always-current makeASceneAdversaries prop (safe for GM + player).
+  const isMakeAScene = roll._featureName === 'Make a Scene' && roll._action;
+  const makeASceneTargets = isMakeAScene ? makeASceneAdversaries : null;
+  const selectedMakeASceneInstanceId = makeASceneSelectedId ?? null;
+  const selectedMakeASceneName = makeASceneTargets?.find(t => t.instanceId === selectedMakeASceneInstanceId)?.name ?? null;
+  const [makeASceneMenuRect, setMakeASceneMenuRect] = useState(null);
+
   const needsLifeSupportSelection = isLifeSupport && (lifeSupportTargets?.length ?? 0) > 0;
-  const canAcknowledge = !needsLifeSupportSelection || selectedLifeSupportInstanceId != null;
+  const needsMakeASceneSelection = isMakeAScene && (makeASceneTargets?.length ?? 0) > 0;
+  const canAcknowledge =
+    (!needsLifeSupportSelection || selectedLifeSupportInstanceId != null) &&
+    (!needsMakeASceneSelection || selectedMakeASceneInstanceId != null);
 
   const handleAcknowledge = () => {
-    const extra = isLifeSupport && selectedLifeSupportInstanceId
-      ? { selectedLifeSupportTargetInstanceId: selectedLifeSupportInstanceId }
-      : undefined;
-    onAcknowledge?.(extra);
+    const extra = {};
+    if (isLifeSupport && selectedLifeSupportInstanceId) extra.selectedLifeSupportTargetInstanceId = selectedLifeSupportInstanceId;
+    if (isMakeAScene && selectedMakeASceneInstanceId) extra.selectedMakeASceneTargetInstanceId = selectedMakeASceneInstanceId;
+    // #region agent log
+    if (isMakeAScene) console.error('[2c0840] ActionBanner.handleAcknowledge', JSON.stringify({isMakeAScene,selectedMakeASceneInstanceId,selectedMakeASceneTargetInstanceId:extra.selectedMakeASceneTargetInstanceId,rollFeatureName:roll._featureName,rollSelectedTargetId:roll._selectedTargetInstanceId,rollFeatureUse:roll._featureUse,rollAttackerId:roll._attackerInstanceId,extraKeys:Object.keys(extra)}));
+    // #endregion
+    onAcknowledge?.(Object.keys(extra).length ? extra : undefined);
   };
+
+  // Action-only banner title: avoid showing "0" when actionName is missing or numeric zero (e.g. Rally)
+  const actionTitle = roll._action && (roll.actionName == null || roll.actionName === '' || roll.actionName === 0)
+    ? (roll._featureName || 'Hope ability')
+    : (roll.actionName || 'Action');
 
   return (
     <div
@@ -259,7 +277,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
         {displayName && (
           <div className="text-[11px] uppercase tracking-widest opacity-70 mb-1">{displayName}</div>
         )}
-        <div className="text-base font-bold text-amber-200 mb-1">{roll.actionName}</div>
+        <div className="text-base font-bold text-amber-200 mb-1">{actionTitle}</div>
         {roll.actionText && (
           <div className="text-[12px] text-slate-300 mb-2">{roll.actionText}</div>
         )}
@@ -294,6 +312,69 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                   </span>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+        {isMakeAScene && (
+          <div className="mb-2">
+            <div className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+              −2 Difficulty on:
+            </div>
+            {(makeASceneTargets?.length ?? 0) === 0 ? (
+              <div className="text-[10px] text-slate-500 italic">No adversaries on the table</div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => setMakeASceneMenuRect(e.currentTarget.getBoundingClientRect())}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors cursor-pointer ${
+                    selectedMakeASceneInstanceId
+                      ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
+                      : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                  }`}
+                >
+                  <ChevronDown size={10} />
+                  {selectedMakeASceneName ?? 'Choose adversary'}
+                </button>
+                {makeASceneMenuRect != null && createPortal(
+                  <>
+                    <div className="fixed inset-0 z-[400]" onClick={() => setMakeASceneMenuRect(null)} />
+                    <div
+                      className="fixed z-[401] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-1"
+                      style={{
+                        top: Math.min(makeASceneMenuRect.bottom + 4, window.innerHeight - 200),
+                        left: Math.min(makeASceneMenuRect.left, window.innerWidth - 200),
+                        minWidth: '160px',
+                        maxWidth: '240px',
+                      }}
+                    >
+                      {makeASceneTargets.map(t => {
+                        const sum = formatTargetSummary(t, { hideMax: false });
+                        const isSelected = t.instanceId === selectedMakeASceneInstanceId;
+                        return (
+                          <button
+                            key={t.instanceId}
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onMakeASceneSelect?.(t.instanceId); setMakeASceneMenuRect(null); }}
+                            className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${
+                              isSelected
+                                ? 'border-amber-500 bg-amber-800/60 text-amber-100'
+                                : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'
+                            }`}
+                          >
+                            <div>{t.name}</div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
+                              {sum.conditions ? ` · ${sum.conditions}` : ''}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>,
+                  document.body
+                )}
+              </>
             )}
           </div>
         )}
@@ -356,7 +437,7 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, onResolveInstantly }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, onResolveInstantly, prayerDiceChars = [], onPrayerDieSelect }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
@@ -392,6 +473,15 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     return () => document.removeEventListener('keydown', onKey);
   }, [targetMenuAnchorRect]);
 
+  // Prayer Dice: selection state for this banner.
+  // selectedAddRollDie: die whose value is added to the DH action total before ack.
+  // selectedDmgReduceDie: die whose value is subtracted from damage before threshold comparison.
+  // Prayer die selections live on the roll object (server-authoritative shared state).
+  const selectedAddRollDie = roll._prayerAddRollDie ?? null;
+  const selectedDmgReduceDie = roll._prayerDmgReduceDie ?? null;
+  const selectAddRollDie = (die) => onPrayerDieSelect?.(roll._rollDbId, { addRollDie: die });
+  const selectDmgReduceDie = (die) => onPrayerDieSelect?.(roll._rollDbId, { dmgReduceDie: die });
+
   // Fearless (Infernis): if this banner was converted from Fear to Hope, use 'hope' for display.
   const isConverted = !!(roll._rollDbId != null && fearlessConvertedBannerIds?.has(roll._rollDbId));
   const effectiveDominant = isConverted ? 'hope' : dominant;
@@ -402,6 +492,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const isCritical    = effectiveDominant === 'critical';
   const isHope        = effectiveDominant === 'hope' || isCritical;
 
+  const isPrayerDiceRoll = !!roll._isPrayerDiceRoll;
   const actionItems = (roll.subItems || []).filter(s => !/damage/i.test(s.pre || '') && !EXTRA_PRE_RE.test(s.pre || ''));
   const damageSub   = (roll.subItems || []).find(s => /damage/i.test(s.pre || '') && s.input);
   const extraItems  = (roll.subItems || []).filter(s => EXTRA_PRE_RE.test(s.pre || ''));
@@ -542,7 +633,23 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
         {/* ── Action line ── */}
         <div className="flex items-baseline justify-center flex-wrap gap-x-1 leading-snug">
-          {isDaggerheart ? (
+          {isPrayerDiceRoll ? (
+            /* Prayer Dice: show each d4 result individually — each becomes its own chip */
+            <>
+              {actionItems.filter(s => /d\d/i.test(s.input || '')).map((s, i) => {
+                const val = parseInt(s.result, 10);
+                return (
+                  <span key={i} className="flex items-baseline gap-1">
+                    {i > 0 && <span className={`text-[11px] ${scheme.detail}`}>·</span>}
+                    <span className={`text-[11px] ${scheme.detail}`}>{s.input}</span>
+                    <span className="text-2xl font-black tabular-nums ml-0.5">
+                      {resolved ? (isNaN(val) ? s.result : val) : <Spinner lg />}
+                    </span>
+                  </span>
+                );
+              })}
+            </>
+          ) : isDaggerheart ? (
             <>
               {dhParts.length > 0 && (
                 <span className={`text-[11px] ${scheme.detail}`}>
@@ -559,8 +666,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 </span>
               )}
               <span className="text-2xl font-black tabular-nums ml-1">
-                {resolved ? total : <Spinner lg />}
+                {resolved ? (total + (selectedAddRollDie?.value ?? 0)) : <Spinner lg />}
               </span>
+              {selectedAddRollDie && resolved && (
+                <span className="text-[10px] text-teal-400/80 ml-0.5">+{selectedAddRollDie.value} Prayer Die</span>
+              )}
               <span className="text-sm font-semibold opacity-80 ml-0.5">
                 {resolved
                   ? (isCritical ? '✦ Critical!' : isHope ? 'with Hope' : 'with Fear')
@@ -587,36 +697,71 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           )}
         </div>
 
-        {/* ── Damage line ── */}
-        {dmg && (
-          <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
-            <span className="text-[11px] text-red-300/60">
-              {dmg.notation}{' '}
-              {resolved ? (
-                <>
-                  {(dmg.discarded || []).map((v, i) => (
-                    <span key={i} className="line-through text-red-300/30 mr-0.5">{v}</span>
-                  ))}
-                  {dmg.dieValue}
-                </>
-              ) : <Spinner />}
-              {dmg.modifier !== 0 && (
-                <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
-              )}
-              {roll._wingsOfLightD8Result != null && (
-                <> + d8({roll._wingsOfLightD8Result})</>
-              )}
-              {' ='}
-            </span>
-            <span className="text-lg font-black tabular-nums text-red-300 ml-1">
-              {resolved ? (roll._wingsOfLightD8Result != null ? dmg.total + roll._wingsOfLightD8Result : dmg.total) : <Spinner />}
-            </span>
-            {dmg.type && (
-              <span className="text-sm font-semibold text-red-300/80 ml-0.5">{dmg.type}</span>
-            )}
-            <span className="text-sm font-semibold text-red-300/80">damage</span>
+        {/* ── Prayer Die: add-to-roll buttons (DH rolls only, visible to all) ── */}
+        {isDaggerheart && resolved && prayerDiceChars.length > 0 && (
+          <div className="flex items-center justify-center flex-wrap gap-1 mt-1">
+            {prayerDiceChars.map(die => {
+              const isSelected = selectedAddRollDie?.id === die.id;
+              const usedForReduce = selectedDmgReduceDie?.id === die.id;
+              return (
+                <button
+                  key={die.id}
+                  type="button"
+                  disabled={usedForReduce}
+                    onClick={() => selectAddRollDie(isSelected ? null : die)}
+                  className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                    isSelected
+                      ? 'border-teal-500 bg-teal-900/50 text-teal-200'
+                      : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                  title={isSelected ? 'Remove Prayer Die from roll' : `Add ${die.ownerName}'s Prayer Die (${die.value}) to this roll`}
+                >
+                  {die.ownerName}: +{die.value} Prayer Die
+                </button>
+              );
+            })}
           </div>
         )}
+
+        {/* ── Damage line ── */}
+        {dmg && (() => {
+          const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+          const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+          const baseDmg = dmg.total + wingsBonus;
+          const displayDmg = Math.max(0, baseDmg - dmgReduction);
+          return (
+            <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
+              <span className="text-[11px] text-red-300/60">
+                {dmg.notation}{' '}
+                {resolved ? (
+                  <>
+                    {(dmg.discarded || []).map((v, i) => (
+                      <span key={i} className="line-through text-red-300/30 mr-0.5">{v}</span>
+                    ))}
+                    {dmg.dieValue}
+                  </>
+                ) : <Spinner />}
+                {dmg.modifier !== 0 && (
+                  <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
+                )}
+                {roll._wingsOfLightD8Result != null && (
+                  <> + d8({roll._wingsOfLightD8Result})</>
+                )}
+                {dmgReduction > 0 && (
+                  <> <span className="text-teal-400/80">− Prayer Die({dmgReduction})</span></>
+                )}
+                {' ='}
+              </span>
+              <span className="text-lg font-black tabular-nums text-red-300 ml-1">
+                {resolved ? displayDmg : <Spinner />}
+              </span>
+              {dmg.type && (
+                <span className="text-sm font-semibold text-red-300/80 ml-0.5">{dmg.type}</span>
+              )}
+              <span className="text-sm font-semibold text-red-300/80">damage</span>
+            </div>
+          );
+        })()}
 
         {/* ── Extra dice sub-items: Reload / Invigorate / Lifesteal ── */}
         {extraItems.map((sub, i) => {
@@ -1057,6 +1202,27 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       {wingsD8Result != null ? `+d8: ${wingsD8Result}` : '+1 Hope → d8'}
                                     </button>
                                   )}
+                                  {/* Prayer Die: damage reduction toggles */}
+                                  {prayerDiceChars.map(die => {
+                                    const isSelected = selectedDmgReduceDie?.id === die.id;
+                                    const usedForRoll = selectedAddRollDie?.id === die.id;
+                                    return (
+                                      <button
+                                        key={die.id}
+                                        type="button"
+                                        disabled={usedForRoll}
+                                        onClick={() => selectDmgReduceDie(isSelected ? null : die)}
+                                        className={`flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                                          isSelected
+                                            ? 'border-teal-500 bg-teal-900/50 text-teal-200'
+                                            : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
+                                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                                        title={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}
+                                      >
+                                        {isSelected ? `−${die.value} Prayer Die` : `${die.ownerName}: −${die.value} Prayer Die`}
+                                      </button>
+                                    );
+                                  })}
                                 </>
                               );
                             })()}
@@ -1206,7 +1372,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 d8Extra = roll._wingsOfLightD8Result ?? (await onGetWingsD8Extra(roll)) ?? 0;
                                 if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
                               }
-                              const totalDamage = (hasDamage ? dmg.total : 0) + d8Extra;
+                              const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                              const totalDamage = Math.max(0, (hasDamage ? dmg.total : 0) + d8Extra - dmgReduction);
                               if (selectedDamageTargetId && hasDamage && onApplyDamage) {
                                 const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
                                 if (selectedTarget) {
@@ -1214,7 +1381,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected }, totalDamage, tags, roll, dmgType);
                                 }
                               }
-                              onAcknowledge?.(alreadyAcked ? { alreadyAcked: true } : undefined);
+                              const ackOpts = {};
+                              if (alreadyAcked) ackOpts.alreadyAcked = true;
+                              onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
                             }}
                             disabled={filteredTargets.length > 0 && !selectedDamageTargetId}
                             className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
@@ -1245,7 +1414,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               ) : (
                 <div className="flex items-center justify-center gap-1.5">
                   <button
-                    onClick={onAcknowledge}
+                    onClick={() => onAcknowledge?.()}
                     className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                   >
                     Acknowledge
@@ -1344,6 +1513,35 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             })()}
           </div>
         )}
+        {/* Prayer Die: damage-reduction display for players (GM sees it in the target area above) */}
+        {!showActions && resolved && hasDamage && prayerDiceChars.length > 0 && (
+          <div className="mt-2.5 pt-2 border-t border-white/10">
+            <div className="flex flex-wrap justify-center gap-1">
+              {prayerDiceChars.map(die => {
+                const isSelected = selectedDmgReduceDie?.id === die.id;
+                return (
+                  <button
+                    key={die.id}
+                    type="button"
+                    onClick={() => selectDmgReduceDie(isSelected ? null : die)}
+                    className={`flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                      isSelected
+                        ? 'border-teal-500 bg-teal-900/50 text-teal-200'
+                        : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
+                    }`}
+                    title={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}
+                  >
+                    {isSelected ? <Check size={10} /> : null}
+                    {die.ownerName}: −{die.value} Prayer Die
+                  </button>
+                );
+              })}
+            </div>
+            {selectedDmgReduceDie && (
+              <p className="text-[10px] text-teal-400/70 text-center mt-0.5">Prayer Die reduces damage — ask GM to apply</p>
+            )}
+          </div>
+        )}
         {/* Fearless (Infernis): toggle button — visible to both GM and character's own player */}
         {resolved && fearlessChar && onFearlessConvert && (
           <div className={showActions ? '' : 'mt-2.5 pt-2 border-t border-white/10'}>
@@ -1389,6 +1587,9 @@ export const DiceRoller = forwardRef(function DiceRoller({
   lifeSupportSelections = {},
   onLifeSupportSelect,
   onLifeSupportClear,
+  makeASceneSelections = {},
+  onMakeASceneSelect,
+  makeASceneAdversaries = [],
   targets,
   getTargetsForRoll,
   onApplyDamage,
@@ -1419,6 +1620,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onWingsD8ToggleRequest,
   onGetWingsD8Extra,
   getWaterRetaliationNames,
+  prayerDiceChars = [],
+  onPrayerDieSelect,
 }, ref) {
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
@@ -1876,6 +2079,10 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 roll={entry.roll}
                 lifeSupportSelectedId={entry.roll._rollDbId != null ? lifeSupportSelections[entry.roll._rollDbId] : undefined}
                 onLifeSupportSelect={onLifeSupportSelect && entry.roll._rollDbId != null ? (instanceId) => onLifeSupportSelect(entry.roll._rollDbId, instanceId) : undefined}
+                makeASceneSelectedId={entry.roll._rollDbId != null ? makeASceneSelections[entry.roll._rollDbId] : undefined}
+                onMakeASceneSelect={onMakeASceneSelect && entry.roll._rollDbId != null ? (instanceId) => onMakeASceneSelect(entry.roll._rollDbId, instanceId) : undefined}
+                makeASceneAdversaries={makeASceneAdversaries}
+                targets={targets}
                 onAcknowledge={!isPlayer ? (extra) => {
                   onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll, extra);
                   dismissBannerById(entry._bannerId);
@@ -1929,6 +2136,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onWingsD8Toggle={onWingsD8Toggle}
                 onWingsD8ToggleRequest={onWingsD8ToggleRequest}
                 onGetWingsD8Extra={onGetWingsD8Extra}
+                prayerDiceChars={prayerDiceChars}
+                onPrayerDieSelect={onPrayerDieSelect}
                 getWaterRetaliationNames={getWaterRetaliationNames}
                 isPlayer={isPlayer}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}

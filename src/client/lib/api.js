@@ -668,6 +668,25 @@ export const postBannerWingsD8Toggle = async (gmUid, bannerId, value) => {
  * Syncs _holdThemOffActive to the roll; all clients receive updated banner via subscription.
  * Returns { ok: true, active: boolean } on success.
  */
+/**
+ * GM or player: select a Prayer Die for add-to-roll or damage-reduction on a banner.
+ * Pass addRollDie and/or dmgReduceDie (die object or null to clear).
+ * All clients receive updated banner via subscription.
+ */
+// opts: { addRollDie?: die|null, dmgReduceDie?: die|null } — only specified keys are patched on the roll.
+export const postBannerPrayerDieSelect = async (gmUid, bannerId, opts = {}) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-prayer-die-select`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, ...opts }),
+    });
+    return res.ok ? res.json() : undefined;
+  } catch { return undefined; }
+};
+
 export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
   const token = await getAuthToken();
   if (!token) return;
@@ -684,6 +703,30 @@ export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
     return res.json();
   } catch (err) {
     console.error('Hold Them Off toggle failed:', err);
+    return undefined;
+  }
+};
+
+/**
+ * GM or player: set the Make a Scene target adversary on a pending banner.
+ * Patches _selectedTargetInstanceId; all clients receive an updated banners snapshot.
+ */
+export const postBannerMakeASceneTarget = async (gmUid, bannerId, instanceId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/room/${gmUid}/banner-make-a-scene-target`, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ bannerId, instanceId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    console.error('Make a Scene target set failed:', err);
     return undefined;
   }
 };

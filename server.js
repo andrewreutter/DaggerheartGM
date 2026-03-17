@@ -1661,6 +1661,77 @@ app.post('/api/room/:gmUid/banner-hold-them-off', requireAuth, async (req, res) 
   }
 });
 
+// POST /api/room/:gmUid/banner-make-a-scene-target — GM or player: set the target adversary for a Make a Scene banner.
+// Patches _selectedTargetInstanceId on the pending roll; pushes updated banners snapshot to all clients.
+app.post('/api/room/:gmUid/banner-make-a-scene-target', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const instanceId = req.body?.instanceId ?? null;
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const isGm = req.uid === gmUid;
+    if (!isGm) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    await updateDiceRollData(APP_ID, gmUid, bannerId, { _selectedTargetInstanceId: instanceId });
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true, instanceId });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-make-a-scene-target error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:gmUid/banner-prayer-die-select — GM or player: select a Prayer Die for add-to-roll or damage-reduction.
+// Patches _prayerAddRollDie and/or _prayerDmgReduceDie on the pending roll; pushes updated banner to all clients.
+app.post('/api/room/:gmUid/banner-prayer-die-select', requireAuth, async (req, res) => {
+  const { gmUid } = req.params;
+  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
+  const { addRollDie, dmgReduceDie } = req.body || {};
+  if (bannerId == null || Number.isNaN(bannerId)) {
+    return res.status(400).json({ error: 'bannerId required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  try {
+    const isGm = req.uid === gmUid;
+    if (!isGm) {
+      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
+      const tableState = tableStateItems[0] || {};
+      if (!(tableState.playerEmails || []).includes(req.email)) {
+        return res.status(403).json({ error: 'Not a player in this room' });
+      }
+    }
+    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const patch = {};
+    if ('addRollDie' in req.body) patch._prayerAddRollDie = addRollDie ?? null;
+    if ('dmgReduceDie' in req.body) patch._prayerDmgReduceDie = dmgReduceDie ?? null;
+    await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
+    subscriptionManager.notifyChange('banners', gmUid);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`POST /api/room/${gmUid}/banner-prayer-die-select error:`, err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /api/room/:gmUid/banner-cancel — Player cancels their own pending banner (GM has not acked/cancelled yet).
 app.post('/api/room/:gmUid/banner-cancel', requireAuth, async (req, res) => {
   const { gmUid } = req.params;
