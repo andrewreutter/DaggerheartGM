@@ -129,6 +129,13 @@ export function wrapEntity(el, updateActiveElement) {
       updateActiveElement(el.instanceId, { resistance: list.filter(r => !(r.type === type && r.source === key)) });
     },
 
+    /** Add or replace an active modifier (e.g. Timeslowing +1d4 Evasion). Replaces existing modifier with same id. */
+    addModifier(modifier) {
+      const id = modifier?.id;
+      const existing = (el.activeModifiers || []).filter(m => m.id !== id);
+      updateActiveElement(el.instanceId, { activeModifiers: [...existing, modifier] });
+    },
+
     /** Add a source of disadvantage on this character's action rolls. */
     addDisadvantage(source) {
       const list = Array.isArray(el.disadvantageSources) ? [...el.disadvantageSources] : [];

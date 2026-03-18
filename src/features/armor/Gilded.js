@@ -1,5 +1,9 @@
 export default {
   name: 'Gilded',
   description: '+1 Presence.',
-  passiveStatMods: { traits: { presence: 1 } },
+  onCharacterBuild({ character, armor }) {
+    character.addFeature('Gilded', '+1 Presence.', {
+      onCharacterRender: (ctx) => ctx.addStatMod('presence', 1),
+    });
+  },
 };

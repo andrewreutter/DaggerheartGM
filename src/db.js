@@ -1,5 +1,4 @@
 import pg from 'pg';
-import { appendFileSync } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -695,21 +694,53 @@ export async function getUnifiedItems(appId, userId, collection, {
 }
 
 /**
+ * Look up a single table_state row by globally unique tableId (primary = gmUid, secondary = uuid).
+ * Returns { userId, data } or null.
+ */
+export async function getTableStateById(appId, tableId) {
+  if (!tableId) return null;
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT user_id, data FROM items
+     WHERE app_id = $1 AND collection = 'table_state' AND id = $2`,
+    [appId, tableId]
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return { userId: r.user_id, data: r.data };
+}
+
+/**
+ * List all table_state rows for a user (GM's owned tables).
+ * Returns [{ id, data }] for use by GET /api/my-tables.
+ */
+export async function listTableStates(appId, userId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, data FROM items
+     WHERE app_id = $1 AND user_id = $2 AND collection = 'table_state'
+     ORDER BY id ASC`,
+    [appId, userId]
+  );
+  return rows.map(r => ({ id: r.id, data: r.data }));
+}
+
+/**
  * Find all table_state records whose playerEmails array contains the given email.
- * Used by GET /api/my-rooms to let players discover which GMs have invited them.
- * Returns [{ userId, data }] where userId is the GM's Firebase UID.
+ * Used by GET /api/my-rooms to let players discover which tables have invited them.
+ * Returns [{ tableId, userId, data }] where tableId is the row's id, userId is the GM's Firebase UID.
  */
 export async function getTableStatesByPlayerEmail(appId, email) {
   const db = getPool();
   // Use the ? (key exists in array) JSONB operator to check membership.
   // Note: in node-postgres, ? is not a placeholder — $1/$2 are used for that.
   const { rows } = await db.query(
-    `SELECT user_id, data FROM items
+    `SELECT id, user_id, data FROM items
      WHERE app_id = $1 AND collection = 'table_state'
      AND data->'playerEmails' ? $2`,
     [appId, email]
   );
-  return rows.map(r => ({ userId: r.user_id, data: r.data }));
+  return rows.map(r => ({ tableId: r.id, userId: r.user_id, data: r.data }));
 }
 
 export async function getWhiteboardSnapshot(appId, gmUid) {
@@ -773,15 +804,6 @@ export async function resolveCharacterElements(appId, elements) {
     CHARACTER_RUNTIME_KEYS_DB.forEach(k => { if (k in el) runtime[k] = el[k]; });
     // Auto-preserve any _ prefixed keys (ancestry/class feature toggle state).
     Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
-    // #region agent log
-    const hadMove = (el.moveDisabledSources?.length || el.retractedActive);
-    const hasMove = (runtime.moveDisabledSources?.length || runtime.retractedActive);
-    if (hadMove || hasMove) {
-      try {
-        appendFileSync('/Users/andrewreutter/Repos/DaggerheartGM/.cursor/debug-3705ef.log', JSON.stringify({ sessionId: '3705ef', location: 'db.js:resolveCharacterElements', message: 'resolve char', data: { instanceId: el.instanceId, elHad: { moveDisabledSources: el.moveDisabledSources, retractedActive: el.retractedActive }, runtimeHas: { moveDisabledSources: runtime.moveDisabledSources, retractedActive: runtime.retractedActive } }, timestamp: Date.now(), hypothesisId: 'B' }) + '\n');
-      } catch (_) {}
-    }
-    // #endregion
     return { ...lib, ...runtime, elementType: 'character' };
   });
 }
@@ -793,13 +815,6 @@ export function stripCharacterElementsForDb(elements) {
   if (!elements?.length) return elements;
   return elements.map(el => {
     if (el.elementType !== 'character') return el;
-    // #region agent log
-    if (el.moveDisabledSources?.length || el.retractedActive) {
-      try {
-        appendFileSync('/Users/andrewreutter/Repos/DaggerheartGM/.cursor/debug-3705ef.log', JSON.stringify({ sessionId: '3705ef', location: 'db.js:stripCharacterElementsForDb', message: 'stripping char with move/retract', data: { instanceId: el.instanceId, moveDisabledSources: el.moveDisabledSources, retractedActive: el.retractedActive, willDrop: !CHARACTER_PERSIST_KEYS_DB.has('moveDisabledSources') }, timestamp: Date.now(), hypothesisId: 'A' }) + '\n');
-      } catch (_) {}
-    }
-    // #endregion
     const stripped = {};
     for (const k of Object.keys(el)) {
       if (CHARACTER_PERSIST_KEYS_DB.has(k) || k.startsWith('_')) stripped[k] = el[k];
@@ -809,14 +824,13 @@ export function stripCharacterElementsForDb(elements) {
 }
 
 /**
- * Fetch and resolve the current table state for a GM.
+ * Fetch and resolve table state by globally unique tableId.
  * Used by the 'table_state' subscription channel.
  */
-export async function getResolvedTableState(appId, gmUid) {
-  const rows = await getItems(appId, gmUid, 'table_state');
-  if (!rows.length) return null;
-  const state = rows[0] || {};
-  const { id: _id, is_public: _ip, _source: _src, ...stateData } = state;
+export async function getResolvedTableState(appId, tableId) {
+  const row = await getTableStateById(appId, tableId);
+  if (!row) return null;
+  const stateData = row.data || {};
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
   return { ...stateData, elements: resolved };

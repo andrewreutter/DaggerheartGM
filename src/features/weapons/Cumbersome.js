@@ -1,6 +1,9 @@
 export default {
   name: 'Cumbersome',
-  skipTag: true,
   description: '-1 to Finesse',
-  passiveStatMods: { traits: { finesse: -1 } },
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Cumbersome', '-1 to Finesse', {
+      onCharacterRender: (ctx) => ctx.addStatMod('finesse', -1),
+    });
+  },
 };

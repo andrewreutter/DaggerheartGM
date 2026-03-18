@@ -1,10 +1,14 @@
 export default {
   name: 'Reliable',
-  automated: true,
-  tagText: '+1 to attack roll (applied)',
   description: '+1 to attack rolls',
-  /** Adds +1 modifier to the action roll. */
-  prependRollParts() {
-    return ['Reliable [1]'];
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Reliable', '+1 to attack rolls', {
+      showTag: true,
+      automated: true,
+      tagText: '+1 to attack roll (applied)',
+      prependRollParts() {
+        return ['Reliable [1]'];
+      },
+    });
   },
 };

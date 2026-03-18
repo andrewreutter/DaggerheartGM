@@ -139,10 +139,15 @@ export const loadCollectionStream = async (collection, opts, { onBatch, onEnrich
 /**
  * Load the table_state collection (single record, no pagination).
  */
-export const loadTableState = async () => {
+/**
+ * Load table state. When tableId is provided, returns that single table's state (for the current view).
+ * When omitted, returns all tables owned by the user (for list/myTables).
+ */
+export const loadTableState = async (tableId = null) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
-  const res = await fetch('/api/data/table_state', {
+  const url = tableId ? `/api/data/table_state?tableId=${encodeURIComponent(tableId)}` : '/api/data/table_state';
+  const res = await fetch(url, {
     headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -394,15 +399,14 @@ export function normalizeRoll(roll) {
 
 /**
  * Roll dice server-side. Returns full roll data including subItems.
- * gmUid — pass the GM's uid for player rolls (routes to /api/room/:gmUid/roll);
- *          omit (null) for the GM's own rolls (routes to /api/room/my/roll).
+ * tableId — pass for player rolls (routes to /api/room/:tableId/roll); omit (null) for GM (routes to /api/room/my/roll).
  * rollMeta may use attackerId/targetId; they are sent as _attackerInstanceId/_selectedTargetInstanceId.
  * rollMeta.silent — if true, server returns roll data without persisting (no banner).
  */
-export const postRoll = async (rollText, displayName, gmUid = null, rollMeta = {}) => {
+export const postRoll = async (rollText, displayName, tableId = null, rollMeta = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
-  const url = gmUid ? `/api/room/${gmUid}/roll` : '/api/room/my/roll';
+  const url = tableId ? `/api/room/${tableId}/roll` : '/api/room/my/roll';
   const { attackerId, targetId, ...rest } = rollMeta;
   const body = {
     rollText,
@@ -428,8 +432,8 @@ export const postRoll = async (rollText, displayName, gmUid = null, rollMeta = {
  * Roll dice server-side without creating a banner (silent roll). Use for rest-move dice etc.
  * rollText — e.g. " [1d4]" (bracket expression). Returns same shape as postRoll; total is the numeric value.
  */
-export const postRollSilent = async (rollText, displayName = '', gmUid = null) => {
-  const rollData = await postRoll(rollText, displayName, gmUid, { silent: true });
+export const postRollSilent = async (rollText, displayName = '', tableId = null) => {
+  const rollData = await postRoll(rollText, displayName, tableId, { silent: true });
   const value = typeof rollData.total === 'number' ? rollData.total : parseInt(rollData.subItems?.[0]?.result, 10) || 0;
   return { ...rollData, value };
 };
@@ -481,7 +485,7 @@ export const generateImage = async (prompt) => {
   return res.json();
 };
 
-/** Returns [{ gmUid, gmName }] for all GMs who have invited the current user. */
+/** Returns [{ tableId, gmUid, gmName, tableName }] for all tables the current user is invited to. */
 export const fetchMyRooms = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -492,11 +496,38 @@ export const fetchMyRooms = async () => {
   return res.json();
 };
 
-/** Player: send a runtime update for an assigned character to the GM's room. */
-export const postCharacterUpdate = async (gmUid, instanceId, updates) => {
+/** Returns [{ id, name }] for all tables the current user owns. */
+export const fetchMyTables = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
-  const res = await fetch(`/api/room/${gmUid}/character-update`, {
+  const res = await fetch('/api/my-tables', {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Create a new table. Returns { id, name }. */
+export const createTable = async (name = 'New Table') => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/my-tables', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ name: String(name).trim() || 'New Table' }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** Player: send a runtime update for an assigned character. tableId identifies the table. */
+export const postCharacterUpdate = async (tableId, instanceId, updates) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${tableId}/character-update`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ instanceId, updates }),
@@ -505,11 +536,11 @@ export const postCharacterUpdate = async (gmUid, instanceId, updates) => {
   return res.json();
 };
 
-/** Player: add a new character to the GM's table (auto-assigned to self). */
-export const postAddCharacter = async (gmUid, charData) => {
+/** Player: add a new character to the table (auto-assigned to self). */
+export const postAddCharacter = async (tableId, charData) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
-  const res = await fetch(`/api/room/${gmUid}/add-character`, {
+  const res = await fetch(`/api/room/${tableId}/add-character`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify(charData),
@@ -521,13 +552,13 @@ export const postAddCharacter = async (gmUid, charData) => {
 /** GM: broadcast a table operation to all room clients (best-effort, fire-and-forget). */
 /**
  * Broadcast an action notification banner to all room clients via SSE.
- * gmUid: null = GM mode (POST /api/room/my/action), string = player mode.
+ * tableId: null = GM mode (POST /api/room/my/action), string = player mode (POST /api/room/:tableId/action).
  * Best-effort — errors are swallowed.
  */
-export const postActionNotification = async (notification, gmUid = null) => {
+export const postActionNotification = async (notification, tableId = null) => {
   const token = await getAuthToken();
   if (!token) return null;
-  const url = gmUid ? `/api/room/${gmUid}/action` : '/api/room/my/action';
+  const url = tableId ? `/api/room/${tableId}/action` : '/api/room/my/action';
   try {
     const resp = await fetch(url, {
       method: 'POST',
@@ -541,16 +572,19 @@ export const postActionNotification = async (notification, gmUid = null) => {
 /**
  * Send a table operation to the server. The server applies the op to the DB
  * and notifies all connected clients via the table_state subscription channel.
+ * tableId defaults to the primary table (caller's uid) when omitted.
  * Fire-and-forget — errors are swallowed.
  */
-export const postTableOp = async (op) => {
+export const postTableOp = async (op, tableId = null) => {
   const token = await getAuthToken();
   if (!token) return;
+  const body = { ...op, _clientId: CLIENT_ID };
+  if (tableId != null) body.tableId = tableId;
   try {
     await fetch('/api/room/my/op', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ ...op, _clientId: CLIENT_ID }),
+      body: JSON.stringify(body),
     });
   } catch { /* best-effort */ }
 };
@@ -568,7 +602,7 @@ export const postBannerAck = async (bannerId, action, options = {}) => {
     const res = await fetch('/api/room/my/banner-ack', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, action, ...options }),
+      body: JSON.stringify({ bannerId, action, tableId: options.tableId, ...options }),
     });
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
@@ -610,14 +644,13 @@ export const postHopeDieUpgrade = async (_rollMeta) => Promise.resolve();
 
 /**
  * Player: toggle ancestry feature reroll request on a banner (set or clear _felineRerollRequestedBy).
- * Generic alias: postBannerFeatureRequest. Endpoint: POST /api/room/:gmUid/banner-feline-reroll-request.
- * Returns { ok: true, requested: boolean } on success, or undefined on failure.
+ * tableId identifies the table. Returns { ok: true, requested: boolean } on success, or undefined on failure.
  */
-export const postBannerFelineRerollRequest = async (gmUid, bannerId) => {
+export const postBannerFelineRerollRequest = async (tableId, bannerId) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-feline-reroll-request`, {
+    const res = await fetch(`/api/room/${tableId}/banner-feline-reroll-request`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId }),
@@ -660,10 +693,10 @@ export const postRerollDualityDice = async (roll) => {
  * GM or player in room: set _chipResolved[stateKey] = 'ack' | 'reject' for an ancestry chip (onChipAck/onChipReject).
  * Returns { ok: true } on success.
  */
-export const postBannerChipResolve = async (gmUid, { bannerId, stateKey, action, extraPatch }) => {
+export const postBannerChipResolve = async (tableId, { bannerId, stateKey, action, extraPatch }) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
-  const res = await fetch(`/api/room/${gmUid}/banner-chip-resolve`, {
+  const res = await fetch(`/api/room/${tableId}/banner-chip-resolve`, {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ bannerId, stateKey, action, extraPatch }),
@@ -726,11 +759,11 @@ export const postBannerRerollDie = async (bannerId, { dieType, suppressAncestryF
  * Player: toggle Ranger's Focus reroll request on a banner (set or clear _rangerFocusRerollRequestedBy).
  * Returns { ok: true, requested: boolean } on success, or undefined on failure.
  */
-export const postBannerRangerFocusRerollRequest = async (gmUid, bannerId) => {
+export const postBannerRangerFocusRerollRequest = async (tableId, bannerId) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-ranger-focus-reroll-request`, {
+    const res = await fetch(`/api/room/${tableId}/banner-ranger-focus-reroll-request`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId }),
@@ -743,14 +776,14 @@ export const postBannerRangerFocusRerollRequest = async (gmUid, bannerId) => {
  * GM: Wings of Light — spend 1 Hope and roll 1d8, patch banner with _wingsOfLightAddD8 and _wingsOfLightD8Result.
  * Returns { ok: true, d8Result: number } on success.
  */
-export const postBannerWingsD8 = async (bannerId) => {
+export const postBannerWingsD8 = async (bannerId, tableId = null) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
     const res = await fetch('/api/room/my/banner-wings-d8', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId }),
+      body: JSON.stringify({ bannerId, tableId }),
     });
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
@@ -760,11 +793,11 @@ export const postBannerWingsD8 = async (bannerId) => {
  * Player: Wings of Light — toggle _wingsOfLightAddD8 on a banner (shared state; no Hope spend or roll).
  * Returns { ok: true, value: boolean } on success.
  */
-export const postBannerWingsD8Toggle = async (gmUid, bannerId, value) => {
+export const postBannerWingsD8Toggle = async (tableId, bannerId, value) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-wings-d8-toggle`, {
+    const res = await fetch(`/api/room/${tableId}/banner-wings-d8-toggle`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, value }),
@@ -784,11 +817,11 @@ export const postBannerWingsD8Toggle = async (gmUid, bannerId, value) => {
  * All clients receive updated banner via subscription.
  */
 // opts: { addRollDie?: die|null, dmgReduceDie?: die|null } — only specified keys are patched on the roll.
-export const postBannerPrayerDieSelect = async (gmUid, bannerId, opts = {}) => {
+export const postBannerPrayerDieSelect = async (tableId, bannerId, opts = {}) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-prayer-die-select`, {
+    const res = await fetch(`/api/room/${tableId}/banner-prayer-die-select`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, ...opts }),
@@ -802,11 +835,11 @@ export const postBannerPrayerDieSelect = async (gmUid, bannerId, opts = {}) => {
  * field: '_rallyDieAddToRoll' | '_rallyDieAddToDamage'; value: boolean.
  * All clients receive updated banner via subscription.
  */
-export const postBannerRallyToggle = async (gmUid, bannerId, field, value) => {
+export const postBannerRallyToggle = async (tableId, bannerId, field, value) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-rally-toggle`, {
+    const res = await fetch(`/api/room/${tableId}/banner-rally-toggle`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, field, value }),
@@ -827,7 +860,7 @@ export const postBannerRallyAck = async (bannerId, opts = {}) => {
     const res = await fetch('/api/room/my/banner-rally-ack', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, ...opts }),
+      body: JSON.stringify({ bannerId, tableId: opts.tableId, ...opts }),
     });
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
@@ -837,14 +870,14 @@ export const postBannerRallyAck = async (bannerId, opts = {}) => {
  * GM: Heart of a Poet (Wordsmith) — acknowledge a Heart of a Poet banner toggle.
  * Cancels original banner, decrements 1 Hope, rolls 1d4, creates copy banner with d4 added.
  */
-export const postBannerHeartD4Ack = async (bannerId) => {
+export const postBannerHeartD4Ack = async (bannerId, tableId = null) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
     const res = await fetch('/api/room/my/banner-heart-d4-ack', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId }),
+      body: JSON.stringify({ bannerId, tableId }),
     });
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
@@ -855,14 +888,14 @@ export const postBannerHeartD4Ack = async (bannerId) => {
  * Patches _heartOfAPoetAddD4 and _heartOfAPoetD4Result on the roll; notifies banners + table_state.
  * @deprecated Use postBannerHeartD4Ack for the Ack-intercept pattern.
  */
-export const postBannerHeartD4 = async (bannerId) => {
+export const postBannerHeartD4 = async (bannerId, tableId = null) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
     const res = await fetch('/api/room/my/banner-heart-d4', {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId }),
+      body: JSON.stringify({ bannerId, tableId }),
     });
     return res.ok ? res.json() : undefined;
   } catch { return undefined; }
@@ -871,11 +904,11 @@ export const postBannerHeartD4 = async (bannerId) => {
 /**
  * Player: Heart of a Poet — toggle intent to add d4 on a non-attack action roll banner (shared state).
  */
-export const postBannerHeartD4Toggle = async (gmUid, bannerId, value) => {
+export const postBannerHeartD4Toggle = async (tableId, bannerId, value) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-heart-d4-toggle`, {
+    const res = await fetch(`/api/room/${tableId}/banner-heart-d4-toggle`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, value }),
@@ -884,11 +917,11 @@ export const postBannerHeartD4Toggle = async (gmUid, bannerId, value) => {
   } catch { return undefined; }
 };
 
-export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
+export const postBannerHoldThemOff = async (tableId, bannerId, active) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-hold-them-off`, {
+    const res = await fetch(`/api/room/${tableId}/banner-hold-them-off`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, active }),
@@ -908,11 +941,11 @@ export const postBannerHoldThemOff = async (gmUid, bannerId, active) => {
  * GM or player: set multi-target selection on a pending banner (synced across clients).
  * patch: { selectedTargetInstanceIds?: string[], useArmorByTargetId?: Record<string, boolean> }
  */
-export const postBannerTargets = async (gmUid, bannerId, patch = {}) => {
+export const postBannerTargets = async (tableId, bannerId, patch = {}) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-targets`, {
+    const res = await fetch(`/api/room/${tableId}/banner-targets`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, ...patch }),
@@ -926,11 +959,11 @@ export const postBannerTargets = async (gmUid, bannerId, patch = {}) => {
  * GM or player: set the Make a Scene target adversary on a pending banner.
  * Patches _selectedTargetInstanceId; all clients receive an updated banners snapshot.
  */
-export const postBannerMakeASceneTarget = async (gmUid, bannerId, instanceId) => {
+export const postBannerMakeASceneTarget = async (tableId, bannerId, instanceId) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    const res = await fetch(`/api/room/${gmUid}/banner-make-a-scene-target`, {
+    const res = await fetch(`/api/room/${tableId}/banner-make-a-scene-target`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId, instanceId }),
@@ -948,13 +981,13 @@ export const postBannerMakeASceneTarget = async (gmUid, bannerId, instanceId) =>
 
 /**
  * Player: cancel own pending banner (only if GM has not acked/cancelled yet).
- * gmUid — the GM's room UID. Fails if the banner was not initiated by the current user.
+ * tableId identifies the table. Fails if the banner was not initiated by the current user.
  */
-export const postBannerCancel = async (gmUid, bannerId) => {
+export const postBannerCancel = async (tableId, bannerId) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
-    await fetch(`/api/room/${gmUid}/banner-cancel`, {
+    await fetch(`/api/room/${tableId}/banner-cancel`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ bannerId }),
@@ -964,19 +997,15 @@ export const postBannerCancel = async (gmUid, bannerId) => {
 
 /**
  * Set Life Support banner target selection; syncs to all room clients.
- * gmUid: when in player mode, the GM's UID; when GM mode, pass null (uses postTableOp).
+ * tableId identifies the table (GM or player).
  * selectedInstanceId: null to clear the selection.
  */
-export const postLifeSupportSelect = async (gmUid, rollDbId, selectedInstanceId) => {
-  if (!gmUid) {
-    return selectedInstanceId
-      ? postTableOp({ op: 'life-support-select', _rollDbId: rollDbId, selectedLifeSupportTargetInstanceId: selectedInstanceId })
-      : postTableOp({ op: 'life-support-clear', _rollDbId: rollDbId });
-  }
+export const postLifeSupportSelect = async (tableId, rollDbId, selectedInstanceId) => {
+  if (!tableId) return;
   const token = await getAuthToken();
   if (!token) return;
   try {
-    await fetch(`/api/room/${gmUid}/life-support-select`, {
+    await fetch(`/api/room/${tableId}/life-support-select`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify({ _rollDbId: rollDbId, selectedLifeSupportTargetInstanceId: selectedInstanceId ?? null }),
@@ -986,19 +1015,18 @@ export const postLifeSupportSelect = async (gmUid, rollDbId, selectedInstanceId)
 
 /**
  * Set rest banner move selection for a character; syncs to all room clients.
- * GM can set any character; player can set only their assigned character.
- * gmUid: room owner (GM's uid when on GM table, or GM's uid when player in that room).
+ * tableId identifies the table. GM can set any character; player can set only their assigned character.
  * Optional: targetInstanceId (for canTargetAlly moves), rollResult ({ dice, value }).
  */
-export const postRestMoveSelect = async (gmUid, rollDbId, instanceId, slot, moveId, options = {}) => {
-  if (!gmUid) return;
+export const postRestMoveSelect = async (tableId, rollDbId, instanceId, slot, moveId, options = {}) => {
+  if (!tableId) return;
   const token = await getAuthToken();
   if (!token) return;
   const body = { rollDbId, instanceId, slot, moveId: moveId ?? null };
   if (options.targetInstanceId !== undefined) body.targetInstanceId = options.targetInstanceId;
   if (options.rollResult !== undefined) body.rollResult = options.rollResult;
   try {
-    await fetch(`/api/room/${gmUid}/rest-move-select`, {
+    await fetch(`/api/room/${tableId}/rest-move-select`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
       body: JSON.stringify(body),

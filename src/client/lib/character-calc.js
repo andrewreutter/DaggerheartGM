@@ -3,7 +3,7 @@
  * Pure functions that compute derived stats from character selections + SRD data.
  */
 
-import { originFeatures, ancestryMap, communityMap } from '../../features/registry.js';
+import { originFeatures, ancestryMap, communityMap, weaponFeatures, armorFeatures } from '../../features/registry.js';
 
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 
@@ -151,14 +151,10 @@ export function resolveArmor(armorItem) {
   };
 }
 
-const ARMOR_MOD_REGEX = /([+-]\d+)\s+to\s+(Finesse|Agility|Strength|Instinct|Presence|Knowledge|Evasion|Armor Score|Severe damage threshold)/gi;
-const ARMOR_DIFFICULT_REGEX = /([+-]\d+)\s+to\s+all\s+character\s+traits(?:\s+and\s+(Evasion))?/i;
-const ARMOR_ROLL_MOD_REGEX = /([+-]\d+)\s+(?:bonus\s+)?to\s+(?:rolls?\b|Spellcast\s+Rolls?)/i;
-
 /**
- * Parse armor feature text and return stat modifiers + roll modifiers.
- * Mirrors computeWeaponModifiers but for the equipped armor item.
+ * Compute armor stat and roll modifiers from the registry only.
  * Returns { traits, evasion, rollModifiers, feature, sources }.
+ * No parsing — armor features must have passiveStatMods in the armor feature registry.
  */
 export function computeArmorModifiers(armorItem) {
   const result = {
@@ -175,56 +171,33 @@ export function computeArmorModifiers(armorItem) {
 
   const feat = features[0];
   result.feature = { name: feat.name, description: feat.description || feat.text || '' };
-  const text = feat.description || feat.text || '';
-  if (!text) return result;
+  const descriptor = armorFeatures[feat.name];
+  const mods = descriptor?.passiveStatMods;
+  if (!mods) return result;
 
-  // Special-case: "Difficult" — "-1 to all character traits and Evasion"
-  const difficultMatch = ARMOR_DIFFICULT_REGEX.exec(text);
-  if (difficultMatch) {
-    const value = parseInt(difficultMatch[1], 10);
-    for (const k of TRAIT_KEYS) {
-      result.traits[k] = (result.traits[k] || 0) + value;
-      result.sources.push({ armor: armorItem.name, feature: feat.name, stat: k, value });
-    }
-    if (difficultMatch[2]) {
-      result.evasion += value;
-      result.sources.push({ armor: armorItem.name, feature: feat.name, stat: 'evasion', value });
-    }
-    return result;
+  if (mods.evasion != null) {
+    result.evasion += mods.evasion;
+    result.sources.push({ armor: armorItem.name, feature: feat.name, stat: 'evasion', value: mods.evasion });
   }
-
-  // Standard stat modifiers: "+1 to Evasion", "-1 to Agility", etc.
-  let match;
-  ARMOR_MOD_REGEX.lastIndex = 0;
-  while ((match = ARMOR_MOD_REGEX.exec(text)) !== null) {
-    const value = parseInt(match[1], 10);
-    const statName = match[2].toLowerCase();
-    const mapping = WEAPON_STAT_MAP[statName];
-    if (!mapping) continue;
-    if (mapping.type === 'trait') {
-      result.traits[mapping.key] = (result.traits[mapping.key] || 0) + value;
-    } else if (mapping.type === 'evasion') {
-      result.evasion += value;
+  if (mods.traits && typeof mods.traits === 'object') {
+    for (const [key, value] of Object.entries(mods.traits)) {
+      if (TRAIT_KEYS.includes(key)) {
+        result.traits[key] = (result.traits[key] || 0) + value;
+        result.sources.push({ armor: armorItem.name, feature: feat.name, stat: key, value });
+      }
     }
-    result.sources.push({ armor: armorItem.name, feature: feat.name, stat: statName, value });
   }
-
-  // Roll modifiers: "+1 to Spellcast Rolls", "+2 bonus to rolls to move silently"
-  const rollMatch = ARMOR_ROLL_MOD_REGEX.exec(text);
-  if (rollMatch) {
-    const score = parseInt(rollMatch[1], 10);
-    const isSpellcast = /spellcast/i.test(text);
-    const isStealth = /silently|stealth/i.test(text);
-    result.rollModifiers.push({
-      name: feat.name,
-      score,
-      description: text,
-      rollType: isSpellcast ? 'spellcast' : isStealth ? 'stealth' : 'other',
-      // autoApply: always included in matching rolls without player selection.
-      // Spellcast is a first-class roll type (like evasion is a stat), so
-      // Channeling always applies. Stealth is situational like an experience.
-      autoApply: isSpellcast,
-    });
+  if (Array.isArray(mods.rollModifiers)) {
+    for (const rm of mods.rollModifiers) {
+      const rollType = (rm.trait === 'spellcast' || rm.trait === 'stealth') ? rm.trait : 'other';
+      result.rollModifiers.push({
+        name: feat.name,
+        score: rm.bonus,
+        description: rm.label || feat.description || '',
+        rollType,
+        autoApply: rollType === 'spellcast',
+      });
+    }
   }
 
   return result;
@@ -553,7 +526,7 @@ export function recomputeCharacter(data, srdData) {
   return result;
 }
 
-// Mapping from SRD stat name strings to internal stat keys.
+// Mapping from SRD stat name strings to internal stat keys (exported for backwards compatibility).
 const WEAPON_STAT_MAP = {
   'finesse':                  { type: 'trait', key: 'finesse' },
   'agility':                  { type: 'trait', key: 'agility' },
@@ -566,12 +539,10 @@ const WEAPON_STAT_MAP = {
   'severe damage threshold':  { type: 'severeThreshold' },
 };
 
-const WEAPON_MOD_REGEX = /([+-]\d+)\s+to\s+(Finesse|Agility|Strength|Instinct|Presence|Knowledge|Evasion|Armor Score|Severe damage threshold)/gi;
-
 /**
- * Parse weapon feature text and return aggregate stat modifiers for all equipped weapons.
- * Returns { traits, evasion, armorScore, severeThreshold, sources } where sources is an array
- * of { weapon, feature, stat, value } objects suitable for tooltip display.
+ * Compute weapon stat modifiers from the registry only.
+ * Returns { traits, evasion, armorScore, severeThreshold, sources }.
+ * No parsing — weapon features must have passiveStatMods in the weapon feature registry.
  */
 export function computeWeaponModifiers(weapons) {
   const result = {
@@ -584,30 +555,31 @@ export function computeWeaponModifiers(weapons) {
   if (!weapons?.length) return result;
 
   for (const w of weapons) {
-    const text = w.feature?.description || w.feature?.text || '';
-    if (!text) continue;
-    let match;
-    WEAPON_MOD_REGEX.lastIndex = 0;
-    while ((match = WEAPON_MOD_REGEX.exec(text)) !== null) {
-      const value = parseInt(match[1], 10);
-      const statName = match[2].toLowerCase();
-      const mapping = WEAPON_STAT_MAP[statName];
-      if (!mapping) continue;
-      if (mapping.type === 'trait') {
-        result.traits[mapping.key] = (result.traits[mapping.key] || 0) + value;
-      } else if (mapping.type === 'evasion') {
-        result.evasion += value;
-      } else if (mapping.type === 'armorScore') {
-        result.armorScore += value;
-      } else if (mapping.type === 'severeThreshold') {
-        result.severeThreshold += value;
+    const featureName = w.feature?.name;
+    if (!featureName) continue;
+    const descriptor = weaponFeatures[featureName];
+    const mods = descriptor?.passiveStatMods;
+    if (!mods) continue;
+
+    if (mods.traits && typeof mods.traits === 'object') {
+      for (const [key, value] of Object.entries(mods.traits)) {
+        if (TRAIT_KEYS.includes(key)) {
+          result.traits[key] = (result.traits[key] || 0) + value;
+          result.sources.push({ weapon: w.name, feature: featureName, stat: key, value });
+        }
       }
-      result.sources.push({
-        weapon: w.name,
-        feature: w.feature.name,
-        stat: statName,
-        value,
-      });
+    }
+    if (mods.evasion != null) {
+      result.evasion += mods.evasion;
+      result.sources.push({ weapon: w.name, feature: featureName, stat: 'evasion', value: mods.evasion });
+    }
+    if (mods.armorScore != null) {
+      result.armorScore += mods.armorScore;
+      result.sources.push({ weapon: w.name, feature: featureName, stat: 'armor score', value: mods.armorScore });
+    }
+    if (mods.severeThreshold != null) {
+      result.severeThreshold += mods.severeThreshold;
+      result.sources.push({ weapon: w.name, feature: featureName, stat: 'severe damage threshold', value: mods.severeThreshold });
     }
   }
   return result;

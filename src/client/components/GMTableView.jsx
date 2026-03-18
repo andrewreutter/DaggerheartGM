@@ -5,7 +5,7 @@ import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, computeHpLoss, isAdversaryDefeated, getDifficultyLabel } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
@@ -24,7 +24,7 @@ import { wrapRoll } from '../../features/roll.js';
 import { runHook, runPipelineHook } from '../../features/hooks.js';
 import { weaponFeatures, armorFeatures, classFeatures, ancestryFeatures } from '../../features/registry.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 
@@ -229,9 +229,10 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
+  const sendOp = useCallback((op) => postTableOp(op, tableId), [tableId]);
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
   const trackerOverlay    = useHoverOverlay({ hideDelay: 120, isTouch });
@@ -347,6 +348,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const [preRollDifficulty, setPreRollDifficulty] = useState(15); // DC 5–30 when GM shows difficulty chip
   const [preRollAdvantages, setPreRollAdvantages] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
+  const characterTargetMenuOpenRef = useRef(false); // set by CharacterHoverCard when target menu is open; avoid closing overlay on mouse leave
 
   const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
   const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
@@ -468,17 +470,19 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   };
 
   // Apply HP/Stress changes to a target after optional Parry reduction.
-  // armorOpts: { applyReduction?, markSlot?, feature? }
+  // armorOpts: { applyReduction?, markSlot?, feature?, postRollSilent?, useImpenetrable? }
   //   applyReduction: reduce hpLoss by 1 (or 2 for Fortified) — set by armor button
   //   markSlot: actually consume an armor slot — false when Resilient saves it
   //   feature: armor feature name ('Fortified', 'Painful', 'Reinforced', etc.)
+  //   postRollSilent: (text, displayName) => Promise<{ value? }> for Timeslowing 1d4
+  //   useImpenetrable: use Impenetrable (Mark Stress instead of last HP, 1/rest)
   // dmgType: 'phy' | 'mag' | '' — damage type from the roll's post tag (Phase 3)
   const applyDamageToTarget = async (target, effectiveDmgTotal, tagNames, roll, armorOpts = {}, dmgType = '') => {
-    const { applyReduction = false, markSlot = false, feature = null } = armorOpts;
+    const { applyReduction = false, markSlot = false, feature = null, postRollSilent = null, useImpenetrable = false } = armorOpts;
 
     // Wrap target and roll so feature hooks receive clean semantic APIs.
     const entityTarget = wrapEntity(target, updateActiveElement);
-    const ctx = { target: entityTarget, tagNames, roll: wrapRoll(roll), dmgType };
+    const ctx = { target: entityTarget, character: entityTarget, tagNames, roll: wrapRoll(roll), dmgType };
 
     // Pre-threshold damage modification (e.g. Warded subtracts armor score from magic damage)
     let dmgTotalForCalc = runPipelineHook(
@@ -512,17 +516,31 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const hpLossReduction = Math.max(0, Math.floor(roll?._hpLossReduction ?? 0));
     hpLoss = Math.max(0, hpLoss - hpLossReduction);
 
-    // Origin lifecycle: onMarkHP can cancel (character only)
-    if (target.elementType === 'character' && hpLoss > 0) {
-      const hpCancel = runBeforeMarkHP(target, hpLoss, 'damage', updateActiveElement);
-      if (hpCancel.cancel) hpLoss = 0;
+    // Impenetrable (1/rest): substitute 1 Stress for the last HP when damage would reduce to 0
+    let hpLossToApply = hpLoss;
+    if (target.elementType === 'character' && hpLoss > 0 && useImpenetrable && target.armorFeatureName === 'Impenetrable') {
+      const currentHp = target.currentHp ?? target.maxHp ?? 0;
+      const wouldBeZero = currentHp - hpLoss <= 0;
+      const hasStressSpace = (target.currentStress ?? 0) < (target.maxStress ?? 6);
+      const usedThisRest = target.featureUsage?.Impenetrable?.cycle === 'rest';
+      if (wouldBeZero && hasStressSpace && !usedThisRest) {
+        hpLossToApply = Math.max(0, currentHp - 1); // leave at 1 HP
+        entityTarget.markStress(1);
+        entityTarget.setFeatureUsed('Impenetrable', 'rest');
+      }
     }
-    if (hpLoss > 0) entityTarget.markHp(hpLoss);
+
+    // Origin lifecycle: onMarkHP can cancel (character only)
+    if (target.elementType === 'character' && hpLossToApply > 0) {
+      const hpCancel = runBeforeMarkHP(target, hpLossToApply, 'damage', updateActiveElement);
+      if (hpCancel.cancel) hpLossToApply = 0;
+    }
+    if (hpLossToApply > 0) entityTarget.markHp(hpLossToApply);
 
     // Post-damage effects (Scary, Burning, etc.)
     runHook(weaponFeatures, tagNames, 'onDamageApplied', ctx);
 
-    // Armor slot marking and triggered effects (Painful, Reinforced, etc.)
+    // Armor slot marking and triggered effects (Painful, Reinforced, Timeslowing, Shifting, etc.)
     // markArmor() runs first so hooks see the post-mark count via target.currentArmor.
     if (markSlot) {
       if (target.elementType === 'character') {
@@ -531,7 +549,28 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       } else {
         entityTarget.markArmor();
       }
-      runHook(armorFeatures, feature ? [feature] : [], 'onArmorSlotMarked', ctx);
+      const armorFeatureName = feature ?? null;
+      if (armorFeatureName) {
+        const descriptor = armorFeatures[armorFeatureName];
+        const fn = descriptor?.onAfterMarkArmor;
+        if (typeof fn === 'function') {
+          const afterCtx = {
+            character: entityTarget,
+            amount: 1,
+            source: armorFeatureName,
+            roll: ctx.roll,
+            postRollSilent,
+            tagNames: ctx.tagNames,
+            dmgType: ctx.dmgType,
+          };
+          try {
+            const result = fn(afterCtx);
+            if (result != null && typeof result.then === 'function') await result;
+          } catch (err) {
+            console.error(`[features] ${armorFeatureName}.onAfterMarkArmor threw:`, err);
+          }
+        }
+      }
     }
 
     // Beastform auto-drop: character has an active beastform and either hit 0 HP,
@@ -571,18 +610,19 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const tagNames = new Set((tags || []).map(t => t.name));
     let effectiveDmgTotal = dmgTotal;
 
-    // Parry: if target is a character with a Parry weapon, invoke the Parry hook
+    // Parry: if target is a character with a Parry weapon, invoke the Parry hook (silent roll — no second banner)
     if (target.type === 'character') {
       const charEl = activeElements.find(el => el.instanceId === target.instanceId);
       const parryWeapon = (charEl?.weapons || []).find(w => w.feature?.name === 'Parry');
       if (parryWeapon && roll?.subItems) {
         const parryFeature = weaponFeatures['Parry'];
         if (parryFeature?.onBeforeDamageApplied) {
+          const postRollSilentForParry = (rollText, displayName) => postRoll(rollText, displayName, tableId, { silent: true });
           effectiveDmgTotal = await parryFeature.onBeforeDamageApplied(effectiveDmgTotal, {
             target: { ...target, name: charEl?.name || target.name },
             roll,
             parryWeapon,
-            postRoll,
+            postRoll: postRollSilentForParry,
             addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
           }) ?? effectiveDmgTotal;
         }
@@ -600,11 +640,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (feature === 'Resilient' && isLastSlot) {
         const resilientFeature = armorFeatures['Resilient'];
         if (resilientFeature?.onLastArmorSlot) {
-          const charEl = activeElements.find(el => el.instanceId === target.instanceId);
-          const charName = charEl?.name || target.name;
+          const character = wrapEntity(target, updateActiveElement);
           const result = await resilientFeature.onLastArmorSlot({
-            target,
-            charName,
+            character,
             postRoll,
             addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
           });
@@ -614,6 +652,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
       armorOpts = { applyReduction: true, markSlot, feature };
     }
+    const postRollSilent = (text, displayName) => postRoll(text, displayName, tableId, { silent: true });
+    armorOpts = { ...armorOpts, postRollSilent, useImpenetrable: !!target.useImpenetrable };
 
     // Dwarf Increased Fortitude: spend 3 Hope to halve physical damage (toggle path; chip path uses setDamageTotal)
     if (target.useIncreasedFortitude && roll?._damageTotalOverride == null && dmgType === 'phy' && target.type === 'character') {
@@ -638,7 +678,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
       if (isMelee && attackerIds.length > 0) {
         const fireTargetId = attackerIds[0];
-        postRoll(`${charEl.name} Fire Retaliation damage [1d10]`, charEl.name, null, {
+        postRoll(`${charEl.name} Fire Retaliation damage [1d10]`, charEl.name, tableId, {
           attackerId: charEl.instanceId,
           targetId: fireTargetId,
         }).catch(() => {});
@@ -676,6 +716,47 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
     }
 
+    // Burning (Emberwoven): when a character with Burning armor is hit in Melee, the attacker marks 1 Stress
+    if (hpApplied >= 1 && charEl?.armorFeatureName === 'Burning' && roll?._attackerInstanceId) {
+      const attackerIds = roll._attackerInstanceIds ?? (roll._attackerInstanceId ? [roll._attackerInstanceId] : []);
+      const isMelee = charEl.tokenX != null && charEl.tokenY != null
+        ? attackerIds.some(id => {
+            const att = activeElements.find(e => e.instanceId === id);
+            return att?.tokenX != null && att?.tokenY != null
+              && tokenDistanceFt(charEl.tokenX, charEl.tokenY, att.tokenX, att.tokenY) <= RANGE_BANDS_FT.MELEE;
+          })
+        : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
+      if (isMelee && attackerIds.length > 0) {
+        const attackerId = attackerIds[0];
+        const attackerEl = activeElements.find(e => e.instanceId === attackerId);
+        if (attackerEl) {
+          wrapEntity(attackerEl, updateActiveElement).markStress(1);
+          const attackerName = attackerEl.name ?? 'Attacker';
+          handleActionNotification({ _action: true, rollUser: charEl.name,
+            actionName: 'Burning', actionText: `Burning: ${attackerName} marked 1 Stress.` });
+        }
+      }
+    }
+
+    // Sharp (Spiked Plate): when a character with Sharp armor is hit in Melee, the attacker takes 1d4 damage
+    if (hpApplied >= 1 && charEl?.armorFeatureName === 'Sharp' && roll?._attackerInstanceId) {
+      const attackerIds = roll._attackerInstanceIds ?? (roll._attackerInstanceId ? [roll._attackerInstanceId] : []);
+      const isMelee = charEl.tokenX != null && charEl.tokenY != null
+        ? attackerIds.some(id => {
+            const att = activeElements.find(e => e.instanceId === id);
+            return att?.tokenX != null && att?.tokenY != null
+              && tokenDistanceFt(charEl.tokenX, charEl.tokenY, att.tokenX, att.tokenY) <= RANGE_BANDS_FT.MELEE;
+          })
+        : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
+      if (isMelee && attackerIds.length > 0) {
+        const sharpTargetId = attackerIds[0];
+        postRoll(`${charEl.name} Sharp retaliation damage [1d4]`, charEl.name, tableId, {
+          _attackerInstanceId: charEl.instanceId,
+          _selectedTargetInstanceId: sharpTargetId,
+        }).catch(() => {});
+      }
+    }
+
     // Ranger's Focus: on hit, mark target as "Focused by X" and clear previous focus for this Ranger
     const isAdversaryTarget = target.elementType === 'adversary' || target.type === 'adversary';
     let attackerName = null;
@@ -697,9 +778,46 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         wrapEntity(target, updateActiveElement).markStress(1);
       }
     }
+
+    // Locked On (weapon): on a successful hit, set lock so the next primary attack vs this target auto-succeeds
+    if (hpApplied >= 1 && roll?._attackerInstanceId) {
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      const hasLockedOn = (attackerEl?.weapons || []).some(w => w.feature?.name === 'Locked On');
+      if (attackerEl?.elementType === 'character' && hasLockedOn) {
+        updateActiveElement(roll._attackerInstanceId, { lockedOnTargetInstanceId: target.instanceId });
+      }
+    }
+
     pendingDamageRef.current = { instanceId: target.instanceId, newHp };
   };
 
+  // Action notification (e.g. Startling, session-cycle banners): fire-and-forget broadcast.
+  // Defined before handleConcussiveKnock so it can be listed in that useCallback's dependency array.
+  const handleActionNotification = (notification) => {
+    dismissAllHoverCards();
+    postActionNotification(notification).catch(() => {});
+  };
+
+  // Player action notification — fire-and-forget broadcast to GM room.
+  const handlePlayerActionNotification = (notification) => {
+    dismissAllHoverCards();
+    postActionNotification(notification, tableId).catch(() => {});
+  };
+
+  // Concussive (weapon): spend 1 Hope to knock the damage target to Far range (50 ft from attacker).
+  const handleConcussiveKnock = useCallback((roll, targetInstanceId) => {
+    if (!roll?._attackerInstanceId || !targetInstanceId) return;
+    const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+    if (!attackerEl || (attackerEl.hope ?? 0) < 1) return;
+    updateActiveElement(roll._attackerInstanceId, { hope: Math.max(0, (attackerEl.hope ?? 0) - 1) });
+    const targetEl = activeElements.find(e => e.instanceId === targetInstanceId);
+    if (targetEl?.tokenX != null && targetEl?.tokenY != null && attackerEl.tokenX != null && attackerEl.tokenY != null) {
+      const pos = positionAtDistanceFt(attackerEl.tokenX, attackerEl.tokenY, targetEl.tokenX, targetEl.tokenY, 50);
+      updateActiveElement(targetInstanceId, { tokenX: pos.x, tokenY: pos.y });
+    }
+    const targetName = targetEl?.name ?? 'Target';
+    handleActionNotification({ _action: true, rollUser: attackerEl.name ?? '', actionName: 'Concussive', actionText: `Concussive: ${targetName} knocked to Far range.` });
+  }, [activeElements, updateActiveElement, handleActionNotification]);
 
   // Apply Hope/Fear side effects after the dice animation completes.
   // Separated from handleDaggerheartRoll so effects fire when the banner dismisses.
@@ -763,16 +881,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // Full reroll: cancel current banner and post the same roll again (shared by Lucky and Human Adaptability).
   // extraMeta is merged into the new roll (e.g. _luckyStressCost for Lucky; Adaptability applies stress on chip ack so passes {}).
   const performFullReroll = useCallback((roll, extraMeta = {}) => {
-    if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel').catch(() => {});
+    if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
     if (!roll.rollText) return;
     const attacker = roll._attackerInstanceId
       ? activeElements.find(e => e.instanceId === roll._attackerInstanceId)
       : findAttacker(roll.rollUser);
-    postRoll(roll.rollText, roll.rollUser ?? roll.displayName, isPlayer ? gmUid : null, {
+    postRoll(roll.rollText, roll.rollUser ?? roll.displayName, isPlayer ? tableId : null, {
       _attackerInstanceId: attacker?.instanceId,
       ...extraMeta,
     }).catch(err => console.error('Full reroll failed:', err));
-  }, [isPlayer, gmUid, activeElements, postBannerAck, postRoll]);
+  }, [isPlayer, tableId, activeElements, postBannerAck, postRoll]);
 
   // Lucky: Mark 1 Stress to reroll on Fear. Stress is applied on Acknowledge of the new roll.
   const handleLuckyReroll = (roll) => performFullReroll(roll, { _luckyStressCost: 1 });
@@ -782,7 +900,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     await handleApplyDamage(target, dmgTotal, tags, roll, dmgType);
     const attacker = findAttacker(roll.rollUser);
     if (attacker?.elementType === 'character') {
-      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Quick', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Quick', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
       if (!stressCancel.cancel) {
         const effective = 1 - (stressCancel.reduceBy ?? 0);
         if (effective > 0) {
@@ -800,7 +918,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     await handleApplyDamage(target, dmgTotal, tags, roll, dmgType);
     const attacker = findAttacker(roll.rollUser);
     if (attacker?.elementType === 'character') {
-      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Bouncing', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Bouncing', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
       if (!stressCancel.cancel) {
         const effective = 1 - (stressCancel.reduceBy ?? 0);
         if (effective > 0) {
@@ -821,12 +939,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const currentHope = el.hope ?? maxHope;
     if (currentHope < 3) return;
 
-    if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel').catch(() => {});
+    if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
 
     const rollText = roll.rollText;
     if (!rollText) return;
 
-    postRoll(rollText, roll.rollUser, null, {
+    postRoll(rollText, roll.rollUser, tableId, {
       _notThisTime: true, _wizardName: wizard.name,
       _notThisTimeHopeCost: 3,
       _wizardInstanceId: wizard.instanceId,
@@ -864,7 +982,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
       const newValue = isCurrentlyActive ? null : roll._rollDbId;
       if (isPlayer && postCharacterUpdate) {
-        postCharacterUpdate(gmUid, charEl.instanceId, { [stateKey]: newValue }).catch(() => {});
+        postCharacterUpdate(tableId, charEl.instanceId, { [stateKey]: newValue }).catch(() => {});
       } else {
         character.setFlag(stateKey, newValue);
       }
@@ -874,7 +992,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       chip.activate(rollWithMine, character, {
         characterRaw: charEl,
         isPlayer,
-        gmUid,
+        tableId,
         postCharacterUpdate,
         postBannerAck,
         postRerollHopeDie,
@@ -889,10 +1007,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   // Chip Ack/Reject (onChipAck/onChipReject): persist resolved state, apply costs, run handler; if addDamage used, replace banner with augmented roll.
   // System guarantees character.name and roll.target.name for addNarration().
-  const handleChipResolve = useCallback(async (reaction, roll, action) => {
+  const handleChipResolve = useCallback(async (reaction, roll, action, options) => {
     const chip = reaction.chip;
     const stateKey = reaction.stateKey;
-    if (!stateKey || roll._rollDbId == null || !gmUid) return;
+    if (!stateKey || roll._rollDbId == null || !tableId) return;
     if (roll._chipResolved?.[stateKey]) return; // already resolved
     const charEl = activeElements.find(e => e.instanceId === reaction.character.instanceId);
     if (!charEl) return;
@@ -929,9 +1047,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     };
     // Run costs + onChipAck BEFORE the server call so we can capture override values to persist.
     if (action === 'ack') {
-      if (chip?.hopeCost > 0) wrappedChar.spendHope(chip.hopeCost);
+      if (chip?.hopeCost > 0) {
+        const hopefulMap = options?.hopefulArmorInsteadByInstanceId ?? roll._hopefulArmorInsteadByInstanceId;
+        const useHopefulArmor = hopefulMap?.[charEl.instanceId];
+        const hasHopeful = charEl.armorMods?.feature?.name === 'Hopeful' || charEl.armorFeatureName === 'Hopeful';
+        const armorSlotsFree = (charEl.maxArmor ?? 0) - (charEl.currentArmor ?? 0);
+        const substitute = useHopefulArmor && hasHopeful && armorSlotsFree > 0
+          ? Math.min(chip.hopeCost, armorSlotsFree)
+          : 0;
+        if (substitute > 0) {
+          for (let i = 0; i < substitute; i++) wrappedChar.markArmor();
+        }
+        if (chip.hopeCost - substitute > 0) wrappedChar.spendHope(chip.hopeCost - substitute);
+      }
       if (chip?.stressCost > 0) {
-        const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'chip', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+        const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'chip', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
         if (!stressCancel.cancel) {
           const effective = chip.stressCost - (stressCancel.reduceBy ?? 0);
           if (effective > 0) wrappedChar.markStress(effective);
@@ -949,7 +1079,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (roll._hpLossReduction != null) extraPatch._hpLossReduction = roll._hpLossReduction;
     if (roll._treatAsMissForTarget != null) extraPatch._treatAsMissForTarget = roll._treatAsMissForTarget;
     try {
-      await postBannerChipResolve(gmUid, {
+      await postBannerChipResolve(tableId, {
         bannerId: roll._rollDbId, stateKey, action,
         ...(Object.keys(extraPatch).length > 0 ? { extraPatch } : {}),
       });
@@ -1013,19 +1143,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
       performFullReroll(roll, {});
     }
-  }, [gmUid, isPlayer, activeElements, updateActiveElement, performFullReroll]);
-
-  // Action notification (e.g. Startling, session-cycle banners): fire-and-forget broadcast.
-  const handleActionNotification = (notification) => {
-    dismissAllHoverCards();
-    postActionNotification(notification).catch(() => {});
-  };
-
-  // Player action notification — fire-and-forget broadcast to GM room.
-  const handlePlayerActionNotification = (notification) => {
-    dismissAllHoverCards();
-    postActionNotification(notification, gmUid).catch(() => {});
-  };
+  }, [tableId, isPlayer, activeElements, updateActiveElement, performFullReroll]);
 
   // Origin lifecycle (e.g. Unshakable): post action banner with character name.
   const postActionForStress = (charEl, actionName, actionText) => {
@@ -1052,15 +1170,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       const ranger = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
       if (ranger?.focusTargetId) updateActiveElement(ranger.instanceId, { focusTargetId: null });
     }
-    if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel').catch(() => {});
+    if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
     if (!roll.rollText || !roll.subItems) return;
     postRerollDualityDice(roll).catch(err => console.error('Ranger Focus reroll failed:', err));
   };
 
   // Ranger's Focus: player toggles reroll request — sets or clears _rangerFocusRerollRequestedBy.
   const handleRangerFocusRerollRequest = (bannerId) => {
-    if (gmUid) {
-      postBannerRangerFocusRerollRequest(gmUid, bannerId)
+    if (tableId) {
+      postBannerRangerFocusRerollRequest(tableId, bannerId)
         .then((res) => {
           if (res?.requested) onRangerFocusRerollRequestSuccess?.(bannerId);
           else onRangerFocusRerollRequestCancel?.(bannerId);
@@ -1071,57 +1189,56 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   // Hold Them Off (Ranger): GM or player toggles "Spend 3 Hope to select two more targets" on the banner.
   const handleHoldThemOffToggle = (bannerId, active) => {
-    if (gmUid) {
-      postBannerHoldThemOff(gmUid, bannerId, active).catch(() => {});
+    if (tableId) {
+      postBannerHoldThemOff(tableId, bannerId, active).catch(() => {});
     }
   };
 
   // Multi-target selection: GM or player changes selected targets or armor toggles (synced across clients).
   const handleBannerTargetsChange = (bannerId, patch) => {
-    if (gmUid) postBannerTargets(gmUid, bannerId, patch).catch(() => {});
+    if (tableId) postBannerTargets(tableId, bannerId, patch).catch(() => {});
   };
 
   // Rally Die: GM or player toggles "Add Rally Die to roll/damage" on the banner (shared state).
   const handleRallyDieToggle = (bannerId, field, value) => {
-    if (gmUid) {
-      postBannerRallyToggle(gmUid, bannerId, field, value).catch(() => {});
+    if (tableId) {
+      postBannerRallyToggle(tableId, bannerId, field, value).catch(() => {});
     }
   };
 
   // Heart of a Poet (Wordsmith): toggle intent to add d4 — both GM and player use the same toggle endpoint.
   // On Ack with toggle enabled, handleBannerAcknowledge intercepts and calls postBannerHeartD4Ack.
   const handleHeartD4Toggle = (bannerId, value) => {
-    const roomUid = gmUid || user?.uid;
+    const roomUid = tableId || user?.uid;
     if (roomUid) postBannerHeartD4Toggle(roomUid, bannerId, value).catch(() => {});
   };
 
   // Kept for backward compat — player path still uses gmUid (the room owner's UID).
   const handleHeartD4ToggleRequest = (bannerId, value) => {
-    if (gmUid) postBannerHeartD4Toggle(gmUid, bannerId, value).catch(() => {});
+    if (tableId) postBannerHeartD4Toggle(tableId, bannerId, value).catch(() => {});
   };
 
   // Wings of Light (Winged Sentinel): GM clicks toggle — spend 1 Hope and roll 1d8, patch banner.
   const handleWingsD8Toggle = (bannerId) => {
-    postBannerWingsD8(bannerId).catch(() => {});
+    postBannerWingsD8(bannerId, tableId).catch(() => {});
   };
 
   // Wings of Light: Player toggles _wingsOfLightAddD8 on banner (shared state).
   const handleWingsD8ToggleRequest = (bannerId, value) => {
-    if (gmUid) postBannerWingsD8Toggle(gmUid, bannerId, value).catch(() => {});
+    if (tableId) postBannerWingsD8Toggle(tableId, bannerId, value).catch(() => {});
   };
 
   // Wings of Light: When applying damage and roll had _wingsOfLightAddD8 but no _wingsOfLightD8Result (player toggled), ack with wingsOfLightD8 to get d8 and return it.
   const getWingsD8Extra = async (roll) => {
     if (roll._wingsOfLightD8Result != null) return roll._wingsOfLightD8Result;
-    const res = await postBannerAck(roll._rollDbId, 'acknowledge', { wingsOfLightD8: true });
+    const res = await postBannerAck(roll._rollDbId, 'acknowledge', { wingsOfLightD8: true, tableId });
     return res?.wingsOfLightD8Result ?? 0;
   };
 
   // Prayer Dice: GM or player selects/deselects a prayer die for add-to-roll or damage-reduction.
-  // Uses the GM's uid (gmUid) as room identifier for both parties.
   const handlePrayerDieSelect = (bannerId, opts) => {
-    if (!gmUid) return;
-    postBannerPrayerDieSelect(gmUid, bannerId, opts).catch(() => {});
+    if (!tableId) return;
+    postBannerPrayerDieSelect(tableId, bannerId, opts).catch(() => {});
   };
 
   // Doubled Up: parse secondary weapon damage from the tag and apply to a second target.
@@ -1136,7 +1253,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const dicePart = fullDmg.match(/^([^\s]+)/)?.[1] || '';
     // Roll the secondary weapon damage via server.
     const secRollText = `Doubled Up damage [${dicePart}]`;
-    postRoll(secRollText, `${roll.rollUser} (Doubled Up)`).then(secRollData => {
+    postRoll(secRollText, `${roll.rollUser} (Doubled Up)`, tableId).then(secRollData => {
       const secDamageSub = (secRollData.subItems || []).find(s => /damage/i.test(s.pre || '') && s.input);
       const secDmgTotal = secDamageSub ? parseInt(secDamageSub.result, 10) : 0;
       if (secDmgTotal > 0) {
@@ -1154,7 +1271,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
     // Rest banner: server already applied fear on ack; run move onApply hooks, then clear rest-move state and run feature/rest cycle clear.
     if (roll._rest && roll._rollDbId) {
-      postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
+      postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
       const perRoll = restMovesSelections[roll._rollDbId] || {};
       const restContext = {};
       for (const instanceId of Object.keys(perRoll)) {
@@ -1189,7 +1306,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
     // Start Session banner: acknowledge then run session clear + onSessionStart hooks.
     if (roll._sessionStart && roll._rollDbId) {
-      postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
+      postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
       runSessionStartClear();
       return;
     }
@@ -1197,7 +1314,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     // Rally Die banner toggle: cancel original, remove modifier, create copy banner with die added.
     // Skip all other processing — the copy banner goes through normal ack.
     if ((roll._rallyDieAddToRoll || roll._rallyDieAddToDamage) && roll._rollDbId) {
-      postBannerRallyAck(roll._rollDbId, {
+      postBannerRallyAck(roll._rollDbId, { tableId,
         addToRoll: !!roll._rallyDieAddToRoll,
         addToDamage: !!roll._rallyDieAddToDamage,
       }).catch(err => console.error('Rally Die ack failed:', err));
@@ -1207,7 +1324,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     // Heart of a Poet banner toggle: cancel original, decrement 1 Hope, create copy banner with d4 added.
     // Skip all other processing — the copy banner goes through normal ack.
     if (roll._heartOfAPoetAddD4 && roll._rollDbId) {
-      postBannerHeartD4Ack(roll._rollDbId).catch(err => console.error('Heart of a Poet ack failed:', err));
+      postBannerHeartD4Ack(roll._rollDbId, tableId).catch(err => console.error('Heart of a Poet ack failed:', err));
       return;
     }
 
@@ -1259,7 +1376,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (roll._featureName === 'Wings of Light' && roll._wingsOfLightPickUpCarry && roll._attackerInstanceId) {
         const charEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
         if (charEl) {
-          const stressCancel = await runBeforeMarkStress(charEl, 1, 'Wings of Light', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+          const stressCancel = await runBeforeMarkStress(charEl, 1, 'Wings of Light', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
           if (!stressCancel.cancel) {
             const effective = 1 - (stressCancel.reduceBy ?? 0);
             if (effective > 0) {
@@ -1314,7 +1431,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         // Send all batched updates (resource costs + class feature effects) as one atomic op
         const batchEntries = Object.entries(batchMap);
         if (batchEntries.length > 0) {
-          postTableOp({ op: 'update-elements', updates: batchEntries.map(([id, upd]) => ({ instanceId: id, updates: upd })) });
+          sendOp({ op: 'update-elements', updates: batchEntries.map(([id, upd]) => ({ instanceId: id, updates: upd })) });
         }
       }
       if (roll._attackerInstanceId) {
@@ -1363,7 +1480,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         }
       }
 
-      postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
+      postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
       return;
     }
 
@@ -1421,7 +1538,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     if (roll._luckyStressCost > 0 && roll._attackerInstanceId) {
       const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
       if (attackerEl) {
-        const stressCancel = await runBeforeMarkStress(attackerEl, roll._luckyStressCost, 'Lucky', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+        const stressCancel = await runBeforeMarkStress(attackerEl, roll._luckyStressCost, 'Lucky', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
         if (!stressCancel.cancel) {
           const effective = roll._luckyStressCost - (stressCancel.reduceBy ?? 0);
           if (effective > 0) {
@@ -1512,9 +1629,20 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       };
       const ctx = { postRoll, characterRaw: charEl, feature };
       if (isToggledOn) {
-        if (chip?.hopeCost > 0) wrappedChar.spendHope(chip.hopeCost);
+        if (chip?.hopeCost > 0) {
+          const useHopefulArmor = roll._hopefulArmorInsteadByInstanceId?.[charEl.instanceId];
+          const hasHopeful = charEl.armorMods?.feature?.name === 'Hopeful' || charEl.armorFeatureName === 'Hopeful';
+          const armorSlotsFree = (charEl.maxArmor ?? 0) - (charEl.currentArmor ?? 0);
+          const substitute = useHopefulArmor && hasHopeful && armorSlotsFree > 0
+            ? Math.min(chip.hopeCost, armorSlotsFree)
+            : 0;
+          if (substitute > 0) {
+            for (let i = 0; i < substitute; i++) wrappedChar.markArmor();
+          }
+          if (chip.hopeCost - substitute > 0) wrappedChar.spendHope(chip.hopeCost - substitute);
+        }
         if (chip?.stressCost > 0) {
-          const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'banner-ack', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+          const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'banner-ack', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
           if (!stressCancel.cancel) {
             const effective = chip.stressCost - (stressCancel.reduceBy ?? 0);
             if (effective > 0) wrappedChar.markStress(effective);
@@ -1566,7 +1694,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         updateActiveElement(die.ownerInstanceId, { activeModifiers: newMods });
       }
     }
-    if (!options?.alreadyAcked) postBannerAck(roll._rollDbId, 'acknowledge').catch(() => {});
+    // Locked On (weapon): consume the lock when this attack (targeting the locked target) is acknowledged
+    if (roll._attackerInstanceId) {
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      const locked = attackerEl?.lockedOnTargetInstanceId;
+      if (locked != null) {
+        const selectedId = roll._selectedTargetInstanceId ?? roll._selectedTargetInstanceIds?.[0];
+        if (selectedId === locked) updateActiveElement(roll._attackerInstanceId, { lockedOnTargetInstanceId: null });
+      }
+    }
+    if (!options?.alreadyAcked) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
   };
 
   // GM cancels a banner: dismiss without any effects.
@@ -1598,7 +1735,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         }
       }
     }
-    postBannerAck(roll._rollDbId, 'cancel').catch(() => {});
+    postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
   };
 
   // Keep for legacy calls (applyDamageToTarget, etc.) that still pass dmgPending on the old path
@@ -1632,12 +1769,24 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const updates = {};
 
     if (roll._hopeCost > 0) {
-      const maxHope = el.maxHope ?? 6;
-      const current = el.hope ?? maxHope;
-      updates.hope = Math.max(0, current - roll._hopeCost);
+      const useHopefulArmor = roll._hopefulArmorInsteadByInstanceId?.[instanceId];
+      const hasHopeful = el.armorMods?.feature?.name === 'Hopeful' || el.armorFeatureName === 'Hopeful';
+      const armorSlotsFree = (el.maxArmor ?? 0) - (el.currentArmor ?? 0);
+      const substitute = useHopefulArmor && hasHopeful && armorSlotsFree > 0
+        ? Math.min(roll._hopeCost, armorSlotsFree)
+        : 0;
+      if (substitute > 0) {
+        updates.currentArmor = Math.min((el.currentArmor ?? 0) + substitute, el.maxArmor ?? 0);
+      }
+      const hopeToSpend = roll._hopeCost - substitute;
+      if (hopeToSpend > 0) {
+        const maxHope = el.maxHope ?? 6;
+        const current = el.hope ?? maxHope;
+        updates.hope = Math.max(0, current - hopeToSpend);
+      }
     }
     if (roll._stressCost > 0) {
-      const stressCancel = await runBeforeMarkStress(el, roll._stressCost, 'feature-use', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+      const stressCancel = await runBeforeMarkStress(el, roll._stressCost, 'feature-use', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
       if (!stressCancel.cancel) {
         const effective = roll._stressCost - (stressCancel.reduceBy ?? 0);
         if (effective > 0) {
@@ -1743,7 +1892,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       const actionText = cycle === 'rest'
         ? 'Short rest — choose your moves per character (some ancestries grant extra slots), then acknowledge to add Fear and refresh rest-use features.'
         : 'Long rest — choose your moves per character (some ancestries grant extra slots), then acknowledge to add Fear and refresh rest and long-rest features.';
-      postRoll(' [1d4]', displayName, isPlayer ? gmUid : null, {
+      postRoll(' [1d4]', displayName, isPlayer ? tableId : null, {
         _action: true,
         _rest: true,
         _restDuration: cycle === 'rest' ? 'short' : 'long',
@@ -1788,10 +1937,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (char.activeChanneledElement && cyclesToClear.includes('rest')) {
         updates.activeChanneledElement = null;
       }
+      // Shifting (armor): disadvantage until rest — clear on rest
+      if (cyclesToClear.includes('rest') && Array.isArray(char.disadvantageSources) && char.disadvantageSources.includes('Shifting')) {
+        updates.disadvantageSources = char.disadvantageSources.filter(s => s !== 'Shifting');
+      }
       if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
     }
     if (Object.keys(batchMap).length > 0) {
-      postTableOp({ op: 'update-elements', updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })) });
+      sendOp({ op: 'update-elements', updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })) });
     }
   };
 
@@ -2026,7 +2179,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
     }
     const key = `${feature.cardKey}|${feature.featureKey}`;
-    postRoll(rollText, displayName).then(() => {
+    postRoll(rollText, displayName, tableId).then(() => {
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     }).catch(err => console.error('Roll failed:', err));
@@ -2070,12 +2223,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets });
       return;
     }
-    postRoll(rollText, displayName, null, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => console.error('Roll failed:', err));
+    postRoll(rollText, displayName, tableId, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => console.error('Roll failed:', err));
   };
 
   const handleTraitRoll = (rollText, displayName, rollMeta = {}) => {
     dismissAllHoverCards();
-    postRoll(rollText, displayName || rollText, null, rollMeta)
+    postRoll(rollText, displayName || rollText, tableId, rollMeta)
       .catch(err => console.error('Trait roll failed:', err));
   };
 
@@ -2084,8 +2237,11 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   // When context.characterEl is provided, runs ancestry onAct hooks; if any chips are added,
   // shows a player-only pre-roll banner instead of posting immediately.
   const handlePlayerOwnRoll = (rollText, displayName, rollMeta = {}, context = null) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePlayerOwnRoll',message:'Roll handler entered',data:{hasSelectedTarget:!!rollMeta._selectedTargetInstanceId,selectedTargetId:rollMeta._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     dismissAllHoverCards();
-    const targetGmUid = (isPlayer && !previewAsPlayerEmail) ? gmUid : null;
+    const targetTableId = tableId;
     const meta = { ...rollMeta, _playerInitiated: true };
 
     // Resolve character from activeElements so we have latest runtime (e.g. disadvantageSources from Galapa Retract).
@@ -2097,7 +2253,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           : null) || contextChar;
 
     if (!characterEl) {
-      postRoll(rollText, displayName || rollText, targetGmUid, meta)
+      postRoll(rollText, displayName || rollText, targetTableId, meta)
         .catch(err => console.error('Player roll failed:', err));
       return;
     }
@@ -2162,9 +2318,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     canvas.addChip = (descriptor) => {
       const featureName = canvas._currentFeatureName;
       const merged = { ...descriptor, _featureName: featureName };
-      // #region agent log
-      fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:addChip', message: 'canvas.addChip', data: { _featureName: featureName, label: descriptor?.label?.slice(0, 40) }, timestamp: Date.now(), hypothesisId: 'A' }) }).catch(() => {});
-      // #endregion
       const hadCustomIsVisible = typeof descriptor.isVisible === 'function';
       if (merged.resetsOn) {
         const originFeatures = [...(characterEl.ancestryFeatures || []), ...(characterEl.communityFeatures || [])];
@@ -2218,13 +2371,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       getFeatureStateFor: (name) => getFeatureStateFor(characterEl, name),
     });
 
-    // #region agent log
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:afterOnAct', message: 'after onAct', data: { chipsLength: canvas.chips.length, isPlayer: !!isPlayer, hasKnowTheTide: canvas.chips.some(c => (c._featureName || c.label || '').includes('Know the Tide')) }, timestamp: Date.now(), hypothesisId: 'B' }) }).catch(() => {});
-    // #endregion
     if (canvas.chips.length === 0) {
       runHook(ancestryFeatures, featureNames, 'onRoll', { roll: rollWrapper });
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
-      postRoll(rollWrapper.getFinalRollText(), pending.displayName || rollText, targetGmUid, metaWithLabel)
+      // #region agent log
+      fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePlayerOwnRoll',message:'Posting roll immediately (no chips)',data:{hasSelectedTarget:!!metaWithLabel._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
+      postRoll(rollWrapper.getFinalRollText(), pending.displayName || rollText, targetTableId, metaWithLabel)
         .catch(err => console.error('Player roll failed:', err));
       return;
     }
@@ -2232,11 +2385,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const onProceed = () => {
       const finalText = rollWrapper.getFinalRollText();
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
-      postRoll(finalText, pending.displayName || pending.rollText, targetGmUid, metaWithLabel)
+      postRoll(finalText, pending.displayName || pending.rollText, targetTableId, metaWithLabel)
         .catch(err => console.error('Player roll failed:', err));
       setPreRollBanner(null);
       setSelectedPreRollChips([]);
     };
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePlayerOwnRoll',message:'Setting preRollBanner (chips present)',data:{chipsCount:canvas.chips.length,hasSelectedTarget:!!pending.meta._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending });
     setSelectedPreRollChips(canvas.chips.map(() => false));
   };
@@ -2250,6 +2406,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
   const handlePreRollProceed = () => {
     if (!preRollBanner) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePreRollProceed',message:'Proceed clicked',data:{hasPending:!!preRollBanner.pending,hasSelectedTarget:!!preRollBanner.pending?.meta?._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
     const charEl = activeElements.find(e => e.instanceId === characterEl.instanceId) || characterEl;
     const hasDifficultyChip = chips.some(c => c._difficultyChip);
@@ -2260,9 +2419,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     }
                     const proceedFeatureNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
                     runHook(ancestryFeatures, proceedFeatureNames, 'onRoll', { roll: rollWrapper });
-    // #region agent log
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:ProceedBefore', message: 'Proceed before loop', data: { selectedCount: selectedPreRollChips.filter(Boolean).length, chipLabels: chips.map(c => c._featureName || c.label?.slice(0, 30)) }, timestamp: Date.now(), hypothesisId: 'C' }) }).catch(() => {});
-    // #endregion
     for (let i = 0; i < chips.length; i++) {
       const chip = chips[i];
       if (chip._difficultyChip) continue;
@@ -2283,17 +2439,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (chip.resetsOn && chip._featureKey) wrapEntity(charEl, updateActiveElement).setFeatureUsed(chip._featureKey, chip.resetsOn);
       const feature = getFeatureStateFor && chip._featureName ? getFeatureStateFor(charEl, chip._featureName) : null;
       if (pending && chip._featureName && !pending.rollBonusLabel) pending.rollBonusLabel = chip._featureName;
-      // #region agent log
-      if (typeof chip.onUse === 'function') fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:chipOnUse', message: 'calling onUse', data: { _featureName: chip._featureName, hasFeature: !!feature }, timestamp: Date.now(), hypothesisId: 'A' }) }).catch(() => {});
-      // #endregion
       if (typeof chip.onUse === 'function') chip.onUse(rollWrapper, feature);
     }
-    // #region agent log
-    const finalText = rollWrapper.getFinalRollText();
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:ProceedAfter', message: 'Proceed after loop', data: { finalText: finalText.slice(-50), hasPlus: finalText.includes(' + ') }, timestamp: Date.now(), hypothesisId: 'C' }) }).catch(() => {});
-    // #endregion
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePreRollProceed',message:'Calling onProceed (postRoll)',data:{metaSelectedTarget:pending?.meta?._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     onProceed();
   };
 
@@ -2406,7 +2558,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           maxArmor: el.maxArmor ?? 0,
           armorFeatureName: el.armorMods?.feature?.name ?? null,
           armorScore: el.armorScore ?? 0,
-          evasion: el.evasion ?? null,
+          evasion: effectiveEvasion(el) ?? el.evasion ?? null,
+          featureUsage: el.featureUsage ?? {},
           conditions: el.conditions ?? '',
           resistance: el.resistance ?? [],
           retractedActive: el.retractedActive ?? false,
@@ -2689,9 +2842,16 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         const feature = ancestryFeatures[af.name];
         if (!feature) continue;
         const chips = [];
+        let bannerNarrations;
         if (feature.onBanner) {
-          const banner = { chips, addChip(descriptor) { this.chips.push(descriptor); } };
+          const banner = {
+            chips,
+            _narrations: [],
+            addChip(descriptor) { this.chips.push(descriptor); },
+            addNarration(text, style) { this._narrations.push(style != null ? { text, style } : { text }); },
+          };
           feature.onBanner(banner);
+          bannerNarrations = banner._narrations?.length ? [...banner._narrations] : undefined;
         } else if (feature.bannerAction) {
           chips.push(feature.bannerAction);
         }
@@ -2714,6 +2874,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             character: char,
             chip,
             stateKey,
+            bannerNarrations,
             _featureKey: featureKeyForResetsOn,
             getDisabledState: (roll) => {
               enrichRollWithAttackRange(roll, activeElements);
@@ -2758,11 +2919,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               const wr = wrapRoll(roll, undefined, char.instanceId);
               wr.isMine = getIsMyRoll(roll);
               const visible = chip.isVisible ? chip.isVisible(wr, entity) : wr.isMine;
-              // #region agent log
-              if (feature.name === 'Danger Sense') {
-                fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'e86e0f',sessionId:'e86e0f',location:'GMTableView.jsx:matchesRoll',message:'Danger Sense matchesRoll',data:{selectedTargetId:roll._selectedTargetInstanceId,hasDamage,charInstanceId:char.instanceId,targetIsMe:wr.target?.isMe,rangeFromMe:wr.target?.rangeFromMe,visible},timestamp:Date.now()})}).catch(()=>{});
-              }
-              // #endregion
               return visible;
             },
             isActive: stateKey
@@ -2786,6 +2942,21 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
     const isFirst = isFirstBannersSnapshotRef.current;
     isFirstBannersSnapshotRef.current = false;
 
+    function getBannerNarration(roll) {
+      const parts = [];
+      if (roll._narration) parts.push({ text: roll._narration });
+      const tagNames = (roll.tags || []).map(t => (typeof t === 'string' ? t : t?.name)).filter(Boolean);
+      const weaponBanner = { addNarration(text, style) { parts.push(style != null ? { text, style } : { text }); } };
+      for (const name of tagNames) {
+        const f = weaponFeatures[name];
+        if (f?.onBanner) f.onBanner(weaponBanner);
+      }
+      for (const r of ancestryBannerReactions) {
+        if (r.matchesRoll(roll) && r.bannerNarrations?.length) parts.push(...r.bannerNarrations);
+      }
+      return parts.filter(p => p?.text);
+    }
+
     const lastBanner = pendingBanners[pendingBanners.length - 1];
     for (const banner of pendingBanners) {
       const dbId = banner._rollDbId;
@@ -2805,8 +2976,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
           setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
         }
+        const narrations = getBannerNarration(banner);
         const augmentedBanner = {
           ...banner,
+          ...(narrations.length ? { _narrations: narrations } : {}),
           ...(rousingSpeechTargets !== undefined ? { _rousingSpeechTargets: rousingSpeechTargets } : {}),
           ...(lifeSupportTargets !== undefined ? { _lifeSupportTargets: lifeSupportTargets } : {}),
           _isPlayerRoll: banner._playerInitiated === true,
@@ -2835,8 +3008,10 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
         setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
       }
+      const narrations = getBannerNarration(banner);
       diceRollerRef.current?.addRoll({
         ...banner,
+        ...(narrations.length ? { _narrations: narrations } : {}),
         ...(rousingSpeechTargets !== undefined ? { _rousingSpeechTargets: rousingSpeechTargets } : {}),
         ...(lifeSupportTargets !== undefined ? { _lifeSupportTargets: lifeSupportTargets } : {}),
         _isPlayerRoll: banner._playerInitiated === true,
@@ -2854,7 +3029,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       }
     }
     diceRollerRef.current?.setBannerReactionsFallback?.(ancestryBannerReactions);
-  }, [pendingBanners, ancestryBannerReactions]);
+  }, [pendingBanners, ancestryBannerReactions, activeElements]);
 
   // Display overrides for banners: run chip.render for each pending roll and matching reaction.
   const displayOverridesByRollId = useMemo(() => {
@@ -2915,6 +3090,22 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
       (!isPlayer || c.assignedPlayerEmail === playerEmail)
     )
     .map(c => ({ instanceId: c.instanceId, name: c.name }));
+
+  // Locked On (weapon): roll DB IDs where the attacker has lockedOnTargetInstanceId === selected target (auto-success badge)
+  const lockedOnAutoSuccessRollDbIds = useMemo(() => {
+    const set = new Set();
+    if (!pendingBanners?.length) return set;
+    for (const roll of pendingBanners) {
+      const dbId = roll._rollDbId;
+      if (!dbId || !roll._attackerInstanceId) continue;
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      const locked = attackerEl?.lockedOnTargetInstanceId;
+      if (!locked) continue;
+      const selectedId = roll._selectedTargetInstanceId ?? roll._selectedTargetInstanceIds?.[0];
+      if (selectedId === locked) set.add(dbId);
+    }
+    return set;
+  }, [pendingBanners, activeElements]);
 
   // Wings of Light (Winged Sentinel): characters currently flying — show "Spend Hope for d8" on their attack banners.
   const wingsOfLightFlyingInstanceIds = useMemo(() => {
@@ -3317,16 +3508,13 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       filled={el.currentStress || 0}
                       pendingFilled={pendingResourceCosts[el.instanceId]?.stress ?? 0}
                       onSetFilled={isAssigned ? async (s) => {
-                        // #region agent log
-                        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'GMTableView.jsx:3267',message:'Characters panel Stress onSetFilled',data:{instanceId:el.instanceId,newFilled:s,currentStress:el.currentStress},hypothesisId:'A',timestamp:Date.now()})}).catch(()=>{});
-                        // #endregion
                         const current = el.currentStress ?? 0;
                         const amount = s - current;
                         if (amount <= 0) {
                           updateActiveElement(el.instanceId, { currentStress: s });
                           return;
                         }
-                        const stressCancel = await runBeforeMarkStress(el, amount, 'stat-block', updateActiveElement, { postRollSilent, gmUid: isPlayer ? gmUid : null, postAction: postActionForStress });
+                        const stressCancel = await runBeforeMarkStress(el, amount, 'stat-block', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
                         if (!stressCancel.cancel) {
                           const effective = amount - (stressCancel.reduceBy ?? 0);
                           if (effective > 0) {
@@ -3334,9 +3522,6 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                             updateActiveElement(el.instanceId, { currentStress: newFilled });
                           }
                         } else {
-                          // #region agent log
-                          fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'GMTableView.jsx:stressCancel',message:'Stress update skipped (cancel)',data:{instanceId:el.instanceId},hypothesisId:'F',timestamp:Date.now()})}).catch(()=>{});
-                          // #endregion
                         }
                       } : undefined}
                       fillColor="bg-orange-500"
@@ -3838,7 +4023,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             isPlayer={isPlayer}
             currentUserUid={user?.uid}
             onBannerAcknowledge={!isPlayer ? handleBannerAcknowledge : undefined}
-            onBannerCancel={!isPlayer ? handleBannerCancel : (gmUid ? (bannerId, roll) => postBannerCancel(gmUid, roll._rollDbId).catch(() => {}) : undefined)}
+            onBannerCancel={!isPlayer ? handleBannerCancel : (tableId ? (bannerId, roll) => postBannerCancel(tableId, roll._rollDbId).catch(() => {}) : undefined)}
             lifeSupportSelections={lifeSupportSelections}
             onLifeSupportSelect={onLifeSupportSelect}
             onLifeSupportClear={onLifeSupportClear}
@@ -3853,12 +4038,12 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
               const byEmail = !!playerEmail && el?.assignedPlayerEmail === playerEmail;
               return byUid || byEmail;
             } : () => true}
-            restGmUid={gmUid}
+            restGmUid={tableId}
             makeASceneSelections={makeASceneSelections}
             onMakeASceneSelect={(rollDbId, instanceId) => {
               setMakeASceneSelections(prev => ({ ...prev, [rollDbId]: instanceId }));
               // Sync selection to server so all clients (GM + player) see the same choice
-              postBannerMakeASceneTarget(gmUid, rollDbId, instanceId).catch(() => {});
+              postBannerMakeASceneTarget(tableId, rollDbId, instanceId).catch(() => {});
             }}
             makeASceneAdversaries={makeASceneAdversaries}
             targets={isPlayer ? [] : damageTargets}
@@ -3866,6 +4051,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             getTargetDisadvantageLabels={!isPlayer ? getTargetDisadvantageLabels : undefined}
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             onApplyVulnerable={!isPlayer ? handleApplyVulnerable : undefined}
+            onConcussiveKnock={!isPlayer ? handleConcussiveKnock : undefined}
             canApplyDamage={!isPlayer}
             onLuckyReroll={isPlayer ? undefined : handleLuckyReroll}
             onQuickTarget={isPlayer ? undefined : handleQuickTarget}
@@ -3876,37 +4062,41 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             bannerReactions={ancestryBannerReactions}
             displayOverridesByRollId={displayOverridesByRollId}
             onBannerReactionActivate={handleBannerReactionActivate}
-            onChipResolve={gmUid ? handleChipResolve : undefined}
+            onChipResolve={tableId ? handleChipResolve : undefined}
             tableCharacters={isPlayer ? [] : tableCharacters}
             rangerFocusRerollChars={rangerFocusRerollChars}
             onRangerFocusReroll={isPlayer ? undefined : handleRangerFocusReroll}
             onRangerFocusRerollRequest={isPlayer ? handleRangerFocusRerollRequest : undefined}
             rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
             holdThemOffChars={holdThemOffChars}
-            onHoldThemOffToggle={gmUid ? handleHoldThemOffToggle : undefined}
-            onBannerTargetsChange={gmUid ? handleBannerTargetsChange : undefined}
+            onHoldThemOffToggle={tableId ? handleHoldThemOffToggle : undefined}
+            lockedOnAutoSuccessRollDbIds={lockedOnAutoSuccessRollDbIds}
+            onBannerTargetsChange={tableId ? handleBannerTargetsChange : undefined}
             wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
             onWingsD8Toggle={!isPlayer ? handleWingsD8Toggle : undefined}
-            onWingsD8ToggleRequest={isPlayer && gmUid ? handleWingsD8ToggleRequest : undefined}
+            onWingsD8ToggleRequest={isPlayer && tableId ? handleWingsD8ToggleRequest : undefined}
             onGetWingsD8Extra={!isPlayer ? getWingsD8Extra : undefined}
             getWaterRetaliationNames={!isPlayer ? getWaterRetaliationNames : undefined}
             prayerDiceChars={prayerDiceChars}
-            onPrayerDieSelect={gmUid ? handlePrayerDieSelect : undefined}
+            onPrayerDieSelect={tableId ? handlePrayerDieSelect : undefined}
             rallyDieInstanceIds={rallyDieInstanceIds}
-            onRallyDieToggle={gmUid ? handleRallyDieToggle : undefined}
+            onRallyDieToggle={tableId ? handleRallyDieToggle : undefined}
             heartOfAPoetChars={heartOfAPoetChars}
-            onHeartD4Toggle={!isPlayer && gmUid ? handleHeartD4Toggle : undefined}
-            onHeartD4ToggleRequest={isPlayer && gmUid ? handleHeartD4ToggleRequest : undefined}
+            onHeartD4Toggle={!isPlayer && tableId ? handleHeartD4Toggle : undefined}
+            onHeartD4ToggleRequest={isPlayer && tableId ? handleHeartD4ToggleRequest : undefined}
             bannerStripLeftOffset={tableCharacters.length > 0 ? CHARACTER_TRAY_WIDTH_PX : 0}
           />
           <BattleMap
-            gmUid={gmUid}
+            gmUid={tableId}
             user={user}
             isPlayer={isPlayer}
             activeElements={activeElements}
             updateActiveElement={updateActiveElement}
             mapConfig={mapConfig}
             onMapConfigChange={onMapConfigChange}
+            tableName={tableName}
+            onTableNameChange={onTableNameChange}
+            onDeleteTable={onDeleteTable}
             onClearDice={() => diceRollerRef.current?.clearDice?.()}
             className="flex-1 min-h-0"
           />
@@ -3914,7 +4104,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         {/* Action log footer — collapsed title bar; click to open overlay with roll/action history */}
         <ActionLog
           rolls={actionLog}
-          rollBuilder={{ onRoll: (rollText, displayName) => postRoll(rollText, displayName, isPlayer ? gmUid : null), displayName: user?.displayName || user?.email || (isPlayer ? 'Player' : 'GM') }}
+          rollBuilder={{ onRoll: (rollText, displayName) => postRoll(rollText, displayName, isPlayer ? tableId : null), displayName: user?.displayName || user?.email || (isPlayer ? 'Player' : 'GM') }}
         />
       </div>
 
@@ -4888,7 +5078,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       }
                     }
                   }
-                  postRoll(finalRollText, displayName, null, { ...rollMeta, _selectedTargetInstanceId: t.instanceId })
+                  postRoll(finalRollText, displayName, tableId, { ...rollMeta, _selectedTargetInstanceId: t.instanceId })
                     .then(() => {
                       if (rk) {
                         setRolledKey(rk);
@@ -4965,7 +5155,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             width: hasCompanion ? 'calc(36rem + 16px)' : 'calc(22rem + 8px)',
             height: 'calc(100dvh - 98px)',
           }}
-          {...characterOverlay.overlayHandlers}
+          onMouseEnter={characterOverlay.overlayHandlers.onMouseEnter}
+          onMouseLeave={() => {
+            const menuOpen = characterTargetMenuOpenRef.current;
+            // #region agent log
+            fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:overlayMouseLeave',message:'Character overlay mouse leave',data:{targetMenuOpen:menuOpen},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+            // #endregion
+            if (!menuOpen) characterOverlay.close();
+          }}
         >
           <div className="flex flex-col overflow-hidden shrink-0" style={{ width: '22rem' }}>
             {(() => {
@@ -4996,6 +5193,7 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   hideCompanionSection={hasCompanion}
                   isPlayer={isPlayer}
                   getValidTargets={allowInteract ? getValidTargets : undefined}
+                  targetMenuOpenRef={characterTargetMenuOpenRef}
                 />
               );
             })()}

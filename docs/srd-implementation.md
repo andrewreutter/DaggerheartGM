@@ -14,8 +14,8 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | ----------------------------------------- | ----- | --------- | ----------- | ---------------------------------------------------------------- | ----------- |
 | [Adversaries](#adversaries-129)           | 129   | Done      | N/A (table) | Attacks rollable                                                 | **Done**    |
 | [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display                                                          | **Done**    |
-| [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 22/38 automated                                                  | **Partial** |
-| [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated                                                  | **Partial** |
+| [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 25/38 automated; 38/38 in registry                               | **Partial** |
+| [Armor](#armor-34)                        | 34    | N/A       | Done        | 18/21 automated; 21/21 in registry                               | **Partial** |
 | [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks                                 | **Partial** |
 | [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 1+ features partial (e.g. Wings of Light, Elemental Incarnation) | **Partial** |
 | [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 18 ancestries automated; 2 features display-only by design       | **Done**    |
@@ -57,7 +57,7 @@ The weapons themselves are all implemented for selection and display. The automa
 
 #### Passive Stat Modifiers — All Done
 
-Handled by `computeWeaponModifiers` in `character-calc.js`. No per-attack effect — applied at character build time.
+Handled by `computeWeaponModifiers` in `character-calc.js` via the weapon feature registry (`passiveStatMods` only — no parsing). No per-attack effect — applied at character build time.
 
 
 | Feature     | Effect                                          | Status                 |
@@ -143,8 +143,15 @@ Applied in `handleApplyDamage` / banner dismiss in `GMTableView`.
 | Feature   | Behavior                                   | Status                                                                                                                                                                                                                                                                                                          |
 | --------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Startling | Action notification card; 1 Stress         | **Done**                                                                                                                                                                                                                                                                                                        |
-| Parry     | Defensive dice cancel matching attack dice | **Broken** — original implementation relied on the old `handleDiceRollComplete`/`dice-ack` path, which was removed in the banner-queue refactor. Needs reimplementation as a linked child banner (`_parentBannerId`). See `parry-linked-banners` in `.cursor/plans/banner_queue_architecture_ac326660.plan.md`. |
+| Parry     | Defensive dice cancel matching attack dice | **Done** — Parry roll uses a silent server roll (no second banner); reduced damage is applied to the same banner. |
 
+
+#### Phase 5 — Optional display-to-automation (Done)
+
+| Feature    | Effect                                   | Status   |
+| ---------- | ---------------------------------------- | -------- |
+| Concussive | On success: toggle "Spend 1 Hope → knock target to Far"; token moved to 50 ft | **Done** |
+| Locked On  | On hit, set lock on target; next primary attack vs same target shows "Locked On: auto-succeeds" badge; lock cleared on ack | **Done** |
 
 #### Display Only — No Automation Needed
 
@@ -163,27 +170,25 @@ These are informational for the GM. Shown as tags in the result banner.
 | Healing     | Clear 1 HP in downtime         | **Display** |
 | Hot         | Cuts through material          | **Display** |
 | Greedy      | +1 proficiency for gold        | **Display** |
-| Concussive  | Knock to Far for 1 Hope        | **Display** |
 | Long        | Target all in a line           | **Display** |
 | Grappling   | Restrain/pull for 1 Hope       | **Display** |
 | Sheltering  | Armor shared with allies       | **Display** |
-| Locked On   | Next attack auto-succeeds      | **Display** |
 | Deflecting  | Mark Armor for Evasion bonus   | **Display** |
 
 
-**Weapon features score: 22 fully automated + 16 display-only = 38/38 accounted for.**
+**Weapon features score: 25 fully automated + 14 display-only (all have registry descriptors) = 38/38 accounted for.**
 
 ---
 
 ## Armor (34)
 
-**Status: Partial.** All 34 armor pieces are selectable in the character builder. Base stats (score, thresholds, max armor) are computed by `resolveArmor`. Armor features are parsed by `computeArmorModifiers` in `character-calc.js` — stat modifiers and roll modifiers are automated. Armor-slot-triggered features (Phase 2) are automated via the damage banner's armor button. Damage-type-gated features (Phase 3) are automated: `dmg.type` flows from `ResultBanner` through `handleApplyDamage` to `applyDamageToTarget`. Map-aware and complex features require later phases.
+**Status: Partial.** All 34 armor pieces are selectable in the character builder. Base stats (score, thresholds, max armor) are computed by `resolveArmor`. Armor features are read from the armor feature registry (`passiveStatMods` only — no parsing) in `computeArmorModifiers`; stat and roll modifiers are automated. Armor-slot-triggered features (Phase 2) are automated via the damage banner's armor button. Damage-type-gated features (Phase 3) are automated: `dmg.type` flows from `ResultBanner` through `handleApplyDamage` to `applyDamageToTarget`. Map-aware and complex features require later phases.
 
 ### Armor Features (21 unique)
 
 #### Stat Modifiers — All Done
 
-Handled by `computeArmorModifiers` in `character-calc.js`. Applied at character build time before weapon modifiers.
+Handled by `computeArmorModifiers` in `character-calc.js` via the armor feature registry (`passiveStatMods` only). Applied at character build time before weapon modifiers.
 
 
 | Feature    | Armors                | Effect                    | Status   |
@@ -215,17 +220,21 @@ Toggleable chips in the Experiences section. Bonus included in the next roll wit
 | Truthseeking | Veritas Opal (T4) | Glows when creature lies | **Display** |
 
 
-#### Armor-Slot-Triggered — Done (Phase 2)
+#### Armor-Slot-Triggered — Done (Phase 2 + Phase 3)
 
-Triggered when the GM clicks the cyan armor button (shield icon) next to a character target in the damage banner. `applyDamageToTarget` in `GMTableView.jsx` reads `armorOpts.feature` to apply the feature effect alongside the slot mark.
+Triggered when the GM clicks the cyan armor button (shield icon) next to a character target in the damage banner. `applyDamageToTarget` in `GMTableView.jsx` reads `armorOpts.feature` to apply the feature effect alongside the slot mark. Phase 3 adds slot-effect and substitution hooks (Timeslowing, Shifting, Hopeful, Impenetrable).
 
 
-| Feature    | Armors                      | Effect                                                              | Status   |
-| ---------- | --------------------------- | ------------------------------------------------------------------- | -------- |
-| Fortified  | Full Fortified (T4)         | Armor Slot reduces severity by two (−2 HP instead of −1)            | **Done** |
-| Painful    | Runes of Fortification (T3) | Auto-mark 1 Stress on target when armor slot is marked              | **Done** |
-| Resilient  | Harrowbone (T2)             | On last slot: roll d6 — a 6 saves the slot (severity still reduces) | **Done** |
-| Reinforced | IronTree Breastplate (T2)   | +2 to both thresholds when last slot marked; clears on restore      | **Done** |
+| Feature     | Armors                      | Effect                                                              | Status   |
+| ----------- | --------------------------- | ------------------------------------------------------------------- | -------- |
+| Fortified   | Full Fortified (T4)         | Armor Slot reduces severity by two (−2 HP instead of −1)            | **Done** |
+| Painful     | Runes of Fortification (T3) | Auto-mark 1 Stress on target when armor slot is marked              | **Done** |
+| Resilient   | Harrowbone (T2)             | On last slot: roll d6 — a 6 saves the slot (severity still reduces) | **Done** |
+| Reinforced  | IronTree Breastplate (T2)   | +2 to both thresholds when last slot marked; clears on restore     | **Done** |
+| Timeslowing | Dunamis Silkchain (T4)      | Mark Armor Slot → +1d4 Evasion until rest (silent roll, activeModifier) | **Done** |
+| Shifting    | Runetan Floating (T2)      | Mark Armor Slot → disadvantage until rest; cleared on rest         | **Done** |
+| Hopeful     | Rosewild (T2)               | When spending Hope (chip/feature), option to mark Armor Slot instead (banner toggle) | **Done** |
+| Impenetrable | Dragonscale (T3)            | When damage would reduce to 0 HP: option to mark Stress instead (1/rest, banner toggle) | **Done** |
 
 
 #### Damage-Type Gated — Done (Phase 3)
@@ -242,32 +251,15 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 #### Map-Aware — Pending (Phase 4)
 
+Map-aware (Phase 4): when the target has Sharp/Burning and the attacker is in Melee (from map or roll metadata), retaliation runs after damage is applied.
 
 | Feature | Armors            | Effect                      | Status   |
 | ------- | ----------------- | --------------------------- | -------- |
-| Sharp   | Spiked Plate (T3) | +d4 Melee damage            | **None** |
-| Burning | Emberwoven (T4)   | Melee attacker marks Stress | **None** |
+| Sharp   | Spiked Plate (T3) | Attacker takes 1d4 damage   | **Done** |
+| Burning | Emberwoven (T4)   | Melee attacker marks Stress | **Done** |
 
 
-#### Complex Unique — Pending (Phase 5)
-
-
-| Feature     | Armors                 | Effect                         | Status   |
-| ----------- | ---------------------- | ------------------------------ | -------- |
-| Timeslowing | Dunamis Silkchain (T4) | Mark Armor Slot → +d4 Evasion  | **None** |
-| Shifting    | Runetan Floating (T2)  | Mark Armor Slot → disadvantage | **None** |
-
-
-#### Flagged for Future
-
-
-| Feature      | Armors           | Effect                                  | Status   |
-| ------------ | ---------------- | --------------------------------------- | -------- |
-| Hopeful      | Rosewild (T2)    | Mark Armor Slot instead of Hope         | **None** |
-| Impenetrable | Dragonscale (T3) | Mark Stress instead of last HP (1/rest) | **None** |
-
-
-**Armor features score: 12 automated (5 stat + 2 roll + 4 slot-triggered + 1 display) / 21 total. Phases 3–5 cover the remaining 9.**
+**Armor features score: 18 automated (5 stat + 2 roll + 8 slot-triggered/substitution + 2 map-aware + 1 display) / 21 total. All 21 have registry descriptors.**
 
 ---
 

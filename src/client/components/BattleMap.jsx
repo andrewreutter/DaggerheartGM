@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices } from 'lucide-react';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices, Trash2 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
@@ -152,13 +152,37 @@ function TokenDotRing({ size, groups }) {
 
 // ─── MapConfigToolbar ────────────────────────────────────────────────────────
 
-function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect }) {
+function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', onTableNameChange, onDeleteTable }) {
   const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
   const fileInputRef = useRef(null);
+  const isNewTable = tableName === '' || tableName === 'New Table';
+  const [isEditingName, setIsEditingName] = useState(isNewTable);
+  const [nameInput, setNameInput] = useState(tableName || 'New Table');
+  const nameInputRef = useRef(null);
 
   // Sync external changes (e.g. from SSE)
   useEffect(() => { setSizeInput(String(mapSizeFt)); }, [mapSizeFt]);
+  useEffect(() => { setNameInput(tableName || 'New Table'); }, [tableName]);
+
+  // On new table, open editor and focus on first display
+  useEffect(() => {
+    if (!isNewTable || !isEditingName) return;
+    const el = nameInputRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.focus();
+      el.select();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isNewTable, isEditingName]);
+
+  const commitName = () => {
+    const trimmed = (nameInput || '').trim() || 'New Table';
+    setNameInput(trimmed);
+    if (onTableNameChange && trimmed !== tableName) onTableNameChange(trimmed);
+    setIsEditingName(false);
+  };
 
   const commitSize = () => {
     const v = Math.max(1, Math.min(500, parseInt(sizeInput, 10) || 100));
@@ -172,69 +196,115 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
     }
   };
 
+  const wxh = (() => {
+    const { mapWidthFt, mapHeightFt } = getMapDimensions(mapConfig);
+    return `${Math.round(mapWidthFt)}' × ${Math.round(mapHeightFt)}'`;
+  })();
+
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-xs shrink-0 flex-wrap">
-      <label
-        className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
-          isUploading
-            ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-            : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white'
-        }`}
-        title="Upload or replace map image"
-      >
-        <Upload size={12} />
-        {isUploading ? 'Uploading…' : mapImageUrl ? 'Replace Map' : 'Upload Map Image'}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          disabled={isUploading}
-          onChange={e => { const f = e.target.files?.[0]; if (f) { onFileSelect(f); e.target.value = ''; } }}
-        />
-      </label>
-
-      {mapImageUrl && (
-        <button
-          className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700 hover:bg-red-900 text-slate-400 hover:text-red-300 transition-colors"
-          title="Remove map image"
-          onClick={() => onMapConfigChange({ mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null }, true)}
-        >
-          <X size={11} /> Remove
-        </button>
-      )}
-
-      <div className="w-px h-4 bg-slate-700" />
-
-      <span className="text-slate-500">Size:</span>
-      <div className="flex items-center gap-1">
-        <button
-          className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'width' ? 'bg-sky-700 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
-          onClick={() => onMapConfigChange({ mapDimension: 'width' })}
-        >W</button>
-        <button
-          className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'height' ? 'bg-sky-700 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
-          onClick={() => onMapConfigChange({ mapDimension: 'height' })}
-        >H</button>
+      {/* Table name + Delete table button — left */}
+      <div className="flex items-center gap-2">
+        {onTableNameChange ? (
+          isEditingName ? (
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
+              className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-100 font-semibold text-sm focus:outline-none focus:border-sky-500"
+              placeholder="Table name"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsEditingName(true)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-700/80 text-slate-200 font-semibold text-sm transition-colors"
+              title="Edit table name"
+            >
+              <span className="truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+              <Pencil size={12} className="shrink-0 text-slate-500" />
+            </button>
+          )
+        ) : (
+          <span className="px-2 py-1 text-slate-300 font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+        )}
+        {onDeleteTable && (
+          <button
+            type="button"
+            onClick={onDeleteTable}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-slate-400 hover:text-red-400 hover:bg-slate-800/80 transition-colors"
+            title="Delete table"
+          >
+            <Trash2 size={12} />
+            <span>Delete table</span>
+          </button>
+        )}
       </div>
-      <input
-        type="number"
-        min={1}
-        max={500}
-        value={sizeInput}
-        onChange={e => setSizeInput(e.target.value)}
-        onBlur={commitSize}
-        onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }}
-        className="w-14 px-1.5 py-0.5 rounded bg-slate-700 border border-slate-600 text-slate-200 text-xs text-right focus:outline-none focus:border-sky-500"
-      />
-      <span className="text-slate-500">ft</span>
 
-      <span className="ml-auto text-slate-600 italic">
-        {(() => {
-          const { mapWidthFt, mapHeightFt } = getMapDimensions(mapConfig);
-          return `${Math.round(mapWidthFt)}' × ${Math.round(mapHeightFt)}'`;
-        })()}
-      </span>
+      {/* Everything else — right */}
+      <div className="flex items-center gap-2 ml-auto">
+        <div className="w-px h-4 bg-slate-700" />
+
+        <label
+          className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
+            isUploading
+              ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+              : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white'
+          }`}
+          title="Upload or replace map image"
+        >
+          <Upload size={12} />
+          {isUploading ? 'Uploading…' : mapImageUrl ? 'Replace Map' : 'Upload Map Image'}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={isUploading}
+            onChange={e => { const f = e.target.files?.[0]; if (f) { onFileSelect(f); e.target.value = ''; } }}
+          />
+        </label>
+
+        {mapImageUrl && (
+          <button
+            className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700 hover:bg-red-900 text-slate-400 hover:text-red-300 transition-colors"
+            title="Remove map image"
+            onClick={() => onMapConfigChange({ mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null }, true)}
+          >
+            <X size={11} /> Remove
+          </button>
+        )}
+
+        <div className="w-px h-4 bg-slate-700" />
+
+        <span className="text-slate-500">Size:</span>
+        <div className="flex items-center gap-1">
+          <button
+            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'width' ? 'bg-sky-700 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+            onClick={() => onMapConfigChange({ mapDimension: 'width' })}
+          >W</button>
+          <button
+            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'height' ? 'bg-sky-700 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+            onClick={() => onMapConfigChange({ mapDimension: 'height' })}
+          >H</button>
+        </div>
+        <input
+          type="number"
+          min={1}
+          max={500}
+          value={sizeInput}
+          onChange={e => setSizeInput(e.target.value)}
+          onBlur={commitSize}
+          onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }}
+          className="w-14 px-1.5 py-0.5 rounded bg-slate-700 border border-slate-600 text-slate-200 text-xs text-right focus:outline-none focus:border-sky-500"
+        />
+        <span className="text-slate-500">ft</span>
+
+        <span className="text-slate-600 italic">{wxh}</span>
+      </div>
     </div>
   );
 }
@@ -521,7 +591,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, onClearDice, className = '' }) {
+export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onDeleteTable, onClearDice, className = '' }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -919,6 +989,9 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
           onMapConfigChange={handleMapConfigChange}
           isUploading={isUploading}
           onFileSelect={handleImageFile}
+          tableName={tableName}
+          onTableNameChange={onTableNameChange}
+          onDeleteTable={onDeleteTable}
         />
       )}
 
@@ -983,7 +1056,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
               onPointerMove={handleMapPointerMove}
               onPointerLeave={handleMapPointerLeave}
             >
-              {/* Map image or blank area */}
+              {/* Map image or blank white canvas (tokens and drag/drop work either way) */}
               {mapConfig?.mapImageUrl ? (
                 <img
                   src={mapConfig.mapImageUrl}
@@ -992,20 +1065,17 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
                   draggable={false}
                 />
               ) : (
-                <div
-                  className="absolute inset-0 bg-slate-900 flex items-center justify-center"
-                  style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, #1e293b 0%, #0f172a 100%)' }}
-                >
+                <div className="absolute inset-0 bg-white flex items-center justify-center">
                   {!isPlayer && charTrayTokens.length === 0 && advTrayTokens.length === 0 && charMapTokens.length === 0 && advMapTokens.length === 0 && (
-                    <div className="text-slate-700 text-sm text-center pointer-events-none">
-                      <Map size={32} className="mx-auto mb-2 opacity-40" />
-                      <div>Upload a battle map or drag tokens onto the canvas</div>
+                    <div className="text-slate-400 text-sm text-center pointer-events-none">
+                      <Map size={32} className="mx-auto mb-2 opacity-50" />
+                      <div>Upload a map image or drag tokens here</div>
                     </div>
                   )}
                   {isPlayer && charMapTokens.length === 0 && advMapTokens.length === 0 && (
-                    <div className="text-slate-700 text-sm text-center pointer-events-none">
-                      <Map size={32} className="mx-auto mb-2 opacity-40" />
-                      <div>No map yet</div>
+                    <div className="text-slate-400 text-sm text-center pointer-events-none">
+                      <Map size={32} className="mx-auto mb-2 opacity-50" />
+                      <div>No map loaded</div>
                     </div>
                   )}
                 </div>

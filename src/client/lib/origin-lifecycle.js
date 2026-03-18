@@ -1,10 +1,10 @@
 /**
- * Origin (ancestry + community) lifecycle hooks: onMarkStress, onMarkHP, onMarkArmor.
+ * Origin (ancestry + community) plus weapon and armor lifecycle hooks: onMarkStress, onMarkHP, onMarkArmor.
  * Run before marking stress/HP/armor on a character; handlers can cancel the mark
  * (e.g. Firbolg Unshakable: roll d6, on 6 don't mark stress).
  */
 
-import { originFeatures } from '../../features/registry.js';
+import { originFeatures, weaponFeatures, armorFeatures } from '../../features/registry.js';
 import { wrapEntity } from '../../features/entity.js';
 
 /**
@@ -19,6 +19,28 @@ function getOriginFeatureNames(characterEl) {
 }
 
 /**
+ * Get weapon and armor feature names from a resolved character element.
+ * @param {object} characterEl - resolved character (has weapons, armorMods)
+ * @returns {{ weapon: string[], armor: string[] }}
+ */
+function getWeaponAndArmorFeatureNames(characterEl) {
+  const weapon = (characterEl.weapons || [])
+    .map(w => w.feature?.name)
+    .filter(Boolean);
+  const armor = characterEl.armorMods?.feature?.name ? [characterEl.armorMods.feature.name] : [];
+  return { weapon, armor };
+}
+
+/**
+ * Get descriptor for a feature name from any registry (origin, weapon, armor).
+ * @param {string} name
+ * @returns {object | undefined}
+ */
+function getDescriptor(name) {
+  return originFeatures[name] ?? weaponFeatures[name] ?? armorFeatures[name];
+}
+
+/**
  * Run onMarkStress handlers for this character. If any returns { cancel: true }, the mark is cancelled.
  * @param {object} characterEl - raw character element
  * @param {number} amount - stress to mark
@@ -28,11 +50,10 @@ function getOriginFeatureNames(characterEl) {
  * @returns {Promise<{ cancel: boolean, reduceBy?: number }>}
  */
 export async function runBeforeMarkStress(characterEl, amount, source, updateActiveElement, options = {}) {
-  const names = getOriginFeatureNames(characterEl);
+  const originNames = getOriginFeatureNames(characterEl);
+  const { weapon: weaponNames, armor: armorNames } = getWeaponAndArmorFeatureNames(characterEl);
+  const names = [...originNames, ...weaponNames, ...armorNames];
   const { postRollSilent, gmUid, postAction } = options;
-  // #region agent log
-  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'origin-lifecycle.js:runBeforeMarkStress',message:'runBeforeMarkStress called',data:{source,amount,characterName:characterEl?.name,featureCount:names.length,hasPostRollSilent:typeof postRollSilent==='function'},hypothesisId:'B',timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const character = wrapEntity(characterEl, updateActiveElement);
   const rollDice = postRollSilent
     ? async (expr) => {
@@ -44,7 +65,7 @@ export async function runBeforeMarkStress(characterEl, amount, source, updateAct
     : () => Promise.resolve({ value: 0 });
 
   for (const name of names) {
-    const descriptor = originFeatures[name];
+    const descriptor = getDescriptor(name);
     const fn = descriptor?.onMarkStress;
     if (typeof fn !== 'function') continue;
     try {
@@ -57,12 +78,7 @@ export async function runBeforeMarkStress(characterEl, amount, source, updateAct
         postAction: (actionText) => postAction?.(characterEl, name, actionText),
       };
       const result = await Promise.resolve(fn(ctx));
-      if (result?.cancel) {
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'origin-lifecycle.js:runBeforeMarkStress',message:'runBeforeMarkStress returning cancel',data:{featureName:name},hypothesisId:'E',timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-        return { cancel: true };
-      }
+      if (result?.cancel) return { cancel: true };
       if (typeof result?.reduceBy === 'number' && result.reduceBy > 0) {
         const reduceBy = Math.min(result.reduceBy, amount);
         return { cancel: false, reduceBy };
@@ -83,10 +99,12 @@ export async function runBeforeMarkStress(characterEl, amount, source, updateAct
  * @returns {{ cancel: boolean }}
  */
 export function runBeforeMarkHP(characterEl, amount, source, updateActiveElement) {
-  const names = getOriginFeatureNames(characterEl);
+  const originNames = getOriginFeatureNames(characterEl);
+  const { weapon: weaponNames, armor: armorNames } = getWeaponAndArmorFeatureNames(characterEl);
+  const names = [...originNames, ...weaponNames, ...armorNames];
   const character = wrapEntity(characterEl, updateActiveElement);
   for (const name of names) {
-    const descriptor = originFeatures[name];
+    const descriptor = getDescriptor(name);
     const fn = descriptor?.onMarkHP;
     if (typeof fn !== 'function') continue;
     try {
@@ -108,10 +126,12 @@ export function runBeforeMarkHP(characterEl, amount, source, updateActiveElement
  * @returns {{ cancel: boolean }}
  */
 export function runBeforeMarkArmor(characterEl, amount, source, updateActiveElement) {
-  const names = getOriginFeatureNames(characterEl);
+  const originNames = getOriginFeatureNames(characterEl);
+  const { weapon: weaponNames, armor: armorNames } = getWeaponAndArmorFeatureNames(characterEl);
+  const names = [...originNames, ...weaponNames, ...armorNames];
   const character = wrapEntity(characterEl, updateActiveElement);
   for (const name of names) {
-    const descriptor = originFeatures[name];
+    const descriptor = getDescriptor(name);
     const fn = descriptor?.onMarkArmor;
     if (typeof fn !== 'function') continue;
     try {

@@ -637,15 +637,10 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
-  // #region agent log
-  if (roll.rollText && roll.rollText.includes(' + ')) {
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'DiceRoller.jsx:ResultBanner', message: 'banner display', data: { total, rollTextTail: (roll.rollText || '').slice(-30) }, timestamp: Date.now(), hypothesisId: 'E' }) }).catch(() => {});
-  }
-  // #endregion
   // Active post-apply interaction: the name of the tag whose interaction phase is running.
   // Replaces the three separate quickPhase / doubledUpPhase / bouncingPhase states.
   const [activeInteractionTag, setActiveInteractionTag] = useState(null);
@@ -667,6 +662,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           : (roll._multiTarget ? (roll._selectedTargetInstanceId ? [roll._selectedTargetInstanceId] : []) : []))
   );
   const [useArmorByTargetId, setUseArmorByTargetId] = useState(() => (roll._useArmorByTargetId && typeof roll._useArmorByTargetId === 'object' ? roll._useArmorByTargetId : {}));
+  const [useImpenetrableByTargetId, setUseImpenetrableByTargetId] = useState(() =>
+    (roll._useImpenetrableByTargetId && typeof roll._useImpenetrableByTargetId === 'object' ? { ...roll._useImpenetrableByTargetId } : {})
+  );
+  const useImpenetrableForSelected = selectedDamageTargetId ? !!useImpenetrableByTargetId[selectedDamageTargetId] : false;
+  const [useHopefulArmorByInstanceId, setUseHopefulArmorByInstanceId] = useState(() =>
+    (roll._hopefulArmorInsteadByInstanceId && typeof roll._hopefulArmorInsteadByInstanceId === 'object' ? { ...roll._hopefulArmorInsteadByInstanceId } : {})
+  );
+  const [concussiveKnockActive, setConcussiveKnockActive] = useState(false);
   // Popup menu for target selection (same UX as initiating player's "Choose target" menu).
   const [targetMenuAnchorRect, setTargetMenuAnchorRect] = useState(null);
   const targetsSyncDebounceRef = useRef(null);
@@ -681,6 +684,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   useEffect(() => {
     if (roll._useArmorByTargetId != null && typeof roll._useArmorByTargetId === 'object') setUseArmorByTargetId(roll._useArmorByTargetId);
   }, [roll._rollDbId, roll._useArmorByTargetId]);
+  useEffect(() => {
+    if (roll._useImpenetrableByTargetId != null && typeof roll._useImpenetrableByTargetId === 'object') {
+      setUseImpenetrableByTargetId(prev => ({ ...roll._useImpenetrableByTargetId }));
+    }
+  }, [roll._rollDbId, roll._useImpenetrableByTargetId]);
+  useEffect(() => {
+    if (roll._hopefulArmorInsteadByInstanceId != null && typeof roll._hopefulArmorInsteadByInstanceId === 'object') {
+      setUseHopefulArmorByInstanceId(prev => ({ ...roll._hopefulArmorInsteadByInstanceId }));
+    }
+  }, [roll._rollDbId, roll._hopefulArmorInsteadByInstanceId]);
 
   // When Hold Them Off is toggled on, seed multi-select from current single selection if empty.
   useEffect(() => {
@@ -907,6 +920,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);
   const resultMixed = showHitMiss && hitCount > 0 && missCount > 0;
   const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-amber-400' : '';
+  const isLockedOnAutoSuccess = roll._rollDbId != null && lockedOnAutoSuccessRollDbIds instanceof Set && lockedOnAutoSuccessRollDbIds.has(roll._rollDbId);
 
   const handleResolveClick = !resolved && onResolveInstantly
     ? (e) => { e.stopPropagation(); onResolveInstantly(); }
@@ -1058,6 +1072,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             Disadvantage ignored: {disadvantageRemovedNote}
           </div>
         )}
+        {isLockedOnAutoSuccess && hasDamage && (
+          <div className="text-[10px] text-amber-300 font-medium mt-1">
+            Locked On: this attack automatically succeeds
+          </div>
+        )}
 
         {/* ── Prayer Die: add-to-roll buttons (DH rolls only, visible to all) ── */}
         {hasDuality && prayerDiceChars.length > 0 && (
@@ -1188,10 +1207,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           );
         })}
 
-        {/* ── Feature tags ── */}
-        {(roll.tags || []).length > 0 && (
+        {/* ── Feature tags (only show tag pill when feature has showTag: true; onBanner-only features use narration) ── */}
+        {(roll.tags || []).filter(t => weaponFeatures[t.name]?.showTag === true).length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
-            {(roll.tags || []).map((tag, i) => {
+            {(roll.tags || []).filter(t => weaponFeatures[t.name]?.showTag === true).map((tag, i) => {
               const isAuto = isTagAutomated(tag.name);
               const conditional = getConditionalTagStatus(tag, roll);
               const effectiveStyle = isAuto ? 'green'
@@ -1273,12 +1292,41 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <CheckSquare size={12} className="shrink-0" />
                         <span className="truncate max-w-[120px]">{featureName}</span>
                       </button>
-                      <span className="flex items-center gap-1 shrink-0">
+                      <span className="flex items-center gap-1 shrink-0 flex-wrap items-center">
+                        {chip?.hopeCost > 0 && (() => {
+                          const instId = character?.instanceId;
+                          const hasHopeful = character?.armorFeatureName === 'Hopeful' || character?.armorMods?.feature?.name === 'Hopeful';
+                          const armorSlotsFree = (character?.maxArmor ?? 0) - (character?.currentArmor ?? 0);
+                          const showHopeful = hasHopeful && armorSlotsFree > 0 && instId;
+                          if (!showHopeful) return null;
+                          const useHopeful = !!useHopefulArmorByInstanceId[instId];
+                          return (
+                            <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={useHopeful}
+                                onChange={(e) => {
+                                  const next = e.target.checked;
+                                  setUseHopefulArmorByInstanceId(prev => ({ ...prev, [instId]: next }));
+                                  if (onBannerTargetsChange && roll._rollDbId != null) {
+                                    const nextMap = { ...(roll._hopefulArmorInsteadByInstanceId || {}), [instId]: next };
+                                    targetsSyncDebounceRef.current = setTimeout(() => {
+                                      targetsSyncDebounceRef.current = null;
+                                      onBannerTargetsChange(roll._rollDbId, { hopefulArmorInsteadByInstanceId: nextMap });
+                                    }, 200);
+                                  }
+                                }}
+                                className="rounded border-amber-600"
+                              />
+                              <span>Mark Armor instead</span>
+                            </label>
+                          );
+                        })()}
                         {chip?.onChipAck != null && (
                           <button
                             type="button"
                             disabled={!isEnabled}
-                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack'); }}
+                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack', { hopefulArmorInsteadByInstanceId: useHopefulArmorByInstanceId }); }}
                             className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-600 bg-emerald-800/60 text-emerald-100 hover:bg-emerald-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             OK
@@ -1463,6 +1511,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   >
                     {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
                     Spend 3 Hope to select two more targets
+                  </button>
+                </Tooltip>
+              )}
+              {/* Concussive (weapon): on success, spend 1 Hope to knock target to Far range */}
+              {tags.some(t => t.name === 'Concussive') && (isHope || isCritical) && hasDamage && selectedDamageTargetId && onConcussiveKnock && (
+                <Tooltip label={concussiveKnockActive ? 'On — spend 1 Hope on Acknowledge to knock target to Far' : 'Spend 1 Hope to knock target to Far range (on Acknowledge)'}>
+                  <button
+                    type="button"
+                    onClick={() => setConcussiveKnockActive(prev => !prev)}
+                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${concussiveKnockActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                  >
+                    {concussiveKnockActive ? <Check size={12} className="shrink-0" /> : null}
+                    Concussive: knock target to Far (1 Hope)
                   </button>
                 </Tooltip>
               )}
@@ -1749,6 +1810,44 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       Use armor
                                     </label>
                                   ) : null}
+                                  {(() => {
+                                    if (!selectedTarget || selectedTarget.type !== 'character' || !hasDamage || !resolved) return null;
+                                    const currentHp = selectedTarget.currentHp ?? selectedTarget.maxHp ?? 0;
+                                    const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                                    const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+                                    const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                                    const displayDmg = Math.max(0, baseDamage + wingsBonus + rallyDmgBonus - dmgReduction);
+                                    const hpLoss = selectedTarget.thresholds != null ? computeHpLoss(displayDmg, selectedTarget.thresholds) : 0;
+                                    const wouldBeZero = currentHp - hpLoss <= 0;
+                                    const hasImpenetrable = selectedTarget.armorFeatureName === 'Impenetrable';
+                                    const hasStressSpace = (selectedTarget.currentStress ?? 0) < (selectedTarget.maxStress ?? 6);
+                                    const usedThisRest = selectedTarget.featureUsage?.Impenetrable?.cycle === 'rest';
+                                    const showImpenetrable = wouldBeZero && hasImpenetrable && hasStressSpace && !usedThisRest;
+                                    if (!showImpenetrable) return null;
+                                    return (
+                                      <label className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer hover:bg-amber-800/40 transition-colors">
+                                        <input
+                                          type="checkbox"
+                                          checked={useImpenetrableForSelected}
+                                          onChange={(e) => {
+                                            const next = e.target.checked;
+                                            setUseImpenetrableByTargetId(prev => {
+                                              const nextMap = { ...prev, [selectedDamageTargetId]: next };
+                                              if (onBannerTargetsChange && roll._rollDbId != null) {
+                                                targetsSyncDebounceRef.current = setTimeout(() => {
+                                                  targetsSyncDebounceRef.current = null;
+                                                  onBannerTargetsChange(roll._rollDbId, { useImpenetrableByTargetId: nextMap });
+                                                }, 200);
+                                              }
+                                              return nextMap;
+                                            });
+                                          }}
+                                          className="rounded border-amber-600"
+                                        />
+                                        <span>Use Impenetrable (1/rest)</span>
+                                      </label>
+                                    );
+                                  })()}
                                   {showWingsD8 && (onWingsD8Toggle || onWingsD8ToggleRequest) && roll._rollDbId && (
                                     <button
                                       type="button"
@@ -1928,7 +2027,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         if (target) {
                                           const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === id);
                                           const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
-                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], useIncreasedFortitude }, baseDamage, tags, roll, dmgType);
+                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], useIncreasedFortitude, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
                                         }
                                       }
                                     }
@@ -1988,9 +2087,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
                                         const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === effectiveTargetId);
                                         const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
-                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, useIncreasedFortitude }, totalDamage, tags, roll, dmgType);
+                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, useIncreasedFortitude, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                       }
                                     }
+                                    if (concussiveKnockActive && onConcussiveKnock && selectedDamageTargetId) onConcussiveKnock(roll, selectedDamageTargetId);
                                     const ackOpts = {};
                                     if (alreadyAcked) ackOpts.alreadyAcked = true;
                                     onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
@@ -2116,6 +2216,20 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             </Tooltip>
           </div>
         )}
+        {!showActions && tags.some(t => t.name === 'Concussive') && (isHope || isCritical) && hasDamage && selectedDamageTargetId && onConcussiveKnock && (
+          <div className="mt-2.5 pt-2 border-t border-white/10">
+            <Tooltip label={concussiveKnockActive ? 'On — spend 1 Hope on Acknowledge to knock target to Far' : 'Spend 1 Hope to knock target to Far range (on Acknowledge)'}>
+              <button
+                type="button"
+                onClick={() => setConcussiveKnockActive(prev => !prev)}
+                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${concussiveKnockActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+              >
+                {concussiveKnockActive ? <Check size={12} className="shrink-0" /> : null}
+                Concussive: knock target to Far (1 Hope)
+              </button>
+            </Tooltip>
+          </div>
+        )}
         {/* Wings of Light (Winged Sentinel): d8 toggle — visible to player so they can signal intent before GM acknowledges */}
         {!showActions && hasDamage && wingsOfLightFlyingInstanceIds?.has(roll._attackerInstanceId) && onWingsD8ToggleRequest && roll._rollDbId && (
           <div className="mt-2.5 pt-2 border-t border-white/10">
@@ -2227,10 +2341,12 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             )}
           </div>
         )}
-        {/* Narration (e.g. Faun Kick knockback) */}
-        {roll._narration && (
-          <p className="text-[10px] text-slate-400 italic text-center mt-1">{roll._narration}</p>
-        )}
+        {/* Narration (e.g. Faun Kick knockback, Burning automated) */}
+        {((roll._narrations?.length) ? roll._narrations : (roll._narration ? [{ text: roll._narration }] : [])).map((item, i) => {
+          const isAutomated = item.style === 'automated';
+          const cls = isAutomated ? 'text-[10px] text-green-400/90 italic text-center mt-1' : 'text-[10px] text-slate-400 italic text-center mt-1';
+          return <p key={i} className={cls}>{item.text}</p>;
+        })}
       </div>
       </div>
     </div>
@@ -2261,6 +2377,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   getTargetDisadvantageLabels,
   onApplyDamage,
   onApplyVulnerable,
+  onConcussiveKnock,
   canApplyDamage = true,
   onLuckyReroll,
   onQuickTarget,
@@ -2280,6 +2397,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   holdThemOffChars = [],
   onHoldThemOffToggle,
   onBannerTargetsChange,
+  lockedOnAutoSuccessRollDbIds = new Set(),
   wingsOfLightFlyingInstanceIds,
   onWingsD8Toggle,
   onWingsD8ToggleRequest,
@@ -2861,6 +2979,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 getTargetDisadvantageLabels={getTargetDisadvantageLabels}
                 onApplyDamage={onApplyDamage}
                 onApplyVulnerable={onApplyVulnerable}
+                onConcussiveKnock={onConcussiveKnock}
                 disableDismiss={isPlayer}
                 canApplyDamage={canApplyDamage}
                 onLuckyReroll={onLuckyReroll}
@@ -2881,6 +3000,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 holdThemOffChars={holdThemOffChars}
                 onHoldThemOffToggle={onHoldThemOffToggle}
                 onBannerTargetsChange={onBannerTargetsChange}
+                lockedOnAutoSuccessRollDbIds={lockedOnAutoSuccessRollDbIds}
                 wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
                 onWingsD8Toggle={onWingsD8Toggle}
                 onWingsD8ToggleRequest={onWingsD8ToggleRequest}

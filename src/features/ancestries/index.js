@@ -5,15 +5,11 @@
  *   { name, description, onCharacterBuild(char) }
  *
  * The barrel runs every builder once at module load. `char.addFeature(name, description, hooks?)`
- * accumulates feature descriptors into two output maps:
- *
- *   featureMap   — { [featureName]: featureDescriptor }  (backward-compatible default export)
- *   ancestryMap  — { [ancestryName]: { name, description, features: [...] } }
- *
- * For fully-implemented ancestries, character-calc.js reads from ancestryMap instead of SRD data,
- * so the SRD JSON is not consulted for feature names/descriptions at character-render time.
+ * is provided by the shared createFeatureBuilder; descriptors go to featureMap and the ancestry's
+ * features array. ancestryMap holds { name, description, features } per ancestry.
  */
 
+import { createFeatureBuilder } from '../add-feature.js';
 import Infernis from './Infernis.js';
 import Katari   from './Katari.js';
 import Giant    from './Giant.js';
@@ -46,7 +42,6 @@ export const ancestryMap = {};
 
 /**
  * Feature name → { onAcknowledge?, stressCost?, hopeCost? } for virtual weapons.
- * stressCost/hopeCost are applied to the attacker (self) on acknowledge; onAcknowledge runs after.
  * Populated at module load by running onCharacterRender hooks against a mock context.
  * @type {Record<string, { onAcknowledge?: Function, stressCost?: number, hopeCost?: number }>}
  */
@@ -54,71 +49,26 @@ export const virtualWeaponBehaviors = {};
 
 for (const builder of builders) {
   const features = [];
-  let lastFeatureName = null;
-
-  const char = {
-    addFeature(name, description, hooks = {}) {
-      lastFeatureName = name;
-      const { onCharacterEdit, ...restHooks } = hooks;
-      const descriptor = {
-        name,
-        description,
-        ancestry: builder.name,
-        sourceType: 'ancestry',
-        source: builder.name,
-        ...restHooks,
-      };
-
-      // Pre-capture static behaviors from onCharacterRender at module load time.
-      // This extracts virtualWeaponBehaviors (onAcknowledge) and advantageTrigger
-      // without requiring a live character object.
-      if (hooks.onCharacterRender) {
-        const mockCtx = {
-          weapons: [],
-          _currentFeatureName: name,
-          addStatMod() {},
-          addThresholdBonus() {},
-          addAdvantageTrigger(condition) { descriptor.advantageTrigger = condition; },
-          addVirtualWeapon(vw) {
-            if (vw.onAcknowledge || vw.stressCost != null || vw.hopeCost != null) {
-              virtualWeaponBehaviors[name] = {
-                onAcknowledge: vw.onAcknowledge,
-                stressCost: vw.stressCost,
-                hopeCost: vw.hopeCost,
-              };
-            }
-          },
-        };
-        try { hooks.onCharacterRender(mockCtx); } catch { /* no-op if hook errors without real char data */ }
-      }
-
-      // Pre-capture card chips from onCard (e.g. Fungril Death Connection).
-      // Chips display on the feature card; click runs onUse(context); context.postAction() posts a banner; GM ack applies costs.
-      if (hooks.onCard) {
-        const cardChips = [];
-        const card = { addChip(d) { cardChips.push(d); } };
-        try { hooks.onCard(card); } catch { /* no-op */ }
-        if (cardChips.length) descriptor.cardChips = cardChips;
-      }
-
-      featureMap[name] = descriptor;
-      features.push(descriptor);
-      if (typeof onCharacterEdit === 'function') {
-        try { onCharacterEdit(char); } catch { /* no-op */ }
-      }
-    },
-    addExperienceBonus(amount) {
-      if (lastFeatureName != null && ancestryEntry) {
-        ancestryEntry.experienceBonus = { amount, featureName: lastFeatureName };
-      }
-    },
-  };
-
   const ancestryEntry = {
     name: builder.name,
     description: builder.description,
     features,
   };
+
+  const char = createFeatureBuilder({
+    targetMap: featureMap,
+    featureList: features,
+    sourceType: 'ancestry',
+    source: builder.name,
+    virtualWeaponBehaviors,
+    ancestryEntry,
+    onAfterAdd(descriptor, hooks, charRef) {
+      if (typeof hooks.onCharacterEdit === 'function') {
+        hooks.onCharacterEdit(charRef);
+      }
+    },
+  });
+
   builder.onCharacterBuild(char);
   ancestryMap[builder.name] = ancestryEntry;
 }

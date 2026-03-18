@@ -5,11 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { wrapEntity } from '../../src/features/entity.js';
 import { runHook, runPipelineHook } from '../../src/features/hooks.js';
-import Painful      from '../../src/features/weapons/Painful.js';
-import Invigorating from '../../src/features/weapons/Invigorating.js';
-import Lifestealing from '../../src/features/weapons/Lifestealing.js';
-import Charged      from '../../src/features/weapons/Charged.js';
-import Startling    from '../../src/features/weapons/Startling.js';
+import { weaponFeatures } from '../../src/features/registry.js';
 
 // ── wrapEntity ────────────────────────────────────────────────────────────────
 
@@ -188,12 +184,12 @@ describe('runPipelineHook', () => {
 describe('Painful feature', () => {
   it('marks 1 Stress on attacker', () => {
     const attacker = { markStress: vi.fn() };
-    Painful.onRollComplete({ attacker, roll: { _action: false } });
+    weaponFeatures.Painful.onRollComplete({ attacker, roll: { _action: false } });
     expect(attacker.markStress).toHaveBeenCalledWith(1);
   });
 
   it('does not throw when attacker is null', () => {
-    expect(() => Painful.onRollComplete({ attacker: null, roll: {} })).not.toThrow();
+    expect(() => weaponFeatures.Painful.onRollComplete({ attacker: null, roll: {} })).not.toThrow();
   });
 });
 
@@ -201,20 +197,20 @@ describe('Invigorating feature', () => {
   it('clears 1 Stress when Invigorate die is 4', () => {
     const attacker = { clearStress: vi.fn() };
     const roll = { subItems: [{ pre: 'Invigorate', result: '4' }] };
-    Invigorating.onRollComplete({ attacker, roll });
+    weaponFeatures.Invigorating.onRollComplete({ attacker, roll });
     expect(attacker.clearStress).toHaveBeenCalledWith(1);
   });
 
   it('does nothing when Invigorate die is not 4', () => {
     const attacker = { clearStress: vi.fn() };
     const roll = { subItems: [{ pre: 'Invigorate', result: '3' }] };
-    Invigorating.onRollComplete({ attacker, roll });
+    weaponFeatures.Invigorating.onRollComplete({ attacker, roll });
     expect(attacker.clearStress).not.toHaveBeenCalled();
   });
 
   it('does nothing when no Invigorate sub-item', () => {
     const attacker = { clearStress: vi.fn() };
-    Invigorating.onRollComplete({ attacker, roll: { subItems: [] } });
+    weaponFeatures.Invigorating.onRollComplete({ attacker, roll: { subItems: [] } });
     expect(attacker.clearStress).not.toHaveBeenCalled();
   });
 });
@@ -223,14 +219,14 @@ describe('Lifestealing feature', () => {
   it('clears 1 HP when Lifesteal die is 6', () => {
     const attacker = { clearHp: vi.fn() };
     const roll = { subItems: [{ pre: 'Lifesteal', result: '6' }] };
-    Lifestealing.onRollComplete({ attacker, roll });
+    weaponFeatures.Lifestealing.onRollComplete({ attacker, roll });
     expect(attacker.clearHp).toHaveBeenCalledWith(1);
   });
 
   it('does nothing when Lifesteal die is not 6', () => {
     const attacker = { clearHp: vi.fn() };
     const roll = { subItems: [{ pre: 'Lifesteal', result: '5' }] };
-    Lifestealing.onRollComplete({ attacker, roll });
+    weaponFeatures.Lifestealing.onRollComplete({ attacker, roll });
     expect(attacker.clearHp).not.toHaveBeenCalled();
   });
 });
@@ -238,7 +234,7 @@ describe('Lifestealing feature', () => {
 describe('Charged feature', () => {
   it('marks 1 Stress on attacker', () => {
     const attacker = { markStress: vi.fn() };
-    Charged.onRollComplete({ attacker, roll: {} });
+    weaponFeatures.Charged.onRollComplete({ attacker, roll: {} });
     expect(attacker.markStress).toHaveBeenCalledWith(1);
   });
 });
@@ -246,13 +242,13 @@ describe('Charged feature', () => {
 describe('Startling feature', () => {
   it('marks 1 Stress when roll is an action notification', () => {
     const attacker = { markStress: vi.fn() };
-    Startling.onRollComplete({ attacker, roll: { _action: true } });
+    weaponFeatures.Startling.onRollComplete({ attacker, roll: { _action: true } });
     expect(attacker.markStress).toHaveBeenCalledWith(1);
   });
 
   it('does nothing when roll is not an action notification', () => {
     const attacker = { markStress: vi.fn() };
-    Startling.onRollComplete({ attacker, roll: { _action: false } });
+    weaponFeatures.Startling.onRollComplete({ attacker, roll: { _action: false } });
     expect(attacker.markStress).not.toHaveBeenCalled();
   });
 });

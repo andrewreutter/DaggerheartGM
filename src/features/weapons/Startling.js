@@ -1,13 +1,15 @@
 export default {
   name: 'Startling',
-  automated: true,
-  tagText: 'Action card — costs 1 Stress',
-  /**
-   * Mark 1 Stress on the attacker when the Startling action notification
-   * completes. Only runs on action notifications (`_action: true`).
-   */
-  onRollComplete({ attacker, roll }) {
-    if (!roll?._action) return;
-    attacker?.markStress(1);
+  description: 'As an action, you can startle a creature within range (action card; costs 1 Stress).',
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Startling', 'As an action, you can startle a creature within range (action card; costs 1 Stress).', {
+      showTag: true,
+      automated: true,
+      tagText: 'Action card — costs 1 Stress',
+      onRollComplete({ attacker, roll }) {
+        if (!roll?._action) return;
+        attacker?.markStress(1);
+      },
+    });
   },
 };

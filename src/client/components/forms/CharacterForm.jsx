@@ -76,18 +76,46 @@ function WeaponValueChip({ weapon, isRecommended, showBurden }) {
   );
 }
 
-function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled, showBurden, ancestryFeatures }) {
+const WEAPON_SORT_OPTIONS = [
+  { value: 'name', label: 'Name' },
+  { value: 'range', label: 'Range' },
+  { value: 'feature', label: 'Feature' },
+];
+
+// Range band order for sort (Melee first → Very Far last); matches map-range bands
+const RANGE_BAND_ORDER = { melee: 0, 'very close': 1, close: 2, far: 3, 'very far': 4 };
+function weaponRangeOrder(weapon, ancestryFeatures) {
+  const rangeStr = (getEffectiveWeaponRange(weapon, ancestryFeatures) || weapon.range || '').trim().toLowerCase();
+  return RANGE_BAND_ORDER[rangeStr] ?? 999;
+}
+
+function WeaponSelect({ value, onChange, weapons, traits, placeholder, disabled, showBurden, ancestryFeatures, sortOrder = 'name', groupTraitOptimized = true }) {
   const best = highestTraitNames(traits);
   const sorted = useMemo(() => {
     const copy = [...weapons];
-    copy.sort((a, b) => {
-      const aMatch = best.includes((a.trait || '').toLowerCase()) ? 0 : 1;
-      const bMatch = best.includes((b.trait || '').toLowerCase()) ? 0 : 1;
-      if (aMatch !== bMatch) return aMatch - bMatch;
+    const compare = (a, b) => {
+      if (sortOrder === 'name') return a.name.localeCompare(b.name);
+      if (sortOrder === 'range') {
+        const oa = weaponRangeOrder(a, ancestryFeatures);
+        const ob = weaponRangeOrder(b, ancestryFeatures);
+        return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
+      }
+      if (sortOrder === 'feature') {
+        const fa = (a.features?.[0]?.name || '').localeCompare(b.features?.[0]?.name || '');
+        return fa !== 0 ? fa : a.name.localeCompare(b.name);
+      }
       return a.name.localeCompare(b.name);
-    });
+    };
+    if (groupTraitOptimized) {
+      const optimized = copy.filter(w => best.includes((w.trait || '').toLowerCase()));
+      const rest = copy.filter(w => !best.includes((w.trait || '').toLowerCase()));
+      optimized.sort(compare);
+      rest.sort(compare);
+      return [...optimized, ...rest];
+    }
+    copy.sort(compare);
     return copy;
-  }, [weapons, best]);
+  }, [weapons, best, sortOrder, groupTraitOptimized, ancestryFeatures]);
 
   const isRec = useCallback(w => best.includes((w?.trait || '').toLowerCase()), [best]);
 
@@ -170,6 +198,8 @@ export function CharacterForm({ value, onChange }) {
     experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
     abilityIds: [], advancements: {}, background: '', connectionText: '', companion: null,
   });
+  const [weaponSortOrder, setWeaponSortOrder] = useState('name');
+  const [weaponGroupTraitOptimized, setWeaponGroupTraitOptimized] = useState(true);
 
   const formData = isControlled ? value : localData;
 
@@ -713,37 +743,64 @@ export function CharacterForm({ value, onChange }) {
         const formAncestryFeatures = (formData.ancestryIds || [])
           .flatMap(id => (srdData?.ancestriesById?.[id]?.features || []).map(f => ({ name: f.name })));
         return (
-          <div className="grid grid-cols-2 gap-3">
-            <FormRow label="Primary Weapon">
-              <WeaponSelect
-                value={formData.primaryWeaponId || null}
-                onChange={newId => {
-                  const newWeapon = newId ? srdData?.weaponsById?.[newId] : null;
-                  const patch = { primaryWeaponId: newId };
-                  if (newWeapon?.burden === 'Two-Handed') patch.secondaryWeaponId = null;
-                  set(patch);
-                }}
-                weapons={weaponOptions.filter(w => w.primary_or_secondary !== 'Secondary')}
-                traits={formData.traits}
-                placeholder="Select primary..."
-                showBurden
-                ancestryFeatures={formAncestryFeatures}
-              />
-            </FormRow>
-            <FormRow label="Secondary Weapon">
-              <WeaponSelect
-                value={formData.secondaryWeaponId || null}
-                onChange={newId => set({ secondaryWeaponId: newId })}
-                weapons={isTwoHanded ? [] : weaponOptions.filter(w => w.primary_or_secondary !== 'Primary')}
-                traits={formData.traits}
-                placeholder={isTwoHanded ? 'N/A (two-handed)' : 'Select secondary...'}
-                disabled={isTwoHanded}
-                ancestryFeatures={formAncestryFeatures}
-              />
-              {isTwoHanded && (
-                <div className="mt-1 text-[10px] text-slate-500">Two-handed primary uses both hands</div>
-              )}
-            </FormRow>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="text-slate-400">Sort:</span>
+              <select
+                value={weaponSortOrder}
+                onChange={e => setWeaponSortOrder(e.target.value)}
+                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs focus:border-sky-500 focus:outline-none"
+              >
+                {WEAPON_SORT_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={weaponGroupTraitOptimized}
+                  onChange={e => setWeaponGroupTraitOptimized(e.target.checked)}
+                  className="rounded border-slate-600 bg-slate-800 text-sky-500 focus:ring-sky-500"
+                />
+                <span className="text-xs">Trait-optimized first</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <FormRow label="Primary Weapon">
+                <WeaponSelect
+                  value={formData.primaryWeaponId || null}
+                  onChange={newId => {
+                    const newWeapon = newId ? srdData?.weaponsById?.[newId] : null;
+                    const patch = { primaryWeaponId: newId };
+                    if (newWeapon?.burden === 'Two-Handed') patch.secondaryWeaponId = null;
+                    set(patch);
+                  }}
+                  weapons={weaponOptions.filter(w => w.primary_or_secondary !== 'Secondary')}
+                  traits={formData.traits}
+                  placeholder="Select primary..."
+                  showBurden
+                  ancestryFeatures={formAncestryFeatures}
+                  sortOrder={weaponSortOrder}
+                  groupTraitOptimized={weaponGroupTraitOptimized}
+                />
+              </FormRow>
+              <FormRow label="Secondary Weapon">
+                <WeaponSelect
+                  value={formData.secondaryWeaponId || null}
+                  onChange={newId => set({ secondaryWeaponId: newId })}
+                  weapons={isTwoHanded ? [] : weaponOptions.filter(w => w.primary_or_secondary !== 'Primary')}
+                  traits={formData.traits}
+                  placeholder={isTwoHanded ? 'N/A (two-handed)' : 'Select secondary...'}
+                  disabled={isTwoHanded}
+                  ancestryFeatures={formAncestryFeatures}
+                  sortOrder={weaponSortOrder}
+                  groupTraitOptimized={weaponGroupTraitOptimized}
+                />
+                {isTwoHanded && (
+                  <div className="mt-1 text-[10px] text-slate-500">Two-handed primary uses both hands</div>
+                )}
+              </FormRow>
+            </div>
           </div>
         );
       })()}
