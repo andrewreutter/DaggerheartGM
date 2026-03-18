@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, computeHpLoss, isAdversaryDefeated, getDifficultyLabel } from '../lib/helpers.js';
@@ -22,13 +22,11 @@ import { Tooltip } from './Tooltip.jsx';
 import { wrapEntity } from '../../features/entity.js';
 import { wrapRoll } from '../../features/roll.js';
 import { runHook, runPipelineHook } from '../../features/hooks.js';
-import { weaponFeatures, armorFeatures, classFeatures, ancestryFeatures, virtualWeaponBehaviors } from '../../features/registry.js';
-import { extractDetailsValues, insertDisadvantageD6, stripDisadvantageFromRollText } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt, distanceFtToRangeBandName } from '../lib/map-range.js';
-import { getRestMovesForCharacter, getRestMoveDefinition } from '../lib/rest-moves.js';
+import { weaponFeatures, armorFeatures, classFeatures, ancestryFeatures } from '../../features/registry.js';
+import { extractDetailsValues } from '../lib/dice-utils.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt } from '../lib/map-range.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
-import { recomputeCharacter } from '../lib/character-calc.js';
-import { runBeforeMarkStress, runBeforeMarkHP, runBeforeMarkArmor } from '../lib/origin-lifecycle.js';
+import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 
 
 /**
@@ -334,8 +332,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   const overlayScrollRef = useRef(null);
   const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
   // editState: null | { step: 'choice', baseElement, instances, collection }
-  //                  | { step: 'form', item, collection, mode, baseElement, instances }
+  //                  | { step: 'form', item, collection, mode, baseElement, instances? }
   const [editState, setEditState] = useState(null);
+  const [characterCardExpanded, setCharacterCardExpanded] = useState(() => new Set());
   const [scaledToggleState, setScaledToggleState] = useState({});
   const trackerKey = trackerOverlay.data
     ? (trackerOverlay.data.kind === 'environment' ? trackerOverlay.data.element.instanceId : trackerOverlay.data.baseElement.id)
@@ -1909,8 +1908,9 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
   }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, navigate]);
 
   // Close modal when URL no longer has item (e.g. user pressed back).
+  // Do not clear when editState.mode === 'new' (create-from-table flow), since we don't navigate for that.
   useEffect(() => {
-    if (!modalCollection && !modalItemId && editState) {
+    if (!modalCollection && !modalItemId && editState && editState.mode !== 'new') {
       setEditState(null);
     }
   }, [modalCollection, modalItemId, editState]);
@@ -2339,6 +2339,17 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
 
     return result;
   }, [activeElements]);
+
+  // Seed character card expanded state: complete characters start expanded, incomplete start collapsed.
+  useEffect(() => {
+    setCharacterCardExpanded(prev => {
+      let next = prev;
+      for (const { element: el } of consolidatedElements.filter(i => i.kind === 'character')) {
+        if (isCharacterComplete(el).complete && !prev.has(el.instanceId)) next = new Set(next).add(el.instanceId);
+      }
+      return next;
+    });
+  }, [consolidatedElements]);
 
   // Find the consolidated element whose cardKey matches the hovered feature (for overlay).
   const hoveredElement = useMemo(() => {
@@ -3139,22 +3150,40 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
             const isMyCharacter = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
             const isAssigned = !isPlayer || isMyCharacter;
             const displayChar = characterDisplayByInstanceId.get(el.instanceId) ?? el;
+            const charComplete = isCharacterComplete(el);
+            const isIncomplete = !charComplete.complete;
+            const isExpanded = characterCardExpanded.has(el.instanceId);
             return (
             <div
               key={el.instanceId}
               className={`rounded-lg border overflow-hidden group/char transition-colors ${isMyCharacter ? 'bg-green-950/30 border-green-700/50' : 'bg-sky-950/30 border-sky-900/40'}`}
               {...characterOverlay.triggerProps(e => ({ element: el, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
             >
-              <div className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5">
+              <div
+                className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5 cursor-pointer hover:bg-sky-900/30 transition-colors"
+                onClick={() => setCharacterCardExpanded(prev => {
+                  const next = new Set(prev);
+                  if (next.has(el.instanceId)) next.delete(el.instanceId);
+                  else next.add(el.instanceId);
+                  return next;
+                })}
+              >
+                {isExpanded ? <ChevronDown size={12} className="text-slate-400 shrink-0" /> : <ChevronRight size={12} className="text-slate-400 shrink-0" />}
                 <User size={10} className={isMyCharacter ? 'text-green-400 shrink-0' : 'text-sky-400 shrink-0'} />
-                <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name}</span>
+                <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name || 'Unnamed'}</span>
+                {isIncomplete && (
+                  <span className="flex items-center gap-0.5 text-amber-400 shrink-0" title={`Missing: ${charComplete.missing?.join(', ') ?? ''}`}>
+                    <AlertTriangle size={10} />
+                    <span className="text-[10px]">Incomplete</span>
+                  </span>
+                )}
                 <span className="text-[10px] font-bold text-sky-400/70 bg-sky-900/50 border border-sky-800/50 rounded px-1 shrink-0 group-hover/char:hidden">T{el.tier ?? 1}</span>
                 {el.playerName && (
                   <span className="text-[10px] text-sky-300/60 truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
                 )}
                 {/* GM: edit/remove */}
                 {!isPlayer && (
-                  <div className="hidden group-hover/char:flex items-center gap-1 shrink-0">
+                  <div className="hidden group-hover/char:flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                     <button
                       onClick={() => {
                         if (el.id) {
@@ -3172,13 +3201,15 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                       title="Edit character"
                     ><Pencil size={11} /></button>
                     <button
-                      onClick={() => { if (window.confirm(`Remove ${el.name} from the table?`)) removeActiveElement(el.instanceId); }}
+                      onClick={() => { if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) removeActiveElement(el.instanceId); }}
                       className="text-slate-500 hover:text-red-400 transition-colors"
                       title="Remove from table"
                     ><X size={11} /></button>
                   </div>
                 )}
               </div>
+              {isExpanded && (
+              <>
               {/* GM: player assignment dropdown */}
               {!isPlayer && playerEmails.length > 0 && (
                 <div className="px-2 pt-1 pb-0.5 border-b border-sky-900/20">
@@ -3413,6 +3444,8 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
                   );
                 })()}
               </div>
+              </>
+              )}
             </div>
           );
           })}
@@ -4462,6 +4495,25 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
           }
           setModalOpen(null);
         }}
+        onCreateNew={modalOpen === 'characters' ? () => {
+          setModalOpen(null);
+          (async () => {
+            const newId = generateId();
+            const stub = {
+              id: newId,
+              name: '',
+              level: 1,
+              baseTraits: {},
+              experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+            };
+            if (isPlayer && onPlayerAddCharacter) {
+              onPlayerAddCharacter({ ...stub, elementType: 'character' });
+            } else {
+              await addToTable(stub, 'characters');
+            }
+            setEditState({ step: 'form', item: stub, collection: 'characters', mode: 'new', baseElement: null });
+          })();
+        } : undefined}
         isLoading={['scenes', 'adventures', 'characters'].includes(modalOpen) ? pickerLoading : undefined}
         excludeIds={modalOpen === 'characters' ? activeElements.filter(el => el.elementType === 'character').map(el => el.id) : undefined}
       />
@@ -4494,6 +4546,14 @@ export function GMTableView({ activeElements, updateActiveElement, removeActiveE
         editable={true}
         saveImage={saveImage}
         onSave={async (editedData) => {
+          if (editState.mode === 'new') {
+            const itemWithId = editedData;
+            await saveItem(editState.collection, itemWithId);
+            if (saveImage && (editedData.imageUrl != null || editedData._additionalImages != null)) {
+              await saveImage(editState.collection, itemWithId.id, editedData.imageUrl ?? '', { _additionalImages: editedData._additionalImages });
+            }
+            return;
+          }
           const itemWithId = { ...editedData, id: editState.baseElement.id };
           if (editState.mode === 'copy') {
             updateActiveElementsBaseData(
