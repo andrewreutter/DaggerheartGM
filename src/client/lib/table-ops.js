@@ -25,6 +25,7 @@ export const CHARACTER_RUNTIME_KEYS = [
   'resistance',                // [{ type, source }] e.g. physical from Galapa Retract
   'disadvantageSources',       // string[] sources that add disadvantage to this character's rolls
   'moveDisabledSources',       // string[] sources that prevent token move (e.g. Retract)
+  'lockedOnTargetInstanceId',  // Locked On (weapon): instanceId of target; next primary attack vs them auto-succeeds, cleared on ack
 ];
 
 export const RUNTIME_KEYS = [

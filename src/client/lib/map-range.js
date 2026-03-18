@@ -83,6 +83,38 @@ export function tokenDistanceFt(ax, ay, bx, by) {
   return Math.max(0, Math.sqrt(dx * dx + dy * dy) - TOKEN_HALF_FT);
 }
 
+/**
+ * Token top-left position such that the token's center is at distance d feet from A's center,
+ * along the ray from A toward B. Used for "knock to Far" (Concussive) and similar effects.
+ *
+ * @param {number} ax - Token A tokenX (top-left)
+ * @param {number} ay - Token A tokenY (top-left)
+ * @param {number} bx - Token B tokenX (top-left)
+ * @param {number} by - Token B tokenY (top-left)
+ * @param {number} d - Desired center-to-center distance in feet (e.g. RANGE_BANDS_FT.FAR for mid-Far)
+ * @returns {{ x: number, y: number }} Token top-left position for the new placement
+ */
+export function positionAtDistanceFt(ax, ay, bx, by, d) {
+  const acx = ax + TOKEN_HALF_FT;
+  const acy = ay + TOKEN_HALF_FT;
+  const bcx = bx + TOKEN_HALF_FT;
+  const bcy = by + TOKEN_HALF_FT;
+  const dx = bcx - acx;
+  const dy = bcy - acy;
+  const L = Math.sqrt(dx * dx + dy * dy);
+  let ux, uy;
+  if (L < 1e-6) {
+    ux = 1;
+    uy = 0;
+  } else {
+    ux = dx / L;
+    uy = dy / L;
+  }
+  const newCx = acx + d * ux;
+  const newCy = acy + d * uy;
+  return { x: newCx - TOKEN_HALF_FT, y: newCy - TOKEN_HALF_FT };
+}
+
 /** Ordered range bands (name + maxFt) for distance → band logic. Same edge rule as BattleMap token highlighting. */
 export const RANGE_BANDS_ORDERED = [
   { name: 'Melee', maxFt: RANGE_BANDS_FT.MELEE },

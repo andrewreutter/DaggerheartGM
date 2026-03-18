@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices } from 'lucide-react';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices, Trash2 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
@@ -152,7 +152,7 @@ function TokenDotRing({ size, groups }) {
 
 // ─── MapConfigToolbar ────────────────────────────────────────────────────────
 
-function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', onTableNameChange }) {
+function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', onTableNameChange, onDeleteTable }) {
   const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
   const fileInputRef = useRef(null);
@@ -203,33 +203,46 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-xs shrink-0 flex-wrap">
-      {/* Table name — left */}
-      {onTableNameChange ? (
-        isEditingName ? (
-          <input
-            ref={nameInputRef}
-            type="text"
-            value={nameInput}
-            onChange={e => setNameInput(e.target.value)}
-            onBlur={commitName}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
-            className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-100 font-semibold text-sm focus:outline-none focus:border-sky-500"
-            placeholder="Table name"
-          />
+      {/* Table name + Delete table button — left */}
+      <div className="flex items-center gap-2">
+        {onTableNameChange ? (
+          isEditingName ? (
+            <input
+              ref={nameInputRef}
+              type="text"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
+              className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-100 font-semibold text-sm focus:outline-none focus:border-sky-500"
+              placeholder="Table name"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsEditingName(true)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-700/80 text-slate-200 font-semibold text-sm transition-colors"
+              title="Edit table name"
+            >
+              <span className="truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+              <Pencil size={12} className="shrink-0 text-slate-500" />
+            </button>
+          )
         ) : (
+          <span className="px-2 py-1 text-slate-300 font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+        )}
+        {onDeleteTable && (
           <button
             type="button"
-            onClick={() => setIsEditingName(true)}
-            className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-700/80 text-slate-200 font-semibold text-sm transition-colors"
-            title="Edit table name"
+            onClick={onDeleteTable}
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-slate-400 hover:text-red-400 hover:bg-slate-800/80 transition-colors"
+            title="Delete table"
           >
-            <span className="truncate max-w-[200px]">{tableName || 'Untitled'}</span>
-            <Pencil size={12} className="shrink-0 text-slate-500" />
+            <Trash2 size={12} />
+            <span>Delete table</span>
           </button>
-        )
-      ) : (
-        <span className="px-2 py-1 text-slate-300 font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
-      )}
+        )}
+      </div>
 
       {/* Everything else — right */}
       <div className="flex items-center gap-2 ml-auto">
@@ -578,7 +591,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onClearDice, className = '' }) {
+export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onDeleteTable, onClearDice, className = '' }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -978,6 +991,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
           onFileSelect={handleImageFile}
           tableName={tableName}
           onTableNameChange={onTableNameChange}
+          onDeleteTable={onDeleteTable}
         />
       )}
 

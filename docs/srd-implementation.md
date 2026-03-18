@@ -14,8 +14,8 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 | ----------------------------------------- | ----- | --------- | ----------- | ---------------------------------------------------------------- | ----------- |
 | [Adversaries](#adversaries-129)           | 129   | Done      | N/A (table) | Attacks rollable                                                 | **Done**    |
 | [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display                                                          | **Done**    |
-| [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 23/38 automated; 38/38 in registry                               | **Partial** |
-| [Armor](#armor-34)                        | 34    | N/A       | Done        | 19/21 automated; 21/21 in registry                               | **Partial** |
+| [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 25/38 automated; 38/38 in registry                               | **Partial** |
+| [Armor](#armor-34)                        | 34    | N/A       | Done        | 18/21 automated; 21/21 in registry                               | **Partial** |
 | [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks                                 | **Partial** |
 | [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 1+ features partial (e.g. Wings of Light, Elemental Incarnation) | **Partial** |
 | [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 18 ancestries automated; 2 features display-only by design       | **Done**    |
@@ -146,6 +146,13 @@ Applied in `handleApplyDamage` / banner dismiss in `GMTableView`.
 | Parry     | Defensive dice cancel matching attack dice | **Done** — Parry roll uses a silent server roll (no second banner); reduced damage is applied to the same banner. |
 
 
+#### Phase 5 — Optional display-to-automation (Done)
+
+| Feature    | Effect                                   | Status   |
+| ---------- | ---------------------------------------- | -------- |
+| Concussive | On success: toggle "Spend 1 Hope → knock target to Far"; token moved to 50 ft | **Done** |
+| Locked On  | On hit, set lock on target; next primary attack vs same target shows "Locked On: auto-succeeds" badge; lock cleared on ack | **Done** |
+
 #### Display Only — No Automation Needed
 
 These are informational for the GM. Shown as tags in the result banner.
@@ -163,15 +170,13 @@ These are informational for the GM. Shown as tags in the result banner.
 | Healing     | Clear 1 HP in downtime         | **Display** |
 | Hot         | Cuts through material          | **Display** |
 | Greedy      | +1 proficiency for gold        | **Display** |
-| Concussive  | Knock to Far for 1 Hope        | **Display** |
 | Long        | Target all in a line           | **Display** |
 | Grappling   | Restrain/pull for 1 Hope       | **Display** |
 | Sheltering  | Armor shared with allies       | **Display** |
-| Locked On   | Next attack auto-succeeds      | **Display** |
 | Deflecting  | Mark Armor for Evasion bonus   | **Display** |
 
 
-**Weapon features score: 23 fully automated + 16 display-only (all have registry descriptors) = 38/38 accounted for.**
+**Weapon features score: 25 fully automated + 14 display-only (all have registry descriptors) = 38/38 accounted for.**
 
 ---
 
@@ -246,15 +251,15 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 #### Map-Aware — Pending (Phase 4)
 
-Descriptors in registry; automation in Phase 4.
+Map-aware (Phase 4): when the target has Sharp/Burning and the attacker is in Melee (from map or roll metadata), retaliation runs after damage is applied.
 
 | Feature | Armors            | Effect                      | Status   |
 | ------- | ----------------- | --------------------------- | -------- |
-| Sharp   | Spiked Plate (T3) | +d4 Melee damage            | **Descriptor** |
-| Burning | Emberwoven (T4)   | Melee attacker marks Stress | **Descriptor** |
+| Sharp   | Spiked Plate (T3) | Attacker takes 1d4 damage   | **Done** |
+| Burning | Emberwoven (T4)   | Melee attacker marks Stress | **Done** |
 
 
-**Armor features score: 16 automated (5 stat + 2 roll + 8 slot-triggered/substitution + 1 display) / 21 total. All 21 have registry descriptors; Phase 4 covers Sharp and Burning (map-aware).**
+**Armor features score: 18 automated (5 stat + 2 roll + 8 slot-triggered/substitution + 2 map-aware + 1 display) / 21 total. All 21 have registry descriptors.**
 
 ---
 

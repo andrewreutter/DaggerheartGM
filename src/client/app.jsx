@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus } from 'lucide-react';
 
@@ -89,8 +90,11 @@ function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [tableFlash, setTableFlash] = useState(false);
+  const [deleteTablePending, setDeleteTablePending] = useState(null); // { id, name } when confirming delete
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const userMenuRef = useRef(null);
   const prevTableCountRef = useRef(null);
+  const myTablesFetchedRef = useRef(false);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -101,6 +105,15 @@ function App() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!deleteTablePending) return;
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') { setDeleteTablePending(null); setDeleteConfirmInput(''); }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [deleteTablePending]);
 
   useEffect(() => {
     const envCount = activeElements.filter(e => e.elementType === 'environment').length;
@@ -323,7 +336,9 @@ function App() {
         }
         fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
         fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
-        fetchMyTables().then(tables => setMyTables(tables || [])).catch(() => {});
+        fetchMyTables().then(tables => { setMyTables(tables || []); myTablesFetchedRef.current = true; }).catch(() => { myTablesFetchedRef.current = true; });
+      } else {
+        myTablesFetchedRef.current = false;
       }
     });
     return () => unsubscribe();
@@ -367,6 +382,13 @@ function App() {
   // Derive whether the current user is viewing someone else's GM table (player mode)
   const isPlayer = route.view === 'gm-table' && !!route.gmUid && route.gmUid !== user?.uid;
 
+  // Redirect to library when user has no tables and is on game-table view (e.g. after deleting last table)
+  useEffect(() => {
+    if (myTablesFetchedRef.current && myTables.length === 0 && route.view === 'gm-table' && user && !isPlayer) {
+      navigate('/library/adversaries', { replace: true });
+    }
+  }, [myTables.length, route.view, user, isPlayer, navigate]);
+
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'gm-table';
   const effectiveIsPlayer = isPlayer || isPreviewMode;
@@ -409,7 +431,19 @@ function App() {
     loadTableState(route.tableId).then((items) => {
       if (!userRef.current) return;
       const tableState = items?.[0];
-      if (!tableState) return;
+      if (!tableState) {
+        setActiveElements([]);
+        setFeatureCountdowns({});
+        setTableBattleMods(DEFAULT_BATTLE_MODS);
+        setFearCount(0);
+        setPlayerEmails([]);
+        setTableName('');
+        setMapConfig(DEFAULT_MAP_CONFIG);
+        setLifeSupportSelections({});
+        setRestMovesSelections({});
+        tableStateReadyRef.current = true;
+        return;
+      }
       if (Array.isArray(tableState.elements)) setActiveElements(tableState.elements);
       setFeatureCountdowns(tableState.featureCountdowns || {});
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
@@ -1154,6 +1188,11 @@ function App() {
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
                 tableName={tableName}
                 onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
+                onDeleteTable={tableId && !effectiveIsPlayer ? () => {
+                  const name = (tableName?.trim() || (tableId === user?.uid ? 'My Game Table' : 'Game Table'));
+                  setDeleteTablePending({ id: tableId, name });
+                  setDeleteConfirmInput('');
+                } : undefined}
                 clearTable={effectiveIsPlayer ? () => {} : sendClearTable}
                 isPlayer={effectiveIsPlayer}
                 playerEmail={effectivePlayerEmail}
@@ -1201,6 +1240,66 @@ function App() {
           }}
           onCancel={() => setPendingSceneAdd(null)}
         />
+      )}
+      {deleteTablePending && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70"
+          onClick={() => { setDeleteTablePending(null); setDeleteConfirmInput(''); }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-table-title"
+        >
+          <div
+            className="bg-slate-800 border border-slate-600 rounded-xl shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="delete-table-title" className="text-lg font-semibold text-red-400 mb-2">Delete table?</h2>
+            <p className="text-slate-300 text-sm mb-4">
+              Permanently delete &ldquo;{deleteTablePending.name}&rdquo;? All encounter data, map, tokens, and settings will be lost. This cannot be undone.
+            </p>
+            <p className="text-slate-400 text-xs mb-2">Type <strong className="text-slate-300 font-mono">DELETE</strong> to confirm:</p>
+            <input
+              type="text"
+              value={deleteConfirmInput}
+              onChange={(e) => setDeleteConfirmInput(e.target.value)}
+              placeholder="DELETE"
+              className="w-full px-3 py-2 rounded-md bg-slate-900 border border-slate-600 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500 mb-4 font-mono"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { setDeleteTablePending(null); setDeleteConfirmInput(''); }
+              }}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setDeleteTablePending(null); setDeleteConfirmInput(''); }}
+                className="px-4 py-2 rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteConfirmInput !== 'DELETE'}
+                onClick={async () => {
+                  const { id, name } = deleteTablePending;
+                  setDeleteTablePending(null);
+                  setDeleteConfirmInput('');
+                  try {
+                    await apiDeleteItem('table_state', id);
+                    setMyTables(prev => prev.filter(t => t.id !== id));
+                    if (route.tableId === id) navigate(`/gm-table/${user?.uid}`);
+                  } catch (err) {
+                    console.error('Delete table failed:', err);
+                  }
+                }}
+                className="px-4 py-2 rounded-md bg-red-800 text-red-100 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Permanently delete table
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

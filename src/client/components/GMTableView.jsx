@@ -24,7 +24,7 @@ import { wrapRoll } from '../../features/roll.js';
 import { runHook, runPipelineHook } from '../../features/hooks.js';
 import { weaponFeatures, armorFeatures, classFeatures, ancestryFeatures } from '../../features/registry.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 
@@ -229,7 +229,7 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', onTableNameChange, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const sendOp = useCallback((op) => postTableOp(op, tableId), [tableId]);
@@ -481,7 +481,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
     // Wrap target and roll so feature hooks receive clean semantic APIs.
     const entityTarget = wrapEntity(target, updateActiveElement);
-    const ctx = { target: entityTarget, tagNames, roll: wrapRoll(roll), dmgType };
+    const ctx = { target: entityTarget, character: entityTarget, tagNames, roll: wrapRoll(roll), dmgType };
 
     // Pre-threshold damage modification (e.g. Warded subtracts armor score from magic damage)
     let dmgTotalForCalc = runPipelineHook(
@@ -709,6 +709,47 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
 
+    // Burning (Emberwoven): when a character with Burning armor is hit in Melee, the attacker marks 1 Stress
+    if (hpApplied >= 1 && charEl?.armorFeatureName === 'Burning' && roll?._attackerInstanceId) {
+      const attackerIds = roll._attackerInstanceIds ?? (roll._attackerInstanceId ? [roll._attackerInstanceId] : []);
+      const isMelee = charEl.tokenX != null && charEl.tokenY != null
+        ? attackerIds.some(id => {
+            const att = activeElements.find(e => e.instanceId === id);
+            return att?.tokenX != null && att?.tokenY != null
+              && tokenDistanceFt(charEl.tokenX, charEl.tokenY, att.tokenX, att.tokenY) <= RANGE_BANDS_FT.MELEE;
+          })
+        : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
+      if (isMelee && attackerIds.length > 0) {
+        const attackerId = attackerIds[0];
+        const attackerEl = activeElements.find(e => e.instanceId === attackerId);
+        if (attackerEl) {
+          wrapEntity(attackerEl, updateActiveElement).markStress(1);
+          const attackerName = attackerEl.name ?? 'Attacker';
+          handleActionNotification({ _action: true, rollUser: charEl.name,
+            actionName: 'Burning', actionText: `Burning: ${attackerName} marked 1 Stress.` });
+        }
+      }
+    }
+
+    // Sharp (Spiked Plate): when a character with Sharp armor is hit in Melee, the attacker takes 1d4 damage
+    if (hpApplied >= 1 && charEl?.armorFeatureName === 'Sharp' && roll?._attackerInstanceId) {
+      const attackerIds = roll._attackerInstanceIds ?? (roll._attackerInstanceId ? [roll._attackerInstanceId] : []);
+      const isMelee = charEl.tokenX != null && charEl.tokenY != null
+        ? attackerIds.some(id => {
+            const att = activeElements.find(e => e.instanceId === id);
+            return att?.tokenX != null && att?.tokenY != null
+              && tokenDistanceFt(charEl.tokenX, charEl.tokenY, att.tokenX, att.tokenY) <= RANGE_BANDS_FT.MELEE;
+          })
+        : (roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE);
+      if (isMelee && attackerIds.length > 0) {
+        const sharpTargetId = attackerIds[0];
+        postRoll(`${charEl.name} Sharp retaliation damage [1d4]`, charEl.name, tableId, {
+          _attackerInstanceId: charEl.instanceId,
+          _selectedTargetInstanceId: sharpTargetId,
+        }).catch(() => {});
+      }
+    }
+
     // Ranger's Focus: on hit, mark target as "Focused by X" and clear previous focus for this Ranger
     const isAdversaryTarget = target.elementType === 'adversary' || target.type === 'adversary';
     let attackerName = null;
@@ -730,9 +771,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         wrapEntity(target, updateActiveElement).markStress(1);
       }
     }
+
+    // Locked On (weapon): on a successful hit, set lock so the next primary attack vs this target auto-succeeds
+    if (hpApplied >= 1 && roll?._attackerInstanceId) {
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      const hasLockedOn = (attackerEl?.weapons || []).some(w => w.feature?.name === 'Locked On');
+      if (attackerEl?.elementType === 'character' && hasLockedOn) {
+        updateActiveElement(roll._attackerInstanceId, { lockedOnTargetInstanceId: target.instanceId });
+      }
+    }
+
     pendingDamageRef.current = { instanceId: target.instanceId, newHp };
   };
 
+  // Concussive (weapon): spend 1 Hope to knock the damage target to Far range (50 ft from attacker).
+  const handleConcussiveKnock = useCallback((roll, targetInstanceId) => {
+    if (!roll?._attackerInstanceId || !targetInstanceId) return;
+    const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+    if (!attackerEl || (attackerEl.hope ?? 0) < 1) return;
+    updateActiveElement(roll._attackerInstanceId, { hope: Math.max(0, (attackerEl.hope ?? 0) - 1) });
+    const targetEl = activeElements.find(e => e.instanceId === targetInstanceId);
+    if (targetEl?.tokenX != null && targetEl?.tokenY != null && attackerEl.tokenX != null && attackerEl.tokenY != null) {
+      const pos = positionAtDistanceFt(attackerEl.tokenX, attackerEl.tokenY, targetEl.tokenX, targetEl.tokenY, 50);
+      updateActiveElement(targetInstanceId, { tokenX: pos.x, tokenY: pos.y });
+    }
+    const targetName = targetEl?.name ?? 'Target';
+    handleActionNotification({ _action: true, rollUser: attackerEl.name ?? '', actionName: 'Concussive', actionText: `Concussive: ${targetName} knocked to Far range.` });
+  }, [activeElements, updateActiveElement, handleActionNotification]);
 
   // Apply Hope/Fear side effects after the dice animation completes.
   // Separated from handleDaggerheartRoll so effects fire when the banner dismisses.
@@ -1619,6 +1684,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (charEl) {
         const newMods = (charEl.activeModifiers || []).filter(m => m.id !== die.id);
         updateActiveElement(die.ownerInstanceId, { activeModifiers: newMods });
+      }
+    }
+    // Locked On (weapon): consume the lock when this attack (targeting the locked target) is acknowledged
+    if (roll._attackerInstanceId) {
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      const locked = attackerEl?.lockedOnTargetInstanceId;
+      if (locked != null) {
+        const selectedId = roll._selectedTargetInstanceId ?? roll._selectedTargetInstanceIds?.[0];
+        if (selectedId === locked) updateActiveElement(roll._attackerInstanceId, { lockedOnTargetInstanceId: null });
       }
     }
     if (!options?.alreadyAcked) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
@@ -2988,6 +3062,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     )
     .map(c => ({ instanceId: c.instanceId, name: c.name }));
 
+  // Locked On (weapon): roll DB IDs where the attacker has lockedOnTargetInstanceId === selected target (auto-success badge)
+  const lockedOnAutoSuccessRollDbIds = useMemo(() => {
+    const set = new Set();
+    if (!pendingBanners?.length) return set;
+    for (const roll of pendingBanners) {
+      const dbId = roll._rollDbId;
+      if (!dbId || !roll._attackerInstanceId) continue;
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      const locked = attackerEl?.lockedOnTargetInstanceId;
+      if (!locked) continue;
+      const selectedId = roll._selectedTargetInstanceId ?? roll._selectedTargetInstanceIds?.[0];
+      if (selectedId === locked) set.add(dbId);
+    }
+    return set;
+  }, [pendingBanners, activeElements]);
+
   // Wings of Light (Winged Sentinel): characters currently flying — show "Spend Hope for d8" on their attack banners.
   const wingsOfLightFlyingInstanceIds = useMemo(() => {
     const set = new Set();
@@ -3938,6 +4028,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             getTargetDisadvantageLabels={!isPlayer ? getTargetDisadvantageLabels : undefined}
             onApplyDamage={isPlayer ? undefined : handleApplyDamage}
             onApplyVulnerable={!isPlayer ? handleApplyVulnerable : undefined}
+            onConcussiveKnock={!isPlayer ? handleConcussiveKnock : undefined}
             canApplyDamage={!isPlayer}
             onLuckyReroll={isPlayer ? undefined : handleLuckyReroll}
             onQuickTarget={isPlayer ? undefined : handleQuickTarget}
@@ -3956,6 +4047,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
             holdThemOffChars={holdThemOffChars}
             onHoldThemOffToggle={tableId ? handleHoldThemOffToggle : undefined}
+            lockedOnAutoSuccessRollDbIds={lockedOnAutoSuccessRollDbIds}
             onBannerTargetsChange={tableId ? handleBannerTargetsChange : undefined}
             wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
             onWingsD8Toggle={!isPlayer ? handleWingsD8Toggle : undefined}
@@ -3981,6 +4073,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             onMapConfigChange={onMapConfigChange}
             tableName={tableName}
             onTableNameChange={onTableNameChange}
+            onDeleteTable={onDeleteTable}
             onClearDice={() => diceRollerRef.current?.clearDice?.()}
             className="flex-1 min-h-0"
           />
