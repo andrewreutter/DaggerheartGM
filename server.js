@@ -8,7 +8,7 @@ import { watchFile } from 'fs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -584,33 +584,48 @@ async function verifyTokenFromQuery(req, res) {
 }
 
 const ROLL_LOG_SIZE = 50;
+/** In-memory roll log fallback keyed by gmUid (used when DB fetch fails). */
+const gmRollLogs = new Map();
 
-function getOrCreateRoom(gmUid) {
-  if (!rooms.has(gmUid)) rooms.set(gmUid, { players: new Map(), gmClients: new Set(), rollLog: [] });
-  return rooms.get(gmUid);
+/** Rooms are keyed by tableId. Presence and GM clients are per-table. */
+function getOrCreateRoom(tableId) {
+  if (!tableId) return null;
+  if (!rooms.has(tableId)) rooms.set(tableId, { players: new Map(), gmClients: new Set() });
+  return rooms.get(tableId);
 }
 
 async function appendRollLog(gmUid, rollData) {
-  const room = getOrCreateRoom(gmUid);
-  room.rollLog.push(rollData);
-  if (room.rollLog.length > ROLL_LOG_SIZE) room.rollLog.shift();
+  if (!gmRollLogs.has(gmUid)) gmRollLogs.set(gmUid, []);
+  const log = gmRollLogs.get(gmUid);
+  log.push(rollData);
+  if (log.length > ROLL_LOG_SIZE) log.shift();
   try {
     const dbId = await appendDiceRoll(APP_ID, gmUid, rollData);
-    // Mutate in place so the caller's reference (and the rollLog entry) carries the DB id
     rollData._rollDbId = dbId;
-    // Notify subscription manager so all clients get an updated banners snapshot
     subscriptionManager.notifyChange('banners', gmUid);
   } catch (err) {
     console.error('[dice] DB write failed:', err.message);
   }
 }
 
-function broadcastPresenceToGm(gmUid) {
-  const room = rooms.get(gmUid);
+function broadcastPresenceToTable(tableId) {
+  const room = rooms.get(tableId);
   if (!room) return;
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   const msg = `event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`;
   for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
+}
+
+/** Resolve table by tableId and validate requester has access (owner or in playerEmails). Returns { tableId, gmUid, tableState } or { error, message }. */
+async function resolveTableAccess(appId, tableId, req) {
+  const row = await getTableStateById(appId, tableId);
+  if (!row) return { error: 404, message: 'Table not found' };
+  const gmUid = row.userId;
+  const tableState = row.data || {};
+  const isOwner = req.uid === gmUid;
+  const isPlayer = (tableState.playerEmails || []).includes(req.email);
+  if (!isOwner && !isPlayer) return { error: 403, message: 'Not invited to this table' };
+  return { tableId, gmUid, tableState };
 }
 
 
@@ -635,29 +650,28 @@ function stripCharacterElements(elements) {
 }
 
 /**
- * Per-room serialization lock for table-state writes.
- * Maps gmUid → Promise (the tail of the current op queue for that room).
- * Each call to applyOpToTableState chains onto the previous promise so concurrent
- * ops are processed sequentially, preventing read-modify-write races.
+ * Per-table serialization lock for table-state writes.
+ * Maps tableId → Promise (the tail of the current op queue for that table).
  */
 const roomOpLocks = new Map();
 
 /**
- * Apply a table op to the current DB state for a GM's room, write back, and notify subscribers.
- * Returns the new state object (or null if no DB available).
- * Ops for the same room are serialized to prevent concurrent write races.
+ * Apply a table op to the DB state for the given tableId, write back, and notify subscribers.
+ * Looks up table ownership by tableId; ops for the same table are serialized.
  */
-async function applyOpToTableState(gmUid, op) {
-  const prev = roomOpLocks.get(gmUid) ?? Promise.resolve();
+async function applyOpToTableState(tableId, op) {
+  const prev = roomOpLocks.get(tableId) ?? Promise.resolve();
   const next = prev.then(async () => {
-    const rows = await getItems(APP_ID, gmUid, 'table_state');
-    const rawState = rows[0] ? (() => { const { id: _id, is_public: _ip, _source: _src, ...data } = rows[0]; return data; })() : {};
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row) throw new Error(`Table not found: ${tableId}`);
+    const { userId, data: rawState } = row;
+    const state = rawState || {};
     // applyTableOp uses 'activeElements' key; DB uses 'elements'
-    const stateForOp = { ...rawState, activeElements: rawState.elements || [] };
+    const stateForOp = { ...state, activeElements: state.elements || [] };
     const changes = applyTableOp(op, stateForOp);
     const { activeElements: newElements, ...otherChanges } = changes;
     const newState = {
-      ...rawState,
+      ...state,
       ...otherChanges,
       ...(newElements !== undefined ? { elements: stripCharacterElements(newElements) } : {}),
     };
@@ -667,12 +681,11 @@ async function applyOpToTableState(gmUid, op) {
       if (char) fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'94f0d0'},body:JSON.stringify({sessionId:'94f0d0',location:'server.js:applyOpToTableState',message:'after strip character',data:{instanceId:char.instanceId,retractedActive:char.retractedActive},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
     }
     // #endregion
-    await upsertItem(APP_ID, gmUid, 'table_state', 'current', newState, false);
-    subscriptionManager.notifyChange('table_state', gmUid);
+    await upsertItem(APP_ID, userId, 'table_state', tableId, newState, false);
+    subscriptionManager.notifyChange('table_state', tableId);
     return newState;
   });
-  // Store the settled promise (errors swallowed) so the chain never breaks on failure
-  roomOpLocks.set(gmUid, next.catch(() => {}));
+  roomOpLocks.set(tableId, next.catch(() => {}));
   return next;
 }
 
@@ -764,10 +777,21 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
 
   if (collection === 'table_state') {
     try {
-      const rows = await getItems(APP_ID, req.uid, 'table_state');
+      const tableId = req.query.tableId;
+      if (tableId) {
+        const row = await getTableStateById(APP_ID, tableId);
+        if (!row || row.userId !== req.uid) {
+          return res.status(403).json({ error: 'Not your table' });
+        }
+        const state = row.data || {};
+        const elements = await resolveCharacterElementsDb(APP_ID, state.elements || []);
+        const resolved = [{ ...state, elements, _source: 'own', id: tableId }];
+        return res.json({ items: resolved, totalCount: 1, dbCount: 1 });
+      }
+      const rows = await listTableStates(APP_ID, req.uid);
       const resolved = await Promise.all(rows.map(async r => {
-        const elements = await resolveCharacterElements(r.elements);
-        return { ...r, elements, _source: 'own' };
+        const elements = await resolveCharacterElementsDb(APP_ID, (r.data?.elements) || []);
+        return { ...(r.data || {}), id: r.id, elements, _source: 'own' };
       }));
       return res.json({ items: resolved, totalCount: resolved.length, dbCount: resolved.length });
     } catch (err) {
@@ -1389,14 +1413,51 @@ app.delete('/api/data/:collection/:id', requireAuth, async (req, res) => {
 
 // --- Multi-player room API ---
 
-// GET /api/my-rooms — returns GMs whose table_state includes the user's email
+// GET /api/my-rooms — returns tables the user is invited to (per-table playerEmails)
 app.get('/api/my-rooms', requireAuth, async (req, res) => {
   try {
     const rows = await getTableStatesByPlayerEmail(APP_ID, req.email);
-    res.json(rows.map(r => ({ gmUid: r.userId, gmName: r.data?.gmDisplayName || '' })));
+    res.json(rows.map(r => ({
+      tableId: r.tableId,
+      gmUid: r.userId,
+      gmName: r.data?.gmDisplayName || '',
+      tableName: r.data?.tableName || (r.tableId === r.userId ? 'My Game Table' : 'Table'),
+    })));
   } catch (err) {
     console.error('GET /api/my-rooms error:', err);
     res.status(500).json({ error: 'Failed to fetch rooms' });
+  }
+});
+
+// GET /api/my-tables — returns tables the user owns (for nav tabs and New Table)
+app.get('/api/my-tables', requireAuth, async (req, res) => {
+  try {
+    const rows = await listTableStates(APP_ID, req.uid);
+    res.json(rows.map(r => ({
+      id: r.id,
+      name: r.data?.tableName || (r.id === req.uid ? 'My Game Table' : 'Table'),
+    })));
+  } catch (err) {
+    console.error('GET /api/my-tables error:', err);
+    res.status(500).json({ error: 'Failed to fetch tables' });
+  }
+});
+
+// POST /api/my-tables — create a new table (empty state), return { id, name }
+app.post('/api/my-tables', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+  try {
+    const name = (req.body?.name && String(req.body.name).trim()) || 'New Table';
+    const { randomUUID } = await import('crypto');
+    const tableId = randomUUID();
+    const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', tableName: name };
+    await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
+    res.status(201).json({ id: tableId, name });
+  } catch (err) {
+    console.error('POST /api/my-tables error:', err);
+    res.status(500).json({ error: 'Failed to create table' });
   }
 });
 
@@ -1404,20 +1465,19 @@ app.get('/api/my-rooms', requireAuth, async (req, res) => {
 app.get('/api/room/my/players', async (req, res) => {
   const user = await verifyTokenFromQuery(req, res);
   if (!user) return;
+  const tableId = req.query.tableId || user.uid;
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   req.socket.setTimeout(0);
   res.flushHeaders();
 
-  const room = getOrCreateRoom(user.uid);
+  const room = getOrCreateRoom(tableId);
   room.gmClients.add(res);
 
-  // Send current presence immediately
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
 
-  // Send recent roll history (all statuses) for the Action Log strip.
   try {
     const rolls = await getRecentDiceRolls(APP_ID, user.uid);
     if (rolls.length > 0) {
@@ -1425,36 +1485,37 @@ app.get('/api/room/my/players', async (req, res) => {
     }
   } catch (err) {
     console.error('[dice] roll-history fetch failed:', err.message);
-    if (room.rollLog.length > 0) {
-      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+    const fallback = gmRollLogs.get(user.uid);
+    if (fallback?.length > 0) {
+      res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: fallback })}\n\n`);
     }
   }
   res.flush?.();
 
-  // Subscribe to channels — each sends initial snapshot immediately and on every change.
   subscriptionManager.subscribe('banners', user.uid, res);
-  subscriptionManager.subscribe('table_state', user.uid, res);
+  subscriptionManager.subscribe('table_state', tableId, res);
 
   const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
   req.on('close', () => {
     clearInterval(heartbeat);
     room.gmClients.delete(res);
     subscriptionManager.unsubscribe('banners', user.uid, res);
-    subscriptionManager.unsubscribe('table_state', user.uid, res);
+    subscriptionManager.unsubscribe('table_state', tableId, res);
   });
 });
 
-// GET /api/room/:gmUid/stream — Player SSE: receive table state and events
-app.get('/api/room/:gmUid/stream', async (req, res) => {
-  const { gmUid } = req.params;
+// GET /api/room/:tableId/stream — Player SSE: receive table state and events for a specific table
+app.get('/api/room/:tableId/stream', async (req, res) => {
+  const { tableId } = req.params;
   const user = await verifyTokenFromQuery(req, res);
   if (!user) return;
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    const playerEmails = tableState.playerEmails || [];
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row) return res.status(404).json({ error: 'Table not found' });
+    const { userId: gmUid, data: tableState } = row;
+    const playerEmails = tableState?.playerEmails || [];
     if (!playerEmails.includes(user.email)) {
-      return res.status(403).json({ error: 'Not invited to this room' });
+      return res.status(403).json({ error: 'Not invited to this table' });
     }
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -1462,15 +1523,12 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
     req.socket.setTimeout(0);
     res.flushHeaders();
 
-    // Track player in room
-    const room = getOrCreateRoom(gmUid);
+    const room = getOrCreateRoom(tableId);
     room.players.set(user.uid, { res, name: user.name, email: user.email, photoURL: user.picture });
 
-    // Send current presence to this player
     const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
     res.write(`event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`);
 
-    // Send recent roll history (all statuses) for the Action Log strip.
     try {
       const rolls = await getRecentDiceRolls(APP_ID, gmUid);
       if (rolls.length > 0) {
@@ -1478,29 +1536,28 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
       }
     } catch (err) {
       console.error('[dice] roll-history fetch failed:', err.message);
-      if (room.rollLog.length > 0) {
-        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: room.rollLog })}\n\n`);
+      const fallback = gmRollLogs.get(gmUid);
+      if (fallback?.length > 0) {
+        res.write(`event: roll-history\ndata: ${JSON.stringify({ rolls: fallback })}\n\n`);
       }
     }
     res.flush?.();
 
-    // Subscribe to channels — table_state sends the initial resolved snapshot immediately.
     subscriptionManager.subscribe('banners', gmUid, res);
-    subscriptionManager.subscribe('table_state', gmUid, res);
+    subscriptionManager.subscribe('table_state', tableId, res);
 
-    // Notify GM of new player
-    broadcastPresenceToGm(gmUid);
+    broadcastPresenceToTable(tableId);
 
     const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
     req.on('close', () => {
       clearInterval(heartbeat);
       room.players.delete(user.uid);
       subscriptionManager.unsubscribe('banners', gmUid, res);
-      subscriptionManager.unsubscribe('table_state', gmUid, res);
-      broadcastPresenceToGm(gmUid);
+      subscriptionManager.unsubscribe('table_state', tableId, res);
+      broadcastPresenceToTable(tableId);
     });
   } catch (err) {
-    console.error(`GET /api/room/${gmUid}/stream error:`, err);
+    console.error(`GET /api/room/${tableId}/stream error:`, err);
     if (!res.headersSent) res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1526,22 +1583,19 @@ app.post('/api/room/my/action', requireAuth, async (req, res) => {
   res.json({ ok: true, _rollDbId: payload._rollDbId ?? null });
 });
 
-// POST /api/room/:gmUid/action — Player broadcasts an action notification to the GM room
-app.post('/api/room/:gmUid/action', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/action — Player broadcasts an action notification to the table
+app.post('/api/room/:tableId/action', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const { _clientId, ...notification } = req.body;
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not a player in this room' });
-    }
     if (!notification._action) notification._action = true;
     const payload = { ...notification, _clientId: _clientId || null, _initiatorUid: req.uid };
     await appendRollLog(gmUid, payload);
     res.json({ ok: true, _rollDbId: payload._rollDbId ?? null });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/action error:`, err);
+    console.error('POST /api/room/:tableId/action error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -1551,23 +1605,25 @@ app.post('/api/room/:gmUid/action', requireAuth, async (req, res) => {
 // When action is 'acknowledge' and wingsOfLightD8 is true, server deducts 1 Hope from the roll's
 // _attackerInstanceId, rolls 1d8, and returns wingsOfLightD8Result (banner is also marked acknowledged).
 app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
-  const { bannerId, action, wingsOfLightD8 } = req.body;
+  const { bannerId, action, wingsOfLightD8, tableId: bodyTableId } = req.body;
+  const tableId = bodyTableId || req.uid;
   let wingsOfLightD8Result = null;
 
   if (action === 'acknowledge' && wingsOfLightD8 && bannerId && process.env.DATABASE_URL) {
     try {
       const row = await getDiceRollById(APP_ID, req.uid, bannerId);
       if (row && row.status === 'pending' && row.data?._wingsOfLightAddD8 && row.data._wingsOfLightD8Result == null && row.data._attackerInstanceId) {
-        const tableRows = await getItems(APP_ID, req.uid, 'table_state');
-        const state = tableRows[0] || {};
-        const elements = state.elements || [];
-        const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
-        const maxHope = charEl?.maxHope ?? 6;
-        const currentHope = charEl?.hope ?? maxHope;
-        if (currentHope >= 1) {
-          const newHope = Math.max(0, currentHope - 1);
-          await applyOpToTableState(req.uid, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
-          wingsOfLightD8Result = randomInt(1, 9);
+        const tableRow = await getTableStateById(APP_ID, tableId);
+        if (tableRow && tableRow.userId === req.uid) {
+          const elements = (tableRow.data?.elements) || [];
+          const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
+          const maxHope = charEl?.maxHope ?? 6;
+          const currentHope = charEl?.hope ?? maxHope;
+          if (currentHope >= 1) {
+            const newHope = Math.max(0, currentHope - 1);
+            await applyOpToTableState(tableId, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
+            wingsOfLightD8Result = randomInt(1, 9);
+          }
         }
       }
     } catch (err) {
@@ -1575,20 +1631,21 @@ app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
     }
   }
 
-  // Rest banner: apply fear before marking acknowledged (short = d4 total, long = d4 total + character count).
   if (action === 'acknowledge' && bannerId && process.env.DATABASE_URL) {
     try {
       const row = await getDiceRollById(APP_ID, req.uid, bannerId);
       if (row && row.status === 'pending' && row.data?._rest === true) {
-        const tableRows = await getItems(APP_ID, req.uid, 'table_state');
-        const state = tableRows[0] || {};
-        const elements = state.elements || state.activeElements || [];
-        const characterCount = elements.filter(e => e.elementType === 'character').length;
-        const total = typeof row.data.total === 'number' ? row.data.total : 0;
-        const fearDelta = row.data._restDuration === 'long' ? total + characterCount : total;
-        const currentFear = state.fearCount ?? 0;
-        const newFear = Math.min(12, currentFear + fearDelta);
-        await applyOpToTableState(req.uid, { op: 'set-fear', fearCount: newFear });
+        const tableRow = await getTableStateById(APP_ID, tableId);
+        if (tableRow && tableRow.userId === req.uid) {
+          const state = tableRow.data || {};
+          const elements = state.elements || state.activeElements || [];
+          const characterCount = elements.filter(e => e.elementType === 'character').length;
+          const total = typeof row.data.total === 'number' ? row.data.total : 0;
+          const fearDelta = row.data._restDuration === 'long' ? total + characterCount : total;
+          const currentFear = state.fearCount ?? 0;
+          const newFear = Math.min(12, currentFear + fearDelta);
+          await applyOpToTableState(tableId, { op: 'set-fear', fearCount: newFear });
+        }
       }
     } catch (err) {
       console.error('[banner-ack] rest fear error:', err.message);
@@ -1669,9 +1726,11 @@ app.post('/api/room/my/reroll-duality-dice', requireAuth, async (req, res) => {
   res.json(rollData);
 });
 
-// POST /api/room/:gmUid/banner-feline-reroll-request — Player: toggle _felineRerollRequestedBy on banner (set to uid or clear if already self).
-app.post('/api/room/:gmUid/banner-feline-reroll-request', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-feline-reroll-request — Player: toggle _felineRerollRequestedBy on banner (set to uid or clear if already self).
+app.post('/api/room/:tableId/banner-feline-reroll-request', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   if (req.uid === gmUid || bannerId == null || Number.isNaN(bannerId)) {
     return res.status(400).json({ error: 'Invalid request' });
@@ -1680,11 +1739,6 @@ app.post('/api/room/:gmUid/banner-feline-reroll-request', requireAuth, async (re
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not a player in this room' });
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1697,14 +1751,16 @@ app.post('/api/room/:gmUid/banner-feline-reroll-request', requireAuth, async (re
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, requested });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-feline-reroll-request error:`, err);
+    console.error('POST /api/room/:tableId/banner-feline-reroll-request error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-ranger-focus-reroll-request — Player: toggle _rangerFocusRerollRequestedBy on banner.
-app.post('/api/room/:gmUid/banner-ranger-focus-reroll-request', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-ranger-focus-reroll-request — Player: toggle _rangerFocusRerollRequestedBy on banner.
+app.post('/api/room/:tableId/banner-ranger-focus-reroll-request', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   if (req.uid === gmUid || bannerId == null || Number.isNaN(bannerId)) {
     return res.status(400).json({ error: 'Invalid request' });
@@ -1713,11 +1769,6 @@ app.post('/api/room/:gmUid/banner-ranger-focus-reroll-request', requireAuth, asy
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not a player in this room' });
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1730,25 +1781,28 @@ app.post('/api/room/:gmUid/banner-ranger-focus-reroll-request', requireAuth, asy
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, requested });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-ranger-focus-reroll-request error:`, err);
+    console.error('POST /api/room/:tableId/banner-ranger-focus-reroll-request error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 // POST /api/room/my/banner-wings-d8 — GM: Wings of Light — spend 1 Hope and roll 1d8, patch banner with _wingsOfLightAddD8 and _wingsOfLightD8Result.
 app.post('/api/room/my/banner-wings-d8', requireAuth, async (req, res) => {
+  const tableId = req.body?.tableId || req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   if (bannerId == null || Number.isNaN(bannerId) || !process.env.DATABASE_URL) {
     return res.status(400).json({ error: 'bannerId required' });
   }
   try {
+    const tableRow = await getTableStateById(APP_ID, tableId);
+    if (!tableRow || tableRow.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
     const row = await getDiceRollById(APP_ID, req.uid, bannerId);
     if (!row || row.status !== 'pending' || !row.data?._attackerInstanceId) {
       return res.status(404).json({ error: 'Banner not found or not a character attack' });
     }
-    const tableRows = await getItems(APP_ID, req.uid, 'table_state');
-    const state = tableRows[0] || {};
-    const elements = state.elements || [];
+    const elements = (tableRow.data?.elements) || [];
     const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
     const maxHope = charEl?.maxHope ?? 6;
     const currentHope = charEl?.hope ?? maxHope;
@@ -1756,7 +1810,7 @@ app.post('/api/room/my/banner-wings-d8', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Character has no Hope to spend' });
     }
     const newHope = Math.max(0, currentHope - 1);
-    await applyOpToTableState(req.uid, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
+    await applyOpToTableState(tableId, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
     const d8Result = randomInt(1, 9);
     await updateDiceRollData(APP_ID, req.uid, bannerId, { _wingsOfLightAddD8: true, _wingsOfLightD8Result: d8Result });
     subscriptionManager.notifyChange('banners', req.uid);
@@ -1767,9 +1821,11 @@ app.post('/api/room/my/banner-wings-d8', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/room/:gmUid/banner-wings-d8-toggle — Player: toggle _wingsOfLightAddD8 on a banner (shared state; no Hope spend or roll).
-app.post('/api/room/:gmUid/banner-wings-d8-toggle', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-wings-d8-toggle — Player: toggle _wingsOfLightAddD8 on a banner (shared state; no Hope spend or roll).
+app.post('/api/room/:tableId/banner-wings-d8-toggle', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const value = req.body?.value === true;
   if (req.uid === gmUid || bannerId == null || Number.isNaN(bannerId)) {
@@ -1779,11 +1835,6 @@ app.post('/api/room/:gmUid/banner-wings-d8-toggle', requireAuth, async (req, res
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not a player in this room' });
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1792,14 +1843,16 @@ app.post('/api/room/:gmUid/banner-wings-d8-toggle', requireAuth, async (req, res
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, value });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-wings-d8-toggle error:`, err);
+    console.error('POST /api/room/:tableId/banner-wings-d8-toggle error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-hold-them-off — GM or player: toggle Hold Them Off (3 Hope, select up to 3 targets) on a banner.
-app.post('/api/room/:gmUid/banner-hold-them-off', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-hold-them-off — GM or player: toggle Hold Them Off (3 Hope, select up to 3 targets) on a banner.
+app.post('/api/room/:tableId/banner-hold-them-off', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const active = req.body?.active === true;
   if (bannerId == null || Number.isNaN(bannerId)) {
@@ -1809,14 +1862,6 @@ app.post('/api/room/:gmUid/banner-hold-them-off', requireAuth, async (req, res) 
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const isGm = req.uid === gmUid;
-    if (!isGm) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1825,16 +1870,18 @@ app.post('/api/room/:gmUid/banner-hold-them-off', requireAuth, async (req, res) 
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, active });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-hold-them-off error:`, err);
+    console.error('POST /api/room/:tableId/banner-hold-them-off error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-targets — GM or player: set multi-target selection on a pending banner (synced across clients).
-app.post('/api/room/:gmUid/banner-targets', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-targets — GM or player: set multi-target selection on a pending banner (synced across clients).
+app.post('/api/room/:tableId/banner-targets', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  const { selectedTargetInstanceIds, useArmorByTargetId } = req.body || {};
+  const { selectedTargetInstanceIds, useArmorByTargetId, useImpenetrableByTargetId, hopefulArmorInsteadByInstanceId } = req.body || {};
   if (bannerId == null || Number.isNaN(bannerId)) {
     return res.status(400).json({ error: 'bannerId required' });
   }
@@ -1842,14 +1889,6 @@ app.post('/api/room/:gmUid/banner-targets', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const isGm = req.uid === gmUid;
-    if (!isGm) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1860,20 +1899,23 @@ app.post('/api/room/:gmUid/banner-targets', requireAuth, async (req, res) => {
       patch._selectedTargetInstanceId = selectedTargetInstanceIds.length === 1 ? selectedTargetInstanceIds[0] : null;
     }
     if (useArmorByTargetId != null && typeof useArmorByTargetId === 'object') patch._useArmorByTargetId = useArmorByTargetId;
+    if (useImpenetrableByTargetId != null && typeof useImpenetrableByTargetId === 'object') patch._useImpenetrableByTargetId = useImpenetrableByTargetId;
+    if (hopefulArmorInsteadByInstanceId != null && typeof hopefulArmorInsteadByInstanceId === 'object') patch._hopefulArmorInsteadByInstanceId = hopefulArmorInsteadByInstanceId;
     if (Object.keys(patch).length === 0) return res.json({ ok: true });
     await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-targets error:`, err);
+    console.error('POST /api/room/:tableId/banner-targets error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-make-a-scene-target — GM or player: set the target adversary for a Make a Scene banner.
-// Patches _selectedTargetInstanceId on the pending roll; pushes updated banners snapshot to all clients.
-app.post('/api/room/:gmUid/banner-make-a-scene-target', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-make-a-scene-target — GM or player: set the target adversary for a Make a Scene banner.
+app.post('/api/room/:tableId/banner-make-a-scene-target', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const instanceId = req.body?.instanceId ?? null;
   if (bannerId == null || Number.isNaN(bannerId)) {
@@ -1883,14 +1925,6 @@ app.post('/api/room/:gmUid/banner-make-a-scene-target', requireAuth, async (req,
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const isGm = req.uid === gmUid;
-    if (!isGm) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1899,15 +1933,16 @@ app.post('/api/room/:gmUid/banner-make-a-scene-target', requireAuth, async (req,
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, instanceId });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-make-a-scene-target error:`, err);
+    console.error('POST /api/room/:tableId/banner-make-a-scene-target error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-prayer-die-select — GM or player: select a Prayer Die for add-to-roll or damage-reduction.
-// Patches _prayerAddRollDie and/or _prayerDmgReduceDie on the pending roll; pushes updated banner to all clients.
-app.post('/api/room/:gmUid/banner-prayer-die-select', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-prayer-die-select — GM or player: select a Prayer Die for add-to-roll or damage-reduction.
+app.post('/api/room/:tableId/banner-prayer-die-select', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const { addRollDie, dmgReduceDie } = req.body || {};
   if (bannerId == null || Number.isNaN(bannerId)) {
@@ -1917,14 +1952,6 @@ app.post('/api/room/:gmUid/banner-prayer-die-select', requireAuth, async (req, r
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const isGm = req.uid === gmUid;
-    if (!isGm) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1936,15 +1963,16 @@ app.post('/api/room/:gmUid/banner-prayer-die-select', requireAuth, async (req, r
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-prayer-die-select error:`, err);
+    console.error('POST /api/room/:tableId/banner-prayer-die-select error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-rally-toggle — GM or player: toggle Rally Die add-to-roll or add-to-damage on a banner.
-// Patches _rallyDieAddToRoll or _rallyDieAddToDamage on the pending roll; pushes updated banners to all clients.
-app.post('/api/room/:gmUid/banner-rally-toggle', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-rally-toggle — GM or player: toggle Rally Die add-to-roll or add-to-damage on a banner.
+app.post('/api/room/:tableId/banner-rally-toggle', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const field = req.body?.field;
   const value = req.body?.value === true;
@@ -1958,14 +1986,6 @@ app.post('/api/room/:gmUid/banner-rally-toggle', requireAuth, async (req, res) =
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const isGm = req.uid === gmUid;
-    if (!isGm) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -1977,16 +1997,15 @@ app.post('/api/room/:gmUid/banner-rally-toggle', requireAuth, async (req, res) =
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, field, value });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-rally-toggle error:`, err);
+    console.error('POST /api/room/:tableId/banner-rally-toggle error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 // POST /api/room/my/banner-rally-ack — GM: acknowledge a Rally Die banner toggle.
-// Cancels the original banner, removes the Rally Die modifier from the attacker, rolls the die,
-// and creates a copy banner with the extra die added to roll and/or damage.
 app.post('/api/room/my/banner-rally-ack', requireAuth, async (req, res) => {
   const gmUid = req.uid;
+  const tableId = req.body?.tableId || req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const addToRoll = req.body?.addToRoll === true;
   const addToDamage = req.body?.addToDamage === true;
@@ -2001,25 +2020,25 @@ app.post('/api/room/my/banner-rally-ack', requireAuth, async (req, res) => {
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
+    const tableRow = await getTableStateById(APP_ID, tableId);
+    if (!tableRow || tableRow.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
     const originalData = row.data || {};
 
-    // 1. Cancel the original banner.
     await setBannerStatus(bannerId, 'cancelled');
 
-    // 2. Find the Rally Die modifier on the attacker and remove it.
     const attackerInstanceId = originalData._attackerInstanceId;
     let rallyDieSize = 'd6';
     if (attackerInstanceId) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      const elements = tableState.elements || tableState.activeElements || [];
+      const elements = (tableRow.data?.elements || tableRow.data?.activeElements) || [];
       const attacker = elements.find(e => e.instanceId === attackerInstanceId);
       if (attacker?.activeModifiers?.length > 0) {
         const rallyMod = attacker.activeModifiers.find(m => m.name === 'Rally Die');
         if (rallyMod) {
           rallyDieSize = rallyMod.dice || 'd6';
           const newMods = attacker.activeModifiers.filter(m => m.id !== rallyMod.id);
-          await applyOpToTableState(gmUid, {
+          await applyOpToTableState(tableId, {
             op: 'update-element',
             instanceId: attackerInstanceId,
             updates: { activeModifiers: newMods },
@@ -2098,18 +2117,21 @@ app.post('/api/room/my/banner-rally-ack', requireAuth, async (req, res) => {
 
 // POST /api/room/my/banner-heart-d4 — GM: Heart of a Poet (Wordsmith) — spend 1 Hope and roll 1d4 on a non-attack action roll banner.
 app.post('/api/room/my/banner-heart-d4', requireAuth, async (req, res) => {
+  const tableId = req.body?.tableId || req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   if (bannerId == null || Number.isNaN(bannerId) || !process.env.DATABASE_URL) {
     return res.status(400).json({ error: 'bannerId required' });
   }
   try {
+    const tableRow = await getTableStateById(APP_ID, tableId);
+    if (!tableRow || tableRow.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
     const row = await getDiceRollById(APP_ID, req.uid, bannerId);
     if (!row || row.status !== 'pending' || !row.data?._attackerInstanceId) {
       return res.status(404).json({ error: 'Banner not found or not a character action roll' });
     }
-    const tableRows = await getItems(APP_ID, req.uid, 'table_state');
-    const state = tableRows[0] || {};
-    const elements = state.elements || [];
+    const elements = (tableRow.data?.elements) || [];
     const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
     const maxHope = charEl?.maxHope ?? 6;
     const currentHope = charEl?.hope ?? maxHope;
@@ -2117,7 +2139,7 @@ app.post('/api/room/my/banner-heart-d4', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Character has no Hope to spend' });
     }
     const newHope = Math.max(0, currentHope - 1);
-    await applyOpToTableState(req.uid, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
+    await applyOpToTableState(tableId, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
     const d4Result = randomInt(1, 5);
     await updateDiceRollData(APP_ID, req.uid, bannerId, { _heartOfAPoetAddD4: true, _heartOfAPoetD4Result: d4Result });
     subscriptionManager.notifyChange('banners', req.uid);
@@ -2129,9 +2151,9 @@ app.post('/api/room/my/banner-heart-d4', requireAuth, async (req, res) => {
 });
 
 // POST /api/room/my/banner-heart-d4-ack — GM: acknowledge a Heart of a Poet banner toggle.
-// Cancels the original banner, decrements 1 Hope, rolls 1d4, creates copy banner with d4 added.
 app.post('/api/room/my/banner-heart-d4-ack', requireAuth, async (req, res) => {
   const gmUid = req.uid;
+  const tableId = req.body?.tableId || req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   if (bannerId == null || Number.isNaN(bannerId)) {
     return res.status(400).json({ error: 'bannerId required' });
@@ -2140,25 +2162,25 @@ app.post('/api/room/my/banner-heart-d4-ack', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
+    const tableRow = await getTableStateById(APP_ID, tableId);
+    if (!tableRow || tableRow.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
     const originalData = row.data || {};
 
-    // 1. Cancel the original banner.
     await setBannerStatus(bannerId, 'cancelled');
 
-    // 2. Decrement 1 Hope from the attacker.
     const attackerInstanceId = originalData._attackerInstanceId;
     if (attackerInstanceId) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const state = tableStateItems[0] || {};
-      const elements = state.elements || state.activeElements || [];
+      const elements = (tableRow.data?.elements || tableRow.data?.activeElements) || [];
       const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === attackerInstanceId);
       const currentHope = charEl?.hope ?? (charEl?.maxHope ?? 6);
       if (currentHope >= 1) {
-        await applyOpToTableState(gmUid, {
+        await applyOpToTableState(tableId, {
           op: 'update-element',
           instanceId: attackerInstanceId,
           updates: { hope: Math.max(0, currentHope - 1) },
@@ -2219,9 +2241,11 @@ app.post('/api/room/my/banner-heart-d4-ack', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/room/:gmUid/banner-heart-d4-toggle — GM or player: toggle intent to add d4 on a Heart of a Poet banner.
-app.post('/api/room/:gmUid/banner-heart-d4-toggle', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-heart-d4-toggle — GM or player: toggle intent to add d4 on a Heart of a Poet banner.
+app.post('/api/room/:tableId/banner-heart-d4-toggle', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const value = req.body?.value === true;
   if (bannerId == null || Number.isNaN(bannerId)) {
@@ -2231,13 +2255,6 @@ app.post('/api/room/:gmUid/banner-heart-d4-toggle', requireAuth, async (req, res
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    if (req.uid !== gmUid) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -2246,14 +2263,16 @@ app.post('/api/room/:gmUid/banner-heart-d4-toggle', requireAuth, async (req, res
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true, value });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-heart-d4-toggle error:`, err);
+    console.error('POST /api/room/:tableId/banner-heart-d4-toggle error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-cancel — Player cancels their own pending banner (GM has not acked/cancelled yet).
-app.post('/api/room/:gmUid/banner-cancel', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-cancel — Player cancels their own pending banner (GM has not acked/cancelled yet).
+app.post('/api/room/:tableId/banner-cancel', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   if (req.uid === gmUid || bannerId == null || Number.isNaN(bannerId)) {
     return res.status(400).json({ error: 'Invalid request' });
@@ -2262,11 +2281,6 @@ app.post('/api/room/:gmUid/banner-cancel', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'Player banner cancel requires database' });
   }
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not a player in this room' });
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -2281,31 +2295,26 @@ app.post('/api/room/:gmUid/banner-cancel', requireAuth, async (req, res) => {
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/banner-cancel error:`, err);
+    console.error('POST /api/room/:tableId/banner-cancel error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/banner-chip-resolve — GM or player in room: set _chipResolved[stateKey] = 'ack' | 'reject' for ancestry chip (onChipAck/onChipReject).
-app.post('/api/room/:gmUid/banner-chip-resolve', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/banner-chip-resolve — GM or player in room: set _chipResolved[stateKey] = 'ack' | 'reject' for ancestry chip.
+app.post('/api/room/:tableId/banner-chip-resolve', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
   const stateKey = req.body?.stateKey;
   const action = req.body?.action; // 'ack' | 'reject'
-  if (!gmUid || bannerId == null || Number.isNaN(bannerId) || !stateKey || (action !== 'ack' && action !== 'reject')) {
-    return res.status(400).json({ error: 'gmUid, bannerId, stateKey, and action (ack|reject) required' });
+  if (bannerId == null || Number.isNaN(bannerId) || !stateKey || (action !== 'ack' && action !== 'reject')) {
+    return res.status(400).json({ error: 'bannerId, stateKey, and action (ack|reject) required' });
   }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    if (req.uid !== gmUid) {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-    }
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -2320,7 +2329,7 @@ app.post('/api/room/:gmUid/banner-chip-resolve', requireAuth, async (req, res) =
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true });
   } catch (err) {
-    console.error('POST /api/room/:gmUid/banner-chip-resolve error:', err);
+    console.error('POST /api/room/:tableId/banner-chip-resolve error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -2396,45 +2405,33 @@ app.post('/api/room/my/banner-reroll-die', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/room/:gmUid/life-support-select — Player or GM sets Life Support target selection (syncs to all clients).
-// selectedLifeSupportTargetInstanceId may be null to clear the selection.
-app.post('/api/room/:gmUid/life-support-select', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/life-support-select — Player or GM sets Life Support target selection (syncs to all clients).
+app.post('/api/room/:tableId/life-support-select', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId } = ctx;
   const { _rollDbId, selectedLifeSupportTargetInstanceId } = req.body || {};
   if (_rollDbId == null) {
     return res.status(400).json({ error: '_rollDbId required' });
   }
   try {
-    if (req.uid === gmUid) {
-      await applyOpToTableState(gmUid, {
-        op: 'life-support-select',
-        _rollDbId,
-        selectedLifeSupportTargetInstanceId,
-      });
-    } else {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
-      await applyOpToTableState(gmUid, {
-        op: 'life-support-select',
-        _rollDbId,
-        selectedLifeSupportTargetInstanceId,
-      });
-    }
+    await applyOpToTableState(tableId, {
+      op: 'life-support-select',
+      _rollDbId,
+      selectedLifeSupportTargetInstanceId,
+    });
     res.json({ ok: true });
   } catch (err) {
-    console.error('POST /api/room/:gmUid/life-support-select error:', err);
+    console.error('POST /api/room/:tableId/life-support-select error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/rest-move-select — GM or player sets a rest move for a character (syncs to all clients).
-// GM can set any character; player can set only their assigned character.
-// Body may include targetInstanceId (for canTargetAlly moves) and rollResult ({ dice, value }) for rollDice moves.
-app.post('/api/room/:gmUid/rest-move-select', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/rest-move-select — GM or player sets a rest move for a character (syncs to all clients).
+app.post('/api/room/:tableId/rest-move-select', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid, tableState } = ctx;
   const { rollDbId, instanceId, slot, moveId, targetInstanceId, rollResult } = req.body || {};
   const slotNum = typeof slot === 'number' ? slot : parseInt(slot, 10);
   if (rollDbId == null || !instanceId || !Number.isInteger(slotNum) || slotNum < 1 || slotNum > 10) {
@@ -2450,29 +2447,20 @@ app.post('/api/room/:gmUid/rest-move-select', requireAuth, async (req, res) => {
   if (targetInstanceId !== undefined) op.targetInstanceId = targetInstanceId;
   if (rollResult !== undefined) op.rollResult = rollResult;
   try {
-    if (req.uid === gmUid) {
-      await applyOpToTableState(gmUid, op);
-    } else {
-      const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-      const tableState = tableStateItems[0] || {};
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
+    if (req.uid !== gmUid) {
       const elements = tableState.elements || [];
       const character = elements.find(e => e.elementType === 'character' && e.instanceId === instanceId);
-      if (!character) {
-        return res.status(404).json({ error: 'Character not found' });
-      }
+      if (!character) return res.status(404).json({ error: 'Character not found' });
       const assignedByUid = character.assignedPlayerUid === req.uid;
       const assignedByEmail = !!req.email && (character.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
       if (!assignedByUid && !assignedByEmail) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
-      await applyOpToTableState(gmUid, op);
     }
+    await applyOpToTableState(tableId, op);
     res.json({ ok: true });
   } catch (err) {
-    console.error('POST /api/room/:gmUid/rest-move-select error:', err);
+    console.error('POST /api/room/:tableId/rest-move-select error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -2486,8 +2474,14 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.json({ ok: true });
   }
+  const tableId = op.tableId || req.uid;
   try {
-    await applyOpToTableState(req.uid, op);
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row || row.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
+    const { tableId: _t, ...opData } = op;
+    await applyOpToTableState(tableId, opData);
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/room/my/op error:', err);
@@ -2496,44 +2490,34 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
 });
 
 
-// POST /api/room/:gmUid/character-update — Player updates their assigned character's runtime state (GM can always update in own room)
-app.post('/api/room/:gmUid/character-update', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/character-update — Player updates their assigned character's runtime state (GM can always update in own room)
+app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid, tableState } = ctx;
   const { instanceId, updates } = req.body;
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
     const character = (tableState.elements || []).find(e => e.instanceId === instanceId);
-    if (!character) {
-      return res.status(404).json({ error: 'Character not found' });
-    }
-    const isRoomOwner = req.uid === gmUid;
-    if (!isRoomOwner) {
-      if (!(tableState.playerEmails || []).includes(req.email)) {
-        return res.status(403).json({ error: 'Not a player in this room' });
-      }
+    if (!character) return res.status(404).json({ error: 'Character not found' });
+    if (req.uid !== gmUid) {
       if (character.assignedPlayerEmail !== req.email) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
     }
-    // Apply the update to the persisted state and notify all subscribers
-    await applyOpToTableState(gmUid, { op: 'update-element', instanceId, updates });
+    await applyOpToTableState(tableId, { op: 'update-element', instanceId, updates });
     res.json({ ok: true });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/character-update error:`, err);
+    console.error('POST /api/room/:tableId/character-update error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/add-character — Player adds a character (auto-assigned to themselves)
-app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/add-character — Player adds a character (auto-assigned to themselves)
+app.post('/api/room/:tableId/add-character', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId } = ctx;
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not invited to this room' });
-    }
     const { id: charId, name, playerName, maxHope, maxHp, maxStress, tier,
       hope, currentHp, currentStress, currentArmor, conditions, tokenX, tokenY,
       assignedPlayerUid, ...extraFields } = req.body;
@@ -2574,36 +2558,29 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
         ...runtimeData,
       };
     }
-    // Add the character to persisted state and notify all subscribers
-    await applyOpToTableState(gmUid, { op: 'add-elements', elements: [character] });
+    await applyOpToTableState(tableId, { op: 'add-elements', elements: [character] });
     res.json({ character });
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/add-character error:`, err);
+    console.error('POST /api/room/:tableId/add-character error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/:gmUid/roll — Player rolls dice server-side; validates room membership, persists to DB.
-// When silent is true: build and return roll data only (no DB write, no banner notification).
-app.post('/api/room/:gmUid/roll', requireAuth, async (req, res) => {
-  const { gmUid } = req.params;
+// POST /api/room/:tableId/roll — Player rolls dice server-side; validates table membership, persists to DB.
+app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { gmUid } = ctx;
   const { rollText, displayName, _clientId, silent, ...rest } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
-  // Forward any _-prefixed meta fields (hopeCost, featureUse, attackerInstanceId, etc.)
-  // so the GM's dice-ack handler can apply resource costs from player feature rolls.
   const extraMeta = Object.fromEntries(Object.entries(rest).filter(([k]) => k.startsWith('_')));
   try {
-    const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
-    const tableState = tableStateItems[0] || {};
-    if (!(tableState.playerEmails || []).includes(req.email)) {
-      return res.status(403).json({ error: 'Not a player in this room' });
-    }
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
     if (!silent) await appendRollLog(gmUid, rollData);
     res.json(rollData);
   } catch (err) {
-    console.error(`POST /api/room/${gmUid}/roll error:`, err);
+    console.error('POST /api/room/:tableId/roll error:', err);
     res.status(500).json({ error: `Roll failed: ${err.message}` });
   }
 });

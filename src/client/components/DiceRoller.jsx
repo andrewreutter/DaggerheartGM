@@ -667,6 +667,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           : (roll._multiTarget ? (roll._selectedTargetInstanceId ? [roll._selectedTargetInstanceId] : []) : []))
   );
   const [useArmorByTargetId, setUseArmorByTargetId] = useState(() => (roll._useArmorByTargetId && typeof roll._useArmorByTargetId === 'object' ? roll._useArmorByTargetId : {}));
+  const [useImpenetrableByTargetId, setUseImpenetrableByTargetId] = useState(() =>
+    (roll._useImpenetrableByTargetId && typeof roll._useImpenetrableByTargetId === 'object' ? { ...roll._useImpenetrableByTargetId } : {})
+  );
+  const useImpenetrableForSelected = selectedDamageTargetId ? !!useImpenetrableByTargetId[selectedDamageTargetId] : false;
+  const [useHopefulArmorByInstanceId, setUseHopefulArmorByInstanceId] = useState(() =>
+    (roll._hopefulArmorInsteadByInstanceId && typeof roll._hopefulArmorInsteadByInstanceId === 'object' ? { ...roll._hopefulArmorInsteadByInstanceId } : {})
+  );
   // Popup menu for target selection (same UX as initiating player's "Choose target" menu).
   const [targetMenuAnchorRect, setTargetMenuAnchorRect] = useState(null);
   const targetsSyncDebounceRef = useRef(null);
@@ -681,6 +688,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   useEffect(() => {
     if (roll._useArmorByTargetId != null && typeof roll._useArmorByTargetId === 'object') setUseArmorByTargetId(roll._useArmorByTargetId);
   }, [roll._rollDbId, roll._useArmorByTargetId]);
+  useEffect(() => {
+    if (roll._useImpenetrableByTargetId != null && typeof roll._useImpenetrableByTargetId === 'object') {
+      setUseImpenetrableByTargetId(prev => ({ ...roll._useImpenetrableByTargetId }));
+    }
+  }, [roll._rollDbId, roll._useImpenetrableByTargetId]);
+  useEffect(() => {
+    if (roll._hopefulArmorInsteadByInstanceId != null && typeof roll._hopefulArmorInsteadByInstanceId === 'object') {
+      setUseHopefulArmorByInstanceId(prev => ({ ...roll._hopefulArmorInsteadByInstanceId }));
+    }
+  }, [roll._rollDbId, roll._hopefulArmorInsteadByInstanceId]);
 
   // When Hold Them Off is toggled on, seed multi-select from current single selection if empty.
   useEffect(() => {
@@ -1273,12 +1290,41 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <CheckSquare size={12} className="shrink-0" />
                         <span className="truncate max-w-[120px]">{featureName}</span>
                       </button>
-                      <span className="flex items-center gap-1 shrink-0">
+                      <span className="flex items-center gap-1 shrink-0 flex-wrap items-center">
+                        {chip?.hopeCost > 0 && (() => {
+                          const instId = character?.instanceId;
+                          const hasHopeful = character?.armorFeatureName === 'Hopeful' || character?.armorMods?.feature?.name === 'Hopeful';
+                          const armorSlotsFree = (character?.maxArmor ?? 0) - (character?.currentArmor ?? 0);
+                          const showHopeful = hasHopeful && armorSlotsFree > 0 && instId;
+                          if (!showHopeful) return null;
+                          const useHopeful = !!useHopefulArmorByInstanceId[instId];
+                          return (
+                            <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={useHopeful}
+                                onChange={(e) => {
+                                  const next = e.target.checked;
+                                  setUseHopefulArmorByInstanceId(prev => ({ ...prev, [instId]: next }));
+                                  if (onBannerTargetsChange && roll._rollDbId != null) {
+                                    const nextMap = { ...(roll._hopefulArmorInsteadByInstanceId || {}), [instId]: next };
+                                    targetsSyncDebounceRef.current = setTimeout(() => {
+                                      targetsSyncDebounceRef.current = null;
+                                      onBannerTargetsChange(roll._rollDbId, { hopefulArmorInsteadByInstanceId: nextMap });
+                                    }, 200);
+                                  }
+                                }}
+                                className="rounded border-amber-600"
+                              />
+                              <span>Mark Armor instead</span>
+                            </label>
+                          );
+                        })()}
                         {chip?.onChipAck != null && (
                           <button
                             type="button"
                             disabled={!isEnabled}
-                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack'); }}
+                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack', { hopefulArmorInsteadByInstanceId: useHopefulArmorByInstanceId }); }}
                             className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-600 bg-emerald-800/60 text-emerald-100 hover:bg-emerald-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             OK
@@ -1749,6 +1795,44 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       Use armor
                                     </label>
                                   ) : null}
+                                  {(() => {
+                                    if (!selectedTarget || selectedTarget.type !== 'character' || !hasDamage || !resolved) return null;
+                                    const currentHp = selectedTarget.currentHp ?? selectedTarget.maxHp ?? 0;
+                                    const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                                    const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+                                    const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                                    const displayDmg = Math.max(0, baseDamage + wingsBonus + rallyDmgBonus - dmgReduction);
+                                    const hpLoss = selectedTarget.thresholds != null ? computeHpLoss(displayDmg, selectedTarget.thresholds) : 0;
+                                    const wouldBeZero = currentHp - hpLoss <= 0;
+                                    const hasImpenetrable = selectedTarget.armorFeatureName === 'Impenetrable';
+                                    const hasStressSpace = (selectedTarget.currentStress ?? 0) < (selectedTarget.maxStress ?? 6);
+                                    const usedThisRest = selectedTarget.featureUsage?.Impenetrable?.cycle === 'rest';
+                                    const showImpenetrable = wouldBeZero && hasImpenetrable && hasStressSpace && !usedThisRest;
+                                    if (!showImpenetrable) return null;
+                                    return (
+                                      <label className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer hover:bg-amber-800/40 transition-colors">
+                                        <input
+                                          type="checkbox"
+                                          checked={useImpenetrableForSelected}
+                                          onChange={(e) => {
+                                            const next = e.target.checked;
+                                            setUseImpenetrableByTargetId(prev => {
+                                              const nextMap = { ...prev, [selectedDamageTargetId]: next };
+                                              if (onBannerTargetsChange && roll._rollDbId != null) {
+                                                targetsSyncDebounceRef.current = setTimeout(() => {
+                                                  targetsSyncDebounceRef.current = null;
+                                                  onBannerTargetsChange(roll._rollDbId, { useImpenetrableByTargetId: nextMap });
+                                                }, 200);
+                                              }
+                                              return nextMap;
+                                            });
+                                          }}
+                                          className="rounded border-amber-600"
+                                        />
+                                        <span>Use Impenetrable (1/rest)</span>
+                                      </label>
+                                    );
+                                  })()}
                                   {showWingsD8 && (onWingsD8Toggle || onWingsD8ToggleRequest) && roll._rollDbId && (
                                     <button
                                       type="button"
@@ -1928,7 +2012,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         if (target) {
                                           const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === id);
                                           const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
-                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], useIncreasedFortitude }, baseDamage, tags, roll, dmgType);
+                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], useIncreasedFortitude, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
                                         }
                                       }
                                     }
@@ -1988,7 +2072,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
                                         const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === effectiveTargetId);
                                         const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
-                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, useIncreasedFortitude }, totalDamage, tags, roll, dmgType);
+                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, useIncreasedFortitude, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                       }
                                     }
                                     const ackOpts = {};

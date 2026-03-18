@@ -15,10 +15,17 @@ import Gilded     from './Gilded.js';
 import Difficult  from './Difficult.js';
 import Channeling from './Channeling.js';
 import Quiet      from './Quiet.js';
+import Sharp      from './Sharp.js';
+import Burning    from './Burning.js';
+import Timeslowing from './Timeslowing.js';
+import Shifting   from './Shifting.js';
+import Hopeful    from './Hopeful.js';
+import Impenetrable from './Impenetrable.js';
 
 const featureList = [
   Fortified, Painful, Resilient, Reinforced, Warded, Physical, Magic,
   Flexible, Heavy, VeryHeavy, Gilded, Difficult, Channeling, Quiet,
+  Sharp, Burning, Timeslowing, Shifting, Hopeful, Impenetrable,
 ];
 
 /** @type {Record<string, object>} */

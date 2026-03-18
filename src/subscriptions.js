@@ -66,7 +66,9 @@ class SubscriptionManager {
         if (!channelName) return;
         try {
           const payload = JSON.parse(msg.payload || '{}');
-          if (payload.gm_uid) this.notifyChange(channelName, payload.gm_uid);
+          // table_state_changed sends table_id; dice_rolls_changed sends gm_uid (banners key)
+          const key = payload.table_id ?? payload.gm_uid;
+          if (key) this.notifyChange(channelName, key);
         } catch {
           // malformed payload — ignore
         }

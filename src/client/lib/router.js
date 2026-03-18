@@ -27,13 +27,20 @@ export function parseRoute(pathname) {
   if (parts[0] === 'gm-table') {
     // Legacy: /gm-table/:collection/:id — collection names never look like Firebase UIDs
     if (VALID_COLLECTIONS.has(parts[1])) {
-      return { view: 'gm-table', gmUid: null, tab: null, modalCollection: parts[1], modalItemId: parts[2] || null };
+      return { view: 'gm-table', gmUid: null, tableId: null, tab: null, modalCollection: parts[1], modalItemId: parts[2] || null };
     }
-    // Current: /gm-table/:gmUid[/:collection/:id]
+    // /gm-table/:gmUid → tableId = gmUid (primary table); /gm-table/:gmUid/:tableId → secondary table
+    // If parts[2] is not a collection name, it's a tableId (uuid); modal is then at parts[3]/parts[4]
     const gmUid = parts[1] || null;
-    const modalCollection = VALID_COLLECTIONS.has(parts[2]) ? parts[2] : null;
-    const modalItemId = modalCollection && parts[3] ? parts[3] : null;
-    return { view: 'gm-table', gmUid, tab: null, modalCollection, modalItemId };
+    let tableId = gmUid;
+    let collectionOffset = 2;
+    if (parts[2] && !VALID_COLLECTIONS.has(parts[2])) {
+      tableId = parts[2];
+      collectionOffset = 3;
+    }
+    const modalCollection = VALID_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
+    const modalItemId = modalCollection && parts[collectionOffset + 1] ? parts[collectionOffset + 1] : null;
+    return { view: 'gm-table', gmUid, tableId, tab: null, modalCollection, modalItemId };
   }
 
   if (parts[0] === 'library') {

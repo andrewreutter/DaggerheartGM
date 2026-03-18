@@ -86,6 +86,19 @@ export function computeHpLoss(damage, thresholds) {
 }
 
 /**
+ * Returns a character's effective Evasion including runtime modifiers (e.g. Timeslowing +1d4).
+ * Used for attack roll comparison and display when activeModifiers include type 'evasion'.
+ */
+export function effectiveEvasion(el) {
+  if (el == null) return null;
+  const base = el.evasion ?? 0;
+  const modBonus = (el.activeModifiers || [])
+    .filter(m => m.type === 'evasion')
+    .reduce((sum, m) => sum + (m.value ?? 0), 0);
+  return base + modBonus;
+}
+
+/**
  * Returns a character's effective damage thresholds with their level added to each value.
  * Per Daggerheart rules, characters add their level to their armor's base thresholds.
  * Returns null if the character has no armorThresholds.

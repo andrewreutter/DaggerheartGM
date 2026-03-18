@@ -49,6 +49,8 @@ export default {
 - **`onCharacterEdit(char)`** — Optional hook passed to `addFeature`. Invoked by the barrel immediately after the feature is registered; receives the builder `char` so the feature can call `char.addExperienceBonus(amount)` (or other builder methods). Use this to register experience bonuses for the feature being added instead of calling addExperienceBonus in onCharacterBuild.
 - **`char.addExperienceBonus(amount)`** — Call from inside an `onCharacterEdit(char)` hook for the feature that grants the bonus. Registers that the ancestry requires the player to choose one experience for a permanent +N; the form shows a dropdown, choice stored in `experienceBonusChoices[featureName]`, and the roll path applies the bonus when that experience is selected. Character is incomplete until the choice is made.
 
+**Unified lifecycle:** Weapon and armor feature descriptors (`src/features/weapons/`, `src/features/armor/`) may also implement `onMarkStress`, `onMarkHP`, and `onMarkArmor`. `origin-lifecycle.js` collects feature names from ancestry + community, equipped weapon feature names, and equipped armor feature name, then runs the hook from the appropriate registry (originFeatures, weaponFeatures, or armorFeatures). Anything in the origin system must not rely on parsing — stat mods come from `passiveStatMods` in the registry.
+
 ### Prefer anonymous one-liners
 
 When a hook body is a single expression, use an arrow function directly. Multi-statement hooks use the method shorthand.

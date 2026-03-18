@@ -1152,7 +1152,8 @@ export function CharacterDefenseRow({ el }) {
   const ancestryEvasion = el.ancestryMods?.evasion ?? 0;
   const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
   const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
-  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + ancestryEvasion + bfEvasionMod;
+  const activeModEvasion = (el.activeModifiers || []).filter(m => m.type === 'evasion').reduce((sum, m) => sum + (m.value ?? 0), 0);
+  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + ancestryEvasion + bfEvasionMod + activeModEvasion;
   const earthBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
   const ancestryBonus = el.ancestryThresholdBonus ?? 0;
   const ancestryBonusSource = el.ancestryThresholdBonusSource || null;
@@ -1165,6 +1166,10 @@ export function CharacterDefenseRow({ el }) {
     else evasionSources.push(`Ancestry: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`);
   }
   if (bfEvasionMod) evasionSources.push(`Beastform (${el.activeBeastform.name}): ${bfEvasionMod > 0 ? '+' : ''}${bfEvasionMod} to Evasion`);
+  (el.activeModifiers || []).filter(m => m.type === 'evasion').forEach(m => {
+    const v = m.value ?? 0;
+    if (v) evasionSources.push(`${m.name || 'Modifier'}: +${v} to Evasion`);
+  });
   const evasionModTooltip = evasionSources.length ? evasionSources.join('; ') : null;
   const armorModTooltip = wm.armorScore
     ? (wm.sources || []).filter(s => s.stat === 'armor score').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Armor Score`).join('; ')

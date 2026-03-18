@@ -695,21 +695,53 @@ export async function getUnifiedItems(appId, userId, collection, {
 }
 
 /**
+ * Look up a single table_state row by globally unique tableId (primary = gmUid, secondary = uuid).
+ * Returns { userId, data } or null.
+ */
+export async function getTableStateById(appId, tableId) {
+  if (!tableId) return null;
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT user_id, data FROM items
+     WHERE app_id = $1 AND collection = 'table_state' AND id = $2`,
+    [appId, tableId]
+  );
+  if (!rows.length) return null;
+  const r = rows[0];
+  return { userId: r.user_id, data: r.data };
+}
+
+/**
+ * List all table_state rows for a user (GM's owned tables).
+ * Returns [{ id, data }] for use by GET /api/my-tables.
+ */
+export async function listTableStates(appId, userId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, data FROM items
+     WHERE app_id = $1 AND user_id = $2 AND collection = 'table_state'
+     ORDER BY id ASC`,
+    [appId, userId]
+  );
+  return rows.map(r => ({ id: r.id, data: r.data }));
+}
+
+/**
  * Find all table_state records whose playerEmails array contains the given email.
- * Used by GET /api/my-rooms to let players discover which GMs have invited them.
- * Returns [{ userId, data }] where userId is the GM's Firebase UID.
+ * Used by GET /api/my-rooms to let players discover which tables have invited them.
+ * Returns [{ tableId, userId, data }] where tableId is the row's id, userId is the GM's Firebase UID.
  */
 export async function getTableStatesByPlayerEmail(appId, email) {
   const db = getPool();
   // Use the ? (key exists in array) JSONB operator to check membership.
   // Note: in node-postgres, ? is not a placeholder — $1/$2 are used for that.
   const { rows } = await db.query(
-    `SELECT user_id, data FROM items
+    `SELECT id, user_id, data FROM items
      WHERE app_id = $1 AND collection = 'table_state'
      AND data->'playerEmails' ? $2`,
     [appId, email]
   );
-  return rows.map(r => ({ userId: r.user_id, data: r.data }));
+  return rows.map(r => ({ tableId: r.id, userId: r.user_id, data: r.data }));
 }
 
 export async function getWhiteboardSnapshot(appId, gmUid) {
@@ -809,14 +841,13 @@ export function stripCharacterElementsForDb(elements) {
 }
 
 /**
- * Fetch and resolve the current table state for a GM.
+ * Fetch and resolve table state by globally unique tableId.
  * Used by the 'table_state' subscription channel.
  */
-export async function getResolvedTableState(appId, gmUid) {
-  const rows = await getItems(appId, gmUid, 'table_state');
-  if (!rows.length) return null;
-  const state = rows[0] || {};
-  const { id: _id, is_public: _ip, _source: _src, ...stateData } = state;
+export async function getResolvedTableState(appId, tableId) {
+  const row = await getTableStateById(appId, tableId);
+  if (!row) return null;
+  const stateData = row.data || {};
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
   return { ...stateData, elements: resolved };

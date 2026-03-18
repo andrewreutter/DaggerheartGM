@@ -123,6 +123,8 @@ export function applyTableOp(op, state) {
       };
     case 'set-gm-display-name':
       return { gmDisplayName: op.gmDisplayName };
+    case 'set-table-name':
+      return { tableName: op.tableName ?? '' };
     case 'life-support-select': {
       const prev = state.lifeSupportSelections || {};
       const key = String(op._rollDbId);

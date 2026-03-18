@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
@@ -51,6 +51,7 @@ function App() {
   const DEFAULT_BATTLE_MODS = { lessDifficult: false, slightlyMoreDangerous: false, damageBoostPlusOne: false, damageBoostD4: false, damageBoostStatic: false, moreDangerous: false };
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
+  const [tableName, setTableName] = useState('');
   const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
@@ -70,8 +71,8 @@ function App() {
   const charLoadResolversRef = useRef([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
-  // Multi-player room state
-  const [myRooms, setMyRooms] = useState([]); // [{ gmUid, gmName }]
+  const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName }] — tables user is invited to
+  const [myTables, setMyTables] = useState([]); // [{ id, name }] — tables user owns
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
@@ -126,6 +127,7 @@ function App() {
     setUserMenuOpen(false);
     setIsAdmin(false);
     setMyRooms([]);
+    setMyTables([]);
     setConnectedPlayers([]);
     setPendingBanners([]);
     tableStateReadyRef.current = false;
@@ -319,23 +321,9 @@ function App() {
         if (window.location.pathname === '/' || window.location.pathname === '') {
           navigate('/library/adversaries', { replace: true });
         }
-        // Fire table state and admin fetch in background; do not block render.
-        // This provides initial state before the SSE connection establishes.
-        loadTableState().then((items) => {
-          if (!userRef.current) return;
-          const tableState = items?.[0];
-          if (Array.isArray(tableState?.elements)) setActiveElements(tableState.elements);
-          setFeatureCountdowns(tableState?.featureCountdowns || {});
-          if (tableState?.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
-          if (tableState?.fearCount != null) setFearCount(tableState.fearCount);
-          if (Array.isArray(tableState?.playerEmails)) setPlayerEmails(tableState.playerEmails);
-          if (tableState?.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
-          if (tableState?.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
-          if (tableState?.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
-          tableStateReadyRef.current = true;
-        }).catch(err => console.error('Failed to load table state:', err));
         fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
         fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
+        fetchMyTables().then(tables => setMyTables(tables || [])).catch(() => {});
       }
     });
     return () => unsubscribe();
@@ -398,15 +386,53 @@ function App() {
     }
   }, [user, route.view, route.gmUid, navigate]);
 
+  // When tableId changes on gm-table view, clear local state so we don't show stale data before SSE snapshot
+  const prevTableIdRef = useRef(null);
+  useEffect(() => {
+    if (route.view !== 'gm-table' || !route.tableId) return;
+    if (prevTableIdRef.current !== null && prevTableIdRef.current !== route.tableId) {
+      setActiveElements([]);
+      setFearCount(0);
+      setFeatureCountdowns({});
+      setTableBattleMods({});
+      setPlayerEmails([]);
+      setTableName('');
+      setLifeSupportSelections({});
+      setRestMovesSelections({});
+    }
+    prevTableIdRef.current = route.tableId;
+  }, [route.view, route.tableId]);
+
+  // Load table state when viewing a table (initial paint before SSE)
+  useEffect(() => {
+    if (!user || route.view !== 'gm-table' || !route.tableId) return;
+    loadTableState(route.tableId).then((items) => {
+      if (!userRef.current) return;
+      const tableState = items?.[0];
+      if (!tableState) return;
+      if (Array.isArray(tableState.elements)) setActiveElements(tableState.elements);
+      setFeatureCountdowns(tableState.featureCountdowns || {});
+      if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
+      if (tableState.fearCount != null) setFearCount(tableState.fearCount);
+      if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
+      if (tableState.tableName != null) setTableName(tableState.tableName);
+      if (tableState.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
+      if (tableState.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
+      if (tableState.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
+      tableStateReadyRef.current = true;
+    }).catch(err => console.error('Failed to load table state:', err));
+  }, [user?.uid, route.view, route.tableId]);
+
   // GM SSE: receive player presence, table state snapshots, banners, and dice roll events
   useEffect(() => {
     if (!user || route.view !== 'gm-table' || isPlayer) return;
+    const tableId = route.tableId || user.uid;
     let es;
     let reconnectTimer;
     const connect = async () => {
       const token = await getAuthToken();
       if (!token || !userRef.current) return;
-      es = new EventSource(`/api/room/my/players?token=${encodeURIComponent(token)}`);
+      es = new EventSource(`/api/room/my/players?token=${encodeURIComponent(token)}&tableId=${encodeURIComponent(tableId)}`);
       es.addEventListener('presence', (e) => {
         setConnectedPlayers(JSON.parse(e.data).players || []);
       });
@@ -419,6 +445,10 @@ function App() {
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        if (state.tableName != null) {
+          setTableName(state.tableName);
+          setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
+        }
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
@@ -438,20 +468,19 @@ function App() {
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
-    // Announce GM display name on connect so it is persisted to table_state
-    postTableOp({ op: 'set-gm-display-name', gmDisplayName: user?.displayName || '' });
+    postTableOp({ op: 'set-gm-display-name', gmDisplayName: user?.displayName || '' }, tableId);
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [user?.uid, route.view, isPlayer]);
+  }, [user?.uid, route.view, route.tableId, isPlayer]);
 
-  // Player SSE: receive table state snapshots, banners, and dice roll events from GM's room
+  // Player SSE: receive table state snapshots, banners, and dice roll events for the invited table
   useEffect(() => {
-    if (!isPlayer || !user || !route.gmUid) return;
+    if (!isPlayer || !user || !route.tableId) return;
     let es;
     let reconnectTimer;
     const connect = async () => {
       const token = await getAuthToken();
       if (!token || !userRef.current) return;
-      es = new EventSource(`/api/room/${route.gmUid}/stream?token=${encodeURIComponent(token)}`);
+      es = new EventSource(`/api/room/${route.tableId}/stream?token=${encodeURIComponent(token)}`);
       // Server-authoritative table state snapshot (replaces state/table-op/character-* events)
       es.addEventListener('table_state', (e) => {
         const state = JSON.parse(e.data);
@@ -461,13 +490,17 @@ function App() {
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
+        if (state.tableName != null) setTableName(state.tableName);
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
-        // Ensure a nav tab exists for this GM's room now that we've confirmed access.
         setMyRooms(prev => {
-          if (prev.some(r => r.gmUid === route.gmUid)) return prev;
-          return [...prev, { gmUid: route.gmUid, gmName: state.gmDisplayName || '' }];
+          const hasRoom = prev.some(r => r.tableId === route.tableId);
+          if (hasRoom && state.tableName != null)
+            return prev.map(r => r.tableId === route.tableId ? { ...r, tableName: state.tableName || '' } : r);
+          if (!hasRoom)
+            return [...prev, { tableId: route.tableId, gmUid: route.gmUid, gmName: state.gmDisplayName || '', tableName: state.tableName || '' }];
+          return prev;
         });
         tableStateReadyRef.current = true;
       });
@@ -486,7 +519,7 @@ function App() {
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, user?.uid, route.gmUid]);
+  }, [isPlayer, user?.uid, route.tableId, route.gmUid]);
 
   // Drive Action Log live updates from the pendingBanners subscription channel.
   // roll-history seeds seenLogDbIdsRef on connect; here we append any newly-arriving
@@ -762,45 +795,54 @@ function App() {
   // These call postTableOp (which POSTs to /api/room/my/op). The server applies the op to the
   // DB state and notifies all subscribers. Token position updates are applied optimistically
   // so the map responds immediately; the next table_state snapshot confirms.
+  const tableId = route.view === 'gm-table' ? (route.tableId || user?.uid) : user?.uid;
 
   const sendUpdateActiveElement = (instanceId, updates) => {
     if ('tokenX' in updates || 'tokenY' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
-    postTableOp({ op: 'update-element', instanceId, updates });
+    postTableOp({ op: 'update-element', instanceId, updates }, tableId);
   };
 
   const sendRemoveActiveElement = (instanceId) => {
-    postTableOp({ op: 'remove-element', instanceId });
+    postTableOp({ op: 'remove-element', instanceId }, tableId);
   };
 
   const sendSetFearCount = (valueOrFn) => {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(fearCount) : valueOrFn;
-    postTableOp({ op: 'set-fear', fearCount: resolved });
+    postTableOp({ op: 'set-fear', fearCount: resolved }, tableId);
+  };
+
+  const sendSetTableName = (valueOrFn) => {
+    const resolved = typeof valueOrFn === 'function' ? valueOrFn(tableName) : valueOrFn;
+    const name = resolved ?? '';
+    postTableOp({ op: 'set-table-name', tableName: name }, tableId);
+    setTableName(name);
+    setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name } : t));
   };
 
   const sendSetTableBattleMods = (valueOrFn) => {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(tableBattleMods) : valueOrFn;
-    postTableOp({ op: 'set-battle-mods', tableBattleMods: resolved });
+    postTableOp({ op: 'set-battle-mods', tableBattleMods: resolved }, tableId);
   };
 
   const sendSetPlayerEmails = (valueOrFn) => {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(playerEmails) : valueOrFn;
-    postTableOp({ op: 'set-player-emails', playerEmails: resolved });
+    postTableOp({ op: 'set-player-emails', playerEmails: resolved }, tableId);
   };
 
   const sendUpdateCountdown = (cardKey, featureKey, cdIdx, value) => {
     const key = `${cardKey}|${featureKey}|${cdIdx}`;
-    postTableOp({ op: 'set-countdown', key, value });
+    postTableOp({ op: 'set-countdown', key, value }, tableId);
   };
 
   const sendClearTable = () => {
-    postTableOp({ op: 'clear-table' });
+    postTableOp({ op: 'clear-table' }, tableId);
   };
 
   const sendDoAddToTable = async (item, collectionName) => {
     const newElements = await doAddToTable(item, collectionName);
-    if (newElements?.length) postTableOp({ op: 'add-elements', elements: newElements });
+    if (newElements?.length) postTableOp({ op: 'add-elements', elements: newElements }, tableId);
     return newElements;
   };
 
@@ -818,12 +860,12 @@ function App() {
 
   const sendUpdateActiveElementsBaseData = (predicate, newBaseData) => {
     const matching = activeElements.find(predicate);
-    if (matching) postTableOp({ op: 'update-base-data', elementId: matching.id, newBaseData });
+    if (matching) postTableOp({ op: 'update-base-data', elementId: matching.id, newBaseData }, tableId);
   };
 
   const sendSetMapConfig = (newConfig, resetTokenPositions = false) => {
     const merged = { ...mapConfig, ...newConfig };
-    postTableOp({ op: 'set-map', ...merged, resetTokenPositions });
+    postTableOp({ op: 'set-map', ...merged, resetTokenPositions }, tableId);
   };
 
   const sendLifeSupportSelect = (rollDbId, instanceId) => {
@@ -836,8 +878,7 @@ function App() {
       else next[key] = instanceId;
       return next;
     });
-    const gmUidForApi = isPlayer ? route.gmUid : null;
-    postLifeSupportSelect(gmUidForApi, rollDbId, isDeselect ? null : instanceId);
+    postLifeSupportSelect(tableId, rollDbId, isDeselect ? null : instanceId);
   };
 
   const sendLifeSupportClear = (rollDbId) => {
@@ -846,41 +887,41 @@ function App() {
       delete next[String(rollDbId)];
       return next;
     });
-    postTableOp({ op: 'life-support-clear', _rollDbId: rollDbId });
+    postTableOp({ op: 'life-support-clear', _rollDbId: rollDbId }, tableId);
   };
 
   const gmUidForRest = route.gmUid || user?.uid;
   const sendRestMoveSelect = (rollDbId, instanceId, slot, moveId, options = {}) => {
-    if (gmUidForRest) postRestMoveSelect(gmUidForRest, rollDbId, instanceId, slot, moveId, options);
+    if (gmUidForRest) postRestMoveSelect(tableId, rollDbId, instanceId, slot, moveId, options);
   };
   const sendRestMoveClear = (rollDbId) => {
-    postTableOp({ op: 'rest-move-clear', _rollDbId: rollDbId });
+    postTableOp({ op: 'rest-move-clear', _rollDbId: rollDbId }, tableId);
   };
 
   // Player callback — sends update to server; state arrives via table_state SSE snapshot.
   // Token position updates are applied optimistically so the map responds immediately.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
-    if (!route.gmUid) return;
+    if (!route.tableId) return;
     if ('tokenX' in updates || 'tokenY' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     try {
-      await postCharacterUpdate(route.gmUid, instanceId, updates);
+      await postCharacterUpdate(route.tableId, instanceId, updates);
     } catch (err) {
       console.error('postCharacterUpdate failed:', err);
     }
-  }, [route.gmUid]);
+  }, [route.tableId]);
 
   const handlePlayerAddCharacter = useCallback(async (charData) => {
-    if (!route.gmUid) return;
+    if (!route.tableId) return;
     try {
-      await postAddCharacter(route.gmUid, charData);
+      await postAddCharacter(route.tableId, charData);
       // State update is handled by the character-added SSE event that the server broadcasts
       // to all room clients (including this player). Updating here too would double-add.
     } catch (err) {
       console.error('postAddCharacter failed:', err);
     }
-  }, [route.gmUid]);
+  }, [route.tableId]);
 
   // GM impersonation: add a character on behalf of the previewed player.
   const handleGmImpersonateAddCharacter = (charData) => {
@@ -916,20 +957,50 @@ function App() {
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
               <NavBtn
                 icon={<LayoutDashboard />}
-                label="My Game Table"
-                active={route.view === 'gm-table' && (route.gmUid === user?.uid || !route.gmUid)}
+                label={(() => { const n = myTables.find(t => t.id === user?.uid)?.name; return (n && n.trim() && n !== 'New Table' ? n : 'My Game Table'); })()}
+                active={route.view === 'gm-table' && route.tableId === user?.uid}
                 onClick={() => navigate(`/gm-table/${user?.uid || ''}`)}
                 pulse={tableFlash}
               />
-              {myRooms.map(({ gmUid, gmName }) => (
+              {myTables.filter(t => t.id !== user?.uid).map((t) => (
                 <NavBtn
-                  key={gmUid}
+                  key={t.id}
                   icon={<LayoutDashboard />}
-                  label={gmName ? `${gmName}'s Table` : 'GM Table'}
-                  active={route.view === 'gm-table' && route.gmUid === gmUid}
-                  onClick={() => navigate(`/gm-table/${gmUid}`)}
+                  label={(t.name && t.name.trim() && t.name !== 'New Table' ? t.name : 'Game Table')}
+                  active={route.view === 'gm-table' && route.tableId === t.id}
+                  onClick={() => navigate(`/gm-table/${user?.uid}/${t.id}`)}
                 />
               ))}
+              {myRooms.map((room) => {
+                const isPrimary = room.tableId === room.gmUid;
+                const href = isPrimary ? `/gm-table/${room.gmUid}` : `/gm-table/${room.gmUid}/${room.tableId}`;
+                const label = (room.tableName && room.tableName.trim() && room.tableName !== 'New Table' ? room.tableName : (room.gmName ? `${room.gmName}'s Game Table` : 'Game Table'));
+                return (
+                  <NavBtn
+                    key={room.tableId}
+                    icon={<LayoutDashboard />}
+                    label={label}
+                    active={route.view === 'gm-table' && route.tableId === room.tableId}
+                    onClick={() => navigate(href)}
+                  />
+                );
+              })}
+              {!isPlayer && (
+                <NavBtn
+                  icon={<Plus size={16} />}
+                  label="New Table"
+                  active={false}
+                  onClick={async () => {
+                    try {
+                      const { id, name } = await createTable('New Table');
+                      setMyTables(prev => [...prev, { id, name }]);
+                      navigate(`/gm-table/${user?.uid}/${id}`);
+                    } catch (err) {
+                      console.error('Create table failed:', err);
+                    }
+                  }}
+                />
+              )}
               {!isPlayer && (() => {
                 const advElements = activeElements.filter(e => e.elementType === 'adversary');
                 const envCount = activeElements.filter(e => e.elementType === 'environment').length;
@@ -1056,6 +1127,7 @@ function App() {
               aria-hidden={route.view !== 'gm-table'}
             >
               <GMTableView
+                tableId={tableId}
                 activeElements={activeElements}
                 updateActiveElement={isPlayer ? handlePlayerCharacterUpdate : sendUpdateActiveElement}
                 removeActiveElement={effectiveIsPlayer ? () => {} : sendRemoveActiveElement}
@@ -1080,6 +1152,8 @@ function App() {
                 setTableBattleMods={effectiveIsPlayer ? () => {} : sendSetTableBattleMods}
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
+                tableName={tableName}
+                onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
                 clearTable={effectiveIsPlayer ? () => {} : sendClearTable}
                 isPlayer={effectiveIsPlayer}
                 playerEmail={effectivePlayerEmail}

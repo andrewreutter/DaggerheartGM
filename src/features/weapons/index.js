@@ -24,6 +24,7 @@ import Lucky         from './Lucky.js';
 import Bouncing      from './Bouncing.js';
 import Versatile     from './Versatile.js';
 import DoubledUp     from './DoubledUp.js';
+import Destructive   from './Destructive.js';
 import Cumbersome    from './Cumbersome.js';
 import Heavy         from './Heavy.js';
 import Protective    from './Protective.js';
@@ -33,6 +34,22 @@ import Brave         from './Brave.js';
 import Paired        from './Paired.js';
 import Otherworldly  from './Otherworldly.js';
 import Parry         from './Parry.js';
+import Returning     from './Returning.js';
+import Hooked        from './Hooked.js';
+import Eruptive      from './Eruptive.js';
+import Persuasive    from './Persuasive.js';
+import Dueling       from './Dueling.js';
+import Retractable   from './Retractable.js';
+import Timebending   from './Timebending.js';
+import Healing       from './Healing.js';
+import Hot           from './Hot.js';
+import Greedy        from './Greedy.js';
+import Concussive    from './Concussive.js';
+import Long          from './Long.js';
+import Grappling     from './Grappling.js';
+import Sheltering    from './Sheltering.js';
+import LockedOn      from './LockedOn.js';
+import Deflecting    from './Deflecting.js';
 
 const featureList = [
   Painful, Invigorating, Lifestealing, Charged, Startling,
@@ -41,6 +58,8 @@ const featureList = [
   Burning, Reloading, Quick, Devastating, Lucky,
   Bouncing, Versatile, DoubledUp,
   Cumbersome, Heavy, Protective, Barrier, DoubleDuty, Brave, Paired, Otherworldly, Parry,
+  Destructive,
+  Returning, Hooked, Eruptive, Persuasive, Dueling, Retractable, Timebending, Healing, Hot, Greedy, Concussive, Long, Grappling, Sheltering, LockedOn, Deflecting,
 ];
 
 /** @type {Record<string, object>} */
