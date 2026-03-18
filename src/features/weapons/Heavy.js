@@ -1,6 +1,9 @@
 export default {
   name: 'Heavy',
-  skipTag: true,
   description: '-1 to Evasion',
-  passiveStatMods: { evasion: -1 },
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Heavy', '-1 to Evasion', {
+      onCharacterRender: (ctx) => ctx.addStatMod('evasion', -1),
+    });
+  },
 };

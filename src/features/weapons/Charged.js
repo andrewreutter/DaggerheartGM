@@ -1,13 +1,14 @@
 export default {
   name: 'Charged',
-  automated: true,
-  tagText: '+1 damage die, mark 1 Stress (applied on dismiss)',
-  /**
-   * Mark 1 Stress on the attacker when a Charged weapon roll (or action
-   * notification) completes.  Charged always uses `_attackerInstanceId`
-   * so `attacker` is resolved from that field in the hook context.
-   */
-  onRollComplete({ attacker }) {
-    attacker?.markStress(1);
+  description: 'Before an attack, mark a Stress to add an extra damage die. The Stress is marked when the roll is acknowledged.',
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Charged', 'Before an attack, mark a Stress to add an extra damage die. The Stress is marked when the roll is acknowledged.', {
+      showTag: true,
+      automated: true,
+      tagText: '+1 damage die, mark 1 Stress (applied on dismiss)',
+      onRollComplete({ attacker }) {
+        attacker?.markStress(1);
+      },
+    });
   },
 };

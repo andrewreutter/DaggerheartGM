@@ -54,9 +54,6 @@ export async function runBeforeMarkStress(characterEl, amount, source, updateAct
   const { weapon: weaponNames, armor: armorNames } = getWeaponAndArmorFeatureNames(characterEl);
   const names = [...originNames, ...weaponNames, ...armorNames];
   const { postRollSilent, gmUid, postAction } = options;
-  // #region agent log
-  fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'origin-lifecycle.js:runBeforeMarkStress',message:'runBeforeMarkStress called',data:{source,amount,characterName:characterEl?.name,featureCount:names.length,hasPostRollSilent:typeof postRollSilent==='function'},hypothesisId:'B',timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const character = wrapEntity(characterEl, updateActiveElement);
   const rollDice = postRollSilent
     ? async (expr) => {
@@ -81,12 +78,7 @@ export async function runBeforeMarkStress(characterEl, amount, source, updateAct
         postAction: (actionText) => postAction?.(characterEl, name, actionText),
       };
       const result = await Promise.resolve(fn(ctx));
-      if (result?.cancel) {
-        // #region agent log
-        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'origin-lifecycle.js:runBeforeMarkStress',message:'runBeforeMarkStress returning cancel',data:{featureName:name},hypothesisId:'E',timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-        return { cancel: true };
-      }
+      if (result?.cancel) return { cancel: true };
       if (typeof result?.reduceBy === 'number' && result.reduceBy > 0) {
         const reduceBy = Math.min(result.reduceBy, amount);
         return { cancel: false, reduceBy };

@@ -641,11 +641,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
-  // #region agent log
-  if (roll.rollText && roll.rollText.includes(' + ')) {
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'DiceRoller.jsx:ResultBanner', message: 'banner display', data: { total, rollTextTail: (roll.rollText || '').slice(-30) }, timestamp: Date.now(), hypothesisId: 'E' }) }).catch(() => {});
-  }
-  // #endregion
   // Active post-apply interaction: the name of the tag whose interaction phase is running.
   // Replaces the three separate quickPhase / doubledUpPhase / bouncingPhase states.
   const [activeInteractionTag, setActiveInteractionTag] = useState(null);
@@ -1212,10 +1207,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           );
         })}
 
-        {/* ── Feature tags ── */}
-        {(roll.tags || []).length > 0 && (
+        {/* ── Feature tags (only show tag pill when feature has showTag: true; onBanner-only features use narration) ── */}
+        {(roll.tags || []).filter(t => weaponFeatures[t.name]?.showTag === true).length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
-            {(roll.tags || []).map((tag, i) => {
+            {(roll.tags || []).filter(t => weaponFeatures[t.name]?.showTag === true).map((tag, i) => {
               const isAuto = isTagAutomated(tag.name);
               const conditional = getConditionalTagStatus(tag, roll);
               const effectiveStyle = isAuto ? 'green'
@@ -2346,10 +2341,12 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             )}
           </div>
         )}
-        {/* Narration (e.g. Faun Kick knockback) */}
-        {roll._narration && (
-          <p className="text-[10px] text-slate-400 italic text-center mt-1">{roll._narration}</p>
-        )}
+        {/* Narration (e.g. Faun Kick knockback, Burning automated) */}
+        {((roll._narrations?.length) ? roll._narrations : (roll._narration ? [{ text: roll._narration }] : [])).map((item, i) => {
+          const isAutomated = item.style === 'automated';
+          const cls = isAutomated ? 'text-[10px] text-green-400/90 italic text-center mt-1' : 'text-[10px] text-slate-400 italic text-center mt-1';
+          return <p key={i} className={cls}>{item.text}</p>;
+        })}
       </div>
       </div>
     </div>

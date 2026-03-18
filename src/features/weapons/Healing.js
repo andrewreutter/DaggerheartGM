@@ -1,5 +1,7 @@
 export default {
   name: 'Healing',
-  skipTag: true,
   description: 'During downtime, automatically clear a Hit Point.',
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Healing', 'During downtime, automatically clear a Hit Point.', {});
+  },
 };

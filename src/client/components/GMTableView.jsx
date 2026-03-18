@@ -348,6 +348,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const [preRollDifficulty, setPreRollDifficulty] = useState(15); // DC 5–30 when GM shows difficulty chip
   const [preRollAdvantages, setPreRollAdvantages] = useState([]); // string[]: optional name per advantage ('' = default "Advantage")
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
+  const characterTargetMenuOpenRef = useRef(false); // set by CharacterHoverCard when target menu is open; avoid closing overlay on mouse leave
 
   const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
   const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
@@ -548,17 +549,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       } else {
         entityTarget.markArmor();
       }
-      ctx.postRollSilent = postRollSilent;
       const armorFeatureName = feature ?? null;
       if (armorFeatureName) {
         const descriptor = armorFeatures[armorFeatureName];
-        const fn = descriptor?.onArmorSlotMarked;
+        const fn = descriptor?.onAfterMarkArmor;
         if (typeof fn === 'function') {
+          const afterCtx = {
+            character: entityTarget,
+            amount: 1,
+            source: armorFeatureName,
+            roll: ctx.roll,
+            postRollSilent,
+            tagNames: ctx.tagNames,
+            dmgType: ctx.dmgType,
+          };
           try {
-            const result = fn(ctx);
+            const result = fn(afterCtx);
             if (result != null && typeof result.then === 'function') await result;
           } catch (err) {
-            console.error(`[features] ${armorFeatureName}.onArmorSlotMarked threw:`, err);
+            console.error(`[features] ${armorFeatureName}.onAfterMarkArmor threw:`, err);
           }
         }
       }
@@ -631,11 +640,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (feature === 'Resilient' && isLastSlot) {
         const resilientFeature = armorFeatures['Resilient'];
         if (resilientFeature?.onLastArmorSlot) {
-          const charEl = activeElements.find(el => el.instanceId === target.instanceId);
-          const charName = charEl?.name || target.name;
+          const character = wrapEntity(target, updateActiveElement);
           const result = await resilientFeature.onLastArmorSlot({
-            target,
-            charName,
+            character,
             postRoll,
             addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
           });
@@ -782,6 +789,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
 
     pendingDamageRef.current = { instanceId: target.instanceId, newHp };
+  };
+
+  // Action notification (e.g. Startling, session-cycle banners): fire-and-forget broadcast.
+  // Defined before handleConcussiveKnock so it can be listed in that useCallback's dependency array.
+  const handleActionNotification = (notification) => {
+    dismissAllHoverCards();
+    postActionNotification(notification).catch(() => {});
+  };
+
+  // Player action notification — fire-and-forget broadcast to GM room.
+  const handlePlayerActionNotification = (notification) => {
+    dismissAllHoverCards();
+    postActionNotification(notification, tableId).catch(() => {});
   };
 
   // Concussive (weapon): spend 1 Hope to knock the damage target to Far range (50 ft from attacker).
@@ -1124,18 +1144,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       performFullReroll(roll, {});
     }
   }, [tableId, isPlayer, activeElements, updateActiveElement, performFullReroll]);
-
-  // Action notification (e.g. Startling, session-cycle banners): fire-and-forget broadcast.
-  const handleActionNotification = (notification) => {
-    dismissAllHoverCards();
-    postActionNotification(notification).catch(() => {});
-  };
-
-  // Player action notification — fire-and-forget broadcast to GM room.
-  const handlePlayerActionNotification = (notification) => {
-    dismissAllHoverCards();
-    postActionNotification(notification, tableId).catch(() => {});
-  };
 
   // Origin lifecycle (e.g. Unshakable): post action banner with character name.
   const postActionForStress = (charEl, actionName, actionText) => {
@@ -2229,6 +2237,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   // When context.characterEl is provided, runs ancestry onAct hooks; if any chips are added,
   // shows a player-only pre-roll banner instead of posting immediately.
   const handlePlayerOwnRoll = (rollText, displayName, rollMeta = {}, context = null) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePlayerOwnRoll',message:'Roll handler entered',data:{hasSelectedTarget:!!rollMeta._selectedTargetInstanceId,selectedTargetId:rollMeta._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     dismissAllHoverCards();
     const targetTableId = tableId;
     const meta = { ...rollMeta, _playerInitiated: true };
@@ -2307,9 +2318,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     canvas.addChip = (descriptor) => {
       const featureName = canvas._currentFeatureName;
       const merged = { ...descriptor, _featureName: featureName };
-      // #region agent log
-      fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:addChip', message: 'canvas.addChip', data: { _featureName: featureName, label: descriptor?.label?.slice(0, 40) }, timestamp: Date.now(), hypothesisId: 'A' }) }).catch(() => {});
-      // #endregion
       const hadCustomIsVisible = typeof descriptor.isVisible === 'function';
       if (merged.resetsOn) {
         const originFeatures = [...(characterEl.ancestryFeatures || []), ...(characterEl.communityFeatures || [])];
@@ -2363,12 +2371,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       getFeatureStateFor: (name) => getFeatureStateFor(characterEl, name),
     });
 
-    // #region agent log
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:afterOnAct', message: 'after onAct', data: { chipsLength: canvas.chips.length, isPlayer: !!isPlayer, hasKnowTheTide: canvas.chips.some(c => (c._featureName || c.label || '').includes('Know the Tide')) }, timestamp: Date.now(), hypothesisId: 'B' }) }).catch(() => {});
-    // #endregion
     if (canvas.chips.length === 0) {
       runHook(ancestryFeatures, featureNames, 'onRoll', { roll: rollWrapper });
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
+      // #region agent log
+      fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePlayerOwnRoll',message:'Posting roll immediately (no chips)',data:{hasSelectedTarget:!!metaWithLabel._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
       postRoll(rollWrapper.getFinalRollText(), pending.displayName || rollText, targetTableId, metaWithLabel)
         .catch(err => console.error('Player roll failed:', err));
       return;
@@ -2382,6 +2390,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       setPreRollBanner(null);
       setSelectedPreRollChips([]);
     };
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePlayerOwnRoll',message:'Setting preRollBanner (chips present)',data:{chipsCount:canvas.chips.length,hasSelectedTarget:!!pending.meta._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending });
     setSelectedPreRollChips(canvas.chips.map(() => false));
   };
@@ -2395,6 +2406,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
   const handlePreRollProceed = () => {
     if (!preRollBanner) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePreRollProceed',message:'Proceed clicked',data:{hasPending:!!preRollBanner.pending,hasSelectedTarget:!!preRollBanner.pending?.meta?._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
     const charEl = activeElements.find(e => e.instanceId === characterEl.instanceId) || characterEl;
     const hasDifficultyChip = chips.some(c => c._difficultyChip);
@@ -2405,9 +2419,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
                     const proceedFeatureNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
                     runHook(ancestryFeatures, proceedFeatureNames, 'onRoll', { roll: rollWrapper });
-    // #region agent log
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:ProceedBefore', message: 'Proceed before loop', data: { selectedCount: selectedPreRollChips.filter(Boolean).length, chipLabels: chips.map(c => c._featureName || c.label?.slice(0, 30)) }, timestamp: Date.now(), hypothesisId: 'C' }) }).catch(() => {});
-    // #endregion
     for (let i = 0; i < chips.length; i++) {
       const chip = chips[i];
       if (chip._difficultyChip) continue;
@@ -2428,17 +2439,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (chip.resetsOn && chip._featureKey) wrapEntity(charEl, updateActiveElement).setFeatureUsed(chip._featureKey, chip.resetsOn);
       const feature = getFeatureStateFor && chip._featureName ? getFeatureStateFor(charEl, chip._featureName) : null;
       if (pending && chip._featureName && !pending.rollBonusLabel) pending.rollBonusLabel = chip._featureName;
-      // #region agent log
-      if (typeof chip.onUse === 'function') fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:chipOnUse', message: 'calling onUse', data: { _featureName: chip._featureName, hasFeature: !!feature }, timestamp: Date.now(), hypothesisId: 'A' }) }).catch(() => {});
-      // #endregion
       if (typeof chip.onUse === 'function') chip.onUse(rollWrapper, feature);
     }
-    // #region agent log
-    const finalText = rollWrapper.getFinalRollText();
-    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'GMTableView.jsx:ProceedAfter', message: 'Proceed after loop', data: { finalText: finalText.slice(-50), hasPlus: finalText.includes(' + ') }, timestamp: Date.now(), hypothesisId: 'C' }) }).catch(() => {});
-    // #endregion
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:handlePreRollProceed',message:'Calling onProceed (postRoll)',data:{metaSelectedTarget:pending?.meta?._selectedTargetInstanceId},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     onProceed();
   };
 
@@ -2835,9 +2842,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         const feature = ancestryFeatures[af.name];
         if (!feature) continue;
         const chips = [];
+        let bannerNarrations;
         if (feature.onBanner) {
-          const banner = { chips, addChip(descriptor) { this.chips.push(descriptor); } };
+          const banner = {
+            chips,
+            _narrations: [],
+            addChip(descriptor) { this.chips.push(descriptor); },
+            addNarration(text, style) { this._narrations.push(style != null ? { text, style } : { text }); },
+          };
           feature.onBanner(banner);
+          bannerNarrations = banner._narrations?.length ? [...banner._narrations] : undefined;
         } else if (feature.bannerAction) {
           chips.push(feature.bannerAction);
         }
@@ -2860,6 +2874,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             character: char,
             chip,
             stateKey,
+            bannerNarrations,
             _featureKey: featureKeyForResetsOn,
             getDisabledState: (roll) => {
               enrichRollWithAttackRange(roll, activeElements);
@@ -2904,11 +2919,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               const wr = wrapRoll(roll, undefined, char.instanceId);
               wr.isMine = getIsMyRoll(roll);
               const visible = chip.isVisible ? chip.isVisible(wr, entity) : wr.isMine;
-              // #region agent log
-              if (feature.name === 'Danger Sense') {
-                fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'e86e0f',sessionId:'e86e0f',location:'GMTableView.jsx:matchesRoll',message:'Danger Sense matchesRoll',data:{selectedTargetId:roll._selectedTargetInstanceId,hasDamage,charInstanceId:char.instanceId,targetIsMe:wr.target?.isMe,rangeFromMe:wr.target?.rangeFromMe,visible},timestamp:Date.now()})}).catch(()=>{});
-              }
-              // #endregion
               return visible;
             },
             isActive: stateKey
@@ -2932,6 +2942,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     const isFirst = isFirstBannersSnapshotRef.current;
     isFirstBannersSnapshotRef.current = false;
 
+    function getBannerNarration(roll) {
+      const parts = [];
+      if (roll._narration) parts.push({ text: roll._narration });
+      const tagNames = (roll.tags || []).map(t => (typeof t === 'string' ? t : t?.name)).filter(Boolean);
+      const weaponBanner = { addNarration(text, style) { parts.push(style != null ? { text, style } : { text }); } };
+      for (const name of tagNames) {
+        const f = weaponFeatures[name];
+        if (f?.onBanner) f.onBanner(weaponBanner);
+      }
+      for (const r of ancestryBannerReactions) {
+        if (r.matchesRoll(roll) && r.bannerNarrations?.length) parts.push(...r.bannerNarrations);
+      }
+      return parts.filter(p => p?.text);
+    }
+
     const lastBanner = pendingBanners[pendingBanners.length - 1];
     for (const banner of pendingBanners) {
       const dbId = banner._rollDbId;
@@ -2951,8 +2976,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
           setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
         }
+        const narrations = getBannerNarration(banner);
         const augmentedBanner = {
           ...banner,
+          ...(narrations.length ? { _narrations: narrations } : {}),
           ...(rousingSpeechTargets !== undefined ? { _rousingSpeechTargets: rousingSpeechTargets } : {}),
           ...(lifeSupportTargets !== undefined ? { _lifeSupportTargets: lifeSupportTargets } : {}),
           _isPlayerRoll: banner._playerInitiated === true,
@@ -2981,8 +3008,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
         setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
       }
+      const narrations = getBannerNarration(banner);
       diceRollerRef.current?.addRoll({
         ...banner,
+        ...(narrations.length ? { _narrations: narrations } : {}),
         ...(rousingSpeechTargets !== undefined ? { _rousingSpeechTargets: rousingSpeechTargets } : {}),
         ...(lifeSupportTargets !== undefined ? { _lifeSupportTargets: lifeSupportTargets } : {}),
         _isPlayerRoll: banner._playerInitiated === true,
@@ -3000,7 +3029,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
     diceRollerRef.current?.setBannerReactionsFallback?.(ancestryBannerReactions);
-  }, [pendingBanners, ancestryBannerReactions]);
+  }, [pendingBanners, ancestryBannerReactions, activeElements]);
 
   // Display overrides for banners: run chip.render for each pending roll and matching reaction.
   const displayOverridesByRollId = useMemo(() => {
@@ -3479,9 +3508,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       filled={el.currentStress || 0}
                       pendingFilled={pendingResourceCosts[el.instanceId]?.stress ?? 0}
                       onSetFilled={isAssigned ? async (s) => {
-                        // #region agent log
-                        fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'GMTableView.jsx:3267',message:'Characters panel Stress onSetFilled',data:{instanceId:el.instanceId,newFilled:s,currentStress:el.currentStress},hypothesisId:'A',timestamp:Date.now()})}).catch(()=>{});
-                        // #endregion
                         const current = el.currentStress ?? 0;
                         const amount = s - current;
                         if (amount <= 0) {
@@ -3496,9 +3522,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             updateActiveElement(el.instanceId, { currentStress: newFilled });
                           }
                         } else {
-                          // #region agent log
-                          fetch('/api/debug-log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_debugUrl:'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',_debugSessionId:'d37b42',sessionId:'d37b42',location:'GMTableView.jsx:stressCancel',message:'Stress update skipped (cancel)',data:{instanceId:el.instanceId},hypothesisId:'F',timestamp:Date.now()})}).catch(()=>{});
-                          // #endregion
                         }
                       } : undefined}
                       fillColor="bg-orange-500"
@@ -5132,7 +5155,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             width: hasCompanion ? 'calc(36rem + 16px)' : 'calc(22rem + 8px)',
             height: 'calc(100dvh - 98px)',
           }}
-          {...characterOverlay.overlayHandlers}
+          onMouseEnter={characterOverlay.overlayHandlers.onMouseEnter}
+          onMouseLeave={() => {
+            const menuOpen = characterTargetMenuOpenRef.current;
+            // #region agent log
+            fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'GMTableView.jsx:overlayMouseLeave',message:'Character overlay mouse leave',data:{targetMenuOpen:menuOpen},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+            // #endregion
+            if (!menuOpen) characterOverlay.close();
+          }}
         >
           <div className="flex flex-col overflow-hidden shrink-0" style={{ width: '22rem' }}>
             {(() => {
@@ -5163,6 +5193,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   hideCompanionSection={hasCompanion}
                   isPlayer={isPlayer}
                   getValidTargets={allowInteract ? getValidTargets : undefined}
+                  targetMenuOpenRef={characterTargetMenuOpenRef}
                 />
               );
             })()}

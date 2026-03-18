@@ -73,9 +73,9 @@ function buildTraitRollText(charName, traitKey, traitScore, expName, experienceM
   return parts.join(' ');
 }
 
-/** Returns true when a feature has no per-attack banner effect (passive stat mods only). */
-function isSkipTagFeature(name) {
-  return weaponFeatures[name]?.skipTag ?? false;
+/** Returns true when the feature should be shown as a tag on the roll banner. */
+function isShowTagFeature(name) {
+  return weaponFeatures[name]?.showTag === true;
 }
 
 /**
@@ -135,8 +135,8 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
     if (f?.appendRollParts) parts.push(...(f.appendRollParts(rollCtx) || []));
   }
 
-  // Feature tag (skip purely passive features)
-  if (feature && !isSkipTagFeature(feature.name)) {
+  // Feature tag when feature opts in with showTag: true, or has onBanner (so tag is in roll.tags for narration).
+  if (feature && (isShowTagFeature(feature.name) || weaponFeatures[feature.name]?.onBanner)) {
     let tagText;
     if (opts.devastating) {
       tagText = 'd20 damage die, mark 1 Stress (active)';
@@ -277,6 +277,7 @@ export function CharacterHoverCard({
   pendingResourceCosts = {},
   isPlayer = false,
   getValidTargets,
+  targetMenuOpenRef,
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
@@ -285,6 +286,13 @@ export function CharacterHoverCard({
   const [selectedAdvIds, setSelectedAdvIds] = useState(() => []);
   // For features that requiresInputForFeature (e.g. Sorcerer Channel Raw Power)
   const [featureInputPending, setFeatureInputPending] = useState(null); // { feature, subFeature, action, spec }
+
+  // Tell parent when target menu is open so overlay does not close on mouse leave (fixed popover is outside overlay bounds).
+  useEffect(() => {
+    if (!targetMenuOpenRef) return;
+    targetMenuOpenRef.current = !!targetMenuPending;
+    return () => { targetMenuOpenRef.current = false; };
+  }, [targetMenuPending, targetMenuOpenRef]);
   const [featureInputValue, setFeatureInputValue] = useState('');
   // Druid beastform selection (shared by Beastform class feature and Evolution hope ability)
   const [selectedBeastformId, setSelectedBeastformId] = useState(null);
@@ -744,6 +752,9 @@ export function CharacterHoverCard({
         return;
       }
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
+      // #region agent log
+      fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'CharacterHoverCard.jsx:targetMenuPending',message:'Target menu opened',data:{validTargetsLength:validTargets.length,type:'weapon'},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
       setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
       return;
     }
@@ -753,6 +764,9 @@ export function CharacterHoverCard({
 
   const handleTargetMenuSelect = (target) => {
     if (!targetMenuPending) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'CharacterHoverCard.jsx:handleTargetMenuSelect',message:'Target selected',data:{targetInstanceId:target?.instanceId,targetName:target?.name,type:targetMenuPending?.type},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     let { type, rollText, displayName, rollMeta, opts, notification } = targetMenuPending;
 
     // Action notification with pre-selected target (e.g. Make a Scene, Bard)

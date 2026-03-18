@@ -295,11 +295,6 @@ function rollFromText(rollText) {
     staticModifier = parseInt(modMatch[1], 10);
     remainder = remainder.slice(0, remainder.length - modMatch[0].length).trimEnd();
   }
-  // #region agent log
-  if (rollText.includes(' + ')) {
-    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '443610' }, body: JSON.stringify({ sessionId: '443610', location: 'server.js:rollFromText', message: 'rollFromText +N', data: { remainder: remainder.slice(-30), staticModifier, modMatch: !!modMatch }, timestamp: Date.now(), hypothesisId: 'D' }) }).catch(() => {});
-  }
-  // #endregion
   if (subItems.length > 0 && remainder) {
     subItems[subItems.length - 1].post = remainder;
   }
@@ -433,11 +428,6 @@ function buildRollData(rollText, displayName, _clientId, extra = {}) {
   if (_clientId) rollData._clientId = _clientId;
   // Preserve client displayName so weapon attack banners show "CharacterName WeaponName".
   if (displayName) rollData.displayName = displayName;
-  // #region agent log
-  if (rollText.includes(' + ')) {
-    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '443610' }, body: JSON.stringify({ sessionId: '443610', location: 'server.js:buildRollData', message: 'buildRollData', data: { total: rollData.total, rollTextTail: rollText.slice(-25) }, timestamp: Date.now(), hypothesisId: 'D' }) }).catch(() => {});
-  }
-  // #endregion
   return { ...rollData, ...extra };
 }
 
@@ -675,12 +665,6 @@ async function applyOpToTableState(tableId, op) {
       ...otherChanges,
       ...(newElements !== undefined ? { elements: stripCharacterElements(newElements) } : {}),
     };
-    // #region agent log
-    if (newState.elements?.length && op.op === 'update-element' && op.instanceId) {
-      const char = newState.elements.find(e => e.instanceId === op.instanceId);
-      if (char) fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'94f0d0'},body:JSON.stringify({sessionId:'94f0d0',location:'server.js:applyOpToTableState',message:'after strip character',data:{instanceId:char.instanceId,retractedActive:char.retractedActive},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
-    }
-    // #endregion
     await upsertItem(APP_ID, userId, 'table_state', tableId, newState, false);
     subscriptionManager.notifyChange('table_state', tableId);
     return newState;
@@ -780,7 +764,10 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       const tableId = req.query.tableId;
       if (tableId) {
         const row = await getTableStateById(APP_ID, tableId);
-        if (!row || row.userId !== req.uid) {
+        if (!row) return res.status(404).json({ error: 'Table not found' });
+        const isOwner = row.userId === req.uid;
+        const isPlayer = (row.data?.playerEmails || []).includes(req.email);
+        if (!isOwner && !isPlayer) {
           return res.status(403).json({ error: 'Not your table' });
         }
         const state = row.data || {};

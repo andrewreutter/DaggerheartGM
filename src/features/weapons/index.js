@@ -1,9 +1,15 @@
 /**
- * Weapon features barrel — builds a lookup map from feature name to feature object.
+ * Weapon features barrel — builder pattern aligned with ancestries/communities.
+ *
+ * Each weapon file exports { name, description?, onCharacterBuild({ character, weapon }) }.
+ * The barrel creates a character builder (shared addFeature) and a weapon context object,
+ * then runs builder.onCharacterBuild({ character, weapon }). Descriptors are registered
+ * in weaponFeatures only (no feature list / no character sheet feature cards).
  */
+import { createFeatureBuilder } from '../add-feature.js';
 import Painful       from './Painful.js';
 import Invigorating  from './Invigorating.js';
-import Lifestealing  from './Lifestealing.js';
+import Lifestealing   from './Lifestealing.js';
 import Charged       from './Charged.js';
 import Startling     from './Startling.js';
 import Reliable      from './Reliable.js';
@@ -27,7 +33,7 @@ import DoubledUp     from './DoubledUp.js';
 import Destructive   from './Destructive.js';
 import Cumbersome    from './Cumbersome.js';
 import Heavy         from './Heavy.js';
-import Protective    from './Protective.js';
+import Protective   from './Protective.js';
 import Barrier       from './Barrier.js';
 import DoubleDuty    from './DoubleDuty.js';
 import Brave         from './Brave.js';
@@ -51,7 +57,7 @@ import Sheltering    from './Sheltering.js';
 import LockedOn      from './LockedOn.js';
 import Deflecting    from './Deflecting.js';
 
-const featureList = [
+const builders = [
   Painful, Invigorating, Lifestealing, Charged, Startling,
   Reliable, Sharpwing, Bonded, Scary, Deadly,
   Powerful, Massive, Brutal, SelfCorrecting, Serrated,
@@ -62,7 +68,17 @@ const featureList = [
   Returning, Hooked, Eruptive, Persuasive, Dueling, Retractable, Timebending, Healing, Hot, Greedy, Concussive, Long, Grappling, Sheltering, LockedOn, Deflecting,
 ];
 
-/** @type {Record<string, object>} */
-const weaponFeatures = Object.fromEntries(featureList.map(f => [f.name, f]));
+/** @type {Record<string, object>} feature name → descriptor */
+const weaponFeatures = {};
+
+for (const builder of builders) {
+  const character = createFeatureBuilder({
+    targetMap: weaponFeatures,
+    sourceType: 'weapon',
+    source: builder.name,
+  });
+  const weapon = { name: builder.name, description: builder.description };
+  builder.onCharacterBuild({ character, weapon });
+}
 
 export default weaponFeatures;

@@ -1,6 +1,12 @@
 export default {
   name: 'Barrier',
-  skipTag: true,
   description: 'Bonus to Armor Score; -1 to Evasion.',
-  passiveStatMods: { armorScore: 1, evasion: -1 },
+  onCharacterBuild({ character, weapon }) {
+    character.addFeature('Barrier', 'Bonus to Armor Score; -1 to Evasion.', {
+      onCharacterRender(ctx) {
+        ctx.addStatMod('armorScore', 1);
+        ctx.addStatMod('evasion', -1);
+      },
+    });
+  },
 };

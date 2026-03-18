@@ -1,5 +1,9 @@
 export default {
   name: 'Flexible',
   description: '+1 Evasion.',
-  passiveStatMods: { evasion: 1 },
+  onCharacterBuild({ character, armor }) {
+    character.addFeature('Flexible', '+1 Evasion.', {
+      onCharacterRender: (ctx) => ctx.addStatMod('evasion', 1),
+    });
+  },
 };
