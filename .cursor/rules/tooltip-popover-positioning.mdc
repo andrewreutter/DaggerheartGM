@@ -1,0 +1,38 @@
+---
+description: Tooltip and popover positioning when using fixed + getBoundingClientRect
+alwaysApply: true
+---
+
+# Tooltip and Popover Positioning
+
+When a tooltip or popover is positioned with **`position: fixed`** and coordinates from **`getBoundingClientRect()`** (viewport coordinates), it **must** be rendered via **`createPortal(..., document.body)`**. Otherwise it will appear in the wrong place.
+
+## Why
+
+In CSS, any ancestor with `transform`, `perspective`, or `filter` creates a new **containing block** for `position: fixed` descendants. The fixed element is then positioned relative to that ancestor, not the viewport. We set `left`/`top` from viewport coordinates, so the element ends up mispositioned (e.g. "nowhere near" the trigger).
+
+Common culprits: banner/panel `transform: translateY(...)`, modals, scroll containers with transform, or any animation wrapper.
+
+## Rule
+
+- **Do**: Render the tooltip/popover with `createPortal(content, document.body)` so it is a direct child of `body`. Then `position: fixed` is viewport-relative and viewport-based `left`/`top` are correct.
+- **Don't**: Render the tooltip as a sibling or descendant of the trigger inside a transformed/stacking-context ancestor and rely on fixed + getBoundingClientRect().
+
+## Example
+
+```jsx
+import { createPortal } from 'react-dom';
+
+// ✅ CORRECT — tooltip in body, fixed position matches viewport coords
+{tooltip && createPortal(
+  <div
+    className="fixed z-50 ..."
+    style={{ left: tooltip.x, top: tooltip.y }}
+  >
+    {tooltip.content}
+  </div>,
+  document.body
+)}
+```
+
+Existing examples in this repo: `CustomSelect.jsx` (option description tooltips), `Tooltip.jsx`, `DiceRoller.jsx` (Make a Scene / target menus), `GMTableView.jsx` (adversary target menu).

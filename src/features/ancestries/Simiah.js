@@ -1,0 +1,29 @@
+/**
+ * Simiah ancestry builder.
+ *
+ * Features:
+ *   Natural Climber — Advantage on Agility rolls for balancing and climbing (addAdvantageTrigger).
+ *   Nimble         — +1 Evasion at character creation (addStatMod).
+ */
+export default {
+  name: 'Simiah',
+  description: 'Simiah resemble anthropomorphic monkeys and apes with long limbs and prehensile feet. While their appearance reflects all simian creatures, from the largest gorilla to the smallest marmoset, their size does not align with their animal counterparts, and they can be anywhere from 2 to 6 feet tall. All simiah can use their dexterous feet for nonverbal communication, work, and combat. Additionally, some also have prehensile tails that can grasp objects or help with balance during difficult maneuvers. These traits grant members of this ancestry unique agility that aids them in a variety of physical tasks. In particular, simiah are skilled climbers and can easily transition from bipedal movement to knuckle-walking and climbing, and back again. On average, simiah live for about 100 years.',
+
+  onCharacterBuild(char) {
+    char.addFeature(
+      'Natural Climber',
+      'You have advantage on Agility Rolls that involve balancing and climbing.',
+      {
+        onCharacterRender: (ctx) => ctx.addAdvantageTrigger('balancing and climbing'),
+      }
+    );
+
+    char.addFeature(
+      'Nimble',
+      'Gain a permanent +1 bonus to your Evasion at character creation.',
+      {
+        onCharacterRender: (ctx) => ctx.addStatMod('evasion', 1),
+      }
+    );
+  },
+};

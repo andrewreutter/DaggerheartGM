@@ -36,6 +36,55 @@ export const parseFeatureCategory = (feature) => {
 
 export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'none'; };
 
+/** Reference bands for action roll difficulty (5–30). */
+const DIFFICULTY_BANDS = [
+  { value: 5, label: 'Very Easy' },
+  { value: 10, label: 'Easy' },
+  { value: 15, label: 'Average' },
+  { value: 20, label: 'Hard' },
+  { value: 25, label: 'Very Hard' },
+  { value: 30, label: 'Nearly Impossible' },
+];
+
+/**
+ * Returns the qualitative difficulty label for a numeric DC (5–30).
+ * For values between bands, returns the nearest band label (e.g. 7 → "Easy").
+ */
+export function getDifficultyLabel(value) {
+  const n = Number(value);
+  if (isNaN(n) || n <= 5) return DIFFICULTY_BANDS[0].label;
+  if (n >= 30) return DIFFICULTY_BANDS[5].label;
+  let best = DIFFICULTY_BANDS[0];
+  for (const band of DIFFICULTY_BANDS) {
+    if (Math.abs(band.value - n) < Math.abs(best.value - n)) best = band;
+  }
+  return best.label;
+}
+
+/**
+ * Daggerheart damage threshold resolution.
+ * Returns the number of HP boxes to mark given a raw damage total and thresholds.
+ *   < major             → 1 (Minor)
+ *   >= major < severe   → 2 (Major)
+ *   >= severe           → 3 (Severe), +1 for each doubling beyond severe
+ */
+export function computeHpLoss(damage, thresholds) {
+  const major = thresholds?.major;
+  const severe = thresholds?.severe;
+  if (severe != null && major != null && severe <= 0 && major <= 0) return damage > 0 ? 1 : 0;
+  if (severe != null && damage >= severe) {
+    let hp = 3;
+    let threshold = severe * 2;
+    while (damage >= threshold) {
+      hp++;
+      threshold *= 2;
+    }
+    return hp;
+  }
+  if (major != null && damage >= major) return 2;
+  return 1;
+}
+
 /**
  * Returns a character's effective damage thresholds with their level added to each value.
  * Per Daggerheart rules, characters add their level to their armor's base thresholds.
@@ -46,9 +95,10 @@ export const effectiveThresholds = (el) => {
   const level = el.level ?? 0;
   const reinforced = el.reinforcedActive ? 2 : 0;
   const elementalBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
+  const ancestryBonus = el.ancestryThresholdBonus ?? 0;
   return {
-    major: el.armorThresholds.major + level + reinforced + elementalBonus,
-    severe: el.armorThresholds.severe + level + reinforced + elementalBonus,
+    major: el.armorThresholds.major + level + reinforced + elementalBonus + ancestryBonus,
+    severe: el.armorThresholds.severe + level + reinforced + elementalBonus + ancestryBonus,
   };
 };
 

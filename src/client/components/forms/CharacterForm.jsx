@@ -8,6 +8,7 @@ import {
   resolveWeapon, resolveArmor, parseArmorThresholds, getEffectiveWeaponRange,
 } from '../../lib/character-calc.js';
 import { generateId } from '../../lib/helpers.js';
+import { ancestryMap } from '../../../features/ancestries/index.js';
 
 const TRAIT_LABELS = {
   agility: 'Agility', strength: 'Strength', finesse: 'Finesse',
@@ -30,6 +31,11 @@ function highestTraitNames(traits) {
   }
   if (max === -Infinity) return [];
   return TRAIT_KEYS_ORDER.filter(k => (traits[k] ?? 0) === max);
+}
+
+function pickRandom(arr) {
+  if (!arr?.length) return undefined;
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function WeaponOption({ weapon, isRecommended, showBurden, ancestryFeatures }) {
@@ -271,6 +277,117 @@ export function CharacterForm({ value, onChange }) {
   // Advancement sections state
   const [openAdvancements, setOpenAdvancements] = useState({});
 
+  const handleFillOutAutomatically = useCallback(() => {
+    const best = highestTraitNames(formData.traits);
+    const favored = (w) => best.includes((w.trait || '').toLowerCase());
+
+    const primaryWeapons = weaponOptions.filter(w => w.primary_or_secondary !== 'Secondary');
+    const primaryFavored = primaryWeapons.filter(favored);
+    const primaryCandidates = primaryFavored.length ? primaryFavored : primaryWeapons;
+    const primaryWeapon = pickRandom(primaryCandidates);
+    const primaryWeaponId = primaryWeapon?.id ?? null;
+    const isTwoHanded = primaryWeapon?.burden === 'Two-Handed';
+
+    let secondaryWeaponId = null;
+    if (!isTwoHanded) {
+      const secondaryWeapons = weaponOptions.filter(w => w.primary_or_secondary !== 'Primary');
+      const secondaryFavored = secondaryWeapons.filter(favored);
+      const secondaryCandidates = secondaryFavored.length ? secondaryFavored : secondaryWeapons;
+      const secondaryWeapon = pickRandom(secondaryCandidates);
+      secondaryWeaponId = secondaryWeapon?.id ?? null;
+    }
+
+    const randomArmor = pickRandom(armorOptions);
+    const armorId = randomArmor?.id ?? null;
+
+    const domains = selectedClass?.domains || [];
+    const byDomain = {};
+    for (const a of abilityOptions) {
+      const d = a.domain || '';
+      if (!byDomain[d]) byDomain[d] = [];
+      byDomain[d].push(a);
+    }
+    const abilityIds = [];
+    const used = new Set();
+    for (let i = 0; i < 2; i++) {
+      const domainName = domains[i];
+      const abilities = byDomain[domainName] || [];
+      const available = abilities.filter(a => !used.has(a.id));
+      const chosen = pickRandom(available);
+      if (chosen) used.add(chosen.id);
+      abilityIds.push(chosen?.id ?? null);
+    }
+
+    const experiences = (formData.experiences || []).map((exp, i) => ({
+      ...exp,
+      name: `Experience ${i + 1} - choose during play`,
+    }));
+
+    const ancestryId = formData.ancestryIds?.[0];
+    const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
+    const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+    let experienceBonusChoices = formData.experienceBonusChoices;
+    if (expBonus) {
+      const expIds = (formData.experiences || []).map(e => e.id).filter(Boolean);
+      const chosenExpId = pickRandom(expIds) ?? expIds[0] ?? null;
+      experienceBonusChoices = { ...(formData.experienceBonusChoices || {}), [expBonus.featureName]: chosenExpId };
+    }
+
+    let companion = formData.companion;
+    if (selectedSubclass?.name === 'Beastbound' && companion) {
+      const compExps = (companion.experiences || []).map((exp, i) => ({
+        ...exp,
+        name: `Experience ${i + 1} - choose during play`,
+      }));
+      companion = {
+        ...companion,
+        name: companion.name || 'Companion',
+        species: companion.species || 'To be determined during play',
+        attackName: companion.attackName || 'Attack',
+        experiences: compExps,
+      };
+    }
+
+    set({
+      primaryWeaponId,
+      secondaryWeaponId,
+      armorId,
+      abilityIds,
+      experiences,
+      ...(expBonus ? { experienceBonusChoices } : {}),
+      ...(companion != null ? { companion } : {}),
+      background: 'To be determined during play.',
+      connectionText: 'To be determined during play.',
+      description: formData.description || 'A 1st level character ready for adventure.',
+    });
+  }, [formData, weaponOptions, armorOptions, abilityOptions, selectedClass, selectedSubclass, srdData, set]);
+
+  const handleRandomizeBigFour = useCallback(() => {
+    const newClass = pickRandom(classOptions);
+    if (!newClass) return;
+    const subNames = newClass.subclasses || [];
+    const newSubclassOptions = (srdData?.subclasses || []).filter(sc => subNames.includes(sc.name));
+    const newSubclass = pickRandom(newSubclassOptions);
+    const newAncestry = pickRandom(ancestryOptions);
+    const newCommunity = pickRandom(communityOptions);
+    const suggestedTraits = parseSuggestedTraits(newClass.suggested_traits);
+    const patch = {
+      classId: newClass.id,
+      subclassId: newSubclass?.id ?? null,
+      ancestryIds: newAncestry ? [newAncestry.id] : [],
+      communityId: newCommunity?.id ?? null,
+      abilityIds: [null, null],
+      ...(suggestedTraits ? { baseTraits: suggestedTraits } : {}),
+    };
+    if (newSubclass?.name === 'Beastbound' && formData.companion == null) {
+      patch.companion = {
+        name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
+        experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
+      };
+    }
+    set(patch);
+  }, [classOptions, ancestryOptions, communityOptions, srdData, formData.companion, set]);
+
   if (srdLoading) {
     return <div className="p-4 text-slate-400 text-sm">Loading SRD data...</div>;
   }
@@ -322,6 +439,16 @@ export function CharacterForm({ value, onChange }) {
           placeholder="A brief description..."
         />
       </FormRow>
+
+      {level === 1 && (
+        <button
+          type="button"
+          onClick={handleRandomizeBigFour}
+          className="w-full py-2 px-4 rounded border text-sm font-medium transition-colors bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600"
+        >
+          Randomize Class, Subclass, Ancestry, and Community
+        </button>
+      )}
 
       {/* ── Class ── */}
       <FormRow label="Class">
@@ -508,6 +635,18 @@ export function CharacterForm({ value, onChange }) {
         />
       </FormRow>
 
+      {level === 1 && (
+        <button
+          type="button"
+          onClick={handleFillOutAutomatically}
+          disabled={!formData.classId || !formData.subclassId || !formData.ancestryIds?.[0] || !formData.communityId}
+          title={!(formData.classId && formData.subclassId && formData.ancestryIds?.[0] && formData.communityId) ? 'Select class, subclass, ancestry, and community to enable' : undefined}
+          className="w-full py-2 px-4 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600 disabled:hover:bg-sky-900/60 disabled:hover:border-sky-700"
+        >
+          Random remaining selections
+        </button>
+      )}
+
       {/* ── Traits ── */}
       <FormRow label="Traits">
         <div className="grid grid-cols-3 gap-2">
@@ -610,39 +749,78 @@ export function CharacterForm({ value, onChange }) {
       })()}
 
       {/* ── Experiences ── */}
-      <FormRow label="Experiences">
-        <div className="space-y-1.5">
-          {(formData.experiences || []).map((exp, i) => (
-            <div key={exp.id || i} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={exp.name || ''}
-                onChange={e => {
-                  const exps = [...(formData.experiences || [])];
-                  exps[i] = { ...exps[i], name: e.target.value };
-                  set({ experiences: exps });
-                }}
-                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"
-                placeholder="Experience name"
-              />
-              <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0">
-                +{exp.score ?? 2}
-              </span>
+      {(() => {
+        const ancestryId = formData.ancestryIds?.[0];
+        const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
+        const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+        const chosenExpId = expBonus ? formData.experienceBonusChoices?.[expBonus.featureName] : null;
+        return (
+          <FormRow label="Experiences">
+            <div className="space-y-1.5">
+              {(formData.experiences || []).map((exp, i) => {
+                const isChosen = expBonus && exp.id === chosenExpId;
+                // Form data is already recomputed (update() sends recomputeCharacter output); show score as-is to avoid double-adding bonus
+                const displayScore = exp.score ?? 2;
+                return (
+                  <div key={exp.id || i} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={exp.name || ''}
+                      onChange={e => {
+                        const exps = [...(formData.experiences || [])];
+                        exps[i] = { ...exps[i], name: e.target.value };
+                        set({ experiences: exps });
+                      }}
+                      className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"
+                      placeholder="Experience name"
+                    />
+                    <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0" title={isChosen ? `${ancestryName} bonus +${expBonus.amount}` : undefined}>
+                      +{displayScore}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const exps = (formData.experiences || []).filter((_, j) => j !== i);
+                        set({ experiences: exps });
+                      }}
+                      className="text-slate-500 hover:text-red-400 text-sm"
+                    >×</button>
+                  </div>
+                );
+              })}
               <button
-                onClick={() => {
-                  const exps = (formData.experiences || []).filter((_, j) => j !== i);
-                  set({ experiences: exps });
-                }}
-                className="text-slate-500 hover:text-red-400 text-sm"
-              >×</button>
+                onClick={() => set({ experiences: [...(formData.experiences || []), { name: '', score: 2, id: generateId() }] })}
+                className="text-xs text-sky-400 hover:text-sky-300"
+              >+ Add Experience</button>
             </div>
-          ))}
-          <button
-            onClick={() => set({ experiences: [...(formData.experiences || []), { name: '', score: 2, id: generateId() }] })}
-            className="text-xs text-sky-400 hover:text-sky-300"
-          >+ Add Experience</button>
-        </div>
-      </FormRow>
+          </FormRow>
+        );
+      })()}
+
+      {/* ── Experience bonus (ancestry, e.g. Clank Purposeful Design) ── */}
+      {(() => {
+        const ancestryId = formData.ancestryIds?.[0];
+        const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
+        const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+        if (!expBonus) return null;
+        const { amount, featureName } = expBonus;
+        const experiences = formData.experiences || [];
+        const options = experiences.filter(e => e.id).map(e => e.id);
+        const value = formData.experienceBonusChoices?.[featureName] ?? null;
+        return (
+          <FormRow label={`${ancestryName} ${featureName}: which experience gets +${amount}?`}>
+            <CustomSelect
+              value={value}
+              onChange={id => set({ experienceBonusChoices: { ...(formData.experienceBonusChoices || {}), [featureName]: id ?? null } })}
+              options={[null, ...options]}
+              getOptionKey={id => id ?? '__none__'}
+              getOptionLabel={id => id ? (experiences.find(e => e.id === id)?.name || id) : 'Select an experience…'}
+              getOptionDescription={id => id ? (experiences.find(e => e.id === id)?.name ? `+${amount} bonus` : '') : ''}
+              placeholder="Select an experience…"
+              className="text-sm"
+            />
+          </FormRow>
+        );
+      })()}
 
       {/* ── Domain Cards ── */}
       {selectedClass && (

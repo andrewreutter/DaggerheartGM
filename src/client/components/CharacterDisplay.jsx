@@ -1,13 +1,15 @@
 import {
   User, Shield, Heart, AlertCircle, AlertTriangle, Sparkles, Swords, Package,
   ChevronDown, ChevronRight, Dices, Zap, Megaphone, X, Flame, Mountain, Droplets, Wind,
+  Share2, CheckSquare, Square,
 } from 'lucide-react';
 import { useState } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, getRetractingClawsWeapon, getKickWeapon } from '../lib/character-calc.js';
+import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runAncestryRender } from '../lib/character-calc.js';
+import { ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 import { CustomSelect } from './forms/CustomSelect.jsx';
 
@@ -200,6 +202,7 @@ function BeastformFeatureCard({
             feature.sourceType === 'class'    ? 'bg-violet-900/60 text-violet-300' :
             feature.sourceType === 'subclass' ? 'bg-sky-900/60 text-sky-300' :
             feature.sourceType === 'ancestry' ? 'bg-amber-900/60 text-amber-300' :
+            feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' :
             'bg-emerald-900/60 text-emerald-300'
           }`}>{feature.source}</span>
         )}
@@ -563,6 +566,135 @@ function SubFeatureCard({ sub, onUse, disabled, isActive }) {
   );
 }
 
+// ─── IoC ancestry feature card (minimal, expandable) ──────────────────────────
+
+/**
+ * Dedicated card for ancestry features from the IoC registry (char.addFeature()).
+ * Expandable: title bar shows feature name + right-floated source badge (ancestry)
+ * and optional share icon (posts banner with feature name + description).
+ * Optional cardChips (from onCard hook): shown when getCardChipContext is provided;
+ * one-shot chips: click runs chip.onUse(context); toggle chips: chip.onToggle(isActive, character, ctx), toggleKey for state.
+ * Expanded body shows description with Markdown. No Use/cost/action parsing.
+ */
+function AncestryFeatureCard({ feature, featureKey, open: openProp, onToggle, onShareFeature, cardChips, getCardChipContext, el, resetsOn: descriptorResetsOn }) {
+  const [openLocal, setOpenLocal] = useState(false);
+  const open = openProp !== undefined ? openProp : openLocal;
+  const toggle = onToggle ?? (() => setOpenLocal(o => !o));
+
+  const cardResetsOn = cardChips?.find(c => c.resetsOn)?.resetsOn ?? descriptorResetsOn;
+  const used = !!((featureKey || feature?.name) && (el?.featureUsage?.[featureKey]?.used || el?.featureUsage?.[feature?.name]?.used));
+  const resetsOnLabel = cardResetsOn === 'session' ? 'session' : cardResetsOn === 'longRest' ? 'long rest' : cardResetsOn === 'rest' ? 'rest' : null;
+  const oncePerLabel = resetsOnLabel ? `Once per ${resetsOnLabel}` : null;
+  const usedUntilLabel = resetsOnLabel
+    ? (cardResetsOn === 'session' ? 'Used until next session' : cardResetsOn === 'longRest' ? 'Used until long rest' : 'Used until any rest')
+    : null;
+
+  return (
+    <div className="rounded border border-slate-700 bg-slate-800/60 overflow-hidden">
+      <div className="px-2 py-1 flex items-center gap-1 min-w-0">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex-1 min-w-0 flex items-center gap-1 text-left hover:bg-slate-700/40 transition-colors rounded -m-1 p-1"
+        >
+          {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
+          <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{feature.name}</span>
+          {cardResetsOn && (
+            <span className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
+              used ? 'bg-slate-800 border-slate-600 text-slate-500' : 'bg-slate-700/60 border-slate-600 text-slate-400'
+            }`}>
+              {used ? usedUntilLabel : oncePerLabel}
+            </span>
+          )}
+          {!cardChips?.length && !cardResetsOn && (
+            <span className="ml-auto text-[9px] rounded px-1 shrink-0 bg-slate-700/40 text-slate-500">Passive</span>
+          )}
+          {feature.source && (
+            <span className={`${!cardChips?.length && !cardResetsOn ? '' : 'ml-auto '}text-[9px] rounded px-1 shrink-0 ${
+              feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' : 'bg-amber-900/60 text-amber-300'
+            }`}>{feature.source}</span>
+          )}
+        </button>
+        {onShareFeature && (
+          <Tooltip content="Share Feature Text" placement="top">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onShareFeature(feature);
+              }}
+              className="shrink-0 p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
+              aria-label="Share Feature Text"
+            >
+              <Share2 size={12} />
+            </button>
+          </Tooltip>
+        )}
+      </div>
+      {cardChips?.length > 0 && getCardChipContext && (
+        <div className="px-2 pb-1 flex flex-wrap gap-1.5 items-center">
+          {cardChips.map((chip, idx) => {
+            const isToggle = typeof chip.onToggle === 'function';
+            const derivedToggleKey = isToggle && feature?.source != null && feature?.name != null ? `_toggle.${feature.source}.${feature.name}` : null;
+            const active = isToggle && el && derivedToggleKey ? !!el[derivedToggleKey] : false;
+            const displayName = isToggle ? (feature?.name ?? 'Toggle') : (chip.label ?? 'Use');
+            const tooltipContent = isToggle ? (chip.label ?? feature?.name ?? '') : (chip.label ?? 'Use');
+            if (isToggle) {
+              return (
+                <Tooltip key={idx} content={tooltipContent} placement="top">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const context = getCardChipContext(feature, chip, featureKey);
+                      if (!context.postToggleIntent) return;
+                      const nextActive = !active;
+                      context.postToggleIntent(nextActive);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold border transition-colors ${
+                      active
+                        ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
+                        : 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {active ? <CheckSquare size={12} className="shrink-0" /> : <Square size={12} className="shrink-0" />}
+                    <span className="truncate max-w-[140px]">{displayName}</span>
+                  </button>
+                </Tooltip>
+              );
+            }
+            const chipUsed = !!(chip.resetsOn && featureKey && el?.featureUsage?.[featureKey]?.used);
+            return (
+              <Tooltip key={idx} content={tooltipContent} placement="top">
+                <button
+                  type="button"
+                  disabled={chipUsed}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (chipUsed) return;
+                    const context = getCardChipContext(feature, chip, featureKey);
+                    if (typeof chip.onUse === 'function') chip.onUse(context);
+                    else context.postAction?.();
+                  }}
+                  className={`text-[10px] rounded px-1.5 py-0.5 border transition-colors ${chipUsed ? 'border-slate-600 bg-slate-800/50 text-slate-500 cursor-not-allowed' : 'border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'}`}
+                >
+                  {displayName}
+                </button>
+              </Tooltip>
+            );
+          })}
+        </div>
+      )}
+      {open && (feature.description != null && feature.description !== '') && (
+        <div className="px-2 pb-2 pt-1 border-t border-slate-700">
+          <MarkdownText text={feature.description} className="text-[11px] text-slate-300 leading-relaxed dh-md" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Feature chip (collapsible) ───────────────────────────────────────────────
 
 /**
@@ -574,7 +706,7 @@ function SubFeatureCard({ sub, onUse, disabled, isActive }) {
  *   featureKey     — unique key for usage tracking (default: feature.name)
  *   activeChanneledElement — 'fire'|'earth'|'water'|'air'|null for Elemental Incarnation
  */
-function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle, wingsOfLightProps, activeChanneledElement, stressMaxed, prayerDiceProps }) {
+function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle, wingsOfLightProps, faerieWingsProps, activeChanneledElement, stressMaxed, prayerDiceProps }) {
   const [openLocal, setOpenLocal] = useState(false);
   const open = openProp !== undefined ? openProp : openLocal;
   const toggle = onToggle ?? (() => setOpenLocal(o => !o));
@@ -597,6 +729,11 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
       >
         {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
         <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{feature.name}</span>
+        {feature.resetsOn && (
+          <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-slate-700/60 border-slate-600 text-slate-400">
+            {feature.resetsOn === 'session' ? 'Once per session' : feature.resetsOn === 'longRest' ? 'Once per long rest' : 'Once per rest'}
+          </span>
+        )}
         {/* Elemental Incarnation: channeling indicator in header */}
         {activeChanneledElement && (
           <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300 font-semibold">
@@ -618,7 +755,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           }`}>
             {action.frequency
               ? isUsed
-                ? `Used until ${action.frequency === 'session' ? 'next session' : action.frequency === 'longRest' ? 'long rest' : 'short rest'}`
+                ? `Used until ${action.frequency === 'session' ? 'next session' : action.frequency === 'longRest' ? 'long rest' : 'any rest'}`
                 : 'Unused'
               : isUsed
                 ? `✓ used/${action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}`
@@ -630,6 +767,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
             feature.sourceType === 'class'     ? 'bg-violet-900/60 text-violet-300' :
             feature.sourceType === 'subclass'  ? 'bg-sky-900/60 text-sky-300' :
             feature.sourceType === 'ancestry'  ? 'bg-amber-900/60 text-amber-300' :
+            feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' :
             'bg-emerald-900/60 text-emerald-300'
           }`}>{feature.source}</span>
         )}
@@ -696,7 +834,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           {action.isActive && subFeatures.length < 2 && (
             <div className="pt-1 border-t border-slate-700/60 space-y-1">
               <CostBadgeStrip action={action} />
-              {onFeatureUse && feature.name !== 'Fearless' && feature.name !== 'Feline Instincts' && feature.name !== 'Kick' && !wingsOfLightProps ? (
+              {onFeatureUse && (!ancestryFeaturesRegistry[feature.name] || !!ancestryFeaturesRegistry[feature.name]?.onUse) && !wingsOfLightProps ? (
                 isUsed ? (
                   <p className="text-[10px] text-slate-500 italic">
                     Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
@@ -755,6 +893,20 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
                   Pick up and carry
                 </button>
               )}
+            </div>
+          )}
+
+          {faerieWingsProps && (
+            <div className="pt-1 border-t border-slate-700/60">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!faerieWingsProps.flying}
+                  onChange={(e) => faerieWingsProps.onFlyingChange(e.target.checked)}
+                  className="rounded border-slate-600"
+                />
+                <span className="text-[10px] font-medium text-slate-300">Flying</span>
+              </label>
             </div>
           )}
 
@@ -823,6 +975,30 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
   );
 }
 
+// ─── Feature state display ────────────────────────────────────────────────────
+
+/**
+ * Collect numeric feature state from el._originFeatureState for stat-block display.
+ * Returns [{ featureName, key, label, value }] where label is the key capitalized.
+ */
+export function getNumericFeatureStateEntries(el) {
+  const bag = el?._originFeatureState;
+  if (!bag || typeof bag !== 'object') return [];
+  const entries = [];
+  for (const featureName of Object.keys(bag)) {
+    const state = bag[featureName];
+    if (!state || typeof state !== 'object') continue;
+    for (const key of Object.keys(state)) {
+      const value = state[key];
+      if (typeof value === 'number' && !Number.isNaN(value)) {
+        const label = key.length ? key.charAt(0).toUpperCase() + key.slice(1).toLowerCase() : key;
+        entries.push({ featureName, key, label, value });
+      }
+    }
+  }
+  return entries;
+}
+
 // ─── Exported components ──────────────────────────────────────────────────────
 
 export function CharacterIdentityHeader({ el, showIncomplete = false, actions }) {
@@ -880,7 +1056,7 @@ export function CharacterIdentityHeader({ el, showIncomplete = false, actions })
  * 6-trait grid.
  *
  * Props:
- *   onTraitClick(traitKey)    — when provided, chips become clickable (HoverCard passes a roll callback)
+ *   onTraitClick(traitKey, opts?) — when provided, chips become clickable. opts may include { isReaction: true }.
  *   selectedExperienceHint    — hint string shown below grid (e.g. '+2 from "Explorer" included')
  */
 export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selectedExperienceHint }) {
@@ -928,6 +1104,21 @@ export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selected
           );
         })}
       </div>
+      {onTraitClick && (
+        <div className="grid grid-cols-6 gap-1 mt-1">
+          {TRAIT_ORDER.map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onTraitClick(t, { isReaction: true }); }}
+              title={`Roll ${TRAIT_FULL[t]} as a reaction`}
+              className="rounded px-1 py-0.5 border border-slate-600/60 bg-slate-800/40 text-[9px] font-medium text-slate-400 hover:bg-slate-700/50 hover:border-slate-500 hover:text-slate-300 transition-colors"
+            >
+              Reaction
+            </button>
+          ))}
+        </div>
+      )}
       {el.spellcastTrait && (() => {
         const traitKey = el.spellcastTrait.toLowerCase();
         const colIndex = TRAIT_ORDER.indexOf(traitKey);
@@ -958,13 +1149,21 @@ export function CharacterDefenseRow({ el }) {
   const thresholds = effectiveThresholds(el);
   const wm = el.weaponMods || {};
   const am = el.armorMods || {};
+  const ancestryEvasion = el.ancestryMods?.evasion ?? 0;
   const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
   const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
-  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + bfEvasionMod;
+  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + ancestryEvasion + bfEvasionMod;
   const earthBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
+  const ancestryBonus = el.ancestryThresholdBonus ?? 0;
+  const ancestryBonusSource = el.ancestryThresholdBonusSource || null;
   const evasionSources = [];
   if (wm.evasion) evasionSources.push(...(wm.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
   if (am.evasion) evasionSources.push(...(am.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
+  if (ancestryEvasion) {
+    const ancestrySourceNames = (el.ancestryMods?.statMods || []).filter(m => m.stat === 'evasion').map(m => m.source).filter(Boolean);
+    if (ancestrySourceNames.length) evasionSources.push(...ancestrySourceNames.map(name => `${name}: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`));
+    else evasionSources.push(`Ancestry: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`);
+  }
   if (bfEvasionMod) evasionSources.push(`Beastform (${el.activeBeastform.name}): ${bfEvasionMod > 0 ? '+' : ''}${bfEvasionMod} to Evasion`);
   const evasionModTooltip = evasionSources.length ? evasionSources.join('; ') : null;
   const armorModTooltip = wm.armorScore
@@ -973,6 +1172,10 @@ export function CharacterDefenseRow({ el }) {
   const severeModTooltip = wm.severeThreshold
     ? (wm.sources || []).filter(s => s.stat === 'severe damage threshold').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Severe threshold`).join('; ')
     : null;
+  const thresholdTooltipParts = [];
+  if (ancestryBonus > 0 && ancestryBonusSource) thresholdTooltipParts.push(`${ancestryBonusSource}: +${ancestryBonus} to Major and Severe`);
+  if (earthBonus > 0) thresholdTooltipParts.push(`Warden of the Elements (Earth): +${earthBonus} to Major and Severe`);
+  const thresholdModTooltip = thresholdTooltipParts.length ? thresholdTooltipParts.join('; ') : null;
   const armorFeature = am.feature;
   const isStatModFeature = armorFeature && /^(Flexible|Heavy|Very Heavy|Gilded|Difficult)$/.test(armorFeature.name);
   return (
@@ -1005,16 +1208,26 @@ export function CharacterDefenseRow({ el }) {
           </div>
         )}
         {thresholds && (
-          <div className="text-slate-400">
+          <div className="text-slate-400" title={thresholdModTooltip || severeModTooltip || undefined}>
             Thresholds:{' '}
-            {earthBonus > 0 ? (
-              <><span className="text-yellow-300/50 font-semibold">{thresholds.major - earthBonus}</span><span className="text-slate-500"> +{earthBonus} =</span>{' '}</>
+            {(earthBonus > 0 || ancestryBonus > 0) ? (
+              <>
+                <span className="text-yellow-300/50 font-semibold">{thresholds.major - earthBonus - ancestryBonus}</span>
+                {ancestryBonus > 0 && <span className="text-slate-500"> +{ancestryBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
+                {earthBonus > 0 && <span className="text-slate-500"> +{earthBonus} (Earth)</span>}
+                <span className="text-slate-500"> = </span>
+              </>
             ) : null}
             <span className="text-yellow-300 font-semibold">{thresholds.major}</span>
             <span className="text-slate-500"> / </span>
             <span className={`font-semibold ${wm.severeThreshold ? 'text-amber-300' : 'text-red-300'}`} title={severeModTooltip || undefined}>
-              {earthBonus > 0 ? (
-                <><span className="opacity-50">{thresholds.severe - earthBonus}</span><span className="text-slate-500 font-normal"> +{earthBonus} =</span>{' '}</>
+              {(earthBonus > 0 || ancestryBonus > 0) ? (
+                <>
+                  <span className="opacity-50">{thresholds.severe - earthBonus - ancestryBonus}</span>
+                  {ancestryBonus > 0 && <span className="text-slate-500 font-normal"> +{ancestryBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
+                  {earthBonus > 0 && <span className="text-slate-500 font-normal"> +{earthBonus} (Earth)</span>}
+                  <span className="text-slate-500 font-normal"> = </span>
+                </>
               ) : null}
               {thresholds.severe}{wm.severeThreshold ? <span className="text-[10px] text-amber-400"> ({wm.severeThreshold > 0 ? '+' : ''}{wm.severeThreshold})</span> : null}
             </span>
@@ -1366,8 +1579,9 @@ export function CharacterWeaponList({
     };
   }
 
-  const retractingClawsWeapon = getRetractingClawsWeapon(el.ancestryFeatures);
-  const kickWeapon = getKickWeapon(el.ancestryFeatures);
+  // Use pre-computed virtual weapons (from recomputeCharacter in builder mode)
+  // or compute on-the-fly for Daggerstack-synced characters.
+  const ancestryVirtualWeapons = el._virtualWeapons || runAncestryRender(el).virtualWeapons;
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
@@ -1433,7 +1647,7 @@ export function CharacterWeaponList({
     );
   }
 
-  if (!weapons.length && !retractingClawsWeapon && !kickWeapon) return null;
+  if (!weapons.length && !ancestryVirtualWeapons.length) return null;
 
   return (
     <Section label={onWeaponClick ? 'Weapons — click to roll' : 'Weapons'}>
@@ -1448,25 +1662,16 @@ export function CharacterWeaponList({
           />
         )}
 
-        {/* Retracting Claws (Katari ancestry) virtual weapon */}
-        {retractingClawsWeapon && (
+        {/* Ancestry virtual weapons (Retracting Claws, Kick, etc.) */}
+        {ancestryVirtualWeapons.map((vw, i) => (
           <WeaponCard
-            weapon={{ ...retractingClawsWeapon, effectiveRange: getEffectiveWeaponRange(retractingClawsWeapon, el.ancestryFeatures) }}
-            traitScore={traits[(retractingClawsWeapon.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(retractingClawsWeapon)}
+            key={`ancestry-vw-${i}`}
+            weapon={{ ...vw, effectiveRange: vw.effectiveRange || vw.range || '' }}
+            traitScore={traits[(vw.trait || '').toLowerCase()] ?? 0}
+            onClick={makeClick(vw)}
             isVirtual
           />
-        )}
-
-        {/* Kick (Faun ancestry) virtual weapon */}
-        {kickWeapon && (
-          <WeaponCard
-            weapon={{ ...kickWeapon, effectiveRange: getEffectiveWeaponRange(kickWeapon, el.ancestryFeatures) }}
-            traitScore={traits[(kickWeapon.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(kickWeapon)}
-            isVirtual
-          />
-        )}
+        ))}
 
         {/* Versatile alternate cards */}
         {versatilePairs.map(({ alternate }, i) => (
@@ -1590,7 +1795,7 @@ export function CharacterWeaponList({
  *   featureUsage              — { [key]: { used, cycle } } usage state map
  *   currentHope               — for gating the Hope ability button
  */
-export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement, prayerDice, onPrayerDieGainHope }) {
+export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement, prayerDice, onPrayerDieGainHope, onShareFeature, getCardChipContext }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
   const allFeatures = [
@@ -1693,6 +1898,23 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
               />
             );
           }
+          if (ancestryFeaturesRegistry[f.name]) {
+            const descriptor = ancestryFeaturesRegistry[f.name];
+            return (
+              <AncestryFeatureCard
+                key={key}
+                feature={f}
+                featureKey={key}
+                open={isOpen(key)}
+                onToggle={() => toggle(key)}
+                onShareFeature={onShareFeature}
+                cardChips={descriptor.cardChips}
+                getCardChipContext={getCardChipContext}
+                el={el}
+                resetsOn={descriptor.resetsOn}
+              />
+            );
+          }
           const rangerFocusToggle = (f.name === "Ranger's Focus" && el.class === 'Ranger' && updateFn)
             ? { value: !!el.rangerFocusOnNextAttack, onChange: (v) => updateFn(el.instanceId, { rangerFocusOnNextAttack: v }) }
             : undefined;
@@ -1702,6 +1924,12 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
                 onFlyingChange: (v) => updateFn(el.instanceId, { wingsOfLightFlying: v }),
                 onPickUpCarry: () => onWingsPickUpCarry(el),
                 canPickUpCarry: (el.currentStress ?? 0) < (el.maxStress ?? 0),
+              }
+            : undefined;
+          const faerieWingsProps = (f.name === 'Wings' && (f.source === 'Faerie' || f.ancestry === 'Faerie') && updateFn)
+            ? {
+                flying: !!el.faerieWingsFlying,
+                onFlyingChange: (v) => updateFn(el.instanceId, { faerieWingsFlying: v }),
               }
             : undefined;
           const prayerDiceProps = (f.name === 'Prayer Dice' && prayerDice?.length > 0)
@@ -1718,6 +1946,7 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
               featureKey={key}
               rangerFocusToggle={rangerFocusToggle}
               wingsOfLightProps={wingsOfLightProps}
+              faerieWingsProps={faerieWingsProps}
               activeChanneledElement={f.name === 'Elemental Incarnation' ? (activeChanneledElement ?? null) : undefined}
               stressMaxed={f.name === 'Elemental Incarnation' ? (el.currentStress ?? 0) >= (el.maxStress ?? 6) : undefined}
               prayerDiceProps={prayerDiceProps}
@@ -1922,9 +2151,9 @@ export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActR
 /**
  * Full character detail pane for use in ItemDetailModal display side.
  */
-export function CharacterDetailPane({ item }) {
+export function CharacterDetailPane({ item, srdData }) {
   const el = item || {};
-  const { complete, missing } = isCharacterComplete(el);
+  const { complete, missing } = isCharacterComplete(el, srdData ? { srdData } : undefined);
   return (
     <div className="flex flex-col gap-3">
       <div className="bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col">

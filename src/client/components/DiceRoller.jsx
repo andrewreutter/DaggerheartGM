@@ -1,10 +1,14 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown } from 'lucide-react';
+import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, Square, CheckSquare, Loader2 } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
+import { Tooltip } from './Tooltip.jsx';
+import { CustomSelect } from './forms/CustomSelect.jsx';
+import { SHORT_REST_MOVES, LONG_REST_MOVES, getRestMoveDefinition } from '../lib/rest-moves.js';
+import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
 import { rangeFtToLabel, RANGE_BANDS_FT } from '../lib/map-range.js';
-import { formatTargetSummary } from '../lib/helpers.js';
+import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import { weaponFeatures } from '../../features/registry.js';
 import { wrapRoll } from '../../features/roll.js';
 
@@ -79,6 +83,11 @@ function parseDiceExpr(input) {
 // Re-alias imported utility under the local name so existing call sites are unchanged.
 const parseSubDetails = _parseSubDetails;
 
+/** Sub-items that are not preset (for 3D animation we only animate newly rolled dice). */
+function subItemsForAnimation(subItems) {
+  return (subItems || []).filter(s => !s._preset);
+}
+
 export function parseRollDice(subItems) {
   const groups = [];
   for (const sub of (subItems || [])) {
@@ -118,13 +127,16 @@ function groupNotation(g) {
 const EXTRA_PRE_RE = /^\s*(Reload|Invigorate|Lifesteal)\s*$/i;
 
 // Sum all non-damage sub-item results (fallback for generic rolls without a top-level total).
+// Sub-items with "disadvantage" in pre are subtracted (e.g. Orc Sturdy).
 function computeActionTotal(subItems) {
   let total = 0;
   for (const sub of (subItems || [])) {
     if (/damage/i.test(sub.pre || '')) continue;
     if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
     const v = parseInt(sub.result, 10);
-    if (!isNaN(v)) total += v;
+    if (isNaN(v)) continue;
+    if (/disadvantage/i.test(sub.pre || '')) { total -= v; continue; }
+    total += v;
   }
   return total;
 }
@@ -150,6 +162,20 @@ function parseStaticValue(input) {
   const t = input.trim();
   const m = /^([+-]?\d+)$/.exec(t);
   return m ? parseInt(m[1], 10) : null;
+}
+
+// Extract trailing " + N" from rollText (matches server rollFromText). Used so the dice string display shows the bonus (e.g. Know the Tide).
+function getStaticModifierFromRollText(rollText) {
+  if (!rollText || typeof rollText !== 'string') return 0;
+  const m = rollText.match(/\s*\+\s*(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+// Extract " — disadvantage removed: label1, label2" from rollText (e.g. Goblin Surefooted). Returns the labels string or null.
+function getDisadvantageRemovedFromRollText(rollText) {
+  if (!rollText || typeof rollText !== 'string') return null;
+  const m = rollText.match(/\s*—\s*disadvantage\s+removed:\s*(.+)$/i);
+  return m ? m[1].trim() : null;
 }
 
 // Parse a dice sub-item into display parts: { notation, dieValue, discarded, modifier, total, type, keep }.
@@ -222,6 +248,183 @@ function getConditionalTagStatus(tag, roll) {
   const feature = weaponFeatures[tag.name];
   if (feature?.bannerStatus) return feature.bannerStatus(tag, wrapRoll(roll));
   return null;
+}
+
+function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerCharacter = {}, onRestMoveSelect, canEditColumn, isPlayer, onAcknowledge, onCancel, disableDismiss, gmUid = null }) {
+  const visible = useBannerVisible();
+  const duration = roll._restDuration === 'long' ? 'Long' : 'Short';
+  const defaultMoves = roll._restDuration === 'long' ? LONG_REST_MOVES : SHORT_REST_MOVES;
+  const total = typeof roll.total === 'number' ? roll.total : 0;
+  const fearN = roll._restDuration === 'long' ? total + characters.length : total;
+  const rollDbId = roll._rollDbId;
+  const [rollingKey, setRollingKey] = useState(null); // 'instanceId-slot' when rolling for that slot
+
+  const allFilled = characters.length === 0 || characters.every(char => {
+    const data = movesPerCharacter[char.instanceId];
+    const slotCount = data && typeof data.shortSlots === 'number' && typeof data.longSlots === 'number'
+      ? (roll._restDuration === 'long' ? data.longSlots : data.shortSlots)
+      : 2;
+    const sel = restMovesForRoll[char.instanceId] || {};
+    for (let s = 1; s <= slotCount; s++) {
+      if (sel['move' + s] == null) return false;
+      const def = getRestMoveDefinition(sel['move' + s]);
+      if (def?.rollDice && !sel['move' + s + 'RollResult']) return false;
+    }
+    return true;
+  });
+
+  const handleSelect = (instanceId, slot, moveId, options = {}) => {
+    if (rollDbId == null || !onRestMoveSelect) return;
+    const def = moveId ? getRestMoveDefinition(moveId) : null;
+    if (def?.rollDice) {
+      onRestMoveSelect(rollDbId, instanceId, slot, moveId, options);
+      const key = `${instanceId}-${slot}`;
+      setRollingKey(key);
+      const rollText = ` [${def.rollDice}]`;
+      postRollSilent(rollText, '', isPlayer ? gmUid : null)
+        .then(res => {
+          onRestMoveSelect(rollDbId, instanceId, slot, moveId, { ...options, rollResult: { dice: def.rollDice, value: res.value } });
+        })
+        .catch(() => {})
+        .finally(() => setRollingKey(k => (k === key ? null : k)));
+    } else {
+      onRestMoveSelect(rollDbId, instanceId, slot, moveId, options);
+    }
+  };
+
+  return (
+    <div
+      className="dice-result-banner select-none flex-shrink-0"
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateY(0)' : 'translateY(16px)',
+        transition: 'opacity 0.2s ease, transform 0.2s ease',
+        pointerEvents: 'auto',
+        maxWidth: '95vw',
+        minWidth: '560px',
+      }}
+    >
+      <div className="px-4 py-3 rounded-xl shadow-2xl bg-slate-900/90 border-2 border-amber-500/60 text-amber-50">
+        <div className="text-base font-bold text-amber-200 mb-2">{duration} Rest - Choose Your Moves</div>
+        <div className="flex items-center gap-4 mb-3 flex-wrap">
+          {(roll.subItems || []).length > 0 && (
+            <div className="flex items-center gap-1">
+              {(roll.subItems || []).map((sub, i) => (
+                <span key={i} className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-xs font-mono">
+                  {sub.pre && <span className="text-slate-400">{sub.pre} </span>}
+                  {sub.result}
+                </span>
+              ))}
+            </div>
+          )}
+          <span className="text-sm font-semibold text-amber-300/90">+{fearN} Fear</span>
+        </div>
+        <div className="flex flex-col gap-2 overflow-y-auto max-h-[40vh] pb-1">
+          {characters.map(char => {
+            const data = movesPerCharacter[char.instanceId];
+            const moves = data && Array.isArray(data.moves) ? data.moves : defaultMoves;
+            const slotCount = data && typeof data.shortSlots === 'number' && typeof data.longSlots === 'number'
+              ? (roll._restDuration === 'long' ? data.longSlots : data.shortSlots)
+              : 2;
+            const slotLabels = data && roll._restDuration === 'long'
+              ? (Array.isArray(data.longSlotLabels) ? data.longSlotLabels : null)
+              : (data && Array.isArray(data.shortSlotLabels) ? data.shortSlotLabels : null);
+            const sel = restMovesForRoll[char.instanceId] || {};
+            const baseCanEdit = canEditColumn ? canEditColumn(char.instanceId) : true;
+            const otherChars = characters.filter(c => c.instanceId !== char.instanceId);
+            // Flatten options so canTargetAlly moves appear as separate rows: "Tend to Wounds (Self)", "Tend to Wounds (Alice)", etc.
+            const flattenOptions = (list) => list.flatMap(m => {
+              const def = getRestMoveDefinition(m.id);
+              if (def?.canTargetAlly) {
+                return [
+                  { ...m, _targetInstanceId: null, _targetName: 'Self' },
+                  ...otherChars.map(c => ({ ...m, _targetInstanceId: c.instanceId, _targetName: c.name })),
+                ];
+              }
+              return [m];
+            });
+            const findSelectedOption = (opts, slotNum) => opts.find(o => {
+              if (o.id !== sel['move' + slotNum]) return false;
+              const def = getRestMoveDefinition(o.id);
+              if (!def?.canTargetAlly) return true;
+              return (o._targetInstanceId ?? null) === (sel['move' + slotNum + 'TargetInstanceId'] ?? null);
+            }) ?? null;
+            return (
+              <div key={char.instanceId} className="flex flex-row items-center gap-2 border border-slate-700 rounded-lg px-2 py-1.5 bg-slate-800/50">
+                <div className="text-[11px] font-semibold text-amber-200 truncate w-24 shrink-0" title={char.name}>{char.name}</div>
+                {Array.from({ length: slotCount }, (_, i) => i + 1).map(slot => {
+                  const options = flattenOptions(moves);
+                  const moveVal = findSelectedOption(options, slot);
+                  const def = moveVal ? getRestMoveDefinition(moveVal.id) : null;
+                  const rollResult = sel['move' + slot + 'RollResult'];
+                  const slotLocked = isPlayer && def?.rollDice && rollResult != null;
+                  const canEditSlot = baseCanEdit && !slotLocked;
+                  const isRolling = rollingKey === `${char.instanceId}-${slot}`;
+                  const slotTitle = (slotLabels && slotLabels[slot - 1]) ?? `Move ${slot}`;
+                  return (
+                    <CustomSelect
+                      key={slot}
+                      value={moveVal}
+                      onChange={(opt) => handleSelect(char.instanceId, slot, opt?.id ?? null, opt?._targetInstanceId !== undefined ? { targetInstanceId: opt._targetInstanceId } : {})}
+                      options={options}
+                      getOptionLabel={(m) => m._targetName != null ? `${m.name} (${m._targetName})` : m.name}
+                      getOptionDescription={(m) => m.description}
+                      getOptionKey={(m) => m._targetInstanceId !== undefined ? `${m.id}-${m._targetInstanceId ?? 'self'}` : m.id}
+                      placeholder={slotTitle}
+                      disabled={!canEditSlot}
+                      className="text-xs flex-1 min-w-[220px] [&_button]:min-h-[3.5rem] [&_button_span]:whitespace-nowrap"
+                      dropdownClassName="[&_button_span]:whitespace-nowrap"
+                      renderValue={(m) => {
+                        const tier = char?.tier ?? 1;
+                        const rollVal = rollResult?.value ?? 0;
+                        const hasDice = def?.rollDice;
+                        const formulaLine = hasDice && rollResult != null
+                          ? `${rollResult.dice} (${rollResult.value}) + Tier (${tier}) = ${rollVal + tier}`
+                          : hasDice ? '\u00a0' : null;
+                        return (
+                          <span className="flex flex-col gap-0.5 justify-center">
+                            <span className="flex items-center gap-1">
+                              {m?._targetName != null ? `${m?.name} (${m._targetName})` : (m?.name ?? slotTitle)}
+                              {isRolling && <Loader2 className="w-3 h-3 animate-spin text-amber-400 shrink-0" />}
+                              {!isRolling && rollResult && <span className="text-amber-400 text-[10px]">({rollResult.dice} → {rollResult.value})</span>}
+                            </span>
+                            {formulaLine != null && (
+                              <span className="text-[10px] text-slate-400 leading-tight">{formulaLine}</span>
+                            )}
+                          </span>
+                        );
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+        {(!disableDismiss || onCancel != null) && (
+          <div className="flex items-center justify-center gap-1.5 mt-3">
+            {!disableDismiss && (
+              <button
+                onClick={() => onAcknowledge?.()}
+                disabled={!allFilled}
+                className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-amber-900/50 disabled:hover:text-amber-200"
+              >
+                Acknowledge
+              </button>
+            )}
+            {onCancel != null && (
+              <button
+                onClick={onCancel}
+                className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSupportSelectedId, onLifeSupportSelect, makeASceneSelectedId, onMakeASceneSelect, makeASceneAdversaries = [], targets = [] }) {
@@ -434,26 +637,50 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, fearlessChars = [], fearlessConvertedBannerIds, onFearlessConvert, felineInstinctsChars = [], onFelineInstinctsReroll, onFelineInstinctsRequest, felineRequestedBannerIds, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, onResolveInstantly, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
+  // #region agent log
+  if (roll.rollText && roll.rollText.includes(' + ')) {
+    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'DiceRoller.jsx:ResultBanner', message: 'banner display', data: { total, rollTextTail: (roll.rollText || '').slice(-30) }, timestamp: Date.now(), hypothesisId: 'E' }) }).catch(() => {});
+  }
+  // #endregion
   // Active post-apply interaction: the name of the tag whose interaction phase is running.
   // Replaces the three separate quickPhase / doubledUpPhase / bouncingPhase states.
   const [activeInteractionTag, setActiveInteractionTag] = useState(null);
-  // Retracting Claws (Katari): one target must be selected before Acknowledge.
-  const [retractingClawsSelectedId, setRetractingClawsSelectedId] = useState(null);
+  // Virtual weapon features (e.g. Retracting Claws, Long Tongue): one target must be selected before Acknowledge.
+  // Pre-selected target (from in-place "Choose target" menu) is stored on roll._selectedTargetInstanceId.
+  const [featureTargetSelectedId, setFeatureTargetSelectedId] = useState(
+    () => (roll._featureNeedsTarget && roll._selectedTargetInstanceId) ? roll._selectedTargetInstanceId : null
+  );
   // Damage banners: target chips are selectors only; selection is applied when Acknowledge is pressed.
   const [selectedDamageTargetId, setSelectedDamageTargetId] = useState(() => roll._selectedTargetInstanceId ?? null);
   const [useArmorForSelected, setUseArmorForSelected] = useState(false);
-  // Hold Them Off (Ranger): multi-select up to 3 targets; per-target armor.
+  // Multi-target: Hold Them Off (Ranger) or weapon/feature with _multiTarget (e.g. Elemental Breath).
   const holdThemOffActive = !!roll._holdThemOffActive;
   const [selectedDamageTargetIds, setSelectedDamageTargetIds] = useState(() =>
-    roll._holdThemOffActive ? [roll._selectedTargetInstanceId].filter(Boolean) : []
+    Array.isArray(roll._selectedTargetInstanceIds)
+      ? roll._selectedTargetInstanceIds
+      : (roll._holdThemOffActive
+          ? [roll._selectedTargetInstanceId].filter(Boolean)
+          : (roll._multiTarget ? (roll._selectedTargetInstanceId ? [roll._selectedTargetInstanceId] : []) : []))
   );
-  const [useArmorByTargetId, setUseArmorByTargetId] = useState(() => ({}));
+  const [useArmorByTargetId, setUseArmorByTargetId] = useState(() => (roll._useArmorByTargetId && typeof roll._useArmorByTargetId === 'object' ? roll._useArmorByTargetId : {}));
   // Popup menu for target selection (same UX as initiating player's "Choose target" menu).
   const [targetMenuAnchorRect, setTargetMenuAnchorRect] = useState(null);
+  const targetsSyncDebounceRef = useRef(null);
+
+  // Sync from roll when server-backed selection/armor updates (e.g. from another client).
+  useEffect(() => {
+    if (Array.isArray(roll._selectedTargetInstanceIds)) setSelectedDamageTargetIds(roll._selectedTargetInstanceIds);
+  }, [roll._rollDbId, roll._selectedTargetInstanceIds]);
+  useEffect(() => {
+    if (roll._featureNeedsTarget && roll._selectedTargetInstanceId) setFeatureTargetSelectedId(roll._selectedTargetInstanceId);
+  }, [roll._rollDbId, roll._featureNeedsTarget, roll._selectedTargetInstanceId]);
+  useEffect(() => {
+    if (roll._useArmorByTargetId != null && typeof roll._useArmorByTargetId === 'object') setUseArmorByTargetId(roll._useArmorByTargetId);
+  }, [roll._rollDbId, roll._useArmorByTargetId]);
 
   // When Hold Them Off is toggled on, seed multi-select from current single selection if empty.
   useEffect(() => {
@@ -462,6 +689,17 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       setSelectedDamageTargetIds([id]);
     }
   }, [holdThemOffActive, selectedDamageTargetIds.length, selectedDamageTargetId, roll._selectedTargetInstanceId]);
+
+  // Sync single-target selection to server so ancestry chips (e.g. Danger Sense) see the selected target.
+  useEffect(() => {
+    if (holdThemOffActive || roll._multiTarget || !onBannerTargetsChange || roll._rollDbId == null) return;
+    if (targetsSyncDebounceRef.current) clearTimeout(targetsSyncDebounceRef.current);
+    targetsSyncDebounceRef.current = setTimeout(() => {
+      targetsSyncDebounceRef.current = null;
+      onBannerTargetsChange(roll._rollDbId, { selectedTargetInstanceIds: selectedDamageTargetId ? [selectedDamageTargetId] : [] });
+    }, 200);
+    return () => { if (targetsSyncDebounceRef.current) clearTimeout(targetsSyncDebounceRef.current); };
+  }, [selectedDamageTargetId, roll._rollDbId, holdThemOffActive, roll._multiTarget, onBannerTargetsChange]);
 
   useEffect(() => {
     if (!targetMenuAnchorRect) return;
@@ -479,66 +717,106 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const selectAddRollDie = (die) => onPrayerDieSelect?.(roll._rollDbId, { addRollDie: die });
   const selectDmgReduceDie = (die) => onPrayerDieSelect?.(roll._rollDbId, { dmgReduceDie: die });
 
-  // Fearless (Infernis): if this banner was converted from Fear to Hope, use 'hope' for display.
-  const isConverted = !!(roll._rollDbId != null && fearlessConvertedBannerIds?.has(roll._rollDbId));
-  const effectiveDominant = isConverted ? 'hope' : dominant;
+  // Pre-ack display: features can set dominantForDisplay via chip.render (e.g. Fearless setWithHope()).
+  const effectiveDominant = (displayOverridesByRollId && roll._rollDbId != null && displayOverridesByRollId[roll._rollDbId]?.dominantForDisplay) ?? dominant;
 
   const hasDHLabels   = (roll.subItems || []).some(s => /hope/i.test(s.pre || ''))
                      && (roll.subItems || []).some(s => /fear/i.test(s.pre || ''));
-  const isDaggerheart = effectiveDominant != null || hasDHLabels;
+  const hasDuality = effectiveDominant != null || hasDHLabels;
   const isCritical    = effectiveDominant === 'critical';
   const isHope        = effectiveDominant === 'hope' || isCritical;
 
+  // Hope/Fear coloration only while rolling if the duality dice were preset (e.g. augmented Kick roll).
+  const dualitySubItems = (roll.subItems || []).filter(s => /hope|fear/i.test(s.pre || ''));
+  const dominantFromPreset = hasDuality && dualitySubItems.length > 0 && dualitySubItems.every(s => s._preset === true);
+
   const isPrayerDiceRoll = !!roll._isPrayerDiceRoll;
   const actionItems = (roll.subItems || []).filter(s => !/damage/i.test(s.pre || '') && !EXTRA_PRE_RE.test(s.pre || ''));
-  const damageSub   = (roll.subItems || []).find(s => /damage/i.test(s.pre || '') && s.input);
-  const extraItems  = (roll.subItems || []).filter(s => EXTRA_PRE_RE.test(s.pre || ''));
+  const extraItems   = (roll.subItems || []).filter(s => EXTRA_PRE_RE.test(s.pre || ''));
+  const damageSubs  = (roll.subItems || []).filter(s => /damage/i.test(s.pre || '') && s.input);
+  const damageTotal = damageSubs.reduce((sum, s) => sum + (parseInt(s.result, 10) || 0), 0);
+  /** Base damage used for thresholds and application; ancestry chips can override via setDamageTotal(). */
+  const baseDamage  = (roll._damageTotalOverride != null ? roll._damageTotalOverride : damageTotal);
+  const damageSub   = damageSubs[0];
   const dmg         = parseDiceSub(damageSub);
-  const hasDamage   = resolved && dmg != null;
+  const hasDamage   = (dmg != null || damageSubs.length > 0);
+  const multiDamage = damageSubs.length > 1;
+
+  // Unified multi-target mode: Hold Them Off toggle or roll._multiTarget (e.g. Elemental Breath).
+  const isMultiTargetMode = holdThemOffActive || (!!roll._multiTarget && (hasDamage || !!roll._featureNeedsTarget));
+  const multiTargetCap = holdThemOffActive ? 3 : (roll._multiTargetMax ?? 10);
+  // For multiple damage sub-items (e.g. augmented Kick), parse each for combined display.
+  const damageParts = multiDamage ? damageSubs.map(s => ({ sub: s, parsed: parseDiceSub(s) })) : null;
+  // Precompute part labels: original damage as dice breakdown (e.g. "d8 3 + 1"), added damage as "<name> <dice>(result)" (e.g. "Tusks 1d6(2)").
+  const damagePartDisplays = damageParts?.map(({ sub, parsed }) => {
+    const damageLabel = (sub.pre || '').replace(/\s+damage$/i, '').trim();
+    // Extra-damage parts (Tusks, Kick, etc.) have a label like "Tusks 1d6"; show "Tusks 1d6(2)". Skip generic "damage" (from pre " damage ") so we use dice breakdown for preset parts.
+    if (damageLabel && damageLabel.toLowerCase() !== 'damage') return `${damageLabel}(${sub.result})`;
+    // Original/preset parts: show dice breakdown (e.g. "d8 3 + 1") so we don't collapse to "damage(4)".
+    if (parsed) {
+      const modStr = parsed.modifier !== 0 ? ` + ${parsed.modifier}` : '';
+      return `${parsed.notation} ${parsed.dieValue}${modStr}`;
+    }
+    return sub.result;
+  }) ?? null;
 
   // Determine if this banner has any interactive actions that require user input before dismissal.
   const tags = roll.tags || [];
   const hasInteractiveTags = tags.some(t => isTagInteractive(t.name));
   const hasLucky = tags.some(t => t.name === 'Lucky') && dominant === 'fear';
-  // Show target row for damage (GM only) or for Retracting Claws (GM and player see chips; only GM can acknowledge).
-  const needsInteraction = resolved && (canApplyDamage || roll._retractingClaws) && (hasDamage || hasInteractiveTags || roll._retractingClaws);
+  // Show target row for GM or for the initiating player (attacker) so they can select targets.
+  const isInitiator = currentUserUid != null && roll._initiatorUid === currentUserUid;
+  const canShowTargetRow = canApplyDamage || (isPlayer && isInitiator);
+  const needsInteraction = (canShowTargetRow || roll._featureNeedsTarget) && (hasDamage || hasInteractiveTags || roll._featureNeedsTarget);
 
   // Whether to show action buttons (Acknowledge / Apply damage)
-  const showActions = resolved && !disableDismiss;
+  const showActions = !disableDismiss;
+  // Show action row (target selection, toggles) to GM or to the initiating player; only GM sees Acknowledge/Skip.
+  const showActionRow = showActions || (isPlayer && isInitiator);
 
   // DH rolls: label + numeric value for each non-damage sub-item. Include input to detect static parts.
   // Use dice expression (e.g. "1d8") as label when pre is blank so builder extra dice show in banner.
-  const dhParts = isDaggerheart
+  // Disadvantage sub-items (e.g. Galapa Retract) are subtracted; carry isDisadvantage for display (minus, short label).
+  const dhParts = hasDuality
     ? actionItems
-        .map(s => ({ label: extractBannerLabel(s.pre) || (s.input && s.input.trim()) || 'Dice', value: parseInt(s.result, 10), input: s.input }))
+        .map(s => {
+          const isDisadvantage = /disadvantage/i.test(s.pre || '');
+          const rawLabel = extractBannerLabel(s.pre) || (s.input && s.input.trim()) || 'Dice';
+          const label = isDisadvantage ? (rawLabel.replace(/\s*disadvantage\s*/i, '').trim() || 'disadvantage') : rawLabel;
+          return { label, value: parseInt(s.result, 10), input: s.input, isDisadvantage };
+        })
         .filter(p => p.label && (resolved ? (!isNaN(p.value) && p.value !== 0) : true))
     : [];
 
   // Generic rolls: parsed dice detail for the first action expression.
-  const genericActionSub = !isDaggerheart
+  const genericActionSub = !hasDuality
     ? actionItems.find(s => /d\d/i.test(s.input || ''))
     : null;
   const genericAction = parseDiceSub(genericActionSub);
   const genericTotal  = total ?? computeActionTotal(roll.subItems);
+  // Trailing " + N" from rollText (e.g. Know the Tide) — show in dice string; total already includes it.
+  const staticModFromRollText = getStaticModifierFromRollText(roll.rollText);
+  // " — disadvantage removed: label1, label2" from rollText (e.g. Goblin Surefooted).
+  const disadvantageRemovedNote = getDisadvantageRemovedFromRollText(roll.rollText);
   // When unresolved, use sum of static-only action parts if every part is static (no dice).
   const staticGenericTotal = !resolved && !genericAction && actionItems.length > 0
     && actionItems.every(s => isStaticDiceInput(s.input))
     ? actionItems.reduce((sum, s) => sum + (parseStaticValue(s.input) ?? 0), 0)
     : null;
 
-  // Color schemes for DH (hope/fear) vs generic rolls.
+  // Color schemes for DH (hope/fear) vs generic rolls. Use hope/fear only when resolved or when Hope/Fear dice were preset (e.g. augmented roll).
   const neutralScheme = { card: 'bg-slate-900/90 border-2 border-sky-500/60 text-sky-100', detail: 'text-sky-200/60' };
-  const scheme = (!resolved || !isDaggerheart)
+  const scheme = (!hasDuality || (!resolved && !dominantFromPreset))
     ? neutralScheme
     : isHope
       ? { card: 'bg-amber-900/90 border-2 border-amber-400 text-amber-50', detail: 'text-amber-400/80' }
       : { card: 'bg-purple-950/90 border-2 border-purple-500/60 text-purple-100', detail: 'text-purple-200/60' };
 
   // Character rolls target adversaries; adversary/other rolls target characters.
-  // Use getTargetsForRoll when Retracting Claws, character attack with weapon range, or adversary attack with range.
+  // Use getTargetsForRoll for virtual weapon features, character attacks with weapon range, or adversary attacks with range.
   const useGetTargetsForRoll = !!(getTargetsForRoll && (
-    roll._retractingClaws ||
-    (hasDamage && roll._attackerInstanceId && (roll._weaponRangeFt != null || roll._retractingClaws || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)))
+    roll._featureNeedsTarget ||
+    (hasDamage && roll._attackerInstanceId && (roll._weaponRangeFt != null || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)))
   ));
   const allTargets = useGetTargetsForRoll ? (getTargetsForRoll(roll) || []) : (targets || []);
   const rollSrc = (rollUser || characterName || '').toLowerCase().trim();
@@ -549,33 +827,24 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         rollSrc.startsWith(t.name.toLowerCase())
       ))
     : false);
-  // Retracting Claws: allTargets is already melee adversaries only; don't re-filter by type or we get [] (no characters in list).
-  const filteredTargets = roll._retractingClaws
-    ? allTargets
-    : isCharacterRoll
-      ? allTargets.filter(t => t.type === 'adversary')
-      : allTargets.filter(t => t.type === 'character');
+  const filteredTargets = isCharacterRoll
+    ? allTargets.filter(t => t.type === 'adversary')
+    : allTargets.filter(t => t.type === 'character');
 
-  // Selected target(s) for banner title (damage or Retracting Claws). Hold Them Off: up to 3 targets.
-  const selectedTargetIdForTitle = roll._retractingClaws ? retractingClawsSelectedId : (holdThemOffActive ? null : selectedDamageTargetId);
-  const selectedTargetsForTitle = holdThemOffActive && selectedDamageTargetIds.length > 0
+  // Selected target(s) for banner title.
+  const selectedTargetIdForTitle = roll._featureNeedsTarget ? featureTargetSelectedId : (isMultiTargetMode ? null : selectedDamageTargetId);
+  const selectedTargetsForTitle = isMultiTargetMode && selectedDamageTargetIds.length > 0
     ? selectedDamageTargetIds.map(id => filteredTargets.find(t => t.instanceId === id)).filter(Boolean)
     : [];
   const selectedTargetForTitle = selectedTargetIdForTitle
     ? filteredTargets.find(t => t.instanceId === selectedTargetIdForTitle)
     : null;
-  const bannerTitle = holdThemOffActive && selectedTargetsForTitle.length > 0
+  const bannerTitle = isMultiTargetMode && selectedTargetsForTitle.length > 0
     ? `${displayName} → ${selectedTargetsForTitle.map(t => t.name).join(', ')}`
     : selectedTargetForTitle ? `${displayName} → ${selectedTargetForTitle.name}` : displayName;
 
-  // Fearless character lookup — done in component body so it's accessible outside showActions IIFE.
-  // Does NOT require isCharacterRoll so it works for players (who receive targets=[]).
-  // fearlessChars is already pre-filtered (player mode: own character only), so adversary rolls
-  // won't match unless an adversary happens to share the character's name.
-  // Feline Instincts (Katari): Agility roll + character has feature and ≥2 Hope.
-  const felineChar = roll._traitKey === 'agility' && roll._attackerInstanceId && isDaggerheart
-    ? felineInstinctsChars.find(c => c.instanceId === roll._attackerInstanceId)
-    : null;
+  // Generic ancestry banner reactions — pre-matched by GMTableView for this roll.
+  const applicableReactions = bannerReactions.filter(r => r.matchesRoll(roll));
 
   // Ranger's Focus: Fear result, attack vs Focus target — can end Focus to reroll Duality dice.
   // Use roll._selectedTargetInstanceId as fallback for players who pre-select before rolling
@@ -592,34 +861,59 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     ? holdThemOffChars.find(c => c.instanceId === roll._attackerInstanceId)
     : null;
 
-  // Heart of a Poet (Wordsmith): non-attack action roll (has _traitKey, no damage, isDaggerheart, not the die-copy banner).
-  const heartOfAPoetChar = resolved && !hasDamage && roll._attackerInstanceId && roll._traitKey && isDaggerheart && !roll._heartOfAPoetApplied
+  // Heart of a Poet (Wordsmith): non-attack action roll (has _traitKey, no damage, hasDuality, not the die-copy banner).
+  const heartOfAPoetChar = !hasDamage && roll._attackerInstanceId && roll._traitKey && hasDuality && !roll._heartOfAPoetApplied
     ? heartOfAPoetChars.find(c => c.instanceId === roll._attackerInstanceId)
     : null;
 
   // Rally Die: character has a Rally Die modifier and this is an attack/action roll (not the clear-stress roll itself).
-  const hasRallyDie = resolved && !roll._rallyClearStress && !roll._rallyDieApplied
+  const hasRallyDie = !roll._rallyClearStress && !roll._rallyDieApplied
     && roll._rollDbId != null && roll._attackerInstanceId
     && rallyDieInstanceIds?.has(roll._attackerInstanceId)
     && (actionItems.length > 0 || hasDamage);
   const rallyAddToRoll = !!roll._rallyDieAddToRoll;
   const rallyAddToDamage = !!roll._rallyDieAddToDamage;
 
-  const fearlessChar = dominant === 'fear' && roll._rollDbId != null
-    ? fearlessChars.find(c =>
-        (roll._attackerInstanceId && c.instanceId === roll._attackerInstanceId) ||
-        (!roll._attackerInstanceId && (
-          c.name?.toLowerCase() === rollSrc ||
-          rollSrc.startsWith(c.name?.toLowerCase())
-        ))
-      )
+  // Attack success/failure: total >= target Difficulty (adversary) or Evasion (character).
+  const selectedTargetIds = isMultiTargetMode
+    ? selectedDamageTargetIds
+    : (selectedDamageTargetId || roll._selectedTargetInstanceId ? [selectedDamageTargetId || roll._selectedTargetInstanceId] : []);
+  const effectiveAttackTotal = hasDuality
+    ? (total + (selectedAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0))
+    : genericTotal;
+  let hitCount = 0;
+  let missCount = 0;
+  for (const id of selectedTargetIds) {
+    const target = filteredTargets.find(t => t.instanceId === id);
+    if (!target) continue;
+    const defense = target.type === 'adversary' ? target.difficulty : target.evasion;
+    if (defense == null) continue;
+    if (effectiveAttackTotal >= defense) hitCount++;
+    else missCount++;
+  }
+  const showHitMiss = hasDamage && resolved && (hitCount + missCount) > 0;
+  const hitMissLabel = showHitMiss
+    ? (hitCount + missCount === 1
+        ? (hitCount === 1 ? 'Hit' : 'Miss')
+        : [hitCount > 0 && `${hitCount} hit${hitCount > 1 ? 's' : ''}`, missCount > 0 && `${missCount} miss${missCount > 1 ? 'es' : ''}`].filter(Boolean).join(', '))
     : null;
+  // Non-attack duality rolls with a difficulty: show Success/Failure (like Hit/Miss for attacks).
+  // Critical (Hope/Fear doubles) is always a success per Daggerheart rules.
+  const showSuccessFailure = hasDuality && resolved && roll._difficulty != null && !showHitMiss;
+  const difficultySuccess = showSuccessFailure && (isCritical || effectiveAttackTotal >= roll._difficulty);
+  const successFailureLabel = showSuccessFailure ? (difficultySuccess ? 'Success' : 'Failure') : null;
+  const resultLabel = hitMissLabel || successFailureLabel;
+  const resultSuccess = showHitMiss ? (hitCount > 0 && missCount === 0) : (showSuccessFailure && difficultySuccess);
+  const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);
+  const resultMixed = showHitMiss && hitCount > 0 && missCount > 0;
+  const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-amber-400' : '';
 
   const handleResolveClick = !resolved && onResolveInstantly
     ? (e) => { e.stopPropagation(); onResolveInstantly(); }
     : undefined;
 
   return (
+    <Tooltip label={handleResolveClick ? 'Click to show result immediately' : ''}>
     <div
       className="dice-result-banner select-none flex-shrink-0"
       style={{
@@ -632,13 +926,21 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         cursor: handleResolveClick ? 'pointer' : undefined,
       }}
       onClick={handleResolveClick}
-      title={handleResolveClick ? 'Click to show result immediately' : undefined}
     >
+      <div style={{ pointerEvents: resolved ? undefined : 'none' }}>
       <div
         className={`px-5 py-3 rounded-xl shadow-2xl text-center ${scheme.card}`}
       >
         {bannerTitle && (
-          <div className="text-[11px] uppercase tracking-widest opacity-70 mb-1.5">{bannerTitle}</div>
+          <div
+            className={`text-[11px] uppercase tracking-widest opacity-70 mb-1.5 ${resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? 'cursor-pointer hover:opacity-90' : ''}`}
+            style={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? { pointerEvents: 'auto' } : undefined}
+            onClick={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? (e) => { e.stopPropagation(); onReplayDice(); } : undefined}
+            title={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? 'Replay dice animation' : undefined}
+            role={resolved && onReplayDice ? 'button' : undefined}
+          >
+            {bannerTitle}
+          </div>
         )}
 
         {/* ── Action line ── */}
@@ -659,19 +961,31 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 );
               })}
             </>
-          ) : isDaggerheart ? (
+          ) : hasDuality ? (
             <>
               {dhParts.length > 0 && (
                 <span className={`text-[11px] ${scheme.detail}`}>
                   {dhParts.map((p, i) => {
                     const displayVal = resolved ? p.value : (isStaticDiceInput(p.input) ? parseStaticValue(p.input) : undefined);
+                    const sep = i > 0 ? (p.isDisadvantage ? ' \u2212 ' : (isNaN(p.value) || p.value >= 0 ? ' + ' : ' \u2212 ')) : '';
                     return (
                       <span key={i}>
-                        {i > 0 && (isNaN(p.value) || p.value >= 0 ? ' + ' : ' \u2212 ')}
-                        {p.label} {displayVal !== undefined && displayVal !== null ? Math.abs(displayVal) : <Spinner />}
+                        {sep}
+                        {p.isDisadvantage ? (
+                          resolved ? (
+                            <span className="text-amber-300/90">{p.label} (−{Math.abs(displayVal ?? 0)})</span>
+                          ) : (
+                            <span className="text-amber-300/70">{p.label} <Spinner /></span>
+                          )
+                        ) : (
+                          <>{p.label} {displayVal !== undefined && displayVal !== null ? Math.abs(displayVal) : <Spinner />}</>
+                        )}
                       </span>
                     );
                   })}
+                  {staticModFromRollText > 0 && (
+                    <span> + {roll._staticModifierLabel ? `${roll._staticModifierLabel} ` : ''}{staticModFromRollText}</span>
+                  )}
                   {' ='}
                 </span>
               )}
@@ -685,33 +999,68 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 <span className="text-[10px] text-violet-400/80 ml-0.5">+{roll._heartOfAPoetD4Result} Heart of a Poet</span>
               )}
               <span className="text-sm font-semibold opacity-80 ml-0.5">
-                {resolved
+                {(resolved || dominantFromPreset)
                   ? (isCritical ? '✦ Critical!' : isHope ? 'with Hope' : 'with Fear')
                   : <Spinner lg />}
               </span>
+              {resultLabel && (
+                <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
+                  {resultLabel}
+                </span>
+              )}
             </>
           ) : genericAction ? (
             <>
               <span className={`text-[11px] ${scheme.detail}`}>
                 {genericAction.notation} {resolved ? genericAction.dieValue : <Spinner />}
                 {genericAction.modifier !== 0 && (
-                  <> {genericAction.modifier > 0 ? '+' : '\u2212'} {Math.abs(genericAction.modifier)}</>
+                  <> {genericAction.modifier > 0 ? '+' : '-'} {Math.abs(genericAction.modifier)}</>
+                )}
+                {actionItems.some(s => /disadvantage/i.test(s.pre || '')) && (
+                  <> {actionItems.filter(s => /disadvantage/i.test(s.pre || '')).map((s, i) => {
+                    const val = parseInt(s.result, 10) || 0;
+                    const notation = (s.input || '1d6').trim();
+                    const label = (s.pre || '').replace(/\s*disadvantage\s*/i, '').trim() || 'disadvantage';
+                    return (
+                      <span key={i}> - {notation} ({resolved ? val : <Spinner />}) {label}</span>
+                    );
+                  })}</>
+                )}
+                {staticModFromRollText > 0 && (
+                  <span> + {roll._staticModifierLabel ? `${roll._staticModifierLabel} ` : ''}{staticModFromRollText}</span>
                 )}
                 {' ='}
               </span>
               <span className="text-2xl font-black tabular-nums ml-1">
-                {resolved ? genericAction.total : <Spinner lg />}
+                {resolved ? genericTotal : <Spinner lg />}
               </span>
+              {resultLabel && (
+                <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
+                  {resultLabel}
+                </span>
+              )}
             </>
           ) : (
-            <span className="text-2xl font-black tabular-nums">
-              {resolved ? genericTotal : (staticGenericTotal !== null ? staticGenericTotal : <Spinner lg />)}
-            </span>
+            <>
+              <span className="text-2xl font-black tabular-nums">
+                {resolved ? genericTotal : (staticGenericTotal !== null ? staticGenericTotal : <Spinner lg />)}
+              </span>
+              {resultLabel && (
+                <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
+                  {resultLabel}
+                </span>
+              )}
+            </>
           )}
         </div>
+        {disadvantageRemovedNote && (
+          <div className="text-[10px] text-slate-400 italic mt-0.5">
+            Disadvantage ignored: {disadvantageRemovedNote}
+          </div>
+        )}
 
         {/* ── Prayer Die: add-to-roll buttons (DH rolls only, visible to all) ── */}
-        {isDaggerheart && resolved && prayerDiceChars.length > 0 && (
+        {hasDuality && prayerDiceChars.length > 0 && (
           <div className="flex items-center justify-center flex-wrap gap-1 mt-1">
             {prayerDiceChars.map(die => {
               const isSelected = selectedAddRollDie?.id === die.id;
@@ -727,36 +1076,57 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       ? 'border-teal-500 bg-teal-900/50 text-teal-200'
                       : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
                   } disabled:opacity-40 disabled:cursor-not-allowed`}
-                  title={isSelected ? 'Remove Prayer Die from roll' : `Add ${die.ownerName}'s Prayer Die (${die.value}) to this roll`}
                 >
-                  {die.ownerName}: +{die.value} Prayer Die
+                  <Tooltip label={isSelected ? 'Remove Prayer Die from roll' : `Add ${die.ownerName}'s Prayer Die (${die.value}) to this roll`}>
+                    <span>{die.ownerName}: +{die.value} Prayer Die</span>
+                  </Tooltip>
                 </button>
               );
             })}
           </div>
         )}
 
-        {/* ── Damage line ── */}
-        {dmg && (() => {
+        {/* ── Damage line (single or combined when augmented e.g. Kick) ── */}
+        {(dmg || multiDamage) && (() => {
           const dmgReduction = selectedDmgReduceDie?.value ?? 0;
           const wingsBonus = roll._wingsOfLightD8Result ?? 0;
           const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-          const baseDmg = dmg.total + wingsBonus + rallyDmgBonus;
+          const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
           const displayDmg = Math.max(0, baseDmg - dmgReduction);
+          const firstDmgType = dmg?.type ?? (damageSubs[0] && parseDiceSub(damageSubs[0])?.type);
+          const selectedTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
+          const isPhysicalDmg = firstDmgType === 'phy' || firstDmgType === 'Physical';
+          const hasPhysicalResistance = selectedTarget?.type === 'character' && (selectedTarget.retractedActive || (Array.isArray(selectedTarget.resistance) && selectedTarget.resistance.some(r => (r.type === 'physical' || r.type === 'Physical'))));
+          const effectiveDisplayDmg = (hasPhysicalResistance && isPhysicalDmg) ? Math.floor(displayDmg / 2) : displayDmg;
           return (
             <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
               <span className="text-[11px] text-red-300/60">
-                {dmg.notation}{' '}
-                {resolved ? (
+                {multiDamage ? (
                   <>
-                    {(dmg.discarded || []).map((v, i) => (
-                      <span key={i} className="line-through text-red-300/30 mr-0.5">{v}</span>
-                    ))}
-                    {dmg.dieValue}
+                    {resolved ? (
+                      damagePartDisplays?.map((partDisplay, i) => (
+                        <span key={i}>
+                          {i > 0 && ' + '}
+                          {partDisplay}
+                        </span>
+                      ))
+                    ) : <Spinner />}
                   </>
-                ) : <Spinner />}
-                {dmg.modifier !== 0 && (
-                  <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
+                ) : (
+                  <>
+                    {dmg.notation}{' '}
+                    {resolved ? (
+                      <>
+                        {(dmg.discarded || []).map((v, i) => (
+                          <span key={i} className="line-through text-red-300/30 mr-0.5">{v}</span>
+                        ))}
+                        {dmg.dieValue}
+                      </>
+                    ) : <Spinner />}
+                    {dmg.modifier !== 0 && (
+                      <> {dmg.modifier > 0 ? '+' : '\u2212'} {Math.abs(dmg.modifier)}</>
+                    )}
+                  </>
                 )}
                 {roll._wingsOfLightD8Result != null && (
                   <> + d8({roll._wingsOfLightD8Result})</>
@@ -770,12 +1140,21 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 {' ='}
               </span>
               <span className="text-lg font-black tabular-nums text-red-300 ml-1">
-                {resolved ? displayDmg : <Spinner />}
+                {resolved
+                  ? (roll._damageTotalOverride != null
+                      ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
+                      : hasPhysicalResistance && isPhysicalDmg
+                        ? <><span className="line-through">{displayDmg}</span> <span className="text-amber-300/90">{effectiveDisplayDmg}</span></>
+                        : effectiveDisplayDmg)
+                  : <Spinner />}
               </span>
-              {dmg.type && (
-                <span className="text-sm font-semibold text-red-300/80 ml-0.5">{dmg.type}</span>
+              {firstDmgType && (
+                <span className="text-sm font-semibold text-red-300/80 ml-0.5">{firstDmgType}</span>
               )}
               <span className="text-sm font-semibold text-red-300/80">damage</span>
+              {hasPhysicalResistance && isPhysicalDmg && (
+                <span className="text-[10px] font-medium text-amber-400/90 ml-1">(Resistance)</span>
+              )}
             </div>
           );
         })()}
@@ -810,7 +1189,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         })}
 
         {/* ── Feature tags ── */}
-        {resolved && (roll.tags || []).length > 0 && (
+        {(roll.tags || []).length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
             {(roll.tags || []).map((tag, i) => {
               const isAuto = isTagAutomated(tag.name);
@@ -850,14 +1229,129 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         )}
 
         {/* Focused-by Stress note: visible to everyone when the attack targets the Ranger's Focus adversary */}
-        {resolved && focusedByStressNote && (
+        {focusedByStressNote && (
           <div className="text-[10px] text-emerald-300/90 mt-1.5">
             Target will mark 1 Stress (Focused).
           </div>
         )}
 
+        {/* Ancestry banner reaction chips (Fearless, Feline Instincts, Kick, etc.) — above Acknowledge/Cancel */}
+        {applicableReactions.length > 0 && (
+          <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap gap-1.5 items-center">
+            {applicableReactions.map((reaction) => {
+              const { featureName, character, getDisabledState, isActive: reactionIsActive, button, stateKey, chip } = reaction;
+              const active = reactionIsActive(roll);
+              const disabledState = typeof getDisabledState === 'function' ? getDisabledState(roll) : { disabled: false, message: '' };
+              const isEnabled = !disabledState.disabled;
+              const disabledMessage = disabledState.message || '';
+              const requested = !!reaction.isRequested;
+              const hasChipAckReject = chip?.onChipAck != null || chip?.onChipReject != null;
+              const chipResolved = stateKey && roll._chipResolved?.[stateKey];
+              const showChipAckRejectRow = hasChipAckReject && onChipResolve && !isPlayer && active && !chipResolved;
+              const checked = active || requested || chipResolved;
+
+              if (hasChipAckReject && chipResolved) {
+                return (
+                  <Tooltip key={`${featureName}-${character.instanceId}`} label={button?.label || ''} placement="bottom-left">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-500">
+                      <CheckSquare size={12} className="shrink-0" />
+                      {featureName}
+                    </div>
+                  </Tooltip>
+                );
+              }
+
+              if (showChipAckRejectRow) {
+                return (
+                  <Tooltip key={`${featureName}-${character.instanceId}`} label={button?.label ? `${button.label} — click to turn off` : 'Click to turn off'} placement="bottom-left">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-200">
+                      <button
+                        type="button"
+                        onClick={() => onBannerReactionActivate?.(reaction, roll)}
+                        className="flex items-center gap-1.5 shrink-0 rounded -m-1 p-1 hover:bg-amber-800/50 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        <CheckSquare size={12} className="shrink-0" />
+                        <span className="truncate max-w-[120px]">{featureName}</span>
+                      </button>
+                      <span className="flex items-center gap-1 shrink-0">
+                        {chip?.onChipAck != null && (
+                          <button
+                            type="button"
+                            disabled={!isEnabled}
+                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack'); }}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-600 bg-emerald-800/60 text-emerald-100 hover:bg-emerald-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            OK
+                          </button>
+                        )}
+                        {chip?.onChipReject != null && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'reject'); }}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700/70"
+                          >
+                            Reject
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  </Tooltip>
+                );
+              }
+
+              const reactionTooltip =
+                active
+                  ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
+                  : isEnabled
+                    ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
+                    : disabledMessage || `${character.name}: cannot use ${featureName}`;
+
+              // Non-toggleable chips (no onChipAck/onChipReject): no checkbox, badge-only style.
+              if (!hasChipAckReject) {
+                const El = chip?.activate ? 'button' : 'div';
+                return (
+                  <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
+                    <El
+                      {...(El === 'button' ? {
+                        type: 'button',
+                        onClick: (active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined,
+                        disabled: !active && !isEnabled && !requested,
+                      } : {})}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-400 shrink-0 ${
+                        El === 'button' && (active || isEnabled || requested) ? 'hover:bg-slate-700/50 cursor-pointer' : ''
+                      }`}
+                    >
+                      {featureName}
+                    </El>
+                  </Tooltip>
+                );
+              }
+
+              return (
+                <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
+                  <button
+                    type="button"
+                    onClick={(active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined}
+                    disabled={!active && !isEnabled && !requested}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors shrink-0 ${
+                      active || requested
+                        ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70 cursor-pointer'
+                        : isEnabled
+                          ? 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 cursor-pointer'
+                          : 'border-slate-600 bg-slate-800/40 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    {checked ? <CheckSquare size={12} className="shrink-0" /> : <Square size={12} className="shrink-0" />}
+                    {featureName}
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+        )}
+
         {/* ── Action row: target badges or Acknowledge ── */}
-        {showActions && (() => {
+        {showActionRow && (() => {
           // ── Post-apply interaction phase (Quick, Doubled Up, Bouncing) ──
           if (activeInteractionTag) {
             const interactionFeature = weaponFeatures[activeInteractionTag];
@@ -909,7 +1403,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           }
 
           // ── Primary action row ──
-          const isAdversaryRoll = !isCharacterRoll && wizardsWithHope.length > 0 && (isDaggerheart || hasDamage);
+          const isAdversaryRoll = !isCharacterRoll && wizardsWithHope.length > 0 && (hasDuality || hasDamage);
 
           // After applying damage, check if any tag needs a post-apply interaction phase.
           const enterPostApplyPhase = () => {
@@ -938,83 +1432,72 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   key={wizard.instanceId}
                   onClick={() => { onNotThisTime(wizard, roll); }}
                   className="w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border border-violet-700 bg-violet-900/50 text-violet-200 hover:bg-violet-800 hover:text-violet-100 transition-colors flex items-center justify-center gap-1"
-                  title={`${wizard.name} spends 3 Hope to force a reroll (Not This Time)`}
                 >
-                  <RotateCcw size={10} /> {wizard.name}: Not This Time (3 Hope)
+                  <Tooltip label={`${wizard.name} spends 3 Hope to force a reroll (Not This Time)`}>
+                    <span><RotateCcw size={10} /> {wizard.name}: Not This Time (3 Hope)</span>
+                  </Tooltip>
                 </button>
               ))}
-              {/* Feline Instincts (Katari): Spend 2 Hope to reroll Hope die — Agility roll, char has feature and ≥2 Hope */}
-              {felineChar && (onFelineInstinctsReroll || onFelineInstinctsRequest) && (() => {
-                const felineRequested = !!roll._felineRerollRequestedBy;
-                return (
-                  <button
-                    onClick={() => {
-                      if (onFelineInstinctsReroll) onFelineInstinctsReroll(roll);
-                      else if (onFelineInstinctsRequest && roll._rollDbId) onFelineInstinctsRequest(roll._rollDbId);
-                    }}
-                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${felineRequested ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
-                    title={felineRequested ? 'Reroll requested — waiting for GM' : 'Spend 2 Hope to reroll Hope Die (Feline Instincts)'}
-                  >
-                    {felineRequested ? <Check size={12} className="shrink-0" /> : <RotateCcw size={10} />}
-                    Spend 2 Hope to reroll Hope Die
-                  </button>
-                );
-              })()}
+              {/* Ancestry banner reactions inside showActions (GM-visible) are handled by the generic block below */}
               {/* Ranger's Focus: End Focus to reroll Duality dice — Fear result, attack vs Focus target (GM only in showActions block) */}
               {dominant === 'fear' && hasDamage && rangerFocusRerollChar && onRangerFocusReroll && (() => {
                 const rangerRequested = !!(roll._rangerFocusRerollRequestedBy || (rangerFocusRequestedBannerIds && rangerFocusRequestedBannerIds.has(roll._rollDbId)));
                 return (
-                  <button
-                    onClick={() => onRangerFocusReroll(roll)}
-                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rangerRequested ? 'border-emerald-500 bg-emerald-800/80 text-emerald-100' : 'border-emerald-700 bg-emerald-900/50 text-emerald-200 hover:bg-emerald-800 hover:text-emerald-100'}`}
-                    title={rangerRequested ? 'Reroll requested — waiting for GM' : "End Ranger's Focus to reroll Duality dice"}
-                  >
-                    {rangerRequested ? <Check size={12} className="shrink-0" /> : <RotateCcw size={10} />}
-                    End Ranger's Focus to reroll Duality dice
-                  </button>
+                  <Tooltip label={rangerRequested ? 'Reroll requested — waiting for GM' : "End Ranger's Focus to reroll Duality dice"}>
+                    <button
+                      onClick={() => onRangerFocusReroll(roll)}
+                      className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rangerRequested ? 'border-emerald-500 bg-emerald-800/80 text-emerald-100' : 'border-emerald-700 bg-emerald-900/50 text-emerald-200 hover:bg-emerald-800 hover:text-emerald-100'}`}
+                    >
+                      {rangerRequested ? <Check size={12} className="shrink-0" /> : <RotateCcw size={10} />}
+                      End Ranger's Focus to reroll Duality dice
+                    </button>
+                  </Tooltip>
                 );
               })()}
               {/* Hold Them Off (Ranger): Spend 3 Hope to select two more targets — visible to GM and initiating player */}
               {holdThemOffChar && onHoldThemOffToggle && roll._rollDbId && (
-                <button
-                  onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
-                  className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
-                  title={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}
-                >
-                  {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
-                  Spend 3 Hope to select two more targets
-                </button>
+                <Tooltip label={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}>
+                  <button
+                    onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
+                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                  >
+                    {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
+                    Spend 3 Hope to select two more targets
+                  </button>
+                </Tooltip>
               )}
               {/* Rally Die: add to roll / damage — visible to GM and player; state shared across windows */}
               {hasRallyDie && onRallyDieToggle && roll._rollDbId && (
                 <>
                   {actionItems.length > 0 && (
-                    <button
-                      onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
-                      className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                      title={rallyAddToRoll ? 'Rally Die will be added to roll on Acknowledge — click to cancel' : 'Add Rally Die result to roll total on Acknowledge'}
-                    >
-                      {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
-                      {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
-                    </button>
+                    <Tooltip label={rallyAddToRoll ? 'Rally Die will be added to roll on Acknowledge — click to cancel' : 'Add Rally Die result to roll total on Acknowledge'}>
+                      <button
+                        onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
+                        className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                      >
+                        {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
+                        {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
+                      </button>
+                    </Tooltip>
                   )}
                   {hasDamage && (
-                    <button
-                      onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
-                      className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                      title={rallyAddToDamage ? 'Rally Die will be added to damage on Acknowledge — click to cancel' : 'Add Rally Die result to damage on Acknowledge'}
-                    >
-                      {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
-                      {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
-                    </button>
+                    <Tooltip label={rallyAddToDamage ? 'Rally Die will be added to damage on Acknowledge — click to cancel' : 'Add Rally Die result to damage on Acknowledge'}>
+                      <button
+                        onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
+                        className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                      >
+                        {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
+                        {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
+                      </button>
+                    </Tooltip>
                   )}
                 </>
               )}
-              {(hasDamage || roll._retractingClaws) && canApplyDamage && (filteredTargets.length > 0 || roll._retractingClaws || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)) ? (
+              {(hasDamage || roll._featureNeedsTarget) && canShowTargetRow && (filteredTargets.length > 0 || roll._featureNeedsTarget || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)) ? (
                 <>
                   <div className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider">
                     {(() => {
-                      const rangeLabel = roll._retractingClaws ? 'Melee' : (roll._weaponRangeFt != null ? rangeFtToLabel(roll._weaponRangeFt) : (roll._attackerType === 'adversary' && roll._attackRangeFt != null ? rangeFtToLabel(roll._attackRangeFt) : null));
+                      const rangeLabel = roll._weaponRangeFt != null ? rangeFtToLabel(roll._weaponRangeFt) : (roll._attackerType === 'adversary' && roll._attackRangeFt != null ? rangeFtToLabel(roll._attackRangeFt) : null);
                       return rangeLabel ? `Apply within ${rangeLabel}` : 'Apply to';
                     })()}
                   </div>
@@ -1022,26 +1505,27 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                     <div className="flex flex-wrap justify-center items-center gap-1">
                       {roll._attackerType === 'adversary' && roll._attackRangeFt != null && filteredTargets.length === 0 ? (
                         <span className="text-[10px] text-slate-500 italic">No characters in range</span>
-                      ) : roll._retractingClaws ? (
+                      ) : roll._featureNeedsTarget ? (
                         filteredTargets.length === 0 ? (
-                          <span className="text-[10px] text-slate-500 italic">No adversaries in Melee range</span>
+                          <span className="text-[10px] text-slate-500 italic">No valid targets in range</span>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
-                                retractingClawsSelectedId
-                                  ? 'bg-amber-800/80 border-amber-500 text-amber-100 ring-1 ring-amber-400'
-                                  : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
-                              }`}
-                              title="Choose target"
-                            >
-                              {retractingClawsSelectedId
-                                ? (filteredTargets.find(t => t.instanceId === retractingClawsSelectedId)?.name ?? 'Select target')
-                                : 'Select target'}
-                              <ChevronDown size={10} className="opacity-70" />
-                            </button>
+                            <Tooltip label="Choose target">
+                              <button
+                                type="button"
+                                onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                                  featureTargetSelectedId
+                                    ? 'bg-amber-800/80 border-amber-500 text-amber-100 ring-1 ring-amber-400'
+                                    : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                                }`}
+                              >
+                                {featureTargetSelectedId
+                                  ? (filteredTargets.find(t => t.instanceId === featureTargetSelectedId)?.name ?? 'Select target')
+                                  : 'Select target'}
+                                <ChevronDown size={10} className="opacity-70" />
+                              </button>
+                            </Tooltip>
                             {targetMenuAnchorRect != null && createPortal(
                               <>
                                 <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
@@ -1063,7 +1547,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            setRetractingClawsSelectedId(t.instanceId);
+                                            setFeatureTargetSelectedId(t.instanceId);
                                             setTargetMenuAnchorRect(null);
                                           }}
                                           className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
@@ -1090,47 +1574,75 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                             )}
                           </>
                         )
-                      ) : holdThemOffActive ? (
+                      ) : isMultiTargetMode ? (
                         filteredTargets.length === 0 ? (
                           <span className="text-[10px] text-slate-500 italic">No valid targets</span>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
-                                selectedDamageTargetIds.length > 0
-                                  ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
-                                  : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
-                              }`}
-                              title="Select up to 3 targets"
-                            >
-                              {selectedDamageTargetIds.length > 0
-                                ? (selectedDamageTargetIds.length === 1
-                                  ? (filteredTargets.find(t => t.instanceId === selectedDamageTargetIds[0])?.name ?? '1 target')
-                                  : `${selectedDamageTargetIds.length} targets`)
-                                : 'Select targets (1–3)'}
-                              <ChevronDown size={10} className="opacity-70" />
-                            </button>
-                            {selectedDamageTargetIds.map((id) => {
-                              const t = filteredTargets.find(x => x.instanceId === id);
-                              if (!t) return null;
-                              const dmgType = dmg?.type || '';
-                              const armorBlockedByType = (t.armorFeatureName === 'Physical' && dmgType === 'mag') || (t.armorFeatureName === 'Magic' && dmgType === 'phy');
-                              const hasArmor = t.type === 'character' && (t.maxArmor ?? 0) > 0 && (t.currentArmor ?? 0) < (t.maxArmor ?? 0) && !armorBlockedByType;
-                              return hasArmor ? (
-                                <label key={id} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50 transition-colors">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!useArmorByTargetId[id]}
-                                    onChange={(e) => setUseArmorByTargetId(prev => ({ ...prev, [id]: e.target.checked }))}
-                                    className="rounded border-cyan-600"
-                                  />
-                                  <Shield size={9} />
-                                  {t.name}
-                                </label>
-                              ) : null;
-                            })}
+                            <Tooltip label={`Select up to ${multiTargetCap} targets`}>
+                              <button
+                                type="button"
+                                onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                                  selectedDamageTargetIds.length > 0
+                                    ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
+                                    : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                                }`}
+                              >
+                                {selectedDamageTargetIds.length > 0
+                                  ? (selectedDamageTargetIds.length === 1
+                                    ? (filteredTargets.find(t => t.instanceId === selectedDamageTargetIds[0])?.name ?? '1 target')
+                                    : `${selectedDamageTargetIds.length} targets`)
+                                  : `Select targets (1–${multiTargetCap})`}
+                                <ChevronDown size={10} className="opacity-70" />
+                              </button>
+                            </Tooltip>
+                            {selectedDamageTargetIds.length > 0 && (() => {
+                              const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                              const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+                              const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                              const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                              const displayDmg = Math.max(0, baseDmg - dmgReduction);
+                              return (
+                                <div className="mt-1 space-y-0.5 w-full">
+                                  {selectedDamageTargetIds.map((id) => {
+                                    const t = filteredTargets.find(x => x.instanceId === id);
+                                    if (!t) return null;
+                                    const dmgType = dmg?.type || '';
+                                    const armorBlockedByType = (t.armorFeatureName === 'Physical' && dmgType === 'mag') || (t.armorFeatureName === 'Magic' && dmgType === 'phy');
+                                    const hasArmor = t.type === 'character' && (t.maxArmor ?? 0) > 0 && (t.currentArmor ?? 0) < (t.maxArmor ?? 0) && !armorBlockedByType;
+                                    const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                                    return (
+                                      <div key={id} className="flex items-center justify-between gap-2 text-[11px] w-full">
+                                        <span className="font-medium text-slate-200 truncate min-w-0">{t.name}</span>
+                                        <span className="flex items-center gap-1.5 shrink-0">
+                                          {hasDamage && (resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : hasDamage && resolved ? <span className="text-slate-500">—</span> : hasDamage ? <Spinner /> : null)}
+                                          {hasArmor ? (
+                                            <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50">
+                                              <input
+                                                type="checkbox"
+                                                checked={!!useArmorByTargetId[id]}
+                                                onChange={(e) => {
+                                                  const next = { ...useArmorByTargetId, [id]: e.target.checked };
+                                                  setUseArmorByTargetId(next);
+                                                  if (onBannerTargetsChange && roll._rollDbId != null) {
+                                                    clearTimeout(targetsSyncDebounceRef.current);
+                                                    targetsSyncDebounceRef.current = setTimeout(() => onBannerTargetsChange(roll._rollDbId, { useArmorByTargetId: next }), 200);
+                                                  }
+                                                }}
+                                                className="rounded border-cyan-600"
+                                              />
+                                              <Shield size={9} />
+                                              Armor
+                                            </label>
+                                          ) : null}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                             {targetMenuAnchorRect != null && createPortal(
                               <>
                                 <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
@@ -1142,34 +1654,47 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     minWidth: '140px',
                                   }}
                                 >
-                                  <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Select targets (1–3)</div>
+                                  <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Select targets (1–{multiTargetCap})</div>
                                   <div className="space-y-1 max-w-[220px]">
-                                    {filteredTargets.map((t) => {
-                                      const sum = formatTargetSummary(t, { hideMax: isPlayer });
-                                      const isSelected = selectedDamageTargetIds.includes(t.instanceId);
-                                      return (
-                                        <button
-                                          key={t.instanceId}
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedDamageTargetIds(prev => {
-                                              if (prev.includes(t.instanceId)) return prev.filter(x => x !== t.instanceId);
-                                              if (prev.length >= 3) return prev;
-                                              return [...prev, t.instanceId];
-                                            });
-                                            setTargetMenuAnchorRect(null);
-                                          }}
-                                          className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-amber-500 bg-amber-800/60 text-amber-100' : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'}`}
-                                        >
-                                          <div>{isSelected ? <Check size={10} className="inline mr-1" /> : null}{t.name}</div>
-                                          <div className="text-[10px] text-slate-400 mt-0.5">
-                                            {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
-                                            {sum.conditions ? ` · ${sum.conditions}` : ''}
-                                          </div>
-                                        </button>
-                                      );
-                                    })}
+                                    {(() => {
+                                      const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                                      const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+                                      const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                                      const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                                      const displayDmg = Math.max(0, baseDmg - dmgReduction);
+                                      return filteredTargets.map((t) => {
+                                        const sum = formatTargetSummary(t, { hideMax: isPlayer });
+                                        const isSelected = selectedDamageTargetIds.includes(t.instanceId);
+                                        const hpLoss = hasDamage && resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                                        return (
+                                          <button
+                                            key={t.instanceId}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedDamageTargetIds(prev => {
+                                                const next = prev.includes(t.instanceId) ? prev.filter(x => x !== t.instanceId) : (prev.length >= multiTargetCap ? prev : [...prev, t.instanceId]);
+                                                if (onBannerTargetsChange && roll._rollDbId != null) {
+                                                  clearTimeout(targetsSyncDebounceRef.current);
+                                                  targetsSyncDebounceRef.current = setTimeout(() => onBannerTargetsChange(roll._rollDbId, { selectedTargetInstanceIds: next }), 200);
+                                                }
+                                                return next;
+                                              });
+                                            }}
+                                            className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-amber-500 bg-amber-800/60 text-amber-100' : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'}`}
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span>{isSelected ? <Check size={10} className="inline mr-1 shrink-0" /> : null}{t.name}</span>
+                                              {hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums shrink-0">{hpLoss} HP</span> : null}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 mt-0.5">
+                                              {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
+                                              {sum.conditions ? ` · ${sum.conditions}` : ''}
+                                            </div>
+                                          </button>
+                                        );
+                                      });
+                                    })()}
                                   </div>
                                   <button type="button" onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }} className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
                                 </div>
@@ -1183,21 +1708,22 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                           <span className="text-[10px] text-slate-500 italic">No valid targets</span>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
-                                selectedDamageTargetId
-                                  ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
-                                  : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
-                              }`}
-                              title="Choose target"
-                            >
-                              {selectedDamageTargetId
-                                ? (filteredTargets.find(t => t.instanceId === selectedDamageTargetId)?.name ?? 'Select target')
-                                : 'Select target'}
-                              <ChevronDown size={10} className="opacity-70" />
-                            </button>
+                            <Tooltip label="Choose target">
+                              <button
+                                type="button"
+                                onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                                  selectedDamageTargetId
+                                    ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
+                                    : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                                }`}
+                              >
+                                {selectedDamageTargetId
+                                  ? (filteredTargets.find(t => t.instanceId === selectedDamageTargetId)?.name ?? 'Select target')
+                                  : 'Select target'}
+                                <ChevronDown size={10} className="opacity-70" />
+                              </button>
+                            </Tooltip>
                             {(() => {
                               const dmgType = dmg?.type || '';
                               const selectedTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
@@ -1239,9 +1765,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                           ? 'border-amber-500 bg-amber-900/50 text-amber-200'
                                           : 'border-amber-700/60 text-amber-300/90 hover:bg-amber-950/40'
                                       } disabled:opacity-60 disabled:cursor-default`}
-                                      title={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result}` : 'Spend 1 Hope to add d8 to damage (applied on Acknowledge)') : 'Spend a Hope to add a d8 to damage'}
                                     >
-                                      {wingsD8Result != null ? `+d8: ${wingsD8Result}` : '+1 Hope → d8'}
+                                      <Tooltip label={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result}` : 'Spend 1 Hope to add d8 to damage (applied on Acknowledge)') : 'Spend a Hope to add a d8 to damage'}>
+                                        <span>{wingsD8Result != null ? `+d8: ${wingsD8Result}` : "+1 Hope → d8"}</span>
+                                      </Tooltip>
                                     </button>
                                   )}
                                   {/* Prayer Die: damage reduction toggles */}
@@ -1259,13 +1786,32 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                             ? 'border-teal-500 bg-teal-900/50 text-teal-200'
                                             : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
                                         } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                        title={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}
                                       >
-                                        {isSelected ? `−${die.value} Prayer Die` : `${die.ownerName}: −${die.value} Prayer Die`}
+                                        <Tooltip label={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}>
+                                          <span>{isSelected ? `−${die.value} Prayer Die` : `${die.ownerName}: −${die.value} Prayer Die`}</span>
+                                        </Tooltip>
                                       </button>
                                     );
                                   })}
                                 </>
+                              );
+                            })()}
+                            {selectedDamageTargetId && hasDamage && (() => {
+                              const t = filteredTargets.find(x => x.instanceId === selectedDamageTargetId);
+                              if (!t) return null;
+                              const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                              const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+                              const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                              const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                              const displayDmg = Math.max(0, baseDmg - dmgReduction);
+                              const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                              return (
+                                <div className="mt-1 flex items-center justify-between gap-2 text-[11px] w-full">
+                                  <span className="font-medium text-slate-200 truncate min-w-0">{t.name}</span>
+                                  <span className="shrink-0">
+                                    {resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : resolved ? <span className="text-slate-500">—</span> : <Spinner />}
+                                  </span>
+                                </div>
                               );
                             })()}
                             {targetMenuAnchorRect != null && (() => {
@@ -1284,6 +1830,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   <div className="space-y-1 max-w-[220px]">
                                     {filteredTargets.map((t) => {
                                       const sum = formatTargetSummary(t, { hideMax: isPlayer });
+                                      const disadvantageFeatures = getTargetDisadvantageLabels?.(roll)?.[t.instanceId];
                                       return (
                                         <button
                                           key={t.instanceId}
@@ -1300,6 +1847,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                           <div className="text-[10px] text-slate-400 mt-0.5">
                                             {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                                             {sum.conditions ? ` · ${sum.conditions}` : ''}
+                                            {disadvantageFeatures?.length ? ` · ${disadvantageFeatures.map(f => `${f} (−1d6)`).join(', ')}` : ''}
                                           </div>
                                         </button>
                                       );
@@ -1344,19 +1892,20 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       return notes.length > 0 ? <div className="mt-1">{notes}</div> : null;
                     })()}
                     <div className="flex flex-wrap justify-center gap-1.5">
-                      {roll._retractingClaws ? (
+                      {roll._featureNeedsTarget ? (
                         <>
-                          {onAcknowledge != null && (
-                            <button
-                              onClick={() => onAcknowledge(retractingClawsSelectedId ? { selectedRetractingClawsTargetInstanceId: retractingClawsSelectedId } : undefined)}
-                              disabled={filteredTargets.length > 0 && !retractingClawsSelectedId}
-                              className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
-                              title={retractingClawsSelectedId ? 'Acknowledge and apply Vulnerable to selected target' : filteredTargets.length === 0 ? 'Acknowledge' : 'Select a target first'}
-                            >
-                              Acknowledge
-                            </button>
+                          {!isPlayer && onAcknowledge != null && (
+                            <Tooltip label={featureTargetSelectedId ? 'Acknowledge' : filteredTargets.length === 0 ? 'Acknowledge' : 'Select a target first'}>
+                              <button
+                                onClick={() => onAcknowledge(featureTargetSelectedId ? { selectedFeatureTargetInstanceId: featureTargetSelectedId } : undefined)}
+                                disabled={filteredTargets.length > 0 && !featureTargetSelectedId}
+                                className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                              >
+                                Acknowledge
+                              </button>
+                            </Tooltip>
                           )}
-                          {onCancel != null && (
+                          {!isPlayer && onCancel != null && (
                             <button
                               onClick={onCancel}
                               className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
@@ -1365,91 +1914,110 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                             </button>
                           )}
                         </>
-                      ) : holdThemOffActive ? (
+                      ) : isMultiTargetMode ? (
                         <>
-                          <button
-                            onClick={async () => {
-                              const dmgType = dmg?.type || '';
-                              if (selectedDamageTargetIds.length > 0 && hasDamage && onApplyDamage) {
-                                for (const id of selectedDamageTargetIds) {
-                                  const target = filteredTargets.find(t => t.instanceId === id);
-                                  if (target) await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id] }, dmg.total, tags, roll, dmgType);
-                                }
-                              }
-                              if (selectedDamageTargetIds.length >= 2 && roll._attackerInstanceId) {
-                                onAcknowledge?.({ holdThemOffHopeCost: 3, attackerInstanceId: roll._attackerInstanceId });
-                              } else {
-                                onAcknowledge?.();
-                              }
-                            }}
-                            disabled={selectedDamageTargetIds.length === 0}
-                            className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
-                            title={selectedDamageTargetIds.length === 0 ? 'Select at least one target' : selectedDamageTargetIds.length >= 2 ? 'Acknowledge and apply damage (3 Hope)' : 'Acknowledge and apply damage'}
-                          >
-                            Acknowledge
-                          </button>
-                          <button
-                            onClick={() => onAcknowledge?.()}
-                            className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                            title="Acknowledge without applying damage"
-                          >
-                            Skip
-                          </button>
-                          {onCancel != null && (
-                            <button
-                              onClick={onCancel}
-                              className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
-                            >
-                              Cancel
-                            </button>
+                          {!isPlayer && (
+                            <>
+                              <Tooltip label={selectedDamageTargetIds.length === 0 ? 'Select at least one target' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? 'Acknowledge and apply damage (3 Hope)' : 'Acknowledge and apply damage'}>
+                                <button
+                                  onClick={async () => {
+                                    const dmgType = dmg?.type || '';
+                                    if (selectedDamageTargetIds.length > 0 && hasDamage && onApplyDamage) {
+                                      for (const id of selectedDamageTargetIds) {
+                                        const target = filteredTargets.find(t => t.instanceId === id);
+                                        if (target) {
+                                          const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === id);
+                                          const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
+                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], useIncreasedFortitude }, baseDamage, tags, roll, dmgType);
+                                        }
+                                      }
+                                    }
+                                    if (holdThemOffActive && selectedDamageTargetIds.length >= 2 && roll._attackerInstanceId) {
+                                      onAcknowledge?.({ holdThemOffHopeCost: 3, attackerInstanceId: roll._attackerInstanceId });
+                                    } else {
+                                      onAcknowledge?.();
+                                    }
+                                  }}
+                                  disabled={selectedDamageTargetIds.length === 0}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                                >
+                                  Acknowledge
+                                </button>
+                              </Tooltip>
+                              <Tooltip label="Acknowledge without applying damage">
+                                <button
+                                  onClick={() => onAcknowledge?.()}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                                >
+                                  Skip
+                                </button>
+                              </Tooltip>
+                              {onCancel != null && (
+                                <button
+                                  onClick={onCancel}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </>
                           )}
                         </>
                       ) : (
                         <>
-                          <button
-                            onClick={async () => {
-                              let d8Extra = 0;
-                              let alreadyAcked = false;
-                              if (hasDamage && roll._wingsOfLightAddD8 && onGetWingsD8Extra) {
-                                d8Extra = roll._wingsOfLightD8Result ?? (await onGetWingsD8Extra(roll)) ?? 0;
-                                if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
-                              }
-                              const dmgReduction = selectedDmgReduceDie?.value ?? 0;
-                              const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-                              const totalDamage = Math.max(0, (hasDamage ? dmg.total : 0) + d8Extra + rallyDmgBonus - dmgReduction);
-                              // Skip damage application when a rally toggle is active — the copy banner handles it.
-                              const rallyPending = rallyAddToRoll || rallyAddToDamage;
-                              if (!rallyPending && selectedDamageTargetId && hasDamage && onApplyDamage) {
-                                const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
-                                if (selectedTarget) {
-                                  const dmgType = dmg?.type || '';
-                                  await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected }, totalDamage, tags, roll, dmgType);
-                                }
-                              }
-                              const ackOpts = {};
-                              if (alreadyAcked) ackOpts.alreadyAcked = true;
-                              onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
-                            }}
-                            disabled={filteredTargets.length > 0 && !selectedDamageTargetId}
-                            className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
-                            title={filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : 'Acknowledge and apply damage to selected target'}
-                          >
-                            Acknowledge
-                          </button>
-                          <button
-                            onClick={() => onAcknowledge?.()}
-                            className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                            title="Acknowledge without applying damage"
-                          >
-                            Skip
-                          </button>
-                          {onCancel != null && (
-                            <button
-                              onClick={onCancel}
-                              className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
-                            >
-                              Cancel
-                            </button>
+                          {!isPlayer && (
+                            <>
+                              <Tooltip label={filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : 'Acknowledge and apply damage to selected target'}>
+                                <button
+                                  onClick={async () => {
+                                    let d8Extra = 0;
+                                    let alreadyAcked = false;
+                                    if (hasDamage && roll._wingsOfLightAddD8 && onGetWingsD8Extra) {
+                                      d8Extra = roll._wingsOfLightD8Result ?? (await onGetWingsD8Extra(roll)) ?? 0;
+                                      if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
+                                    }
+                                    const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                                    const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                                    const totalDamage = Math.max(0, (hasDamage ? baseDamage : 0) + d8Extra + rallyDmgBonus - dmgReduction);
+                                    // Skip damage application when a rally toggle is active — the copy banner handles it.
+                                    const rallyPending = rallyAddToRoll || rallyAddToDamage;
+                                    if (!rallyPending && selectedDamageTargetId && hasDamage && onApplyDamage) {
+                                      const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
+                                      if (selectedTarget) {
+                                        const dmgType = dmg?.type || '';
+                                        const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
+                                        const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === effectiveTargetId);
+                                        const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
+                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, useIncreasedFortitude }, totalDamage, tags, roll, dmgType);
+                                      }
+                                    }
+                                    const ackOpts = {};
+                                    if (alreadyAcked) ackOpts.alreadyAcked = true;
+                                    onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
+                                  }}
+                                  disabled={filteredTargets.length > 0 && !selectedDamageTargetId}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                                >
+                                  Acknowledge
+                                </button>
+                              </Tooltip>
+                              <Tooltip label="Acknowledge without applying damage">
+                                <button
+                                  onClick={() => onAcknowledge?.()}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                                >
+                                  Skip
+                                </button>
+                              </Tooltip>
+                              {onCancel != null && (
+                                <button
+                                  onClick={onCancel}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </>
                           )}
                         </>
                       )}
@@ -1463,47 +2031,50 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                     const heartActive = !!roll._heartOfAPoetAddD4;
                     const noHope = (heartOfAPoetChar?.hope ?? 1) < 1;
                     return (
-                      <button
-                        type="button"
-                        onClick={() => { if (!noHope) onHeartD4Toggle(roll._rollDbId, !heartActive); }}
-                        disabled={noHope}
-                        className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
-                          noHope
-                            ? 'border-violet-900/40 bg-violet-950/20 text-violet-400/50 cursor-not-allowed'
-                            : heartActive
-                              ? 'border-violet-500 bg-violet-800/80 text-violet-100'
-                              : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
-                        } disabled:cursor-default`}
-                        title={noHope ? 'No Hope remaining to spend' : heartActive ? 'Heart of a Poet d4 will be added on Acknowledge — click to cancel' : 'Add Heart of a Poet d4 to roll on Acknowledge (spend 1 Hope)'}
-                      >
-                        {heartActive ? <Check size={12} className="shrink-0" /> : null}
-                        {heartActive ? 'Heart of a Poet → roll (on Ack)' : 'Add Heart of a Poet d4'}
-                      </button>
+                      <Tooltip label={noHope ? 'No Hope remaining to spend' : heartActive ? 'Heart of a Poet d4 will be added on Acknowledge — click to cancel' : 'Add Heart of a Poet d4 to roll on Acknowledge (spend 1 Hope)'}>
+                        <button
+                          type="button"
+                          onClick={() => { if (!noHope) onHeartD4Toggle(roll._rollDbId, !heartActive); }}
+                          disabled={noHope}
+                          className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
+                            noHope
+                              ? 'border-violet-900/40 bg-violet-950/20 text-violet-400/50 cursor-not-allowed'
+                              : heartActive
+                                ? 'border-violet-500 bg-violet-800/80 text-violet-100'
+                                : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
+                          } disabled:cursor-default`}
+                        >
+                          {heartActive ? <Check size={12} className="shrink-0" /> : null}
+                          {heartActive ? 'Heart of a Poet → roll (on Ack)' : 'Add Heart of a Poet d4'}
+                        </button>
+                      </Tooltip>
                     );
                   })()}
-                  <div className="flex items-center justify-center gap-1.5">
-                    <button
-                      onClick={() => onAcknowledge?.()}
-                      className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                    >
-                      Acknowledge
-                    </button>
-                    {onCancel != null && (
+                  {!isPlayer && (
+                    <div className="flex items-center justify-center gap-1.5">
                       <button
-                        onClick={onCancel}
-                        className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                        onClick={() => onAcknowledge?.()}
+                        className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                       >
-                        Cancel
+                        Acknowledge
                       </button>
-                    )}
-                  </div>
+                      {onCancel != null && (
+                        <button
+                          onClick={onCancel}
+                          className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           );
         })()}
         {/* Player self-cancel: shown outside showActions when the player is the initiator */}
-        {!showActions && resolved && onCancel != null && (
+        {!showActions && onCancel != null && (
           <div className="mt-2.5 pt-2 border-t border-white/10 flex justify-center">
             <button
               onClick={onCancel}
@@ -1513,53 +2084,40 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             </button>
           </div>
         )}
-        {/* Feline Instincts (Katari): "Spend 2 Hope to reroll Hope Die" — visible to player when not showActions so they can request GM attention */}
-        {!showActions && resolved && felineChar && onFelineInstinctsRequest && (() => {
-          const felineRequested = !!(roll._felineRerollRequestedBy || (felineRequestedBannerIds && felineRequestedBannerIds.has(roll._rollDbId)));
-          return (
-            <div className="mt-2.5 pt-2 border-t border-white/10">
-              <button
-                onClick={() => { if (roll._rollDbId) onFelineInstinctsRequest(roll._rollDbId); }}
-                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${felineRequested ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
-                title={felineRequested ? 'Reroll requested — click to cancel' : 'Spend 2 Hope to reroll Hope Die (Feline Instincts) — request GM to perform'}
-              >
-                {felineRequested ? <Check size={12} className="shrink-0" /> : <RotateCcw size={10} />}
-                Spend 2 Hope to reroll Hope Die
-              </button>
-            </div>
-          );
-        })()}
+        {/* Feline Instincts and other ancestry reactions are handled by the generic banner reaction buttons above */}
         {/* Ranger's Focus: "End Focus to reroll Duality" — visible to player when not showActions so they can request GM */}
-        {!showActions && resolved && dominant === 'fear' && hasDamage && rangerFocusRerollChar && onRangerFocusRerollRequest && (() => {
+        {!showActions && dominant === 'fear' && hasDamage && rangerFocusRerollChar && onRangerFocusRerollRequest && (() => {
           const rangerRequested = !!(roll._rangerFocusRerollRequestedBy || (rangerFocusRequestedBannerIds && rangerFocusRequestedBannerIds.has(roll._rollDbId)));
           return (
             <div className="mt-2.5 pt-2 border-t border-white/10">
-              <button
-                onClick={() => { if (roll._rollDbId) onRangerFocusRerollRequest(roll._rollDbId); }}
-                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rangerRequested ? 'border-emerald-500 bg-emerald-800/80 text-emerald-100' : 'border-emerald-700 bg-emerald-900/50 text-emerald-200 hover:bg-emerald-800 hover:text-emerald-100'}`}
-                title={rangerRequested ? 'Reroll requested — click to cancel' : "End Ranger's Focus to reroll Duality dice — request GM to perform"}
-              >
-                {rangerRequested ? <Check size={12} className="shrink-0" /> : <RotateCcw size={10} />}
-                End Ranger's Focus to reroll Duality dice
-              </button>
+              <Tooltip label={rangerRequested ? 'Reroll requested — click to cancel' : "End Ranger's Focus to reroll Duality dice — request GM to perform"}>
+                <button
+                  onClick={() => { if (roll._rollDbId) onRangerFocusRerollRequest(roll._rollDbId); }}
+                  className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rangerRequested ? 'border-emerald-500 bg-emerald-800/80 text-emerald-100' : 'border-emerald-700 bg-emerald-900/50 text-emerald-200 hover:bg-emerald-800 hover:text-emerald-100'}`}
+                >
+                  {rangerRequested ? <Check size={12} className="shrink-0" /> : <RotateCcw size={10} />}
+                  End Ranger's Focus to reroll Duality dice
+                </button>
+              </Tooltip>
             </div>
           );
         })()}
         {/* Hold Them Off (Ranger): toggle — visible to player when not showActions so they can toggle before GM acknowledges */}
-        {!showActions && resolved && holdThemOffChar && onHoldThemOffToggle && roll._rollDbId && (
+        {!showActions && holdThemOffChar && onHoldThemOffToggle && roll._rollDbId && (
           <div className="mt-2.5 pt-2 border-t border-white/10">
-            <button
-              onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
-              className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
-              title={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}
-            >
-              {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
-              Spend 3 Hope to select two more targets
-            </button>
+            <Tooltip label={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}>
+              <button
+                onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
+                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+              >
+                {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
+                Spend 3 Hope to select two more targets
+              </button>
+            </Tooltip>
           </div>
         )}
         {/* Wings of Light (Winged Sentinel): d8 toggle — visible to player so they can signal intent before GM acknowledges */}
-        {!showActions && resolved && hasDamage && wingsOfLightFlyingInstanceIds?.has(roll._attackerInstanceId) && onWingsD8ToggleRequest && roll._rollDbId && (
+        {!showActions && hasDamage && wingsOfLightFlyingInstanceIds?.has(roll._attackerInstanceId) && onWingsD8ToggleRequest && roll._rollDbId && (
           <div className="mt-2.5 pt-2 border-t border-white/10">
             {(() => {
               const wingsActive = !!roll._wingsOfLightAddD8;
@@ -1574,10 +2132,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       ? 'border-amber-500 bg-amber-800/80 text-amber-100'
                       : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
                   } disabled:opacity-60 disabled:cursor-default`}
-                  title={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result} — already applied` : 'Spend 1 Hope to add d8 to damage (applied on GM Acknowledge)') : 'Spend a Hope to add a d8 to damage'}
                 >
-                  {wingsActive ? <Check size={12} className="shrink-0" /> : null}
-                  {wingsD8Result != null ? `+d8: ${wingsD8Result} (Spend 1 Hope)` : 'Spend 1 Hope to add d8 to damage'}
+                  <Tooltip label={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result} — already applied` : 'Spend 1 Hope to add d8 to damage (applied on GM Acknowledge)') : 'Spend a Hope to add a d8 to damage'}>
+                    <span>{wingsActive ? <Check size={12} className="shrink-0" /> : null}{wingsD8Result != null ? `+d8: ${wingsD8Result} (Spend 1 Hope)` : 'Spend 1 Hope to add d8 to damage'}</span>
+                  </Tooltip>
                 </button>
               );
             })()}
@@ -1590,22 +2148,23 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               const heartActive = !!roll._heartOfAPoetAddD4;
               const heartResult = roll._heartOfAPoetD4Result;
               return (
-                <button
-                  type="button"
-                  onClick={() => { if (heartResult == null) onHeartD4ToggleRequest(roll._rollDbId, !heartActive); }}
-                  disabled={heartResult != null}
-                  className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
-                    heartResult != null
-                      ? 'border-violet-500 bg-violet-900/60 text-violet-100 opacity-80 cursor-default'
-                      : heartActive
-                        ? 'border-violet-500 bg-violet-800/80 text-violet-100'
-                        : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
-                  } disabled:cursor-default`}
-                  title={heartResult != null ? `+d4: ${heartResult} (Heart of a Poet, applied on GM Acknowledge)` : heartActive ? 'Intent set — waiting for GM to apply' : 'Spend 1 Hope to add d4 (Heart of a Poet) — GM will apply'}
-                >
-                  {heartActive || heartResult != null ? <Check size={12} className="shrink-0" /> : null}
-                  {heartResult != null ? `+d4: ${heartResult} (Heart of a Poet)` : 'Spend 1 Hope → d4 (Heart of a Poet)'}
-                </button>
+                <Tooltip label={heartResult != null ? `+d4: ${heartResult} (Heart of a Poet, applied on GM Acknowledge)` : heartActive ? 'Intent set — waiting for GM to apply' : 'Spend 1 Hope to add d4 (Heart of a Poet) — GM will apply'}>
+                  <button
+                    type="button"
+                    onClick={() => { if (heartResult == null) onHeartD4ToggleRequest(roll._rollDbId, !heartActive); }}
+                    disabled={heartResult != null}
+                    className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
+                      heartResult != null
+                        ? 'border-violet-500 bg-violet-900/60 text-violet-100 opacity-80 cursor-default'
+                        : heartActive
+                          ? 'border-violet-500 bg-violet-800/80 text-violet-100'
+                          : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
+                    } disabled:cursor-default`}
+                  >
+                    {heartActive || heartResult != null ? <Check size={12} className="shrink-0" /> : null}
+                    {heartResult != null ? `+d4: ${heartResult} (Heart of a Poet)` : 'Spend 1 Hope → d4 (Heart of a Poet)'}
+                  </button>
+                </Tooltip>
               );
             })()}
           </div>
@@ -1614,50 +2173,52 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         {!showActions && hasRallyDie && onRallyDieToggle && roll._rollDbId && (
           <div className="mt-2.5 pt-2 border-t border-white/10 space-y-1">
             {actionItems.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
-                className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                title={rallyAddToRoll ? 'Rally Die will be added to roll on GM Acknowledge — click to cancel' : 'Add Rally Die result to roll total (applied on GM Acknowledge)'}
-              >
-                {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
-                {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
-              </button>
+              <Tooltip label={rallyAddToRoll ? 'Rally Die will be added to roll on GM Acknowledge — click to cancel' : 'Add Rally Die result to roll total (applied on GM Acknowledge)'}>
+                <button
+                  type="button"
+                  onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
+                  className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                >
+                  {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
+                  {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
+                </button>
+              </Tooltip>
             )}
             {hasDamage && (
-              <button
-                type="button"
-                onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
-                className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                title={rallyAddToDamage ? 'Rally Die will be added to damage on GM Acknowledge — click to cancel' : 'Add Rally Die result to damage (applied on GM Acknowledge)'}
-              >
-                {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
-                {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
-              </button>
+              <Tooltip label={rallyAddToDamage ? 'Rally Die will be added to damage on GM Acknowledge — click to cancel' : 'Add Rally Die result to damage (applied on GM Acknowledge)'}>
+                <button
+                  type="button"
+                  onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
+                  className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
+                >
+                  {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
+                  {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
+                </button>
+              </Tooltip>
             )}
           </div>
         )}
         {/* Prayer Die: damage-reduction display for players (GM sees it in the target area above) */}
-        {!showActions && resolved && hasDamage && prayerDiceChars.length > 0 && (
+        {!showActions && hasDamage && prayerDiceChars.length > 0 && (
           <div className="mt-2.5 pt-2 border-t border-white/10">
             <div className="flex flex-wrap justify-center gap-1">
               {prayerDiceChars.map(die => {
                 const isSelected = selectedDmgReduceDie?.id === die.id;
                 return (
-                  <button
-                    key={die.id}
-                    type="button"
-                    onClick={() => selectDmgReduceDie(isSelected ? null : die)}
-                    className={`flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
-                      isSelected
-                        ? 'border-teal-500 bg-teal-900/50 text-teal-200'
-                        : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
-                    }`}
-                    title={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}
-                  >
-                    {isSelected ? <Check size={10} /> : null}
-                    {die.ownerName}: −{die.value} Prayer Die
-                  </button>
+                  <Tooltip key={die.id} label={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}>
+                    <button
+                      type="button"
+                      onClick={() => selectDmgReduceDie(isSelected ? null : die)}
+                      className={`flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
+                        isSelected
+                          ? 'border-teal-500 bg-teal-900/50 text-teal-200'
+                          : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
+                      }`}
+                    >
+                      {isSelected ? <Check size={10} /> : null}
+                      {die.ownerName}: −{die.value} Prayer Die
+                    </button>
+                  </Tooltip>
                 );
               })}
             </div>
@@ -1666,38 +2227,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             )}
           </div>
         )}
-        {/* Fearless (Infernis): toggle button — visible to character's own player only; GM sees banner color update optimistically */}
-        {resolved && fearlessChar && onFearlessConvert && isPlayer && (
-          <div className={showActions ? '' : 'mt-2.5 pt-2 border-t border-white/10'}>
-            <button
-              onClick={isConverted || fearlessChar.canConvert ? () => onFearlessConvert(roll, fearlessChar.instanceId) : undefined}
-              disabled={!isConverted && !fearlessChar.canConvert}
-              className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
-                isConverted
-                  ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70 cursor-pointer'
-                  : fearlessChar.canConvert
-                    ? 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 cursor-pointer'
-                    : 'border-slate-600 bg-slate-800/40 text-slate-500 cursor-not-allowed'
-              }`}
-              title={
-                isConverted
-                  ? `${fearlessChar.name}: click to revert to Fear (Fearless)`
-                  : fearlessChar.canConvert
-                    ? `${fearlessChar.name} marks 2 Stress (on Acknowledge) to change Fear to Hope (Fearless)`
-                    : `${fearlessChar.name} needs 2 empty Stress boxes to use Fearless`
-              }
-            >
-              {isConverted ? 'Changed to Hope — click to revert' : 'Mark 2 stress to change Fear to Hope'}
-            </button>
-          </div>
+        {/* Narration (e.g. Faun Kick knockback) */}
+        {roll._narration && (
+          <p className="text-[10px] text-slate-400 italic text-center mt-1">{roll._narration}</p>
         )}
       </div>
+      </div>
     </div>
+    </Tooltip>
   );
 }
 
 // ── DiceRoller ──────────────────────────────────────────────────────────────
-// Imperative API (via ref): addRoll(roll), updateRoll(optId, realData), dismiss(), dismissBannerId(bannerId), dismissBannerByDbId(dbId)
+// Imperative API (via ref): addRoll(roll), updateRoll(optId, realData), dismiss(), dismissBannerId(bannerId), dismissBannerByDbId(dbId), replaceBannerByDbId(oldDbId, newRoll)
 // Props: isPlayer, onBannerAcknowledge, onBannerCancel, lifeSupportSelections, onLifeSupportSelect, onLifeSupportClear,
 //        targets, onApplyDamage, canApplyDamage,
 //        onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget,
@@ -1716,6 +2258,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   makeASceneAdversaries = [],
   targets,
   getTargetsForRoll,
+  getTargetDisadvantageLabels,
   onApplyDamage,
   onApplyVulnerable,
   canApplyDamage = true,
@@ -1725,13 +2268,10 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onBouncingTarget,
   wizardsWithHope = [],
   onNotThisTime,
-  fearlessChars = [],
-  fearlessConvertedBannerIds,
-  onFearlessConvert,
-  felineInstinctsChars = [],
-  onFelineInstinctsReroll,
-  onFelineInstinctsRequest,
-  felineRequestedBannerIds,
+  bannerReactions = [],
+  displayOverridesByRollId = {},
+  onBannerReactionActivate,
+  onChipResolve,
   tableCharacters = [],
   rangerFocusRerollChars = [],
   onRangerFocusReroll,
@@ -1739,6 +2279,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   rangerFocusRequestedBannerIds,
   holdThemOffChars = [],
   onHoldThemOffToggle,
+  onBannerTargetsChange,
   wingsOfLightFlyingInstanceIds,
   onWingsD8Toggle,
   onWingsD8ToggleRequest,
@@ -1751,6 +2292,14 @@ export const DiceRoller = forwardRef(function DiceRoller({
   heartOfAPoetChars = [],
   onHeartD4Toggle,
   onHeartD4ToggleRequest,
+  restMovesSelections = {},
+  onRestMoveSelect,
+  onRestMoveClear,
+  restTableCharacters = [],
+  restMovesPerCharacter = {},
+  restCanEditColumn = () => true,
+  restGmUid = null,
+  bannerStripLeftOffset = 0,
 }, ref) {
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
@@ -1766,6 +2315,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
   // All mutations update the ref synchronously first, then trigger re-render via setActiveBanners.
   const activeBannersRef = useRef([]); // [{ _bannerId, roll, resolved }]
   const [activeBanners, setActiveBanners] = useState([]);
+  // Fallback when bannerReactions prop is empty due to render race (e.g. Fearless chip on Fear roll).
+  const bannerReactionsFallbackRef = useRef([]);
+  function setBannerReactionsFallback(reactions) {
+    bannerReactionsFallbackRef.current = Array.isArray(reactions) ? reactions : [];
+  }
 
   // dbIds for which a dismiss was triggered before updateRoll stamped _rollDbId (race condition).
   // updateRoll checks this set and auto-dismisses if the newly-stamped id is pending.
@@ -1774,6 +2328,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   // Serial dice animation state
   const diceQueueRef    = useRef([]); // _bannerIds waiting for dice animation
   const animatingIdRef  = useRef(null); // _bannerId currently animating
+  const replayBannerIdsRef = useRef(new Set()); // bannerIds that should replay all dice (including preset)
 
   function syncBanners(newBanners) {
     activeBannersRef.current = newBanners;
@@ -1870,19 +2425,27 @@ export const DiceRoller = forwardRef(function DiceRoller({
       const nextId = diceQueueRef.current[0];
       const entry = activeBannersRef.current.find(b => b._bannerId === nextId);
 
-      if (!entry || entry.resolved) {
-        // Banner was dismissed or already resolved — skip
+      if (!entry) {
+        diceQueueRef.current.shift();
+        continue;
+      }
+      const isReplay = replayBannerIdsRef.current.has(nextId);
+      if (isReplay) replayBannerIdsRef.current.delete(nextId);
+      if (!isReplay && entry.resolved) {
+        // Banner was dismissed or already resolved — skip (replay allows resolved)
         diceQueueRef.current.shift();
         continue;
       }
 
       // Optimistic banner: set as animating and wait for updateRoll to provide real data
-      if (entry.roll._optimistic) {
+      if (!isReplay && entry.roll._optimistic) {
         animatingIdRef.current = nextId;
         return;
       }
 
-      const groups = parseRollDice(entry.roll.subItems);
+      const groups = isReplay
+        ? parseRollDice(entry.roll.subItems || [])
+        : parseRollDice(subItemsForAnimation(entry.roll.subItems));
       if (!groups.length) {
         // No dice groups — resolve immediately without animation
         diceQueueRef.current.shift();
@@ -1932,6 +2495,18 @@ export const DiceRoller = forwardRef(function DiceRoller({
       return;
     }
     dismissBannerById(entry._bannerId);
+  }
+
+  /** Replay dice animation for a resolved banner (all dice including preset, with result values). Interrupts any current animation. */
+  function replayDiceForBanner(bannerId) {
+    const entry = activeBannersRef.current.find(b => b._bannerId === bannerId);
+    if (!entry?.roll?.subItems?.length) return;
+    const hasDice = (entry.roll.subItems || []).some(s => s.input && /d\d/i.test(s.input));
+    if (!hasDice) return;
+    resolveCurrentAndQueueInstantly();
+    replayBannerIdsRef.current.add(bannerId);
+    diceQueueRef.current.unshift(bannerId);
+    processNextDice();
   }
 
   /**
@@ -2066,6 +2641,27 @@ export const DiceRoller = forwardRef(function DiceRoller({
     syncBanners(current.map((b, i) => i === idx ? { ...b, roll: mergedRoll } : b));
   }
 
+  /** In-place replacement when a chip uses addDamage (e.g. Faun Kick). Updates the banner and animates only new (non-_preset) dice. */
+  function replaceBannerByDbId(oldDbId, newRoll) {
+    if (oldDbId == null) return;
+    const current = activeBannersRef.current;
+    const idx = current.findIndex(b => b.roll._rollDbId === oldDbId);
+    if (idx < 0) {
+      addRoll(newRoll);
+      return;
+    }
+    const entry = current[idx];
+    const mergedRoll = { ...newRoll, _bannerId: entry._bannerId };
+    const groups = parseRollDice(subItemsForAnimation(newRoll.subItems || []));
+    const resolved = groups.length === 0;
+    const updatedEntry = { ...entry, roll: mergedRoll, resolved };
+    syncBanners(current.map((b, i) => i === idx ? updatedEntry : b));
+    if (groups.length > 0) {
+      diceQueueRef.current.push(entry._bannerId);
+      processNextDice();
+    }
+  }
+
   function updateRoll(optId, realData) {
     // Find the matching optimistic banner
     const entry = activeBannersRef.current.find(b => b.roll._optId === optId);
@@ -2094,7 +2690,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
     // If this banner is the current animating one, start animation now
     if (animatingIdRef.current === bannerId) {
       if (initDoneRef.current) {
-        const groups = parseRollDice(realData.subItems);
+        const groups = parseRollDice(subItemsForAnimation(realData.subItems));
         if (groups.length) {
           // Remove from diceQueue (it wasn't shifted yet since it was optimistic)
           diceQueueRef.current = diceQueueRef.current.filter(id => id !== bannerId);
@@ -2112,7 +2708,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
     }
   }
 
-  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId }), [isPlayer]);
+  function clearDice() {
+    diceBoxRef.current?.clearDice();
+  }
+
+  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, setBannerReactionsFallback, clearDice }), [isPlayer]);
 
   // ── DiceBox initialization ─────────────────────────────────────────────────
 
@@ -2145,7 +2745,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
         if (animatingIdRef.current !== null) {
           const entry = activeBannersRef.current.find(b => b._bannerId === animatingIdRef.current);
           if (entry && !entry.roll._optimistic && !entry.resolved) {
-            const groups = parseRollDice(entry.roll.subItems);
+            const groups = parseRollDice(subItemsForAnimation(entry.roll.subItems));
             if (groups.length) {
               startAnimation(groups, animatingIdRef.current);
             } else {
@@ -2185,13 +2785,13 @@ export const DiceRoller = forwardRef(function DiceRoller({
           bottom: DICE_BOTTOM_RESERVE,
         }}
       />
-      {/* Banner strip — left-aligned, no scroll; overflow hidden is fine */}
+      {/* Banner strip — left edge offset by character tokens shelf width */}
       {activeBanners.length > 0 && (
         <div
           style={{
             position: 'absolute',
             bottom: '2.5rem',
-            left: 0,
+            left: bannerStripLeftOffset,
             right: 0,
             display: 'flex',
             alignItems: 'flex-end',
@@ -2202,7 +2802,28 @@ export const DiceRoller = forwardRef(function DiceRoller({
           }}
         >
           {activeBanners.map(entry => (
-            entry.roll._action ? (
+            entry.roll._rest ? (
+              <RestBanner
+                key={entry._bannerId}
+                roll={entry.roll}
+                characters={restTableCharacters}
+                restMovesForRoll={entry.roll._rollDbId != null ? (restMovesSelections[entry.roll._rollDbId] || {}) : {}}
+                movesPerCharacter={restMovesPerCharacter}
+                onRestMoveSelect={onRestMoveSelect}
+                canEditColumn={restCanEditColumn}
+                isPlayer={isPlayer}
+                gmUid={restGmUid}
+                onAcknowledge={!isPlayer ? () => {
+                  onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll);
+                  dismissBannerById(entry._bannerId);
+                } : undefined}
+                onCancel={!isPlayer ? () => {
+                  onBannerCancelRef.current?.(entry._bannerId, entry.roll);
+                  dismissBannerById(entry._bannerId);
+                } : undefined}
+                disableDismiss={isPlayer}
+              />
+            ) : entry.roll._action ? (
               <ActionBanner
                 key={entry._bannerId}
                 roll={entry.roll}
@@ -2237,6 +2858,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 } : undefined}
                 targets={targets}
                 getTargetsForRoll={getTargetsForRoll}
+                getTargetDisadvantageLabels={getTargetDisadvantageLabels}
                 onApplyDamage={onApplyDamage}
                 onApplyVulnerable={onApplyVulnerable}
                 disableDismiss={isPlayer}
@@ -2247,13 +2869,10 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onBouncingTarget={onBouncingTarget}
                 wizardsWithHope={wizardsWithHope}
                 onNotThisTime={onNotThisTime}
-                fearlessChars={fearlessChars}
-                fearlessConvertedBannerIds={fearlessConvertedBannerIds}
-                onFearlessConvert={onFearlessConvert}
-                felineInstinctsChars={felineInstinctsChars}
-                onFelineInstinctsReroll={onFelineInstinctsReroll}
-                onFelineInstinctsRequest={onFelineInstinctsRequest}
-                felineRequestedBannerIds={felineRequestedBannerIds}
+                bannerReactions={bannerReactions?.length ? bannerReactions : bannerReactionsFallbackRef.current}
+                displayOverridesByRollId={displayOverridesByRollId}
+                onBannerReactionActivate={onBannerReactionActivate}
+                onChipResolve={onChipResolve}
                 tableCharacters={tableCharacters}
                 rangerFocusRerollChars={rangerFocusRerollChars}
                 onRangerFocusReroll={onRangerFocusReroll}
@@ -2261,6 +2880,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
                 holdThemOffChars={holdThemOffChars}
                 onHoldThemOffToggle={onHoldThemOffToggle}
+                onBannerTargetsChange={onBannerTargetsChange}
                 wingsOfLightFlyingInstanceIds={wingsOfLightFlyingInstanceIds}
                 onWingsD8Toggle={onWingsD8Toggle}
                 onWingsD8ToggleRequest={onWingsD8ToggleRequest}
@@ -2274,7 +2894,9 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onHeartD4ToggleRequest={onHeartD4ToggleRequest}
                 getWaterRetaliationNames={getWaterRetaliationNames}
                 isPlayer={isPlayer}
+                currentUserUid={currentUserUid}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}
+                onReplayDice={entry.resolved ? () => replayDiceForBanner(entry._bannerId) : undefined}
               />
             )
           ))}

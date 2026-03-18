@@ -29,6 +29,7 @@ export function wrapEntity(el, updateActiveElement) {
 
     // ── Stable identity and max values with safe defaults ─────────────────────
     instanceId:  el.instanceId,
+    id:          el.instanceId,  // alias for clean feature-hook APIs
     name:        el.name,
     class:       el.class,
     maxStress:   el.maxStress   ?? 6,
@@ -87,12 +88,73 @@ export function wrapEntity(el, updateActiveElement) {
       updateActiveElement(el.instanceId, { hope: snapshot.hope });
     },
 
+    /** True when at least n stress boxes are empty (i.e. the character can absorb n more stress). */
+    hasStress(n = 1) {
+      return entity.maxStress - snapshot.currentStress >= n;
+    },
+
     /**
      * Persist an arbitrary flag on the element (e.g. feature-specific state
      * like reinforcedActive). Triggers a React state update immediately.
      */
     setFlag(key, value) {
       updateActiveElement(el.instanceId, { [key]: value });
+    },
+
+    /** Mark a feature as used for a given cycle (e.g. once per rest). */
+    setFeatureUsed(featureKey, cycle) {
+      const next = { ...(el.featureUsage || {}), [featureKey]: { used: true, cycle } };
+      updateActiveElement(el.instanceId, { featureUsage: next });
+    },
+
+    /** Append a condition string to the element's conditions list. */
+    addCondition(name) {
+      const existing = el.conditions || '';
+      const trimmed = existing.trim();
+      const updated = trimmed ? `${trimmed}, ${name}` : name;
+      updateActiveElement(el.instanceId, { conditions: updated });
+    },
+
+    /** Add a damage resistance (e.g. physical). Source identifies the feature (e.g. 'Galapa - Retract'). */
+    addResistance(type, source) {
+      const list = Array.isArray(el.resistance) ? [...el.resistance] : [];
+      const key = source ?? 'Unknown';
+      if (!list.some(r => r.type === type && r.source === key)) list.push({ type, source: key });
+      updateActiveElement(el.instanceId, { resistance: list });
+    },
+
+    removeResistance(type, source) {
+      const list = Array.isArray(el.resistance) ? el.resistance : [];
+      const key = source ?? 'Unknown';
+      updateActiveElement(el.instanceId, { resistance: list.filter(r => !(r.type === type && r.source === key)) });
+    },
+
+    /** Add a source of disadvantage on this character's action rolls. */
+    addDisadvantage(source) {
+      const list = Array.isArray(el.disadvantageSources) ? [...el.disadvantageSources] : [];
+      const key = source ?? 'Unknown';
+      if (!list.includes(key)) list.push(key);
+      updateActiveElement(el.instanceId, { disadvantageSources: list });
+    },
+
+    removeDisadvantage(source) {
+      const list = Array.isArray(el.disadvantageSources) ? el.disadvantageSources : [];
+      const key = source ?? 'Unknown';
+      updateActiveElement(el.instanceId, { disadvantageSources: list.filter(s => s !== key) });
+    },
+
+    /** Add a source that prevents this character's token from being moved. */
+    disableMove(source) {
+      const list = Array.isArray(el.moveDisabledSources) ? [...el.moveDisabledSources] : [];
+      const key = source ?? 'Unknown';
+      if (!list.includes(key)) list.push(key);
+      updateActiveElement(el.instanceId, { moveDisabledSources: list });
+    },
+
+    enableMove(source) {
+      const list = Array.isArray(el.moveDisabledSources) ? el.moveDisabledSources : [];
+      const key = source ?? 'Unknown';
+      updateActiveElement(el.instanceId, { moveDisabledSources: list.filter(s => s !== key) });
     },
   };
 

@@ -1,6 +1,8 @@
 // Runtime fields that are local to the Game Table and NOT overwritten by library data.
 // Used when resolving characters by reference: library base data is merged in, but
 // these fields are preserved from the stored activeElement.
+// Any _ prefixed key on a character element is also preserved automatically
+// (ancestry/class feature state uses _ prefix by convention, e.g. _fearlessToggle).
 export const CHARACTER_RUNTIME_KEYS = [
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
@@ -17,8 +19,12 @@ export const CHARACTER_RUNTIME_KEYS = [
   'activeBeastform',           // Druid: current beastform object or null
   'selectedBeastformAdvantage', // Druid: currently selected beastform advantage label or null
   'activeChanneledElement',   // Warden of the Elements: 'fire'|'earth'|'water'|'air' or null
-  '_fearlessToggle',           // Fearless (Infernis): _rollDbId of the converted banner, or null
   'wingsOfLightFlying',        // Winged Sentinel: whether the character is currently flying
+  'faerieWingsFlying',        // Faerie Wings: whether the character is currently flying (for Wings chip)
+  'retractedActive',           // Galapa Retract: in shell (toggle state for card chip)
+  'resistance',                // [{ type, source }] e.g. physical from Galapa Retract
+  'disadvantageSources',       // string[] sources that add disadvantage to this character's rolls
+  'moveDisabledSources',       // string[] sources that prevent token move (e.g. Retract)
 ];
 
 export const RUNTIME_KEYS = [
@@ -91,6 +97,8 @@ export function applyTableOp(op, state) {
             if (k === 'companion') return;
             if (k in el) runtime[k] = el[k];
           });
+          // Auto-preserve any _ prefixed keys (ancestry/class feature toggle state).
+          Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
           const merged = { ...op.newBaseData, ...runtime, elementType: 'character' };
           if (op.newBaseData.companion || el.companion) {
             merged.companion = { ...(op.newBaseData.companion || {}), currentStress: el.companion?.currentStress };
@@ -129,6 +137,24 @@ export function applyTableOp(op, state) {
       const next = { ...prev };
       delete next[String(op._rollDbId)];
       return { lifeSupportSelections: next };
+    }
+    case 'rest-move-select': {
+      const prev = state.restMovesSelections || {};
+      const key = String(op.rollDbId);
+      const perRoll = prev[key] ? { ...prev[key] } : {};
+      const perChar = perRoll[op.instanceId] ? { ...perRoll[op.instanceId] } : {};
+      perChar['move' + op.slot] = op.moveId ?? null;
+      if (op.targetInstanceId !== undefined) perChar['move' + op.slot + 'TargetInstanceId'] = op.targetInstanceId ?? null;
+      if (op.rollResult !== undefined) perChar['move' + op.slot + 'RollResult'] = op.rollResult ?? null;
+      perRoll[op.instanceId] = perChar;
+      const next = { ...prev, [key]: perRoll };
+      return { restMovesSelections: next };
+    }
+    case 'rest-move-clear': {
+      const prev = state.restMovesSelections || {};
+      const next = { ...prev };
+      delete next[String(op._rollDbId)];
+      return { restMovesSelections: next };
     }
     default:
       return {};

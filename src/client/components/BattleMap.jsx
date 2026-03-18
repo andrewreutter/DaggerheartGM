@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
-import { Upload, X, Map, ArrowLeftToLine, Pencil } from 'lucide-react';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices } from 'lucide-react';
+import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
+import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
+
+/** Width in px of the character tokens shelf (left tray). Used by DiceRoller to offset the banner strip. */
+export const CHARACTER_TRAY_WIDTH_PX = 36 + 16;
 
 // Daggerheart range bands — Melee (≤5') through Very Far (≤300')
 const RANGE_BANDS = [
@@ -516,7 +521,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, className = '' }) {
+export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, onClearDice, className = '' }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -587,7 +592,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
   const renderedWidthPx = Math.round(mapWidthFt * pxPerFt);
   const renderedHeightPx = Math.round(mapHeightFt * pxPerFt);
   const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
-  const trayTokenSizePx = 36; // fixed size for tray tokens
+  const trayTokenSizePx = CHARACTER_TRAY_WIDTH_PX - 16; // 36; fixed size for tray tokens
 
   // Categorize elements
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
@@ -616,7 +621,8 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
   }, [user?.uid, user?.email]);
 
   const canDrag = useCallback((el) => {
-    if (!isPlayer) return true; // GM can drag anything
+    if (el.elementType === 'character' && (el.moveDisabledSources?.length > 0 || el.retractedActive)) return false;
+    if (!isPlayer) return true; // GM can drag anything else
     if (el.elementType === 'adversary') return false; // players can't drag adversaries
     return isMyCharacter(el);
   }, [isPlayer, isMyCharacter]);
@@ -716,9 +722,9 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       if (element.instanceId === center.excludeInstanceId) continue;
       const dx = (element.tokenX + 2.5) - center.x;
       const dy = (element.tokenY + 2.5) - center.y;
-      // Use nearest-edge distance: subtract token radius so any overlap with a band counts
+      // Use nearest-edge distance: subtract token radius so any overlap with a band counts (shared with map-range)
       const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
-      const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
+      const bandIdx = getRangeBandIndexForDistanceFt(dist);
       result[element.instanceId] = bandIdx; // -1 means Out of Range
     }
     return result;
@@ -730,14 +736,18 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
     const dx = followBullseyeFt.x - bullseyeFt.x;
     const dy = followBullseyeFt.y - bullseyeFt.y;
     const dist = Math.max(0, Math.sqrt(dx * dx + dy * dy) - 2.5);
-    const bandIdx = RANGE_BANDS.findIndex(b => dist <= b.maxFt);
+    const bandIdx = getRangeBandIndexForDistanceFt(dist);
     return bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
   }, [bullseyeFt, followBullseyeFt]);
 
   // ─── Drag handlers ──────────────────────────────────────────────────────
 
   const handlePointerDown = useCallback((e, element, fromTray) => {
-    if (!canDrag(element)) return;
+    if (!canDrag(element)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -914,20 +924,43 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
 
       {/* Map area */}
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
-        {/* Left tray — characters without position */}
+        {/* Left tray — character tokens shelf */}
         {showLeftTray && (
-          <TrayColumn
-            tokens={charTrayTokens}
-            side="left"
-            isHighlighted={highlightLeftTray}
-            trayRef={leftTrayRef}
-            tokenSizePx={trayTokenSizePx}
-            dragRef={dragRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            pinnedInstanceId={pinnedToken?.element.instanceId}
-          />
+          <div
+            ref={leftTrayRef}
+            className={`flex flex-col shrink-0 border-r border-slate-800 ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-slate-900/60'}`}
+            style={{ width: CHARACTER_TRAY_WIDTH_PX, minHeight: 0 }}
+          >
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <TrayColumn
+                tokens={charTrayTokens}
+                side="left"
+                isHighlighted={highlightLeftTray}
+                trayRef={null}
+                tokenSizePx={trayTokenSizePx}
+                dragRef={dragRef}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                pinnedInstanceId={pinnedToken?.element.instanceId}
+              />
+            </div>
+            {onClearDice && (
+              <div className="p-1.5 border-t border-slate-800 shrink-0">
+                <Tooltip label="Clear 3D dice from view">
+                  <button
+                    type="button"
+                    onClick={onClearDice}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                    aria-label="Clear dice"
+                  >
+                    <Eraser size={14} />
+                    <Dices size={14} />
+                  </button>
+                </Tooltip>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Hidden tray ref for drop detection even when left tray is empty */}
