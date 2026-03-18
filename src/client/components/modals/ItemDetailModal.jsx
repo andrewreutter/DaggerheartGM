@@ -16,6 +16,7 @@ import { MarkdownText } from '../../lib/markdown.js';
 import { computeSceneBudget } from '../../lib/battle-points.js';
 import { generateId } from '../../lib/helpers.js';
 import { getBaselineStats, getUnscaledAdversary, computeScaledStats } from '../../lib/adversary-defaults.js';
+import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -225,6 +226,8 @@ export function ItemDetailModal({
     isNew,
   });
 
+  const { srdData: characterSrdData } = useCharacterSrdData();
+
   // Lock body scroll while the modal is open.
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -398,7 +401,7 @@ export function ItemDetailModal({
           <MarkdownText text={displayItem.description} className="text-sm italic text-slate-300" />
         )}
         {collection === 'characters' && (
-          <CharacterDetailPane item={displayItem} />
+          <CharacterDetailPane item={displayItem} srdData={characterSrdData} />
         )}
 
         </div>

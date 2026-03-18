@@ -20,6 +20,11 @@ export const CHARACTER_RUNTIME_KEYS = [
   'selectedBeastformAdvantage', // Druid: currently selected beastform advantage label or null
   'activeChanneledElement',   // Warden of the Elements: 'fire'|'earth'|'water'|'air' or null
   'wingsOfLightFlying',        // Winged Sentinel: whether the character is currently flying
+  'faerieWingsFlying',        // Faerie Wings: whether the character is currently flying (for Wings chip)
+  'retractedActive',           // Galapa Retract: in shell (toggle state for card chip)
+  'resistance',                // [{ type, source }] e.g. physical from Galapa Retract
+  'disadvantageSources',       // string[] sources that add disadvantage to this character's rolls
+  'moveDisabledSources',       // string[] sources that prevent token move (e.g. Retract)
 ];
 
 export const RUNTIME_KEYS = [
@@ -138,7 +143,9 @@ export function applyTableOp(op, state) {
       const key = String(op.rollDbId);
       const perRoll = prev[key] ? { ...prev[key] } : {};
       const perChar = perRoll[op.instanceId] ? { ...perRoll[op.instanceId] } : {};
-      perChar[op.slot === 2 ? 'move2' : 'move1'] = op.moveId ?? null;
+      perChar['move' + op.slot] = op.moveId ?? null;
+      if (op.targetInstanceId !== undefined) perChar['move' + op.slot + 'TargetInstanceId'] = op.targetInstanceId ?? null;
+      if (op.rollResult !== undefined) perChar['move' + op.slot + 'RollResult'] = op.rollResult ?? null;
       perRoll[op.instanceId] = perChar;
       const next = { ...prev, [key]: perRoll };
       return { restMovesSelections: next };

@@ -10,21 +10,21 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 ## Summary
 
 
-| Collection                                | Count | Browsable | Selectable  | Features           | Overall     |
-| ----------------------------------------- | ----- | --------- | ----------- | ------------------ | ----------- |
-| [Adversaries](#adversaries-129)           | 129   | Done      | N/A (table) | Attacks rollable   | **Done**    |
-| [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display            | **Done**    |
-| [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 22/38 automated    | **Partial** |
-| [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated    | **Partial** |
-| [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks | **Partial** |
+| Collection                                | Count | Browsable | Selectable  | Features                                                         | Overall     |
+| ----------------------------------------- | ----- | --------- | ----------- | ---------------------------------------------------------------- | ----------- |
+| [Adversaries](#adversaries-129)           | 129   | Done      | N/A (table) | Attacks rollable                                                 | **Done**    |
+| [Environments](#environments-19)          | 19    | Done      | N/A (table) | Display                                                          | **Done**    |
+| [Weapons](#weapons-186)                   | 186   | N/A       | Done        | 22/38 automated                                                  | **Partial** |
+| [Armor](#armor-34)                        | 34    | N/A       | Done        | 15/21 automated                                                  | **Partial** |
+| [Classes](#classes-9)                     | 9     | N/A       | Done        | 9/9 clickable; 7/9 Phase 2 hooks                                 | **Partial** |
 | [Subclasses](#subclasses-18)              | 18    | N/A       | Done        | 1+ features partial (e.g. Wings of Light, Elemental Incarnation) | **Partial** |
-| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 6 ancestries automated (11 features) | **Partial** |
-| [Communities](#communities-9)             | 9     | N/A       | Done        | 0/9 features auto  | **Display** |
-| [Abilities](#abilities--domain-cards-189) | 189   | N/A       | Done        | Display            | **Display** |
-| [Domains](#domains-9)                     | 9     | N/A       | Indirect    | Filtering only     | **Partial** |
-| [Beastforms](#beastforms-24)              | 24    | API only  | Done        | Partial            | **Partial** |
-| [Items](#items-60)                        | 60    | API only  | None        | None               | **None**    |
-| [Consumables](#consumables-60)            | 60    | API only  | None        | None               | **None**    |
+| [Ancestries](#ancestries-18)              | 18    | N/A       | Done        | 18 ancestries automated; 2 features display-only by design       | **Done**    |
+| [Communities](#communities-9)             | 9     | N/A       | Done        | 9/9 features automated                                           | **Done**    |
+| [Abilities](#abilities--domain-cards-189) | 189   | N/A       | Done        | Display                                                          | **Display** |
+| [Domains](#domains-9)                     | 9     | N/A       | Indirect    | Filtering only                                                   | **Partial** |
+| [Beastforms](#beastforms-24)              | 24    | API only  | Done        | Partial                                                          | **Partial** |
+| [Items](#items-60)                        | 60    | API only  | None        | None                                                             | **None**    |
+| [Consumables](#consumables-60)            | 60    | API only  | None        | None                                                             | **None**    |
 
 
 **Totals:** 746 SRD elements. ~360 fully implemented (adversaries + environments + weapons + abilities as display + armor stat/roll/slot-triggered/damage-type-gated features), ~142 partially implemented, ~244 not in the UI.
@@ -140,9 +140,9 @@ Applied in `handleApplyDamage` / banner dismiss in `GMTableView`.
 #### Action / Defensive — All Done
 
 
-| Feature   | Behavior                                   | Status   |
-| --------- | ------------------------------------------ | -------- |
-| Startling | Action notification card; 1 Stress         | **Done** |
+| Feature   | Behavior                                   | Status                                                                                                                                                                                                                                                                                                          |
+| --------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Startling | Action notification card; 1 Stress         | **Done**                                                                                                                                                                                                                                                                                                        |
 | Parry     | Defensive dice cancel matching attack dice | **Broken** — original implementation relied on the old `handleDiceRollComplete`/`dice-ack` path, which was removed in the banner-queue refactor. Needs reimplementation as a linked child banner (`_parentBannerId`). See `parry-linked-banners` in `.cursor/plans/banner_queue_architecture_ac326660.plan.md`. |
 
 
@@ -185,70 +185,85 @@ These are informational for the GM. Shown as tags in the result banner.
 
 Handled by `computeArmorModifiers` in `character-calc.js`. Applied at character build time before weapon modifiers.
 
-| Feature    | Armors              | Effect                     | Status   |
-| ---------- | ------------------- | -------------------------- | -------- |
-| *(none)*   | Leather (T1-T4)     | No feature                 | **Done** |
-| Flexible   | Gambeson (T1-T4)    | +1 Evasion                 | **Done** |
-| Heavy      | Chainmail (T1-T4)   | -1 Evasion                 | **Done** |
-| Very Heavy | Full Plate (T1-T4)  | -2 Evasion; -1 Agility     | **Done** |
-| Gilded     | Bellamoi Fine (T3)  | +1 Presence                | **Done** |
+
+| Feature    | Armors                | Effect                    | Status   |
+| ---------- | --------------------- | ------------------------- | -------- |
+| *(none)*   | Leather (T1-T4)       | No feature                | **Done** |
+| Flexible   | Gambeson (T1-T4)      | +1 Evasion                | **Done** |
+| Heavy      | Chainmail (T1-T4)     | -1 Evasion                | **Done** |
+| Very Heavy | Full Plate (T1-T4)    | -2 Evasion; -1 Agility    | **Done** |
+| Gilded     | Bellamoi Fine (T3)    | +1 Presence               | **Done** |
 | Difficult  | Savior Chainmail (T4) | -1 all traits and Evasion | **Done** |
+
 
 #### Roll Modifiers — All Done
 
 Toggleable chips in the Experiences section. Bonus included in the next roll without spending Hope.
 
-| Feature    | Armors              | Effect             | Status   |
-| ---------- | ------------------- | ------------------ | -------- |
+
+| Feature    | Armors                | Effect             | Status   |
+| ---------- | --------------------- | ------------------ | -------- |
 | Channeling | Channeling Armor (T4) | +1 Spellcast Rolls | **Done** |
-| Quiet      | Tyris Soft (T2)     | +2 stealth rolls   | **Done** |
+| Quiet      | Tyris Soft (T2)       | +2 stealth rolls   | **Done** |
+
 
 #### Display Only — Done
 
-| Feature      | Armors              | Effect                 | Status      |
-| ------------ | ------------------- | ---------------------- | ----------- |
-| Truthseeking | Veritas Opal (T4)   | Glows when creature lies | **Display** |
+
+| Feature      | Armors            | Effect                   | Status      |
+| ------------ | ----------------- | ------------------------ | ----------- |
+| Truthseeking | Veritas Opal (T4) | Glows when creature lies | **Display** |
+
 
 #### Armor-Slot-Triggered — Done (Phase 2)
 
 Triggered when the GM clicks the cyan armor button (shield icon) next to a character target in the damage banner. `applyDamageToTarget` in `GMTableView.jsx` reads `armorOpts.feature` to apply the feature effect alongside the slot mark.
 
-| Feature    | Armors                      | Effect                                                        | Status   |
-| ---------- | --------------------------- | ------------------------------------------------------------- | -------- |
-| Fortified  | Full Fortified (T4)         | Armor Slot reduces severity by two (−2 HP instead of −1)      | **Done** |
-| Painful    | Runes of Fortification (T3) | Auto-mark 1 Stress on target when armor slot is marked        | **Done** |
+
+| Feature    | Armors                      | Effect                                                              | Status   |
+| ---------- | --------------------------- | ------------------------------------------------------------------- | -------- |
+| Fortified  | Full Fortified (T4)         | Armor Slot reduces severity by two (−2 HP instead of −1)            | **Done** |
+| Painful    | Runes of Fortification (T3) | Auto-mark 1 Stress on target when armor slot is marked              | **Done** |
 | Resilient  | Harrowbone (T2)             | On last slot: roll d6 — a 6 saves the slot (severity still reduces) | **Done** |
-| Reinforced | IronTree Breastplate (T2)   | +2 to both thresholds when last slot marked; clears on restore | **Done** |
+| Reinforced | IronTree Breastplate (T2)   | +2 to both thresholds when last slot marked; clears on restore      | **Done** |
+
 
 #### Damage-Type Gated — Done (Phase 3)
 
 `dmg.type` (`'phy'`/`'mag'`) is extracted from the roll's post tag in `parseDiceSub` and flows through `onApplyDamage` → `handleApplyDamage` → `applyDamageToTarget`. `armorScore` is added to character targets in `damageTargets`.
 
-| Feature  | Armors               | Effect                             | Status   |
-| -------- | -------------------- | ---------------------------------- | -------- |
+
+| Feature  | Armors               | Effect                                                    | Status   |
+| -------- | -------------------- | --------------------------------------------------------- | -------- |
 | Warded   | Elundrian Chain (T2) | Reduce magic damage by Armor Score before threshold check | **Done** |
-| Physical | Bladefare (T3)       | Armor button hidden for magic damage | **Done** |
-| Magic    | Monett's Cloak (T3)  | Armor button hidden for physical damage | **Done** |
+| Physical | Bladefare (T3)       | Armor button hidden for magic damage                      | **Done** |
+| Magic    | Monett's Cloak (T3)  | Armor button hidden for physical damage                   | **Done** |
+
 
 #### Map-Aware — Pending (Phase 4)
 
-| Feature | Armors              | Effect                        | Status   |
-| ------- | ------------------- | ----------------------------- | -------- |
-| Sharp   | Spiked Plate (T3)   | +d4 Melee damage              | **None** |
-| Burning | Emberwoven (T4)     | Melee attacker marks Stress   | **None** |
+
+| Feature | Armors            | Effect                      | Status   |
+| ------- | ----------------- | --------------------------- | -------- |
+| Sharp   | Spiked Plate (T3) | +d4 Melee damage            | **None** |
+| Burning | Emberwoven (T4)   | Melee attacker marks Stress | **None** |
+
 
 #### Complex Unique — Pending (Phase 5)
 
-| Feature     | Armors                  | Effect                           | Status   |
-| ----------- | ----------------------- | -------------------------------- | -------- |
-| Timeslowing | Dunamis Silkchain (T4)  | Mark Armor Slot → +d4 Evasion    | **None** |
-| Shifting    | Runetan Floating (T2)   | Mark Armor Slot → disadvantage   | **None** |
+
+| Feature     | Armors                 | Effect                         | Status   |
+| ----------- | ---------------------- | ------------------------------ | -------- |
+| Timeslowing | Dunamis Silkchain (T4) | Mark Armor Slot → +d4 Evasion  | **None** |
+| Shifting    | Runetan Floating (T2)  | Mark Armor Slot → disadvantage | **None** |
+
 
 #### Flagged for Future
 
-| Feature      | Armors           | Effect                               | Status   |
-| ------------ | ---------------- | ------------------------------------ | -------- |
-| Hopeful      | Rosewild (T2)    | Mark Armor Slot instead of Hope      | **None** |
+
+| Feature      | Armors           | Effect                                  | Status   |
+| ------------ | ---------------- | --------------------------------------- | -------- |
+| Hopeful      | Rosewild (T2)    | Mark Armor Slot instead of Hope         | **None** |
 | Impenetrable | Dragonscale (T3) | Mark Stress instead of last HP (1/rest) | **None** |
 
 
@@ -261,6 +276,7 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 **Status: Partial.** All 9 classes are selectable in the character builder. Base stats (HP, evasion, domains) are computed. All class features are now **clickable** via the Phase 1 feature interaction system (Use/Announce buttons, sub-feature cards, cost badges). Resource costs (Hope/Stress/Armor) are applied on banner dismiss. Session/Short Rest/Long Rest buttons refresh feature usage and active modifiers. See the [Clickable Character Features plan](../.cursor/plans/clickable_character_features_6686c77f.plan.md) for the full feature rundown and Phase 2 roadmap.
 
 **Phase 1 — All features clickable** as of this implementation:
+
 - `parseFeatureAction` parser detects Hope cost, Stress cost, Armor ops, dice, Spellcast DC, frequency, and target type from description text
 - `FeatureChip` shows Use/Announce/passive-badge UI based on feature type
 - `SubFeatureCard` renders multi-option features (Channel Raw Power, Attack of Opportunity)
@@ -271,17 +287,18 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 - Session/Short Rest/Long Rest buttons in Encounter panel header clear matching `featureUsage` and `activeModifiers`
 - Not This Time (Wizard) button appears on adversary ResultBanners when Wizard has 3+ Hope
 
-| Class        | Class Features                                  | Hope Feature                                         | Feature Status                                                    |
-| ------------ | ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| **Bard**     | Rally                                           | Make a Scene (3 Hope: Distract target -2 Difficulty) | **Partial** — clickable; Rally adds modifier chips (mode: clearStress); on attack/action banners, attacker with Rally Die sees "Add Rally Die to roll" and "Add Rally Die to damage" toggles (visible to both GM and player, state shared across windows); on Acknowledge with toggle active: original banner cancelled, modifier removed, copy banner created with die added and randomized; modifier chip "clr Stress" button: roll die, on Acknowledge clear stress equal to result. Make a Scene sets `difficultyMod` on target via ActionBanner target picker + `onFeatureActivated` hook; badge shown on adversary card |
-| **Druid**    | Beastform, Wildtouch                            | Evolution (3 Hope: free Beastform + trait boost)     | **Done** — Beastform: tier-filtered selector, Use (1 Stress/once-per-rest), Drop Out, auto-drop on last HP or Fragile; in-beastform: attack roll (Hope+Fear+Trait+proficiency), mutually-exclusive advantage chips (+d6), weapons disabled, domain cards disabled, trait/evasion bonuses shown. Evolution (hope ability): 3 Hope, same activeBeastform state + shared selector. Wildtouch: announce only. |
-| **Guardian** | Unstoppable                                     | Frontline Tank (3 Hope: clear 2 Armor Slots)         | **Partial** — Unstoppable die chip: `onHpDealt` ratchets d4→d6→d8→d10; `modifyPreThresholdDamage` reduces incoming damage by one tier while chip active; Frontline Tank deducts Hope + clears Armor |
+
+| Class        | Class Features                                  | Hope Feature                                         | Feature Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ----------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bard**     | Rally                                           | Make a Scene (3 Hope: Distract target -2 Difficulty) | **Partial** — clickable; Rally adds modifier chips (mode: clearStress); on attack/action banners, attacker with Rally Die sees "Add Rally Die to roll" and "Add Rally Die to damage" toggles (visible to both GM and player, state shared across windows); on Acknowledge with toggle active: original banner cancelled, modifier removed, copy banner created with die added and randomized; modifier chip "clr Stress" button: roll die, on Acknowledge clear stress equal to result. Make a Scene sets `difficultyMod` on target via ActionBanner target picker + `onFeatureActivated` hook; badge shown on adversary card                                                                                                                                                                                                                                                                                                       |
+| **Druid**    | Beastform, Wildtouch                            | Evolution (3 Hope: free Beastform + trait boost)     | **Done** — Beastform: tier-filtered selector, Use (1 Stress/once-per-rest), Drop Out, auto-drop on last HP or Fragile; in-beastform: attack roll (Hope+Fear+Trait+proficiency), mutually-exclusive advantage chips (+d6), weapons disabled, domain cards disabled, trait/evasion bonuses shown. Evolution (hope ability): 3 Hope, same activeBeastform state + shared selector. Wildtouch: announce only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Guardian** | Unstoppable                                     | Frontline Tank (3 Hope: clear 2 Armor Slots)         | **Partial** — Unstoppable die chip: `onHpDealt` ratchets d4→d6→d8→d10; `modifyPreThresholdDamage` reduces incoming damage by one tier while chip active; Frontline Tank deducts Hope + clears Armor                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | **Ranger**   | Ranger's Focus                                  | Hold Them Off (3 Hope: attack 2 extra targets)       | **Done** — Ranger's Focus: "Use on next attack" toggle; weapon attack with toggle adds 1 Hope cost and title suffix; on damage apply target gets "Focused by X" (badge with clear); `onFeatureActivated` sets `focusTargetId`; `onHpDealt` marks Stress on Ranger when they deal HP to focus target. Focused-by effects: when Ranger deals damage to Focus target, target marks 1 Stress (banner note "Target will mark 1 Stress (Focused)"); on Fear result vs Focus target, GM/Ranger can end Focus to reroll Duality dice (request flow for player). Hold Them Off: banner shows "Spend 3 Hope to select two more targets" toggle (visible to GM and initiating player); toggle state stored on roll (`_holdThemOffActive`) and synced via banners subscription; when on, target selector allows multi-select up to 3 targets; damage/effects applied to all selected on Acknowledge; 3 Hope deducted when 2–3 targets selected. |
-| **Rogue**    | Cloaked, Sneak Attack                           | Rogue's Dodge (3 Hope: +2 Evasion)                   | **Partial** — Sneak Attack: `computeModifierEligibility` auto-enables chip when Cloaked or ally within Melee of adversary; Rogue's Dodge: `onDamageReceived` auto-clears modifier chip when Rogue takes HP damage |
-| **Seraph**   | Prayer Dice                                     | Life Support (3 Hope: clear 1 HP on ally)            | **Partial** — Prayer Dice: one chip per d4 with `usageModes: ['gainHope']`. **+Hope**: clicking posts an ActionBanner; GM acks → Hope gained + die consumed. **+Roll**: teal prayer die buttons appear in every DH roll banner (Seraph/ally rolls); clicking adds die value to displayed total; die consumed on GM Acknowledge. **−Dmg**: teal prayer die toggle appears in damage banners whenever a character or ally is targeted; shows `− Prayer Die(N)` in damage line; die consumed on GM Acknowledge; player-visible section also shown. Life Support: action banner with chips for allies within Close range with ≥1 marked HP, single selection (GM or player may click); on GM Acknowledge target clears 1 HP and feature marked used |
-| **Sorcerer** | Arcane Sense, Minor Illusion, Channel Raw Power | Volatile Magic (3 Hope: reroll damage dice)          | **Partial** — Channel Raw Power: `requiresInputForFeature` prompts for card level before dispatch; inline number input overlay in CharacterHoverCard; `onFeatureActivated` gains Hope or adds +2×level damage modifier; Volatile Magic deducts Hope |
-| **Warrior**  | Attack of Opportunity, Combat Training          | No Mercy (3 Hope: +1 attack until rest)              | **Partial** — Attack of Opportunity sub-features; Combat Training passive badge; No Mercy adds modifier chip |
-| **Wizard**   | Prestidigitation, Strange Patterns              | Not This Time (3 Hope: force adversary reroll)       | **Partial** — all clickable; Not This Time button on adversary ResultBanners |
+| **Rogue**    | Cloaked, Sneak Attack                           | Rogue's Dodge (3 Hope: +2 Evasion)                   | **Partial** — Sneak Attack: `computeModifierEligibility` auto-enables chip when Cloaked or ally within Melee of adversary; Rogue's Dodge: `onDamageReceived` auto-clears modifier chip when Rogue takes HP damage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Seraph**   | Prayer Dice                                     | Life Support (3 Hope: clear 1 HP on ally)            | **Partial** — Prayer Dice: one chip per d4 with `usageModes: ['gainHope']`. **+Hope**: clicking posts an ActionBanner; GM acks → Hope gained + die consumed. **+Roll**: teal prayer die buttons appear in every DH roll banner (Seraph/ally rolls); clicking adds die value to displayed total; die consumed on GM Acknowledge. **−Dmg**: teal prayer die toggle appears in damage banners whenever a character or ally is targeted; shows `− Prayer Die(N)` in damage line; die consumed on GM Acknowledge; player-visible section also shown. Life Support: action banner with chips for allies within Close range with ≥1 marked HP, single selection (GM or player may click); on GM Acknowledge target clears 1 HP and feature marked used                                                                                                                                                                                     |
+| **Sorcerer** | Arcane Sense, Minor Illusion, Channel Raw Power | Volatile Magic (3 Hope: reroll damage dice)          | **Partial** — Channel Raw Power: `requiresInputForFeature` prompts for card level before dispatch; inline number input overlay in CharacterHoverCard; `onFeatureActivated` gains Hope or adds +2×level damage modifier; Volatile Magic deducts Hope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Warrior**  | Attack of Opportunity, Combat Training          | No Mercy (3 Hope: +1 attack until rest)              | **Partial** — Attack of Opportunity sub-features; Combat Training passive badge; No Mercy adds modifier chip                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Wizard**   | Prestidigitation, Strange Patterns              | Not This Time (3 Hope: force adversary reroll)       | **Partial** — all clickable; Not This Time button on adversary ResultBanners                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 
 **Phase 2 complete.** All class hooks (Bard, Guardian, Ranger, Rogue, Seraph, Sorcerer) implemented via the IoC class feature system. See `.cursor/plans/clickable_character_features_6686c77f.plan.md` for Phase 3 roadmap.
@@ -293,26 +310,26 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 **Status: Display.** All 18 subclasses are selectable. Spellcast trait is stored. Features are shown grouped by tier (Foundation / Specialization / Mastery) but none are automated.
 
 
-| Subclass                   | Class    | Key Features                                                                              | Status                                   |
-| -------------------------- | -------- | ----------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **Troubadour**             | Bard     | Gifted Performer, Virtuoso, Maestro                                                       | Display                                  |
-| **Wordsmith**              | Bard     | Rousing Speech, Heart of a Poet, Epic Poetry, Eloquent                                    | Partial — Rousing Speech: action banner with in-range character chips (Far range), clears 2 Stress per target on GM Acknowledge, marks feature used; Heart of a Poet: "Spend 1 Hope → d4" button on non-attack action roll banners (GM executes, player can toggle intent); GM spends 1 Hope and rolls d4, result added to displayed total; Epic Poetry, Eloquent: Display |
+| Subclass                   | Class    | Key Features                                                                              | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | -------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Troubadour**             | Bard     | Gifted Performer, Virtuoso, Maestro                                                       | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Wordsmith**              | Bard     | Rousing Speech, Heart of a Poet, Epic Poetry, Eloquent                                    | Partial — Rousing Speech: action banner with in-range character chips (Far range), clears 2 Stress per target on GM Acknowledge, marks feature used; Heart of a Poet: "Spend 1 Hope → d4" button on non-attack action roll banners (GM executes, player can toggle intent); GM spends 1 Hope and rolls d4, result added to displayed total; Epic Poetry, Eloquent: Display                                                                                               |
 | **Warden of the Elements** | Druid    | Elemental Incarnation, Elemental Dominion, Elemental Aura                                 | Partial — Elemental Incarnation: Done (Fire: 1d10 retaliation auto-posted when Melee adversary deals HP damage, banner notice shown before Ack; Earth: +Proficiency to thresholds with breakdown display; Water: Stress on Very Close adversaries from attacker's position when Melee damage dealt, banner notice lists targets before Ack; Air: d6 auto-appended to Agility rolls; state cleared on Severe damage or rest). Elemental Dominion, Elemental Aura: Display |
-| **Warden of Renewal**      | Druid    | Clarity of Nature, Regeneration, Defender, Regenerative Reach, Warden's Protection        | Display                                  |
-| **Stalwart**               | Guardian | Unwavering, Iron Will, Undaunted, Loyal Protector, Unrelenting, Partners-in-Arms          | Display                                  |
-| **Vengeance**              | Guardian | At Ease, Revenge, Nemesis, Act of Reprisal                                                | Display                                  |
-| **Beastbound**             | Ranger   | Companion, Advanced Training, Loyal Friend, Expert Training, Battle-Bonded                | Display + Library edit — Companion: Name/Species editable in form (between Class and Subclass); evasion/maxStress static; companion stress on table card; companion card stacked in Library, second card to right of hover on Game Table |
-| **Wayfinder**              | Ranger   | Ruthless Predator, Path Forward, Apex Predator, Elusive Predator                          | Display                                  |
-| **Nightwalker**            | Rogue    | Shadow Stepper, Fleeting Shadow, Vanishing Act, Dark Cloud, Adrenaline                    | Display                                  |
-| **Syndicate**              | Rogue    | Well-Connected, Reliable Backup, Contacts Everywhere                                      | Display                                  |
-| **Divine Wielder**         | Seraph   | Spirit Weapon, Sparing Touch, Sacred Resonance, Devout                                    | Display                                  |
-| **Winged Sentinel**        | Seraph   | Wings of Light, Ascendant, Power of the Gods, Ethereal Visage                             | Partial — Wings of Light: persisted flying toggle; "Pick up and carry" action banner (marks 1 Stress on GM ack, disabled when stress maxed); "Spend a Hope to add a d8 to damage" toggle on character attack banners (shared state; GM click spends Hope and rolls d8; player toggle applied at ack). Other features: Display |
-| **Elemental Origin**       | Sorcerer | Elementalist, Transcendence, Natural Evasion                                              | Display — Natural Evasion could automate |
-| **Primal Origin**          | Sorcerer | Manipulate Magic, Arcane Charge, Enchanted Aid                                            | Display                                  |
-| **Call of the Brave**      | Warrior  | Courage, Battle Ritual, Camaraderie, Rise to the Challenge                                | Display                                  |
-| **Call of the Slayer**     | Warrior  | Slayer, Martial Preparation, Weapon Specialist                                            | Display                                  |
-| **School of Knowledge**    | Wizard   | Prepared, Adept, Brilliant, Honed Expertise, Accomplished, Perfect Recall                 | Display                                  |
-| **School of War**          | Wizard   | Battlemage, Face Your Fear, Thrive in Chaos, Have No Fear, Conjure Shield, Fueled by Fear | Display                                  |
+| **Warden of Renewal**      | Druid    | Clarity of Nature, Regeneration, Defender, Regenerative Reach, Warden's Protection        | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Stalwart**               | Guardian | Unwavering, Iron Will, Undaunted, Loyal Protector, Unrelenting, Partners-in-Arms          | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Vengeance**              | Guardian | At Ease, Revenge, Nemesis, Act of Reprisal                                                | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Beastbound**             | Ranger   | Companion, Advanced Training, Loyal Friend, Expert Training, Battle-Bonded                | Display + Library edit — Companion: Name/Species editable in form (between Class and Subclass); evasion/maxStress static; companion stress on table card; companion card stacked in Library, second card to right of hover on Game Table                                                                                                                                                                                                                                 |
+| **Wayfinder**              | Ranger   | Ruthless Predator, Path Forward, Apex Predator, Elusive Predator                          | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Nightwalker**            | Rogue    | Shadow Stepper, Fleeting Shadow, Vanishing Act, Dark Cloud, Adrenaline                    | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Syndicate**              | Rogue    | Well-Connected, Reliable Backup, Contacts Everywhere                                      | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Divine Wielder**         | Seraph   | Spirit Weapon, Sparing Touch, Sacred Resonance, Devout                                    | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Winged Sentinel**        | Seraph   | Wings of Light, Ascendant, Power of the Gods, Ethereal Visage                             | Partial — Wings of Light: persisted flying toggle; "Pick up and carry" action banner (marks 1 Stress on GM ack, disabled when stress maxed); "Spend a Hope to add a d8 to damage" toggle on character attack banners (shared state; GM click spends Hope and rolls d8; player toggle applied at ack). Other features: Display                                                                                                                                            |
+| **Elemental Origin**       | Sorcerer | Elementalist, Transcendence, Natural Evasion                                              | Display — Natural Evasion could automate                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Primal Origin**          | Sorcerer | Manipulate Magic, Arcane Charge, Enchanted Aid                                            | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Call of the Brave**      | Warrior  | Courage, Battle Ritual, Camaraderie, Rise to the Challenge                                | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Call of the Slayer**     | Warrior  | Slayer, Martial Preparation, Weapon Specialist                                            | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **School of Knowledge**    | Wizard   | Prepared, Adept, Brilliant, Honed Expertise, Accomplished, Perfect Recall                 | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **School of War**          | Wizard   | Battlemage, Face Your Fear, Thrive in Chaos, Have No Fear, Conjure Shield, Fueled by Fear | Display                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 
 **Note:** Most subclass features are narrative or situational. Automation candidates are features with clear stat modifications or dice effects (Natural Evasion, Adrenaline, Weapon Specialist, etc.).
@@ -321,54 +338,65 @@ Triggered when the GM clicks the cyan armor button (shield icon) next to a chara
 
 ## Ancestries (18)
 
-**Status: Display.** All 18 ancestries are selectable in the character builder (single ancestry only — multi-ancestry supported in data model but not in form UI). Features are displayed on the character sheet but none are automated. Ancestry banner reactions may declare optional `hopeCost` and `stressCost`; the system gates isEnabled on resources and applies costs before calling acknowledge.
+**Status: Done.** All 18 ancestries are selectable in the character builder (single ancestry only — multi-ancestry supported in data model but not in form UI). Features are displayed on the character sheet; all 18 ancestries are implemented in `src/features/ancestries/` with one or both features automated except two intentionally display-only features (Caprine Leap, Amphibious). Ancestry banner reactions may declare optional `hopeCost` and `stressCost`; the system gates isEnabled on resources and applies costs before calling acknowledge. Origin lifecycle hooks `onMarkStress`, `onMarkHP`, and `onMarkArmor` run before marking (e.g. Firbolg Unshakable).
 
 
-| Ancestry     | Feature 1         | Feature 2           | Status  |
-| ------------ | ----------------- | ------------------- | ------- |
-| **Clank**    | Purposeful Design | Efficient           | Display |
-| **Drakona**  | Scales            | Elemental Breath    | **Done** — Scales: target chip on Severe damage (mark 1 Stress to mark 1 fewer HP). Elemental Breath: virtual weapon (Instinct, Very Close, d8 magic + Proficiency) via `src/features/ancestries/Drakona.js`; roll builder adds proficiency and magic tag for Warded etc.; multi-target (target or group within Very Close) via `multiTarget: true`. |
-| **Dwarf**    | Thick Skin        | Increased Fortitude | **Done** — Thick Skin: target chip on Minor damage (mark 2 Stress instead of 1 HP). Increased Fortitude: target chip on physical damage (spend 3 Hope to halve damage). Both via `src/features/ancestries/Dwarf.js` and target-chip pipeline in GMTableView/DiceRoller. |
-| **Elf**      | Quick Reactions   | Celestial Trance    | Display |
-| **Faerie**   | Luckbender        | Wings               | Display |
-| **Faun**     | Caprine Leap      | Kick                | **Done** — Caprine Leap: narrative only (Display final). Kick: chip Ack on successful Melee attack adds +2d6 to **current** attack (mark 1 Stress), knockback narration; banner replaced with augmented roll |
-| **Firbolg**  | Charge            | Unshakable          | Display |
-| **Fungril**  | Fungril Network   | Death Connection    | Display |
-| **Galapa**   | Shell             | Retract             | Display |
-| **Giant**    | Endurance         | Reach               | **Done** — Endurance: +1 HP slot via ancestry IoC. Reach: Melee weapons display and roll as Very Close; carries through to map range bands (10'). Both automated via `src/features/ancestries/` |
-| **Goblin**   | Surefooted        | Danger Sense        | Display |
-| **Halfling** | Luckbringer       | Internal Compass    | Display |
-| **Human**    | High Stamina      | Adaptability        | Display |
-| **Infernis** | Fearless          | Dread Visage        | **Done** — All automated via `src/features/ancestries/` IoC. Fearless: `onBannerRender` calls `roll.setHope()` for pre-ack banner color; on Acknowledge, stress applied via character, hope via `grantHopeToAttacker` return. Dread Visage: advantage condition parsed from description text. |
-| **Katari**   | Feline Instincts  | Retracting Claws    | **Done** — All automated via `src/features/ancestries/` IoC. Feline Instincts: banner reaction for Hope die reroll (2 Hope cost, player request flow). Retracting Claws: virtual weapon via `onCharacterRender` / `addVirtualWeapon`; on Acknowledge applies Vulnerable via `onAcknowledge`. |
-| **Orc**      | Sturdy            | Tusks               | Display |
-| **Ribbet**   | Amphibious        | Long Tongue         | Display |
-| **Simiah**   | Natural Climber   | Nimble              | Display |
+| Ancestry     | Feature 1         | Feature 2           | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------ | ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Clank**    | Purposeful Design | Efficient           | **Done** — Purposeful Design: character form dropdown for which experience gets +1; roll path applies +1 when that experience is selected; incomplete until chosen. Efficient: `onRest(rest)` adds long rest moves to short rest list via `src/features/ancestries/Clank.js` and `getRestMovesForCharacter` in rest-moves.js.                                                                                                                                                                    |
+| **Drakona**  | Scales            | Elemental Breath    | **Done** — Scales: target chip on Severe damage (mark 1 Stress to mark 1 fewer HP). Elemental Breath: virtual weapon (Instinct, Very Close, d8 magic + Proficiency) via `src/features/ancestries/Drakona.js`; roll builder adds proficiency and magic tag for Warded etc.; multi-target (target or group within Very Close) via `multiTarget: true`.                                                                                                                                             |
+| **Dwarf**    | Thick Skin        | Increased Fortitude | **Done** — Thick Skin: target chip on Minor damage (mark 2 Stress instead of 1 HP). Increased Fortitude: target chip on physical damage (spend 3 Hope to halve damage). Both via `src/features/ancestries/Dwarf.js` and target-chip pipeline in GMTableView/DiceRoller.                                                                                                                                                                                                                          |
+| **Elf**      | Quick Reactions   | Celestial Trance    | **Done** — Quick Reactions: `onAct(canvas, roll, char, options)` adds a chip for reaction rolls (1 Stress for advantage); player-only pre-roll banner with Proceed then sends roll with `roll.addAdvantageDie('Quick Reactions')`. Celestial Trance: `onRest(rest)` calls `rest.addShortMoveSlot()` and `rest.addLongMoveSlot()`; RestBanner shows per-character slot count (default 2).                                                                                                         |
+| **Faerie**   | Luckbender        | Wings               | **Done** — Luckbender: banner chip, 3 Hope, once/session, `roll.reroll('Duality')`. Wings: banner chip when selected target is this character and flying (`faerieWingsFlying`), 1 Stress, `ctx.setTreatAsMissForTarget`. Flying toggle on feature card. Via `src/features/ancestries/Faerie.js`.                                                                                                                                                                                                 |
+| **Faun**     | Caprine Leap      | Kick                | **Done** — Caprine Leap: narrative only (Display final). Kick: chip Ack on successful Melee attack adds +2d6 to **current** attack (mark 1 Stress), knockback narration; banner replaced with augmented roll                                                                                                                                                                                                                                                                                     |
+| **Firbolg**  | Charge            | Unshakable          | **Done** — Charge: pre-roll canvas chip "I moved this turn" for Agility rolls; when selected, adds advantage d6 (onAct). Unshakable: `onMarkStress` rolls d6; on 6 the stress is not marked (origin-lifecycle in `src/client/lib/origin-lifecycle.js`).                                                                                                                                                                                                                                          |
+| **Fungril**  | Fungril Network   | Death Connection    | **Done** — Fungril Network: display (narrative). Death Connection: `onCard(card)` adds a chip (label, stressCost: 1, onUse: context.postAction); chip shows on feature card; click posts action banner; GM ack applies 1 Stress. Both in `src/features/ancestries/Fungril.js`.                                                                                                                                                                                                                   |
+| **Galapa**   | Shell             | Retract             | **Done** — Shell: `addThresholdBonus(ctx.proficiency ?? 1)` in `onCharacterRender`; effectiveThresholds applies ancestryThresholdBonus. Retract: onCard toggle chip with `toggleKey: 'retractedActive'`; entity methods addResistance('physical'), addDisadvantage, disableMove (source `'Galapa - Retract'`); physical damage halved in applyDamageToTarget, disadvantage via insertDisadvantageD6 in handlePlayerOwnRoll, canDrag false in BattleMap. Via `src/features/ancestries/Galapa.js`. |
+| **Giant**    | Endurance         | Reach               | **Done** — Endurance: +1 HP slot via ancestry IoC. Reach: Melee weapons display and roll as Very Close; carries through to map range bands (10'). Both automated via `src/features/ancestries/`                                                                                                                                                                                                                                                                                                  |
+| **Goblin**   | Surefooted        | Danger Sense        | **Done** — Danger Sense: banner chip when adversary attack targets this character or an ally within Very Close (`roll.target.rangeFromMe`), 1 Stress, once/rest, `roll.fullReroll()`. Surefooted: Agility rolls skip disadvantage from `addDisadvantage` (e.g. Galapa Retract) in handlePlayerOwnRoll. Via `src/features/ancestries/Goblin.js`.                                                                                                                                                  |
+| **Halfling** | Luckbringer       | Internal Compass    | **Done** — Luckbringer: `onSessionStart` grants 1 Hope to each party character (called from handleSessionCycle). Internal Compass: banner chip when Hope die shows 1, spend 1 Hope to reroll Hope die. Via `src/features/ancestries/Halfling.js`.                                                                                                                                                                                                                                                |
+| **Human**    | High Stamina      | Adaptability        | **Done** — High Stamina: `addStatMod('maxStress', 1)` in `onCharacterRender`. Adaptability: onBanner chip when roll failed and used an experience (Fear or failed difficulty); mark 1 Stress to full reroll via `roll.fullReroll()` and shared `performFullReroll` (Lucky uses same helper). Via `src/features/ancestries/Human.js`.                                                                                                                                                             |
+| **Infernis** | Fearless          | Dread Visage        | **Done** — All automated via `src/features/ancestries/` IoC. Fearless: `onBannerRender` calls `roll.setHope()` for pre-ack banner color; on Acknowledge, stress applied via character, hope via `grantHopeToAttacker` return. Dread Visage: advantage condition parsed from description text.                                                                                                                                                                                                    |
+| **Katari**   | Feline Instincts  | Retracting Claws    | **Done** — All automated via `src/features/ancestries/` IoC. Feline Instincts: banner reaction for Hope die reroll (2 Hope cost, player request flow). Retracting Claws: virtual weapon via `onCharacterRender` / `addVirtualWeapon`; on Acknowledge applies Vulnerable via `onAcknowledge`.                                                                                                                                                                                                     |
+| **Orc**      | Sturdy            | Tusks               | **Done** — Sturdy: onTargeted when 1 HP subtracts 1d6 from adversary attack before roll. Tusks: chip on successful Melee attack (spend 1 Hope for +1d6 damage) via `src/features/ancestries/Orc.js`.                                                                                                                                                                                                                                                                                             |
+| **Ribbet**   | Amphibious        | Long Tongue         | **Done** — Long Tongue: virtual weapon (Finesse, Close, d12 physical, +Proficiency) with `onAcknowledge({ target, self })` → `self.markStress(1)`. Amphibious: display only. Via `src/features/ancestries/Ribbet.js`.                                                                                                                                                                                                                                                                            |
+| **Simiah**   | Natural Climber   | Nimble              | **Done** — Natural Climber: `addAdvantageTrigger('balancing and climbing')`. Nimble: `addStatMod('evasion', 1)`. Both via `src/features/ancestries/Simiah.js`.                                                                                                                                                                                                                                                                                                                                   |
 
 
-**Note:** Most ancestry features are narrative. A few have mechanical implications (Thick Skin could modify damage thresholds, Quick Reactions could modify initiative) but Daggerheart doesn't have granular stat modifications for most of these — they're GM-adjudicated.
+
+
+### Display-only origin features (ancestries + communities)
+
+All ancestries and communities are implemented in `src/features/ancestries/` and `src/features/communities/`. The following features are **intentionally** display-only (no hooks): they are purely narrative or environmental and do not require dice, resources, or state changes in the app.
+
+
+| Origin     | Feature      | Description (summary)                                            | Should be display-only?                                |
+| ---------- | ------------ | ---------------------------------------------------------------- | ------------------------------------------------------ |
+| **Faun**   | Caprine Leap | Leap within Close range as normal movement (vault, jump, scale). | **Yes** — movement/narrative; no dice or resource.     |
+| **Ribbet** | Amphibious   | Breathe air and water; move through water without penalty.       | **Yes** — environmental; no roll or state to automate. |
+
+
+There are **no** community features that are display-only; all nine community features have hooks (advantage triggers, onAct/onBanner/onCard/onSessionStart).
 
 ---
 
 ## Communities (9)
 
-**Status: Display.** All 9 communities are selectable. Features are displayed but not automated.
+**Status: Done.** All 9 communities are selectable. Community features use the same IoC system as ancestries (`src/features/communities/`); ancestry and community descriptors are merged into the unified origin registry (badge by `sourceType`: ancestry = amber, community = emerald). All 9 features are automated.
 
 
-| Community       | Feature          | Status  |
-| --------------- | ---------------- | ------- |
-| **Highborne**   | Privilege        | Display |
-| **Loreborne**   | Well-Read        | Display |
-| **Orderborne**  | Dedicated        | Display |
-| **Ridgeborne**  | Steady           | Display |
-| **Seaborne**    | Know the Tide    | Display |
-| **Slyborne**    | Scoundrel        | Display |
-| **Underborne**  | Low-Light Living | Display |
-| **Wanderborne** | Nomadic Pack     | Display |
-| **Wildborne**   | Lightfoot        | Display |
+| Community       | Feature          | Status                                                                                               |
+| --------------- | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| **Highborne**   | Privilege        | **Done** — advantage on consort/negotiate/leverage (addAdvantageTrigger)                             |
+| **Loreborne**   | Well-Read        | **Done** — advantage on history/culture/politics (addAdvantageTrigger)                               |
+| **Orderborne**  | Dedicated        | **Done** — onAct chip, once/rest; roll text rewritten to Hope [d20] (Dedicated)                      |
+| **Ridgeborne**  | Steady           | **Done** — advantage on cliffs/harsh env/survival (addAdvantageTrigger)                              |
+| **Seaborne**    | Know the Tide    | **Done** — onBanner (place token on Fear), onAct (spend token for +1), onSessionStart (clear tokens) |
+| **Slyborne**    | Scoundrel        | **Done** — advantage on criminals/detect lies/hide (addAdvantageTrigger)                             |
+| **Underborne**  | Low-Light Living | **Done** — advantage on hide/investigate/perceive (addAdvantageTrigger)                              |
+| **Wanderborne** | Nomadic Pack     | **Done** — onCard chip, once/session spend 1 Hope (action notification + featureUsage)               |
+| **Wildborne**   | Lightfoot        | **Done** — advantage on move without being heard (addAdvantageTrigger)                               |
 
-
-**Note:** Community features are entirely narrative/situational. No stat modifications to automate. "Display" is the correct final state for these.
 
 ---
 

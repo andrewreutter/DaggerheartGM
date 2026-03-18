@@ -1,14 +1,19 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { renderMarkdown } from '../../lib/markdown.js';
 
 const TOOLTIP_WIDTH = 272;
 const TOOLTIP_GAP = 6;
 const TOOLTIP_BOTTOM_PAD = 16;
+const DROPDOWN_MAX_HEIGHT = 288;
+const DROPDOWN_GAP = 2;
 
 /**
  * Custom dropdown for visual consistency with native selects.
  * Shows a button when closed; expands to a list when opened.
+ * Dropdown is always portaled to document.body with position:fixed so it is
+ * bounded by the viewport (opens downward or upward to avoid being cut off).
  * When getOptionDescription is provided, hovering an option shows a tooltip
  * to the left or right depending on available viewport space.
  *
@@ -25,12 +30,14 @@ const TOOLTIP_BOTTOM_PAD = 16;
  * @param {boolean} [props.disabled]
  * @param {string} [props.className]
  * @param {string} [props.dropdownClassName] - Extra classes for the dropdown panel
+ * @param {boolean} [props.fixedDropdown] - Deprecated; dropdown is always viewport-positioned
  */
 export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, placeholder, disabled, className = '', dropdownClassName = '', fixedDropdown = false }) {
   const [open, setOpen] = useState(false);
   const [tooltip, setTooltip] = useState(null); // { label, description, x, y }
-  const [fixedPos, setFixedPos] = useState(null); // { top|bottom, left, width } for fixedDropdown
+  const [dropdownPos, setDropdownPos] = useState(null); // { top?, bottom?, left, width, maxHeight } for portaled dropdown
   const ref = useRef(null);
+  const dropdownRef = useRef(null);
   const tooltipRef = useRef(null);
 
   // After the tooltip renders, measure its actual height and nudge it up if it overflows the viewport.
@@ -44,20 +51,31 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
     }
   }, [tooltip?.description]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compute fixed-position coordinates for the dropdown panel when fixedDropdown=true
-  useEffect(() => {
-    if (!fixedDropdown || !open || !ref.current) { setFixedPos(null); return; }
+  // Compute position relative to the browser window (viewport), not any scroll container.
+  // Portaled to body so fixed positioning is viewport-relative and the dropdown isn't clipped.
+  useLayoutEffect(() => {
+    if (!open || !ref.current) { setDropdownPos(null); return; }
     const btn = ref.current.querySelector('button');
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    if (spaceBelow >= 120 || spaceBelow >= spaceAbove) {
-      setFixedPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    const spaceBelow = window.innerHeight - rect.bottom - DROPDOWN_GAP;
+    const spaceAbove = rect.top - DROPDOWN_GAP;
+    if (spaceBelow >= DROPDOWN_MAX_HEIGHT) {
+      setDropdownPos({
+        top: rect.bottom + DROPDOWN_GAP,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.min(DROPDOWN_MAX_HEIGHT, spaceBelow),
+      });
     } else {
-      setFixedPos({ bottom: window.innerHeight - rect.top + 2, left: rect.left, width: rect.width, maxHeight: Math.min(288, spaceAbove - 8) });
+      setDropdownPos({
+        bottom: window.innerHeight - rect.top + DROPDOWN_GAP,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.min(DROPDOWN_MAX_HEIGHT, spaceAbove - 8),
+      });
     }
-  }, [open, fixedDropdown]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) {
@@ -65,7 +83,9 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
       return;
     }
     const handleClickOutside = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      const inTrigger = ref.current?.contains(e.target);
+      const inDropdown = dropdownRef.current?.contains(e.target);
+      if (!inTrigger && !inDropdown) setOpen(false);
     };
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -111,10 +131,17 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
         <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ml-1 ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && !disabled && (
+      {open && !disabled && dropdownPos && createPortal(
         <div
-          className={`bg-slate-900 border border-slate-700 rounded shadow-xl max-h-72 overflow-y-auto ${fixedDropdown ? 'fixed z-50' : 'absolute z-20 mt-1 w-full'} ${dropdownClassName}`}
-          style={fixedDropdown && fixedPos ? { top: fixedPos.top, bottom: fixedPos.bottom, left: fixedPos.left, width: fixedPos.width, maxHeight: fixedPos.maxHeight } : undefined}
+          ref={dropdownRef}
+          className={`bg-slate-900 border border-slate-700 rounded shadow-xl overflow-y-auto fixed z-[90] ${dropdownClassName}`}
+          style={{
+            top: dropdownPos.top,
+            bottom: dropdownPos.bottom,
+            left: dropdownPos.left,
+            width: dropdownPos.width,
+            maxHeight: dropdownPos.maxHeight,
+          }}
         >
           {placeholder && (
             <button
@@ -149,13 +176,14 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
 
-      {tooltip && (
+      {tooltip && createPortal(
         <div
           ref={tooltipRef}
-          className="fixed z-50 pointer-events-none"
+          className="fixed z-[90] pointer-events-none"
           style={{
             left: tooltip.x,
             top: tooltip.y,
@@ -170,7 +198,8 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
               dangerouslySetInnerHTML={{ __html: renderMarkdown(tooltip.description) }}
             />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

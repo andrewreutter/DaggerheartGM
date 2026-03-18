@@ -61,6 +61,39 @@ export function rewriteDamageWithBonus(damageStr, bonus) {
  * Handles: Powerful/Massive (2dXkh), Brutal (dX!), Self-Correcting (dXm6),
  * Serrated (dXm8).
  */
+/**
+ * Append " disadvantage <featureName> [1d6]" to the end of roll text (same pattern as advantage dice).
+ * The server rolls 1d6 and subtracts it from the action total; the banner shows the feature name (e.g. Retract).
+ * @param {string} rollText
+ * @param {string} [featureName] - e.g. 'Galapa - Retract'; used in roll text and banner label
+ * @returns {string}
+ */
+export function insertDisadvantageD6(rollText, featureName = 'disadvantage') {
+  if (!rollText || typeof rollText !== 'string') return rollText;
+  const label = (featureName || 'disadvantage').trim() || 'disadvantage';
+  return rollText.trimEnd() + ` disadvantage ${label} [1d6]`;
+}
+
+/**
+ * Strip trailing " disadvantage <label> [Nd6]" blocks from roll text (inverse of insertDisadvantageD6).
+ * Used by removeDisadvantage() so features like Goblin Surefooted can ignore disadvantage.
+ * @param {string} rollText
+ * @returns {{ strippedText: string, removedLabels: string[] }}
+ */
+export function stripDisadvantageFromRollText(rollText) {
+  if (!rollText || typeof rollText !== 'string') return { strippedText: rollText, removedLabels: [] };
+  const removedLabels = [];
+  let s = rollText.trimEnd();
+  // One or more trailing " disadvantage <label> [1d6]" (label may contain spaces, e.g. "Galapa - Retract")
+  const re = /\s+disadvantage\s+([^\[]+?)\s*\[\d*d\d+\]\s*$/i;
+  let m;
+  while ((m = s.match(re))) {
+    removedLabels.unshift(m[1].trim() || 'Disadvantage');
+    s = s.slice(0, -m[0].length).trimEnd();
+  }
+  return { strippedText: s, removedLabels };
+}
+
 export function rewriteDamageForFeature(damageStr, featureName) {
   if (!damageStr || !featureName) return damageStr;
   const m = damageStr.trim().match(/^(\d*)(d\d+)([+-]\d+)?(.*)$/i);

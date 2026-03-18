@@ -397,6 +397,7 @@ export function normalizeRoll(roll) {
  * gmUid — pass the GM's uid for player rolls (routes to /api/room/:gmUid/roll);
  *          omit (null) for the GM's own rolls (routes to /api/room/my/roll).
  * rollMeta may use attackerId/targetId; they are sent as _attackerInstanceId/_selectedTargetInstanceId.
+ * rollMeta.silent — if true, server returns roll data without persisting (no banner).
  */
 export const postRoll = async (rollText, displayName, gmUid = null, rollMeta = {}) => {
   const token = await getAuthToken();
@@ -421,6 +422,16 @@ export const postRoll = async (rollText, displayName, gmUid = null, rollMeta = {
     throw new Error(body.error || `HTTP ${res.status}`);
   }
   return normalizeRoll(await res.json());
+};
+
+/**
+ * Roll dice server-side without creating a banner (silent roll). Use for rest-move dice etc.
+ * rollText — e.g. " [1d4]" (bracket expression). Returns same shape as postRoll; total is the numeric value.
+ */
+export const postRollSilent = async (rollText, displayName = '', gmUid = null) => {
+  const rollData = await postRoll(rollText, displayName, gmUid, { silent: true });
+  const value = typeof rollData.total === 'number' ? rollData.total : parseInt(rollData.subItems?.[0]?.result, 10) || 0;
+  return { ...rollData, value };
 };
 
 /** Returns { isAdmin } for the currently signed-in user. */
@@ -590,6 +601,12 @@ export const postRerollHopeDie = async (roll) => {
   }
   return res.json();
 };
+
+/**
+ * Stub: when Dedicated (Orderborne) upgrades Hope die to d20, call this so the server can optionally
+ * track or validate. Replace with a real endpoint when needed; until then, no-op.
+ */
+export const postHopeDieUpgrade = async (_rollMeta) => Promise.resolve();
 
 /**
  * Player: toggle ancestry feature reroll request on a banner (set or clear _felineRerollRequestedBy).
@@ -971,16 +988,20 @@ export const postLifeSupportSelect = async (gmUid, rollDbId, selectedInstanceId)
  * Set rest banner move selection for a character; syncs to all room clients.
  * GM can set any character; player can set only their assigned character.
  * gmUid: room owner (GM's uid when on GM table, or GM's uid when player in that room).
+ * Optional: targetInstanceId (for canTargetAlly moves), rollResult ({ dice, value }).
  */
-export const postRestMoveSelect = async (gmUid, rollDbId, instanceId, slot, moveId) => {
+export const postRestMoveSelect = async (gmUid, rollDbId, instanceId, slot, moveId, options = {}) => {
   if (!gmUid) return;
   const token = await getAuthToken();
   if (!token) return;
+  const body = { rollDbId, instanceId, slot, moveId: moveId ?? null };
+  if (options.targetInstanceId !== undefined) body.targetInstanceId = options.targetInstanceId;
+  if (options.rollResult !== undefined) body.rollResult = options.rollResult;
   try {
     await fetch(`/api/room/${gmUid}/rest-move-select`, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ rollDbId, instanceId, slot, moveId: moveId ?? null }),
+      body: JSON.stringify(body),
     });
   } catch { /* best-effort */ }
 };

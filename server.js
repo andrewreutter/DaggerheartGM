@@ -288,10 +288,22 @@ function rollFromText(rollText) {
     }
     lastEnd = m.index + m[0].length;
   }
-  if (subItems.length > 0 && lastEnd < cleanedText.length) {
-    subItems[subItems.length - 1].post = cleanedText.slice(lastEnd);
+  let remainder = lastEnd < cleanedText.length ? cleanedText.slice(lastEnd) : '';
+  let staticModifier = 0;
+  const modMatch = remainder.match(/\s*\+\s*(\d+)\s*$/);
+  if (modMatch) {
+    staticModifier = parseInt(modMatch[1], 10);
+    remainder = remainder.slice(0, remainder.length - modMatch[0].length).trimEnd();
   }
-  return { subItems, tags };
+  // #region agent log
+  if (rollText.includes(' + ')) {
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '443610' }, body: JSON.stringify({ sessionId: '443610', location: 'server.js:rollFromText', message: 'rollFromText +N', data: { remainder: remainder.slice(-30), staticModifier, modMatch: !!modMatch }, timestamp: Date.now(), hypothesisId: 'D' }) }).catch(() => {});
+  }
+  // #endregion
+  if (subItems.length > 0 && remainder) {
+    subItems[subItems.length - 1].post = remainder;
+  }
+  return { subItems, tags, staticModifier };
 }
 
 // Reroll only the Hope die (Feline Instincts). Keeps other subItems from previousSubItems by index.
@@ -380,6 +392,7 @@ function parseDaggerheartResult(subItems) {
     if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
     const result = parseInt(sub.result, 10);
     if (isNaN(result)) continue;
+    if (/disadvantage/i.test(sub.pre || '')) { total -= result; continue; }
     total += result;
     if (/hope/i.test(sub.pre || '')) { hopeResult = result; hopePre = sub.pre; }
     else if (/fear/i.test(sub.pre || '')) fearResult = result;
@@ -397,27 +410,34 @@ function parseDaggerheartResult(subItems) {
 
 // Build a full roll data object from text + displayName.
 function buildRollData(rollText, displayName, _clientId, extra = {}) {
-  const { subItems, tags } = rollFromText(rollText);
+  const { subItems, tags, staticModifier = 0 } = rollFromText(rollText);
   if (!subItems.length) return null;
   const dh = parseDaggerheartResult(subItems);
   let rollData;
   if (dh) {
-    rollData = { ...dh, rollUser: dh.characterName || displayName || '', subItems, timestamp: Date.now() };
+    rollData = { ...dh, total: dh.total + staticModifier, rollUser: dh.characterName || displayName || '', subItems, timestamp: Date.now() };
   } else {
     let total = 0;
     for (const sub of subItems) {
       if (/damage/i.test(sub.pre || '')) continue;
       if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
       const v = parseInt(sub.result, 10);
-      if (!isNaN(v)) total += v;
+      if (isNaN(v)) continue;
+      if (/disadvantage/i.test(sub.pre || '')) { total -= v; continue; }
+      total += v;
     }
-    rollData = { rollUser: displayName || '', total, subItems, timestamp: Date.now() };
+    rollData = { rollUser: displayName || '', total: total + staticModifier, subItems, timestamp: Date.now() };
   }
   rollData.rollText = rollText;
   if (tags.length) rollData.tags = tags;
   if (_clientId) rollData._clientId = _clientId;
   // Preserve client displayName so weapon attack banners show "CharacterName WeaponName".
   if (displayName) rollData.displayName = displayName;
+  // #region agent log
+  if (rollText.includes(' + ')) {
+    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '443610' }, body: JSON.stringify({ sessionId: '443610', location: 'server.js:buildRollData', message: 'buildRollData', data: { total: rollData.total, rollTextTail: rollText.slice(-25) }, timestamp: Date.now(), hypothesisId: 'D' }) }).catch(() => {});
+  }
+  // #endregion
   return { ...rollData, ...extra };
 }
 
@@ -470,6 +490,46 @@ function buildRerollDieRoll(originalData, dieType, suppressAncestryFeature) {
   const preRe = dieType === 'Hope' ? /hope/i : /fear/i;
   const newSubItems = origSubItems.map((sub) => {
     if (preRe.test(sub.pre || '')) {
+      const expr = (sub.input || '').trim() || 'd12';
+      const rolled = rollDice(expr);
+      if (rolled) {
+        return { ...sub, input: rolled.input, result: String(rolled.result), details: rolled.details, post: sub.post || '' };
+      }
+      return { ...sub, post: sub.post || '' };
+    }
+    return { ...sub, _preset: true, post: sub.post || '' };
+  });
+  const dh = parseDaggerheartResult(newSubItems);
+  let copyData;
+  if (dh) {
+    copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+  } else {
+    let total = 0;
+    for (const sub of newSubItems) {
+      if (/damage/i.test(sub.pre || '')) continue;
+      if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+      const v = parseInt(sub.result, 10);
+      if (!isNaN(v)) total += v;
+    }
+    copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+  }
+  for (const k of Object.keys(originalData)) {
+    if (k.startsWith('_') && k !== '_presetSubIndexes' && !(k in copyData)) copyData[k] = originalData[k];
+  }
+  if (originalData.rollText) copyData.rollText = originalData.rollText;
+  if (originalData.displayName) copyData.displayName = originalData.displayName;
+  if (originalData.tags) copyData.tags = originalData.tags;
+  if (suppressAncestryFeature != null) copyData._suppressAncestryFeature = suppressAncestryFeature;
+  return copyData;
+}
+
+// Build replacement roll that rerolls both Hope and Fear duality dice. All other subItems get _preset: true.
+// Used by roll.reroll('Duality') (e.g. Faerie Luckbender).
+function buildRerollDualityRoll(originalData, suppressAncestryFeature) {
+  const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+  const dualityRe = /hope|fear/i;
+  const newSubItems = origSubItems.map((sub) => {
+    if (dualityRe.test(sub.pre || '')) {
       const expr = (sub.input || '').trim() || 'd12';
       const rolled = rollDice(expr);
       if (rolled) {
@@ -601,6 +661,12 @@ async function applyOpToTableState(gmUid, op) {
       ...otherChanges,
       ...(newElements !== undefined ? { elements: stripCharacterElements(newElements) } : {}),
     };
+    // #region agent log
+    if (newState.elements?.length && op.op === 'update-element' && op.instanceId) {
+      const char = newState.elements.find(e => e.instanceId === op.instanceId);
+      if (char) fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'94f0d0'},body:JSON.stringify({sessionId:'94f0d0',location:'server.js:applyOpToTableState',message:'after strip character',data:{instanceId:char.instanceId,retractedActive:char.retractedActive},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
+    }
+    // #endregion
     await upsertItem(APP_ID, gmUid, 'table_state', 'current', newState, false);
     subscriptionManager.notifyChange('table_state', gmUid);
     return newState;
@@ -1440,12 +1506,13 @@ app.get('/api/room/:gmUid/stream', async (req, res) => {
 });
 
 // POST /api/room/my/roll — GM rolls dice server-side; persists to DB, returns result.
+// When silent is true: build and return roll data only (no DB write, no banner notification).
 app.post('/api/room/my/roll', requireAuth, async (req, res) => {
-  const { rollText, displayName, _clientId, ...extraMeta } = req.body;
+  const { rollText, displayName, _clientId, silent, ...extraMeta } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   const rollData = buildRollData(rollText, displayName, _clientId, extraMeta);
   if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
-  await appendRollLog(req.uid, rollData);
+  if (!silent) await appendRollLog(req.uid, rollData);
   res.json(rollData);
 });
 
@@ -1788,7 +1855,10 @@ app.post('/api/room/:gmUid/banner-targets', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
     const patch = {};
-    if (Array.isArray(selectedTargetInstanceIds)) patch._selectedTargetInstanceIds = selectedTargetInstanceIds;
+    if (Array.isArray(selectedTargetInstanceIds)) {
+      patch._selectedTargetInstanceIds = selectedTargetInstanceIds;
+      patch._selectedTargetInstanceId = selectedTargetInstanceIds.length === 1 ? selectedTargetInstanceIds[0] : null;
+    }
     if (useArmorByTargetId != null && typeof useArmorByTargetId === 'object') patch._useArmorByTargetId = useArmorByTargetId;
     if (Object.keys(patch).length === 0) return res.json({ ok: true });
     await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
@@ -2245,6 +2315,7 @@ app.post('/api/room/:gmUid/banner-chip-resolve', requireAuth, async (req, res) =
     const allowedExtra = {};
     if (extraPatch._damageTotalOverride != null) allowedExtra._damageTotalOverride = extraPatch._damageTotalOverride;
     if (extraPatch._hpLossReduction != null) allowedExtra._hpLossReduction = extraPatch._hpLossReduction;
+    if (extraPatch._treatAsMissForTarget != null) allowedExtra._treatAsMissForTarget = extraPatch._treatAsMissForTarget;
     await updateDiceRollData(APP_ID, gmUid, bannerId, { _chipResolved: resolved, ...allowedExtra });
     subscriptionManager.notifyChange('banners', gmUid);
     res.json({ ok: true });
@@ -2289,15 +2360,18 @@ app.post('/api/room/my/banner-add-damage', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/room/my/banner-reroll-die — GM: ancestry chip requested reroll of one duality die (e.g. Feline Instincts roll.reroll('Hope')).
-// Cancel original, append replacement roll with that die rerolled and others preset; suppress only the triggering chip.
+// POST /api/room/my/banner-reroll-die — GM: ancestry chip requested reroll of one or both duality dice.
+// dieType: 'Hope' | 'Fear' | 'Duality'. Cancel original, append replacement; suppress only the triggering chip.
 app.post('/api/room/my/banner-reroll-die', requireAuth, async (req, res) => {
   const gmUid = req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  const dieType = req.body?.dieType; // 'Hope' | 'Fear'
+  const dieType = req.body?.dieType; // 'Hope' | 'Fear' | 'Duality'
   const suppressAncestryFeature = req.body?.suppressAncestryFeature;
-  if (bannerId == null || Number.isNaN(bannerId) || !dieType || (dieType !== 'Hope' && dieType !== 'Fear')) {
-    return res.status(400).json({ error: 'bannerId and dieType (Hope or Fear) required' });
+  if (bannerId == null || Number.isNaN(bannerId) || !dieType) {
+    return res.status(400).json({ error: 'bannerId and dieType required' });
+  }
+  if (dieType !== 'Hope' && dieType !== 'Fear' && dieType !== 'Duality') {
+    return res.status(400).json({ error: 'dieType must be Hope, Fear, or Duality' });
   }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Requires database' });
@@ -2307,7 +2381,9 @@ app.post('/api/room/my/banner-reroll-die', requireAuth, async (req, res) => {
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
-    const copyData = buildRerollDieRoll(row.data, dieType, suppressAncestryFeature ?? null);
+    const copyData = dieType === 'Duality'
+      ? buildRerollDualityRoll(row.data, suppressAncestryFeature ?? null)
+      : buildRerollDieRoll(row.data, dieType, suppressAncestryFeature ?? null);
     copyData._replacedRollDbId = bannerId;
     await setBannerStatus(bannerId, 'cancelled');
     const dbId = await appendDiceRoll(APP_ID, gmUid, copyData);
@@ -2356,21 +2432,26 @@ app.post('/api/room/:gmUid/life-support-select', requireAuth, async (req, res) =
 
 // POST /api/room/:gmUid/rest-move-select — GM or player sets a rest move for a character (syncs to all clients).
 // GM can set any character; player can set only their assigned character.
+// Body may include targetInstanceId (for canTargetAlly moves) and rollResult ({ dice, value }) for rollDice moves.
 app.post('/api/room/:gmUid/rest-move-select', requireAuth, async (req, res) => {
   const { gmUid } = req.params;
-  const { rollDbId, instanceId, slot, moveId } = req.body || {};
-  if (rollDbId == null || !instanceId || !slot || (slot !== 1 && slot !== 2)) {
-    return res.status(400).json({ error: 'rollDbId, instanceId, and slot (1 or 2) required' });
+  const { rollDbId, instanceId, slot, moveId, targetInstanceId, rollResult } = req.body || {};
+  const slotNum = typeof slot === 'number' ? slot : parseInt(slot, 10);
+  if (rollDbId == null || !instanceId || !Number.isInteger(slotNum) || slotNum < 1 || slotNum > 10) {
+    return res.status(400).json({ error: 'rollDbId, instanceId, and slot (1–10) required' });
   }
+  const op = {
+    op: 'rest-move-select',
+    rollDbId,
+    instanceId,
+    slot: slotNum,
+    moveId: moveId ?? null,
+  };
+  if (targetInstanceId !== undefined) op.targetInstanceId = targetInstanceId;
+  if (rollResult !== undefined) op.rollResult = rollResult;
   try {
     if (req.uid === gmUid) {
-      await applyOpToTableState(gmUid, {
-        op: 'rest-move-select',
-        rollDbId,
-        instanceId,
-        slot,
-        moveId: moveId ?? null,
-      });
+      await applyOpToTableState(gmUid, op);
     } else {
       const tableStateItems = await getItems(APP_ID, gmUid, 'table_state');
       const tableState = tableStateItems[0] || {};
@@ -2382,16 +2463,12 @@ app.post('/api/room/:gmUid/rest-move-select', requireAuth, async (req, res) => {
       if (!character) {
         return res.status(404).json({ error: 'Character not found' });
       }
-      if (character.assignedPlayerUid !== req.uid) {
+      const assignedByUid = character.assignedPlayerUid === req.uid;
+      const assignedByEmail = !!req.email && (character.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
+      if (!assignedByUid && !assignedByEmail) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
-      await applyOpToTableState(gmUid, {
-        op: 'rest-move-select',
-        rollDbId,
-        instanceId,
-        slot,
-        moveId: moveId ?? null,
-      });
+      await applyOpToTableState(gmUid, op);
     }
     res.json({ ok: true });
   } catch (err) {
@@ -2507,9 +2584,10 @@ app.post('/api/room/:gmUid/add-character', requireAuth, async (req, res) => {
 });
 
 // POST /api/room/:gmUid/roll — Player rolls dice server-side; validates room membership, persists to DB.
+// When silent is true: build and return roll data only (no DB write, no banner notification).
 app.post('/api/room/:gmUid/roll', requireAuth, async (req, res) => {
   const { gmUid } = req.params;
-  const { rollText, displayName, _clientId, ...rest } = req.body;
+  const { rollText, displayName, _clientId, silent, ...rest } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   // Forward any _-prefixed meta fields (hopeCost, featureUse, attackerInstanceId, etc.)
   // so the GM's dice-ack handler can apply resource costs from player feature rolls.
@@ -2522,7 +2600,7 @@ app.post('/api/room/:gmUid/roll', requireAuth, async (req, res) => {
     }
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
-    await appendRollLog(gmUid, rollData);
+    if (!silent) await appendRollLog(gmUid, rollData);
     res.json(rollData);
   } catch (err) {
     console.error(`POST /api/room/${gmUid}/roll error:`, err);

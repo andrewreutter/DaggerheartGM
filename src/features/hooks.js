@@ -25,6 +25,10 @@ export function runHook(featureMap, tagNames, hookName, context) {
     const feature = featureMap[name];
     if (feature && typeof feature[hookName] === 'function') {
       try {
+        if (context.canvas) {
+          context.canvas._currentFeatureName = name;
+          if (typeof context.getFeatureStateFor === 'function') context.feature = context.getFeatureStateFor(name);
+        }
         feature[hookName](context);
       } catch (err) {
         console.error(`[features] ${name}.${hookName} threw:`, err);

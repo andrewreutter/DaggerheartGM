@@ -119,6 +119,26 @@ describe('applyTableOp', () => {
     expect(result.restMovesSelections['10'].c1).toEqual({ move1: 'tend-to-wounds', move2: 'prepare' });
   });
 
+  it('rest-move-select accepts targetInstanceId and rollResult', () => {
+    const result = applyTableOp(
+      {
+        op: 'rest-move-select',
+        rollDbId: 10,
+        instanceId: 'c1',
+        slot: 1,
+        moveId: 'tend-to-wounds',
+        targetInstanceId: 'c2',
+        rollResult: { dice: '1d4', value: 3 },
+      },
+      {}
+    );
+    expect(result.restMovesSelections['10'].c1).toEqual({
+      move1: 'tend-to-wounds',
+      move1TargetInstanceId: 'c2',
+      move1RollResult: { dice: '1d4', value: 3 },
+    });
+  });
+
   it('rest-move-clear removes roll from rest moves', () => {
     const state = { restMovesSelections: { '10': { c1: { move1: 'x', move2: 'y' } }, '11': { c2: { move1: 'z' } } } };
     const result = applyTableOp({ op: 'rest-move-clear', _rollDbId: 10 }, state);

@@ -1,10 +1,11 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, Square, CheckSquare } from 'lucide-react';
+import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, Square, CheckSquare, Loader2 } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { Tooltip } from './Tooltip.jsx';
 import { CustomSelect } from './forms/CustomSelect.jsx';
-import { SHORT_REST_MOVES, LONG_REST_MOVES } from '../lib/rest-moves.js';
+import { SHORT_REST_MOVES, LONG_REST_MOVES, getRestMoveDefinition } from '../lib/rest-moves.js';
+import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
 import { rangeFtToLabel, RANGE_BANDS_FT } from '../lib/map-range.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
@@ -126,13 +127,16 @@ function groupNotation(g) {
 const EXTRA_PRE_RE = /^\s*(Reload|Invigorate|Lifesteal)\s*$/i;
 
 // Sum all non-damage sub-item results (fallback for generic rolls without a top-level total).
+// Sub-items with "disadvantage" in pre are subtracted (e.g. Orc Sturdy).
 function computeActionTotal(subItems) {
   let total = 0;
   for (const sub of (subItems || [])) {
     if (/damage/i.test(sub.pre || '')) continue;
     if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
     const v = parseInt(sub.result, 10);
-    if (!isNaN(v)) total += v;
+    if (isNaN(v)) continue;
+    if (/disadvantage/i.test(sub.pre || '')) { total -= v; continue; }
+    total += v;
   }
   return total;
 }
@@ -158,6 +162,20 @@ function parseStaticValue(input) {
   const t = input.trim();
   const m = /^([+-]?\d+)$/.exec(t);
   return m ? parseInt(m[1], 10) : null;
+}
+
+// Extract trailing " + N" from rollText (matches server rollFromText). Used so the dice string display shows the bonus (e.g. Know the Tide).
+function getStaticModifierFromRollText(rollText) {
+  if (!rollText || typeof rollText !== 'string') return 0;
+  const m = rollText.match(/\s*\+\s*(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+// Extract " — disadvantage removed: label1, label2" from rollText (e.g. Goblin Surefooted). Returns the labels string or null.
+function getDisadvantageRemovedFromRollText(rollText) {
+  if (!rollText || typeof rollText !== 'string') return null;
+  const m = rollText.match(/\s*—\s*disadvantage\s+removed:\s*(.+)$/i);
+  return m ? m[1].trim() : null;
 }
 
 // Parse a dice sub-item into display parts: { notation, dieValue, discarded, modifier, total, type, keep }.
@@ -232,21 +250,46 @@ function getConditionalTagStatus(tag, roll) {
   return null;
 }
 
-function RestBanner({ roll, characters = [], restMovesForRoll = {}, onRestMoveSelect, canEditColumn, isPlayer, onAcknowledge, onCancel, disableDismiss }) {
+function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerCharacter = {}, onRestMoveSelect, canEditColumn, isPlayer, onAcknowledge, onCancel, disableDismiss, gmUid = null }) {
   const visible = useBannerVisible();
   const duration = roll._restDuration === 'long' ? 'Long' : 'Short';
-  const moves = roll._restDuration === 'long' ? LONG_REST_MOVES : SHORT_REST_MOVES;
+  const defaultMoves = roll._restDuration === 'long' ? LONG_REST_MOVES : SHORT_REST_MOVES;
   const total = typeof roll.total === 'number' ? roll.total : 0;
   const fearN = roll._restDuration === 'long' ? total + characters.length : total;
   const rollDbId = roll._rollDbId;
+  const [rollingKey, setRollingKey] = useState(null); // 'instanceId-slot' when rolling for that slot
 
   const allFilled = characters.length === 0 || characters.every(char => {
-    const sel = restMovesForRoll[char.instanceId];
-    return sel?.move1 != null && sel?.move2 != null;
+    const data = movesPerCharacter[char.instanceId];
+    const slotCount = data && typeof data.shortSlots === 'number' && typeof data.longSlots === 'number'
+      ? (roll._restDuration === 'long' ? data.longSlots : data.shortSlots)
+      : 2;
+    const sel = restMovesForRoll[char.instanceId] || {};
+    for (let s = 1; s <= slotCount; s++) {
+      if (sel['move' + s] == null) return false;
+      const def = getRestMoveDefinition(sel['move' + s]);
+      if (def?.rollDice && !sel['move' + s + 'RollResult']) return false;
+    }
+    return true;
   });
 
-  const handleSelect = (instanceId, slot, moveId) => {
-    if (rollDbId != null && onRestMoveSelect) onRestMoveSelect(rollDbId, instanceId, slot, moveId);
+  const handleSelect = (instanceId, slot, moveId, options = {}) => {
+    if (rollDbId == null || !onRestMoveSelect) return;
+    const def = moveId ? getRestMoveDefinition(moveId) : null;
+    if (def?.rollDice) {
+      onRestMoveSelect(rollDbId, instanceId, slot, moveId, options);
+      const key = `${instanceId}-${slot}`;
+      setRollingKey(key);
+      const rollText = ` [${def.rollDice}]`;
+      postRollSilent(rollText, '', isPlayer ? gmUid : null)
+        .then(res => {
+          onRestMoveSelect(rollDbId, instanceId, slot, moveId, { ...options, rollResult: { dice: def.rollDice, value: res.value } });
+        })
+        .catch(() => {})
+        .finally(() => setRollingKey(k => (k === key ? null : k)));
+    } else {
+      onRestMoveSelect(rollDbId, instanceId, slot, moveId, options);
+    }
   };
 
   return (
@@ -257,8 +300,8 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, onRestMoveSe
         transform: visible ? 'translateY(0)' : 'translateY(16px)',
         transition: 'opacity 0.2s ease, transform 0.2s ease',
         pointerEvents: 'auto',
-        maxWidth: '90vw',
-        minWidth: '320px',
+        maxWidth: '95vw',
+        minWidth: '560px',
       }}
     >
       <div className="px-4 py-3 rounded-xl shadow-2xl bg-slate-900/90 border-2 border-amber-500/60 text-amber-50">
@@ -276,37 +319,84 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, onRestMoveSe
           )}
           <span className="text-sm font-semibold text-amber-300/90">+{fearN} Fear</span>
         </div>
-        <div className="flex gap-4 overflow-x-auto pb-1">
+        <div className="flex flex-col gap-2 overflow-y-auto max-h-[40vh] pb-1">
           {characters.map(char => {
+            const data = movesPerCharacter[char.instanceId];
+            const moves = data && Array.isArray(data.moves) ? data.moves : defaultMoves;
+            const slotCount = data && typeof data.shortSlots === 'number' && typeof data.longSlots === 'number'
+              ? (roll._restDuration === 'long' ? data.longSlots : data.shortSlots)
+              : 2;
+            const slotLabels = data && roll._restDuration === 'long'
+              ? (Array.isArray(data.longSlotLabels) ? data.longSlotLabels : null)
+              : (data && Array.isArray(data.shortSlotLabels) ? data.shortSlotLabels : null);
             const sel = restMovesForRoll[char.instanceId] || {};
-            const move1Val = moves.find(m => m.id === sel.move1) ?? null;
-            const move2Val = moves.find(m => m.id === sel.move2) ?? null;
-            const canEdit = canEditColumn ? canEditColumn(char.instanceId) : true;
+            const baseCanEdit = canEditColumn ? canEditColumn(char.instanceId) : true;
+            const otherChars = characters.filter(c => c.instanceId !== char.instanceId);
+            // Flatten options so canTargetAlly moves appear as separate rows: "Tend to Wounds (Self)", "Tend to Wounds (Alice)", etc.
+            const flattenOptions = (list) => list.flatMap(m => {
+              const def = getRestMoveDefinition(m.id);
+              if (def?.canTargetAlly) {
+                return [
+                  { ...m, _targetInstanceId: null, _targetName: 'Self' },
+                  ...otherChars.map(c => ({ ...m, _targetInstanceId: c.instanceId, _targetName: c.name })),
+                ];
+              }
+              return [m];
+            });
+            const findSelectedOption = (opts, slotNum) => opts.find(o => {
+              if (o.id !== sel['move' + slotNum]) return false;
+              const def = getRestMoveDefinition(o.id);
+              if (!def?.canTargetAlly) return true;
+              return (o._targetInstanceId ?? null) === (sel['move' + slotNum + 'TargetInstanceId'] ?? null);
+            }) ?? null;
             return (
-              <div key={char.instanceId} className="flex flex-col gap-1.5 min-w-[180px] border border-slate-700 rounded-lg p-2 bg-slate-800/50">
-                <div className="text-[11px] font-semibold text-amber-200 truncate" title={char.name}>{char.name}</div>
-                <CustomSelect
-                  value={move1Val}
-                  onChange={(opt) => handleSelect(char.instanceId, 1, opt?.id ?? null)}
-                  options={moves}
-                  getOptionLabel={(m) => m.name}
-                  getOptionDescription={(m) => m.description}
-                  getOptionKey={(m) => m.id}
-                  placeholder="Move 1"
-                  disabled={!canEdit}
-                  className="text-xs"
-                />
-                <CustomSelect
-                  value={move2Val}
-                  onChange={(opt) => handleSelect(char.instanceId, 2, opt?.id ?? null)}
-                  options={moves}
-                  getOptionLabel={(m) => m.name}
-                  getOptionDescription={(m) => m.description}
-                  getOptionKey={(m) => m.id}
-                  placeholder="Move 2"
-                  disabled={!canEdit}
-                  className="text-xs"
-                />
+              <div key={char.instanceId} className="flex flex-row items-center gap-2 border border-slate-700 rounded-lg px-2 py-1.5 bg-slate-800/50">
+                <div className="text-[11px] font-semibold text-amber-200 truncate w-24 shrink-0" title={char.name}>{char.name}</div>
+                {Array.from({ length: slotCount }, (_, i) => i + 1).map(slot => {
+                  const options = flattenOptions(moves);
+                  const moveVal = findSelectedOption(options, slot);
+                  const def = moveVal ? getRestMoveDefinition(moveVal.id) : null;
+                  const rollResult = sel['move' + slot + 'RollResult'];
+                  const slotLocked = isPlayer && def?.rollDice && rollResult != null;
+                  const canEditSlot = baseCanEdit && !slotLocked;
+                  const isRolling = rollingKey === `${char.instanceId}-${slot}`;
+                  const slotTitle = (slotLabels && slotLabels[slot - 1]) ?? `Move ${slot}`;
+                  return (
+                    <CustomSelect
+                      key={slot}
+                      value={moveVal}
+                      onChange={(opt) => handleSelect(char.instanceId, slot, opt?.id ?? null, opt?._targetInstanceId !== undefined ? { targetInstanceId: opt._targetInstanceId } : {})}
+                      options={options}
+                      getOptionLabel={(m) => m._targetName != null ? `${m.name} (${m._targetName})` : m.name}
+                      getOptionDescription={(m) => m.description}
+                      getOptionKey={(m) => m._targetInstanceId !== undefined ? `${m.id}-${m._targetInstanceId ?? 'self'}` : m.id}
+                      placeholder={slotTitle}
+                      disabled={!canEditSlot}
+                      className="text-xs flex-1 min-w-[220px] [&_button]:min-h-[3.5rem] [&_button_span]:whitespace-nowrap"
+                      dropdownClassName="[&_button_span]:whitespace-nowrap"
+                      renderValue={(m) => {
+                        const tier = char?.tier ?? 1;
+                        const rollVal = rollResult?.value ?? 0;
+                        const hasDice = def?.rollDice;
+                        const formulaLine = hasDice && rollResult != null
+                          ? `${rollResult.dice} (${rollResult.value}) + Tier (${tier}) = ${rollVal + tier}`
+                          : hasDice ? '\u00a0' : null;
+                        return (
+                          <span className="flex flex-col gap-0.5 justify-center">
+                            <span className="flex items-center gap-1">
+                              {m?._targetName != null ? `${m?.name} (${m._targetName})` : (m?.name ?? slotTitle)}
+                              {isRolling && <Loader2 className="w-3 h-3 animate-spin text-amber-400 shrink-0" />}
+                              {!isRolling && rollResult && <span className="text-amber-400 text-[10px]">({rollResult.dice} → {rollResult.value})</span>}
+                            </span>
+                            {formulaLine != null && (
+                              <span className="text-[10px] text-slate-400 leading-tight">{formulaLine}</span>
+                            )}
+                          </span>
+                        );
+                      }}
+                    />
+                  );
+                })}
               </div>
             );
           })}
@@ -547,15 +637,23 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
+  // #region agent log
+  if (roll.rollText && roll.rollText.includes(' + ')) {
+    fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _debugUrl: 'http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', _debugSessionId: '443610', sessionId: '443610', location: 'DiceRoller.jsx:ResultBanner', message: 'banner display', data: { total, rollTextTail: (roll.rollText || '').slice(-30) }, timestamp: Date.now(), hypothesisId: 'E' }) }).catch(() => {});
+  }
+  // #endregion
   // Active post-apply interaction: the name of the tag whose interaction phase is running.
   // Replaces the three separate quickPhase / doubledUpPhase / bouncingPhase states.
   const [activeInteractionTag, setActiveInteractionTag] = useState(null);
-  // Virtual weapon features (e.g. Retracting Claws): one target must be selected before Acknowledge.
-  const [featureTargetSelectedId, setFeatureTargetSelectedId] = useState(null);
+  // Virtual weapon features (e.g. Retracting Claws, Long Tongue): one target must be selected before Acknowledge.
+  // Pre-selected target (from in-place "Choose target" menu) is stored on roll._selectedTargetInstanceId.
+  const [featureTargetSelectedId, setFeatureTargetSelectedId] = useState(
+    () => (roll._featureNeedsTarget && roll._selectedTargetInstanceId) ? roll._selectedTargetInstanceId : null
+  );
   // Damage banners: target chips are selectors only; selection is applied when Acknowledge is pressed.
   const [selectedDamageTargetId, setSelectedDamageTargetId] = useState(() => roll._selectedTargetInstanceId ?? null);
   const [useArmorForSelected, setUseArmorForSelected] = useState(false);
@@ -578,6 +676,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     if (Array.isArray(roll._selectedTargetInstanceIds)) setSelectedDamageTargetIds(roll._selectedTargetInstanceIds);
   }, [roll._rollDbId, roll._selectedTargetInstanceIds]);
   useEffect(() => {
+    if (roll._featureNeedsTarget && roll._selectedTargetInstanceId) setFeatureTargetSelectedId(roll._selectedTargetInstanceId);
+  }, [roll._rollDbId, roll._featureNeedsTarget, roll._selectedTargetInstanceId]);
+  useEffect(() => {
     if (roll._useArmorByTargetId != null && typeof roll._useArmorByTargetId === 'object') setUseArmorByTargetId(roll._useArmorByTargetId);
   }, [roll._rollDbId, roll._useArmorByTargetId]);
 
@@ -588,6 +689,17 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       setSelectedDamageTargetIds([id]);
     }
   }, [holdThemOffActive, selectedDamageTargetIds.length, selectedDamageTargetId, roll._selectedTargetInstanceId]);
+
+  // Sync single-target selection to server so ancestry chips (e.g. Danger Sense) see the selected target.
+  useEffect(() => {
+    if (holdThemOffActive || roll._multiTarget || !onBannerTargetsChange || roll._rollDbId == null) return;
+    if (targetsSyncDebounceRef.current) clearTimeout(targetsSyncDebounceRef.current);
+    targetsSyncDebounceRef.current = setTimeout(() => {
+      targetsSyncDebounceRef.current = null;
+      onBannerTargetsChange(roll._rollDbId, { selectedTargetInstanceIds: selectedDamageTargetId ? [selectedDamageTargetId] : [] });
+    }, 200);
+    return () => { if (targetsSyncDebounceRef.current) clearTimeout(targetsSyncDebounceRef.current); };
+  }, [selectedDamageTargetId, roll._rollDbId, holdThemOffActive, roll._multiTarget, onBannerTargetsChange]);
 
   useEffect(() => {
     if (!targetMenuAnchorRect) return;
@@ -635,10 +747,17 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const multiTargetCap = holdThemOffActive ? 3 : (roll._multiTargetMax ?? 10);
   // For multiple damage sub-items (e.g. augmented Kick), parse each for combined display.
   const damageParts = multiDamage ? damageSubs.map(s => ({ sub: s, parsed: parseDiceSub(s) })) : null;
-  // Precompute part labels so ancestry addDamage shows <name> <dice> (avoids inline callback TDZ).
+  // Precompute part labels: original damage as dice breakdown (e.g. "d8 3 + 1"), added damage as "<name> <dice>(result)" (e.g. "Tusks 1d6(2)").
   const damagePartDisplays = damageParts?.map(({ sub, parsed }) => {
     const damageLabel = (sub.pre || '').replace(/\s+damage$/i, '').trim();
-    return damageLabel ? `${damageLabel}(${sub.result})` : (parsed ? `${parsed.notation}(${sub.result})` : sub.result);
+    // Extra-damage parts (Tusks, Kick, etc.) have a label like "Tusks 1d6"; show "Tusks 1d6(2)". Skip generic "damage" (from pre " damage ") so we use dice breakdown for preset parts.
+    if (damageLabel && damageLabel.toLowerCase() !== 'damage') return `${damageLabel}(${sub.result})`;
+    // Original/preset parts: show dice breakdown (e.g. "d8 3 + 1") so we don't collapse to "damage(4)".
+    if (parsed) {
+      const modStr = parsed.modifier !== 0 ? ` + ${parsed.modifier}` : '';
+      return `${parsed.notation} ${parsed.dieValue}${modStr}`;
+    }
+    return sub.result;
   }) ?? null;
 
   // Determine if this banner has any interactive actions that require user input before dismissal.
@@ -657,9 +776,15 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
   // DH rolls: label + numeric value for each non-damage sub-item. Include input to detect static parts.
   // Use dice expression (e.g. "1d8") as label when pre is blank so builder extra dice show in banner.
+  // Disadvantage sub-items (e.g. Galapa Retract) are subtracted; carry isDisadvantage for display (minus, short label).
   const dhParts = hasDuality
     ? actionItems
-        .map(s => ({ label: extractBannerLabel(s.pre) || (s.input && s.input.trim()) || 'Dice', value: parseInt(s.result, 10), input: s.input }))
+        .map(s => {
+          const isDisadvantage = /disadvantage/i.test(s.pre || '');
+          const rawLabel = extractBannerLabel(s.pre) || (s.input && s.input.trim()) || 'Dice';
+          const label = isDisadvantage ? (rawLabel.replace(/\s*disadvantage\s*/i, '').trim() || 'disadvantage') : rawLabel;
+          return { label, value: parseInt(s.result, 10), input: s.input, isDisadvantage };
+        })
         .filter(p => p.label && (resolved ? (!isNaN(p.value) && p.value !== 0) : true))
     : [];
 
@@ -669,6 +794,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     : null;
   const genericAction = parseDiceSub(genericActionSub);
   const genericTotal  = total ?? computeActionTotal(roll.subItems);
+  // Trailing " + N" from rollText (e.g. Know the Tide) — show in dice string; total already includes it.
+  const staticModFromRollText = getStaticModifierFromRollText(roll.rollText);
+  // " — disadvantage removed: label1, label2" from rollText (e.g. Goblin Surefooted).
+  const disadvantageRemovedNote = getDisadvantageRemovedFromRollText(roll.rollText);
   // When unresolved, use sum of static-only action parts if every part is static (no dice).
   const staticGenericTotal = !resolved && !genericAction && actionItems.length > 0
     && actionItems.every(s => isStaticDiceInput(s.input))
@@ -751,7 +880,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     : (selectedDamageTargetId || roll._selectedTargetInstanceId ? [selectedDamageTargetId || roll._selectedTargetInstanceId] : []);
   const effectiveAttackTotal = hasDuality
     ? (total + (selectedAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0))
-    : (genericAction?.total ?? genericTotal);
+    : genericTotal;
   let hitCount = 0;
   let missCount = 0;
   for (const id of selectedTargetIds) {
@@ -768,6 +897,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         ? (hitCount === 1 ? 'Hit' : 'Miss')
         : [hitCount > 0 && `${hitCount} hit${hitCount > 1 ? 's' : ''}`, missCount > 0 && `${missCount} miss${missCount > 1 ? 'es' : ''}`].filter(Boolean).join(', '))
     : null;
+  // Non-attack duality rolls with a difficulty: show Success/Failure (like Hit/Miss for attacks).
+  // Critical (Hope/Fear doubles) is always a success per Daggerheart rules.
+  const showSuccessFailure = hasDuality && resolved && roll._difficulty != null && !showHitMiss;
+  const difficultySuccess = showSuccessFailure && (isCritical || effectiveAttackTotal >= roll._difficulty);
+  const successFailureLabel = showSuccessFailure ? (difficultySuccess ? 'Success' : 'Failure') : null;
+  const resultLabel = hitMissLabel || successFailureLabel;
+  const resultSuccess = showHitMiss ? (hitCount > 0 && missCount === 0) : (showSuccessFailure && difficultySuccess);
+  const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);
+  const resultMixed = showHitMiss && hitCount > 0 && missCount > 0;
+  const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-amber-400' : '';
 
   const handleResolveClick = !resolved && onResolveInstantly
     ? (e) => { e.stopPropagation(); onResolveInstantly(); }
@@ -828,13 +967,25 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 <span className={`text-[11px] ${scheme.detail}`}>
                   {dhParts.map((p, i) => {
                     const displayVal = resolved ? p.value : (isStaticDiceInput(p.input) ? parseStaticValue(p.input) : undefined);
+                    const sep = i > 0 ? (p.isDisadvantage ? ' \u2212 ' : (isNaN(p.value) || p.value >= 0 ? ' + ' : ' \u2212 ')) : '';
                     return (
                       <span key={i}>
-                        {i > 0 && (isNaN(p.value) || p.value >= 0 ? ' + ' : ' \u2212 ')}
-                        {p.label} {displayVal !== undefined && displayVal !== null ? Math.abs(displayVal) : <Spinner />}
+                        {sep}
+                        {p.isDisadvantage ? (
+                          resolved ? (
+                            <span className="text-amber-300/90">{p.label} (−{Math.abs(displayVal ?? 0)})</span>
+                          ) : (
+                            <span className="text-amber-300/70">{p.label} <Spinner /></span>
+                          )
+                        ) : (
+                          <>{p.label} {displayVal !== undefined && displayVal !== null ? Math.abs(displayVal) : <Spinner />}</>
+                        )}
                       </span>
                     );
                   })}
+                  {staticModFromRollText > 0 && (
+                    <span> + {roll._staticModifierLabel ? `${roll._staticModifierLabel} ` : ''}{staticModFromRollText}</span>
+                  )}
                   {' ='}
                 </span>
               )}
@@ -852,9 +1003,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   ? (isCritical ? '✦ Critical!' : isHope ? 'with Hope' : 'with Fear')
                   : <Spinner lg />}
               </span>
-              {hitMissLabel && (
-                <span className={`text-xs font-semibold ml-1 ${hitCount > 0 && missCount === 0 ? 'text-emerald-400' : hitCount === 0 && missCount > 0 ? 'text-red-400' : 'text-amber-400'}`}>
-                  {hitMissLabel}
+              {resultLabel && (
+                <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
+                  {resultLabel}
                 </span>
               )}
             </>
@@ -863,16 +1014,29 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className={`text-[11px] ${scheme.detail}`}>
                 {genericAction.notation} {resolved ? genericAction.dieValue : <Spinner />}
                 {genericAction.modifier !== 0 && (
-                  <> {genericAction.modifier > 0 ? '+' : '\u2212'} {Math.abs(genericAction.modifier)}</>
+                  <> {genericAction.modifier > 0 ? '+' : '-'} {Math.abs(genericAction.modifier)}</>
+                )}
+                {actionItems.some(s => /disadvantage/i.test(s.pre || '')) && (
+                  <> {actionItems.filter(s => /disadvantage/i.test(s.pre || '')).map((s, i) => {
+                    const val = parseInt(s.result, 10) || 0;
+                    const notation = (s.input || '1d6').trim();
+                    const label = (s.pre || '').replace(/\s*disadvantage\s*/i, '').trim() || 'disadvantage';
+                    return (
+                      <span key={i}> - {notation} ({resolved ? val : <Spinner />}) {label}</span>
+                    );
+                  })}</>
+                )}
+                {staticModFromRollText > 0 && (
+                  <span> + {roll._staticModifierLabel ? `${roll._staticModifierLabel} ` : ''}{staticModFromRollText}</span>
                 )}
                 {' ='}
               </span>
               <span className="text-2xl font-black tabular-nums ml-1">
-                {resolved ? genericAction.total : <Spinner lg />}
+                {resolved ? genericTotal : <Spinner lg />}
               </span>
-              {hitMissLabel && (
-                <span className={`text-xs font-semibold ml-1 ${hitCount > 0 && missCount === 0 ? 'text-emerald-400' : hitCount === 0 && missCount > 0 ? 'text-red-400' : 'text-amber-400'}`}>
-                  {hitMissLabel}
+              {resultLabel && (
+                <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
+                  {resultLabel}
                 </span>
               )}
             </>
@@ -881,14 +1045,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className="text-2xl font-black tabular-nums">
                 {resolved ? genericTotal : (staticGenericTotal !== null ? staticGenericTotal : <Spinner lg />)}
               </span>
-              {hitMissLabel && (
-                <span className={`text-xs font-semibold ml-1 ${hitCount > 0 && missCount === 0 ? 'text-emerald-400' : hitCount === 0 && missCount > 0 ? 'text-red-400' : 'text-amber-400'}`}>
-                  {hitMissLabel}
+              {resultLabel && (
+                <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
+                  {resultLabel}
                 </span>
               )}
             </>
           )}
         </div>
+        {disadvantageRemovedNote && (
+          <div className="text-[10px] text-slate-400 italic mt-0.5">
+            Disadvantage ignored: {disadvantageRemovedNote}
+          </div>
+        )}
 
         {/* ── Prayer Die: add-to-roll buttons (DH rolls only, visible to all) ── */}
         {hasDuality && prayerDiceChars.length > 0 && (
@@ -925,6 +1094,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
           const displayDmg = Math.max(0, baseDmg - dmgReduction);
           const firstDmgType = dmg?.type ?? (damageSubs[0] && parseDiceSub(damageSubs[0])?.type);
+          const selectedTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
+          const isPhysicalDmg = firstDmgType === 'phy' || firstDmgType === 'Physical';
+          const hasPhysicalResistance = selectedTarget?.type === 'character' && (selectedTarget.retractedActive || (Array.isArray(selectedTarget.resistance) && selectedTarget.resistance.some(r => (r.type === 'physical' || r.type === 'Physical'))));
+          const effectiveDisplayDmg = (hasPhysicalResistance && isPhysicalDmg) ? Math.floor(displayDmg / 2) : displayDmg;
           return (
             <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
               <span className="text-[11px] text-red-300/60">
@@ -969,14 +1142,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className="text-lg font-black tabular-nums text-red-300 ml-1">
                 {resolved
                   ? (roll._damageTotalOverride != null
-                      ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({displayDmg})</span></>
-                      : displayDmg)
+                      ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
+                      : hasPhysicalResistance && isPhysicalDmg
+                        ? <><span className="line-through">{displayDmg}</span> <span className="text-amber-300/90">{effectiveDisplayDmg}</span></>
+                        : effectiveDisplayDmg)
                   : <Spinner />}
               </span>
               {firstDmgType && (
                 <span className="text-sm font-semibold text-red-300/80 ml-0.5">{firstDmgType}</span>
               )}
               <span className="text-sm font-semibold text-red-300/80">damage</span>
+              {hasPhysicalResistance && isPhysicalDmg && (
+                <span className="text-[10px] font-medium text-amber-400/90 ml-1">(Resistance)</span>
+              )}
             </div>
           );
         })()}
@@ -1127,6 +1305,27 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   : isEnabled
                     ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
                     : disabledMessage || `${character.name}: cannot use ${featureName}`;
+
+              // Non-toggleable chips (no onChipAck/onChipReject): no checkbox, badge-only style.
+              if (!hasChipAckReject) {
+                const El = chip?.activate ? 'button' : 'div';
+                return (
+                  <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
+                    <El
+                      {...(El === 'button' ? {
+                        type: 'button',
+                        onClick: (active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined,
+                        disabled: !active && !isEnabled && !requested,
+                      } : {})}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-400 shrink-0 ${
+                        El === 'button' && (active || isEnabled || requested) ? 'hover:bg-slate-700/50 cursor-pointer' : ''
+                      }`}
+                    >
+                      {featureName}
+                    </El>
+                  </Tooltip>
+                );
+              }
 
               return (
                 <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
@@ -1457,35 +1656,45 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 >
                                   <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Select targets (1–{multiTargetCap})</div>
                                   <div className="space-y-1 max-w-[220px]">
-                                    {filteredTargets.map((t) => {
-                                      const sum = formatTargetSummary(t, { hideMax: isPlayer });
-                                      const isSelected = selectedDamageTargetIds.includes(t.instanceId);
-                                      return (
-                                        <button
-                                          key={t.instanceId}
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedDamageTargetIds(prev => {
-                                              const next = prev.includes(t.instanceId) ? prev.filter(x => x !== t.instanceId) : (prev.length >= multiTargetCap ? prev : [...prev, t.instanceId]);
-                                              if (onBannerTargetsChange && roll._rollDbId != null) {
-                                                clearTimeout(targetsSyncDebounceRef.current);
-                                                targetsSyncDebounceRef.current = setTimeout(() => onBannerTargetsChange(roll._rollDbId, { selectedTargetInstanceIds: next }), 200);
-                                              }
-                                              return next;
-                                            });
-                                            setTargetMenuAnchorRect(null);
-                                          }}
-                                          className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-amber-500 bg-amber-800/60 text-amber-100' : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'}`}
-                                        >
-                                          <div>{isSelected ? <Check size={10} className="inline mr-1" /> : null}{t.name}</div>
-                                          <div className="text-[10px] text-slate-400 mt-0.5">
-                                            {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
-                                            {sum.conditions ? ` · ${sum.conditions}` : ''}
-                                          </div>
-                                        </button>
-                                      );
-                                    })}
+                                    {(() => {
+                                      const dmgReduction = selectedDmgReduceDie?.value ?? 0;
+                                      const wingsBonus = roll._wingsOfLightD8Result ?? 0;
+                                      const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
+                                      const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                                      const displayDmg = Math.max(0, baseDmg - dmgReduction);
+                                      return filteredTargets.map((t) => {
+                                        const sum = formatTargetSummary(t, { hideMax: isPlayer });
+                                        const isSelected = selectedDamageTargetIds.includes(t.instanceId);
+                                        const hpLoss = hasDamage && resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                                        return (
+                                          <button
+                                            key={t.instanceId}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedDamageTargetIds(prev => {
+                                                const next = prev.includes(t.instanceId) ? prev.filter(x => x !== t.instanceId) : (prev.length >= multiTargetCap ? prev : [...prev, t.instanceId]);
+                                                if (onBannerTargetsChange && roll._rollDbId != null) {
+                                                  clearTimeout(targetsSyncDebounceRef.current);
+                                                  targetsSyncDebounceRef.current = setTimeout(() => onBannerTargetsChange(roll._rollDbId, { selectedTargetInstanceIds: next }), 200);
+                                                }
+                                                return next;
+                                              });
+                                            }}
+                                            className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-amber-500 bg-amber-800/60 text-amber-100' : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'}`}
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span>{isSelected ? <Check size={10} className="inline mr-1 shrink-0" /> : null}{t.name}</span>
+                                              {hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums shrink-0">{hpLoss} HP</span> : null}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 mt-0.5">
+                                              {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
+                                              {sum.conditions ? ` · ${sum.conditions}` : ''}
+                                            </div>
+                                          </button>
+                                        );
+                                      });
+                                    })()}
                                   </div>
                                   <button type="button" onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }} className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
                                 </div>
@@ -1621,6 +1830,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   <div className="space-y-1 max-w-[220px]">
                                     {filteredTargets.map((t) => {
                                       const sum = formatTargetSummary(t, { hideMax: isPlayer });
+                                      const disadvantageFeatures = getTargetDisadvantageLabels?.(roll)?.[t.instanceId];
                                       return (
                                         <button
                                           key={t.instanceId}
@@ -1637,6 +1847,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                           <div className="text-[10px] text-slate-400 mt-0.5">
                                             {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                                             {sum.conditions ? ` · ${sum.conditions}` : ''}
+                                            {disadvantageFeatures?.length ? ` · ${disadvantageFeatures.map(f => `${f} (−1d6)`).join(', ')}` : ''}
                                           </div>
                                         </button>
                                       );
@@ -2047,6 +2258,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   makeASceneAdversaries = [],
   targets,
   getTargetsForRoll,
+  getTargetDisadvantageLabels,
   onApplyDamage,
   onApplyVulnerable,
   canApplyDamage = true,
@@ -2084,7 +2296,10 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onRestMoveSelect,
   onRestMoveClear,
   restTableCharacters = [],
+  restMovesPerCharacter = {},
   restCanEditColumn = () => true,
+  restGmUid = null,
+  bannerStripLeftOffset = 0,
 }, ref) {
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
@@ -2493,7 +2708,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
     }
   }
 
-  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, setBannerReactionsFallback }), [isPlayer]);
+  function clearDice() {
+    diceBoxRef.current?.clearDice();
+  }
+
+  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, setBannerReactionsFallback, clearDice }), [isPlayer]);
 
   // ── DiceBox initialization ─────────────────────────────────────────────────
 
@@ -2566,13 +2785,13 @@ export const DiceRoller = forwardRef(function DiceRoller({
           bottom: DICE_BOTTOM_RESERVE,
         }}
       />
-      {/* Banner strip — left-aligned, no scroll; overflow hidden is fine */}
+      {/* Banner strip — left edge offset by character tokens shelf width */}
       {activeBanners.length > 0 && (
         <div
           style={{
             position: 'absolute',
             bottom: '2.5rem',
-            left: 0,
+            left: bannerStripLeftOffset,
             right: 0,
             display: 'flex',
             alignItems: 'flex-end',
@@ -2589,9 +2808,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 roll={entry.roll}
                 characters={restTableCharacters}
                 restMovesForRoll={entry.roll._rollDbId != null ? (restMovesSelections[entry.roll._rollDbId] || {}) : {}}
+                movesPerCharacter={restMovesPerCharacter}
                 onRestMoveSelect={onRestMoveSelect}
                 canEditColumn={restCanEditColumn}
                 isPlayer={isPlayer}
+                gmUid={restGmUid}
                 onAcknowledge={!isPlayer ? () => {
                   onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll);
                   dismissBannerById(entry._bannerId);
@@ -2637,6 +2858,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 } : undefined}
                 targets={targets}
                 getTargetsForRoll={getTargetsForRoll}
+                getTargetDisadvantageLabels={getTargetDisadvantageLabels}
                 onApplyDamage={onApplyDamage}
                 onApplyVulnerable={onApplyVulnerable}
                 disableDismiss={isPlayer}

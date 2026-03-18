@@ -20,8 +20,20 @@ import Giant    from './Giant.js';
 import Faun     from './Faun.js';
 import Dwarf    from './Dwarf.js';
 import Drakona  from './Drakona.js';
+import Clank    from './Clank.js';
+import Elf      from './Elf.js';
+import Simiah   from './Simiah.js';
+import Fungril  from './Fungril.js';
+import Orc      from './Orc.js';
+import Human    from './Human.js';
+import Halfling from './Halfling.js';
+import Galapa   from './Galapa.js';
+import Ribbet   from './Ribbet.js';
+import Faerie   from './Faerie.js';
+import Goblin   from './Goblin.js';
+import Firbolg  from './Firbolg.js';
 
-const builders = [Infernis, Katari, Giant, Faun, Dwarf, Drakona];
+const builders = [Infernis, Katari, Giant, Faun, Dwarf, Drakona, Clank, Elf, Simiah, Fungril, Orc, Human, Halfling, Galapa, Ribbet, Faerie, Goblin, Firbolg];
 
 /** @type {Record<string, object>} feature name → full feature descriptor */
 const featureMap = {};
@@ -33,22 +45,28 @@ const featureMap = {};
 export const ancestryMap = {};
 
 /**
- * Feature name → { onAcknowledge } for virtual weapons that need a custom acknowledge callback.
+ * Feature name → { onAcknowledge?, stressCost?, hopeCost? } for virtual weapons.
+ * stressCost/hopeCost are applied to the attacker (self) on acknowledge; onAcknowledge runs after.
  * Populated at module load by running onCharacterRender hooks against a mock context.
- * @type {Record<string, { onAcknowledge: Function }>}
+ * @type {Record<string, { onAcknowledge?: Function, stressCost?: number, hopeCost?: number }>}
  */
 export const virtualWeaponBehaviors = {};
 
 for (const builder of builders) {
   const features = [];
+  let lastFeatureName = null;
 
   const char = {
     addFeature(name, description, hooks = {}) {
+      lastFeatureName = name;
+      const { onCharacterEdit, ...restHooks } = hooks;
       const descriptor = {
         name,
         description,
         ancestry: builder.name,
-        ...hooks,
+        sourceType: 'ancestry',
+        source: builder.name,
+        ...restHooks,
       };
 
       // Pre-capture static behaviors from onCharacterRender at module load time.
@@ -59,26 +77,50 @@ for (const builder of builders) {
           weapons: [],
           _currentFeatureName: name,
           addStatMod() {},
+          addThresholdBonus() {},
           addAdvantageTrigger(condition) { descriptor.advantageTrigger = condition; },
           addVirtualWeapon(vw) {
-            if (vw.onAcknowledge) virtualWeaponBehaviors[name] = { onAcknowledge: vw.onAcknowledge };
+            if (vw.onAcknowledge || vw.stressCost != null || vw.hopeCost != null) {
+              virtualWeaponBehaviors[name] = {
+                onAcknowledge: vw.onAcknowledge,
+                stressCost: vw.stressCost,
+                hopeCost: vw.hopeCost,
+              };
+            }
           },
         };
         try { hooks.onCharacterRender(mockCtx); } catch { /* no-op if hook errors without real char data */ }
       }
 
+      // Pre-capture card chips from onCard (e.g. Fungril Death Connection).
+      // Chips display on the feature card; click runs onUse(context); context.postAction() posts a banner; GM ack applies costs.
+      if (hooks.onCard) {
+        const cardChips = [];
+        const card = { addChip(d) { cardChips.push(d); } };
+        try { hooks.onCard(card); } catch { /* no-op */ }
+        if (cardChips.length) descriptor.cardChips = cardChips;
+      }
+
       featureMap[name] = descriptor;
       features.push(descriptor);
+      if (typeof onCharacterEdit === 'function') {
+        try { onCharacterEdit(char); } catch { /* no-op */ }
+      }
+    },
+    addExperienceBonus(amount) {
+      if (lastFeatureName != null && ancestryEntry) {
+        ancestryEntry.experienceBonus = { amount, featureName: lastFeatureName };
+      }
     },
   };
 
-  builder.onCharacterBuild(char);
-
-  ancestryMap[builder.name] = {
+  const ancestryEntry = {
     name: builder.name,
     description: builder.description,
     features,
   };
+  builder.onCharacterBuild(char);
+  ancestryMap[builder.name] = ancestryEntry;
 }
 
 /** Feature name → feature descriptor (backward-compatible default export). */

@@ -41,10 +41,16 @@ function wrapSubItem(sub) {
  *   are set true when that entity is the character that owns the feature.
  * @returns {object|null} wrapped roll, or null if roll is falsy
  */
+/** Effective selected target: single id from initial roll or from synced multi-select array. */
+function getEffectiveSelectedTargetId(roll) {
+  return roll._selectedTargetInstanceId ?? (Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds.length > 0 ? roll._selectedTargetInstanceIds[0] : null);
+}
+
 export function wrapRoll(roll, displayStore, characterInstanceId) {
   if (!roll) return null;
+  const effectiveTargetId = getEffectiveSelectedTargetId(roll);
   const isAttackerMe = characterInstanceId != null && roll._attackerInstanceId === characterInstanceId;
-  const isTargetMe = characterInstanceId != null && roll._selectedTargetInstanceId === characterInstanceId;
+  const isTargetMe = characterInstanceId != null && effectiveTargetId === characterInstanceId;
   const base = {
     ...roll,
 
@@ -52,6 +58,8 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
     get isWithFear() { return roll.dominant === 'fear'; },
     /** True when this is a Hope or Critical roll. */
     get isWithHope() { return roll.dominant === 'hope' || roll.dominant === 'critical'; },
+    /** True when this roll was initiated as a Reaction (trait roll from the Reaction chip). */
+    get isReaction() { return !!roll._isReaction; },
     /** True when this roll was initiated by the character in context. Set by system before match/render/ack. */
     isMine: false,
     /** True when the roll used Daggerheart duality dice (dominant is set). */
@@ -62,6 +70,10 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
     },
     /** True when the attack hit the selected target (total >= evasion/difficulty). Set by enricher. */
     get isSuccess() { return roll.isSuccess ?? false; },
+    /** True when the roll failed: if a difficulty was set, total < difficulty; otherwise (duality) Fear. */
+    get isFailure() { return roll._difficulty != null ? !(roll.isSuccess ?? false) : roll.dominant === 'fear'; },
+    /** True when the roll used an experience (e.g. +2 from selected experience). */
+    get hasExperience() { return !!roll._experienceHopeCost; },
     /** Range band name from attacker to selected target (e.g. 'Melee'). Set by enricher. */
     get attackRange() { return roll.attackRange ?? null; },
 
@@ -82,11 +94,13 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
      * `id`   — instanceId of the selected target, or null.
      * `name` — display name of the target (set by enricher when available).
      * `isMe` — true when this entity is the character that owns the feature (only set when characterInstanceId passed).
+     * `rangeFromMe` — distance in feet from the feature-owning character to this target (when both on map); undefined if not computed.
      */
     target: {
-      id:   roll._selectedTargetInstanceId ?? null,
+      id:   effectiveTargetId,
       name: roll._selectedTargetName ?? null,
       isMe: isTargetMe,
+      get rangeFromMe() { return roll._targetRangeFromMe; },
     },
 
     /**
@@ -111,15 +125,23 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
     },
 
     /**
-     * Request a replacement banner that rerolls only the given duality die (Hope or Fear).
-     * Like addDamage: cancels the current banner and creates a new one with all other values
-     * preset and only the specified die rerolled; ancestry chips are shown except the one that
-     * triggered the reroll. Call from onChipAck; the client will see roll._rerollDie and call
-     * the banner-reroll-die API.
-     * @param {'Hope'|'Fear'} dieType
+     * Request a replacement banner that rerolls one or both duality dice.
+     * Hope | Fear: reroll only that die. Duality: reroll both Hope and Fear.
+     * Call from onChipAck; the client will see roll._rerollDie or roll._rerollDuality and call the API.
+     * @param {'Hope'|'Fear'|'Duality'} dieType
      */
     reroll(dieType) {
       if (dieType === 'Hope' || dieType === 'Fear') roll._rerollDie = dieType;
+      else if (dieType === 'Duality') roll._rerollDuality = true;
+    },
+
+    /**
+     * Request a full reroll of the entire roll (cancel current banner, post same rollText again).
+     * Used by Human Adaptability and Lucky weapon. Call from onChipAck or from a reroll button
+     * handler; the client will see roll._fullReroll and call the shared performFullReroll helper.
+     */
+    fullReroll() {
+      roll._fullReroll = true;
     },
 
     /**

@@ -54,7 +54,7 @@ function App() {
   const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
-  const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2 } } }
+  const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   // tableStateReadyRef is set once initial state is loaded from the server (via REST or SSE).
   const tableStateReadyRef = useRef(false);
@@ -760,10 +760,13 @@ function App() {
 
   // --- Table op dispatchers ---
   // These call postTableOp (which POSTs to /api/room/my/op). The server applies the op to the
-  // DB state and notifies all subscribers. Clients receive a server-authoritative table_state
-  // snapshot and replace their local state wholesale (no optimistic update needed).
+  // DB state and notifies all subscribers. Token position updates are applied optimistically
+  // so the map responds immediately; the next table_state snapshot confirms.
 
   const sendUpdateActiveElement = (instanceId, updates) => {
+    if ('tokenX' in updates || 'tokenY' in updates) {
+      setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
+    }
     postTableOp({ op: 'update-element', instanceId, updates });
   };
 
@@ -847,16 +850,20 @@ function App() {
   };
 
   const gmUidForRest = route.gmUid || user?.uid;
-  const sendRestMoveSelect = (rollDbId, instanceId, slot, moveId) => {
-    if (gmUidForRest) postRestMoveSelect(gmUidForRest, rollDbId, instanceId, slot, moveId);
+  const sendRestMoveSelect = (rollDbId, instanceId, slot, moveId, options = {}) => {
+    if (gmUidForRest) postRestMoveSelect(gmUidForRest, rollDbId, instanceId, slot, moveId, options);
   };
   const sendRestMoveClear = (rollDbId) => {
     postTableOp({ op: 'rest-move-clear', _rollDbId: rollDbId });
   };
 
   // Player callback — sends update to server; state arrives via table_state SSE snapshot.
+  // Token position updates are applied optimistically so the map responds immediately.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.gmUid) return;
+    if ('tokenX' in updates || 'tokenY' in updates) {
+      setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
+    }
     try {
       await postCharacterUpdate(route.gmUid, instanceId, updates);
     } catch (err) {

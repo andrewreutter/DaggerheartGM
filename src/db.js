@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { appendFileSync } from 'fs';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -743,6 +744,11 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'featureUsage', 'activeModifiers', 'focusTargetId', 'rangerFocusOnNextAttack', 'companion',
   'activeBeastform', 'selectedBeastformAdvantage',
   'wingsOfLightFlying', 'activeChanneledElement',
+  'faerieWingsFlying', // Faerie Wings: flying state for Wings chip
+  'retractedActive',   // Galapa Retract: in shell (toggle state for card chip)
+  'resistance',        // [{ type, source }] e.g. physical from Galapa Retract
+  'disadvantageSources',  // string[] sources that add disadvantage to this character's rolls
+  'moveDisabledSources',  // string[] sources that prevent token move (e.g. Retract)
 ]);
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 
@@ -767,6 +773,15 @@ export async function resolveCharacterElements(appId, elements) {
     CHARACTER_RUNTIME_KEYS_DB.forEach(k => { if (k in el) runtime[k] = el[k]; });
     // Auto-preserve any _ prefixed keys (ancestry/class feature toggle state).
     Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
+    // #region agent log
+    const hadMove = (el.moveDisabledSources?.length || el.retractedActive);
+    const hasMove = (runtime.moveDisabledSources?.length || runtime.retractedActive);
+    if (hadMove || hasMove) {
+      try {
+        appendFileSync('/Users/andrewreutter/Repos/DaggerheartGM/.cursor/debug-3705ef.log', JSON.stringify({ sessionId: '3705ef', location: 'db.js:resolveCharacterElements', message: 'resolve char', data: { instanceId: el.instanceId, elHad: { moveDisabledSources: el.moveDisabledSources, retractedActive: el.retractedActive }, runtimeHas: { moveDisabledSources: runtime.moveDisabledSources, retractedActive: runtime.retractedActive } }, timestamp: Date.now(), hypothesisId: 'B' }) + '\n');
+      } catch (_) {}
+    }
+    // #endregion
     return { ...lib, ...runtime, elementType: 'character' };
   });
 }
@@ -778,6 +793,13 @@ export function stripCharacterElementsForDb(elements) {
   if (!elements?.length) return elements;
   return elements.map(el => {
     if (el.elementType !== 'character') return el;
+    // #region agent log
+    if (el.moveDisabledSources?.length || el.retractedActive) {
+      try {
+        appendFileSync('/Users/andrewreutter/Repos/DaggerheartGM/.cursor/debug-3705ef.log', JSON.stringify({ sessionId: '3705ef', location: 'db.js:stripCharacterElementsForDb', message: 'stripping char with move/retract', data: { instanceId: el.instanceId, moveDisabledSources: el.moveDisabledSources, retractedActive: el.retractedActive, willDrop: !CHARACTER_PERSIST_KEYS_DB.has('moveDisabledSources') }, timestamp: Date.now(), hypothesisId: 'A' }) + '\n');
+      } catch (_) {}
+    }
+    // #endregion
     const stripped = {};
     for (const k of Object.keys(el)) {
       if (CHARACTER_PERSIST_KEYS_DB.has(k) || k.startsWith('_')) stripped[k] = el[k];

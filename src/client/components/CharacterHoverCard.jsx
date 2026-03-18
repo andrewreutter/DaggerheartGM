@@ -24,9 +24,10 @@ import {
 import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
 import { weaponFeatures, classFeatures, ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
+import { ancestryMap } from '../../features/ancestries/index.js';
 import { runPipelineHook, runHook } from '../../features/hooks.js';
 import { wrapEntity } from '../../features/entity.js';
-import { getEffectiveWeaponRange } from '../lib/character-calc.js';
+import { getEffectiveWeaponRange, recomputeCharacter } from '../lib/character-calc.js';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
 
@@ -60,14 +61,14 @@ function appendVulnerableTargetToRollText(rollText) {
  * Hope [d12] / Fear [d12] are separate expressions so the server can detect
  * which die is dominant.
  */
-function buildTraitRollText(charName, traitKey, traitScore, expName) {
+function buildTraitRollText(charName, traitKey, traitScore, expName, experienceModifier = 2) {
   const traitName = TRAIT_FULL[traitKey] || traitKey;
   const parts = [`${charName} ${traitName} Hope [d12] Fear [d12]`];
   if (traitScore !== 0) {
     parts.push(`${traitName} [${traitScore}]`);
   }
   if (expName) {
-    parts.push(`${expName} [2]`);
+    parts.push(`${expName} [${experienceModifier}]`);
   }
   return parts.join(' ');
 }
@@ -93,13 +94,14 @@ function buildFeatureTagText(feature, traits, level) {
 }
 
 function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName, damageStr, feature, traits, level, opts = {}) {
+  const experienceModifier = opts.experienceModifier ?? 2;
   const traitName = TRAIT_FULL[traitKey] || traitKey;
   const parts = [`${charName} ${weaponName} Hope [d12] Fear [d12]`];
   if (traitScore !== 0) {
     parts.push(`${traitName} [${traitScore}]`);
   }
   if (expName) {
-    parts.push(`${expName} [2]`);
+    parts.push(`${expName} [${experienceModifier}]`);
   }
 
   const featureSet = feature?.name ? [feature.name] : [];
@@ -298,6 +300,9 @@ export function CharacterHoverCard({
 
   const { srdData } = useCharacterSrdData();
 
+  // Recompute for display so experiences (and other derived fields) reflect ancestry bonus on game table
+  const displayEl = useMemo(() => (srdData ? recomputeCharacter(el, srdData) : el), [el, srdData]);
+
   const traits = el.traits || {};
   const hasDaggerstack = !!el.daggerstackUrl;
   const rollModifiers = el.armorMods?.rollModifiers || [];
@@ -414,6 +419,19 @@ export function CharacterHoverCard({
   // ── Feature use handler ──────────────────────────────────────────────────────
   // Called when user clicks Use on a feature or a SubFeatureCard.
   const handleFeatureUse = onRoll || onActionNotification ? (feature, subFeature = null, event = null) => {
+    // Galapa Retract: toggle retractedActive and keep move/resistance/disadvantage in sync (no banner).
+    if (feature.name === 'Retract' && updateFn && el?.instanceId) {
+      const source = 'Galapa - Retract';
+      const nextActive = !el.retractedActive;
+      const resistance = Array.isArray(el.resistance) ? el.resistance.filter(r => !(r.type === 'physical' && r.source === source)) : [];
+      if (nextActive) resistance.push({ type: 'physical', source });
+      const disadvantageSources = Array.isArray(el.disadvantageSources) ? el.disadvantageSources.filter(s => s !== source) : [];
+      if (nextActive) disadvantageSources.push(source);
+      const moveDisabledSources = Array.isArray(el.moveDisabledSources) ? el.moveDisabledSources.filter(s => s !== source) : [];
+      if (nextActive) moveDisabledSources.push(source);
+      updateFn(el.instanceId, { retractedActive: nextActive, resistance, disadvantageSources, moveDisabledSources });
+      return;
+    }
     // Sorcerer Channel Raw Power (and any future class feature) requires an input value
     // before dispatch. Show an inline prompt and defer actual dispatch until submitted.
     const classFeat = classFeatures[el.class];
@@ -465,7 +483,7 @@ export function CharacterHoverCard({
         _featureKey: featureKey,
         _frequency: 'session',
       };
-      onRoll?.(rollText, displayName, prayerRollMeta);
+      onRoll?.(rollText, displayName, prayerRollMeta, { characterEl: el });
       return;
     }
 
@@ -520,7 +538,7 @@ export function CharacterHoverCard({
       const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
       if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
       const displayName = subFeature ? `${el.name} ${feature.name}: ${subFeature.name}` : `${el.name} ${feature.name}`;
-      onRoll?.(rollText, displayName, rollMeta);
+      onRoll?.(rollText, displayName, rollMeta, { characterEl: el });
       if (selectedMod) setSelectedModId(null);
       if (selectedAdvs.length) setSelectedAdvIds([]);
     } else {
@@ -569,35 +587,51 @@ export function CharacterHoverCard({
   const getBeastformTraitBonus = (traitKey) =>
     (beastformTraitBonus?.stat === traitKey ? beastformTraitBonus.bonus : 0);
 
-  // ── Trait click handler ──────────────────────────────────────────────────────
-  const handleTraitClick = onRoll ? (traitKey) => {
+  // Ancestry experience bonus (e.g. Clank Purposeful Design): +1 when selected experience matches choice
+  const getExperienceModifier = (activeExpId) => {
+    const ancestryName = Array.isArray(el.ancestry) && el.ancestry.length > 0 ? el.ancestry[0] : null;
+    const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+    if (!expBonus || !activeExpId) return 2;
+    const choice = el.experienceBonusChoices?.[expBonus.featureName];
+    return choice === activeExpId ? 2 + expBonus.amount : 2;
+  };
+
+  // ── Trait click handler (used by both trait chips and Reaction row) ───────────
+  // Same roll text (trait in roll), same meta (_traitKey, _attackerInstanceId, experience/mod/advantage).
+  // Only difference for Reaction: displayName and _isReaction flag.
+  const handleTraitClick = onRoll ? (traitKey, opts) => {
+    const isReaction = opts?.isReaction === true;
     const activeExp = el.selectedExperienceIndex != null
       ? (el.experiences || [])[el.selectedExperienceIndex]
       : null;
     const baseScore = traits[traitKey] ?? 0;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
     const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
-    let rollText = buildTraitRollText(el.name, traitKey, effectiveScore, activeExp?.name);
+    const expMod = getExperienceModifier(activeExp?.id);
+    let rollText = buildTraitRollText(el.name, traitKey, effectiveScore, activeExp?.name, expMod);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    // Air (Elemental Incarnation): auto-apply d6 advantage on Agility rolls
     if (traitKey === 'agility' && el.activeChanneledElement === 'air') {
       rollText += ' Air [d6]';
     }
     const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
     if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
-    const displayName = `${el.name} ${TRAIT_FULL[traitKey]}`;
-    const traitRollMeta = { _attackerInstanceId: el.instanceId, _traitKey: traitKey };
-    if (selectedMod?.consumeOnUse) traitRollMeta._usedModifierId = selectedMod.id;
-    if (el.selectedExperienceIndex != null) traitRollMeta._experienceHopeCost = 1;
-    onRoll(rollText, displayName, traitRollMeta);
+    const displayName = isReaction ? `${el.name} — Reaction (${TRAIT_FULL[traitKey]})` : `${el.name} ${TRAIT_FULL[traitKey]}`;
+    const traitRollMeta = {
+      _attackerInstanceId: el.instanceId,
+      _traitKey: traitKey,
+      ...(isReaction && { _isReaction: true }),
+      ...(selectedMod?.consumeOnUse && { _usedModifierId: selectedMod.id }),
+      ...(el.selectedExperienceIndex != null && { _experienceHopeCost: 1 }),
+    };
+    onRoll(rollText, displayName, traitRollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
     if (selectedAdvs.length) setSelectedAdvIds([]);
   } : undefined;
 
   const selectedExpHint = el.selectedExperienceIndex != null
-    ? `+2 from "${(el.experiences || [])[el.selectedExperienceIndex]?.name}" included`
+    ? `+${getExperienceModifier((el.experiences || [])[el.selectedExperienceIndex]?.id)} from "${(el.experiences || [])[el.selectedExperienceIndex]?.name}" included`
     : undefined;
 
   // ── Spellcast roll handler ─────────────────────────────────────────────────
@@ -609,7 +643,8 @@ export function CharacterHoverCard({
       : null;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, 'spellcast');
     const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
-    let rollText = buildTraitRollText(el.name + ' Spellcast', traitKey, effectiveScore, activeExp?.name);
+    const expMod = getExperienceModifier(activeExp?.id);
+    let rollText = buildTraitRollText(el.name + ' Spellcast', traitKey, effectiveScore, activeExp?.name, expMod);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
@@ -619,14 +654,14 @@ export function CharacterHoverCard({
     const spellcastRollMeta = { _attackerInstanceId: el.instanceId, _traitKey: traitKey };
     if (selectedMod?.consumeOnUse) spellcastRollMeta._usedModifierId = selectedMod.id;
     if (el.selectedExperienceIndex != null) spellcastRollMeta._experienceHopeCost = 1;
-    onRoll(rollText, displayName, spellcastRollMeta);
+    onRoll(rollText, displayName, spellcastRollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
     if (selectedAdvs.length) setSelectedAdvIds([]);
   } : undefined;
 
   // Send roll (used after target selection or when no target menu needed)
   const sendWeaponRoll = (rollText, displayName, rollMeta, opts) => {
-    onRoll(rollText, displayName, rollMeta);
+    onRoll(rollText, displayName, rollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
     if ((selectedAdvIds || []).length) setSelectedAdvIds([]);
     if (opts?.devastating) {
@@ -647,6 +682,7 @@ export function CharacterHoverCard({
     const opts = {};
     if (rollMeta.devastating) opts.devastating = true;
     if (rollMeta.secondaryDamage) opts.secondaryDamage = rollMeta.secondaryDamage;
+    opts.experienceModifier = getExperienceModifier(activeExp?.id);
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
     const effectiveTrait = baseTrait + getBeastformTraitBonus(traitKey) + rollModBonus;
     // Virtual weapons (e.g. Elemental Breath) can add Proficiency to damage and a damage type for the roll.
@@ -678,7 +714,7 @@ export function CharacterHoverCard({
     if (selectedMod?.consumeOnUse) rollMeta._usedModifierId = selectedMod.id;
     if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
     if (weapon._featureName) rollMeta._featureName = weapon._featureName;
-    if (weapon._featureName && weapon.onAcknowledge) rollMeta._featureNeedsTarget = true;
+    if (weapon._featureName && (weapon.onAcknowledge || weapon.stressCost != null || weapon.hopeCost != null)) rollMeta._featureNeedsTarget = true;
     if (weapon.multiTarget) {
       rollMeta._multiTarget = true;
       if (weapon.multiTargetMax != null) rollMeta._multiTargetMax = weapon.multiTargetMax;
@@ -695,7 +731,12 @@ export function CharacterHoverCard({
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: rollMeta._weaponRangeFt,
       }) ?? [];
-      if (validTargets.length === 0) return; // don't send roll; popup would show "No targets in range"
+      // When no targets in range: still send the roll so the user sees dice/banner (they can ack without applying damage).
+      if (validTargets.length === 0) {
+        sendWeaponRoll(rollText, displayName, rollMeta, opts);
+        if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
+        return;
+      }
       // Multi-target weapons: send roll immediately; target selection happens on the banner.
       if (weapon.multiTarget) {
         sendWeaponRoll(rollText, displayName, rollMeta, opts);
@@ -728,7 +769,7 @@ export function CharacterHoverCard({
     if (target.type === 'adversary' && target.vulnerable) {
       rollText = appendVulnerableTargetToRollText(rollText);
     }
-    onRoll(rollText, displayName, { ...rollMeta, _selectedTargetInstanceId: target.instanceId });
+    onRoll(rollText, displayName, { ...rollMeta, _selectedTargetInstanceId: target.instanceId }, { characterEl: el });
     if (type === 'weapon') {
       if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
       if (selectedMod) setSelectedModId(null);
@@ -849,7 +890,7 @@ export function CharacterHoverCard({
       if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
       return;
     }
-    onRoll(rollText, displayName, beastformRollMeta);
+    onRoll(rollText, displayName, beastformRollMeta, { characterEl: el });
   } : undefined;
 
   // beastformProps — passed into CharacterFeatureList and CharacterWeaponList
@@ -990,7 +1031,7 @@ export function CharacterHoverCard({
 
         {/* ── Experiences + Modifier Bin ── */}
         <CharacterExperiences
-          el={el}
+          el={displayEl}
           selectedIndex={el.selectedExperienceIndex}
           onSelect={updateFn ? (i) => updateFn(el.instanceId, { selectedExperienceIndex: i }) : undefined}
           hope={currentHope}
@@ -1019,7 +1060,7 @@ export function CharacterHoverCard({
                   _attackerInstanceId: el.instanceId,
                   _rallyClearStress: true,
                   _rallyDieModId: mod.id,
-                });
+                }, { characterEl: el });
                 return;
               }
               // Other clearStress chips (e.g. Rogue's Dodge): immediately clear 1 stress
@@ -1145,15 +1186,13 @@ export function CharacterHoverCard({
 
         {/* ── Weapons (or Beastform Attack when transformed) ── */}
         <CharacterWeaponList
-          el={el}
+          el={displayEl}
           onWeaponClick={handleWeaponClick}
           devastatingActive={devastatingActive}
           onDevastatingToggle={() => setDevastatingActive(d => !d)}
           stressMaxed={stressMaxed}
           onActionNotification={onActionNotification}
-          selectedExperienceHint={el.selectedExperienceIndex != null
-            ? `+2 from \u201c${(el.experiences || [])[el.selectedExperienceIndex]?.name}\u201d included`
-            : undefined}
+          selectedExperienceHint={selectedExpHint}
           onBeastformAttack={handleBeastformAttack}
         />
 
@@ -1195,6 +1234,63 @@ export function CharacterHoverCard({
             rollUser: el.name,
             actionName: feature.name,
             actionText: feature.description ?? '',
+          }) : undefined}
+          getCardChipContext={onActionNotification && onRoll && updateFn ? (feature, chip, featureKey) => ({
+            character: wrapEntity(el, updateFn),
+            feature,
+            derivedToggleKey: typeof chip.onToggle === 'function' ? `_toggle.${feature.source ?? ''}.${feature.name ?? ''}` : undefined,
+            postToggleIntent: typeof chip.onToggle === 'function'
+              ? (nextActive) => {
+                  const title = [...[el.name, feature.source, feature.name].filter(Boolean), nextActive ? 'ACTIVATE' : 'DEACTIVATE'].join(' - ');
+                  onActionNotification({
+                    _action: true,
+                    rollUser: el.name,
+                    actionName: title,
+                    actionText: feature.description ?? '',
+                    _featureUse: true,
+                    _attackerInstanceId: el.instanceId,
+                    _stressCost: chip.stressCost ?? 0,
+                    _hopeCost: chip.hopeCost ?? 0,
+                    _cardToggle: {
+                      instanceId: el.instanceId,
+                      derivedToggleKey: `_toggle.${feature.source ?? ''}.${feature.name ?? ''}`,
+                      nextActive,
+                      featureName: feature.name,
+                      featureSource: feature.source,
+                    },
+                    tags: [
+                      ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
+                      ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
+                    ],
+                  });
+                }
+              : undefined,
+            postAction: (customLabel) => onActionNotification({
+              _action: true,
+              rollUser: el.name,
+              actionName: feature.name,
+              actionText: customLabel ?? chip.label ?? feature.name,
+              _featureUse: true,
+              _attackerInstanceId: el.instanceId,
+              _stressCost: chip.stressCost ?? 0,
+              _hopeCost: chip.hopeCost ?? 0,
+              _featureKey: featureKey ?? `${feature.name}-0`,
+              _frequency: chip.resetsOn ?? undefined,
+              tags: [
+                ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
+                ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
+              ],
+            }),
+            postTraitRoll: (traitKey, options) => {
+              const key = String(traitKey).toLowerCase();
+              const traitName = TRAIT_FULL[key] || traitKey;
+              const score = el.traits?.[key] ?? 0;
+              const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
+              const displayName = [el.name, feature.source, feature.name].filter(Boolean).join(' - ');
+              const meta = { _attackerInstanceId: el.instanceId, _traitKey: key };
+              if (options?.difficulty != null) meta._difficulty = options.difficulty;
+              onRoll(rollText, displayName, meta);
+            },
           }) : undefined}
         />
 
