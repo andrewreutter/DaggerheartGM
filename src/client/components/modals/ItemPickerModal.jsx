@@ -1,5 +1,5 @@
-import { useMemo, useEffect, useRef } from 'react';
-import { X, AlertTriangle } from 'lucide-react';
+import { useMemo, useEffect, useRef, useState } from 'react';
+import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { DaggerstackImport } from '../DaggerstackImport.jsx';
@@ -28,8 +28,9 @@ export const ITEM_PICKER_SINGULAR = {
  *   initialSearch — pre-fill the search input on open (useful for "Link placeholder" flow)
  *   onClose       — called when the modal is dismissed
  *   onSelect      — called with the selected item; modal closes itself after
+ *   onCreateNew   — optional; when collection === 'characters', called when user clicks "Create new character"
  */
-export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect, isLoading, excludeIds }) {
+export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect, onCreateNew, isLoading, excludeIds }) {
   const isPaginated = collection === 'adversaries' || collection === 'environments';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
@@ -38,6 +39,7 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
   const search = useCollectionSearch(collection, { limit: 40, enabled: isPaginated, infinite: true });
   const resultsRef = useRef(null);
   const sentinelRef = useRef(null);
+  const [daggerstackOpen, setDaggerstackOpen] = useState(false);
 
   useEffect(() => {
     if (initialSearch) search.setFilter('search', initialSearch);
@@ -79,7 +81,7 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
   }, [search.hasMore, search.isLoadingMore, search.loadMore]);
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center pt-16 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center pt-24 p-4" onClick={onClose}>
       <div
         className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[75vh]"
         onClick={e => e.stopPropagation()}
@@ -99,6 +101,55 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
           </button>
         </div>
 
+        {/* Create new character — only for characters; at top, opens editor, add to table on first complete */}
+        {collection === 'characters' && onCreateNew && (
+          <div className="px-5 py-3 border-b border-slate-800 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                onCreateNew();
+                onClose();
+              }}
+              className="w-full rounded-lg border-2 border-sky-500 bg-sky-600 hover:bg-sky-500 text-white font-semibold py-3 px-4 flex items-center justify-center gap-2 transition-colors"
+            >
+              <UserPlus size={18} />
+              Create new character
+            </button>
+          </div>
+        )}
+
+        {/* Daggerstack import — only for characters; collapsible, collapsed by default; right under Create */}
+        {collection === 'characters' && (
+          <div className="border-b border-slate-800 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDaggerstackOpen(prev => !prev)}
+              className="w-full px-5 py-2.5 flex items-center gap-2 text-left text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors"
+            >
+              {daggerstackOpen ? <ChevronDown size={16} className="shrink-0" /> : <ChevronRight size={16} className="shrink-0" />}
+              <span className="text-sm font-medium">Import from Daggerstack</span>
+            </button>
+            {daggerstackOpen && (
+              <div className="px-5 pb-3 pt-0 shrink-0">
+                <DaggerstackImport
+                  compact
+                  onImported={async (character) => {
+                    const charToSave = { ...character, id: generateId() };
+                    delete charToSave.elementType;
+                    delete charToSave.conditions;
+                    delete charToSave.playerName;
+                    const saved = await saveItem('characters', charToSave);
+                    if (saved) {
+                      onSelect(saved);
+                      onClose();
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Filters — only for paginated collections (adversaries / environments) */}
         {isPaginated && (
           <div className="px-5 py-4 border-b border-slate-800 shrink-0">
@@ -112,39 +163,19 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
           </div>
         )}
 
-        {/* Simple search for non-paginated (scenes / adventures) */}
+        {/* Simple search for non-paginated (scenes / adventures / characters) */}
         {!isPaginated && (
           <div className="px-5 py-3 border-b border-slate-800 shrink-0">
             <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400 shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <input
-                autoFocus
+                autoFocus={collection !== 'characters'}
                 className="flex-1 bg-transparent text-sm text-white outline-none placeholder-slate-500"
                 placeholder="Search by name..."
                 value={search.filters.search}
                 onChange={e => search.setFilter('search', e.target.value)}
               />
             </div>
-          </div>
-        )}
-
-        {/* Daggerstack import — only for characters */}
-        {collection === 'characters' && (
-          <div className="px-5 py-3 border-b border-slate-800 shrink-0">
-            <DaggerstackImport
-              compact
-              onImported={async (character) => {
-                const charToSave = { ...character, id: generateId() };
-                delete charToSave.elementType;
-                delete charToSave.conditions;
-                delete charToSave.playerName;
-                const saved = await saveItem('characters', charToSave);
-                if (saved) {
-                  onSelect(saved);
-                  onClose();
-                }
-              }}
-            />
           </div>
         )}
 
@@ -163,16 +194,13 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
               <button
                 key={item.id}
                 onClick={() => {
-                  if (incomplete) return;
-                  onSelect(item); onClose();
+                  onSelect(item);
+                  onClose();
                 }}
-                disabled={incomplete}
-                className={`w-full text-left px-5 py-3 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4 ${
-                  incomplete ? 'opacity-60 cursor-not-allowed' : 'hover:bg-slate-800'
-                }`}
-                title={incomplete ? `Incomplete — missing: ${charCheck.missing.join(', ')}. Edit this character first.` : undefined}
+                className={`w-full text-left px-5 py-3 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4 hover:bg-slate-800`}
+                title={incomplete ? `Incomplete — missing: ${charCheck.missing.join(', ')}` : undefined}
               >
-                <span className={`font-medium text-sm truncate ${incomplete ? 'text-slate-400' : 'text-white'}`}>{item.name}</span>
+                <span className="font-medium text-sm truncate text-white">{item.name}</span>
                 <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1.5">
                   {incomplete && (
                     <span className="flex items-center gap-0.5 text-amber-400" title={`Missing: ${charCheck.missing.join(', ')}`}>
