@@ -2418,6 +2418,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   restCanEditColumn = () => true,
   restGmUid = null,
   bannerStripLeftOffset = 0,
+  diceCanvasHidden = false,
 }, ref) {
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
@@ -2901,6 +2902,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
           left: 0,
           right: 0,
           bottom: DICE_BOTTOM_RESERVE,
+          visibility: diceCanvasHidden ? 'hidden' : 'visible',
         }}
       />
       {/* Banner strip — left edge offset by character tokens shelf width */}

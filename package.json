@@ -16,6 +16,8 @@
     "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
     "build:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outdir=public",
     "dev:js": "esbuild src/client/app.jsx --bundle --format=esm --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime --external:firebase/app --external:firebase/auth --external:lucide-react --external:marked --external:@3d-dice/dice-box-threejs --outdir=public --watch",
+    "db:local": "supabase start",
+    "db:local:stop": "supabase stop",
     "test": "vitest run && npx playwright test",
     "test:unit": "vitest run",
     "test:browser": "npx playwright test"
@@ -40,6 +42,7 @@
     "@playwright/test": "^1.58.2",
     "@tailwindcss/cli": "^4.2.1",
     "esbuild": "^0.27.3",
+    "supabase": "^2.81.3",
     "tailwindcss": "^4.2.1",
     "vitest": "^4.0.18"
   }

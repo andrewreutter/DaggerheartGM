@@ -3,9 +3,7 @@ import { extractDetailsValues } from '../../client/lib/dice-utils.js';
 export default {
   name: 'Parry',
   description: "When attacked, roll this weapon's damage dice. Matching results are discarded from the attacker's damage.",
-  onCharacterBuild({ character, weapon }) {
-    character.addFeature('Parry', "When attacked, roll this weapon's damage dice. Matching results are discarded from the attacker's damage.", {
-      async onBeforeDamageApplied(effectiveDmgTotal, { target, roll, parryWeapon, postRoll, addActionBanner }) {
+  async onBeforeDamageApplied(effectiveDmgTotal, { target, roll, parryWeapon, postRoll, addActionBanner }) {
         if (!parryWeapon || !roll?.subItems) return effectiveDmgTotal;
 
         const damageSub = roll.subItems.find(s => /damage/i.test(s.pre || '') && s.input);
@@ -57,6 +55,4 @@ export default {
           return effectiveDmgTotal;
         }
       },
-    });
-  },
 };

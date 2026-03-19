@@ -1,12 +1,9 @@
 /**
  * Ancestry features barrel.
  *
- * Each ancestry file exports a builder object:
- *   { name, description, onCharacterBuild(char) }
- *
- * The barrel runs every builder once at module load. `char.addFeature(name, description, hooks?)`
- * is provided by the shared createFeatureBuilder; descriptors go to featureMap and the ancestry's
- * features array. ancestryMap holds { name, description, features } per ancestry.
+ * Each ancestry file exports { name, description, features: [{ name, description, ...hooks }] }.
+ * The barrel iterates builder.features and registers each via addFeature. Descriptors go to
+ * featureMap and the ancestry's features array. ancestryMap holds { name, description, features } per ancestry.
  */
 
 import { createFeatureBuilder } from '../add-feature.js';
@@ -69,7 +66,9 @@ for (const builder of builders) {
     },
   });
 
-  builder.onCharacterBuild(char);
+  for (const { name, description, ...hooks } of builder.features) {
+    char.addFeature(name, description, hooks);
+  }
   ancestryMap[builder.name] = ancestryEntry;
 }
 

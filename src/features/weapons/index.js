@@ -1,10 +1,9 @@
 /**
- * Weapon features barrel — builder pattern aligned with ancestries/communities.
+ * Weapon features barrel.
  *
- * Each weapon file exports { name, description?, onCharacterBuild({ character, weapon }) }.
- * The barrel creates a character builder (shared addFeature) and a weapon context object,
- * then runs builder.onCharacterBuild({ character, weapon }). Descriptors are registered
- * in weaponFeatures only (no feature list / no character sheet feature cards).
+ * Each weapon file exports a single feature descriptor: { name, description?, ...hooks }.
+ * The barrel registers each via addFeature. Descriptors are in weaponFeatures only
+ * (no feature list / no character sheet feature cards).
  */
 import { createFeatureBuilder } from '../add-feature.js';
 import Painful       from './Painful.js';
@@ -77,8 +76,8 @@ for (const builder of builders) {
     sourceType: 'weapon',
     source: builder.name,
   });
-  const weapon = { name: builder.name, description: builder.description };
-  builder.onCharacterBuild({ character, weapon });
+  const { name, description, ...hooks } = builder;
+  character.addFeature(name, description, hooks);
 }
 
 export default weaponFeatures;

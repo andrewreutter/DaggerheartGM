@@ -1,10 +1,9 @@
 /**
- * Armor features barrel — builder pattern aligned with ancestries/communities.
+ * Armor features barrel.
  *
- * Each armor file exports { name, description, onCharacterBuild({ character, armor }) }.
- * The barrel creates a character builder (shared addFeature) and an armor context object,
- * then runs builder.onCharacterBuild({ character, armor }). Descriptors are registered
- * in armorFeatures only (no feature list / no character sheet feature cards).
+ * Each armor file exports a single feature descriptor: { name, description?, ...hooks }.
+ * The barrel registers each via addFeature. Descriptors are in armorFeatures only
+ * (no feature list / no character sheet feature cards).
  */
 import { createFeatureBuilder } from '../add-feature.js';
 import Fortified  from './Fortified.js';
@@ -43,8 +42,8 @@ for (const builder of builders) {
     sourceType: 'armor',
     source: builder.name,
   });
-  const armor = { name: builder.name, description: builder.description };
-  builder.onCharacterBuild({ character, armor });
+  const { name, description, ...hooks } = builder;
+  character.addFeature(name, description, hooks);
 }
 
 export default armorFeatures;

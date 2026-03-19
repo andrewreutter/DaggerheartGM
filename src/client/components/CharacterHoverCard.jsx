@@ -287,21 +287,26 @@ export function CharacterHoverCard({
   // For features that requiresInputForFeature (e.g. Sorcerer Channel Raw Power)
   const [featureInputPending, setFeatureInputPending] = useState(null); // { feature, subFeature, action, spec }
 
-  // Tell parent when target menu is open so overlay does not close on mouse leave (fixed popover is outside overlay bounds).
-  useEffect(() => {
-    if (!targetMenuOpenRef) return;
-    targetMenuOpenRef.current = !!targetMenuPending;
-    return () => { targetMenuOpenRef.current = false; };
-  }, [targetMenuPending, targetMenuOpenRef]);
   const [featureInputValue, setFeatureInputValue] = useState('');
   // Druid beastform selection (shared by Beastform class feature and Evolution hope ability)
   const [selectedBeastformId, setSelectedBeastformId] = useState(null);
   // In-place target menu before sending roll: { type: 'weapon'|'beastform', rollText, displayName, rollMeta, validTargets, opts?, anchorRect? }
   const [targetMenuPending, setTargetMenuPending] = useState(null);
 
+  // targetMenuOpenRef is kept in sync synchronously in every setTargetMenuPending call below.
+  // (useEffect would be async/post-render, causing a race condition with onMouseLeave.)
+  const openTargetMenu = (value) => {
+    if (targetMenuOpenRef) targetMenuOpenRef.current = true;
+    setTargetMenuPending(value);
+  };
+  const closeTargetMenu = () => {
+    if (targetMenuOpenRef) targetMenuOpenRef.current = false;
+    setTargetMenuPending(null);
+  };
+
   useEffect(() => {
     if (!targetMenuPending) return;
-    const onKey = (e) => { if (e.key === 'Escape') setTargetMenuPending(null); };
+    const onKey = (e) => { if (e.key === 'Escape') closeTargetMenu(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [targetMenuPending]);
@@ -582,7 +587,7 @@ export function CharacterHoverCard({
           validTargets = (getValidTargets(el.instanceId, {}) ?? []).filter(t => t.type === 'adversary');
         }
         const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
-        setTargetMenuPending({ type: 'feature_action', notification, validTargets, anchorRect });
+        openTargetMenu({ type: 'feature_action', notification, validTargets, anchorRect });
         return;
       }
 
@@ -752,10 +757,7 @@ export function CharacterHoverCard({
         return;
       }
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
-      // #region agent log
-      fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'CharacterHoverCard.jsx:targetMenuPending',message:'Target menu opened',data:{validTargetsLength:validTargets.length,type:'weapon'},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
-      setTargetMenuPending({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
+      openTargetMenu({ type: 'weapon', rollText, displayName, rollMeta, validTargets, opts, anchorRect });
       return;
     }
     sendWeaponRoll(rollText, displayName, rollMeta, opts);
@@ -764,9 +766,6 @@ export function CharacterHoverCard({
 
   const handleTargetMenuSelect = (target) => {
     if (!targetMenuPending) return;
-    // #region agent log
-    fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c57b44'},body:JSON.stringify({sessionId:'c57b44',location:'CharacterHoverCard.jsx:handleTargetMenuSelect',message:'Target selected',data:{targetInstanceId:target?.instanceId,targetName:target?.name,type:targetMenuPending?.type},timestamp:Date.now(),hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
     let { type, rollText, displayName, rollMeta, opts, notification } = targetMenuPending;
 
     // Action notification with pre-selected target (e.g. Make a Scene, Bard)
@@ -776,7 +775,7 @@ export function CharacterHoverCard({
         _selectedTargetInstanceId: target.instanceId,
         _selectedTargetName: target.name,
       });
-      setTargetMenuPending(null);
+      closeTargetMenu();
       return;
     }
 
@@ -795,11 +794,11 @@ export function CharacterHoverCard({
         setDevastatingActive(false);
       }
     }
-    setTargetMenuPending(null);
+    closeTargetMenu();
   };
 
   const handleTargetMenuCancel = () => {
-    setTargetMenuPending(null);
+    closeTargetMenu();
   };
 
   // ── Beastform helpers ────────────────────────────────────────────────────────
@@ -900,7 +899,7 @@ export function CharacterHoverCard({
         weaponRangeFt: beastformRollMeta._weaponRangeFt,
       }) ?? [];
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
-      setTargetMenuPending({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
+      openTargetMenu({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
       if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
       return;
     }

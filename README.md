@@ -353,6 +353,44 @@ npm run crawl:hod -- --full          # HoD full refresh (same as weekly cron)
 npm run refresh:daggerstack          # regenerate Daggerstack UUID map (same as nightly 4 AM cron)
 ```
 
+### Local Database (Supabase CLI)
+
+Instead of developing against your production Supabase instance, run a full local stack via Docker:
+
+**Prerequisites**: [Docker Desktop](https://docs.docker.com/desktop/) (or OrbStack / Rancher Desktop) must be running.
+
+```bash
+npm run db:local        # start local Postgres + Storage + Studio (Docker)
+npm run db:local:stop   # stop the local stack when done
+```
+
+On first run, `supabase start` pulls the Docker images and prints credentials:
+
+```
+API URL: http://localhost:54321
+DB URL:  postgresql://postgres:postgres@localhost:54322/postgres
+Studio:  http://localhost:54323
+service_role key: eyJ...
+```
+
+Copy those values into your `.env`:
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres
+SUPABASE_URL=http://localhost:54321
+SUPABASE_SERVICE_ROLE_KEY=<service_role key printed above>
+```
+
+Then start the app as normal — it will auto-run all migrations against the local DB on startup:
+
+```bash
+npm run dev
+```
+
+The local Supabase Studio at `http://localhost:54323` gives you a full DB browser UI. The local stack is free, offline-capable, and completely isolated from production.
+
+> **Storage**: setting `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` enables local Storage for battle map image uploads. If you omit them, map images fall back to data URLs — both work fine.
+
 ### Dev Live Reload
 
 `npm run dev` starts esbuild and Tailwind in watch mode. The server exposes `GET /livereload` — an SSE endpoint that watches `public/` for file changes and broadcasts a reload signal. `public/index.html` includes a small inline `EventSource` script that calls `location.reload()` whenever the signal arrives or the connection is re-established after a server restart. No browser extension or extra tooling needed.

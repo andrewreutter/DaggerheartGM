@@ -41,7 +41,7 @@ Communities use the same `char.addFeature(name, description, hooks?)` API. All a
 ### Weapons
 
 - **Location:** `src/features/weapons/<FeatureName>.js`
-- **Export:** Same builder shape as ancestries/communities: `{ name, description?, onCharacterBuild({ character, weapon }) }`. The barrel runs each builder at module load; descriptors get `sourceType: 'weapon'` and `source: name`. **Same addFeature as ancestries/communities** — call `character.addFeature(name, description, hooks)`. Weapon descriptors are registered in `weaponFeatures` only (no feature list), so they do **not** appear as character sheet feature cards; the same hooks (e.g. `prependRollParts`, `onDamageApplied`) are supported.
+- **Export:** Same builder shape as ancestries/communities: `{ name, description?, onCharacterBuild({ character, weapon }) }`. The barrel runs each builder at module load; descriptors get `sourceType: 'weapon'` and `source: name`. **Same addFeature as ancestries/communities** — call `character.addFeature(name, description, hooks)`. Weapon descriptors are registered in `weaponFeatures` only (no feature list), so they do **not** appear as character sheet feature cards; the same hooks (e.g. `prependRollParts`, `onBannerAck`) are supported.
 - **Registration:** In `weapons/index.js`, import and add to the `builders` array.
 
 ```js
@@ -58,7 +58,7 @@ export default {
 };
 ```
 
-**Builder API:** `character.addFeature(name, description, hooks?)` — same as ancestry/community. All hook/option properties (e.g. `automated`, `tagText`, `prependRollParts`, `onDamageApplied`) go in `hooks`.
+**Builder API:** `character.addFeature(name, description, hooks?)` — same as ancestry/community. All hook/option properties (e.g. `automated`, `tagText`, `prependRollParts`, `onBannerAck`) go in `hooks`.
 
 ### Armor
 
@@ -184,6 +184,7 @@ These hooks are available on descriptors passed to `char.addFeature(..., hooks)`
 **Context:** `banner` — object with:
 - `addChip(descriptor)` — register a chip (ancestry/community only).
 - `addNarration(text, style?)` — add a narration line shown on the result banner (same as `ctx.addNarration` in onChipAck, but from onBanner so it appears without chip ack). Optional `style`: e.g. `'automated'` for green styling (effect is applied by the app). Use in ancestry/community or weapon features.
+- `addAutomatedNarration(text)` — convenience: same as `addNarration(text, 'automated')`. Use for automated (app-applied) effect descriptions.
 
 **Chip descriptor (only include fields you use):**
 
@@ -375,9 +376,10 @@ Weapon descriptors are keyed by `name`. Tags on the roll are matched to these na
 - **Signature:** `(hpLoss, ctx) => number`  
 - **Context `ctx`:** `{ target, character, tagNames, roll, dmgType }` (target/character wrapped, roll wrapped).
 
-**onDamageApplied(ctx)**  
-- **When:** After HP is applied in `applyDamageToTarget`.  
-- **Context:** Same `ctx`. Use e.g. `target.markStress(1)`.
+**onBannerAck(roll, target, ctx)** (weapon)  
+- **When:** When the GM acknowledges the banner (same moment as ancestry chip `onBannerAck`). Run for each tag on the roll and each selected damage target. Use for “when GM accepts, apply an effect to the target” (e.g. Burning: mark Stress per 6 rolled; Scary: mark 1 Stress).  
+- **Args:** `roll` — wrapped roll (e.g. `roll.sub('damage').values()`); `target` — wrapped selected damage target; `ctx` — `{}` (reserved for future use).  
+- Replaces the previous **onDamageApplied** hook so weapon “on accept” effects use the same concept as ancestry/community banner ack.
 
 ### 4.5 Before damage applied (async)
 
@@ -474,7 +476,7 @@ Weapon and armor descriptors can also implement **onMarkStress**, **onMarkHP**, 
 | **onChipAck** | `(roll, character, ctx, feature)` — ctx: `addDamage`, `addNarration`, `setTreatAsMissForTarget`, `characterRaw` |
 | **modifyPreThresholdDamage** (armor/weapon) | `(dmgTotal, ctx)` — ctx: `target`, `character`, `tagNames`, `roll`, `dmgType` |
 | **modifyHpLoss** (weapon) | `(hpLoss, ctx)` — same ctx |
-| **onDamageApplied** (weapon) | `ctx` — same |
+| **onBannerAck** (weapon) | `(roll, target, ctx)` — when GM accepts; roll wrapped, target wrapped |
 | **onAfterMarkArmor** (armor) | `{ character, amount: 1, source, roll?, postRollSilent?, tagNames?, dmgType? }` |
 | **onLastArmorSlot** (armor) | `{ character, postRoll, addActionBanner }` |
 | **onBeforeDamageApplied** (weapon) | `(effectiveDmgTotal, { target, roll, parryWeapon, postRoll, addActionBanner })` |

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices, Trash2 } from 'lucide-react';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
@@ -591,7 +591,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onDeleteTable, onClearDice, className = '' }) {
+export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onDeleteTable, onClearDice, diceCanvasHidden = false, onToggleDiceVisibility, className = '' }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -1018,19 +1018,32 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
                 pinnedInstanceId={pinnedToken?.element.instanceId}
               />
             </div>
-            {onClearDice && (
-              <div className="p-1.5 border-t border-slate-800 shrink-0">
-                <Tooltip label="Clear 3D dice from view">
-                  <button
-                    type="button"
-                    onClick={onClearDice}
-                    className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
-                    aria-label="Clear dice"
-                  >
-                    <Eraser size={14} />
-                    <Dices size={14} />
-                  </button>
-                </Tooltip>
+            {(onClearDice || onToggleDiceVisibility) && (
+              <div className="p-1.5 border-t border-slate-800 shrink-0 flex flex-col gap-1">
+                {onToggleDiceVisibility && (
+                  <Tooltip label={diceCanvasHidden ? 'Show 3D dice' : 'Hide 3D dice'}>
+                    <button
+                      type="button"
+                      onClick={onToggleDiceVisibility}
+                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                      aria-label={diceCanvasHidden ? 'Show dice' : 'Hide dice'}
+                    >
+                      {diceCanvasHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </button>
+                  </Tooltip>
+                )}
+                {onClearDice && (
+                  <Tooltip label="Clear 3D dice">
+                    <button
+                      type="button"
+                      onClick={onClearDice}
+                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                      aria-label="Clear dice"
+                    >
+                      <Eraser size={14} />
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             )}
           </div>

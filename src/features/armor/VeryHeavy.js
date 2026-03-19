@@ -1,12 +1,8 @@
 export default {
   name: 'Very Heavy',
   description: '-2 Evasion; -1 Agility.',
-  onCharacterBuild({ character, armor }) {
-    character.addFeature('Very Heavy', '-2 Evasion; -1 Agility.', {
-      onCharacterRender(ctx) {
-        ctx.addStatMod('evasion', -2);
-        ctx.addStatMod('agility', -1);
-      },
-    });
+  onCharacterRender(ctx) {
+    ctx.addStatMod('evasion', -2);
+    ctx.addStatMod('agility', -1);
   },
 };

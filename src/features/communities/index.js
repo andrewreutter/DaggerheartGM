@@ -1,8 +1,8 @@
 /**
  * Community features barrel.
  *
- * Same builder shape as ancestries: { name, description, onCharacterBuild(char) }.
- * Uses shared createFeatureBuilder; descriptors get sourceType: 'community' and source: builder.name.
+ * Each community file exports { name, description, features: [{ name, description, ...hooks }] }.
+ * The barrel iterates builder.features and registers each via addFeature.
  */
 
 import { createFeatureBuilder } from '../add-feature.js';
@@ -42,7 +42,9 @@ for (const builder of builders) {
     source: builder.name,
   });
 
-  builder.onCharacterBuild(char);
+  for (const { name, description, ...hooks } of builder.features) {
+    char.addFeature(name, description, hooks);
+  }
   communityMap[builder.name] = communityEntry;
 }
 
