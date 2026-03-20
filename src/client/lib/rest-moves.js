@@ -136,7 +136,7 @@ export function getRestMovesForCharacter(character, restDuration) {
     const entry = ancestryMap[name];
     if (!entry?.features) continue;
     for (const f of entry.features) {
-      if (typeof f.onRest === 'function') f.onRest(rest);
+      if (typeof f.onRest === 'function') f.onRest({ rest, feature: f });
     }
   }
   const communityName = character.community || null;
@@ -144,7 +144,7 @@ export function getRestMovesForCharacter(character, restDuration) {
     const communityEntry = communityMap[communityName];
     if (communityEntry?.features) {
       for (const f of communityEntry.features) {
-        if (typeof f.onRest === 'function') f.onRest(rest);
+        if (typeof f.onRest === 'function') f.onRest({ rest, feature: f });
       }
     }
   }

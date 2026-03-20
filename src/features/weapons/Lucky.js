@@ -1,20 +1,19 @@
+/**
+ * SRD: On a failed attack, you can mark a Stress to reroll your attack.
+ */
 export default {
   name: 'Lucky',
   description: 'On a failed attack, mark a Stress to reroll your attack.',
   showTag: true,
   automated: false,
-  interactive: true,
-  tagText: 'Mark Stress to reroll on Fear',
-  bannerInteraction: {
-    type: 'reroll-button',
-    phase: 'pre-apply',
-    triggeredWhen: 'fear',
-    prompt: 'Lucky: Reroll? (mark 1 Stress)',
-  },
-  bannerStatus(tag, roll) {
-    if (!roll) return null;
-    return roll.dominant === 'fear'
-      ? { text: 'Fear! Mark Stress to reroll?', style: 'red' }
-      : { text: 'Not triggered (no Fear)', style: 'muted' };
-  },
+  tagText: 'Mark Stress to reroll on failure',
+  chips: [
+    {
+      placement: 'banner',
+      label: 'Mark 1 Stress to reroll your attack (Lucky)',
+      stressCost: 1,
+      isVisible: (ctx) => ctx.roll.isMine && ctx.roll.isFailure,
+      onChipAck: ({ roll }) => roll.fullReroll(),
+    },
+  ],
 };

@@ -3,7 +3,7 @@
  * Pure functions that compute derived stats from character selections + SRD data.
  */
 
-import { originFeatures, ancestryMap, communityMap, weaponFeatures, armorFeatures } from '../../features/registry.js';
+import { originFeatures, weaponFeatures, armorFeatures, classFeatures } from '../../features/registry.js';
 
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 
@@ -236,62 +236,132 @@ export function getEffectiveWeaponRange(weapon, ancestryFeatures) {
 }
 
 /**
- * Run all registered origin (ancestry + community) features' onCharacterRender hooks against a character.
- * Returns { statMods, virtualWeapons } — the caller merges these into the character result.
+ * Build the subset of activeFeatures used for onCharacterRender (ancestry + community + class + subclass).
+ * Used during recomputeCharacter before weapons/armor are in the full activeFeatures list.
  *
- * @param {object} charData - the partially-built character result (with ancestryFeatures, communityFeatures, traits, weapons, etc.)
- * @param {Record<string, object>} [registry] - origin features registry (defaults to module-level import)
- * @returns {{ statMods: Array<{stat: string, value: number, source: string}>, virtualWeapons: object[], thresholdBonus: number, thresholdBonusSources: string[] }}
+ * @param {object} result - character result with ancestryFeatures, communityFeatures, classFeatures, subclassFeatures
+ * @param {object|null} srdClass - resolved class SRD item
+ * @param {object|null} srdSubclass - resolved subclass SRD item
+ * @returns {object[]} activeFeatures (ancestry, community, class, subclass only)
  */
-export function runAncestryRender(charData, registry = originFeatures) {
-  const ancestryNames = (charData.ancestryFeatures || []).map(f => f.name);
-  const communityNames = (charData.communityFeatures || []).map(f => f.name);
-  const featureNames = [...ancestryNames, ...communityNames];
+function buildActiveFeaturesForRender(result, srdClass, srdSubclass) {
+  const active = [];
+  for (const f of result.ancestryFeatures || []) {
+    const hooks = originFeatures[f.name] || {};
+    active.push({ ...f, ...hooks, type: 'ancestry', source: f.sourceItem ?? f.source });
+  }
+  for (const f of result.communityFeatures || []) {
+    const hooks = originFeatures[f.name] || {};
+    active.push({ ...f, ...hooks, type: 'community', source: f.sourceItem ?? f.source });
+  }
+  for (const f of result.classFeatures || []) {
+    const hooks = classFeatures[f.name] || {};
+    active.push({ ...f, ...hooks, type: 'class', source: srdClass ?? result.class });
+  }
+  for (const f of result.subclassFeatures || []) {
+    const hooks = classFeatures[f.name] || {};
+    active.push({ ...f, ...hooks, type: 'subclass', source: srdSubclass ?? result.subclass });
+  }
+  return active;
+}
+
+/**
+ * When activeFeatures is not provided (e.g. CharacterDisplay fallback), build from ancestry + community only.
+ */
+function getRenderActiveFeaturesFromCharData(charData) {
+  const active = [];
+  for (const f of charData.ancestryFeatures || []) {
+    const hooks = originFeatures[f.name] || {};
+    active.push({ ...f, ...hooks, type: 'ancestry', source: f.sourceItem ?? f.source });
+  }
+  for (const f of charData.communityFeatures || []) {
+    const hooks = originFeatures[f.name] || {};
+    active.push({ ...f, ...hooks, type: 'community', source: f.sourceItem ?? f.source });
+  }
+  return active;
+}
+
+/**
+ * Apply declarative passiveStatMods, collect declarative virtualWeapon(s), merge into weapons, run weaponsFilters.
+ * No hook or ctx — all behavior from descriptor fields.
+ *
+ * @param {object} charData - partially-built character result (weapons, ancestryFeatures, etc.)
+ * @param {object[]} [activeFeatures] - flat feature list from buildActiveFeaturesForRender; when omitted, built from ancestry + community only
+ * @param {number} [weaponIdStart] - next numeric index for virtual weapon IDs (e.g. 2 → wep_2, wep_3, ...)
+ * @returns {{ statMods: Array<{stat: string, value: number, source: string}>, virtualWeapons: object[], weapons: object[], thresholdBonus: number, thresholdMajorBonus: number, thresholdSevereBonus: number, thresholdBonusSources: string[] }}
+ */
+export function runCharacterRender(charData, activeFeatures, weaponIdStart = 0) {
+  const features = Array.isArray(activeFeatures) && activeFeatures.length > 0
+    ? activeFeatures
+    : getRenderActiveFeaturesFromCharData(charData);
   const statMods = [];
   const virtualWeapons = [];
-  const thresholdBonusEntries = [];
-  const weaponsCopy = (charData.weapons || []).map(w => ({ ...w }));
+  let nextVirtualWeaponId = weaponIdStart;
+  let thresholdMajorBonus = 0;
+  let thresholdSevereBonus = 0;
+  const thresholdBonusSources = [];
 
-  const ctx = {
-    ...charData,
-    weapons: weaponsCopy,
-
-    addStatMod(stat, value) {
-      statMods.push({ stat, value, source: ctx._currentFeatureName });
-    },
-
-    addThresholdBonus(value) {
-      const v = Number(value) || 0;
-      if (v && ctx._currentFeatureName) thresholdBonusEntries.push({ value: v, source: ctx._currentFeatureName });
-      else if (v) thresholdBonusEntries.push({ value: v, source: 'Ancestry' });
-    },
-
-    addVirtualWeapon(weapon) {
+  for (const feature of features) {
+    const name = feature.name;
+    const psm = feature.passiveStatMods;
+    if (psm) {
+      if (psm.traits && typeof psm.traits === 'object') {
+        for (const [stat, value] of Object.entries(psm.traits)) {
+          if (typeof value === 'number') statMods.push({ stat, value, source: name });
+        }
+      }
+      for (const key of Object.keys(psm)) {
+        if (key === 'traits' || key === 'rollModifiers') continue;
+        const value = psm[key];
+        if (key === 'majorThreshold' || key === 'severeThreshold') {
+          if (typeof value === 'number') {
+            if (key === 'majorThreshold') {
+              thresholdMajorBonus += value;
+              if (name) thresholdBonusSources.push(name);
+            } else {
+              thresholdSevereBonus += value;
+              if (name) thresholdBonusSources.push(name);
+            }
+          }
+          continue;
+        }
+        if (typeof value === 'number') statMods.push({ stat: key, value, source: name });
+      }
+    }
+    // Declarative virtualWeapon / virtualWeapons
+    const toAdd = feature.virtualWeapon ? [feature.virtualWeapon] : (feature.virtualWeapons || []);
+    for (const weapon of toAdd) {
+      const id = `wep_${nextVirtualWeaponId++}`;
       virtualWeapons.push({
         ...weapon,
-        name: weapon.name || ctx._currentFeatureName,
-        _featureName: ctx._currentFeatureName,
-        feature: weapon.feature || { name: ctx._currentFeatureName, description: weapon.description || '' },
+        id,
+        name: weapon.name || name,
+        _featureName: name,
+        feature: weapon.feature || { name, description: weapon.description || '' },
       });
-    },
-
-    // Advantage triggers are captured at barrel load time (index.js mock run); no-op during live computation.
-    addAdvantageTrigger() {},
-
-    _currentFeatureName: null,
-  };
-
-  for (const name of featureNames) {
-    const feature = registry[name];
-    if (!feature?.onCharacterRender) continue;
-    ctx._currentFeatureName = name;
-    feature.onCharacterRender(ctx);
+    }
   }
 
-  const thresholdBonus = thresholdBonusEntries.reduce((a, e) => a + e.value, 0);
+  let weapons = [...(charData.weapons || []).map(w => ({ ...w })), ...virtualWeapons];
+  for (const feature of features) {
+    if (typeof feature.weaponsFilter === 'function') {
+      weapons = feature.weaponsFilter(weapons);
+    }
+  }
+  for (const w of weapons) {
+    w.effectiveRange = w.effectiveRange || w.range || '';
+  }
 
-  const thresholdBonusSources = [...new Set(thresholdBonusEntries.map(e => e.source).filter(Boolean))];
-  return { statMods, virtualWeapons, weapons: weaponsCopy, thresholdBonus, thresholdBonusSources };
+  const thresholdBonus = 0; // legacy; use thresholdMajorBonus / thresholdSevereBonus
+  return {
+    statMods,
+    virtualWeapons,
+    weapons,
+    thresholdBonus,
+    thresholdMajorBonus,
+    thresholdSevereBonus,
+    thresholdBonusSources: [...new Set(thresholdBonusSources)],
+  };
 }
 
 /**
@@ -304,6 +374,90 @@ function resolveFeatures(items, sourceType, sourceName) {
     sourceType,
     source: sourceName || sourceType,
   }));
+}
+
+/**
+ * Build the flat activeFeatures array: merge SRD data with registry hooks and attach type/source.
+ * Each entry: { ...srdData, ...registryHooks, type, source }.
+ * type: 'ancestry' | 'community' | 'class' | 'subclass' | 'weapon' | 'armor'
+ * source: reference to the contributing item (ancestry/community/class/subclass/armor object, or weapon object with id).
+ *
+ * @param {object} result - fully recomputed character result (weapons have stable ids; ancestry/community may have sourceItem)
+ * @param {object|null} srdClass - resolved class SRD item
+ * @param {object|null} srdSubclass - resolved subclass SRD item
+ * @param {object|null} srdArmor - resolved armor SRD item
+ * @returns {object[]} activeFeatures
+ */
+function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
+  const active = [];
+
+  for (const f of result.ancestryFeatures || []) {
+    const hooks = originFeatures[f.name] || {};
+    active.push({
+      ...f,
+      ...hooks,
+      type: 'ancestry',
+      source: f.sourceItem ?? f.source,
+    });
+  }
+
+  for (const f of result.communityFeatures || []) {
+    const hooks = originFeatures[f.name] || {};
+    active.push({
+      ...f,
+      ...hooks,
+      type: 'community',
+      source: f.sourceItem ?? f.source,
+    });
+  }
+
+  for (const f of result.classFeatures || []) {
+    const hooks = classFeatures[f.name] || {};
+    active.push({
+      ...f,
+      ...hooks,
+      type: 'class',
+      source: srdClass ?? result.class,
+    });
+  }
+
+  for (const f of result.subclassFeatures || []) {
+    const hooks = classFeatures[f.name] || {};
+    active.push({
+      ...f,
+      ...hooks,
+      type: 'subclass',
+      source: srdSubclass ?? result.subclass,
+    });
+  }
+
+  const allWeapons = [...(result.weapons || []), ...(result._virtualWeapons || [])];
+  for (const weapon of allWeapons) {
+    const feat = weapon.feature;
+    if (!feat?.name) continue;
+    const hooks = weaponFeatures[feat.name] || {};
+    active.push({
+      name: feat.name,
+      description: feat.description ?? '',
+      ...hooks,
+      type: 'weapon',
+      source: weapon,
+    });
+  }
+
+  if (srdArmor?.features?.length) {
+    const feat = srdArmor.features[0];
+    const hooks = armorFeatures[feat.name] || {};
+    active.push({
+      name: feat.name,
+      description: feat.description ?? feat.text ?? '',
+      ...hooks,
+      type: 'armor',
+      source: srdArmor,
+    });
+  }
+
+  return active;
 }
 
 /**
@@ -369,7 +523,7 @@ export function recomputeCharacter(data, srdData) {
     result.subclass = data.subclass || null;
   }
 
-  // Resolve ancestries — prefer the builder registry over SRD data when available
+  // Resolve ancestries — always from SRD; originFeatures supplies hooks at runtime
   const ancestryIds = data.ancestryIds || [];
   const ancestryNames = [];
   const ancestryFeatures = [];
@@ -377,41 +531,28 @@ export function recomputeCharacter(data, srdData) {
     const srdAnc = srdData.ancestriesById?.[aId];
     if (!srdAnc) continue;
     ancestryNames.push(srdAnc.name);
-    const builder = ancestryMap[srdAnc.name];
-    if (builder) {
-      // Fully-implemented ancestry: use embedded descriptions, skip SRD JSON
-      ancestryFeatures.push(...builder.features.map(f => ({
-        id: `${aId}-feat-${f.name.toLowerCase().replace(/\s+/g, '-')}`,
-        name: f.name,
-        description: f.description,
-        type: 'ancestry',
-        sourceType: 'ancestry',
-        source: srdAnc.name,
-      })));
-    } else {
-      ancestryFeatures.push(...resolveFeatures(srdAnc.features, 'ancestry', srdAnc.name));
-    }
+    const resolved = resolveFeatures(srdAnc.features, 'ancestry', srdAnc.name);
+    ancestryFeatures.push(...resolved.map(f => ({
+      ...f,
+      id: `${aId}-feat-${(f.name || '').toLowerCase().replace(/\s+/g, '-')}`,
+      type: 'ancestry',
+      sourceItem: srdAnc,
+    })));
   }
   if (ancestryNames.length) result.ancestry = ancestryNames;
   if (ancestryFeatures.length) result.ancestryFeatures = ancestryFeatures;
 
-  // Resolve community — prefer the builder registry over SRD data when available
+  // Resolve community — always from SRD
   const srdCommunity = srdData.communitiesById?.[data.communityId] || null;
   if (srdCommunity) {
     result.community = srdCommunity.name;
-    const builder = communityMap[srdCommunity.name];
-    if (builder) {
-      result.communityFeatures = builder.features.map(f => ({
-        id: `${data.communityId}-feat-${f.name.toLowerCase().replace(/\s+/g, '-')}`,
-        name: f.name,
-        description: f.description,
-        type: 'community',
-        sourceType: 'community',
-        source: srdCommunity.name,
-      }));
-    } else {
-      result.communityFeatures = resolveFeatures(srdCommunity.features, 'community', srdCommunity.name);
-    }
+    const resolved = resolveFeatures(srdCommunity.features, 'community', srdCommunity.name);
+    result.communityFeatures = resolved.map(f => ({
+      ...f,
+      id: `${data.communityId}-feat-${(f.name || '').toLowerCase().replace(/\s+/g, '-')}`,
+      type: 'community',
+      sourceItem: srdCommunity,
+    }));
   } else {
     result.community = data.community || null;
   }
@@ -443,25 +584,25 @@ export function recomputeCharacter(data, srdData) {
   }
   if (armorMods.evasion !== 0) result.evasion = (result.evasion ?? 0) + armorMods.evasion;
 
-  // Resolve weapons — always reassign so clearing a weapon ID removes it from the display
+  // Resolve weapons — always reassign so clearing a weapon ID removes it from the display; assign stable IDs (wep_0, wep_1)
   const weapons = [];
   const primaryWeapon = srdData.weaponsById?.[data.primaryWeaponId];
   const secondaryWeapon = srdData.weaponsById?.[data.secondaryWeaponId];
-  if (primaryWeapon) weapons.push(resolveWeapon(primaryWeapon));
-  if (secondaryWeapon) weapons.push(resolveWeapon(secondaryWeapon));
+  if (primaryWeapon) weapons.push({ ...resolveWeapon(primaryWeapon), id: 'wep_0' });
+  if (secondaryWeapon) weapons.push({ ...resolveWeapon(secondaryWeapon), id: 'wep_1' });
   // Set effectiveRange fallback before ancestry render
   for (const w of weapons) {
     w.effectiveRange = w.effectiveRange || w.range || '';
   }
   result.weapons = weapons;
 
-  // Run ancestry feature onCharacterRender hooks (Reach, Endurance, Retracting Claws, Kick, etc.)
-  const ancestryRender = runAncestryRender(result);
-  result.weapons = ancestryRender.weapons;
-  result._virtualWeapons = ancestryRender.virtualWeapons;
-  // Apply ancestry stat mods and threshold bonus
+  // Run onCharacterRender and passiveStatMods over ancestry + community + class + subclass (unified loop)
+  const renderFeatures = buildActiveFeaturesForRender(result, srdClass, srdSubclass);
+  const characterRenderResult = runCharacterRender(result, renderFeatures, result.weapons.length);
+  result.weapons = characterRenderResult.weapons;
+  result._virtualWeapons = characterRenderResult.virtualWeapons;
   const ancestryMods = { traits: {}, maxHp: 0, maxStress: 0, evasion: 0 };
-  for (const mod of ancestryRender.statMods) {
+  for (const mod of characterRenderResult.statMods) {
     if (TRAIT_KEYS.includes(mod.stat)) {
       ancestryMods.traits[mod.stat] = (ancestryMods.traits[mod.stat] || 0) + mod.value;
       if (result.traits && mod.stat in result.traits) result.traits[mod.stat] += mod.value;
@@ -476,11 +617,20 @@ export function recomputeCharacter(data, srdData) {
       result.evasion = (result.evasion ?? 0) + mod.value;
     }
   }
-  if (ancestryRender.thresholdBonus > 0) {
-    result.ancestryThresholdBonus = ancestryRender.thresholdBonus;
-    if (ancestryRender.thresholdBonusSources?.length) result.ancestryThresholdBonusSource = ancestryRender.thresholdBonusSources.join(', ');
+  if (characterRenderResult.thresholdBonus > 0) {
+    result.ancestryThresholdBonus = characterRenderResult.thresholdBonus;
+    if (characterRenderResult.thresholdBonusSources?.length) result.ancestryThresholdBonusSource = characterRenderResult.thresholdBonusSources.join(', ');
   }
-  result.ancestryMods = { ...ancestryMods, statMods: ancestryRender.statMods };
+  if (characterRenderResult.thresholdMajorBonus != null && characterRenderResult.thresholdMajorBonus > 0) {
+    result.ancestryThresholdMajorBonus = characterRenderResult.thresholdMajorBonus;
+  }
+  if (characterRenderResult.thresholdSevereBonus != null && characterRenderResult.thresholdSevereBonus > 0) {
+    result.ancestryThresholdSevereBonus = characterRenderResult.thresholdSevereBonus;
+  }
+  if (characterRenderResult.thresholdBonusSources?.length) {
+    result.ancestryThresholdBonusSource = characterRenderResult.thresholdBonusSources.join(', ');
+  }
+  result.ancestryMods = { ...ancestryMods, statMods: characterRenderResult.statMods };
   // Refresh effectiveRange for weapons mutated by ancestry features
   for (const w of result.weapons) {
     w.effectiveRange = w.effectiveRange || w.range || '';
@@ -512,8 +662,10 @@ export function recomputeCharacter(data, srdData) {
 
   // Ancestry experience bonus (e.g. Clank Purposeful Design): apply to chosen experience for display.
   // Use base 2 for the chosen experience so we never double-add (saved data may already have score 3).
-  const ancestryName = result.ancestry?.[0];
-  const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+  const expBonusFeat = result.ancestryFeatures?.find(f => typeof originFeatures[f.name]?.experienceBonus === 'number');
+  const expBonus = expBonusFeat
+    ? { amount: originFeatures[expBonusFeat.name].experienceBonus, featureName: expBonusFeat.name }
+    : null;
   if (expBonus) {
     const choice = data.experienceBonusChoices?.[expBonus.featureName];
     const baseScore = 2;
@@ -522,6 +674,8 @@ export function recomputeCharacter(data, srdData) {
       score: exp.id === choice ? baseScore + expBonus.amount : (exp.score ?? baseScore),
     }));
   }
+
+  result.activeFeatures = buildActiveFeatures(result, srdClass, srdSubclass, srdArmor);
 
   return result;
 }
@@ -735,18 +889,18 @@ export function isCharacterComplete(data, opts) {
 
   if (abilityCount < 2) missing.push('Domain Cards (need 2)');
   // Ancestry experience bonus (e.g. Clank Purposeful Design): require chosen experience
-  let ancestryName = opts?.ancestryName ?? (Array.isArray(data.ancestry) && data.ancestry.length > 0 ? data.ancestry[0] : null);
-  if (!ancestryName && opts?.srdData?.ancestriesById && data.ancestryIds?.[0]) {
-    ancestryName = opts.srdData.ancestriesById[data.ancestryIds[0]]?.name ?? null;
-  }
-  if (ancestryName) {
-    const expBonus = ancestryMap[ancestryName]?.experienceBonus;
-    if (expBonus) {
-      const choice = data.experienceBonusChoices?.[expBonus.featureName];
-      const experienceIds = (data.experiences || []).map(e => e.id).filter(Boolean);
-      if (choice == null || choice === '' || !experienceIds.includes(choice)) {
-        missing.push(`${expBonus.featureName}: choose an experience for +${expBonus.amount}`);
-      }
+  const ancestryId = data.ancestryIds?.[0];
+  const srdAnc = opts?.srdData?.ancestriesById?.[ancestryId];
+  const ancestryFeatureNames = srdAnc?.features?.map(f => f.name) ?? [];
+  const expBonusFeatName = ancestryFeatureNames.find(n => typeof originFeatures[n]?.experienceBonus === 'number');
+  const expBonus = expBonusFeatName
+    ? { amount: originFeatures[expBonusFeatName].experienceBonus, featureName: expBonusFeatName }
+    : null;
+  if (expBonus) {
+    const choice = data.experienceBonusChoices?.[expBonus.featureName];
+    const experienceIds = (data.experiences || []).map(e => e.id).filter(Boolean);
+    if (choice == null || choice === '' || !experienceIds.includes(choice)) {
+      missing.push(`${expBonus.featureName}: choose an experience for +${expBonus.amount}`);
     }
   }
   // Beastbound requires companion name, species, attack name, and two experiences

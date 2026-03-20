@@ -1,38 +1,36 @@
 /**
- * Dwarf ancestry builder.
+ * Dwarf ancestry — feature hooks keyed by feature name.
  *
- * Features:
- *   Thick Skin         — When taking Minor damage, mark 2 Stress instead of 1 HP (target chip).
- *   Increased Fortitude — Spend 3 Hope to halve incoming physical damage (target chip).
+ * SRD (ancestry): Dwarves are most easily recognized as short humanoids with square frames, dense musculature, and
+ * thick hair. Their skin and nails contain a high amount of keratin, making them naturally resilient. Typically,
+ * dwarves live up to 250 years of age.
+ *
+ * SRD (Thick Skin): When you take Minor damage, you can **mark 2 Stress** instead of marking a Hit Point.
+ *
+ * SRD (Increased Fortitude): **Spend 3 Hope** to halve incoming physical damage.
  */
 export default {
-  name: 'Dwarf',
-  description: 'Dwarves are most easily recognized as short humanoids with square frames, dense musculature, and thick hair. Their average height ranges from 4 to 5 ½ feet, and they are often broad in proportion to their stature. Their skin and nails contain a high amount of keratin, making them naturally resilient. This allows dwarves to embed gemstones into their bodies and decorate themselves with tattoos or piercings. Their hair grows thickly—usually on their heads, but some dwarves have thick hair across their bodies as well. Dwarves of all genders can grow facial hair, which they often style in elaborate arrangements. Typically, dwarves live up to 250 years of age, maintaining their muscle mass well into later life.',
-
-  features: [
-    {
-      name: 'Thick Skin',
-      description: 'When you take Minor damage, you can **mark 2 Stress** instead of marking a Hit Point.',
-      onBanner(banner) {
-        banner.addChip({
-          label: 'Mark 2 Stress instead of 1 HP for Minor damage',
-          stressCost: 2,
-          isVisible: (roll) => roll.target.isMe && roll.hpLoss === 1,
-          onChipAck: (roll) => roll.reduceHPLoss(1),
-        });
+  'Thick Skin': {
+    chips: [
+      {
+        placement: 'banner',
+        label: 'Mark 2 Stress instead of 1 HP for Minor damage',
+        stressCost: 2,
+        isVisible: (ctx) => ctx.roll.target.isMe && ctx.roll.hpLoss === 1,
+        onChipAck: ({ roll }) => roll.reduceHPLoss(1),
       },
-    },
-    {
-      name: 'Increased Fortitude',
-      description: '**Spend 3 Hope** to halve incoming physical damage.',
-      onBanner(banner) {
-        banner.addChip({
-          label: 'Spend 3 Hope to halve damage',
-          hopeCost: 3,
-          isVisible: (roll) => roll.target.isMe && roll.dmgType === 'phy',
-          onChipAck: (roll) => roll.setDamageTotal(roll.damageTotal / 2),
-        });
+    ],
+  },
+  'Increased Fortitude': {
+    chips: [
+      {
+        placement: 'banner',
+        label: 'Spend 3 Hope to halve damage',
+        hopeCost: 3,
+        isVisible: (ctx) => ctx.roll.target.isMe && ctx.roll.dmgType === 'phy',
+        onChipAck: ({ roll }) => roll.setDamageTotal(roll.damageTotal / 2),
+        damageModifierWhenActive: { hopeCost: 3, dmgType: 'phy', apply: (total) => Math.ceil(total / 2) },
       },
-    },
-  ],
+    ],
+  },
 };

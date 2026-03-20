@@ -1,3 +1,6 @@
+/**
+ * SRD: When you make an attack with your primary weapon, you can deal damage to another target within Melee range.
+ */
 export default {
   name: 'Doubled Up',
   description: 'When you attack with your primary weapon, you can deal damage to another target within Melee range.',
@@ -5,9 +8,6 @@ export default {
   automated: false,
   interactive: true,
   tagText: null,
-  bannerStatus(tag) {
-    return { text: tag.text, style: 'info' };
-  },
   bannerInteraction: {
     type: 'target-picker',
     phase: 'post-apply',

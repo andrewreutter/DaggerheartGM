@@ -1,18 +1,15 @@
 /**
- * Loreborne community builder.
+ * Loreborne community — feature hooks keyed by feature name.
  *
- * Features:
- *   Well-Read — Advantage on rolls involving history, culture, or politics of person or place.
+ * SRD (community): Being part of a loreborne community means you're from a society that favors strong academic or
+ * political prowess. Loreborne communities highly value knowledge, frequently in the form of historical preservation,
+ * political advancement, scientific study, or lore and mythology compilation.
+ *
+ * SRD (Well-Read): You have advantage on rolls that involve the history, culture, or politics of a prominent person
+ * or place.
  */
 export default {
-  name: 'Loreborne',
-  description: "Being part of a loreborne community means you're from a society that favors strong academic or political prowess. Loreborne communities highly value knowledge, frequently in the form of historical preservation, political advancement, scientific study, skill development, or lore and mythology compilation. Most members of these communities research in institutions built in bastions of civilization, while some eclectic few thrive in gathering information from the natural world. Some may be isolationists, operating in smaller enclaves, schools, or guilds and following their own unique ethos. Others still wield their knowledge on a larger scale, making deft political maneuvers across governmental landscapes.",
-
-  features: [
-    {
-      name: 'Well-Read',
-      description: "You have advantage on rolls that involve the history, culture, or politics of a prominent person or place.",
-      onCharacterRender: (ctx) => ctx.addAdvantageTrigger("the history, culture, or politics of a prominent person or place"),
-    },
-  ],
+  'Well-Read': {
+    advantageTriggers: ["the history, culture, or politics of a prominent person or place"],
+  },
 };

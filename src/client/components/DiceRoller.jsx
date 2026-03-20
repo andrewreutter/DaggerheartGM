@@ -427,30 +427,30 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
   );
 }
 
-function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSupportSelectedId, onLifeSupportSelect, makeASceneSelectedId, onMakeASceneSelect, makeASceneAdversaries = [], targets = [] }) {
+function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSupportSelectedId, onLifeSupportSelect, actionAdversarySelectedId, onActionAdversarySelect, actionAdversaryTargets = [], targets = [] }) {
   const visible = useBannerVisible();
   const displayName = roll.rollUser || roll.characterName || '';
   const lifeSupportTargets = roll._lifeSupportTargets;
   const isLifeSupport = lifeSupportTargets != null;
   const selectedLifeSupportInstanceId = lifeSupportSelectedId ?? null;
 
-  // Make a Scene: use the always-current makeASceneAdversaries prop (safe for GM + player).
-  const isMakeAScene = roll._featureName === 'Make a Scene' && roll._action;
-  const makeASceneTargets = isMakeAScene ? makeASceneAdversaries : null;
-  const selectedMakeASceneInstanceId = makeASceneSelectedId ?? null;
-  const selectedMakeASceneName = makeASceneTargets?.find(t => t.instanceId === selectedMakeASceneInstanceId)?.name ?? null;
-  const [makeASceneMenuRect, setMakeASceneMenuRect] = useState(null);
+  // Action banner with adversary target: use the always-current actionAdversaryTargets prop (safe for GM + player).
+  const isActionAdversary = roll._action && roll._targetType === 'adversary';
+  const actionAdversaryTargetsList = isActionAdversary ? actionAdversaryTargets : null;
+  const selectedActionAdversaryInstanceId = actionAdversarySelectedId ?? null;
+  const selectedActionAdversaryName = actionAdversaryTargetsList?.find(t => t.instanceId === selectedActionAdversaryInstanceId)?.name ?? null;
+  const [actionAdversaryMenuRect, setActionAdversaryMenuRect] = useState(null);
 
   const needsLifeSupportSelection = isLifeSupport && (lifeSupportTargets?.length ?? 0) > 0;
-  const needsMakeASceneSelection = isMakeAScene && (makeASceneTargets?.length ?? 0) > 0;
+  const needsActionAdversarySelection = isActionAdversary && (actionAdversaryTargetsList?.length ?? 0) > 0;
   const canAcknowledge =
     (!needsLifeSupportSelection || selectedLifeSupportInstanceId != null) &&
-    (!needsMakeASceneSelection || selectedMakeASceneInstanceId != null);
+    (!needsActionAdversarySelection || selectedActionAdversaryInstanceId != null);
 
   const handleAcknowledge = () => {
     const extra = {};
     if (isLifeSupport && selectedLifeSupportInstanceId) extra.selectedLifeSupportTargetInstanceId = selectedLifeSupportInstanceId;
-    if (isMakeAScene && selectedMakeASceneInstanceId) extra.selectedMakeASceneTargetInstanceId = selectedMakeASceneInstanceId;
+    if (isActionAdversary && selectedActionAdversaryInstanceId) extra.selectedActionAdversaryTargetInstanceId = selectedActionAdversaryInstanceId;
     onAcknowledge?.(Object.keys(extra).length ? extra : undefined);
   };
 
@@ -515,47 +515,47 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
             )}
           </div>
         )}
-        {isMakeAScene && (
+        {isActionAdversary && (
           <div className="mb-2">
             <div className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
               −2 Difficulty on:
             </div>
-            {(makeASceneTargets?.length ?? 0) === 0 ? (
+            {(actionAdversaryTargetsList?.length ?? 0) === 0 ? (
               <div className="text-[10px] text-slate-500 italic">No adversaries on the table</div>
             ) : (
               <>
                 <button
                   type="button"
-                  onClick={(e) => setMakeASceneMenuRect(e.currentTarget.getBoundingClientRect())}
+                  onClick={(e) => setActionAdversaryMenuRect(e.currentTarget.getBoundingClientRect())}
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors cursor-pointer ${
-                    selectedMakeASceneInstanceId
+                    selectedActionAdversaryInstanceId
                       ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
                       : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
                   }`}
                 >
                   <ChevronDown size={10} />
-                  {selectedMakeASceneName ?? 'Choose adversary'}
+                  {selectedActionAdversaryName ?? 'Choose adversary'}
                 </button>
-                {makeASceneMenuRect != null && createPortal(
+                {actionAdversaryMenuRect != null && createPortal(
                   <>
-                    <div className="fixed inset-0 z-[400]" onClick={() => setMakeASceneMenuRect(null)} />
+                    <div className="fixed inset-0 z-[400]" onClick={() => setActionAdversaryMenuRect(null)} />
                     <div
                       className="fixed z-[401] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-1"
                       style={{
-                        top: Math.min(makeASceneMenuRect.bottom + 4, window.innerHeight - 200),
-                        left: Math.min(makeASceneMenuRect.left, window.innerWidth - 200),
+                        top: Math.min(actionAdversaryMenuRect.bottom + 4, window.innerHeight - 200),
+                        left: Math.min(actionAdversaryMenuRect.left, window.innerWidth - 200),
                         minWidth: '160px',
                         maxWidth: '240px',
                       }}
                     >
-                      {makeASceneTargets.map(t => {
+                      {actionAdversaryTargetsList.map(t => {
                         const sum = formatTargetSummary(t, { hideMax: false });
-                        const isSelected = t.instanceId === selectedMakeASceneInstanceId;
+                        const isSelected = t.instanceId === selectedActionAdversaryInstanceId;
                         return (
                           <button
                             key={t.instanceId}
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); onMakeASceneSelect?.(t.instanceId); setMakeASceneMenuRect(null); }}
+                            onClick={(e) => { e.stopPropagation(); onActionAdversarySelect?.(t.instanceId); setActionAdversaryMenuRect(null); }}
                             className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${
                               isSelected
                                 ? 'border-amber-500 bg-amber-800/60 text-amber-100'
@@ -637,7 +637,7 @@ function isTagInteractive(tagName) {
   return weaponFeatures[tagName]?.interactive ?? false;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
@@ -776,7 +776,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Determine if this banner has any interactive actions that require user input before dismissal.
   const tags = roll.tags || [];
   const hasInteractiveTags = tags.some(t => isTagInteractive(t.name));
-  const hasLucky = tags.some(t => t.name === 'Lucky') && dominant === 'fear';
   // Show target row for GM or for the initiating player (attacker) so they can select targets.
   const isInitiator = currentUserUid != null && roll._initiatorUid === currentUserUid;
   const canShowTargetRow = canApplyDamage || (isPlayer && isInitiator);
@@ -1465,15 +1464,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
           return (
             <div className="mt-2.5 pt-2 border-t border-white/10">
-              {/* Lucky reroll button */}
-              {hasLucky && (
-                <button
-                  onClick={() => { onLuckyReroll?.(roll); }}
-                  className="w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors flex items-center justify-center gap-1"
-                >
-                  <RotateCcw size={10} /> Lucky: Reroll? (mark 1 Stress)
-                </button>
-              )}
               {/* Not This Time buttons — one per eligible Wizard */}
               {isAdversaryRoll && onNotThisTime && wizardsWithHope.map(wizard => (
                 <button
@@ -2026,8 +2016,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         const target = filteredTargets.find(t => t.instanceId === id);
                                         if (target) {
                                           const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === id);
-                                          const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
-                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], useIncreasedFortitude, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
+                                          const damageModifiers = targetReactions
+                                            .filter(r => r.isActive(roll) && r.chip?.damageModifierWhenActive)
+                                            .map(r => ({ ...r.chip.damageModifierWhenActive }));
+                                          await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], damageModifiers, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
                                         }
                                       }
                                     }
@@ -2086,8 +2078,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         const dmgType = dmg?.type || '';
                                         const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
                                         const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === effectiveTargetId);
-                                        const useIncreasedFortitude = targetReactions.some(r => r.featureName === 'Increased Fortitude' && r.isActive(roll));
-                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, useIncreasedFortitude, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
+                                        const damageModifiers = targetReactions
+                                          .filter(r => r.isActive(roll) && r.chip?.damageModifierWhenActive)
+                                          .map(r => ({ ...r.chip.damageModifierWhenActive }));
+                                        await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                       }
                                     }
                                     if (concussiveKnockActive && onConcussiveKnock && selectedDamageTargetId) onConcussiveKnock(roll, selectedDamageTargetId);
@@ -2358,7 +2352,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 // Imperative API (via ref): addRoll(roll), updateRoll(optId, realData), dismiss(), dismissBannerId(bannerId), dismissBannerByDbId(dbId), replaceBannerByDbId(oldDbId, newRoll)
 // Props: isPlayer, onBannerAcknowledge, onBannerCancel, lifeSupportSelections, onLifeSupportSelect, onLifeSupportClear,
 //        targets, onApplyDamage, canApplyDamage,
-//        onLuckyReroll, onQuickTarget, onDoubledUpTarget, onBouncingTarget,
+//        onQuickTarget, onDoubledUpTarget, onBouncingTarget,
 //        wizardsWithHope, onNotThisTime
 
 export const DiceRoller = forwardRef(function DiceRoller({
@@ -2369,9 +2363,9 @@ export const DiceRoller = forwardRef(function DiceRoller({
   lifeSupportSelections = {},
   onLifeSupportSelect,
   onLifeSupportClear,
-  makeASceneSelections = {},
-  onMakeASceneSelect,
-  makeASceneAdversaries = [],
+  actionAdversarySelections = {},
+  onActionAdversarySelect,
+  actionAdversaryTargets = [],
   targets,
   getTargetsForRoll,
   getTargetDisadvantageLabels,
@@ -2379,7 +2373,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onApplyVulnerable,
   onConcussiveKnock,
   canApplyDamage = true,
-  onLuckyReroll,
   onQuickTarget,
   onDoubledUpTarget,
   onBouncingTarget,
@@ -2949,9 +2942,9 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 roll={entry.roll}
                 lifeSupportSelectedId={entry.roll._rollDbId != null ? lifeSupportSelections[entry.roll._rollDbId] : undefined}
                 onLifeSupportSelect={onLifeSupportSelect && entry.roll._rollDbId != null ? (instanceId) => onLifeSupportSelect(entry.roll._rollDbId, instanceId) : undefined}
-                makeASceneSelectedId={entry.roll._rollDbId != null ? makeASceneSelections[entry.roll._rollDbId] : undefined}
-                onMakeASceneSelect={onMakeASceneSelect && entry.roll._rollDbId != null ? (instanceId) => onMakeASceneSelect(entry.roll._rollDbId, instanceId) : undefined}
-                makeASceneAdversaries={makeASceneAdversaries}
+                actionAdversarySelectedId={entry.roll._rollDbId != null ? actionAdversarySelections[entry.roll._rollDbId] : undefined}
+                onActionAdversarySelect={onActionAdversarySelect && entry.roll._rollDbId != null ? (instanceId) => onActionAdversarySelect(entry.roll._rollDbId, instanceId) : undefined}
+                actionAdversaryTargets={actionAdversaryTargets}
                 targets={targets}
                 onAcknowledge={!isPlayer ? (extra) => {
                   onBannerAcknowledgeRef.current?.(entry._bannerId, entry.roll, extra);
@@ -2984,7 +2977,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onConcussiveKnock={onConcussiveKnock}
                 disableDismiss={isPlayer}
                 canApplyDamage={canApplyDamage}
-                onLuckyReroll={onLuckyReroll}
                 onQuickTarget={onQuickTarget}
                 onDoubledUpTarget={onDoubledUpTarget}
                 onBouncingTarget={onBouncingTarget}

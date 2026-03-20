@@ -1,3 +1,6 @@
+/**
+ * SRD: Each time you mark an Armor Slot, you must mark a Stress.
+ */
 export default {
   name: 'Painful',
   description: 'When you mark an Armor Slot, you must also mark a Stress.',

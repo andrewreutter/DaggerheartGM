@@ -1,3 +1,5 @@
+const noop = () => {};
+
 /**
  * Entity Wrapper — wraps a raw active element + updateActiveElement callback
  * into an object with game-semantic mutator methods.
@@ -10,8 +12,12 @@
  * Mutable tracked fields (currentStress, currentHp, hope, currentArmor) are
  * exposed as snapshot getters — chained method calls within one hook see the
  * accumulated changes even though React batches the actual state updates.
+ *
+ * Optional third argument options may include:
+ * - postTraitRoll(traitKey, options?) — post a trait roll (Hope/Fear + trait); no-op when omitted.
+ * - postAction(customLabel?) — post an action banner; no-op when omitted.
  */
-export function wrapEntity(el, updateActiveElement) {
+export function wrapEntity(el, updateActiveElement, options = {}) {
   if (!el) return null;
 
   // Mutate local snapshot fields so chained method calls within one hook
@@ -163,6 +169,12 @@ export function wrapEntity(el, updateActiveElement) {
       const key = source ?? 'Unknown';
       updateActiveElement(el.instanceId, { moveDisabledSources: list.filter(s => s !== key) });
     },
+
+    /** Post a trait roll (Hope/Fear + trait). No-op when wrapper created without implementation. */
+    postTraitRoll: typeof options.postTraitRoll === 'function' ? options.postTraitRoll : noop,
+
+    /** Post an action banner. No-op when wrapper created without implementation. */
+    postAction: typeof options.postAction === 'function' ? options.postAction : noop,
   };
 
   return entity;

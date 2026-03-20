@@ -1,3 +1,6 @@
+/**
+ * SRD: Mark a Stress to gain a +1 bonus to your Proficiency on a primary weapon attack.
+ */
 export default {
   name: 'Charged',
   description: 'Before an attack, mark a Stress to add an extra damage die. The Stress is marked when the roll is acknowledged.',

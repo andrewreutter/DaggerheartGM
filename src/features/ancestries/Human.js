@@ -1,31 +1,27 @@
 /**
- * Human ancestry builder.
+ * Human ancestry — feature hooks keyed by feature name.
  *
- * Features:
- *   High Stamina — +1 Stress slot (addStatMod maxStress).
- *   Adaptability — On failed roll that used an experience, mark 1 Stress to full reroll (onBanner chip).
+ * SRD (ancestry): Humans are most easily recognized by their dexterous hands, rounded ears, and bodies built for
+ * endurance. Their average height ranges from just under 5 feet to about 6 ½ feet. In general, humans live to an age
+ * of about 100.
+ *
+ * SRD (High Stamina): Gain an additional Stress slot at character creation.
+ *
+ * SRD (Adaptability): When you fail a roll that utilized one of your Experiences, you can **mark a Stress** to reroll.
  */
 export default {
-  name: 'Human',
-  description: 'Humans are a diverse and adaptable people with a wide range of appearances, cultures, and lifespans. They are known for their resilience and capacity to persevere through hardship.',
-
-  features: [
-    {
-      name: 'High Stamina',
-      description: 'Gain an additional Stress slot.',
-      onCharacterRender: (ctx) => ctx.addStatMod('maxStress', 1),
-    },
-    {
-      name: 'Adaptability',
-      description: 'When you fail a roll that used an experience, you can **mark a Stress** to reroll the entire roll.',
-      onBanner(banner) {
-        banner.addChip({
-          label: 'Mark 1 Stress to reroll the entire roll (Adaptability)',
-          stressCost: 1,
-          isVisible: (roll) => roll.isMine && roll.hasExperience && roll.isFailure,
-          onChipAck: (roll) => roll.fullReroll(),
-        });
+  'High Stamina': {
+    passiveStatMods: { maxStress: 1 },
+  },
+  Adaptability: {
+    chips: [
+      {
+        placement: 'banner',
+        label: 'Mark 1 Stress to reroll the entire roll (Adaptability)',
+        stressCost: 1,
+        isVisible: (ctx) => ctx.roll.isMine && ctx.roll.hasExperience && ctx.roll.isFailure,
+        onChipAck: ({ roll }) => roll.fullReroll(),
       },
-    },
-  ],
+    ],
+  },
 };

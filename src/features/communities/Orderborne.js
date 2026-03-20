@@ -1,28 +1,24 @@
 /**
- * Orderborne community builder.
+ * Orderborne community — feature hooks keyed by feature name.
  *
- * Features:
- *   Dedicated — Record three sayings/values; once per rest, when embodying one, roll d20 as Hope Die (onAct chip).
+ * SRD (community): Being part of an orderborne community means you're from a collective that focuses on discipline or
+ * faith, and you uphold a set of principles that reflect your experience there. By aligning around a common value or
+ * goal, orderborne can mobilize larger populations with less effort.
+ *
+ * SRD (Dedicated): Record three sayings or values your upbringing instilled in you. Once per rest, when you describe
+ * how you're embodying one of these principles through your current action, you can roll a **d20** as your Hope Die.
  */
 export default {
-  name: 'Orderborne',
-  description: "Being part of an orderborne community means you're from a collective that focuses on discipline or faith, and you uphold a set of principles that reflect your experience there. Orderborne are frequently some of the most powerful among the surrounding communities. By aligning the members of their society around a common value or goal, such as a god, doctrine, ethos, or even a shared business or trade, the ruling bodies of these enclaves can mobilize larger populations with less effort. While orderborne communities take a variety of forms—some even profoundly pacifistic—perhaps the most feared are those that structure themselves around military prowess. In such a case, it's not uncommon for orderborne to provide soldiers for hire to other cities or countries.",
-
-  features: [
-    {
-      name: 'Dedicated',
-      description: 'Record three sayings or values your upbringing instilled in you. Once per rest, when you describe how you\'re embodying one of these principles through your current action, you can roll a **d20** as your Hope Die.',
-      resetsOn: 'rest',
-      onAct(ctx) {
-        const { canvas } = ctx;
-        canvas.addChip({
-          label: 'Apply one of your three values to roll a d20 as your Hope Die',
-          resetsOn: 'rest',
-          onUse(r) {
-            r.rollText = r.rollText.replace(/Hope \[d12\]/, 'Hope [d20] (Dedicated)');
-          },
-        });
+  Dedicated: {
+    chips: [
+      {
+        placement: 'preroll',
+        label: 'Apply one of your three values to roll a d20 as your Hope Die',
+        resetsOn: 'rest',
+        onUse({roll}) {
+          roll.setFromText(roll.rollText.replace(/Hope \[d12\]/, 'Hope [d20] (Dedicated)'));
+        },
       },
-    },
-  ],
+    ],
+  },
 };

@@ -1,3 +1,6 @@
+/**
+ * SRD: When you are targeted for an attack, you can mark an Armor Slot to give the attack roll against you disadvantage.
+ */
 const SHIFTING_SOURCE = 'Shifting';
 
 export default {

@@ -152,12 +152,12 @@ function TokenDotRing({ size, groups }) {
 
 // ─── MapConfigToolbar ────────────────────────────────────────────────────────
 
-function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', onTableNameChange, onDeleteTable }) {
+function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable }) {
   const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
   const fileInputRef = useRef(null);
   const isNewTable = tableName === '' || tableName === 'New Table';
-  const [isEditingName, setIsEditingName] = useState(isNewTable);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(tableName || 'New Table');
   const nameInputRef = useRef(null);
 
@@ -165,7 +165,12 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
   useEffect(() => { setSizeInput(String(mapSizeFt)); }, [mapSizeFt]);
   useEffect(() => { setNameInput(tableName || 'New Table'); }, [tableName]);
 
-  // On new table, open editor and focus on first display
+  // Only open name editor when table state has loaded and name is empty or default
+  useEffect(() => {
+    if (tableStateReady) setIsEditingName(isNewTable);
+  }, [tableStateReady, isNewTable]);
+
+  // On new table, focus name input when editor is open
   useEffect(() => {
     if (!isNewTable || !isEditingName) return;
     const el = nameInputRef.current;
@@ -591,7 +596,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onDeleteTable, onClearDice, diceCanvasHidden = false, onToggleDiceVisibility, className = '' }) {
+export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, onClearDice, diceCanvasHidden = false, onToggleDiceVisibility, className = '' }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -990,6 +995,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
           isUploading={isUploading}
           onFileSelect={handleImageFile}
           tableName={tableName}
+          tableStateReady={tableStateReady}
           onTableNameChange={onTableNameChange}
           onDeleteTable={onDeleteTable}
         />

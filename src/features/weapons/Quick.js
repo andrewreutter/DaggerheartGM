@@ -1,3 +1,6 @@
+/**
+ * SRD: When you make an attack, you can mark a Stress to target another creature within range.
+ */
 export default {
   name: 'Quick',
   description: 'When you make an attack, you can mark a Stress to target another creature within range.',
@@ -5,9 +8,6 @@ export default {
   automated: false,
   interactive: true,
   tagText: 'Mark Stress to target another creature in range',
-  bannerStatus() {
-    return { text: 'Mark Stress to target another creature', style: 'info' };
-  },
   bannerInteraction: {
     type: 'target-picker',
     phase: 'post-apply',

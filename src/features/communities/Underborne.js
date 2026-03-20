@@ -1,18 +1,16 @@
 /**
- * Underborne community builder.
+ * Underborne community — feature hooks keyed by feature name.
  *
- * Features:
- *   Low-Light Living — In low light, advantage on hide, investigate, perceive.
+ * SRD (community): Being part of an underborne community means you're from a subterranean society. Many underborne live
+ * right beneath the cities and villages of other collectives. Underborne are recognized for their incredible boldness
+ * and skill that enable great feats of architecture and engineering. Because of the dangers of their environment, many
+ * develop unique nonverbal languages.
+ *
+ * SRD (Low-Light Living): When you're in an area with low light or heavy shadow, you have advantage on rolls to hide,
+ * investigate, or perceive details within that area.
  */
 export default {
-  name: 'Underborne',
-  description: "Being part of an underborne community means you're from a subterranean society. Many underborne live right beneath the cities and villages of other collectives, while some live much deeper. These communities range from small family groups in burrows to massive metropolises in caverns of stone. In many locales, underborne are recognized for their incredible boldness and skill that enable great feats of architecture and engineering. Underborne are regularly hired for their bravery, as even the least daring among them has likely encountered formidable belowground beasts, and learning to dispatch such creatures is common practice amongst these societies. Because of the dangers of their environment, many underborne communities develop unique nonverbal languages that prove equally useful on the surface.",
-
-  features: [
-    {
-      name: 'Low-Light Living',
-      description: "When you're in an area with low light or heavy shadow, you have advantage on rolls to hide, investigate, or perceive details within that area.",
-      onCharacterRender: (ctx) => ctx.addAdvantageTrigger('hide, investigate, or perceive details within that area'),
-    },
-  ],
+  'Low-Light Living': {
+    advantageTriggers: ['hide, investigate, or perceive details within low light or heavy shadow'],
+  },
 };

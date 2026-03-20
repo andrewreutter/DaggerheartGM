@@ -6,21 +6,23 @@
 import { describe, it, expect } from 'vitest';
 import Bard from '../../src/features/classes/Bard.js';
 
+const Rally = Bard.Rally;
+
 describe('Bard Rally Die producesModifier', () => {
   it('has mode clearStress', () => {
-    expect(Bard.hopeAbility.producesModifier.mode).toBe('clearStress');
+    expect(Rally.hopeAbility.producesModifier.mode).toBe('clearStress');
   });
 
   it('has consumeOnUse: true', () => {
-    expect(Bard.hopeAbility.producesModifier.consumeOnUse).toBe(true);
+    expect(Rally.hopeAbility.producesModifier.consumeOnUse).toBe(true);
   });
 
   it('has dice property', () => {
-    expect(Bard.hopeAbility.producesModifier.dice).toBeTruthy();
+    expect(Rally.hopeAbility.producesModifier.dice).toBeTruthy();
   });
 
   it('has refreshOn: use', () => {
-    expect(Bard.hopeAbility.producesModifier.refreshOn).toBe('use');
+    expect(Rally.hopeAbility.producesModifier.refreshOn).toBe('use');
   });
 });
 

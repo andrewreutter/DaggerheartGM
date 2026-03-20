@@ -1,8 +1,8 @@
+/**
+ * SRD: +2 to Armor Score; -1 to Evasion.
+ */
 export default {
   name: 'Barrier',
   description: 'Bonus to Armor Score; -1 to Evasion.',
-  onCharacterRender(ctx) {
-    ctx.addStatMod('armorScore', 1);
-    ctx.addStatMod('evasion', -1);
-  },
+  passiveStatMods: { armorScore: 1, evasion: -1 },
 };

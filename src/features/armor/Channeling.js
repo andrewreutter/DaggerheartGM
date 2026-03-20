@@ -1,5 +1,8 @@
+/**
+ * SRD: +1 to Spellcast Rolls.
+ */
 export default {
   name: 'Channeling',
   description: '+1 to Spellcast rolls.',
-  onCharacterRender: (ctx) => ctx.addRollModifier({ trait: 'spellcast', bonus: 1, label: 'Channeling' }),
+  passiveStatMods: { rollModifiers: [{ trait: 'spellcast', bonus: 1, label: 'Channeling' }] },
 };

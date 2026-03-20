@@ -108,10 +108,11 @@ export const effectiveThresholds = (el) => {
   const level = el.level ?? 0;
   const reinforced = el.reinforcedActive ? 2 : 0;
   const elementalBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
-  const ancestryBonus = el.ancestryThresholdBonus ?? 0;
+  const ancestryMajor = el.ancestryThresholdMajorBonus ?? el.ancestryThresholdBonus ?? 0;
+  const ancestrySevere = el.ancestryThresholdSevereBonus ?? el.ancestryThresholdBonus ?? 0;
   return {
-    major: el.armorThresholds.major + level + reinforced + elementalBonus + ancestryBonus,
-    severe: el.armorThresholds.severe + level + reinforced + elementalBonus + ancestryBonus,
+    major: el.armorThresholds.major + level + reinforced + elementalBonus + ancestryMajor,
+    severe: el.armorThresholds.severe + level + reinforced + elementalBonus + ancestrySevere,
   };
 };
 

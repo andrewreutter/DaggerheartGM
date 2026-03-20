@@ -1,3 +1,6 @@
+/**
+ * SRD: Mark 1 or more Stress to hit that many targets in range of the attack.
+ */
 export default {
   name: 'Bouncing',
   description: 'Mark 1 or more Stress to hit that many targets in range.',

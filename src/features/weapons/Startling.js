@@ -1,3 +1,6 @@
+/**
+ * SRD: Mark a Stress to crack the whip and force all adversaries within Melee range back to Close range.
+ */
 export default {
   name: 'Startling',
   description: 'As an action, you can startle a creature within range (action card; costs 1 Stress).',

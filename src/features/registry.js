@@ -11,5 +11,5 @@ const originFeatures = { ...ancestryFeatureMap, ...communityFeatureMap };
 
 export { default as weaponFeatures } from './weapons/index.js';
 export { default as armorFeatures } from './armor/index.js';
-export { default as classFeatures } from './classes/index.js';
+export { default as classFeatures, classFeatureNameToClass } from './classes/index.js';
 export { originFeatures, originFeatures as ancestryFeatures, ancestryMap, communityMap, virtualWeaponBehaviors };

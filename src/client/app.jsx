@@ -58,7 +58,8 @@ function App() {
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
   const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
-  // tableStateReadyRef is set once initial state is loaded from the server (via REST or SSE).
+  // tableStateReady: true after we've applied table state for the current table (avoids opening name editor before load)
+  const [tableStateReady, setTableStateReady] = useState(false);
   const tableStateReadyRef = useRef(false);
   const scenesLoadedRef = useRef(false);
   const adventuresLoadedRef = useRef(false);
@@ -77,8 +78,8 @@ function App() {
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
-  // Player-only: banner IDs for which Feline Instincts reroll was requested (optimistic feedback)
-  const [felineRequestedBannerIds, setFelineRequestedBannerIds] = useState(() => new Set());
+  // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
+  const [featureRequestedBannerIdsByKey, setFeatureRequestedBannerIdsByKey] = useState(() => ({}));
   // Player-only: banner IDs for which Ranger's Focus reroll was requested
   const [rangerFocusRequestedBannerIds, setRangerFocusRequestedBannerIds] = useState(() => new Set());
   const [actionLog, setActionLog] = useState([]);
@@ -421,6 +422,7 @@ function App() {
       setTableName('');
       setLifeSupportSelections({});
       setRestMovesSelections({});
+      setTableStateReady(false);
     }
     prevTableIdRef.current = route.tableId;
   }, [route.view, route.tableId]);
@@ -441,6 +443,7 @@ function App() {
         setMapConfig(DEFAULT_MAP_CONFIG);
         setLifeSupportSelections({});
         setRestMovesSelections({});
+        setTableStateReady(true);
         tableStateReadyRef.current = true;
         return;
       }
@@ -453,6 +456,7 @@ function App() {
       if (tableState.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
       if (tableState.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
       if (tableState.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
+      setTableStateReady(true);
       tableStateReadyRef.current = true;
     }).catch(err => console.error('Failed to load table state:', err));
   }, [user?.uid, route.view, route.tableId]);
@@ -486,6 +490,7 @@ function App() {
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
+        setTableStateReady(true);
         tableStateReadyRef.current = true;
       });
       es.addEventListener('roll-history', (e) => {
@@ -528,6 +533,7 @@ function App() {
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
+        setTableStateReady(true);
         setMyRooms(prev => {
           const hasRoom = prev.some(r => r.tableId === route.tableId);
           if (hasRoom && state.tableName != null)
@@ -1187,6 +1193,7 @@ function App() {
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
                 tableName={tableName}
+                tableStateReady={tableStateReady}
                 onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
                 onDeleteTable={tableId && !effectiveIsPlayer ? () => {
                   const name = (tableName?.trim() || (tableId === user?.uid ? 'My Game Table' : 'Game Table'));
@@ -1202,8 +1209,23 @@ function App() {
                 gmUid={route.gmUid || user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
-                onFelineRerollRequestSuccess={effectiveIsPlayer ? (bannerId) => setFelineRequestedBannerIds(prev => new Set([...prev, bannerId])) : undefined}
-                onFelineRerollRequestCancel={effectiveIsPlayer ? (bannerId) => setFelineRequestedBannerIds(prev => { const next = new Set(prev); next.delete(bannerId); return next; }) : undefined}
+                onFeatureRequestSuccess={effectiveIsPlayer ? (bannerId, stateKey) => {
+                  if (stateKey == null) return;
+                  setFeatureRequestedBannerIdsByKey(prev => ({
+                    ...prev,
+                    [stateKey]: new Set([...(prev[stateKey] || []), bannerId]),
+                  }));
+                } : undefined}
+                onFeatureRequestCancel={effectiveIsPlayer ? (bannerId, stateKey) => {
+                  if (stateKey == null) return;
+                  setFeatureRequestedBannerIdsByKey(prev => {
+                    const set = prev[stateKey];
+                    if (!set) return prev;
+                    const next = new Set(set);
+                    next.delete(bannerId);
+                    return { ...prev, [stateKey]: next };
+                  });
+                } : undefined}
                 rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
                 onRangerFocusRerollRequestSuccess={effectiveIsPlayer ? (bannerId) => setRangerFocusRequestedBannerIds(prev => new Set([...prev, bannerId])) : undefined}
                 onRangerFocusRerollRequestCancel={effectiveIsPlayer ? (bannerId) => setRangerFocusRequestedBannerIds(prev => { const next = new Set(prev); next.delete(bannerId); return next; }) : undefined}

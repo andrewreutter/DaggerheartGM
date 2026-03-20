@@ -57,10 +57,23 @@ export function rewriteDamageWithBonus(damageStr, bonus) {
 }
 
 /**
- * Rewrite a damage string using a dice-system extension notation.
- * Handles: Powerful/Massive (2dXkh), Brutal (dX!), Self-Correcting (dXm6),
- * Serrated (dXm8).
+ * Parse the leading dice expression from a damage string.
+ * Returns `{ qty, die, modStr, rest }` or `null` if the string doesn't match.
+ * e.g. `parseLeadingDamageDice('d8+2 phy')` → `{ qty: '1', die: 'd8', modStr: '+2', rest: ' phy' }`
+ * e.g. `parseLeadingDamageDice('2d6')` → `{ qty: '2', die: 'd6', modStr: '', rest: '' }`
  */
+export function parseLeadingDamageDice(damageStr) {
+  if (!damageStr) return null;
+  const m = damageStr.trim().match(/^(\d*)(d\d+)([+-]\d+)?(.*)$/i);
+  if (!m) return null;
+  return {
+    qty: m[1] || '1',
+    die: m[2],
+    modStr: m[3] || '',
+    rest: m[4] || '',
+  };
+}
+
 /**
  * Append " disadvantage <featureName> [1d6]" to the end of roll text (same pattern as advantage dice).
  * The server rolls 1d6 and subtracts it from the action total; the banner shows the feature name (e.g. Retract).
@@ -92,27 +105,4 @@ export function stripDisadvantageFromRollText(rollText) {
     s = s.slice(0, -m[0].length).trimEnd();
   }
   return { strippedText: s, removedLabels };
-}
-
-export function rewriteDamageForFeature(damageStr, featureName) {
-  if (!damageStr || !featureName) return damageStr;
-  const m = damageStr.trim().match(/^(\d*)(d\d+)([+-]\d+)?(.*)$/i);
-  if (!m) return damageStr;
-  const qty    = m[1] || '1';
-  const die    = m[2];
-  const modStr = m[3] || '';
-  const rest   = m[4] || '';
-  switch (featureName) {
-    case 'Powerful':
-    case 'Massive':
-      return `2${die}kh${modStr}${rest}`;
-    case 'Brutal':
-      return `${qty}${die}!${modStr}${rest}`;
-    case 'Self-Correcting':
-      return `${qty}${die}m6${modStr}${rest}`;
-    case 'Serrated':
-      return `${qty}${die}m8${modStr}${rest}`;
-    default:
-      return damageStr;
-  }
 }

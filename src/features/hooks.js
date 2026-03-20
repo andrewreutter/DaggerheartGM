@@ -1,18 +1,13 @@
 /**
- * Hook Dispatchers — two dispatch patterns for the feature IoC system.
+ * Hook Dispatchers — dispatch patterns for the feature IoC system.
  *
- * runHook       — fire-and-forget: calls feature[hookName](context) for each
- *                 matching feature. Order-independent side effects.
- *
- * runPipelineHook — pipeline: each feature receives the accumulated value from
- *                   the previous feature and may transform it. Features may
- *                   declare a numeric `priority` (default 50); lower priority
- *                   runs first.
+ * runHook / runCharacterHook — fire-and-forget: call feature[hookName](context).
+ * runPipelineHook / runCharacterPipelineHook — pipeline: each feature transforms a value.
+ * runAsyncPipelineHook / runCharacterAsyncPipelineHook — async pipeline.
  */
 
 /**
  * Call `feature[hookName](context)` for every feature whose name is in tagNames.
- * Silently skips features that don't implement the hook or aren't in the map.
  *
  * @param {Record<string, object>} featureMap  - lookup map: feature name → feature object
  * @param {Set<string>|string[]}   tagNames    - active feature names for this roll/event
@@ -25,16 +20,64 @@ export function runHook(featureMap, tagNames, hookName, context) {
     const feature = featureMap[name];
     if (feature && typeof feature[hookName] === 'function') {
       try {
-        if (context.canvas) {
-          context.canvas._currentFeatureName = name;
-          if (typeof context.getFeatureStateFor === 'function') context.feature = context.getFeatureStateFor(name);
-        }
-        feature[hookName](context);
+        const ctx = { ...context, feature };
+        feature[hookName](ctx);
       } catch (err) {
         console.error(`[features] ${name}.${hookName} threw:`, err);
       }
     }
   }
+}
+
+/**
+ * Call hookName on each feature in the activeFeatures array with a unified context.
+ * Use when you have a flat list of feature descriptors (e.g. from character-calc activeFeatures).
+ * Injects source (the contributing item) and feature (descriptor).
+ *
+ * @param {object[]} activeFeatures - array of feature descriptors with at least .name and optional .source, .priority
+ * @param {string}   hookName       - method name to call on each feature
+ * @param {object}   context        - base context (e.g. { banner, character, characters, system })
+ */
+export function runCharacterHook(activeFeatures, hookName, context) {
+  if (!Array.isArray(activeFeatures)) return;
+  for (const feature of activeFeatures) {
+    if (typeof feature[hookName] !== 'function') continue;
+    const name = feature.name;
+    try {
+      const ctx = { ...context, source: feature.source, feature };
+      feature[hookName](ctx);
+    } catch (err) {
+      console.error(`[features] ${name}.${hookName} threw:`, err);
+    }
+  }
+}
+
+/**
+ * Run a pipeline hook over an activeFeatures array. Each feature receives
+ * (currentValue, context) with context including source: feature.source.
+ *
+ * @param {object[]} activeFeatures - array of feature descriptors with optional .source, .priority
+ * @param {string}   hookName       - method name (e.g. 'modifyPreThresholdDamage')
+ * @param {*}        initialValue   - starting value
+ * @param {object}   context        - base context
+ * @returns {*} the final transformed value
+ */
+export function runCharacterPipelineHook(activeFeatures, hookName, initialValue, context) {
+  if (!Array.isArray(activeFeatures)) return initialValue;
+  const participants = activeFeatures.filter(f => typeof f[hookName] === 'function');
+  participants.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+
+  let value = initialValue;
+  for (const feature of participants) {
+    try {
+      const ctx = { ...context, source: feature.source, feature };
+      const result = feature[hookName](value, ctx);
+      if (result !== undefined) value = result;
+    } catch (err) {
+      console.error(`[features] ${feature.name}.${hookName} threw:`, err);
+    }
+  }
+  return value;
 }
 
 /**
@@ -63,7 +106,35 @@ export async function runAsyncPipelineHook(featureMap, tagNames, hookName, initi
   let value = initialValue;
   for (const feature of participants) {
     try {
-      const result = await feature[hookName](value, context);
+      const ctx = { ...context, feature };
+      const result = await feature[hookName](value, ctx);
+      if (result !== undefined) value = result;
+    } catch (err) {
+      console.error(`[features] ${feature.name}.${hookName} threw:`, err);
+    }
+  }
+  return value;
+}
+
+/**
+ * Async pipeline over activeFeatures array. Each feature receives (value, context) with source.
+ *
+ * @param {object[]} activeFeatures - array of feature descriptors
+ * @param {string}   hookName       - method name
+ * @param {*}        initialValue   - starting value
+ * @param {object}   context        - base context
+ * @returns {Promise<*>} the final transformed value
+ */
+export async function runCharacterAsyncPipelineHook(activeFeatures, hookName, initialValue, context) {
+  if (!Array.isArray(activeFeatures)) return initialValue;
+  const participants = activeFeatures.filter(f => typeof f[hookName] === 'function');
+  participants.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+
+  let value = initialValue;
+  for (const feature of participants) {
+    try {
+      const ctx = { ...context, source: feature.source, feature };
+      const result = await feature[hookName](value, ctx);
       if (result !== undefined) value = result;
     } catch (err) {
       console.error(`[features] ${feature.name}.${hookName} threw:`, err);
@@ -101,7 +172,8 @@ export function runPipelineHook(featureMap, tagNames, hookName, initialValue, co
   let value = initialValue;
   for (const feature of participants) {
     try {
-      const result = feature[hookName](value, context);
+      const ctx = { ...context, feature };
+      const result = feature[hookName](value, ctx);
       if (result !== undefined) value = result;
     } catch (err) {
       console.error(`[features] ${feature.name}.${hookName} threw:`, err);

@@ -25,8 +25,9 @@ import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
 import { weaponFeatures, classFeatures, ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
 import { ancestryMap } from '../../features/ancestries/index.js';
-import { runPipelineHook, runHook } from '../../features/hooks.js';
+import { runHook } from '../../features/hooks.js';
 import { wrapEntity } from '../../features/entity.js';
+import { wrapRoll } from '../../features/roll.js';
 import { getEffectiveWeaponRange, recomputeCharacter } from '../lib/character-calc.js';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
@@ -93,7 +94,7 @@ function buildFeatureTagText(feature, traits, level) {
   return feature.text || feature.description || WEAPON_TAG_DESCRIPTIONS[feature.name] || '';
 }
 
-function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName, damageStr, feature, traits, level, opts = {}) {
+function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName, damageStr, feature, traits, level, opts = {}, rollMeta = {}) {
   const experienceModifier = opts.experienceModifier ?? 2;
   const traitName = TRAIT_FULL[traitKey] || traitKey;
   const parts = [`${charName} ${weaponName} Hope [d12] Fear [d12]`];
@@ -110,7 +111,8 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
   // Pre-damage additions (e.g. Reliable [1])
   for (const name of featureSet) {
     const f = weaponFeatures[name];
-    if (f?.prependRollParts) parts.push(...(f.prependRollParts(rollCtx) || []));
+    const pre = f?.prependRollParts;
+    if (Array.isArray(pre) && pre.length) parts.push(...pre);
   }
 
   // Damage string — rewrite via pipeline hook, except when devastating toggle overrides
@@ -120,7 +122,14 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
       const dm = damageStr.trim().match(/^(\d*d\d+)([+-]\d+)?(.*)$/i);
       if (dm) effectiveDamage = `d20${dm[2] || ''}${dm[3] || ''}`;
     } else {
-      effectiveDamage = runPipelineHook(weaponFeatures, featureSet, 'rewriteDamage', damageStr, rollCtx);
+      // Create synthetic roll object and wrap it for mutation-based rewriteDamage hooks
+      const syntheticRoll = { damageStr, ...rollMeta };
+      const wrappedRoll = wrapRoll(syntheticRoll);
+      rollCtx.roll = wrappedRoll;
+      // Run hooks (features mutate roll.damageStr directly)
+      runHook(weaponFeatures, featureSet, 'rewriteDamage', rollCtx);
+      // Read the mutated value (fallback to original if no mutation occurred)
+      effectiveDamage = wrappedRoll.damageStr ?? damageStr;
     }
     const m = effectiveDamage.trim().match(/^([^\s]+)(?:\s+(.+))?$/);
     if (m) {
@@ -132,7 +141,8 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
   // Post-damage additions (e.g. Reload [d6], Invigorate [d4], Lifesteal [d6])
   for (const name of featureSet) {
     const f = weaponFeatures[name];
-    if (f?.appendRollParts) parts.push(...(f.appendRollParts(rollCtx) || []));
+    const app = f?.appendRollParts;
+    if (Array.isArray(app) && app.length) parts.push(...app);
   }
 
   // Feature tag when feature opts in with showTag: true, or has onBanner (so tag is in roll.tags for narration).
@@ -278,6 +288,8 @@ export function CharacterHoverCard({
   isPlayer = false,
   getValidTargets,
   targetMenuOpenRef,
+  system,
+  characters,
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
@@ -323,16 +335,22 @@ export function CharacterHoverCard({
   const activeModifiers = el.activeModifiers || [];
   const selectedMod = selectedModId != null ? activeModifiers.find(m => m.id === selectedModId) : null;
 
-  // Compute modifier eligibility for class features that auto-enable/disable chips
+  // Compute modifier eligibility for class features that auto-enable/disable chips (dispatch by feature name).
   // (e.g. Rogue's Sneak Attack requires Cloaked or ally-in-Melee proximity).
   const modifierEligibility = useMemo(() => {
-    const classFeat = classFeatures[el.class];
-    if (!classFeat?.computeModifierEligibility) return {};
-    return classFeat.computeModifierEligibility({
-      el,
-      activeElements: activeElements ?? [],
-      mapConfig: mapConfig ?? {},
-    }) || {};
+    const allClassFeatures = [...(el.classFeatures || []), ...(el.subclassFeatures || [])];
+    let result = {};
+    for (const f of allClassFeatures) {
+      const descriptor = classFeatures[f.name];
+      if (descriptor?.computeModifierEligibility) {
+        Object.assign(result, descriptor.computeModifierEligibility({
+          el,
+          activeElements: activeElements ?? [],
+          mapConfig: mapConfig ?? {},
+        }) || {});
+      }
+    }
+    return result;
   }, [el, activeElements, mapConfig]);
 
   // Advantage chips: declared via addAdvantageTrigger for implemented ancestry features;
@@ -348,10 +366,11 @@ export function CharacterHoverCard({
     ];
     for (const f of featureArrays) {
       const ancestryDescriptor = ancestryFeaturesRegistry[f.name];
-      // Fully-implemented ancestry features: use the declared advantageTrigger (skip text parsing).
+      // Fully-implemented origin features: use declared advantageTriggers or advantageTrigger (skip text parsing).
       if (ancestryDescriptor) {
-        if (ancestryDescriptor.advantageTrigger) {
-          chips.push({ id: `adv-${f.name}-${idx++}`, name: f.name, condition: ancestryDescriptor.advantageTrigger, dice: 'd6', mode: 'advantage' });
+        const conditions = ancestryDescriptor.advantageTriggers ?? (ancestryDescriptor.advantageTrigger ? [ancestryDescriptor.advantageTrigger] : []);
+        for (const condition of conditions) {
+          chips.push({ id: `adv-${f.name}-${idx++}`, name: f.name, condition, dice: 'd6', mode: 'advantage' });
         }
         continue;
       }
@@ -446,9 +465,9 @@ export function CharacterHoverCard({
       return;
     }
     // Sorcerer Channel Raw Power (and any future class feature) requires an input value
-    // before dispatch. Show an inline prompt and defer actual dispatch until submitted.
-    const classFeat = classFeatures[el.class];
-    const requiredInputSpec = classFeat?.requiresInputForFeature?.[feature.name];
+    // before dispatch. Show an inline prompt and defer actual dispatch until submitted. (Dispatch by feature name.)
+    const classFeatForInput = classFeatures[feature.name];
+    const requiredInputSpec = classFeatForInput?.requiresInput;
     if (requiredInputSpec && !featureInputPending) {
       const action = subFeature
         ? parseFeatureAction(subFeature.description || '')
@@ -520,7 +539,7 @@ export function CharacterHoverCard({
       : null;
     if (featureInputPending) setFeatureInputPending(null);
 
-    const forceAction = classFeat?.forceActionNotificationFeatures?.includes(feature.name);
+    const forceAction = classFeatures[feature.name]?.forceActionNotification === true;
     const hasDice = !forceAction && (action.dice.length > 0 || action.spellcastDC != null);
     // Only add experience Hope cost when this feature use involves a roll (experience is used in the roll)
     const rollMeta = {
@@ -708,7 +727,7 @@ export function CharacterHoverCard({
     }
     let rollText = buildWeaponRollText(
       el.name, weapon.name, traitKey, effectiveTrait,
-      activeExp?.name, damageStr, weapon.feature, traits, el.level, opts,
+      activeExp?.name, damageStr, weapon.feature, traits, el.level, opts, rollMeta,
     );
     const rangeStr = (weapon.effectiveRange ?? getEffectiveWeaponRange(weapon, el.ancestryFeatures)) || weapon.range;
     if (rangeStr) rollText += ` ${rangeStr}`;
@@ -719,6 +738,7 @@ export function CharacterHoverCard({
     if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
     let displayName = `${el.name} ${weapon.name}`;
     rollMeta._attackerInstanceId = el.instanceId;
+    if (weapon.id != null) rollMeta._weaponId = weapon.id;
     rollMeta._traitKey = (weapon.trait || '').toLowerCase();
     if (rangeStr) {
       const ft = rangeBandNameToFt(rangeStr);
@@ -1097,15 +1117,13 @@ export function CharacterHoverCard({
               });
               return; // Die is consumed on GM ack, not here
             }
-            // Dispatch class feature onModifierUsed hook
-            if (el.class) {
-              const selfEl = wrapEntity(el, updateFn);
-              runHook(classFeatures, [el.class], 'onModifierUsed', {
-                modifier: mod,
-                mode,
-                selfEl,
-                updateActiveElement: updateFn,
-              });
+            // Dispatch class feature onModifierUsed hook (per-feature)
+            const selfEl = wrapEntity(el, updateFn);
+            for (const f of el.classFeatures || []) {
+              const descriptor = classFeatures[f.name];
+              if (descriptor?.onModifierUsed) {
+                descriptor.onModifierUsed({ modifier: mod, mode, selfEl, updateActiveElement: updateFn });
+              }
             }
             // Consume the modifier chip after use
             const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
@@ -1248,63 +1266,82 @@ export function CharacterHoverCard({
             actionName: feature.name,
             actionText: feature.description ?? '',
           }) : undefined}
-          getCardChipContext={onActionNotification && onRoll && updateFn ? (feature, chip, featureKey) => ({
-            character: wrapEntity(el, updateFn),
-            feature,
-            derivedToggleKey: typeof chip.onToggle === 'function' ? `_toggle.${feature.source ?? ''}.${feature.name ?? ''}` : undefined,
-            postToggleIntent: typeof chip.onToggle === 'function'
-              ? (nextActive) => {
-                  const title = [...[el.name, feature.source, feature.name].filter(Boolean), nextActive ? 'ACTIVATE' : 'DEACTIVATE'].join(' - ');
-                  onActionNotification({
-                    _action: true,
-                    rollUser: el.name,
-                    actionName: title,
-                    actionText: feature.description ?? '',
-                    _featureUse: true,
-                    _attackerInstanceId: el.instanceId,
-                    _stressCost: chip.stressCost ?? 0,
-                    _hopeCost: chip.hopeCost ?? 0,
-                    _cardToggle: {
-                      instanceId: el.instanceId,
-                      derivedToggleKey: `_toggle.${feature.source ?? ''}.${feature.name ?? ''}`,
-                      nextActive,
-                      featureName: feature.name,
-                      featureSource: feature.source,
-                    },
-                    tags: [
-                      ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
-                      ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
-                    ],
-                  });
-                }
-              : undefined,
-            postAction: (customLabel) => onActionNotification({
-              _action: true,
-              rollUser: el.name,
-              actionName: feature.name,
-              actionText: customLabel ?? chip.label ?? feature.name,
-              _featureUse: true,
-              _attackerInstanceId: el.instanceId,
-              _stressCost: chip.stressCost ?? 0,
-              _hopeCost: chip.hopeCost ?? 0,
-              _featureKey: featureKey ?? `${feature.name}-0`,
-              _frequency: chip.resetsOn ?? undefined,
-              tags: [
-                ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
-                ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
-              ],
-            }),
-            postTraitRoll: (traitKey, options) => {
-              const key = String(traitKey).toLowerCase();
-              const traitName = TRAIT_FULL[key] || traitKey;
-              const score = el.traits?.[key] ?? 0;
-              const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
-              const displayName = [el.name, feature.source, feature.name].filter(Boolean).join(' - ');
-              const meta = { _attackerInstanceId: el.instanceId, _traitKey: key };
-              if (options?.difficulty != null) meta._difficulty = options.difficulty;
-              onRoll(rollText, displayName, meta);
-            },
-          }) : undefined}
+          getCardChipContext={onActionNotification && onRoll && updateFn ? (feature, chip, featureKey) => {
+            const featureName = feature?.name;
+            const get = (key, defaultVal) => {
+              const bag = el._originFeatureState?.[featureName];
+              return bag != null && key in bag ? bag[key] : defaultVal;
+            };
+            const set = (key, value) => {
+              const current = el._originFeatureState ?? {};
+              const featureBag = current[featureName] ?? {};
+              const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
+              updateFn(el.instanceId, { _originFeatureState: next });
+            };
+            const featureWithState = feature ? { ...feature, get, set } : { get, set };
+            const character = wrapEntity(el, updateFn, {
+              postTraitRoll: (traitKey, options) => {
+                const key = String(traitKey).toLowerCase();
+                const traitName = TRAIT_FULL[key] || traitKey;
+                const score = el.traits?.[key] ?? 0;
+                const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
+                const displayName = [el.name, feature.source, feature.name].filter(Boolean).join(' - ');
+                const meta = { _attackerInstanceId: el.instanceId, _traitKey: key };
+                if (options?.difficulty != null) meta._difficulty = options.difficulty;
+                onRoll(rollText, displayName, meta);
+              },
+              postAction: (customLabel) => onActionNotification({
+                _action: true,
+                rollUser: el.name,
+                actionName: feature.name,
+                actionText: customLabel ?? chip.label ?? feature.name,
+                _featureUse: true,
+                _attackerInstanceId: el.instanceId,
+                _stressCost: chip.stressCost ?? 0,
+                _hopeCost: chip.hopeCost ?? 0,
+                _featureKey: featureKey ?? `${feature.name}-0`,
+                _frequency: chip.resetsOn ?? undefined,
+                tags: [
+                  ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
+                  ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
+                ],
+              }),
+            });
+            return {
+              roll: null,
+              character,
+              feature: featureWithState,
+              ...(characters != null && { characters }),
+              ...(system != null && { system }),
+              derivedToggleKey: typeof chip.onToggle === 'function' ? `_toggle.${feature.source ?? ''}.${feature.name ?? ''}` : undefined,
+              postToggleIntent: typeof chip.onToggle === 'function'
+                ? (nextActive) => {
+                    const title = [...[el.name, feature.source, feature.name].filter(Boolean), nextActive ? 'ACTIVATE' : 'DEACTIVATE'].join(' - ');
+                    onActionNotification({
+                      _action: true,
+                      rollUser: el.name,
+                      actionName: title,
+                      actionText: feature.description ?? '',
+                      _featureUse: true,
+                      _attackerInstanceId: el.instanceId,
+                      _stressCost: chip.stressCost ?? 0,
+                      _hopeCost: chip.hopeCost ?? 0,
+                      _cardToggle: {
+                        instanceId: el.instanceId,
+                        derivedToggleKey: `_toggle.${feature.source ?? ''}.${feature.name ?? ''}`,
+                        nextActive,
+                        featureName: feature.name,
+                        featureSource: feature.source,
+                      },
+                      tags: [
+                        ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
+                        ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
+                      ],
+                    });
+                  }
+                : undefined,
+            };
+          } : undefined}
         />
 
         {/* ── Domain Cards ── */}

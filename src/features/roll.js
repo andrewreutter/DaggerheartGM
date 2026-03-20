@@ -1,9 +1,9 @@
 /**
- * Roll Wrapper — wraps a raw roll object with utility methods so feature
+ * Roll/Banner Wrapper — wraps a raw roll object with utility methods so feature
  * hooks have a clean API instead of inline regex + array searches.
  *
- * wrapRoll(roll) is called when building hook contexts (GMTableView) and
- * before dispatching bannerStatus (DiceRoller).
+ * wrapRoll(roll) / wrapBanner(roll) is called when building hook contexts (GMTableView)
+ * and before dispatching bannerStatus (DiceRoller).
  */
 import { extractDetailsValues } from '../client/lib/dice-utils.js';
 
@@ -15,6 +15,26 @@ const TRAIT_NAMES = {
   presence: 'Presence',
   knowledge: 'Knowledge',
 };
+
+const TRAIT_NAMES_SET = new Set(Object.values(TRAIT_NAMES));
+
+/** True if pre (trimmed) is or ends with a trait name or is spellcast. */
+function isTraitOrSpellcastPre(pre) {
+  const t = (pre || '').trim();
+  if (!t) return false;
+  if (/spellcast/i.test(t)) return true;
+  return [...TRAIT_NAMES_SET].some(name => t === name || t.endsWith(' ' + name));
+}
+
+/** True if subItem looks like a d20 roll (primary action die). */
+function isD20SubItem(sub) {
+  return sub?.input && /\bd20\b/i.test(sub.input);
+}
+
+/** True if subItem is a damage roll (pre contains "damage" and has dice input). */
+function isDamageSubItem(sub) {
+  return sub && /damage/i.test(sub.pre || '') && sub.input;
+}
 
 function wrapSubItem(sub) {
   return {
@@ -76,6 +96,52 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
     get hasExperience() { return !!roll._experienceHopeCost; },
     /** Range band name from attacker to selected target (e.g. 'Melee'). Set by enricher. */
     get attackRange() { return roll.attackRange ?? null; },
+
+    /**
+     * Primary d20 sub-item (action roll). Prefers one whose pre matches a trait name or 'spellcast'.
+     * Returns a wrapped sub-item with .values() and .hasValue(), or null if not found.
+     */
+    get attackRoll() {
+      const subs = roll.subItems || [];
+      const d20s = subs.filter(isD20SubItem);
+      const primary = d20s.find(s => isTraitOrSpellcastPre(s.pre)) ?? d20s[0];
+      return primary ? wrapSubItem(primary) : null;
+    },
+
+    /**
+     * Damage sub-item (pre contains "damage" and has dice input).
+     * Returns a wrapped sub-item with .values() and .hasValue(), or null if not found.
+     */
+    get damageRoll() {
+      const found = (roll.subItems || []).find(isDamageSubItem);
+      return found ? wrapSubItem(found) : null;
+    },
+
+    /**
+     * True when the given character is the attacker (by instanceId or id).
+     * @param {{ instanceId?: string, id?: string }} character — raw element or wrapped entity
+     */
+    isAttacker(character) {
+      const id = character?.id ?? character?.instanceId;
+      return id != null && this.attacker.id === id;
+    },
+
+    /**
+     * True when the given character is the selected damage target (by instanceId or id).
+     * @param {{ instanceId?: string, id?: string }} character — raw element or wrapped entity
+     */
+    isTarget(character) {
+      const id = character?.id ?? character?.instanceId;
+      return id != null && this.target.id === id;
+    },
+
+    /**
+     * True when the roll was made with the given weapon (by weapon id).
+     * @param {{ id?: string }} source — weapon object with stable id (e.g. wep_0)
+     */
+    isSourceWeapon(source) {
+      return roll._weaponId != null && source != null && roll._weaponId === (source?.id ?? source);
+    },
 
     /**
      * Attacker info derived from the roll metadata.
@@ -180,3 +246,6 @@ export function wrapRoll(roll, displayStore, characterInstanceId) {
 
   return base;
 }
+
+/** Alias for wrapRoll; use when the value represents the banner in hook context. */
+export const wrapBanner = wrapRoll;

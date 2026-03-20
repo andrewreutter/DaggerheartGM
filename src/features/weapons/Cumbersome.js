@@ -1,5 +1,8 @@
+/**
+ * SRD: -1 to Finesse.
+ */
 export default {
   name: 'Cumbersome',
   description: '-1 to Finesse',
-  onCharacterRender: (ctx) => ctx.addStatMod('finesse', -1),
+  passiveStatMods: { traits: { finesse: -1 } },
 };

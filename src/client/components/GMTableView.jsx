@@ -11,17 +11,18 @@ import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './D
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
+import { buildSystemContext } from '../lib/feature-context.js';
 import { postRoll, postRollSilent, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postBannerRallyToggle, postBannerRallyAck, postBannerHeartD4Ack, postBannerHeartD4Toggle, postBannerChipResolve, postBannerAddDamage, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
-import { CompanionSheet, getNumericFeatureStateEntries } from './CharacterDisplay.jsx';
+import { CompanionSheet, getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import { wrapEntity } from '../../features/entity.js';
 import { wrapRoll } from '../../features/roll.js';
-import { runHook, runPipelineHook } from '../../features/hooks.js';
+import { runHook, runCharacterHook, runPipelineHook, runCharacterPipelineHook } from '../../features/hooks.js';
 import { weaponFeatures, armorFeatures, classFeatures, ancestryFeatures } from '../../features/registry.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt, distanceFtToRangeBandName } from '../lib/map-range.js';
@@ -229,7 +230,7 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFelineRerollRequestSuccess, onFelineRerollRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const sendOp = useCallback((op) => postTableOp(op, tableId), [tableId]);
@@ -321,8 +322,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [diceCanvasHidden, setDiceCanvasHidden] = useState(false);
   const addMenuRef = useRef(null);
-  // Make a Scene (Bard): { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
-  const [makeASceneSelections, setMakeASceneSelections] = useState({});
+  // Action banners with adversary target: { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
+  const [actionAdversarySelections, setActionAdversarySelections] = useState({});
   // Character dialog removed — characters are now managed through the Library picker
   const [playerEmailInput, setPlayerEmailInput] = useState('');
   const [showPlayerEmailPanel, setShowPlayerEmailPanel] = useState(false);
@@ -470,6 +471,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     });
   };
 
+  const wrappedPartyCharacters = useMemo(() =>
+    activeElements.filter(e => e.elementType === 'character').map(el => wrapEntity(el, updateActiveElement)),
+    [activeElements, updateActiveElement]
+  );
+
+  const system = useMemo(
+    () => buildSystemContext(tableId, (n) => diceRollerRef.current?.addRoll(n)),
+    [tableId]
+  );
+
   // Apply HP/Stress changes to a target after optional Parry reduction.
   // armorOpts: { applyReduction?, markSlot?, feature?, postRollSilent?, useImpenetrable? }
   //   applyReduction: reduce hpLoss by 1 (or 2 for Fortified) — set by armor button
@@ -483,45 +494,109 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
     // Wrap target and roll so feature hooks receive clean semantic APIs.
     const entityTarget = wrapEntity(target, updateActiveElement);
-    const ctx = { target: entityTarget, character: entityTarget, tagNames, roll: wrapRoll(roll), dmgType };
+    const wrappedRoll = wrapRoll(roll);
+    const ctx = { target: entityTarget, character: entityTarget, tagNames, roll: wrappedRoll, dmgType, characters: wrappedPartyCharacters, system };
 
-    // Pre-threshold damage modification (e.g. Warded subtracts armor score from magic damage)
-    let dmgTotalForCalc = runPipelineHook(
-      armorFeatures,
-      target.armorFeatureName ? [target.armorFeatureName] : [],
-      'modifyPreThresholdDamage',
-      effectiveDmgTotal,
-      ctx,
-    );
+    // Store initial damage total and use roll.damageTotal as the pipeline accumulator
+    if (wrappedRoll.damageTotal == null) {
+      wrappedRoll._initialDamageTotal = effectiveDmgTotal;
+      wrappedRoll.damageTotal = effectiveDmgTotal;
+    } else {
+      wrappedRoll._initialDamageTotal = wrappedRoll.damageTotal;
+      wrappedRoll.damageTotal = effectiveDmgTotal;
+    }
+
+    // Pre-threshold damage modification (e.g. Warded, Guardian Unstoppable) — unified over activeFeatures for characters
+    // Hooks read from roll.damageTotal and return the new value
+    if (target.elementType === 'character' && Array.isArray(target.activeFeatures) && target.activeFeatures.length > 0) {
+      const participants = target.activeFeatures.filter(f => typeof f.modifyPreThresholdDamage === 'function');
+      participants.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+      for (const feature of participants) {
+        try {
+          const featureCtx = { ...ctx, source: feature.source, feature };
+          const result = feature.modifyPreThresholdDamage(featureCtx);
+          if (result !== undefined) wrappedRoll.damageTotal = result;
+        } catch (err) {
+          console.error(`[features] ${feature.name}.modifyPreThresholdDamage threw:`, err);
+        }
+      }
+    } else if (target.armorFeatureName) {
+      const descriptor = armorFeatures[target.armorFeatureName];
+      if (descriptor && typeof descriptor.modifyPreThresholdDamage === 'function') {
+        try {
+          const featureCtx = { ...ctx, feature: descriptor };
+          const result = descriptor.modifyPreThresholdDamage(featureCtx);
+          if (result !== undefined) wrappedRoll.damageTotal = result;
+        } catch (err) {
+          console.error(`[features] ${target.armorFeatureName}.modifyPreThresholdDamage threw:`, err);
+        }
+      }
+    }
 
     // Character resistance to physical damage (e.g. Galapa Retract, or resistance array)
     if (target.elementType === 'character' && (dmgType === 'phy' || dmgType === 'Physical')) {
       const resistance = Array.isArray(target.resistance) ? target.resistance : [];
       const hasResistance = target.retractedActive
         || resistance.some(r => (r.type === 'physical' || r.type === 'Physical'));
-      if (hasResistance) dmgTotalForCalc = Math.floor(dmgTotalForCalc / 2);
+      if (hasResistance) wrappedRoll.damageTotal = Math.floor(wrappedRoll.damageTotal / 2);
     }
 
-    let hpLoss = computeHpLoss(dmgTotalForCalc, target.thresholds);
+    // Store initial HP loss and use roll.hpLoss as the pipeline accumulator
+    const initialHpLoss = computeHpLoss(wrappedRoll.damageTotal, target.thresholds);
+    wrappedRoll._initialHpLoss = initialHpLoss;
+    wrappedRoll.hpLoss = initialHpLoss;
 
-    // HP loss modification (e.g. Deadly adds +1 on Severe)
-    hpLoss = runPipelineHook(weaponFeatures, tagNames, 'modifyHpLoss', hpLoss, ctx);
+    // HP loss modification (e.g. Deadly adds +1 on Severe) — from attacker's weapon features when character, else by tag names
+    // Hooks read from roll.hpLoss and return the new value
+    const attackerEl = roll?._attackerInstanceId ? activeElements.find(e => e.instanceId === roll._attackerInstanceId) : null;
+    if (attackerEl?.activeFeatures?.length && tagNames.size > 0) {
+      const weaponFeaturesForRoll = attackerEl.activeFeatures.filter(f => f.type === 'weapon' && tagNames.has(f.name));
+      const participants = weaponFeaturesForRoll.filter(f => typeof f.modifyHpLoss === 'function');
+      participants.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+      for (const feature of participants) {
+        try {
+          const featureCtx = { ...ctx, source: feature.source, feature };
+          const result = feature.modifyHpLoss(featureCtx);
+          if (result !== undefined) wrappedRoll.hpLoss = result;
+        } catch (err) {
+          console.error(`[features] ${feature.name}.modifyHpLoss threw:`, err);
+        }
+      }
+    } else {
+      const participants = [];
+      for (const name of tagNames) {
+        const descriptor = weaponFeatures[name];
+        if (descriptor && typeof descriptor.modifyHpLoss === 'function') {
+          participants.push(descriptor);
+        }
+      }
+      participants.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+      for (const descriptor of participants) {
+        try {
+          const featureCtx = { ...ctx, feature: descriptor };
+          const result = descriptor.modifyHpLoss(featureCtx);
+          if (result !== undefined) wrappedRoll.hpLoss = result;
+        } catch (err) {
+          console.error(`[features] ${descriptor.name}.modifyHpLoss threw:`, err);
+        }
+      }
+    }
 
     // Armor reduction when a slot is used
     if (applyReduction) {
       const reduction = armorFeatures[feature]?.armorReduction ?? 1;
-      hpLoss = Math.max(0, hpLoss - reduction);
+      wrappedRoll.hpLoss = Math.max(0, wrappedRoll.hpLoss - reduction);
     }
 
     // Ancestry/feature HP reduction (e.g. Dwarf Thick Skin from onChipAck reduceHpLoss(1))
     const hpLossReduction = Math.max(0, Math.floor(roll?._hpLossReduction ?? 0));
-    hpLoss = Math.max(0, hpLoss - hpLossReduction);
+    wrappedRoll.hpLoss = Math.max(0, wrappedRoll.hpLoss - hpLossReduction);
 
     // Impenetrable (1/rest): substitute 1 Stress for the last HP when damage would reduce to 0
-    let hpLossToApply = hpLoss;
-    if (target.elementType === 'character' && hpLoss > 0 && useImpenetrable && target.armorFeatureName === 'Impenetrable') {
+    let hpLossToApply = wrappedRoll.hpLoss;
+    if (target.elementType === 'character' && wrappedRoll.hpLoss > 0 && useImpenetrable && target.armorFeatureName === 'Impenetrable') {
       const currentHp = target.currentHp ?? target.maxHp ?? 0;
-      const wouldBeZero = currentHp - hpLoss <= 0;
+      const wouldBeZero = currentHp - wrappedRoll.hpLoss <= 0;
       const hasStressSpace = (target.currentStress ?? 0) < (target.maxStress ?? 6);
       const usedThisRest = target.featureUsage?.Impenetrable?.cycle === 'rest';
       if (wouldBeZero && hasStressSpace && !usedThisRest) {
@@ -533,7 +608,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
     // Origin lifecycle: onMarkHP can cancel (character only)
     if (target.elementType === 'character' && hpLossToApply > 0) {
-      const hpCancel = runBeforeMarkHP(target, hpLossToApply, 'damage', updateActiveElement);
+      const hpCancel = runBeforeMarkHP(target, hpLossToApply, 'damage', updateActiveElement, { characters: wrappedPartyCharacters, system });
       if (hpCancel.cancel) hpLossToApply = 0;
     }
     if (hpLossToApply > 0) entityTarget.markHp(hpLossToApply);
@@ -542,7 +617,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     // markArmor() runs first so hooks see the post-mark count via target.currentArmor.
     if (markSlot) {
       if (target.elementType === 'character') {
-        const armorCancel = runBeforeMarkArmor(target, 1, feature ?? 'armor', updateActiveElement);
+        const armorCancel = runBeforeMarkArmor(target, 1, feature ?? 'armor', updateActiveElement, { characters: wrappedPartyCharacters, system });
         if (!armorCancel.cancel) entityTarget.markArmor();
       } else {
         entityTarget.markArmor();
@@ -556,10 +631,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             character: entityTarget,
             amount: 1,
             source: armorFeatureName,
+            feature: descriptor,
             roll: ctx.roll,
             postRollSilent,
             tagNames: ctx.tagNames,
             dmgType: ctx.dmgType,
+            characters: wrappedPartyCharacters,
+            system,
           };
           try {
             const result = fn(afterCtx);
@@ -576,7 +654,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (target.elementType === 'character' && entityTarget.activeBeastform) {
       const bf = entityTarget.activeBeastform;
       const isFragile = (bf.features || []).some(f => /fragile/i.test(f.name || ''));
-      const dropped = entityTarget.currentHp === 0 || (hpLoss >= 2 && isFragile);
+      const dropped = entityTarget.currentHp === 0 || (wrappedRoll.hpLoss >= 2 && isFragile);
       if (dropped) {
         updateActiveElement(target.instanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
         const reason = entityTarget.currentHp === 0 ? '(last HP)' : '(Fragile — Major or greater damage)';
@@ -589,12 +667,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
 
-    // Dispatch onDamageReceived for class features (e.g. Elemental Incarnation Severe drop)
-    if (target.elementType === 'character' && hpLoss >= 1) {
-      const targetClassFeat = classFeatures[target.class];
-      if (targetClassFeat?.onDamageReceived) {
-        targetClassFeat.onDamageReceived({ character: entityTarget, dmgTotal: dmgTotalForCalc, hpLoss, updateActiveElement });
-      }
+    // Dispatch onDamageReceived (e.g. Elemental Incarnation Severe drop)
+    if (target.elementType === 'character' && wrappedRoll.hpLoss >= 1 && Array.isArray(target.activeFeatures)) {
+      runCharacterHook(target.activeFeatures, 'onDamageReceived', {
+        character: entityTarget,
+        dmgTotal: wrappedRoll.damageTotal,
+        hpLoss: wrappedRoll.hpLoss,
+        updateActiveElement,
+        characters: wrappedPartyCharacters,
+      });
     }
 
     return entityTarget.currentHp;
@@ -609,20 +690,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     let effectiveDmgTotal = dmgTotal;
 
     // Parry: if target is a character with a Parry weapon, invoke the Parry hook (silent roll — no second banner)
-    if (target.type === 'character') {
+    if (target.type === 'character' && roll?.subItems) {
       const charEl = activeElements.find(el => el.instanceId === target.instanceId);
       const parryWeapon = (charEl?.weapons || []).find(w => w.feature?.name === 'Parry');
-      if (parryWeapon && roll?.subItems) {
+      if (parryWeapon) {
         const parryFeature = weaponFeatures['Parry'];
         if (parryFeature?.onBeforeDamageApplied) {
-          const postRollSilentForParry = (rollText, displayName) => postRoll(rollText, displayName, tableId, { silent: true });
-          effectiveDmgTotal = await parryFeature.onBeforeDamageApplied(effectiveDmgTotal, {
-            target: { ...target, name: charEl?.name || target.name },
-            roll,
-            parryWeapon,
-            postRoll: postRollSilentForParry,
-            addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
-          }) ?? effectiveDmgTotal;
+          const wrappedTarget = wrapEntity(charEl || target, updateActiveElement);
+          const wrappedRoll = wrapRoll(roll);
+          const result = await parryFeature.onBeforeDamageApplied({
+            target: wrappedTarget,
+            roll: wrappedRoll,
+            feature: parryFeature,
+            system,
+            effectiveDmgTotal,
+            characters: wrappedPartyCharacters,
+          });
+          if (result !== undefined) {
+            effectiveDmgTotal = result;
+          }
         }
       }
     }
@@ -641,8 +727,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           const character = wrapEntity(target, updateActiveElement);
           const result = await resilientFeature.onLastArmorSlot({
             character,
-            postRoll,
-            addActionBanner: (n) => diceRollerRef.current?.addRoll(n),
+            system,
+            characters: wrappedPartyCharacters,
+            feature: resilientFeature,
           });
           if (result?.saveSlot) markSlot = false;
         }
@@ -653,12 +740,28 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     const postRollSilent = (text, displayName) => postRoll(text, displayName, tableId, { silent: true });
     armorOpts = { ...armorOpts, postRollSilent, useImpenetrable: !!target.useImpenetrable };
 
-    // Dwarf Increased Fortitude: spend 3 Hope to halve physical damage (toggle path; chip path uses setDamageTotal)
-    if (target.useIncreasedFortitude && roll?._damageTotalOverride == null && dmgType === 'phy' && target.type === 'character') {
+    // Generic damage modifiers from active banner chips (e.g. Increased Fortitude toggle path)
+    const modifiers = Array.isArray(target.damageModifiers) ? target.damageModifiers : [];
+    if (roll?._damageTotalOverride == null && target.type === 'character' && modifiers.length > 0) {
       const charEl = activeElements.find(el => el.instanceId === target.instanceId);
-      if (charEl && (charEl.hope ?? 0) >= 3) {
-        updateActiveElement(target.instanceId, { hope: Math.max(0, (charEl.hope ?? 0) - 3) });
-        effectiveDmgTotal = Math.floor(effectiveDmgTotal / 2);
+      if (charEl) {
+        for (const mod of modifiers) {
+          const applies = mod.dmgType == null || mod.dmgType === dmgType;
+          if (!applies || typeof mod.apply !== 'function') continue;
+          const hopeCost = mod.hopeCost ?? 0;
+          const stressCost = mod.stressCost ?? 0;
+          const hasHope = (charEl.hope ?? 0) >= hopeCost;
+          const hasStress = stressCost <= 0 || (charEl.currentStress != null && charEl.maxStress != null && (charEl.maxStress - charEl.currentStress) >= stressCost);
+          if (hopeCost > 0 && !hasHope) continue;
+          if (stressCost > 0 && !hasStress) continue;
+          if (hopeCost > 0) updateActiveElement(target.instanceId, { hope: Math.max(0, (charEl.hope ?? 0) - hopeCost) });
+          if (stressCost > 0) {
+            const nextStress = Math.min(charEl.maxStress ?? 0, (charEl.currentStress ?? 0) + stressCost);
+            updateActiveElement(target.instanceId, { currentStress: nextStress });
+          }
+          effectiveDmgTotal = mod.apply(effectiveDmgTotal);
+          break; // apply first matching modifier only (current behavior)
+        }
       }
     }
 
@@ -786,6 +889,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
 
+    // onHpDealt (e.g. Guardian Unstoppable ratchet, Ranger's Focus self-Stress)
+    if (hpApplied >= 1 && roll?._attackerInstanceId) {
+      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
+      if (attackerEl?.elementType === 'character' && Array.isArray(attackerEl.activeFeatures) && attackerEl.activeFeatures.length > 0) {
+        const entityAttacker = wrapEntity(attackerEl, updateActiveElement);
+        const entityTarget = wrapEntity(target, updateActiveElement);
+        runCharacterHook(attackerEl.activeFeatures, 'onHpDealt', {
+          character: entityAttacker,
+          hpDealt: hpApplied,
+          target: entityTarget,
+          updateActiveElement,
+          characters: wrappedPartyCharacters,
+        });
+      }
+    }
+
     pendingDamageRef.current = { instanceId: target.instanceId, newHp };
   };
 
@@ -876,8 +995,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   };
 
 
-  // Full reroll: cancel current banner and post the same roll again (shared by Lucky and Human Adaptability).
-  // extraMeta is merged into the new roll (e.g. _luckyStressCost for Lucky; Adaptability applies stress on chip ack so passes {}).
+  // Full reroll: cancel current banner and post the same roll again (shared by Human Adaptability and other features).
+  // extraMeta is merged into the new roll (Adaptability applies stress on chip ack so passes {}).
   const performFullReroll = useCallback((roll, extraMeta = {}) => {
     if (roll._rollDbId) postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
     if (!roll.rollText) return;
@@ -890,15 +1009,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }).catch(err => console.error('Full reroll failed:', err));
   }, [isPlayer, tableId, activeElements, postBannerAck, postRoll]);
 
-  // Lucky: Mark 1 Stress to reroll on Fear. Stress is applied on Acknowledge of the new roll.
-  const handleLuckyReroll = (roll) => performFullReroll(roll, { _luckyStressCost: 1 });
-
   // Quick: apply the same damage to a second target, marking 1 Stress on the attacker.
   const handleQuickTarget = async (target, dmgTotal, tags, roll, dmgType = '') => {
     await handleApplyDamage(target, dmgTotal, tags, roll, dmgType);
     const attacker = findAttacker(roll.rollUser);
     if (attacker?.elementType === 'character') {
-      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Quick', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Quick', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
       if (!stressCancel.cancel) {
         const effective = 1 - (stressCancel.reduceBy ?? 0);
         if (effective > 0) {
@@ -916,7 +1032,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     await handleApplyDamage(target, dmgTotal, tags, roll, dmgType);
     const attacker = findAttacker(roll.rollUser);
     if (attacker?.elementType === 'character') {
-      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Bouncing', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+      const stressCancel = await runBeforeMarkStress(attacker, 1, 'Bouncing', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
       if (!stressCancel.cancel) {
         const effective = 1 - (stressCancel.reduceBy ?? 0);
         if (effective > 0) {
@@ -997,8 +1113,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         postBannerFeatureRequest: postBannerFelineRerollRequest,
         updateActiveElement,
         activeElements,
-        onFeatureRequestSuccess: reaction.featureName === 'Feline Instincts' ? onFelineRerollRequestSuccess : undefined,
-        onFeatureRequestCancel: reaction.featureName === 'Feline Instincts' ? onFelineRerollRequestCancel : undefined,
+        onFeatureRequestSuccess: onFeatureRequestSuccess ? (bannerId) => onFeatureRequestSuccess(bannerId, reaction.stateKey) : undefined,
+        onFeatureRequestCancel: onFeatureRequestCancel ? (bannerId) => onFeatureRequestCancel(bannerId, reaction.stateKey) : undefined,
       });
     }
   };
@@ -1013,24 +1129,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     const charEl = activeElements.find(e => e.instanceId === reaction.character.instanceId);
     if (!charEl) return;
     enrichRollWithDamage(roll, activeElements);
-    const wrappedChar = wrapEntity(charEl, updateActiveElement);
-    const characterName = wrappedChar.name ?? roll.rollUser ?? roll.displayName ?? 'Character';
-    const characterForChip = { ...wrappedChar, name: characterName };
-    // Use a display store so setWithHope() is available; check it after onChipAck runs.
-    const chipDisplayStore = {};
-    const rollWithTarget = wrapRoll(roll, chipDisplayStore, reaction.character.instanceId);
     const featureName = reaction.featureName ?? 'Feature';
-    const ctx = {
-      _extraDamage: null,
-      _narration: null,
-      addDamage(expr) { this._extraDamage = String(expr).trim(); },
-      addNarration(text) { this._narration = `${featureName}: ${text}`; },
-      /** Request that the selected damage target take no HP/Stress from this roll (e.g. Faerie Wings). */
-      setTreatAsMissForTarget(instanceId) { roll._treatAsMissForTarget = instanceId; },
-      characterRaw: charEl,
-    };
-    // Feature-level state: get/set backed by character._originFeatureState[featureName]. Preserved via _ prefix.
-    const feature = {
+    const featureState = {
       get(key, defaultVal) {
         const bag = charEl._originFeatureState?.[featureName];
         return bag != null && key in bag ? bag[key] : defaultVal;
@@ -1043,6 +1143,58 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         updateActiveElement(charEl.instanceId, { _originFeatureState: next });
       },
     };
+    const wrappedChar = wrapEntity(charEl, updateActiveElement, {
+      postTraitRoll: (traitKey, opts) => {
+        const key = String(traitKey).toLowerCase();
+        const traitName = TRAIT_FULL[key] || traitKey;
+        const score = charEl.traits?.[key] ?? 0;
+        const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
+        const displayName = [charEl.name, reaction.feature?.source, reaction.feature?.name].filter(Boolean).join(' - ');
+        const meta = { _attackerInstanceId: charEl.instanceId, _traitKey: key };
+        if (opts?.difficulty != null) meta._difficulty = opts.difficulty;
+        postRoll(rollText, displayName, tableId, meta);
+      },
+      postAction: (customLabel) => {
+        postActionNotification({
+          _action: true,
+          rollUser: charEl.name,
+          actionName: reaction.feature?.name ?? 'Feature',
+          actionText: customLabel ?? reaction.feature?.name ?? '',
+          _attackerInstanceId: charEl.instanceId,
+        }, tableId).catch(() => {});
+      },
+    });
+    const characterName = wrappedChar.name ?? roll.rollUser ?? roll.displayName ?? 'Character';
+    const characterForChip = { ...wrappedChar, name: characterName };
+    // Use a display store so setWithHope() is available; check it after onChipAck runs.
+    const chipDisplayStore = {};
+    const rollWithTarget = wrapRoll(roll, chipDisplayStore, reaction.character.instanceId);
+    const featureWithState = reaction.feature ? { ...reaction.feature, ...featureState } : null;
+    // Use the real banner from closure (same object passed to onBanner) when available; otherwise create one with the identical shape.
+    let banner = reaction.banner;
+    if (!banner) {
+      banner = {
+        chips: [],
+        _narrations: [],
+        _rollRef: null,
+        _featureName: null,
+        _extraDamage: null,
+        _narration: null,
+        addChip(descriptor) {},
+        addNarration(text, style) {
+          this._narrations.push(style != null ? { text, style } : { text });
+          if (this._featureName) this._narration = `${this._featureName}: ${text}`;
+        },
+        addAutomatedNarration(text) { this.addNarration(text, 'automated'); },
+        addDamage(expr) { this._extraDamage = String(expr).trim(); },
+        setTreatAsMissForTarget(instanceId) { if (this._rollRef) this._rollRef._treatAsMissForTarget = instanceId; },
+      };
+    }
+    banner._rollRef = roll;
+    banner._featureName = featureName;
+    banner._extraDamage = null;
+    banner._narration = null;
+    const chipContext = { roll: rollWithTarget, character: characterForChip, banner, feature: featureWithState, featureState, characterRaw: charEl, characters: wrappedPartyCharacters, system };
     // Run costs + onChipAck BEFORE the server call so we can capture override values to persist.
     if (action === 'ack') {
       if (chip?.hopeCost > 0) {
@@ -1059,16 +1211,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (chip.hopeCost - substitute > 0) wrappedChar.spendHope(chip.hopeCost - substitute);
       }
       if (chip?.stressCost > 0) {
-        const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'chip', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+        const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'chip', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
         if (!stressCancel.cancel) {
           const effective = chip.stressCost - (stressCancel.reduceBy ?? 0);
           if (effective > 0) wrappedChar.markStress(effective);
         }
       }
-      if (chip?.onChipAck) chip.onChipAck(rollWithTarget, characterForChip, ctx, feature);
+      if (chip?.onChipAck) chip.onChipAck(chipContext);
       if (chip?.resetsOn && (reaction._featureKey ?? chip._featureKey)) wrappedChar.setFeatureUsed(reaction._featureKey ?? chip._featureKey, chip.resetsOn);
     } else {
-      if (chip?.onChipReject) chip.onChipReject(rollWithTarget, characterForChip, ctx, feature);
+      if (chip?.onChipReject) chip.onChipReject(chipContext);
     }
     // Capture any override values set by onChipAck and persist them to the server so they
     // survive the SSE snapshot refresh that immediately follows chip resolution.
@@ -1089,12 +1241,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (action === 'ack' && roll._rollDbId != null && chipDisplayStore[roll._rollDbId]?.dominantForDisplay === 'hope') {
       setChipHopeConvertedIds(prev => new Set([...prev, roll._rollDbId]));
     }
-    if (ctx._extraDamage) {
+    if (banner._extraDamage) {
       try {
         const newRoll = await postBannerAddDamage(roll._rollDbId, {
-          extraDamage: ctx._extraDamage,
+          extraDamage: banner._extraDamage,
           extraDamageLabel: reaction.featureName ?? undefined,
-          narration: ctx._narration ?? undefined,
+          narration: banner._narration ?? undefined,
           suppressAncestryFeature: reaction.featureName,
         });
         diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
@@ -1141,7 +1293,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
       performFullReroll(roll, {});
     }
-  }, [tableId, isPlayer, activeElements, updateActiveElement, performFullReroll]);
+  }, [tableId, isPlayer, activeElements, updateActiveElement, performFullReroll, wrappedPartyCharacters]);
 
   // Origin lifecycle (e.g. Unshakable): post action banner with character name.
   const postActionForStress = (charEl, actionName, actionText) => {
@@ -1260,10 +1412,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }).catch(err => console.error('Doubled Up roll failed:', err));
   };
 
+  /** Set roll.isSuccess from selected target (adversary: difficulty, character: evasion). Used by banner reactions and virtual-weapon onAcknowledge. */
+  const enrichRollWithIsSuccess = (roll, elements) => {
+    if (!roll._selectedTargetInstanceId) return;
+    const target = elements?.find(e => e.instanceId === roll._selectedTargetInstanceId);
+    if (!target) return;
+    const isAdversary = target.elementType === 'adversary' || target.type === 'adversary';
+    const defense = isAdversary ? target.difficulty : target.evasion;
+    if (defense == null) return;
+    let effectiveTotal = roll.total ?? 0;
+    if (roll.dominant != null) {
+      effectiveTotal += (roll._prayerAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0);
+    }
+    roll.isSuccess = effectiveTotal >= defense;
+  };
 
   // GM acknowledges a banner: apply all game side-effects, broadcast to other clients via banner-ack.
   // This is the unified replacement for handleDiceRollComplete + handlePlayerRollComplete.
-  // options: { selectedLifeSupportTargetInstanceId?: string, selectedRetractingClawsTargetInstanceId?: string } for single-target selection.
+  // options: { selectedLifeSupportTargetInstanceId?: string, selectedActionAdversaryTargetInstanceId?: string, selectedRetractingClawsTargetInstanceId?: string } for single-target selection.
   const handleBannerAcknowledge = async (bannerId, roll, options = {}) => {
     removePendingCosts(roll);
 
@@ -1341,9 +1507,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             if (h > 0) self.spendHope(h);
           }
           if (typeof behavior.onAcknowledge === 'function') {
+            if (!roll._selectedTargetInstanceId && options.selectedFeatureTargetInstanceId) {
+              roll._selectedTargetInstanceId = options.selectedFeatureTargetInstanceId;
+            }
+            enrichRollWithIsSuccess(roll, activeElements);
             behavior.onAcknowledge({
               target: wrapEntity(targetEl, updateActiveElement),
               ...(selfEl && { self: wrapEntity(selfEl, updateActiveElement) }),
+              roll: wrapRoll(roll),
             });
           }
         }
@@ -1363,7 +1534,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (typeof f?.onBannerAck !== 'function') continue;
         for (const id of targetIds) {
           const targetEl = activeElements.find(e => e.instanceId === id);
-          if (targetEl) f.onBannerAck(wr, wrapEntity(targetEl, updateActiveElement), {});
+          if (targetEl) f.onBannerAck({ roll: wr, target: wrapEntity(targetEl, updateActiveElement), system });
         }
       }
     }
@@ -1374,14 +1545,26 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         const ct = roll._cardToggle;
         const el = activeElements.find(e => e.instanceId === ct.instanceId);
         const descriptor = ancestryFeatures[ct.featureName];
-        const toggleChip = descriptor?.cardChips?.find(c => typeof c.onToggle === 'function');
+        const cardChips = descriptor?.chips?.filter(c => c.placement === 'card') || descriptor?.cardChips || [];
+        const toggleChip = cardChips.find(c => typeof c.onToggle === 'function');
         if (el && toggleChip) {
           // Batch toggle key + onToggle effects (moveDisabledSources, resistance, disadvantageSources) into one op
           const batch = { [ct.derivedToggleKey]: ct.nextActive };
           const batchUpdate = (instanceId, updates) => { if (instanceId === ct.instanceId) Object.assign(batch, updates); };
           const character = wrapEntity(el, batchUpdate);
-          const featureObj = { name: ct.featureName, source: ct.featureSource, description: descriptor.description };
-          toggleChip.onToggle(ct.nextActive, character, { character, feature: featureObj });
+          const get = (key, defaultVal) => {
+            const bag = el._originFeatureState?.[ct.featureName];
+            return bag != null && key in bag ? bag[key] : defaultVal;
+          };
+          const set = (key, value) => {
+            const current = el._originFeatureState ?? {};
+            const featureBag = current[ct.featureName] ?? {};
+            const next = { ...current, [ct.featureName]: { ...featureBag, [key]: value } };
+            updateActiveElement(ct.instanceId, { _originFeatureState: next });
+          };
+          const featureObj = descriptor ? { ...descriptor, get, set } : { name: ct.featureName, source: ct.featureSource, get, set };
+          const chip = { isActive: ct.nextActive };
+          toggleChip.onToggle({ character, chip, feature: featureObj, characters: wrappedPartyCharacters, system });
           updateActiveElement(ct.instanceId, batch);
         } else {
           updateActiveElement(ct.instanceId, { [ct.derivedToggleKey]: ct.nextActive });
@@ -1392,7 +1575,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (roll._featureName === 'Wings of Light' && roll._wingsOfLightPickUpCarry && roll._attackerInstanceId) {
         const charEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
         if (charEl) {
-          const stressCancel = await runBeforeMarkStress(charEl, 1, 'Wings of Light', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+          const stressCancel = await runBeforeMarkStress(charEl, 1, 'Wings of Light', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
           if (!stressCancel.cancel) {
             const effective = 1 - (stressCancel.reduceBy ?? 0);
             if (effective > 0) {
@@ -1416,15 +1599,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
         resourceAck = await applyFeatureResources(roll._attackerInstanceId, roll, batchCollect);
 
-        // Dispatch class feature activation hook (e.g. Druid Beastform / Evolution, Bard Make a Scene)
-        if (attackerEl) {
-          const classFeat = classFeatures[attackerEl.class];
-          if (classFeat?.onFeatureActivated) {
+        // Dispatch class feature activation hook by feature name (e.g. Druid Beastform, Bard Make a Scene)
+        if (attackerEl && roll._featureName) {
+          const classFeat = classFeatures[roll._featureName];
+          if (classFeat?.onFeatureActivated && attackerEl.class === classFeat.class) {
             const selfEl = wrapEntity(attackerEl, batchCollect);
-            // Make a Scene (Bard): pass selected adversary so difficultyMod is applied
-            const makeASceneTargetId = options?.selectedMakeASceneTargetInstanceId ?? roll._selectedTargetInstanceId ?? null;
-            const targetEl = makeASceneTargetId
-              ? activeElements.find(e => e.instanceId === makeASceneTargetId) ?? null
+            // Action-with-adversary-target: pass selected adversary (e.g. Make a Scene difficultyMod)
+            const actionAdversaryTargetId = options?.selectedActionAdversaryTargetInstanceId ?? roll._selectedTargetInstanceId ?? null;
+            const targetEl = actionAdversaryTargetId
+              ? activeElements.find(e => e.instanceId === actionAdversaryTargetId) ?? null
               : null;
             classFeat.onFeatureActivated({
               featureName: roll._featureName ?? null,
@@ -1433,10 +1616,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               targetEl,
               selfEl,
               updateActiveElement: batchCollect,
-              roll,
+              roll: wrapRoll(roll, undefined, selfEl?.instanceId),
+              characters: wrappedPartyCharacters,
+              feature: classFeat,
+              system,
             });
-            if (roll._featureName === 'Make a Scene' && roll._rollDbId != null) {
-              setMakeASceneSelections(prev => {
+            if (roll._action && roll._targetType === 'adversary' && roll._rollDbId != null) {
+              setActionAdversarySelections(prev => {
                 const next = { ...prev };
                 delete next[roll._rollDbId];
                 return next;
@@ -1454,7 +1640,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         const actionTagNames = new Set((roll.tags || []).map(t => t.name));
         const actionAttackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
         const actionAttacker = actionAttackerEl ? wrapEntity(actionAttackerEl, updateActiveElement) : null;
-        runHook(weaponFeatures, actionTagNames, 'onRollComplete', { attacker: actionAttacker, roll });
+        if (actionAttackerEl?.activeFeatures?.length && actionTagNames.size > 0) {
+          const weaponFeaturesForRoll = actionAttackerEl.activeFeatures.filter(f => f.type === 'weapon' && actionTagNames.has(f.name));
+          runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker: actionAttacker, roll, characters: wrappedPartyCharacters, system });
+        } else {
+          runHook(weaponFeatures, actionTagNames, 'onRollComplete', { attacker: actionAttacker, roll, characters: wrappedPartyCharacters, system });
+        }
       }
       // Rousing Speech: clear 2 Stress from each character within Far range.
       const rousingUpdates = [];
@@ -1550,20 +1741,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         updateActiveElement(roll._attackerInstanceId, { currentStress: newStress, activeModifiers: newMods });
       }
     }
-    // Apply deferred costs from Lucky reroll (1 Stress) and Not This Time (3 Hope)
-    if (roll._luckyStressCost > 0 && roll._attackerInstanceId) {
-      const attackerEl = activeElements.find(e => e.instanceId === roll._attackerInstanceId);
-      if (attackerEl) {
-        const stressCancel = await runBeforeMarkStress(attackerEl, roll._luckyStressCost, 'Lucky', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
-        if (!stressCancel.cancel) {
-          const effective = roll._luckyStressCost - (stressCancel.reduceBy ?? 0);
-          if (effective > 0) {
-            const maxStress = attackerEl.maxStress ?? 6;
-            updateActiveElement(roll._attackerInstanceId, { currentStress: Math.min((attackerEl.currentStress ?? 0) + effective, maxStress) });
-          }
-        }
-      }
-    }
+    // Apply deferred costs from Not This Time (3 Hope)
     if (roll._notThisTimeHopeCost > 0 && roll._wizardInstanceId) {
       const wizardEl = activeElements.find(e => e.instanceId === roll._wizardInstanceId);
       if (wizardEl) {
@@ -1601,14 +1779,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         });
       }
     }
-    // Dispatch onRollComplete hook for all weapon feature tags
+    // Dispatch onRollComplete for weapon features on the roll
     {
       const rollTagNames = new Set((roll.tags || []).map(t => t.name));
       const attackerEl = roll._attackerInstanceId
         ? activeElements.find(e => e.instanceId === roll._attackerInstanceId)
         : findAttacker(roll.rollUser);
       const attacker = attackerEl ? wrapEntity(attackerEl, updateActiveElement) : null;
-      runHook(weaponFeatures, rollTagNames, 'onRollComplete', { attacker, roll });
+      if (attackerEl?.activeFeatures?.length && rollTagNames.size > 0) {
+        const weaponFeaturesForRoll = attackerEl.activeFeatures.filter(f => f.type === 'weapon' && rollTagNames.has(f.name));
+        runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
+      } else {
+        runHook(weaponFeatures, rollTagNames, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
+      }
     }
     // Generic ancestry banner reaction acknowledge: run chip.onBannerAck (or legacy acknowledge) for each active reaction.
     // Features request "convert to Hope" by calling roll.setWithHope() in acknowledge; system applies skip-fear + grant hope after the loop.
@@ -1629,9 +1812,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (!acknowledge) continue;
       const stateKey = reaction.stateKey;
       const isToggledOn = !!(stateKey && roll._rollDbId != null && charEl[stateKey] === roll._rollDbId);
-      const wrappedChar = wrapEntity(charEl, updateActiveElement);
       const featureName = reaction.featureName ?? 'Feature';
-      const feature = {
+      const featureState = {
         get(key, defaultVal) {
           const bag = charEl._originFeatureState?.[featureName];
           return bag != null && key in bag ? bag[key] : defaultVal;
@@ -1643,7 +1825,37 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           updateActiveElement(charEl.instanceId, { _originFeatureState: next });
         },
       };
-      const ctx = { postRoll, characterRaw: charEl, feature };
+      const wrappedChar = wrapEntity(charEl, updateActiveElement, {
+        postTraitRoll: (traitKey, opts) => {
+          const key = String(traitKey).toLowerCase();
+          const traitName = TRAIT_FULL[key] || traitKey;
+          const score = charEl.traits?.[key] ?? 0;
+          const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
+          const displayName = [charEl.name, reaction.feature?.source, reaction.feature?.name].filter(Boolean).join(' - ');
+          const meta = { _attackerInstanceId: charEl.instanceId, _traitKey: key };
+          if (opts?.difficulty != null) meta._difficulty = opts.difficulty;
+          postRoll(rollText, displayName, tableId, meta);
+        },
+        postAction: (customLabel) => {
+          postActionNotification({
+            _action: true,
+            rollUser: charEl.name,
+            actionName: reaction.feature?.name ?? 'Feature',
+            actionText: customLabel ?? reaction.feature?.name ?? '',
+            _attackerInstanceId: charEl.instanceId,
+          }, tableId).catch(() => {});
+        },
+      });
+      const featureWithState = reaction.feature ? { ...reaction.feature, ...featureState } : null;
+      const context = {
+        roll: rollForAck,
+        character: wrappedChar,
+        feature: featureWithState,
+        featureState,
+        characterRaw: charEl,
+        postRoll,
+        system,
+      };
       if (isToggledOn) {
         if (chip?.hopeCost > 0) {
           const useHopefulArmor = roll._hopefulArmorInsteadByInstanceId?.[charEl.instanceId];
@@ -1658,16 +1870,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           if (chip.hopeCost - substitute > 0) wrappedChar.spendHope(chip.hopeCost - substitute);
         }
         if (chip?.stressCost > 0) {
-          const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'banner-ack', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+          const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'banner-ack', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
           if (!stressCancel.cancel) {
             const effective = chip.stressCost - (stressCancel.reduceBy ?? 0);
             if (effective > 0) wrappedChar.markStress(effective);
           }
         }
-        if (acknowledge) acknowledge.call(chip, rollForAck, wrappedChar, ctx, feature);
+        if (acknowledge) acknowledge.call(chip, context);
         if (chip?.resetsOn && (reaction._featureKey ?? chip._featureKey)) wrappedChar.setFeatureUsed(reaction._featureKey ?? chip._featureKey, chip.resetsOn);
       } else if (acknowledge) {
-        acknowledge.call(chip, rollForAck, wrappedChar, ctx, feature);
+        acknowledge.call(chip, context);
       }
     }
     // Clear any toggle state for this roll (system-owned: features don't clear it).
@@ -1802,7 +2014,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
     if (roll._stressCost > 0) {
-      const stressCancel = await runBeforeMarkStress(el, roll._stressCost, 'feature-use', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+      const stressCancel = await runBeforeMarkStress(el, roll._stressCost, 'feature-use', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
       if (!stressCancel.cancel) {
         const effective = roll._stressCost - (stressCancel.reduceBy ?? 0);
         if (effective > 0) {
@@ -1872,13 +2084,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
     const featuresWithSessionStart = Object.entries(ancestryFeatures).filter(([, d]) => typeof d.onSessionStart === 'function').map(([name]) => name);
     const getFeatureForCharacter = (el, featureName) => {
+      const descriptor = ancestryFeatures[featureName] ?? {};
       const get = (key, defaultVal) => { const bag = el._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : defaultVal; };
       const set = (key, value) => {
         const current = el._originFeatureState ?? {};
         const next = { ...current, [featureName]: { ...(current[featureName] ?? {}), [key]: value } };
         updateActiveElement(el.instanceId, { _originFeatureState: next });
       };
-      return { get, set };
+      return { ...descriptor, get, set };
     };
     const wrappedCharacters = charactersList.map(el => wrapEntity(el, updateActiveElement));
     for (const name of featuresWithSessionStart) {
@@ -1886,11 +2099,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         [...(el.ancestryFeatures || []), ...(el.communityFeatures || [])].some(f => f.name === name)
       );
       if (charsWithFeature.length === 0) continue;
-      const hook = ancestryFeatures[name].onSessionStart;
-      if (hook.length === 1) {
-        for (const el of charsWithFeature) hook(getFeatureForCharacter(el, name));
+      const descriptor = ancestryFeatures[name];
+      const hook = descriptor.onSessionStart;
+      if (descriptor.sessionStartOnce) {
+        hook({ feature: null, characters: wrappedCharacters, system });
       } else {
-        hook(null, wrappedCharacters);
+        for (const el of charsWithFeature) {
+          hook({ feature: getFeatureForCharacter(el, name), character: wrapEntity(el, updateActiveElement), characters: wrappedCharacters, system });
+        }
       }
     }
   };
@@ -2250,8 +2466,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
   // Roll handler for a player acting on their own character.
   // Routes through POST /api/room/:gmUid/roll (validated server-side, real dice).
-  // When context.characterEl is provided, runs ancestry onAct hooks; if any chips are added,
-  // shows a player-only pre-roll banner instead of posting immediately.
+  // When context.characterEl is provided, collects canvasChips from origin features; if any chips are added,
+  // shows a pre-roll banner instead of posting immediately.
   const handlePlayerOwnRoll = (rollText, displayName, rollMeta = {}, context = null) => {
     // GM uses /api/room/my/roll (tableId=null) so server uses req.uid and banner subscription key matches; player uses table-scoped endpoint.
     const targetTableId = isPlayer ? tableId : null;
@@ -2312,6 +2528,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       addRollBonus(n) {
         pending.rollBonus = (pending.rollBonus || 0) + n;
       },
+      setFromText(text) {
+        pending.rollText = text ?? pending.rollText;
+      },
+      setDisplayName(name) {
+        pending.displayName = name ?? pending.displayName;
+      },
+      setMeta(m) {
+        if (m != null) pending.meta = { ...pending.meta, ...m };
+      },
       getFinalRollText() {
         let t = pending.rollText;
         if (advantageNames.length > 0) {
@@ -2330,19 +2555,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     const canvas = { chips: [] };
     canvas.isUsed = (featureKey) => !!(characterEl.featureUsage?.[featureKey]?.used);
     canvas.addChip = (descriptor) => {
-      const featureName = canvas._currentFeatureName;
+      const featureName = descriptor._featureName;
       const merged = { ...descriptor, _featureName: featureName };
       const hadCustomIsVisible = typeof descriptor.isVisible === 'function';
       if (merged.resetsOn) {
-        const originFeatures = [...(characterEl.ancestryFeatures || []), ...(characterEl.communityFeatures || [])];
-        merged._featureKey = `${featureName}-${Math.max(0, originFeatures.findIndex(f => f.name === featureName))}`;
+        if (featureName) {
+          const originList = [...(characterEl.ancestryFeatures || []), ...(characterEl.communityFeatures || [])];
+          merged._featureKey = `${featureName}-${Math.max(0, originList.findIndex(f => f.name === featureName))}`;
+        } else {
+          merged._featureKey = null;
+        }
         if (!hadCustomIsVisible) {
           merged.isVisible = (r) => r.isMine && merged._featureKey != null && !canvas.isUsed(merged._featureKey);
         }
         merged._used = !!(merged._featureKey && canvas.isUsed(merged._featureKey));
       }
       const featureReader = { get(key, d) { const bag = characterEl._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : d; } };
-      const isVisibleResult = typeof merged.isVisible === 'function' ? merged.isVisible(rollWrapper, featureReader) : true;
+      const baseDescriptor = featureName ? ancestryFeatures[featureName] : null;
+      const featureWithState = baseDescriptor && getFeatureStateFor
+        ? { ...baseDescriptor, ...getFeatureStateFor(characterEl, featureName) }
+        : (getFeatureStateFor && featureName ? getFeatureStateFor(characterEl, featureName) : { get: () => undefined, set: () => {} });
+      const character = wrapEntity(characterEl, updateActiveElement);
+      const canvasContext = { roll: rollWrapper, character, characters: wrappedPartyCharacters, system, feature: featureWithState };
+      // Backward compatible: support legacy (roll, featureState, context?) signature
+      const isVisibleResult = typeof merged.isVisible === 'function' 
+        ? (merged.isVisible.length === 1 ? merged.isVisible(canvasContext) : merged.isVisible(rollWrapper, featureReader, canvasContext))
+        : true;
       // When isVisible returns a number N > 0, add N copies of the chip (each can be toggled and onUse called).
       const count = typeof isVisibleResult === 'number' && isVisibleResult > 0
         ? Math.floor(isVisibleResult)
@@ -2358,11 +2596,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       canvas.chips.push({ _difficultyChip: true, label: 'Difficulty (optional)' });
     }
 
-    const featureNames = [
-      ...(characterEl.ancestryFeatures || []).map(f => f.name),
-      ...(characterEl.communityFeatures || []).map(f => f.name),
-    ];
-    const wrappedChar = wrapEntity(characterEl, updateActiveElement);
     const getFeatureStateFor = (el, featureName) => {
       const get = (key, defaultVal) => {
         const bag = el._originFeatureState?.[featureName];
@@ -2377,16 +2610,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       };
       return { get, set };
     };
-    runHook(ancestryFeatures, featureNames, 'onAct', {
-      canvas,
-      roll: rollWrapper,
-      char: wrappedChar,
-      options: { isReaction: !!rollMeta._isReaction },
-      getFeatureStateFor: (name) => getFeatureStateFor(characterEl, name),
-    });
+    // Collect pre-roll chips from declarative chips array (placement: 'preroll') or legacy canvasChips.
+    if (Array.isArray(characterEl.activeFeatures) && characterEl.activeFeatures.length > 0) {
+      for (const feature of characterEl.activeFeatures) {
+        const prerollChips = feature.chips?.filter(c => c.placement === 'preroll') || feature.canvasChips || [];
+        for (const c of prerollChips) {
+          canvas.addChip({ ...c, _featureName: feature.name });
+        }
+      }
+    } else {
+      const featureNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
+      for (const name of featureNames) {
+        const descriptor = ancestryFeatures[name];
+        const prerollChips = descriptor?.chips?.filter(c => c.placement === 'preroll') || descriptor?.canvasChips || [];
+        for (const c of prerollChips) {
+          canvas.addChip({ ...c, _featureName: name });
+        }
+      }
+    }
 
     if (canvas.chips.length === 0) {
-      runHook(ancestryFeatures, featureNames, 'onRoll', { roll: rollWrapper });
+      if (Array.isArray(characterEl.activeFeatures) && characterEl.activeFeatures.length > 0) {
+        runCharacterHook(characterEl.activeFeatures, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
+      } else {
+        const featureNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
+        runHook(ancestryFeatures, featureNames, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
+      }
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
       dismissAllHoverCards();
       postRoll(rollWrapper.getFinalRollText(), pending.displayName || rollText, targetTableId, metaWithLabel);
@@ -2426,8 +2675,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       for (const name of preRollAdvantages) rollWrapper.addAdvantageDie((name && name.trim()) || 'Advantage');
       for (const name of preRollDisadvantages) rollWrapper.addDisadvantage((name && name.trim()) || 'Disadvantage');
     }
-                    const proceedFeatureNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
-                    runHook(ancestryFeatures, proceedFeatureNames, 'onRoll', { roll: rollWrapper });
+                    if (Array.isArray(charEl.activeFeatures) && charEl.activeFeatures.length > 0) {
+                      runCharacterHook(charEl.activeFeatures, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
+                    } else {
+                      const proceedFeatureNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
+                      runHook(ancestryFeatures, proceedFeatureNames, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
+                    }
     for (let i = 0; i < chips.length; i++) {
       const chip = chips[i];
       if (chip._difficultyChip) continue;
@@ -2446,9 +2699,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (Object.keys(updates).length) updateActiveElement(charEl.instanceId, updates);
       if (chip.requestHopeDieUpgrade) postHopeDieUpgrade(rollWrapper.meta).catch(() => {});
       if (chip.resetsOn && chip._featureKey) wrapEntity(charEl, updateActiveElement).setFeatureUsed(chip._featureKey, chip.resetsOn);
-      const feature = getFeatureStateFor && chip._featureName ? getFeatureStateFor(charEl, chip._featureName) : null;
+      const descriptor = chip._featureName ? ancestryFeatures[chip._featureName] : null;
+      const featureState = getFeatureStateFor && chip._featureName ? getFeatureStateFor(charEl, chip._featureName) : { get: () => undefined, set: () => {} };
+      const feature = descriptor ? { ...descriptor, ...featureState } : { ...featureState };
+      const character = wrapEntity(charEl, updateActiveElement);
       if (pending && chip._featureName && !pending.rollBonusLabel) pending.rollBonusLabel = chip._featureName;
-      if (typeof chip.onUse === 'function') chip.onUse(rollWrapper, feature);
+      if (typeof chip.onUse === 'function') chip.onUse({ roll: rollWrapper, character, feature, characters: wrappedPartyCharacters, system });
     }
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
@@ -2529,8 +2785,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }, [hoveredFeature]);
 
-  // Minimal adversary list for Make a Scene banner picker — safe for both GM and player views.
-  const makeASceneAdversaries = useMemo(() =>
+  // Minimal adversary list for action-banner adversary picker — safe for both GM and player views.
+  const actionAdversaryTargets = useMemo(() =>
     consolidatedElements
       .filter(item => item.kind === 'adversary-group')
       .flatMap(item =>
@@ -2633,53 +2889,47 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     return getTargetsForRoll(syntheticRoll);
   }, [getTargetsForRoll]);
 
-  // For adversary-attack banners: which character targets add disadvantage (e.g. Orc Sturdy at 1 HP). Call onTargeted early and discard; return { [instanceId]: ['Sturdy', ...] }.
+  // For adversary-attack banners: which character targets add disadvantage (e.g. Orc Sturdy at 1 HP). Call onTargeted via activeFeatures.
   const getTargetDisadvantageLabels = useCallback((roll) => {
     if (!roll?.rollText || roll._attackerType !== 'adversary') return {};
     const characterTargets = getTargetsForRoll(roll).filter(t => t.type === 'character');
     const out = {};
     for (const t of characterTargets) {
       const el = activeElements.find(e => e.instanceId === t.instanceId);
-      if (!el?.ancestryFeatures?.length) continue;
+      if (!Array.isArray(el?.activeFeatures) || el.activeFeatures.length === 0) continue;
       const disadvantageFeatures = [];
-      const pendingRoll = {
-        get rollText() { return roll.rollText; },
-        set rollText(_v) {},
-        addDisadvantage(featureName) { disadvantageFeatures.push(featureName ?? pendingRoll._currentFeatureName); },
-      };
       const wrappedChar = wrapEntity(el, updateActiveElement);
-      for (const af of el.ancestryFeatures) {
-        const descriptor = ancestryFeatures[af?.name];
-        if (descriptor?.onTargeted) {
-          pendingRoll._currentFeatureName = af?.name;
-          descriptor.onTargeted(pendingRoll, wrappedChar);
-        }
+      for (const feature of el.activeFeatures) {
+        if (typeof feature.onTargeted !== 'function') continue;
+        const pendingRoll = {
+          get rollText() { return roll.rollText; },
+          set rollText(_v) {},
+          addDisadvantage(name) { disadvantageFeatures.push(name ?? feature.name); },
+        };
+        feature.onTargeted({ roll: pendingRoll, character: wrappedChar, characters: wrappedPartyCharacters, system });
       }
       if (disadvantageFeatures.length) out[t.instanceId] = disadvantageFeatures;
     }
     return out;
-  }, [activeElements, getTargetsForRoll, updateActiveElement]);
+  }, [activeElements, getTargetsForRoll, updateActiveElement, wrappedPartyCharacters]);
 
-  // For adversary target menu (pre-roll): get disadvantage feature names for one character target. Call onTargeted and discard; return ['Sturdy', ...].
+  // For adversary target menu (pre-roll): get disadvantage feature names for one character target.
   const getDisadvantageForTarget = useCallback((rollText, targetInstanceId) => {
     const el = activeElements.find(e => e.instanceId === targetInstanceId);
-    if (!el?.ancestryFeatures?.length) return [];
+    if (!Array.isArray(el?.activeFeatures) || el.activeFeatures.length === 0) return [];
     const disadvantageFeatures = [];
-    const pendingRoll = {
-      get rollText() { return rollText; },
-      set rollText(_v) {},
-      addDisadvantage(featureName) { disadvantageFeatures.push(featureName ?? pendingRoll._currentFeatureName); },
-    };
     const wrappedChar = wrapEntity(el, updateActiveElement);
-    for (const af of el.ancestryFeatures) {
-      const descriptor = ancestryFeatures[af?.name];
-      if (descriptor?.onTargeted) {
-        pendingRoll._currentFeatureName = af?.name;
-        descriptor.onTargeted(pendingRoll, wrappedChar);
-      }
+    for (const feature of el.activeFeatures) {
+      if (typeof feature.onTargeted !== 'function') continue;
+      const pendingRoll = {
+        get rollText() { return rollText; },
+        set rollText(_v) {},
+        addDisadvantage(name) { disadvantageFeatures.push(name ?? feature.name); },
+      };
+      feature.onTargeted({ roll: pendingRoll, character: wrappedChar, characters: wrappedPartyCharacters, system });
     }
     return disadvantageFeatures;
-  }, [activeElements, updateActiveElement]);
+  }, [activeElements, updateActiveElement, wrappedPartyCharacters]);
 
   // Deduplicate actions by adversary id — same type only appears once in the board. Exclude adversary types that have no living (non-defeated) instances.
   const consolidatedMenu = useMemo(() => {
@@ -2809,8 +3059,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     return map;
   }, [srdData, tableCharacters]);
 
-  // Origin (ancestry + community) banner reactions: collect all characters with origin features
-  // that define onBanner or bannerAction, pre-filtered by player mode.
+  // Banner reactions from all characters' activeFeatures (onBanner / bannerAction chips).
   const ancestryBannerReactions = useMemo(() => {
     const enrichRollWithAttackRange = (roll, elements) => {
       if (!roll._attackerInstanceId || !roll._selectedTargetInstanceId) return;
@@ -2821,20 +3070,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       const dist = tokenDistanceFt(attacker.tokenX, attacker.tokenY, target.tokenX, target.tokenY);
       roll.attackRange = distanceFtToRangeBandName(dist);
     };
-    const enrichRollWithIsSuccess = (roll, elements) => {
-      if (!roll._selectedTargetInstanceId) return;
-      const target = elements?.find(e => e.instanceId === roll._selectedTargetInstanceId);
-      if (!target) return;
-      const isAdversary = target.elementType === 'adversary' || target.type === 'adversary';
-      const defense = isAdversary ? target.difficulty : target.evasion;
-      if (defense == null) return;
-      let effectiveTotal = roll.total ?? 0;
-      if (roll.dominant != null) {
-        effectiveTotal += (roll._prayerAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0);
-      }
-      roll.isSuccess = effectiveTotal >= defense;
-    };
 
+    const wrappedCharacters = tableCharacters.map(c => wrapEntity(c, updateActiveElement));
     const reactions = [];
     for (const char of tableCharacters) {
       if (isPlayer && char.assignedPlayerEmail !== playerEmail) continue;
@@ -2842,27 +3079,45 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       const getIsMyRoll = (roll) => roll._attackerInstanceId != null
         ? roll._attackerInstanceId === char.instanceId
         : !!(roll.rollUser && char.name && (roll.rollUser.toLowerCase() === char.name.toLowerCase() || roll.rollUser.toLowerCase().startsWith(char.name.toLowerCase())));
-      const originFeaturesList = [...(char.ancestryFeatures || []), ...(char.communityFeatures || [])];
-      for (let idx = 0; idx < originFeaturesList.length; idx++) {
-        const af = originFeaturesList[idx];
-        const feature = ancestryFeatures[af.name];
-        if (!feature) continue;
+      const activeFeaturesList = Array.isArray(char.activeFeatures) ? char.activeFeatures : [];
+      for (let idx = 0; idx < activeFeaturesList.length; idx++) {
+        const feature = activeFeaturesList[idx];
+        // Check for banner chips in unified array or legacy onBanner hook
+        const hasBannerChips = feature.chips?.some(c => c.placement === 'banner');
+        if (!feature.onBanner && !feature.bannerAction && !hasBannerChips) continue;
         const chips = [];
         let bannerNarrations;
         if (feature.onBanner) {
           const banner = {
             chips,
             _narrations: [],
+            _rollRef: null,
+            _featureName: null,
+            _extraDamage: null,
+            _narration: null,
             addChip(descriptor) { this.chips.push(descriptor); },
-            addNarration(text, style) { this._narrations.push(style != null ? { text, style } : { text }); },
+            addNarration(text, style) {
+              this._narrations.push(style != null ? { text, style } : { text });
+              if (this._featureName) this._narration = `${this._featureName}: ${text}`;
+            },
             addAutomatedNarration(text) { this.addNarration(text, 'automated'); },
+            addDamage(expr) { this._extraDamage = String(expr).trim(); },
+            setTreatAsMissForTarget(instanceId) { if (this._rollRef) this._rollRef._treatAsMissForTarget = instanceId; },
           };
-          feature.onBanner(banner);
+          // Unified chips array: auto-register banner chips (placement: 'banner')
+          const bannerChips = feature.chips?.filter(c => c.placement === 'banner') || [];
+          for (const chip of bannerChips) {
+            banner.addChip(chip);
+          }
+          // Legacy: onBanner hook (still supported for non-chip side effects like addAutomatedNarration)
+          if (typeof feature.onBanner === 'function') {
+            feature.onBanner({ banner, character: entity, characters: wrappedCharacters, system });
+          }
           bannerNarrations = banner._narrations?.length ? [...banner._narrations] : undefined;
         } else if (feature.bannerAction) {
           chips.push(feature.bannerAction);
         }
-        const sourceName = feature.source ?? feature.ancestry ?? 'Unknown';
+        const sourceName = typeof feature.source === 'string' ? feature.source : (feature.source?.name ?? feature.type ?? 'Unknown');
         chips.forEach((chip, chipIndex) => {
           // Only toggleable (stateKey) when the chip has Ack/Reject — otherwise it's display-only or activate-only.
           const hasChipAckReject = chip?.onChipAck != null || chip?.onChipReject != null;
@@ -2882,6 +3137,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             chip,
             stateKey,
             bannerNarrations,
+            banner: feature.onBanner ? banner : undefined,
             _featureKey: featureKeyForResetsOn,
             getDisabledState: (roll) => {
               enrichRollWithAttackRange(roll, activeElements);
@@ -2925,7 +3181,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               }
               const wr = wrapRoll(roll, undefined, char.instanceId);
               wr.isMine = getIsMyRoll(roll);
-              const visible = chip.isVisible ? chip.isVisible(wr, entity) : wr.isMine;
+              // Unified context for isVisible (backward compatible with legacy (roll, character) signature)
+              const getFeatureState = (featureName) => {
+                const get = (key, defaultVal) => {
+                  const bag = char._originFeatureState?.[featureName];
+                  return bag != null && key in bag ? bag[key] : defaultVal;
+                };
+                const set = (key, value) => {
+                  const current = char._originFeatureState ?? {};
+                  const featureBag = current[featureName] ?? {};
+                  const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
+                  updateActiveElement(char.instanceId, { _originFeatureState: next });
+                };
+                return { get, set };
+              };
+              const featureWithState = { ...feature, ...getFeatureState(feature.name) };
+              const chipContext = { roll: wr, character: entity, characters: wrappedCharacters, system, feature: featureWithState, banner };
+              const visible = chip.isVisible 
+                ? (chip.isVisible.length === 1 ? chip.isVisible(chipContext) : chip.isVisible(wr, entity)) // New unified context or legacy signature
+                : wr.isMine;
               return visible;
             },
             isActive: stateKey
@@ -2941,7 +3215,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
     return reactions;
-  }, [tableCharacters, activeElements, isPlayer, playerEmail]);
+  }, [tableCharacters, activeElements, isPlayer, playerEmail, updateActiveElement, system]);
 
   // Sync DiceRoller with the authoritative pendingBanners subscription snapshot (must run after ancestryBannerReactions is defined).
   useEffect(() => {
@@ -2959,7 +3233,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       for (const name of tagNames) {
         const f = weaponFeatures[name];
         weaponBanner.addAutomatedNarration = () => weaponBanner.addNarration(f.description, 'automated');
-        if (f?.onBanner) f.onBanner(weaponBanner);
+        if (f?.onBanner) f.onBanner({ banner: weaponBanner, roll, characters: wrappedPartyCharacters, system });
       }
       for (const r of ancestryBannerReactions) {
         if (r.matchesRoll(roll) && r.bannerNarrations?.length) parts.push(...r.bannerNarrations);
@@ -2983,8 +3257,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (banner._action && banner._featureName === 'Life Support' && banner._attackerInstanceId) {
           lifeSupportTargets = getCharactersWithinCloseRangeWithMarkedHp(activeElements, banner._attackerInstanceId);
         }
-        if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
-          setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
+        if (banner._action && banner._targetType === 'adversary' && banner._selectedTargetInstanceId && dbId != null) {
+          setActionAdversarySelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
         }
         const narrations = getBannerNarration(banner);
         const augmentedBanner = {
@@ -3000,8 +3274,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
       if (pendingBannerDbIdsRef.current.has(dbId)) {
         diceRollerRef.current?.updateBannerRollByDbId?.(dbId, banner);
-        if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId != null) {
-          setMakeASceneSelections(prev => ({ ...prev, [dbId]: banner._selectedTargetInstanceId }));
+        if (banner._action && banner._targetType === 'adversary' && banner._selectedTargetInstanceId != null) {
+          setActionAdversarySelections(prev => ({ ...prev, [dbId]: banner._selectedTargetInstanceId }));
         }
         continue;
       }
@@ -3015,8 +3289,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (banner._action && banner._featureName === 'Life Support' && banner._attackerInstanceId) {
         lifeSupportTargets = getCharactersWithinCloseRangeWithMarkedHp(activeElements, banner._attackerInstanceId);
       }
-      if (banner._action && banner._featureName === 'Make a Scene' && banner._selectedTargetInstanceId && dbId != null) {
-        setMakeASceneSelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
+      if (banner._action && banner._targetType === 'adversary' && banner._selectedTargetInstanceId && dbId != null) {
+        setActionAdversarySelections(prev => prev[dbId] ? prev : { ...prev, [dbId]: banner._selectedTargetInstanceId });
       }
       const narrations = getBannerNarration(banner);
       diceRollerRef.current?.addRoll({
@@ -3524,7 +3798,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           updateActiveElement(el.instanceId, { currentStress: s });
                           return;
                         }
-                        const stressCancel = await runBeforeMarkStress(el, amount, 'stat-block', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress });
+                        const stressCancel = await runBeforeMarkStress(el, amount, 'stat-block', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
                         if (!stressCancel.cancel) {
                           const effective = amount - (stressCancel.reduceBy ?? 0);
                           if (effective > 0) {
@@ -3578,8 +3852,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   const toggleChips = [];
                   for (const f of allFeatures) {
                     const descriptor = ancestryFeatures[f?.name];
-                    if (!descriptor?.cardChips) continue;
-                    for (const chip of descriptor.cardChips) {
+                    const cardChips = descriptor?.chips?.filter(c => c.placement === 'card') || descriptor?.cardChips || [];
+                    if (!cardChips.length) continue;
+                    for (const chip of cardChips) {
                       if (typeof chip.onToggle !== 'function') continue;
                       toggleChips.push({ feature: f, chip, descriptor });
                     }
@@ -4050,13 +4325,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               return byUid || byEmail;
             } : () => true}
             restGmUid={tableId}
-            makeASceneSelections={makeASceneSelections}
-            onMakeASceneSelect={(rollDbId, instanceId) => {
-              setMakeASceneSelections(prev => ({ ...prev, [rollDbId]: instanceId }));
+            actionAdversarySelections={actionAdversarySelections}
+            onActionAdversarySelect={(rollDbId, instanceId) => {
+              setActionAdversarySelections(prev => ({ ...prev, [rollDbId]: instanceId }));
               // Sync selection to server so all clients (GM + player) see the same choice
               postBannerMakeASceneTarget(tableId, rollDbId, instanceId).catch(() => {});
             }}
-            makeASceneAdversaries={makeASceneAdversaries}
+            actionAdversaryTargets={actionAdversaryTargets}
             targets={isPlayer ? [] : damageTargets}
             getTargetsForRoll={getTargetsForRoll}
             getTargetDisadvantageLabels={!isPlayer ? getTargetDisadvantageLabels : undefined}
@@ -4064,7 +4339,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             onApplyVulnerable={!isPlayer ? handleApplyVulnerable : undefined}
             onConcussiveKnock={!isPlayer ? handleConcussiveKnock : undefined}
             canApplyDamage={!isPlayer}
-            onLuckyReroll={isPlayer ? undefined : handleLuckyReroll}
             onQuickTarget={isPlayer ? undefined : handleQuickTarget}
             onDoubledUpTarget={isPlayer ? undefined : handleDoubledUpTarget}
             onBouncingTarget={isPlayer ? undefined : handleBouncingTarget}
@@ -4106,6 +4380,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             mapConfig={mapConfig}
             onMapConfigChange={onMapConfigChange}
             tableName={tableName}
+            tableStateReady={tableStateReady}
             onTableNameChange={onTableNameChange}
             onDeleteTable={onDeleteTable}
             onClearDice={() => diceRollerRef.current?.clearDice?.()}
@@ -4478,7 +4753,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                         )}
                         {inst.difficultyMod != null && inst.difficultyMod !== 0 && (
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Make a Scene: difficulty reduced">
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Difficulty modifier">
                               {inst.difficultyMod > 0 ? '+' : ''}{inst.difficultyMod} Difficulty
                             </span>
                             <button
@@ -4660,7 +4935,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/50 border border-emerald-600/60 text-emerald-200">Focused by {inst.focusedBy}</span>
                           )}
                           {inst.difficultyMod != null && inst.difficultyMod !== 0 && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Make a Scene: difficulty reduced">
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Difficulty modifier">
                               {inst.difficultyMod > 0 ? '+' : ''}{inst.difficultyMod} Difficulty
                             </span>
                           )}
@@ -5076,18 +5351,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   let finalRollText = rollText;
                   if (t.type === 'character') {
                     const targetEl = activeElements.find(el => el.instanceId === t.instanceId) || t;
-                    const pendingRoll = {
-                      get rollText() { return finalRollText; },
-                      set rollText(v) { finalRollText = v; },
-                      addDisadvantage(featureName) { finalRollText = insertDisadvantageD6(finalRollText, featureName ?? pendingRoll._currentFeatureName); },
-                    };
                     const wrappedChar = wrapEntity(targetEl, updateActiveElement);
-                    const ancestryFeatureList = targetEl.ancestryFeatures || [];
-                    for (const af of ancestryFeatureList) {
-                      const descriptor = ancestryFeatures[af?.name];
-                      if (descriptor?.onTargeted) {
-                        pendingRoll._currentFeatureName = af?.name;
-                        descriptor.onTargeted(pendingRoll, wrappedChar);
+                    if (Array.isArray(targetEl.activeFeatures)) {
+                      for (const feature of targetEl.activeFeatures) {
+                        if (typeof feature.onTargeted !== 'function') continue;
+                        const pendingRoll = {
+                          get rollText() { return finalRollText; },
+                          set rollText(v) { finalRollText = v; },
+                          addDisadvantage(name) { finalRollText = insertDisadvantageD6(finalRollText, name ?? feature.name); },
+                        };
+                        feature.onTargeted({ roll: pendingRoll, character: wrappedChar, characters: wrappedPartyCharacters, system });
                       }
                     }
                   }
@@ -5203,6 +5476,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   isPlayer={isPlayer}
                   getValidTargets={allowInteract ? getValidTargets : undefined}
                   targetMenuOpenRef={characterTargetMenuOpenRef}
+                  system={system}
+                  characters={wrappedPartyCharacters}
                 />
               );
             })()}

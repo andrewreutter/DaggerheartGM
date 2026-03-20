@@ -1,0 +1,117 @@
+source,parent,name,actor,verb,spend,action,mayOrCan
+ancestries,Drakona,Scales,you,would take Severe damage,mark a Stress,mark 1 fewer Hit Points,can
+ancestries,Faun,Kick,you,succeed on an attack against a target within Melee range,mark a Stress,"kick yourself off them, dealing an extra 2d6 damage and knocking back either yourself or the target to Very Close range",can
+ancestries,Firbolg,Charge,you,succeed on an Agility Roll to move from Far or Very Far range into Melee range with one or more targets,mark a Stress,deal 1d12 physical damage to all targets within Melee range,can
+ancestries,Human,Adaptability,you,fail a roll that utilized one of your Experiences,mark a Stress,reroll,can
+ancestries,Infernis,Fearless,you,roll with Fear,mark 2 Stress,change it into a roll with Hope instead,can
+ancestries,Katari,Feline Instincts,you,make an Agility Roll,spend 2 Hope,reroll your Hope Die,can
+ancestries,Orc,Tusks,you,succeed on an attack against a target within Melee range,spend a Hope,"gore the target with your tusks, dealing an extra 1d6 damage",can
+communities,Seaborne,Know the Tide,you,"roll with Fear, place a token on your community card. You can hold a number of tokens equal to your level. Before you make an action roll",spend any number of these tokens,gain a +1 bonus to the roll for each token spent,can
+classes,Ranger,Ranger's Focus,you,"deal damage to them, they must mark a Stress. - When you fail an attack against them",end your Ranger's Focus feature,reroll your Duality Dice,can
+subclasses,Wordsmith,Eloquent,you,encourage an ally,do one of the following: - Allow them,find a mundane object or tool they need,can
+subclasses,Warden of the Elements,Elemental Dominion,you,"would mark Hit Points, roll a d6 per Hit Point marked. For each result of 6, reduce the number of Hit Points you mark by 1. - _Water:_ When an attack against you succeeds",mark a Stress,make the attacker temporarily _Vulnerable_,can
+subclasses,Warden of the Elements,Elemental Aura,an adversary,"marks 1 or more Hit Points, they must also mark a Stress. - _Earth:_ Your allies gain a +1 bonus to Strength. - _Water:_ When an adversary deals damage to you",mark a Stress,move them anywhere within Very Close range of where they are,can
+subclasses,Warden of Renewal,Defender,you're,in Beastform and an ally within Close range marks 2 or more Hit Points,mark a Stress,reduce the number of Hit Points they mark by 1,can
+subclasses,Stalwart,Iron Will,you,take physical damage,mark an additional Armor Slot,reduce the severity,can
+subclasses,Stalwart,Loyal Protector,an ally within Close range,has 2 or fewer Hit Points and would take damage,mark a Stress,sprint to their side and take the damage instead,can
+subclasses,Stalwart,Partners-in-Arms,an ally within Very Close range,takes damage,mark an Armor Slot,reduce the severity by one threshold,can
+subclasses,Vengeance,Revenge,an adversary within Melee range,succeeds on an attack against you,mark 2 Stress,force the attacker to mark a Hit Point,can
+subclasses,Wayfinder,Ruthless Predator,you,make a damage roll,mark a Stress,gain a +1 bonus to your Proficiency,can
+subclasses,Wayfinder,Path Forward,you're,traveling to a place you've previously visited or you carry an object that has been at the location before,"identify the shortest, most direct path",your destination,can
+subclasses,Nightwalker,Shadow Stepper,you,move into an area of darkness or a shadow cast by another creature or object,mark a Stress,disappear from where you are and reappear inside another shadow within Far range,can
+subclasses,Elemental Origin,Natural Evasion,an,attack roll against you succeeds,mark a Stress and describe how you use your element,defend you,can
+subclasses,Call of the Slayer,Slayer,you,make an attack roll or damage roll,"spend any number of these Slayer Dice, rolling them and adding their result",the roll,can
+subclasses,Call of the Slayer,Weapon Specialist,you,succeed on an attack,spend a Hope,add one of the damage dice from your secondary weapon to the damage roll,can
+subclasses,School of War,Thrive in Chaos,you,succeed on an attack,mark a Stress after rolling damage,force the target to mark an additional Hit Point,can
+weapons,Rapier,Quick,you,make an attack,mark a Stress,target another creature within range,can
+weapons,Improved Rapier,Quick,you,make an attack,mark a Stress,target another creature within range,can
+weapons,Bladed Whip,Quick,you,make an attack,mark a Stress,target another creature within range,can
+weapons,Advanced Rapier,Quick,you,make an attack,mark a Stress,target another creature within range,can
+weapons,Legendary Rapier,Quick,you,make an attack,mark a Stress,target another creature within range,can
+weapons,Dual-Ended Sword,Quick,you,make an attack,mark a Stress,target another creature within range,can
+weapons,Buckler,Deflecting,you,are attacked,mark an Armor Slot,gain a bonus to your Evasion equal to your available Armor Score against the attack,can
+weapons,Knuckle Claws,Doubled Up,you,make an attack with your primary weapon,deal damage,another target within Melee range,can
+armor,Runetan Floating Armor,Shifting,you,are targeted for an attack,mark an Armor Slot,give the attack roll against you disadvantage,can
+adversaries,Giant Mosquitoes,Bloodsucker - Reaction,the Mosquitoes' attack,causes a target to mark HP,mark a Stress,force the target to mark an additional HP,can
+adversaries,Harrier,Fall Back - Reaction,a creature,moves into Melee range to make an attack,mark a Stress before the attack roll,move anywhere within Close range and make an attack against that creature,can
+adversaries,Green Ooze,Split - Reaction,the Ooze,has 3 or more HP marked,spend a Fear,split them into two Tiny Green Oozes (with no marked HP or Stress),can
+adversaries,Red Ooze,Split - Reaction,the Ooze,has 3 or more HP marked,spend a Fear,split them into two Tiny Red Oozes (with no marked HP or Stress),can
+adversaries,Sylvan Soldier,Blend In - Reaction,the Soldier,makes a successful attack,mark a Stress,become _Hidden_ until the Soldier's next attack or a PC succeeds on an Instinct Roll (14) to find them,can
+adversaries,Tangle Bramble,Drain and Multiply - Reaction,an attack from the Bramble,causes a target to mark HP and there are three or more Tangle Bramble Minions within Close range,combine the Minions into a Tangle Bramble Swarm Horde. The Horde's HP is equal,the number of Minions combined,can
+adversaries,Brawny Zombie,Rip and Tear - Reaction,the Zombies,makes a successful standard attack,mark a Stress,temporarily _Restrain_ the target and force them to mark 2 Stress,can
+adversaries,Zombie Pack,Overwhelm - Reaction,the,Zombies mark HP from an attack within Melee range,mark a Stress,make a standard attack against the attacker,can
+adversaries,Master Assassin,The Subtle Blade - Reaction,the Assassin successfully,makes a standard attack against a _Vulnerable_ target,spend a Fear,deal Severe damage instead of their standard damage,can
+adversaries,Courtesan,Searing Glance - Reaction,a PC within Close range,makes a Presence Roll,mark a Stress,cast a gaze toward the aftermath,can
+adversaries,Elite Soldier,Vassal's Loyalty - Reaction,the Soldier,is within Very Close range of a knight or other noble who would take damage,mark a Stress,move into Melee range of them and take the damage instead,can
+adversaries,Gorgon,Petrifying Gaze - Reaction,the Gorgon,takes damage from an attack within Close range,spend a Fear,force the attacker to make an Instinct Reaction Roll,can
+adversaries,Secret-Keeper,Fallen Hounds - Reaction,the Secret-Keeper,marks 2 or more HP,mark a Stress,"summon a Demonic Hound Pack, which appears at Close range and is immediately spotlighted",can
+adversaries,Shark,Blood in the Water - Reaction,a creature within Close range of the Shark,marks HP from another creature's attack,mark a Stress,"immediately spotlight the Shark, moving them into Melee range of the target and making a standard attack",can
+adversaries,Spectral Captain,Hold Fast - Reaction,the Captain's Spectral allies,are forced to make a reaction roll,mark a Stress,give those allies a +2 bonus to the roll,can
+adversaries,Spy,Fly on the Wall - Reaction,a PC or group,is discussing something sensitive,mark a Stress,"reveal that the Spy is present in the scene, observing them",can
+adversaries,Adult Flickerfly,Uncanny Reflexes - Reaction,the Flickerfly,takes damage from an attack within Close range,mark a Stress,take half damage,can
+adversaries,Demon of Despair,Your Friends Will Fail You - Reaction,a PC,fails with Fear,mark a Stress,cause all other PCs within Close range to lose a Hope,can
+adversaries,Demon of Jealousy,Rivalry - Reaction,a creature within Close range,takes damage from a different adversary,mark a Stress,add a d4 to the damage roll,can
+adversaries,Demon of Jealousy,What's Yours Is Mine - Reaction,a PC,takes Severe damage within Very Close range of the Demon,spend a Fear,cause the target to make a Finesse Reaction Roll,can
+adversaries,Demon of Wrath,Retaliation - Reaction,the Demon,takes damage from an attack within Close range,mark a Stress,make a standard attack against the attacker,can
+adversaries,Dire Bat,Guardian - Reaction,an allied Vampire,marks HP,mark a Stress,fly into Melee range of the attacker and make an attack with advantage against them,can
+adversaries,Dryad,We Are All One - Reaction,an ally,dies within Close range,spend a Fear,clear 2 HP and 2 Stress as the fallen ally's life force is returned to the forest,can
+adversaries,Greater Water Elemental,High Tide - Reaction,the Elemental,makes a successful standard attack,mark a Stress,knock the target back to Close range,can
+adversaries,Huge Green Ooze,Split - Reaction,the Ooze,has 4 or more HP marked,spend a Fear,split them into two Green Oozes (with no marked HP or Stress),can
+adversaries,Stag Knight,Thorny Armor - Reaction,the Knight,takes damage from an attack within Melee range,mark a Stress,deal 1d10+5 physical damage to the attacker,can
+adversaries,Vampire,Mistform - Reaction,the Vampire,takes physical damage,spend a Fear,take half damage,can
+adversaries,Vault Guardian Turret,Concentrate Fire - Reaction,another adversary,deals damage to a target within Far range of the Turret,mark a Stress,add the Turret's standard attack damage to the damage roll,can
+adversaries,Arch-Necromancer,"Not Today, My Dears - Reaction",the Necromancer,has marked 7 or more of their HP,spend a Fear,have them teleport away to a safe location to recover,can
+adversaries,Oracle of Doom,Vengeful Fate - Reaction,the Oracle,marks HP from an attack within Very Close range,mark a Stress,knock the attacker back to Far range and deal 2d10+4 physical damage,can
+adversaries,Perfected Zombie,Skilled Opportunist - Reaction,another adversary,deals damage to a target within Very Close range of the Zombie,spend a Fear,add the Zombie's standard attack damage to the damage roll,can
+adversaries,Zombie Legion,Overwhelm - Reaction,the Legion,takes Minor damage from an attack within Melee range,mark a Stress,make a standard attack with advantage against the attacker,can
+beastforms,Nimble Grazer,Elusive Prey,an attack roll against you,would succeed,mark a Stress and roll a d4. Add the result,your Evasion against this attack,can
+beastforms,Pack Predator,Hobbling Strike,you,succeed on an attack against a target within Melee range,mark a Stress,make the target temporarily _Vulnerable_,can
+beastforms,Powerful Beast,Rampage,you,roll a 1 on a damage die,roll a d10 and add the result,the damage roll,can
+beastforms,Great Predator,Vicious Maul,you,succeed on an attack against a target,spend a Hope,make them temporarily _Vulnerable_ and gain a +1 bonus to your Proficiency for this attack,can
+beastforms,Mighty Lizard,Snapping Strike,you,succeed on an attack against a target within Melee range,spend a Hope,"clamp that opponent in your jaws, making them temporarily _Restrained_ and _Vulnerable",can
+beastforms,Aquatic Predator,Vicious Maul,you,succeed on an attack against a target,spend a Hope,make them _Vulnerable_ and gain a +1 bonus to your Proficiency for this attack,can
+beastforms,Terrible Lizard,Devastating Strikes,you,deal Severe damage to a target within Melee range,mark a Stress,force them to mark an additional Hit Point,can
+abilities,Cloaking Blast,Cloaking Blast,you,make a successful Spellcast Roll to cast a different spell,spend a Hope,become _Cloaked_,can
+abilities,Arcane Reflection,Arcane Reflection,you,would take magic damage,spend any number of Hope,roll that many d6s,can
+abilities,Get Back Up,Get Back Up,you,take Severe damage,mark a Stress,reduce the severity by one threshold,can
+abilities,Whirlwind,Whirlwind,you,make a successful attack against a target within Very Close range,spend a Hope,use the attack against all other targets within Very Close range,can
+abilities,Versatile Fighter,Versatile Fighter,you,deal damage,mark a Stress,use the maximum result of one of your damage dice instead of rolling it,can
+abilities,Champion's Edge,Champion's Edge,you,critically succeed on an attack,spend up,3 Hope and choose one of the following options for each Hope spent: - You clear a Hit Point,can
+abilities,Battle-Hardened,Battle-Hardened,you,would make a Death Move,spend a Hope,clear a Hit Point instead,can
+abilities,Glancing Blow,Glancing Blow,you,fail an attack,mark a Stress,deal weapon damage using half your Proficiency,can
+abilities,Battle Monster,Battle Monster,you,make a successful attack against an adversary,mark 4 Stress,force the target to mark a number of Hit Points equal to the number of Hit Points you currently have marked instead of rolling for damage,can
+abilities,I See It Coming,I See It Coming,you're,targeted by an attack made from beyond Melee range,mark a Stress,roll a d4 and gain a bonus to your Evasion equal to the result against the attack,can
+abilities,Ferocity,Ferocity,you,cause an adversary to mark 1 or more Hit Points,spend 2 Hope,increase your Evasion by the number of Hit Points they marked,can
+abilities,Brace,Brace,you,mark an Armor Slot to reduce incoming damage,mark a Stress,mark an additional Armor Slot,can
+abilities,Redirect,Redirect,an attack made against you from beyond Melee range,"fails, roll a number of d6s equal to your Proficiency. If any roll a 6",mark a Stress,redirect the attack to damage an adversary within Very Close range instead,can
+abilities,Know Thy Enemy,Know Thy Enemy,observing,a creature,"make an Instinct Roll against them. On a success, spend a Hope and ask the GM for one set of information about the target from the following options: - Their unmarked Hit Points and Stress. - Their Difficulty and damage thresholds. - Their tactics and standard attack damage dice. - Their features and Experiences. Additionally on a success, you can mark a Stress",remove a Fear from the GM's Fear Pool,can
+abilities,Rapid Riposte,Rapid Riposte,an,attack made against you from within Melee range fails,mark a Stress and seize the opportunity,deal the weapon damage of one of your active weapons to the attacker,can
+abilities,Bone-Touched,Bone-Touched,4,"or more of the domain cards in your loadout are from the Bone domain, gain the following benefits: - +1 bonus to Agility - Once per rest",spend 3 Hope,cause an attack that succeeded against you to fail instead,can
+abilities,Breaking Blow,Breaking Blow,you,make a successful attack,mark a Stress,make the next successful attack against that same target deal an extra 2d12 damage,can
+abilities,Safe Haven,Safe Haven,you,have a few minutes of calm to focus,spend 2 Hope,"summon your Safe Haven, a large interdimensional home where you and your allies can take shelter",can
+abilities,Inspirational Words,Inspirational Words,you,speak with an ally,spend a token from this card,give them one benefit from the following options: - Your ally clears a Stress,can
+abilities,Never Upstaged,Never Upstaged,you,mark 1 or more Hit Points from an attack,mark a Stress,place a number of tokens equal to the number of Hit Points you marked on this card,can
+abilities,Grace-Touched,Grace-Touched,you,would force a target to mark a number of Hit Points,choose instead,force them to mark that number of Stress,can
+abilities,Encore,Encore,an ally within Close range,deals damage to an adversary,"make a Spellcast Roll against that same target. On a success, you deal the same damage",the target that your ally dealt,can
+abilities,Notorious,Notorious,you,leverage your notoriety to get what you want,mark a Stress before you roll,gain a +10 bonus to the result,can
+abilities,Uncanny Disguise,Uncanny Disguise,you,have a few minutes to prepare,mark a Stress,don the facade of any humanoid you can picture clearly in your mind,can
+abilities,Chokehold,Chokehold,you,position yourself behind a creature who's about your size,mark a Stress,"pull them into a chokehold, making them temporarily _Vulnerable_",can
+abilities,Stealth Expertise,Stealth Expertise,you,roll with Fear while attempting to move unnoticed through a dangerous area,mark a Stress,roll with Hope instead,can
+abilities,Mass Disguise,Mass Disguise,you,have a few minutes of silence to focus,mark a Stress,change the appearance of all willing creatures within Close range,can
+abilities,Midnight-Touched,Midnight-Touched,you,have 0 Hope and the GM would gain a Fear,"gain a Hope instead. - When you make a successful attack, you can mark a Stress",add the result of your Fear Die to your damage roll,can
+abilities,Vanishing Dodge,Vanishing Dodge,an attack made against you that,would deal physical damage fails,spend a Hope,"envelop yourself in shadow, becoming _Hidden_ and teleporting to a point within Close range of the attacker",can
+abilities,Spellcharge,Spellcharge,you,"take magic damage, place tokens equal to the number of Hit Points you marked on this card. You can store a number of tokens equal to your Spellcast trait. When you make a successful attack against a target",spend any number of tokens,add a d6 for each token spent to your damage roll,can
+abilities,Gifted Tracker,Gifted Tracker,you're,tracking a specific creature or group of creatures based on signs of their passage,"spend any number of Hope and ask the GM that many questions from the following list. - What direction did they go? - How long ago did they pass through? - What were they doing in this location? - How many of them were here? When you encounter creatures you've tracked in this way, gain a +1 bonus",your Evasion against them,can
+abilities,Nature's Tongue,Nature's Tongue,you,"want to speak to the plants and animals around you, make an Instinct Roll (12). On a success, they'll give you the information they know. On a roll with Fear, their knowledge might be limited or come at a cost. Additionally, before you make a Spellcast Roll while within a natural environment",spend a Hope,gain a +2 bonus to the roll,can
+abilities,Thorn Skin,Thorn Skin,you,"do, place a number of tokens equal to your Spellcast trait on this card. When you take damage",spend any number of tokens,roll that number of d6s,can
+abilities,Sage-Touched,Sage-Touched,4,"or more of the domain cards in your loadout are from the Sage domain, gain the following benefits: - While you're in a natural environment, you gain a +2 bonus to your Spellcast Rolls. - Once per rest",double your Agility or Instinct when making a roll that uses that trait. You must choose,do this before you roll,can
+abilities,Fane of the Wilds,Fane of the Wilds,you,would make a Spellcast Roll,spend any number of tokens after the roll,gain a +1 bonus for each token spent,can
+abilities,Mending Touch,Mending Touch,you,can take a few minutes to focus on the target you're helping,spend 2 Hope,clear a Hit Point or a Stress on them,can
+abilities,Healing Strike,Healing Strike,you,deal damage to an adversary,spend 2 Hope,clear a Hit Point on an ally within Close range,can
+abilities,Splendor-Touched,Splendor-Touched,4,"or more of the domain cards in your loadout are from the Splendor domain, gain the following benefits: - +3 bonus to your Severe damage threshold - Once per long rest, when incoming damage would require you to mark a number of Hit Points",choose,mark that much Stress or spend that much Hope instead,can
+abilities,I Am Your Shield,I Am Your Shield,an ally within Very Close range,would take damage,mark a Stress,stand in the way and make yourself the target of the attack instead,can
+abilities,Bold Presence,Bold Presence,you,make a Presence Roll,spend a Hope,add your Strength to the roll,can
+abilities,Support Tank,Support Tank,an ally within Close range,fails a roll,spend 2 Hope,allow them to reroll either their Hope or Fear Die,can
+abilities,Shrug It Off,Shrug It Off,you,would take damage,mark a Stress,reduce the severity of the damage by one threshold,can
+abilities,Lead by Example,Lead by Example,you,deal damage to an adversary,mark a Stress and describe how you encourage your allies. The next PC,make an attack against that adversary can clear a Stress or gain a Hope,can
+abilities,Unbreakable,Unbreakable,you,"mark your last Hit Point, instead of making a death move",roll a d6 and clear a number of Hit Points equal,the result,can

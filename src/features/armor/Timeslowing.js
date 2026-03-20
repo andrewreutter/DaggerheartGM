@@ -1,3 +1,6 @@
+/**
+ * SRD: Mark an Armor Slot to roll a d4 and add its result as a bonus to your Evasion against an incoming attack.
+ */
 export default {
   name: 'Timeslowing',
   description: 'When you mark an Armor Slot, gain a +1d4 bonus to Evasion until you take a rest.',

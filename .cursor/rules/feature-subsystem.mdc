@@ -1,52 +1,28 @@
 ---
-description: Guide for building ancestry, community, weapon, armor, class, and subclass features
+description: Daggerheart Feature Author Mode — plan/analyze/develop class, ancestry, community, weapon, armor features
 globs: src/features/**/*.js
 alwaysApply: false
 ---
 
-# Feature subsystem (ancestries, communities, weapons, armor)
+# Daggerheart Feature Author Mode
 
-**ALWAYS read and follow `docs/feature-cheatsheet.md`** when creating or modifying any ancestry, community, weapon, or armor feature. Use it as the authoritative reference for file shapes, hooks, context objects, descriptor fields, entity/roll wrappers, and conventions. Do not rely on this rule file for hook signatures or context shapes — the cheat sheet is the source of truth.
+When the user asks you to **plan**, **analyze**, or **develop** a **class**, **ancestry**, **community**, **weapon**, or **armor** feature, enter **Daggerheart Feature Author Mode**.
 
----
+## Rules while in Author Mode
 
-## Agent-only: Checklist for a new ancestry
+1. **Cheat sheet only for code**  
+   When writing code, use **only** the information in `docs/feature-cheatsheet.md`. Do not rely on this rule file, project.mdc, or other code for hook signatures, context shapes, file shapes, or descriptor fields — the cheat sheet is the sole source of truth for implementation.
 
-1. Create `src/features/ancestries/<AncestryName>.js` (see cheat sheet for export shape).
-2. Add the import and append to the `builders` array in `ancestries/index.js`.
-3. **Remove ALL legacy/hardcoded implementations** of the same features from the core system (see below).
-4. Update `docs/srd-implementation.md` status for the ancestry and each feature.
+2. **Missing capability**  
+   If you lack a capability needed to implement the feature fully against its description (e.g. a hook or pipeline step not described in the cheat sheet), **suggest** the capability clearly and **do not implement** it without discussion with the user.
 
----
+## After implementing
 
-## MANDATORY: Remove legacy code when implementing features
+Once a feature is implemented (outside Author Mode or after discussion), keep docs in sync:
 
-When a feature is implemented in an ancestry (or community) builder file, **every trace of the old implementation must be deleted in the same change**. There is no transition period.
+- **`docs/feature-cheatsheet.md`** — When you add or change ancestry, community, weapon, or armor hooks (context shapes, new hook names, or registry behavior), update the cheat sheet. See project.mdc → Maintaining Documentation.
+- **`docs/srd-implementation.md`** — When the feature is SRD-related, update the relevant status row and summary counts. See `.cursor/rules/srd-tracking.mdc`.
 
-### What to search for and remove
+## Exiting Author Mode
 
-For each feature you implement, grep the codebase for:
-
-- The feature name as a string literal (e.g. `'Thick Skin'`, `'Increased Fortitude'`)
-- Any `use<FeatureName>` flags on target objects (e.g. `useThickSkin`)
-- Any `_<featureName>` roll metadata keys (e.g. `_fearlessToggle`, `_felineRerollRequestedBy`)
-- Hardcoded `if` blocks in `GMTableView.jsx`, `DiceRoller.jsx`, or other core files that check for the feature by name
-- Feature-specific props threading
-
-### Where legacy code typically hides
-
-- **`DiceRoller.jsx` ResultBanner** — manual `bannerReactions` checks and flags set on targets before `onApplyDamage`
-- **`GMTableView.jsx` handleApplyDamage** — `if (target.useXxx)` blocks that duplicate `onChipAck` behavior
-- **`GMTableView.jsx` handleDiceRollComplete** — feature-name checks for state mutations
-- **`CharacterHoverCard.jsx`** — feature-specific roll text logic
-- **`table-ops.js`** — feature-specific state keys now handled by the chip/toggle system
-
-### Validation
-
-After removal, confirm:
-
-1. No file outside `src/features/ancestries/` (or `communities/`) references the feature name in **behavioral** logic (display/description text is fine).
-2. No `use<FeatureName>` flags remain on targets or rolls.
-3. The feature works end-to-end through the IoC system only.
-
-**A feature is not done until the old code is gone.**
+Author Mode applies only while planning, analyzing, or developing those feature types. It does not restrict documentation updates (e.g. `docs/srd-implementation.md`, `docs/feature-cheatsheet.md`) or other project work; for those, follow the normal project and srd-tracking rules.

@@ -1,5 +1,8 @@
+/**
+ * SRD: +1 to Presence.
+ */
 export default {
   name: 'Gilded',
   description: '+1 Presence.',
-  onCharacterRender: (ctx) => ctx.addStatMod('presence', 1),
+  passiveStatMods: { traits: { presence: 1 } },
 };

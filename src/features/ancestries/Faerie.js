@@ -1,41 +1,39 @@
 /**
- * Faerie ancestry builder.
+ * Faerie ancestry — feature hooks keyed by feature name.
  *
- * Features:
- *   Luckbender — Once per session, spend 3 Hope to reroll both duality dice (onBanner chip).
- *   Wings — When you're flying and the attack targets you, mark 1 Stress to treat the attack as a miss (onBanner chip).
+ * SRD (ancestry): Faeries are winged humanoid creatures with insectile features. All faeries possess membranous wings
+ * and they each go through a process of metamorphosis. The average height of a faerie ranges from about 2 feet to 5 feet.
+ *
+ * SRD (Luckbender): Once per session, after you or a willing ally within Close range makes an action roll, you can
+ * **spend 3 Hope** to reroll the Duality Dice.
+ *
+ * SRD (Wings): You can fly. While flying, you can **mark a Stress** after an adversary makes an attack against you to
+ * gain a +2 bonus to your Evasion against that attack.
  */
 export default {
-  name: 'Faerie',
-  description: 'Faeries are small, winged humanoids with a strong connection to luck and the fey. They are known for their capricious nature and ability to bend fortune.',
-
-  features: [
-    {
-      name: 'Luckbender',
-      description: 'Once per session, you can **spend 3 Hope** to reroll both your Hope and Fear dice.',
-      onBanner(banner) {
-        banner.addChip({
-          label: 'Spend 3 Hope to reroll both duality dice (Luckbender)',
-          hopeCost: 3,
-          resetsOn: 'session',
-          isVisible: (roll) => roll.isMine && roll.hasDuality,
-          onChipAck(roll) { roll.reroll('Duality'); },
-        });
+  Luckbender: {
+    chips: [
+      {
+        placement: 'banner',
+        label: 'Spend 3 Hope to reroll both duality dice (Luckbender)',
+        hopeCost: 3,
+        resetsOn: 'session',
+        isVisible: (ctx) => ctx.roll.isMine && ctx.roll.hasDuality,
+        onChipAck({ roll }) { roll.reroll('Duality'); },
       },
-    },
-    {
-      name: 'Wings',
-      description: 'You have wings and can fly. When an attack would target you while you are flying, you can **mark a Stress** to treat the attack as a miss.',
-      onBanner(banner) {
-        banner.addChip({
-          label: 'Mark 1 Stress to treat this attack as a miss (Wings)',
-          stressCost: 1,
-          isVisible: (roll, character) => roll.hasDamage && !!character.faerieWingsFlying,
-          onChipAck(roll, character, ctx) {
-            ctx.setTreatAsMissForTarget(character.instanceId);
-          },
-        });
+    ],
+  },
+  Wings: {
+    chips: [
+      {
+        placement: 'banner',
+        label: 'Mark 1 Stress to treat this attack as a miss (Wings)',
+        stressCost: 1,
+        isVisible: (ctx) => ctx.roll.hasDamage && !!ctx.character.faerieWingsFlying,
+        onChipAck({ character, banner }) {
+          banner.setTreatAsMissForTarget(character.instanceId);
+        },
       },
-    },
-  ],
+    ],
+  },
 };

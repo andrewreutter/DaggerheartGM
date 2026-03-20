@@ -8,7 +8,7 @@ import { MarkdownText } from '../lib/markdown.js';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runAncestryRender } from '../lib/character-calc.js';
+import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runCharacterRender } from '../lib/character-calc.js';
 import { ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 import { CustomSelect } from './forms/CustomSelect.jsx';
@@ -566,6 +566,35 @@ function SubFeatureCard({ sub, onUse, disabled, isActive }) {
   );
 }
 
+// ─── Display resetsOn from chips (single source of truth) ───────────────────────
+
+/**
+ * Derive the reset cycle for the feature card from chips (unified chips array with placement, or legacy cardChips/canvasChips/onBanner).
+ * Ensures Faerie, Goblin, Orderborne etc. show "Once per session/rest" from chip data.
+ */
+function getDisplayResetsOn(descriptor) {
+  if (!descriptor) return undefined;
+  // Unified chips array (new API)
+  if (descriptor.chips) {
+    const chip = descriptor.chips.find(c => c.resetsOn);
+    if (chip) return chip.resetsOn;
+  }
+  // Legacy: cardChips
+  const fromCardChips = descriptor.cardChips?.find(c => c.resetsOn)?.resetsOn;
+  if (fromCardChips) return fromCardChips;
+  // Legacy: canvasChips
+  const fromCanvasChips = descriptor.canvasChips?.find(c => c.resetsOn)?.resetsOn;
+  if (fromCanvasChips) return fromCanvasChips;
+  // Legacy: onBanner
+  if (typeof descriptor.onBanner === 'function') {
+    const chips = [];
+    const banner = { addChip(d) { chips.push(d); } };
+    descriptor.onBanner({ banner });
+    return chips[0]?.resetsOn;
+  }
+  return undefined;
+}
+
 // ─── IoC ancestry feature card (minimal, expandable) ──────────────────────────
 
 /**
@@ -573,7 +602,7 @@ function SubFeatureCard({ sub, onUse, disabled, isActive }) {
  * Expandable: title bar shows feature name + right-floated source badge (ancestry)
  * and optional share icon (posts banner with feature name + description).
  * Optional cardChips (from onCard hook): shown when getCardChipContext is provided;
- * one-shot chips: click runs chip.onUse(context); toggle chips: chip.onToggle(isActive, character, ctx), toggleKey for state.
+ * one-shot chips: click runs chip.onUse(context); toggle chips: chip.onToggle(context) with context.character, context.chip (chip.isActive), toggleKey for state.
  * Expanded body shows description with Markdown. No Use/cost/action parsing.
  */
 function AncestryFeatureCard({ feature, featureKey, open: openProp, onToggle, onShareFeature, cardChips, getCardChipContext, el, resetsOn: descriptorResetsOn }) {
@@ -675,7 +704,7 @@ function AncestryFeatureCard({ feature, featureKey, open: openProp, onToggle, on
                     if (chipUsed) return;
                     const context = getCardChipContext(feature, chip, featureKey);
                     if (typeof chip.onUse === 'function') chip.onUse(context);
-                    else context.postAction?.();
+                    else context.character?.postAction?.();
                   }}
                   className={`text-[10px] rounded px-1.5 py-0.5 border transition-colors ${chipUsed ? 'border-slate-600 bg-slate-800/50 text-slate-500 cursor-not-allowed' : 'border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'}`}
                 >
@@ -1155,7 +1184,8 @@ export function CharacterDefenseRow({ el }) {
   const activeModEvasion = (el.activeModifiers || []).filter(m => m.type === 'evasion').reduce((sum, m) => sum + (m.value ?? 0), 0);
   const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + ancestryEvasion + bfEvasionMod + activeModEvasion;
   const earthBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
-  const ancestryBonus = el.ancestryThresholdBonus ?? 0;
+  const ancestryMajorBonus = el.ancestryThresholdMajorBonus ?? el.ancestryThresholdBonus ?? 0;
+  const ancestrySevereBonus = el.ancestryThresholdSevereBonus ?? el.ancestryThresholdBonus ?? 0;
   const ancestryBonusSource = el.ancestryThresholdBonusSource || null;
   const evasionSources = [];
   if (wm.evasion) evasionSources.push(...(wm.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
@@ -1178,7 +1208,14 @@ export function CharacterDefenseRow({ el }) {
     ? (wm.sources || []).filter(s => s.stat === 'severe damage threshold').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Severe threshold`).join('; ')
     : null;
   const thresholdTooltipParts = [];
-  if (ancestryBonus > 0 && ancestryBonusSource) thresholdTooltipParts.push(`${ancestryBonusSource}: +${ancestryBonus} to Major and Severe`);
+  if ((ancestryMajorBonus > 0 || ancestrySevereBonus > 0) && ancestryBonusSource) {
+    if (ancestryMajorBonus === ancestrySevereBonus) {
+      thresholdTooltipParts.push(`${ancestryBonusSource}: +${ancestryMajorBonus} to Major and Severe`);
+    } else {
+      if (ancestryMajorBonus > 0) thresholdTooltipParts.push(`${ancestryBonusSource}: +${ancestryMajorBonus} to Major`);
+      if (ancestrySevereBonus > 0) thresholdTooltipParts.push(`${ancestryBonusSource}: +${ancestrySevereBonus} to Severe`);
+    }
+  }
   if (earthBonus > 0) thresholdTooltipParts.push(`Warden of the Elements (Earth): +${earthBonus} to Major and Severe`);
   const thresholdModTooltip = thresholdTooltipParts.length ? thresholdTooltipParts.join('; ') : null;
   const armorFeature = am.feature;
@@ -1586,7 +1623,7 @@ export function CharacterWeaponList({
 
   // Use pre-computed virtual weapons (from recomputeCharacter in builder mode)
   // or compute on-the-fly for Daggerstack-synced characters.
-  const ancestryVirtualWeapons = el._virtualWeapons || runAncestryRender(el).virtualWeapons;
+  const ancestryVirtualWeapons = el._virtualWeapons || runCharacterRender(el).virtualWeapons;
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
@@ -1913,10 +1950,10 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
                 open={isOpen(key)}
                 onToggle={() => toggle(key)}
                 onShareFeature={onShareFeature}
-                cardChips={descriptor.cardChips}
+                cardChips={descriptor.chips?.filter(c => c.placement === 'card') || descriptor.cardChips}
                 getCardChipContext={getCardChipContext}
                 el={el}
-                resetsOn={descriptor.resetsOn}
+                resetsOn={getDisplayResetsOn(descriptor)}
               />
             );
           }
