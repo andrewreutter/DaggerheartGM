@@ -203,6 +203,28 @@ describe('activateChip()', () => {
     expect(() => activateChip(chip, table, makeChipState())).not.toThrow();
   });
 
+  it('stores selectedTargetIds in chip state for selectTargets chips', () => {
+    const calls = [];
+    const chip = {
+      selectTargets: (table) => table.adversaries,
+      onUse: (table, cs) => calls.push(cs.get('selectedTargetIds')),
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1', 'adv-2'] });
+    expect(chipState.get('selectedTargetIds')).toEqual(['adv-1', 'adv-2']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['adv-1', 'adv-2']);
+  });
+
+  it('does not store selectedTargetIds when selectTargets is absent', () => {
+    const chip = { onUse: () => {} };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1'] });
+    expect(chipState.get('selectedTargetIds')).toBeUndefined();
+  });
+
   it('resolves function-valued temporaryStatMods on toggle-on and caches for toggle-off', () => {
     const char = mockCharacter({ instanceId: 'char-1', currentArmor: 4 });
     const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });

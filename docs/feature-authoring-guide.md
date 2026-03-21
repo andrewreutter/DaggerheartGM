@@ -893,6 +893,51 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 }
 ```
 
+- `selectTargets` *(function)*: If provided, the chip renders a combat target picker instead of (or before) the normal button. Must be a function `(table) => Actor[]` that returns the list of valid target Actors the player can choose from. When the player confirms their selection, the engine stores the chosen instance IDs in chip state as an array (accessible via `chip.get('selectedTargetIds')`) and then calls `onUse`. Use this for features that deal damage or apply effects to additional combat targets beyond the primary action target — e.g. weapon properties that bounce to extra targets or deal secondary weapon damage.
+- `multiSelect` *(boolean)*: When `true` (and `selectTargets` is also set), the player can select multiple targets from the list. When `false` or omitted, only a single target may be selected. The number of selected targets can drive a variable `stressCost` function.
+
+```javascript
+// Example: Bouncing — mark Stress to hit additional targets in range
+when(isActing, (table) => table.action?.type === 'attack', (table) => table.rolls?.action?.isSuccess, {
+  description: 'Mark Stress to bounce to additional targets in range.',
+  placements: ['reviewAction'],
+  stressCost: (table) => table.feature.get('bounceTargets') ?? 0,
+  multiSelect: true,
+  selectTargets: (table) => {
+    const targetId = table.action?.target?.instanceId;
+    return table.adversaries.filter((a) => a.instanceId !== targetId);
+  },
+  onUse(table, chip) {
+    const selectedIds = chip.get('selectedTargetIds') || [];
+    table.feature.set('bounceTargets', selectedIds.length);
+    const targets = table.adversaries.filter((a) => selectedIds.includes(a.instanceId));
+    if (targets.length > 0) {
+      table.action?.addDamageRoll({ name: 'Bouncing', dice: 'd8', targets });
+    }
+  },
+})
+
+// Example: Doubled Up — deal secondary weapon damage to another Melee target
+when(isActing, (table) => table.action?.type === 'attack', (table) => table.rolls?.action?.isSuccess, {
+  description: 'Deal secondary weapon damage to another target within Melee range.',
+  placements: ['reviewAction'],
+  selectTargets: (table) => {
+    const targetId = table.action?.target?.instanceId;
+    return table.adversaries.filter(
+      (a) => a.instanceId !== targetId && table.me?.rangeFrom(a) === 'melee'
+    );
+  },
+  onUse(table, chip) {
+    const selectedIds = chip.get('selectedTargetIds') || [];
+    const target = table.adversaries.find((a) => selectedIds.includes(a.instanceId));
+    if (target) {
+      const diceStr = table.me?.secondaryWeapon?.damage ?? 'd6';
+      table.action?.addDamageRoll({ name: 'Doubled Up', dice: diceStr, targets: [target] });
+    }
+  },
+})
+```
+
 **Resource Costs & Frequencies:**
 When these properties are defined on a chip, the engine automatically handles deducting the cost or tracking the usage cycle when the GM approves the action.
 
