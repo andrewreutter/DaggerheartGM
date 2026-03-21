@@ -893,6 +893,36 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 }
 ```
 
+- `isSelectTarget` *(function)*: If provided, the chip renders a target picker instead of a plain button. Must be a function `(table) => [actor, ...]` that returns the list of valid target actors (filtered from `table.adversaries`, `table.characters`, etc.). When the player confirms a selection, the engine stores the chosen instance IDs in chip state (accessible via `chip.get('selectedTargetIds')` — an array of strings) and then calls `onUse`. Combine with `isToggle: true` so the player can toggle the chip on/off while selecting targets. By default, single-select; set `multiSelect: true` on the chip to allow picking multiple targets.
+
+```javascript
+// Example: deal damage to another target in Melee range
+when(isActing, (table) => table.action?.type === 'attack', {
+  description: 'Deal damage to another target within Melee range.',
+  placements: ['reviewAction'],
+  isToggle: true,
+  isSelectTarget: (table) => {
+    const primaryTargetId = table.action?.target?.instanceId;
+    return table.adversaries.filter(
+      (adv) => adv.instanceId !== primaryTargetId
+        && table.me?.rangeFrom(adv) === 'melee'
+    );
+  },
+  onUse(table, chip) {
+    const ids = chip.get('selectedTargetIds') || [];
+    if (chip.isOn && ids.length > 0) {
+      const target = table.adversaries.find((a) => a.instanceId === ids[0]);
+      if (target) {
+        const diceStr = (table.rolls?.damage?.dice ?? []).map((d) => d.die).join('+') || 'd6';
+        table.action?.addDamageRoll({ name: 'Bounce', dice: diceStr, targets: [target] });
+      }
+    }
+  },
+})
+```
+
+- `multiSelect` *(boolean | number)*: When `true`, the target picker (from `isSelectTarget`) allows selecting multiple targets. When a number, caps the selection at that count. Defaults to `false` (single-select). Only meaningful when `isSelectTarget` is also set.
+
 **Resource Costs & Frequencies:**
 When these properties are defined on a chip, the engine automatically handles deducting the cost or tracking the usage cycle when the GM approves the action.
 
