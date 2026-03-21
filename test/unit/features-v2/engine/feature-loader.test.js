@@ -1,11 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { applyDeclarativeFeatures } from '../../../../src/features-v2/engine/feature-loader.js';
+import {
+  applyDeclarativeFeatures,
+  mergeDeclarativeFeatureState,
+} from '../../../../src/features-v2/engine/feature-loader.js';
 import { buildTableSnapshot } from '../../../../src/features-v2/engine/table.js';
 import { Efficient } from '../../../../src/features-v2/ancestries/Clank.js';
 import { CelestialTrance } from '../../../../src/features-v2/ancestries/Elf.js';
 import { mockCharacter, mockGameState } from '../helpers.js';
+import { Hopeful } from '../../../../src/features-v2/armor_properties/Hopeful.js';
 
 describe('applyDeclarativeFeatures', () => {
+  it('accumulates substituteArmorForHope from declarative armor features', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = {};
+    const { substituteArmorForHope } = applyDeclarativeFeatures(
+      [{ ...Hopeful, _ownerInstanceId: 'c1', _source: 'armor_property' }],
+      char,
+      table
+    );
+    expect(substituteArmorForHope).toBe(true);
+  });
+
   it('accumulates CONV-011 rest slot passiveStatMods into stats', () => {
     const character = { traits: {} };
     const table = {};
@@ -47,16 +62,54 @@ describe('applyDeclarativeFeatures', () => {
     const feature = {
       name: 'TieredTest',
       passiveStatMods: {
-        armorScore: (t, self) => {
-          const weapon = t.me?.weapons?.find((w) => w.id === self?._weaponId);
-          return (weapon?.tier ?? 1) + 1;
+        armorScore: (t) => {
+          const tier = parseInt(String(t.source?.tier ?? 1), 10) || 1;
+          return tier + 1;
         },
       },
       _ownerInstanceId: 'c1',
       _weaponId: 'w-test',
+      _sourceObject: { id: 'w-test', name: 'Test Weapon', tier: 3, range: 'melee' },
     };
     const { stats } = applyDeclarativeFeatures([feature], char, table);
     expect(stats.armorScore).toBe(4); // tier 3 + 1
+  });
+
+  it('accumulates weaponRenderHints from weapon_property onRender', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      primaryWeaponId: 'w1',
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    const feature = {
+      name: 'RenderTest',
+      onRender: () => ({ isDisabled: true, disabledReason: 'Test gate' }),
+      _ownerInstanceId: 'c1',
+      _source: 'weapon_property',
+      _weaponId: 'w1',
+    };
+    const { weaponRenderHints } = applyDeclarativeFeatures([feature], char, table);
+    expect(weaponRenderHints).toEqual({ w1: { isDisabled: true, disabledReason: 'Test gate' } });
+  });
+
+  it('merges onRender hints for the same weapon (isDisabled OR)', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = {};
+    const a = {
+      name: 'A',
+      onRender: () => ({ isDisabled: false }),
+      _weaponId: 'w1',
+      _ownerInstanceId: 'c1',
+    };
+    const b = {
+      name: 'B',
+      onRender: () => ({ isDisabled: true, disabledReason: 'Blocked' }),
+      _weaponId: 'w1',
+      _ownerInstanceId: 'c1',
+    };
+    const { weaponRenderHints } = applyDeclarativeFeatures([a, b], char, table);
+    expect(weaponRenderHints.w1.isDisabled).toBe(true);
+    expect(weaponRenderHints.w1.disabledReason).toBe('Blocked');
   });
 
   it('returns rangeOverrides from features that declare them', () => {
@@ -69,6 +122,22 @@ describe('applyDeclarativeFeatures', () => {
     };
     const { rangeOverrides } = applyDeclarativeFeatures([feature], char, table);
     expect(rangeOverrides).toEqual({ melee: 'veryClose' });
+  });
+
+  it('mergeDeclarativeFeatureState merges table and character bags; character wins', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      featureState: { Reinforced: { reinforcedActive: true } },
+    });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char],
+        _ownerInstanceId: 'c1',
+        featureState: { Reinforced: { reinforcedActive: false } },
+      })
+    );
+    const merged = mergeDeclarativeFeatureState(char, table);
+    expect(merged.Reinforced.reinforcedActive).toBe(true);
   });
 
   it('handles majorThreshold and severeThreshold as static passiveStatMods', () => {

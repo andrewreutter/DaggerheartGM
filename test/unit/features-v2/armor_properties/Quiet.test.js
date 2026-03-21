@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { Quiet } from '../../../../src/features-v2/armor_properties/Quiet.js';
-import { runIntent, mockCharacter, mockAdversary, mockAction } from '../helpers.js';
+import {
+  runIntent,
+  mockCharacter,
+  mockAdversary,
+  mockAction,
+  mockGameState,
+  mockChipState,
+} from '../helpers.js';
+import { collectChips, activateChip } from '../../../../src/features-v2/engine/chip-system.js';
+import { buildTableSnapshot } from '../../../../src/features-v2/engine/table.js';
 
 describe('Quiet', () => {
   it('has a single chip for the intent phase', () => {
@@ -27,16 +36,39 @@ describe('Quiet', () => {
     expect(chip.placements).toContain('intent');
   });
 
-  it('chip onUse queues an addStatic mutation with value 2', () => {
-    // Directly invoke the chip's onUse to verify mutation
-    const chip = Quiet.chips[0];
-    // Unwrap the when() wrapper — the inner chip is wrapped; we need to resolve it
-    // We use runIntent and check mutations produced when acting
+  it('chip onUse queues addRollStatic with name Quiet and value 2', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    // runIntent doesn't fire onUse, but we can verify the chip structure
-    expect(chip).toBeDefined();
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'char-1',
+        action: {
+          type: 'action',
+          actorInstanceId: 'char-1',
+          targetInstanceIds: ['adv-1'],
+          trait: 'Agility',
+          range: 'melee',
+          effects: [],
+          appliedEffects: [],
+        },
+      })
+    );
+
+    const chips = collectChips([{ ...Quiet, _ownerInstanceId: 'char-1' }], 'intent', table);
+
+    expect(chips.length).toBeGreaterThan(0);
+    const chip = chips[0];
+    const chipState = mockChipState();
+    const mutations = activateChip(chip, table, chipState);
+
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'addRollStatic',
+        payload: expect.objectContaining({ name: 'Quiet', value: 2 }),
+      })
+    );
   });
 
   it('does not offer chip to non-acting character', () => {

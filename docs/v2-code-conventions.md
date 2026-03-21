@@ -235,7 +235,7 @@ This applies everywhere token positions are read: `rangeFromTarget`,
 If a predicate passed to `when()` is only referenced once, write it inline (e.g.
 `when((table) => table.feature.get('x') === true, { ... })`). Do not add a
 file-level or module-level named function solely for that one call — reuse
-shared predicates from `when.js` (`isActing`, `hasPhysicalDamage`, etc.) when
+shared predicates from `when.js` (`isActing`, `armorUseCommitted`, `hasPhysicalDamage`, etc.) when
 they apply.
 
 ---
@@ -335,6 +335,8 @@ When a feature requires the player to permanently choose one item from a dynamic
 ```
 
 `isSelect` is a function `(table) => [{ id, name, description? }, ...]`. The engine stores the chosen id in chip state as `'selectedId'` before calling `onUse`, so `chip.get('selectedId')` always returns the player's selection.
+
+**Exclusive in-action choices (not character creation):** If the SRD offers two different effects at the same moment (e.g. Restrain *or* Pull), implement **two** separate `reviewAction` chips with distinct `name` and `description`, sharing the same `when()` predicates (see Faun `Kick`, weapon `Grappling`). Do **not** use `isSelect` on a `reviewAction` chip for this — that pattern is reserved for `create`-phase picks per above.
 
 ---
 
@@ -554,3 +556,100 @@ temporaryStatMods: {
   evasion: (table) => table.me?.armor ?? 0,
 }
 ```
+
+---
+
+## CONV-025 — Chip `isDisabled` and `resolveAction` placement
+
+Chips may declare **`isDisabled`**: either a boolean or `(table) => boolean`. `collectChips` attaches a resolved **`disabled`** flag for UI; `activateChip` is a no-op when disabled.
+
+Use placement **`resolveAction`** for buttons that should appear in the “resolve the action” step **after** review outcome, without running an `onResolve` hook (that phase is reserved for `onResolve`). Order: `reviewAction` → `reviewOutcome` → **`resolveAction`** (chips only) → `resolve` (hooks).
+
+```js
+// ✓ Good — two optional buttons, gated by feature state
+{
+  name: 'Feature — Option A',
+  placements: ['resolveAction'],
+  isDisabled: (table) => table.feature.get('spent') === true,
+  onUse: (table) => { table.feature.set('spent', true); /* … */ },
+}
+```
+
+---
+
+## CONV-026 — Read armor commitment from `table.action`, not from roll metadata
+
+V2 features must use **`table.action.useArmorByTargetId`** and/or **`useArmor` on `{ type: 'damage' }` effects** when they need to know whether the player committed to spend armor on a hit. Do not read `_useArmorByTargetId` from raw roll objects in feature modules — that field is VTT transport; the snapshot API is the supported contract (see Feature Authoring Guide §C.3).
+
+```js
+// ✗ Bad — couples feature logic to dice-roll persistence shape
+const use = roll?._useArmorByTargetId?.[targetId];
+
+// ✓ Good — use the action context the engine passes into hooks
+const use = table.action?.useArmorByTargetId?.[targetId];
+// or: table.action.effects.find(e => e.type === 'damage' && e.target?.instanceId === targetId)?.useArmor
+```
+
+---
+
+## CONV-027 — Name/description-only features do not require unit tests
+
+If a feature module exports **only** `{ name, description }` (and other purely declarative card text that does not register hooks, chips, or passive engine behavior—aligned with **CONV-006**), it **does not** need a matching `test/unit/features-v2/.../<Feature>.test.js`. Validation must not mark **Needs Fix** solely for a missing test file in that case.
+
+Once the file adds executable behavior (`hooks`, `chips`, `passiveStatMods`, `virtualWeapons`, `onUse`, `when()`, etc.), the normal test requirements apply, including **CONV-008** for mutation assertions.
+
+Optional smoke tests are still allowed for teams that want refactor guardrails; they are not a validation gate for minimal stubs.
+
+---
+
+## CONV-028 — Adversary-only “reaction roll” vs a fixed DC may use a flat d20
+
+When the SRD says **adversaries** must succeed on a **reaction roll** against a **fixed Difficulty** (a number in parentheses, e.g. “(14)”), and the implementation only affects **adversaries** (e.g. splash damage to `table.adversaries`, or rolls only for adversary actors), **`table.rollDie('d20') >= DC`** is **acceptable** and is **not** missing “Agility + Proficiency.”
+
+**Why:** V2 table snapshots build adversary actors with **empty `traits`** and **no** PC-style reaction stats unless the table pipeline is extended to hydrate them. Demanding d20 + trait + proficiency for those actors would require data and APIs the engine does not guarantee.
+
+**Validation:** Do **not** mark **Needs Fix** for “flat d20 vs DC” on pure adversary checks unless the SRD **names a specific trait** for that roll, or the implementation already has access to documented adversary reaction modifiers.
+
+**Example:** `Eruptive` — other adversaries in range roll vs 14 or take half damage; a flat d20 vs 14 matches **CONV-028**.
+
+---
+
+## CONV-029 — Engine core must not encode SRD feature names
+
+**Applies to:** `src/features-v2/engine/table.js`, `chip-system.js`, `action-loop.js`, `when.js`, and other **framework** modules that build snapshots and run hooks — not to individual feature files under `src/features-v2/**/`.
+
+The engine must **never** branch on **SRD display names** or string literals like `'Hopeful'`, `'Reinforced'`, `'Sturdy'`, etc. Features are identified by **declarative keys** and **merged state** on elements, not by the framework looking up “does this character have Hopeful?”
+
+```js
+// ✗ Bad — framework knows a specific feature by name
+if (element.armorMods?.Hopeful) { ... }
+if (names.includes('Hopeful')) { ... }
+
+// ✓ Good — feature file sets a generic mechanism flag; loader merges it
+// Hopeful.js: { name: 'Hopeful', substituteArmorForHope: true, ... }
+// table.js: element.substituteArmorForHope === true
+
+// ✓ Good — runtime state keyed by feature name lives in featureState / merge helpers
+// used during rendering, not in table.js string checks for marketing names
+```
+
+**Why:** The framework stays reusable and testable; new armor properties or renames do not require editing core engine files.
+
+**Related:** Authoring guide documents merged fields (e.g. `substituteArmorForHope` on the element from `applyDeclarativeFeatures`).
+
+---
+
+## CONV-030 — Call `dispatchStateChangeHooks` once per V2 mutation batch
+
+When the Game Table (or tests) applies a **batch** of V2 engine mutations to character/table state — for example after updating armor slots from the UI or applying rest-move results — invoke **`dispatchStateChangeHooks(postMutationGameState, features, mutationBatch)`** **once** for that batch so `hooks.onStateChange` runs with correct `table.mutationBatch` predicates.
+
+```js
+// ✗ Bad — armor cleared on the element but Reinforced never sees `onStateChange`
+element.currentArmor += 1; // UI only
+
+// ✓ Good — after mutations are applied, re-run feature hooks with the same batch
+const mutations = applyArmorClearOps(state); // hypothetical
+dispatchStateChangeHooks(state, flatFeatures, mutations);
+```
+
+**Until** the client wires this path for V2, `onStateChange` is **engine-complete** and covered by unit tests; features can still implement it for when integration lands.

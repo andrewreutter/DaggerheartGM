@@ -16,6 +16,13 @@ describe('Devastating', () => {
     expect(chip.isToggle).toBe(true);
   });
 
+  it('does not offer intent chip on non-attack actions (e.g. trait rolls)', () => {
+    const { chips } = runIntent(Devastating, {
+      action: mockAction({ type: 'trait' }),
+    });
+    expect(chips.filter((c) => c.placements?.includes('intent'))).toHaveLength(0);
+  });
+
   it('does not offer intent chip when not acting', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const other = mockCharacter({ instanceId: 'char-2' });

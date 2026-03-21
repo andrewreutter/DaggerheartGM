@@ -17,4 +17,11 @@ export const Reach = {
   description:
     'Treat any weapon, ability, spell, or other feature that has a Melee range as though it has a Very Close range instead.',
   rangeOverrides: { melee: 'veryClose' },
+  onIntent: (table) => {
+    table.me.weapons.forEach((weapon) => {
+      if (weapon.range === 'Melee') {
+        weapon.range = 'Very Close';
+      }
+    });
+  }
 };

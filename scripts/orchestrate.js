@@ -28,6 +28,12 @@
  *   --agents N        concurrent agent pool size (default: 3)
  *   --model M         model for impl / fix / unblock (default: claude-4.6-opus-high-thinking)
  *   --val-model M     model for val (default: claude-4.6-opus-high-thinking-fast)
+ *
+ * Cost estimation (Cloud Agents API only — not IDE Composer):
+ *   ORCHESTRATOR_MODEL_COST_USD_JSON — optional JSON map of model id → USD per completed agent
+ *     (merged over built-in defaults for the stock --model / --val-model strings). Example:
+ *     {"claude-4.6-opus-high-thinking":0.42,"claude-4.6-opus-high-thinking-fast":0.15}
+ *   ORCHESTRATOR_DEBUG_AGENT_PAYLOAD=1 — log top-level keys of one GET /v0/agents/:id response (verify usage/cost fields)
  *   --impl-only       only run impl agents
  *   --val-only        only run val agents
  *   --no-fix          skip fix agents this run
@@ -39,6 +45,60 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+import {
+  buildModelCostMap,
+  estimateOrchestratorCost,
+  sumSessionCostUsd,
+} from './orchestrator-cost.js';
+
+/**
+ * Node's `--env-file` is strict; a single bad line can leave GITHUB_TOKEN unset while
+ * other keys load. Parse `.env` ourselves (export prefix, quotes) and fill gaps.
+ */
+function loadDotEnvManual() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const paths = [
+    resolve(process.cwd(), '.env'),
+    resolve(here, '..', '.env'),
+  ];
+  const seen = new Set();
+  for (const envPath of paths) {
+    if (seen.has(envPath) || !existsSync(envPath)) continue;
+    seen.add(envPath);
+    let text;
+    try {
+      text = readFileSync(envPath, 'utf8');
+    } catch {
+      continue;
+    }
+    const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
+    for (let line of lines) {
+      line = line.trim();
+      if (!line || line.startsWith('#')) continue;
+      if (line.startsWith('export ')) line = line.slice(7).trim();
+      const eq = line.indexOf('=');
+      if (eq === -1) continue;
+      const key = line.slice(0, eq).trim();
+      let val = line.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (!key) continue;
+      const isGithub = key === 'GITHUB_TOKEN' || key === 'GH_TOKEN';
+      const cur = process.env[key];
+      if (cur === undefined || (isGithub && !String(cur).trim())) {
+        process.env[key] = val;
+      }
+    }
+  }
+}
+
+loadDotEnvManual();
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
@@ -91,11 +151,14 @@ async function apiPost(path, body) {
 const STATE_FILE = '.orchestrator-state.json';
 
 function loadState() {
-  if (!existsSync(STATE_FILE)) return { inFlight: [], reviewQueue: [] };
+  const empty = { inFlight: [], reviewQueue: [], completionHistory: [] };
+  if (!existsSync(STATE_FILE)) return empty;
   try {
-    return JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+    const raw = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+    if (!raw.completionHistory) raw.completionHistory = [];
+    return raw;
   } catch {
-    return { inFlight: [], reviewQueue: [] };
+    return empty;
   }
 }
 
@@ -127,6 +190,88 @@ function getInFlightResolutions(state) {
     if (entry.mode === 'unblock' && entry.resolution) resolutions.add(entry.resolution);
   }
   return resolutions;
+}
+
+const HISTORY_WINDOW = 30; // keep last N completions for adaptive tuning
+
+let modelCostMapCache = null;
+function getModelCostMap() {
+  if (!modelCostMapCache) modelCostMapCache = buildModelCostMap();
+  return modelCostMapCache;
+}
+
+/**
+ * @param {object} state
+ * @param {object} entry — in-flight entry (includes `model` when launched from fillAgentSlots)
+ * @param {{ raw?: object } | null} [checkResult] — from checkAgent (full API payload in `raw`)
+ */
+function recordCompletion(state, entry, checkResult = null) {
+  const durationMs = Date.now() - new Date(entry.launchedAt).getTime();
+  const batchSize  = (entry.items || []).length || 1;
+  const cost = estimateOrchestratorCost({
+    entry,
+    agentPayload: checkResult?.raw ?? null,
+    durationMs,
+    implFixUnblockModel: MODEL,
+    valModel: VAL_MODEL,
+    modelCostMap: getModelCostMap(),
+  });
+  state.completionHistory.push({
+    mode: entry.mode, batchSize, durationMs,
+    perItemMs: Math.round(durationMs / batchSize),
+    completedAt: new Date().toISOString(),
+    model: cost.model,
+    estimatedCostUsd: cost.estimatedCostUsd,
+    costSource: cost.costSource,
+  });
+  // Trim to rolling window
+  if (state.completionHistory.length > HISTORY_WINDOW) {
+    state.completionHistory = state.completionHistory.slice(-HISTORY_WINDOW);
+  }
+}
+
+/**
+ * Compute adaptive impl:val ratio from observed completion times.
+ * Returns the number of impl agents per 1 val agent (e.g. 3 means 3:1).
+ * Falls back to the default 3:1 when insufficient data.
+ */
+function getAdaptiveRatio(state) {
+  const implTimes = state.completionHistory.filter(h => h.mode === 'impl').map(h => h.durationMs);
+  const valTimes  = state.completionHistory.filter(h => h.mode === 'val').map(h => h.durationMs);
+
+  if (implTimes.length < 2 || valTimes.length < 1) return 3; // default
+
+  const avgImpl = implTimes.reduce((a, b) => a + b, 0) / implTimes.length;
+  const avgVal  = valTimes.reduce((a, b) => a + b, 0) / valTimes.length;
+
+  // Ratio = how many val agents finish in the time one impl takes
+  // Clamp between 1 (equal) and 6 (heavily impl-favored)
+  const ratio = Math.round(Math.max(1, Math.min(6, avgImpl / avgVal)));
+  return ratio;
+}
+
+function formatTimingStats(state) {
+  const implTimes = state.completionHistory.filter(h => h.mode === 'impl');
+  const valTimes  = state.completionHistory.filter(h => h.mode === 'val');
+  if (implTimes.length === 0 && valTimes.length === 0) return '';
+
+  const avg = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length / 1000);
+  const parts = [];
+  if (implTimes.length > 0) parts.push(`impl avg ${avg(implTimes.map(h => h.durationMs))}s (${implTimes.length} samples)`);
+  if (valTimes.length > 0)  parts.push(`val avg ${avg(valTimes.map(h => h.durationMs))}s (${valTimes.length} samples)`);
+  parts.push(`ratio ${getAdaptiveRatio(state)}:1`);
+  if (state.completionHistory.length > 0) {
+    parts.push(`est. session ~$${sumSessionCostUsd(state).toFixed(2)}`);
+  }
+  return parts.join(' | ');
+}
+
+function logSessionCostSummary(state) {
+  if (state.completionHistory.length > 0) {
+    console.log(
+      `\nEstimated session cost (cloud agents, this process): ~$${sumSessionCostUsd(state).toFixed(2)} USD`
+    );
+  }
 }
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
@@ -281,6 +426,35 @@ function regenerateSummaryTable() {
   console.log('  Summary table regenerated.');
 }
 
+/** Update specific feature rows in the tracker to a new status. */
+function updateTrackerRowStatuses(featureNames, newStatus) {
+  const namesSet = new Set(featureNames);
+  if (namesSet.size === 0) return 0;
+
+  const content = readFileSync(TRACKER, 'utf8');
+  const lines = content.split('\n');
+  let updated = 0;
+
+  const newLines = lines.map(line => {
+    if (!line.startsWith('| ') || line.includes('---') || line.includes('Feature Name')
+        || line.includes('Resolution') || line.includes('Collection')) return line;
+    const cols = line.split('|');
+    if (cols.length < 4) return line;
+    const name = cols[1].trim();
+    if (namesSet.has(name)) {
+      cols[3] = ` ${newStatus} `;
+      updated++;
+      return cols.join('|');
+    }
+    return line;
+  });
+
+  if (updated > 0) {
+    writeFileSync(TRACKER, newLines.join('\n'), 'utf8');
+  }
+  return updated;
+}
+
 // ── Batch assignment ──────────────────────────────────────────────────────────
 
 function assignBatches(features, numAgents, batchSize = BATCH_SIZE) {
@@ -416,17 +590,25 @@ async function launchAgent(prompt, branchName, repo, model = MODEL, baseBranch =
   return res.id;
 }
 
+/** Log top-level keys once (when ORCHESTRATOR_DEBUG_AGENT_PAYLOAD=1) to inspect billing/usage fields. */
+let debugAgentPayloadLogged = false;
+
 /**
  * Check a single agent's status via the API.
- * Returns { status: 'RUNNING'|'FINISHED'|'ERROR', url?, summary? }
+ * Returns { status: 'RUNNING'|'FINISHED'|'ERROR', url?, summary?, raw }
  */
 async function checkAgent(agentId) {
   const agent = await apiGet(`/v0/agents/${agentId}`);
+  if (process.env.ORCHESTRATOR_DEBUG_AGENT_PAYLOAD === '1' && !debugAgentPayloadLogged && agent && typeof agent === 'object') {
+    debugAgentPayloadLogged = true;
+    console.log('[orchestrator] sample GET /v0/agents/:id top-level keys:', Object.keys(agent).sort().join(', '));
+  }
   return {
     status:     agent.status,
     url:        agent.target?.url ?? null,
     branchName: agent.target?.branchName ?? null,
     summary:    agent.summary ?? '',
+    raw:        agent,
   };
 }
 
@@ -473,11 +655,20 @@ async function pollAgents(entries, { onFinished, onFailed } = {}) {
 
 // ── Pull request creation ─────────────────────────────────────────────────────
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+/** Read at call time (not module load) so `node --env-file=.env` is reliable; support GH CLI's GH_TOKEN. */
+function getGithubToken() {
+  const raw = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+  return raw.trim() || null;
+}
 
 async function createPullRequest(branchName, baseBranch, entry, repo) {
-  if (!GITHUB_TOKEN) {
-    console.error('    ✗ GITHUB_TOKEN not set — cannot create PR. Add it to .env.');
+  const githubToken = getGithubToken();
+  if (!githubToken) {
+    console.error(
+      '    ✗ No GitHub token — cannot create PR. Set GITHUB_TOKEN (or GH_TOKEN) in .env in the repo root, ' +
+        'with no surrounding quotes unless the value needs them. Run via `npm run agents` ' +
+        '(uses `node --env-file=.env`). Do not use a leading `export` on the line — Node\'s env-file parser ignores it.'
+    );
     return null;
   }
 
@@ -502,7 +693,7 @@ async function createPullRequest(branchName, baseBranch, entry, repo) {
     const res = await fetch(`https://api.github.com/repos/${ownerRepo}/pulls`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Authorization: `Bearer ${githubToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/vnd.github+json',
       },
@@ -524,7 +715,8 @@ async function createPullRequest(branchName, baseBranch, entry, repo) {
 
 // ── Branch merging ────────────────────────────────────────────────────────────
 
-function mergeBranches(branches, baseBranch) {
+function mergeBranches(entries, baseBranch) {
+  const branches = entries.map(e => typeof e === 'string' ? e : e.branchName);
   console.log('\n── Merging branches ────────────────────────────────────────');
 
   try { git(`git pull origin ${baseBranch} --no-rebase`, { quiet: true }); } catch (_) {}
@@ -559,6 +751,16 @@ function mergeBranches(branches, baseBranch) {
         try { git('git merge --abort', { quiet: true }); } catch (_) {}
       }
     }
+  }
+
+  // Merge conflict resolution uses --ours for the tracker, discarding agent status updates.
+  // Re-apply them from the orchestrator's knowledge of what was assigned to each agent.
+  const mergedFeatureNames = entries
+    .filter(e => typeof e === 'object' && (e.mode === 'impl' || e.mode === 'fix'))
+    .flatMap(e => e.items || []);
+  if (mergedFeatureNames.length > 0) {
+    const count = updateTrackerRowStatuses(mergedFeatureNames, 'Done');
+    if (count > 0) console.log(`  Updated ${count} tracker row(s) to Done.`);
   }
 
   regenerateSummaryTable();
@@ -711,7 +913,7 @@ function pickNextWork(state) {
   }
 
   // Priority 3: Impl and Val
-  // Val agents are ~2x faster, so lean toward impl (3:1 target ratio).
+  // Ratio auto-tunes from observed completion times (default 3:1 impl:val).
   // Val also gets larger batches (VAL_BATCH_SIZE) since each check is quick.
   const hasImpl = !VAL_ONLY && summary.unclaimed > 0;
   const hasVal  = !IMPL_ONLY && summary.done > 0;
@@ -719,8 +921,8 @@ function pickNextWork(state) {
   const inFlightImpl = state.inFlight.filter(e => e.mode === 'impl').length;
   const inFlightVal  = state.inFlight.filter(e => e.mode === 'val').length;
 
-  // Prefer impl unless val is significantly underrepresented (target ~3:1)
-  const implHeavy = inFlightImpl > inFlightVal * 3;
+  const targetRatio = getAdaptiveRatio(state);
+  const implHeavy = inFlightImpl > inFlightVal * targetRatio;
   const tryOrder = (hasImpl && hasVal)
     ? (implHeavy ? ['val', 'impl'] : ['impl', 'val'])
     : hasImpl ? ['impl'] : hasVal ? ['val'] : [];
@@ -775,7 +977,9 @@ async function fillAgentSlots(state, baseBranch, repo) {
       addInFlight(state, {
         agentId: id, branchName, mode: work.mode, label: work.label,
         items: work.items, resolution: work.resolution,
+        batchSize: work.items?.length || 1,
         launchedAt: new Date().toISOString(),
+        model: work.model,
       });
     } catch (err) {
       console.error(`    ✗ Launch failed: ${err.message}`);
@@ -807,13 +1011,14 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
 
   // Check each agent's current status
   const stillRunning = [];
-  const autoMergeable = [];
+  const autoMergeEntries = [];
 
   for (const entry of [...state.inFlight]) {
     try {
       const result = await checkAgent(entry.agentId);
       if (result.status === 'FINISHED') {
         console.log(`  ✓ ${entry.agentId} [${entry.mode}] FINISHED`);
+        recordCompletion(state, entry, result);
         removeInFlight(state, entry.agentId);
         if (entry.mode === 'val' || entry.mode === 'unblock') {
           const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
@@ -823,7 +1028,7 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
           });
           saveState(state);
         } else {
-          autoMergeable.push(entry.branchName);
+          autoMergeEntries.push(entry);
         }
       } else if (result.status === 'ERROR') {
         console.log(`  ✗ ${entry.agentId} [${entry.mode}] ERROR: ${result.summary}`);
@@ -839,8 +1044,8 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
   }
 
   // Merge any branches that finished while we were away
-  if (autoMergeable.length > 0) {
-    mergeBranches(autoMergeable, baseBranch);
+  if (autoMergeEntries.length > 0) {
+    mergeBranches(autoMergeEntries, baseBranch);
   }
 
   // Poll remaining running agents
@@ -848,6 +1053,7 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
     console.log(`\n  Resuming poll of ${stillRunning.length} running agent(s)...`);
     await pollAgents(stillRunning, {
       async onFinished(entry, result) {
+        recordCompletion(state, entry, result);
         removeInFlight(state, entry.agentId);
         if (entry.mode === 'val' || entry.mode === 'unblock') {
           const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
@@ -864,9 +1070,9 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
     });
 
     // Merge auto-mergeable branches from the just-finished poll
-    const justFinished = stillRunning
-      .filter(e => !state.inFlight.some(s => s.agentId === e.agentId) && e.mode !== 'unblock' && e.mode !== 'val')
-      .map(e => e.branchName);
+    const justFinished = stillRunning.filter(
+      e => !state.inFlight.some(s => s.agentId === e.agentId) && e.mode !== 'unblock' && e.mode !== 'val'
+    );
     if (justFinished.length > 0) {
       mergeBranches(justFinished, baseBranch);
     }
@@ -932,6 +1138,7 @@ async function main() {
 
   if (state.inFlight.length === 0) {
     console.log('  No dispatchable work found.');
+    logSessionCostSummary(state);
     printFinalReport(state.reviewQueue);
   } else {
     console.log(`\n── Pool active: ${state.inFlight.length}/${NUM_AGENTS} slots ──────────────────────`);
@@ -940,14 +1147,16 @@ async function main() {
     for (let poll = 1; poll <= MAX_POLLS && state.inFlight.length > 0; poll++) {
       await sleep(POLL_MS);
 
-      const autoMerge = [];
+      const autoMergeEntries = [];
       let slotsFreed = false;
 
       for (const entry of [...state.inFlight]) {
         try {
           const result = await checkAgent(entry.agentId);
           if (result.status === 'FINISHED') {
-            console.log(`\n  ✓ ${entry.agentId} [${entry.mode}] (${entry.branchName ?? '?'}) FINISHED`);
+            const dur = Math.round((Date.now() - new Date(entry.launchedAt).getTime()) / 1000);
+            console.log(`\n  ✓ [${entry.mode}] ${entry.label.slice(0, 60)} — ${dur}s`);
+            recordCompletion(state, entry, result);
             removeInFlight(state, entry.agentId);
             slotsFreed = true;
             if (entry.mode === 'val' || entry.mode === 'unblock') {
@@ -958,7 +1167,7 @@ async function main() {
               });
               saveState(state);
             } else {
-              autoMerge.push(entry.branchName);
+              autoMergeEntries.push(entry);
             }
           } else if (result.status === 'ERROR') {
             console.log(`\n  ✗ ${entry.agentId} [${entry.mode}] ERROR: ${result.summary ?? 'no summary'}`);
@@ -973,8 +1182,8 @@ async function main() {
       }
 
       // Batch-merge all auto-mergeable branches that finished this cycle
-      if (autoMerge.length > 0) {
-        mergeBranches(autoMerge, baseBranch);
+      if (autoMergeEntries.length > 0) {
+        mergeBranches(autoMergeEntries, baseBranch);
       }
 
       // Fill any freed slots with new work
@@ -986,10 +1195,12 @@ async function main() {
         const modes = {};
         for (const e of state.inFlight) modes[e.mode] = (modes[e.mode] || 0) + 1;
         const modeStr = Object.entries(modes).map(([m, n]) => `${n} ${m}`).join(', ');
-        console.log(`\n  [${state.inFlight.length}/${NUM_AGENTS} slots: ${modeStr}]`);
+        const timing  = formatTimingStats(state);
+        console.log(`\n  [${state.inFlight.length}/${NUM_AGENTS} slots: ${modeStr}]${timing ? `  ${timing}` : ''}`);
       }
     }
 
+    logSessionCostSummary(state);
     printFinalReport(state.reviewQueue);
   }
 

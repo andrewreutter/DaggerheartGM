@@ -5,7 +5,10 @@ export const Devastating = {
   description:
     'Before you make an attack roll, you can mark a Stress to use a d20 as your damage die.',
   chips: [
-    when(isActing, {
+    when(
+      isActing,
+      (table) => table.action?.type === 'attack',
+      {
       description: 'Mark a Stress to use a d20 as your damage die.',
       placements: ['intent'],
       stressCost: 1,

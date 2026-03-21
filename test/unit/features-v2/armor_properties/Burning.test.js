@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Burning } from '../../../../src/features-v2/armor_properties/Burning.js';
-import { runResolve, mockCharacter, mockAdversary } from '../helpers.js';
+import { runReviewAction, mockCharacter, mockAdversary } from '../helpers.js';
 
 describe('Burning', () => {
   it('marks 1 Stress on the attacker when attacked at melee range', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    const { mutations } = runResolve(Burning, {
+    const { mutations } = runReviewAction(Burning, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
       action: {
@@ -32,7 +32,7 @@ describe('Burning', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    const { mutations } = runResolve(Burning, {
+    const { mutations } = runReviewAction(Burning, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
       action: {
@@ -53,7 +53,7 @@ describe('Burning', () => {
     const char2 = mockCharacter({ instanceId: 'char-2' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    const { mutations } = runResolve(
+    const { mutations } = runReviewAction(
       { ...Burning, _ownerInstanceId: 'char-1' },
       {
         activeElements: [char1, char2, adv],
@@ -68,6 +68,26 @@ describe('Burning', () => {
         },
       }
     );
+
+    expect(mutations.filter((m) => m.type === 'markStress')).toHaveLength(0);
+  });
+
+  it('does not mark Stress when a character attacks you at melee (adversaries only per SRD)', () => {
+    const target = mockCharacter({ instanceId: 'char-1' });
+    const attacker = mockCharacter({ instanceId: 'char-2' });
+
+    const { mutations } = runReviewAction(Burning, {
+      activeElements: [target, attacker],
+      _ownerInstanceId: 'char-1',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'char-2',
+        targetInstanceIds: ['char-1'],
+        range: 'melee',
+        effects: [],
+        appliedEffects: [],
+      },
+    });
 
     expect(mutations.filter((m) => m.type === 'markStress')).toHaveLength(0);
   });

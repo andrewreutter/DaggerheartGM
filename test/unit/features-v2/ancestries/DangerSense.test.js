@@ -50,6 +50,26 @@ describe('Danger Sense', () => {
     expect(result.chips[0]._featureName).toBe('Danger Sense');
   });
 
+  it('does not show chip when a character attacks (adversaries only per SRD)', () => {
+    const me = mockCharacter({ instanceId: 'char-1' });
+    const attacker = mockCharacter({ instanceId: 'char-2' });
+
+    const result = runReviewAction(DangerSense, {
+      activeElements: [me, attacker],
+      _ownerInstanceId: 'char-1',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'char-2',
+        targetInstanceIds: ['char-1'],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: mockRoll(),
+    });
+
+    expect(result.chips).toHaveLength(0);
+  });
+
   it('does not show chip on non-attack actions', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });

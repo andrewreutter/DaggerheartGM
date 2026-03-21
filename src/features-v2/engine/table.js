@@ -20,7 +20,10 @@
  *     trait: string,
  *     range: string,
  *     effects: object[],           // mutable array shared between snapshot and caller
+ *     appliedEffects: object[],    // after resolution (optional)
+ *     useArmorByTargetId: object,  // { [targetInstanceId]: boolean } — VTT/banner: committed to spend armor on that target for this hit
  *     rollText: string,
+ *     // In effects[], entries with type 'damage' may include useArmor: boolean (mirrors useArmorByTargetId for that target).
  *   },
  *   rolls: {
  *     action: object,              // { hopeDie, fearDie, dice, statics, isSuccess, isCritical }
@@ -29,10 +32,16 @@
  *   },
  *   featureState: object,          // { [featureKey]: { [key]: value } }  persistent feature state
  *   _ownerInstanceId: string,      // set by engine before iterating: feature owner
+ *   _mutationBatch: object[],      // optional; read-only description of the last applied mutation
+ *                                   // batch (e.g. from dispatchStateChangeHooks). Exposed on the
+ *                                   // snapshot as table.mutationBatch (empty array when absent).
  * }
  */
 
 const MUTATIONS_KEY = Symbol('mutations');
+
+/** One SRD “handful” of gold in the character’s integer `gold` field (base‑9 inventory). */
+export const GOLD_COINS_PER_HANDFUL = 9;
 
 // ---------------------------------------------------------------------------
 // Die rolling
@@ -100,14 +109,17 @@ export function queueInternalMutation(table, type, payload) {
  *
  * @param {object} w              — raw weapon object (SRD or virtual)
  * @param {object} [rangeOverrides] — { [sourceRange]: targetRange } map
+ * @param {object} [weaponRenderHints] — { [weaponId]: { isDisabled?, disabledReason? } } from `applyDeclarativeFeatures`
  */
-function buildWeaponView(w, rangeOverrides) {
+function buildWeaponView(w, rangeOverrides, weaponRenderHints) {
   if (!w) return null;
   const baseRange = w.range ?? null;
   const featureNames = (Array.isArray(w.feature) ? w.feature : w.feature ? [w.feature] : [])
     .map((f) => (typeof f === 'string' ? f : f.name)).filter(Boolean);
-  return {
-    id: w.id ?? null,
+  const id = w.id ?? null;
+  const hint = id != null && weaponRenderHints ? weaponRenderHints[id] : undefined;
+  const out = {
+    id,
     name: w.name ?? 'Unknown Weapon',
     tier: parseInt(w.tier) || 1,
     range: (rangeOverrides && baseRange && rangeOverrides[baseRange]) ?? baseRange,
@@ -115,6 +127,11 @@ function buildWeaponView(w, rangeOverrides) {
     damage: w.damage ?? null,
     features: featureNames,
   };
+  if (hint && typeof hint === 'object') {
+    if (typeof hint.isDisabled === 'boolean') out.isDisabled = hint.isDisabled;
+    if (hint.disabledReason) out.disabledReason = hint.disabledReason;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +168,30 @@ function buildActor(element, gameState, mutations) {
     // Proficiency (base 1; increases with advancement picks)
     proficiency: element.proficiency ?? 1,
 
+    /** Total Armor Score from gear (distinct from current marked armor slots `armor`). */
+    armorScore: element.armorScore ?? 0,
+
+    /**
+     * When true, this actor may pay Hope costs by marking armor slots instead (`spendHope` with
+     * `{ armorInstead: true }`). Set during character rendering from declarative feature data
+     * (`substituteArmorForHope` on features → merged onto the element); the engine does not
+     * look up SRD feature names (see CONV-029).
+     */
+    substituteArmorForHope: element.substituteArmorForHope === true,
+
+    /**
+     * From weapon property **`onRender`** hooks (merge **`weaponRenderHints`** from `applyDeclarativeFeatures` onto the element).
+     * The UI should disable weapon interactions when `primaryWeapon` / `weapons[]` show `isDisabled: true`.
+     */
+    get weaponRenderHints() {
+      return element.weaponRenderHints && typeof element.weaponRenderHints === 'object'
+        ? { ...element.weaponRenderHints }
+        : {};
+    },
+
+    /** Gold carried (coins); used by spendGold / Greedy et al. */
+    gold: element.gold ?? 0,
+
     // Character level (1–10 in SRD; distinct from proficiency)
     level: element.level ?? 1,
 
@@ -170,11 +211,11 @@ function buildActor(element, gameState, mutations) {
     // Weapons — read from element; range overrides (from Reach etc.) applied via element._rangeOverrides
     get primaryWeapon() {
       const w = element.primaryWeapon ?? element.weapons?.[0] ?? null;
-      return buildWeaponView(w, element._rangeOverrides);
+      return buildWeaponView(w, element._rangeOverrides, element.weaponRenderHints);
     },
     get secondaryWeapon() {
       const w = element.secondaryWeapon ?? element.weapons?.[1] ?? null;
-      return buildWeaponView(w, element._rangeOverrides);
+      return buildWeaponView(w, element._rangeOverrides, element.weaponRenderHints);
     },
     get weapons() {
       const all = element.weapons
@@ -184,7 +225,7 @@ function buildActor(element, gameState, mutations) {
       for (const vw of element.virtualWeapons ?? []) {
         if (!all.some((w) => w.id != null && w.id === vw.id)) all.push(vw);
       }
-      return all.map((w) => buildWeaponView(w, element._rangeOverrides));
+      return all.map((w) => buildWeaponView(w, element._rangeOverrides, element.weaponRenderHints));
     },
 
     get rangeFromTarget() {
@@ -240,8 +281,33 @@ function buildActor(element, gameState, mutations) {
     clearHP(amount) {
       addMutation(mutations, 'clearHP', { instanceId, amount });
     },
-    spendHope(amount) {
-      addMutation(mutations, 'spendHope', { instanceId, amount });
+    /**
+     * @param {number} amount
+     * @param {{ armorInstead?: boolean, payWithArmorSlot?: boolean }} [opts] — When `armorInstead` or
+     *   `payWithArmorSlot` is true, queues `markArmor` for the same slot count instead of spending Hope.
+     *   Requires `element.substituteArmorForHope` (from declarative armor features) and enough armor slots.
+     */
+    spendHope(amount, opts = {}) {
+      const n = Number(amount) || 0;
+      if (n <= 0) return;
+      const useArmor = opts?.armorInstead === true || opts?.payWithArmorSlot === true;
+      if (useArmor) {
+        if (element.substituteArmorForHope !== true) {
+          throw new Error(
+            'Armor-for-Hope substitution requires substituteArmorForHope on the element (merge from applyDeclarativeFeatures)'
+          );
+        }
+        const avail = element.currentArmor ?? 0;
+        if (avail < n) {
+          throw new Error('Not enough available armor slots for Hope substitution');
+        }
+        addMutation(mutations, 'markArmor', { instanceId, amount: n });
+        return;
+      }
+      addMutation(mutations, 'spendHope', { instanceId, amount: n });
+    },
+    spendGold(amount) {
+      addMutation(mutations, 'spendGold', { instanceId, amount });
     },
     gainHope(amount) {
       addMutation(mutations, 'gainHope', { instanceId, amount });
@@ -388,7 +454,18 @@ function buildRollObject(rollData, mutations, rollKey) {
 // ---------------------------------------------------------------------------
 
 function buildFeatureStore(featureKey, featureState, mutations) {
-  const state = featureState?.[featureKey] ?? {};
+  if (!featureState) {
+    return {
+      get() {
+        return undefined;
+      },
+      set() {},
+    };
+  }
+  if (!featureState[featureKey]) {
+    featureState[featureKey] = {};
+  }
+  const state = featureState[featureKey];
 
   return {
     get(key) {
@@ -433,10 +510,14 @@ function buildActionContext(gameState, actorMap, mutations) {
     attacker: type === 'attack' ? actor : undefined,
     trait: actionData.trait,
     range: actionData.range,
+    /** Which weapon the actor is using for this attack (primary vs secondary). */
+    weaponId: actionData.weaponId ?? null,
     restType: actionData.restType,
     effects: actionData.effects || [],
     pendingEffects: actionData.effects || [],   // alias used during onReviewOutcome
     appliedEffects: actionData.appliedEffects || [], // populated after resolution
+    /** Per-target armor commitment for this action (banner sync). Missing key = not committed. */
+    useArmorByTargetId: actionData.useArmorByTargetId,
 
     // ── Helper booleans ────────────────────────────────────────────────────
     /** True for any roll that uses duality (Hope + Fear) dice. */
@@ -506,7 +587,21 @@ export function buildTableSnapshot(gameState = {}) {
   const featureKey = gameState._featureKey || '__unknown__';
   const featureStore = buildFeatureStore(featureKey, gameState.featureState, store);
 
+  const activeFeature = gameState._activeFeature ?? null;
+  const sourceObject =
+    gameState._sourceObject ?? activeFeature?._sourceObject ?? null;
+
   const table = {
+    /** Feature object for the current hook/chip (set by action loop / tests). */
+    get activeFeature() {
+      return activeFeature;
+    },
+
+    /** Source row (weapon, armor, …) for the active feature when applicable. */
+    get source() {
+      return sourceObject;
+    },
+
     // Global state
     top: {
       fear: gameState.fear ?? 0,
@@ -546,6 +641,24 @@ export function buildTableSnapshot(gameState = {}) {
 
     // Per-feature persistent state
     feature: featureStore,
+
+    /**
+     * Read-only view of `gameState.featureState` for merging into declarative
+     * character rendering (`applyDeclarativeFeatures`). Same reference as the
+     * live game state bag; do not mutate — use `table.feature.set` at runtime.
+     */
+    featureState: gameState.featureState ?? {},
+
+    /**
+     * Descriptors for the mutation batch being processed (e.g. `clearArmor`,
+     * `markArmor`). Populated when `gameState._mutationBatch` is set — typically
+     * by `dispatchStateChangeHooks`. Otherwise an empty array. Each entry matches
+     * the shapes produced by Actor write methods / `applyMutations` (`type` + `payload`).
+     */
+    get mutationBatch() {
+      const b = gameState._mutationBatch;
+      return Array.isArray(b) ? [...b] : [];
+    },
 
     /**
      * Roll one or more dice synchronously and return the total.

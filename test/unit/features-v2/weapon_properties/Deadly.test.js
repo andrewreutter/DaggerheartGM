@@ -37,4 +37,15 @@ describe('Deadly', () => {
     expect(effects[0].amount).toBe(4);
     expect(effects[1].amount).toBe(3);
   });
+
+  it('does not modify HP effects when action type is not attack (CONV-025)', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const effects = [{ stat: 'currentHP', amount: 3, target: adv }];
+
+    runReviewOutcome(Deadly, {
+      action: mockAction({ type: 'trait', effects }),
+    });
+
+    expect(effects[0].amount).toBe(3);
+  });
 });

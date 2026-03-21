@@ -10,6 +10,23 @@ import { unwrapAll, unwrap } from './when.js';
 import { applyMutations, queueInternalMutation } from './table.js';
 
 // ---------------------------------------------------------------------------
+// resolveChipDisabled
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a chip should be treated as disabled (greyed out, no onUse).
+ * Supports `isDisabled: true | (table) => boolean`.
+ */
+export function resolveChipDisabled(chip, table) {
+  if (chip == null || typeof chip !== 'object') return false;
+  const d = chip.isDisabled;
+  if (d === undefined || d === false) return false;
+  if (d === true) return true;
+  if (typeof d === 'function') return !!d(table);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // collectChips
 // ---------------------------------------------------------------------------
 
@@ -47,6 +64,7 @@ export function collectChips(features, phase, table, usageStore = {}) {
 
       result.push({
         ...chip,
+        disabled: resolveChipDisabled(chip, table),
         _featureName: feature.name,
         _ownerInstanceId: feature._ownerInstanceId,
         _chipKey: chipKey,
@@ -80,6 +98,8 @@ export function collectChips(features, phase, table, usageStore = {}) {
  * @returns {object[]} mutations          — queued mutations from the call
  */
 export function activateChip(chip, table, chipState = makeChipState(), selectOpts = {}) {
+  if (resolveChipDisabled(chip, table)) return [];
+
   if (chip.isToggle) {
     chipState._isOn = !chipState._isOn;
   }
@@ -154,19 +174,31 @@ export function activateChip(chip, table, chipState = makeChipState(), selectOpt
  *
  * @param {object} chip   — chip descriptor
  * @param {object} table  — current Game Table Snapshot (table.me is the owner)
+ * @param {{ armorInsteadOfHope?: boolean }} [costOpts] — When true and `hopeCost` applies, uses
+ *   armor-for-Hope substitution (`markArmor` instead of `spendHope`) only if
+ *   `table.me.substituteArmorForHope` and there are enough armor slots; otherwise spends Hope.
  */
-export function deductChipCosts(chip, table) {
+export function deductChipCosts(chip, table, costOpts = {}) {
   if (!table.me) return;
 
   const resolve = (v) => (typeof v === 'function' ? v(table) : v);
 
   const hopeCost = resolve(chip.hopeCost);
   const stressCost = resolve(chip.stressCost);
+  const goldCost = resolve(chip.goldCost);
   const armorMark = resolve(chip.armorMark);
   const armorClear = resolve(chip.armorClear);
 
-  if (hopeCost) table.me.spendHope(hopeCost);
+  if (hopeCost) {
+    const wantsArmor = costOpts?.armorInsteadOfHope === true;
+    const canSubstitute =
+      wantsArmor &&
+      table.me.substituteArmorForHope === true &&
+      (table.me.armor ?? 0) >= hopeCost;
+    table.me.spendHope(hopeCost, canSubstitute ? { armorInstead: true } : {});
+  }
   if (stressCost) table.me.markStress(stressCost);
+  if (goldCost) table.me.spendGold(goldCost);
   if (armorMark) table.me.markArmor(armorMark);
   if (armorClear) table.me.clearArmor(armorClear);
 }

@@ -24,7 +24,7 @@ describe('Nomadic Pack', () => {
     );
   });
 
-  it('offers a session card chip that broadcasts when used', () => {
+  it('offers a session card chip that queues an action loop when used', () => {
     const table = mockTable();
     const chips = collectChips([annotated], 'card', table, {});
     expect(chips).toHaveLength(1);
@@ -35,9 +35,11 @@ describe('Nomadic Pack', () => {
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({
-        type: 'broadcast',
+        type: 'actionLoop',
         payload: expect.objectContaining({
-          message: expect.stringContaining('Nomadic Pack'),
+          instanceId: 'char-1',
+          title: 'Nomadic Pack',
+          description: expect.stringContaining('Nomadic Pack'),
         }),
       })
     );

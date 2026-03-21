@@ -6,6 +6,7 @@ import {
   trackChipFrequency,
   resetChipFrequency,
   makeChipState,
+  resolveChipDisabled,
 } from '../../../../src/features-v2/engine/chip-system.js';
 import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
@@ -149,6 +150,49 @@ describe('collectChips()', () => {
     expect(chips[0]._featureName).toBe('Cool Feature');
     expect(chips[0]._ownerInstanceId).toBe('char-99');
   });
+
+  it('sets disabled from isDisabled(table)', () => {
+    const feature = {
+      name: 'Gated',
+      _ownerInstanceId: 'char-1',
+      chips: [
+        {
+          placements: ['card'],
+          isDisabled: (table) => table.feature.get('off') === true,
+          onUse: () => {},
+        },
+      ],
+    };
+    const table = mockTable({ _featureKey: 'Gated', featureState: { Gated: { off: true } } });
+    const chips = collectChips([feature], 'card', table);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].disabled).toBe(true);
+  });
+
+  it('sets disabled from static isDisabled: true', () => {
+    const feature = {
+      name: 'Off',
+      _ownerInstanceId: 'char-1',
+      chips: [{ placements: ['card'], isDisabled: true, onUse: () => {} }],
+    };
+    const chips = collectChips([feature], 'card', mockTable());
+    expect(chips[0].disabled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveChipDisabled
+// ---------------------------------------------------------------------------
+
+describe('resolveChipDisabled()', () => {
+  it('is false when isDisabled is omitted', () => {
+    expect(resolveChipDisabled({}, mockTable())).toBe(false);
+  });
+
+  it('evaluates isDisabled as a function', () => {
+    const chip = { isDisabled: () => true };
+    expect(resolveChipDisabled(chip, mockTable())).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -156,6 +200,17 @@ describe('collectChips()', () => {
 // ---------------------------------------------------------------------------
 
 describe('activateChip()', () => {
+  it('returns no mutations when the chip is disabled', () => {
+    const chip = {
+      placements: ['card'],
+      isDisabled: () => true,
+      onUse: (table) => table.me.markStress(99),
+    };
+    const table = mockTable();
+    const mutations = activateChip(chip, table, makeChipState());
+    expect(mutations).toEqual([]);
+  });
+
   it('calls chip.onUse with table and chipState', () => {
     const calls = [];
     const chip = {
@@ -284,6 +339,54 @@ describe('deductChipCosts()', () => {
     );
   });
 
+  it('with armorInsteadOfHope queues markArmor instead of spendHope when substitution allowed and slots allow', () => {
+    const char = mockCharacter({
+      instanceId: 'char-1',
+      substituteArmorForHope: true,
+      currentArmor: 3,
+    });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { hopeCost: 2 };
+    deductChipCosts(chip, table, { armorInsteadOfHope: true });
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'markArmor', payload: { instanceId: 'char-1', amount: 2 } })
+    );
+    expect(mutations.find((m) => m.type === 'spendHope')).toBeUndefined();
+  });
+
+  it('with armorInsteadOfHope falls back to spendHope when substituteArmorForHope is false', () => {
+    const char = mockCharacter({ instanceId: 'char-1', currentArmor: 3 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { hopeCost: 1 };
+    deductChipCosts(chip, table, { armorInsteadOfHope: true });
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendHope', payload: { instanceId: 'char-1', amount: 1 } })
+    );
+  });
+
+  it('with armorInsteadOfHope falls back to spendHope when not enough armor slots', () => {
+    const char = mockCharacter({
+      instanceId: 'char-1',
+      substituteArmorForHope: true,
+      currentArmor: 1,
+    });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { hopeCost: 2 };
+    deductChipCosts(chip, table, { armorInsteadOfHope: true });
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendHope', payload: { instanceId: 'char-1', amount: 2 } })
+    );
+  });
+
   it('queues markStress mutation for stressCost', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
@@ -297,6 +400,19 @@ describe('deductChipCosts()', () => {
     );
   });
 
+  it('queues spendGold mutation for goldCost', () => {
+    const char = mockCharacter({ instanceId: 'char-1', gold: 10 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { goldCost: 1 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendGold', payload: { instanceId: 'char-1', amount: 1 } })
+    );
+  });
+
   it('queues markArmor for armorMark', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
@@ -307,6 +423,19 @@ describe('deductChipCosts()', () => {
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({ type: 'markArmor' })
+    );
+  });
+
+  it('queues spendGold mutation for goldCost', () => {
+    const char = mockCharacter({ instanceId: 'char-1', gold: 20 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { goldCost: 9 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendGold', payload: { instanceId: 'char-1', amount: 9 } })
     );
   });
 

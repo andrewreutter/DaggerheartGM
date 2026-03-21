@@ -28,7 +28,7 @@ describe('Doubled Up', () => {
   it('shows chip on successful attack', () => {
     const { chips } = runReviewAction(DoubledUp, {
       activeElements: [char, adv1, adv2],
-      action: mockAction({ type: 'attack', targetInstanceIds: ['adv-1'] }),
+      action: mockAction({ type: 'attack', targetInstanceIds: ['adv-1'], weaponId: 'w1' }),
       rolls: mockRoll({ isSuccess: true }),
     });
 
@@ -39,7 +39,8 @@ describe('Doubled Up', () => {
 
   it('does not show chip on failed attack', () => {
     const { chips } = runReviewAction(DoubledUp, {
-      action: mockAction({ type: 'attack' }),
+      activeElements: [char, adv1],
+      action: mockAction({ type: 'attack', weaponId: 'w1' }),
       rolls: mockRoll({ isSuccess: false }),
     });
 
@@ -48,7 +49,18 @@ describe('Doubled Up', () => {
 
   it('does not show chip on non-attack action', () => {
     const { chips } = runReviewAction(DoubledUp, {
-      action: mockAction({ type: 'trait' }),
+      activeElements: [char, adv1],
+      action: mockAction({ type: 'trait', weaponId: 'w1' }),
+      rolls: mockRoll({ isSuccess: true }),
+    });
+
+    expect(chips).toHaveLength(0);
+  });
+
+  it('does not show chip when attacking with secondary weapon', () => {
+    const { chips } = runReviewAction(DoubledUp, {
+      activeElements: [char, adv1, adv2],
+      action: mockAction({ type: 'attack', targetInstanceIds: ['adv-1'], weaponId: 'w2' }),
       rolls: mockRoll({ isSuccess: true }),
     });
 
@@ -72,7 +84,7 @@ describe('Doubled Up', () => {
 
     const { chips } = runReviewAction(DoubledUp, {
       activeElements: [char, adv1, adv2, adv3],
-      action: mockAction({ type: 'attack', targetInstanceIds: ['adv-1'] }),
+      action: mockAction({ type: 'attack', targetInstanceIds: ['adv-1'], weaponId: 'w1' }),
       rolls: mockRoll({ isSuccess: true }),
     });
 
@@ -92,6 +104,7 @@ describe('Doubled Up', () => {
         type: 'attack',
         actorInstanceId: 'char-1',
         targetInstanceIds: ['adv-1'],
+        weaponId: 'w1',
         range: 'melee',
         effects: [],
         appliedEffects: [],

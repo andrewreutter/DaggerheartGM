@@ -6,8 +6,19 @@ import { mockGameState, mockCharacter } from '../helpers.js';
 
 const WEAPON_ID = 'srd-wpn-tower-shield';
 
-function makeFeature() {
-  return { ...Barrier, _ownerInstanceId: 'c1', _weaponId: WEAPON_ID };
+function makeFeature(tier) {
+  return {
+    ...Barrier,
+    _ownerInstanceId: 'c1',
+    _weaponId: WEAPON_ID,
+    _source: 'weapon_property',
+    _sourceObject: {
+      id: WEAPON_ID,
+      name: 'Tower Shield',
+      tier: String(tier),
+      range: 'melee',
+    },
+  };
 }
 
 function makeCharWithWeapon(tier) {
@@ -24,7 +35,7 @@ describe('Barrier', () => {
     expect(Barrier.passiveStatMods.evasion).toBe(-1);
   });
 
-  it('has an armorScore function that reads tier from table.me.weapons', () => {
+  it('has an armorScore function that reads tier from table.source (weapon row)', () => {
     expect(typeof Barrier.passiveStatMods.armorScore).toBe('function');
   });
 
@@ -36,7 +47,7 @@ describe('Barrier', () => {
   ])('tier %i weapon gives +%i armorScore', (tier, expected) => {
     const char = makeCharWithWeapon(tier);
     const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
-    const { stats } = applyDeclarativeFeatures([makeFeature()], char, table);
+    const { stats } = applyDeclarativeFeatures([makeFeature(tier)], char, table);
     expect(stats.armorScore).toBe(expected);
     expect(stats.evasion).toBe(9); // 10 - 1
   });

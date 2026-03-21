@@ -46,6 +46,25 @@ export function isTargeted(table) {
 }
 
 /**
+ * Built-in predicate: true when the feature's owner has committed to mark an
+ * Armor Slot for this action (banner / VTT). Uses `table.action.useArmorByTargetId`
+ * and `useArmor` on pending `{ type: 'damage' }` effects — see Feature Authoring
+ * Guide §C.3 (armor commitment).
+ */
+export function armorUseCommitted(table) {
+  const id = table.me?.instanceId;
+  if (!id) return false;
+  if (table.action?.useArmorByTargetId?.[id] === true) return true;
+  return (table.action?.effects ?? []).some(
+    (e) =>
+      e.type === 'damage' &&
+      e.target?.instanceId === id &&
+      (e.amount ?? 0) > 0 &&
+      e.useArmor === true
+  );
+}
+
+/**
  * Built-in predicate: true when there is a pending damage effect targeting
  * the feature's owner with a positive amount.
  */
@@ -68,6 +87,20 @@ export function hasPhysicalDamage(table) {
       e.type === 'damage' &&
       e.target?.instanceId === table.me?.instanceId &&
       e.damageType === 'physical' &&
+      e.amount > 0
+  ) === true;
+}
+
+/**
+ * Built-in predicate: true when there is pending *magic* damage targeting
+ * the feature's owner with a positive amount.
+ */
+export function hasMagicDamage(table) {
+  return table.action?.effects?.some(
+    (e) =>
+      e.type === 'damage' &&
+      e.target?.instanceId === table.me?.instanceId &&
+      e.damageType === 'magic' &&
       e.amount > 0
   ) === true;
 }

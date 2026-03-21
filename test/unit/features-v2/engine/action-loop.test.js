@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createActionLoop } from '../../../../src/features-v2/engine/action-loop.js';
+import { createActionLoop, dispatchStateChangeHooks } from '../../../../src/features-v2/engine/action-loop.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
+import { Reinforced } from '../../../../src/features-v2/armor_properties/Reinforced.js';
 import { mockGameState, mockCharacter, mockAdversary, mockAction } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,38 @@ function makeLoop(featureOverrides = {}, gameOverrides = {}, actionOverrides = {
 // ---------------------------------------------------------------------------
 
 describe('createActionLoop()', () => {
+  it('carries useArmorByTargetId from gameState.action into the loop snapshot', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const gameState = mockGameState({
+      activeElements: [char, adv],
+      _ownerInstanceId: 'char-1',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'char-1',
+        targetInstanceIds: ['adv-1'],
+        trait: 'Agility',
+        range: 'melee',
+        effects: [],
+        appliedEffects: [],
+        useArmorByTargetId: { 'adv-1': true },
+      },
+    });
+    const feature = makeFeature({
+      hooks: {
+        onReviewOutcome: (table) => {
+          expect(table.action.useArmorByTargetId).toEqual({ 'adv-1': true });
+        },
+      },
+    });
+    const loop = createActionLoop(
+      gameState,
+      mockAction({ actorInstanceId: 'char-1', targetInstanceIds: ['adv-1'] }),
+      [feature]
+    );
+    loop.runPhase('reviewOutcome');
+  });
+
   it('returns a loop object with runPhase and getPhaseResult', () => {
     const loop = makeLoop();
     expect(typeof loop.runPhase).toBe('function');
@@ -132,6 +165,27 @@ describe('Hook execution', () => {
     );
     loop.runPhase('resolve');
     expect(calls).toContain('resolve');
+  });
+
+  it('does not run lifecycle hooks during resolveAction (chips only)', () => {
+    const calls = [];
+    const feature = makeFeature({
+      hooks: {
+        onIntent: () => calls.push('intent'),
+        onReviewAction: () => calls.push('reviewAction'),
+        onReviewOutcome: () => calls.push('reviewOutcome'),
+        onResolve: () => calls.push('onResolve'),
+      },
+    });
+
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const loop = createActionLoop(
+      mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }),
+      mockAction({ actorInstanceId: 'char-1' }),
+      [feature]
+    );
+    loop.runPhase('resolveAction');
+    expect(calls).toHaveLength(0);
   });
 
   it('does NOT call onIntent when wrapped in when(isActing) and I am not acting', () => {
@@ -341,5 +395,40 @@ describe('loop.setRolls() and loop.setEffects()', () => {
     loop.runPhase('reviewOutcome');
     expect(seenEffects).toHaveLength(1);
     expect(seenEffects[0].stat).toBe('currentHP');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatchStateChangeHooks
+// ---------------------------------------------------------------------------
+
+describe('dispatchStateChangeHooks()', () => {
+  it('runs onStateChange and returns setFeatureState mutations from hooks', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      currentArmor: 2,
+    });
+    const gameState = mockGameState({
+      activeElements: [char],
+      featureState: { Reinforced: { reinforcedActive: true } },
+    });
+
+    const batch = [{ type: 'clearArmor', payload: { instanceId: 'c1', amount: 1 } }];
+
+    const { mutations } = dispatchStateChangeHooks(
+      gameState,
+      [{ ...Reinforced, _ownerInstanceId: 'c1' }],
+      batch
+    );
+
+    expect(
+      mutations.some(
+        (m) =>
+          m.type === 'setFeatureState' &&
+          m.payload.featureKey === 'Reinforced' &&
+          m.payload.key === 'reinforcedActive' &&
+          m.payload.value === false
+      )
+    ).toBe(true);
   });
 });

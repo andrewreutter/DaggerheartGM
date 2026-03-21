@@ -5,7 +5,7 @@
  * single location.
  *
  * Usage:
- *   import { buildTableSnapshot, when, isActing, createActionLoop } from 'src/features-v2';
+ *   import { buildTableSnapshot, when, isActing, createActionLoop, dispatchStateChangeHooks } from 'src/features-v2';
  *   import registry from 'src/features-v2';
  */
 
@@ -14,6 +14,7 @@ export {
   when,
   isActing,
   isTargeted,
+  armorUseCommitted,
   isWhen,
   unwrap,
   unwrapAll,
@@ -21,13 +22,17 @@ export {
   applyMutations,
   collectChips,
   activateChip,
+  resolveChipDisabled,
   deductChipCosts,
   trackChipFrequency,
   resetChipFrequency,
   makeChipState,
   createActionLoop,
+  dispatchStateChangeHooks,
+  findWeaponDamageDieForPool,
   loadCharacterFeatures,
   applyDeclarativeFeatures,
+  mergeDeclarativeFeatureState,
 } from './engine/index.js';
 
 // Registry

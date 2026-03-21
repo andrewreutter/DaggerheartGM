@@ -28,6 +28,7 @@ export const DangerSense = {
   chips: [
     when(
       (table) => table.action?.type === 'attack',
+      (table) => table.action?.actor?.isAdversary === true,
       (table) => {
         const targets = table.action.targets || [];
         const isTargetingMe = targets.some((t) => t.instanceId === table.me?.instanceId);

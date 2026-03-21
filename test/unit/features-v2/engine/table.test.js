@@ -19,6 +19,26 @@ describe('buildTableSnapshot()', () => {
     expect(table.feature).toBeDefined();
     expect(typeof table.feature.get).toBe('function');
     expect(typeof table.feature.set).toBe('function');
+    expect(table.featureState).toBeDefined();
+    expect(typeof table.featureState).toBe('object');
+  });
+
+  it('exposes gameState.featureState on the snapshot as table.featureState', () => {
+    const fs = { Reinforced: { reinforcedActive: true } };
+    const table = buildTableSnapshot(mockGameState({ featureState: fs }));
+    expect(table.featureState).toBe(fs);
+  });
+
+  it('defaults table.mutationBatch to [] when _mutationBatch is absent', () => {
+    const table = buildTableSnapshot(mockGameState());
+    expect(table.mutationBatch).toEqual([]);
+  });
+
+  it('exposes a copy of _mutationBatch on table.mutationBatch', () => {
+    const batch = [{ type: 'clearArmor', payload: { instanceId: 'c1', amount: 1 } }];
+    const table = buildTableSnapshot(mockGameState({ _mutationBatch: batch }));
+    expect(table.mutationBatch).toEqual(batch);
+    expect(table.mutationBatch).not.toBe(batch);
   });
 
   it('populates table.top.fear from gameState.fear', () => {
@@ -43,6 +63,21 @@ describe('buildTableSnapshot()', () => {
     const table = buildTableSnapshot(state);
     expect(table.me?.name).toBe('Alice');
     expect(table.me?.instanceId).toBe('owner-123');
+  });
+
+  it('table.me.weaponRenderHints and primaryWeapon.isDisabled respect merged hints on the element', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      traits: { presence: 2 },
+      primaryWeapon: { id: 'w-pomp', name: 'Test', tier: 1, range: 'melee', trait: 'agility', damage: 'd6' },
+      weaponRenderHints: { 'w-pomp': { isDisabled: true, disabledReason: 'Requires Presence ≤ 0' } },
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.weaponRenderHints).toEqual({
+      'w-pomp': { isDisabled: true, disabledReason: 'Requires Presence ≤ 0' },
+    });
+    expect(table.me?.primaryWeapon?.isDisabled).toBe(true);
+    expect(table.me?.primaryWeapon?.disabledReason).toBe('Requires Presence ≤ 0');
   });
 
   it('separates characters and adversaries', () => {
@@ -90,6 +125,83 @@ describe('buildTableSnapshot()', () => {
     expect(table.action?.targets).toHaveLength(1);
     expect(table.action?.target?.instanceId).toBe('adv-1');
     expect(table.action?.attacker?.instanceId).toBe('char-1');
+  });
+
+  it('exposes weaponId on table.action when present in gameState', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const state = mockGameState({
+      activeElements: [char, adv],
+      action: {
+        type: 'attack',
+        actorInstanceId: 'char-1',
+        targetInstanceIds: ['adv-1'],
+        weaponId: 'w-primary',
+        effects: [],
+        appliedEffects: [],
+      },
+    });
+    const table = buildTableSnapshot(state);
+    expect(table.action?.weaponId).toBe('w-primary');
+  });
+
+  it('exposes armorScore and gold on table.me for resource features', () => {
+    const char = mockCharacter({ instanceId: 'char-1', armorScore: 3, gold: 18 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
+    expect(table.me?.armorScore).toBe(3);
+    expect(table.me?.gold).toBe(18);
+  });
+
+  it('queues spendGold mutation from table.me.spendGold', () => {
+    const char = mockCharacter({ instanceId: 'char-1', gold: 20 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
+    table.me.spendGold(9);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendGold', payload: { instanceId: 'char-1', amount: 9 } })
+    );
+  });
+
+  it('exposes activeFeature and source for declarative weapon features', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const feat = { name: 'TestProp', _weaponId: 'w1', _sourceObject: { id: 'w1', tier: 2 } };
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char],
+        _ownerInstanceId: 'char-1',
+        _activeFeature: feat,
+        _sourceObject: feat._sourceObject,
+      })
+    );
+    expect(table.activeFeature).toBe(feat);
+    expect(table.source?.tier).toBe(2);
+  });
+
+  it('exposes useArmorByTargetId and per-effect useArmor on table.action', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const dmg = {
+      type: 'damage',
+      target: { instanceId: 'char-1', name: char.name },
+      amount: 2,
+      damageType: 'phy',
+      useArmor: true,
+    };
+    const state = mockGameState({
+      activeElements: [char, adv],
+      _ownerInstanceId: 'char-1',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'adv-1',
+        targetInstanceIds: ['char-1'],
+        useArmorByTargetId: { 'char-1': true },
+        effects: [dmg],
+        appliedEffects: [],
+      },
+    });
+    const table = buildTableSnapshot(state);
+    expect(table.action?.useArmorByTargetId).toEqual({ 'char-1': true });
+    expect(table.action?.effects?.[0]?.useArmor).toBe(true);
   });
 
   it('rolls subdocument is undefined when no rolls provided', () => {
@@ -159,6 +271,39 @@ describe('Actor write methods (mutation queueing)', () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({ type: 'spendHope', payload: { instanceId: 'c1', amount: 2 } })
     );
+  });
+
+  it('spendHope with armorInstead queues markArmor when substituteArmorForHope and slots are available', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      substituteArmorForHope: true,
+      currentArmor: 2,
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me.substituteArmorForHope).toBe(true);
+    table.me.spendHope(1, { armorInstead: true });
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'markArmor', payload: { instanceId: 'c1', amount: 1 } })
+    );
+    expect(mutations.find((m) => m.type === 'spendHope')).toBeUndefined();
+  });
+
+  it('spendHope with armorInstead throws without substituteArmorForHope', () => {
+    const char = mockCharacter({ instanceId: 'c1', currentArmor: 2 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me.substituteArmorForHope).toBe(false);
+    expect(() => table.me.spendHope(1, { armorInstead: true })).toThrow(/substituteArmorForHope/);
+  });
+
+  it('spendHope with armorInstead throws when not enough armor slots', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      substituteArmorForHope: true,
+      currentArmor: 0,
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(() => table.me.spendHope(1, { armorInstead: true })).toThrow(/Not enough available armor/);
   });
 
   it('markHP queues a markHP mutation', () => {

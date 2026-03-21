@@ -8,6 +8,57 @@
  */
 
 import { unwrap, unwrapAll } from './when.js';
+import { buildTableSnapshot } from './table.js';
+
+/**
+ * Merge persisted V2 feature state from the character element and optional
+ * table snapshot so `table.feature.get(...)` works during declarative evaluation.
+ *
+ * - `character.featureState` and `tableBase.featureState` (from `buildTableSnapshot`)
+ *   are shallow-merged per feature key; character values win on key overlap.
+ *
+ * Returns a **new** object safe to pass into `buildTableSnapshot` (avoids mutating
+ * live table state when the engine adds empty per-feature buckets).
+ */
+export function mergeDeclarativeFeatureState(character = {}, tableBase = {}) {
+  const merged = {};
+
+  function mergeFrom(src) {
+    if (!src || typeof src !== 'object') return;
+    for (const [featKey, bag] of Object.entries(src)) {
+      if (!bag || typeof bag !== 'object') continue;
+      merged[featKey] = { ...(merged[featKey] || {}), ...bag };
+    }
+  }
+
+  mergeFrom(tableBase.featureState);
+  mergeFrom(character.featureState);
+
+  // Deep-clone per-feature bags so buildTableSnapshot / buildFeatureStore
+  // can add empty `{}` buckets without touching live `gameState.featureState`.
+  const clone = {};
+  for (const [k, bag] of Object.entries(merged)) {
+    clone[k] = { ...bag };
+  }
+  return clone;
+}
+
+/**
+ * Snapshot for one feature during declarative evaluation so `table.source` /
+ * `table.activeFeature` match the feature being applied (mirrors the action loop).
+ */
+function snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState) {
+  return buildTableSnapshot({
+    fear: tableBase?.top?.fear ?? 0,
+    mapConfig: tableBase?.top?.map ?? null,
+    activeElements: [character],
+    _ownerInstanceId: feature._ownerInstanceId ?? character.instanceId,
+    _featureKey: feature.name ?? 'Feature',
+    _activeFeature: feature,
+    _sourceObject: feature._sourceObject,
+    featureState: mergedFeatureState,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // loadCharacterFeatures
@@ -16,7 +67,9 @@ import { unwrap, unwrapAll } from './when.js';
 /**
  * Given a character's chosen options and the V2 registry, return a flat array
  * of all feature objects that apply to this character. Each returned feature
- * is annotated with `_ownerInstanceId` and `_source` (e.g. 'class', 'weapon').
+ * is annotated with `_ownerInstanceId`, `_source` (e.g. 'class', 'weapon_property'),
+ * and internal registry linkage so `table.source` in snapshots points at the
+ * class, weapon, armor, ancestry, etc. row the feature came from.
  *
  * @param {object} character  — character data including chosen option IDs
  * @param {object} registry   — { ancestries, communities, classes, subclasses,
@@ -43,7 +96,12 @@ export function loadCharacterFeatures(character, registry) {
 
     for (const feat of optionFeatures) {
       if (feat && typeof feat === 'object') {
-        features.push({ ...feat, _ownerInstanceId: instanceId, _source: source });
+        features.push({
+          ...feat,
+          _ownerInstanceId: instanceId,
+          _source: source,
+          _sourceObject: option,
+        });
       }
     }
   }
@@ -97,12 +155,20 @@ export function loadCharacterFeatures(character, registry) {
           _ownerInstanceId: instanceId,
           _source: 'weapon_property',
           _weaponId: weaponId,
+          _sourceObject: weapon,
           // Keep raw feature text for any implementation that needs it
           _weaponFeatureText: typeof wf === 'object' ? wf.text : undefined,
         });
       } else if (typeof wf === 'object') {
         // No registered implementation yet — include as a display-only feature
-        features.push({ name: propName, description: wf.text, _ownerInstanceId: instanceId, _source: 'weapon_property', _weaponId: weaponId });
+        features.push({
+          name: propName,
+          description: wf.text,
+          _ownerInstanceId: instanceId,
+          _source: 'weapon_property',
+          _weaponId: weaponId,
+          _sourceObject: weapon,
+        });
       }
     }
   }
@@ -121,9 +187,20 @@ export function loadCharacterFeatures(character, registry) {
         const propName = af.name || af;
         const propImpl = registry.armor_properties?.[propName];
         if (propImpl) {
-          features.push({ ...propImpl, _ownerInstanceId: instanceId, _source: 'armor_property' });
+          features.push({
+            ...propImpl,
+            _ownerInstanceId: instanceId,
+            _source: 'armor_property',
+            _sourceObject: armor,
+          });
         } else if (typeof af === 'object') {
-          features.push({ name: propName, description: af.text, _ownerInstanceId: instanceId, _source: 'armor_property' });
+          features.push({
+            name: propName,
+            description: af.text,
+            _ownerInstanceId: instanceId,
+            _source: 'armor_property',
+            _sourceObject: armor,
+          });
         }
       }
     }
@@ -133,7 +210,12 @@ export function loadCharacterFeatures(character, registry) {
   for (const abilityId of character.abilityIds || []) {
     const ability = registry.abilities?.[abilityId];
     if (ability) {
-      features.push({ ...ability, _ownerInstanceId: instanceId, _source: 'ability' });
+      features.push({
+        ...ability,
+        _ownerInstanceId: instanceId,
+        _source: 'ability',
+        _sourceObject: ability,
+      });
     }
   }
 
@@ -152,10 +234,10 @@ export function loadCharacterFeatures(character, registry) {
  *
  * @param {object[]} features   — from loadCharacterFeatures()
  * @param {object}   character  — raw character data
- * @param {object}   table      — current table snapshot (for when() evaluation)
- * @returns {object} computedStats
+ * @param {object}   tableBase  — optional base snapshot (fear/map); per-feature `table` is rebuilt so `table.source` / `table.activeFeature` are set
+ * @returns {{ stats: object, virtualWeapons: object[], advantageTriggers: object[], damageAffinities: object, movementModes: object[], rangeOverrides: object, substituteArmorForHope: boolean, weaponRenderHints: object }}
  */
-export function applyDeclarativeFeatures(features, character, table) {
+export function applyDeclarativeFeatures(features, character, tableBase) {
   const stats = {
     evasion: character.evasion ?? 0,
     armorScore: character.armorScore ?? 0,
@@ -182,10 +264,33 @@ export function applyDeclarativeFeatures(features, character, table) {
   const damageAffinities = { resistances: [], immunities: [], vulnerabilities: [] };
   const movementModes = [];
   const rangeOverrides = {}; // { [sourceRange]: effectiveRange } — e.g. { melee: 'veryClose' }
+  /** @type {Record<string, { isDisabled?: boolean, disabledReason?: string }>} */
+  const weaponRenderHints = {};
+  let substituteArmorForHope = !!character.substituteArmorForHope;
+
+  const mergedFeatureState = mergeDeclarativeFeatureState(character, tableBase);
+
+  function mergeWeaponRenderHint(weaponId, hint) {
+    if (!weaponId || !hint || typeof hint !== 'object') return;
+    const prev = weaponRenderHints[weaponId] || {};
+    const merged = { ...prev, ...hint };
+    merged.isDisabled = !!(prev.isDisabled || hint.isDisabled);
+    if (merged.isDisabled) {
+      merged.disabledReason =
+        (hint.isDisabled && hint.disabledReason) ||
+        (prev.isDisabled && prev.disabledReason) ||
+        merged.disabledReason;
+    } else {
+      delete merged.disabledReason;
+    }
+    weaponRenderHints[weaponId] = merged;
+  }
 
   for (const feature of features) {
-    // Set table.me to the feature owner before evaluating
-    // (We build a shallow table view; full snapshot already has me set)
+    const table = snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState);
+
+    const subHope = unwrap(feature.substituteArmorForHope, table);
+    if (subHope === true) substituteArmorForHope = true;
 
     // passiveStatMods
     const mods = unwrap(feature.passiveStatMods, table);
@@ -193,8 +298,8 @@ export function applyDeclarativeFeatures(features, character, table) {
       for (const [key, value] of Object.entries(mods)) {
         let resolvedValue = unwrap(value, table);
         // Allow function values: (table, feature?) => number
-        // The feature object is passed as the second arg so weapon properties
-        // can access per-weapon context (e.g. `self._weaponTier`).
+        // The feature object is passed as the second arg for fields like `_weaponId`;
+        // registry fields (tier, damage, …) should be read from `table.source`.
         if (typeof resolvedValue === 'function') resolvedValue = resolvedValue(table, feature);
         if (typeof resolvedValue === 'number' && key in stats) {
           stats[key] += resolvedValue;
@@ -231,6 +336,15 @@ export function applyDeclarativeFeatures(features, character, table) {
     if (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) {
       Object.assign(rangeOverrides, overrides);
     }
+
+    // Weapon property rendering (e.g. Pompous — disable weapon when traits fail)
+    const resolvedOnRender = unwrap(feature.onRender, table);
+    if (feature._weaponId && resolvedOnRender !== undefined) {
+      let hint;
+      if (typeof resolvedOnRender === 'function') hint = resolvedOnRender(table);
+      else if (resolvedOnRender && typeof resolvedOnRender === 'object') hint = resolvedOnRender;
+      if (hint && typeof hint === 'object') mergeWeaponRenderHint(feature._weaponId, hint);
+    }
   }
 
   return {
@@ -240,5 +354,12 @@ export function applyDeclarativeFeatures(features, character, table) {
     damageAffinities,
     movementModes,
     rangeOverrides,
+    /** When true, merge onto the character element so `table.me.substituteArmorForHope` is set in snapshots (armor-for-Hope substitution). */
+    substituteArmorForHope,
+    /**
+     * Merge onto the character element (like `_rangeOverrides`) so weapon views include `isDisabled` / `disabledReason` in snapshots.
+     * Shape: `{ [weaponId]: { isDisabled?: boolean, disabledReason?: string } }`.
+     */
+    weaponRenderHints,
   };
 }

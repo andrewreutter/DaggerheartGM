@@ -107,9 +107,10 @@ VALIDATION STEPS (per feature)
      for the mapping table).
    - The exact mechanic text is your ground truth.
 
-2. Read the implementation and test files.
+2. Read the implementation file. If the feature has executable behavior (hooks, chips, passiveStatMods, etc.), also read its test file when present.
    - Implementation: src/features-v2/<collection>/<FileName>.js
-   - Tests: test/unit/features-v2/<collection>/<FeatureName>.test.js
+   - Tests (when applicable): test/unit/features-v2/<collection>/<FeatureName>.test.js
+   - **CONV-027**: features that are only `{ name, description }` do not require a dedicated test file—skip test-file requirements for those rows.
 
 3. Run the tests:
        export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
@@ -134,13 +135,18 @@ VALIDATION STEPS (per feature)
    □ Uses only V2 API methods from docs/feature-authoring-guide.md?
    □ No references to legacy src/features/ patterns?
    □ Mutations queued through table.me / table.action.target, not raw objects?
-   □ At least one happy-path test?
-   □ At least one negative-path test?
-   □ Tests verify specific mutation types and payloads (not just truthiness)?
+   □ At least one happy-path test? (N/A if **CONV-027** — name/description-only)
+   □ At least one negative-path test? (N/A if **CONV-027** — name/description-only)
+   □ Tests verify specific mutation types and payloads (not just truthiness)? (N/A if **CONV-027**; when tests exist, **CONV-008** applies)
 
 5. Apply the code conventions checklist.
    For each rule in docs/v2-code-conventions.md (re-read this batch),
    check whether the feature violates it. Reference violations by CONV-NNN.
+
+   **Adversary reaction rolls vs a fixed DC:** If the SRD text names a reaction roll
+   with a number in parentheses and the code only rolls for **adversaries**, read
+   **CONV-028** before flagging “missing trait/proficiency on the reaction roll.”
+   A flat `d20` vs that DC is often correct in V2.
 
 6. Record your verdict.
    - Validated: all checklist items pass. Clear `Val Notes` for that row.

@@ -17,7 +17,8 @@ export const NomadicPack = {
       hopeCost: 1,
       frequency: "session",
       onUse(table) {
-        table.top.broadcast(
+        table.me.actionLoop(
+          "Nomadic Pack",
           `${table.me.name} reaches into their Nomadic Pack — work with the GM to name the mundane item they pull out.`
         );
       },

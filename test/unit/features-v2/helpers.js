@@ -196,6 +196,63 @@ export function runResolve(feature, tableOverrides = {}) {
   return _runPhase(feature, 'resolve', tableOverrides);
 }
 
+/**
+ * Run a single feature through the resolveAction phase (chips only; no lifecycle hook).
+ */
+export function runResolveAction(feature, tableOverrides = {}) {
+  return _runPhase(feature, 'resolveAction', tableOverrides);
+}
+
+/**
+ * Run reviewAction then resolveAction on one shared loop so `featureState` persists.
+ */
+export function runReviewActionThenResolveAction(feature, tableOverrides = {}) {
+  const char = mockCharacter({ instanceId: 'char-1' });
+  const adv = mockAdversary({ instanceId: 'adv-1' });
+
+  const annotatedFeature = {
+    ...feature,
+    _ownerInstanceId: feature._ownerInstanceId ?? 'char-1',
+  };
+
+  const actionType = tableOverrides.actionType ?? 'attack';
+
+  const gameState = mockGameState({
+    ...tableOverrides,
+    activeElements: tableOverrides.activeElements ?? [char, adv],
+    _ownerInstanceId: annotatedFeature._ownerInstanceId,
+    _featureKey: feature.name ?? 'TestFeature',
+  });
+
+  const loop = createActionLoop(
+    gameState,
+    mockAction({
+      type: actionType,
+      actorInstanceId: annotatedFeature._ownerInstanceId,
+      ...tableOverrides.action,
+    }),
+    [annotatedFeature],
+    tableOverrides.usageStore ?? {}
+  );
+
+  if (tableOverrides.action?.effects) {
+    loop.setEffects(tableOverrides.action.effects);
+  }
+
+  const reviewAction = loop.runPhase('reviewAction');
+  const resolveAction = loop.runPhase('resolveAction');
+
+  return {
+    reviewAction,
+    resolveAction,
+    chips: resolveAction.chips,
+    mutations: [...reviewAction.mutations, ...resolveAction.mutations],
+    narrations: [...reviewAction.narrations, ...resolveAction.narrations],
+    loop,
+    gameState,
+  };
+}
+
 function _runPhase(feature, phase, tableOverrides) {
   const char = mockCharacter({ instanceId: 'char-1' });
   const adv = mockAdversary({ instanceId: 'adv-1' });

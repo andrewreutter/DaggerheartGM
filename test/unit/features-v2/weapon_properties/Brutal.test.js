@@ -65,6 +65,24 @@ describe('Brutal', () => {
     expect(effects[0].amount).toBe(12);
   });
 
+  it('does not add extra damage when action type is not attack (CONV-025)', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+
+    const effects = [{ type: 'damage', target: { instanceId: 'adv-1' }, amount: 8, damageType: 'physical', source: char }];
+    const { mutations } = runReviewAction(Brutal, {
+      activeElements: [char, adv],
+      action: {
+        ...mockAction({ type: 'trait' }),
+        effects,
+      },
+      rolls: mockRoll({ damageDice: [{ name: 'weapon', die: 'd8', value: 8 }] }),
+    });
+
+    expect(mutations.filter((m) => m.type === 'rollDie')).toHaveLength(0);
+    expect(effects[0].amount).toBe(8);
+  });
+
   it('does not add damage when it is not the acting character', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const other = mockCharacter({ instanceId: 'char-2' });

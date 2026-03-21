@@ -16,6 +16,7 @@
  *   const reviewActionResult = loop.runPhase('reviewAction');
  *   // ... engine applies thresholds ...
  *   const reviewOutcomeResult = loop.runPhase('reviewOutcome');
+ *   const resolveActionResult = loop.runPhase('resolveAction'); // chips only (e.g. post-hit choices)
  *   const resolveResult = loop.runPhase('resolve');
  */
 
@@ -28,6 +29,7 @@ const PHASE_CHIP_PLACEMENT = {
   intent: 'intent',
   reviewAction: 'reviewAction',
   reviewOutcome: 'reviewOutcome',
+  resolveAction: 'resolveAction',
   resolve: 'resolve',
 };
 
@@ -36,7 +38,9 @@ const PHASE_CHIP_PLACEMENT = {
  *
  * @param {object} gameState     — raw game state (see table.js for shape)
  * @param {object} actionConfig  — { type, actorInstanceId, targetInstanceIds?,
- *                                   rollText?, weaponId?, traitKey? }
+ *                                   rollText?, weaponId?, traitKey? } — `weaponId`
+ *                                   is copied onto `gameState.action` for attack loops (primary vs secondary).
+ *                                   `useArmorByTargetId` may be supplied via `gameState.action` from the VTT/banner.
  * @param {object[]} features    — flat array of all feature objects for all
  *                                 characters on the table, each annotated with
  *                                 `_ownerInstanceId`
@@ -53,6 +57,10 @@ export function createActionLoop(gameState, actionConfig, features = [], usageSt
       targetInstanceIds: actionConfig.targetInstanceIds || [],
       trait: actionConfig.traitKey,
       range: actionConfig.range,
+      /** Which weapon the actor is using for this attack (e.g. primary vs secondary). */
+      weaponId: actionConfig.weaponId ?? null,
+      /** Carried from `gameState.action` when hydrating mid-banner (e.g. roll `_useArmorByTargetId`). */
+      useArmorByTargetId: gameState.action?.useArmorByTargetId,
       effects: [],
       appliedEffects: [],
     },
@@ -63,7 +71,7 @@ export function createActionLoop(gameState, actionConfig, features = [], usageSt
   /**
    * Run a single phase of the Action Loop.
    *
-   * @param {'intent'|'reviewAction'|'reviewOutcome'|'resolve'} phase
+   * @param {'intent'|'reviewAction'|'reviewOutcome'|'resolveAction'|'resolve'} phase
    * @returns {{ chips: object[], mutations: object[], narrations: string[] }}
    */
   function runPhase(phase) {
@@ -77,6 +85,7 @@ export function createActionLoop(gameState, actionConfig, features = [], usageSt
         ...stateWithAction,
         _ownerInstanceId: feature._ownerInstanceId,
         _featureKey: feature.name,
+        _activeFeature: feature,
         featureState: gameState.featureState,
       };
 
@@ -157,6 +166,54 @@ export function createActionLoop(gameState, actionConfig, features = [], usageSt
   };
 }
 
+/**
+ * Run `hooks.onStateChange` for every feature after an external mutation batch
+ * is applied to game state (rest moves, manual armor track, etc. — not Action Loop phases).
+ *
+ * **Contract:** `gameState` must already reflect **post-mutation** truth (e.g. cleared armor
+ * on elements). `mutationBatch` is the same batch, for predicates only — use
+ * `table.mutationBatch` in hooks to inspect it. Features should almost always wrap the hook in
+ * `when()` so logic runs only for relevant batches.
+ *
+ * @param {object} gameState       — authoritative state after mutations are applied
+ * @param {object[]} [features]    — flat list of features with `_ownerInstanceId`
+ * @param {object[]} [mutationBatch] — descriptors `{ type, payload, timestamp? }[]` (same as `applyMutations` output)
+ * @returns {{ mutations: object[], narrations: string[] }}
+ */
+export function dispatchStateChangeHooks(gameState, features = [], mutationBatch = []) {
+  const batch = Array.isArray(mutationBatch) ? [...mutationBatch] : [];
+  const allMutations = [];
+  const allNarrations = [];
+
+  for (const feature of features) {
+    const featureState = {
+      ...gameState,
+      _ownerInstanceId: feature._ownerInstanceId,
+      _featureKey: feature.name,
+      _activeFeature: feature,
+      featureState: gameState.featureState,
+      _mutationBatch: batch,
+    };
+
+    const table = buildTableSnapshot(featureState);
+    const hookFnRaw = feature.hooks?.onStateChange;
+    if (hookFnRaw) {
+      const hookFn = unwrap(hookFnRaw, table);
+      if (typeof hookFn === 'function') {
+        hookFn(table);
+      }
+    }
+
+    const mutations = applyMutations(table);
+    allMutations.push(...mutations);
+    for (const m of mutations) {
+      if (m.type === 'addNarration') allNarrations.push(m.payload.text);
+    }
+  }
+
+  return { mutations: allMutations, narrations: allNarrations };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -178,6 +235,7 @@ function hasToggleChipGate(feature, phase, table) {
 }
 
 function hookNameForPhase(phase, actionType) {
+  if (phase === 'resolveAction') return null;
   if (phase === 'intent') {
     if (actionType === 'shortRest' || actionType === 'longRest') return 'onRest';
     if (actionType === 'sessionStart') return 'onSessionStart';

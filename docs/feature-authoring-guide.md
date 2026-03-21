@@ -175,12 +175,13 @@ export const Retaliate = {
 **Built-in predicates:**
 
 
-| Predicate           | True when...                                                                   |
-| ------------------- | ------------------------------------------------------------------------------ |
-| `isActing`          | The feature's owner is the one currently acting                                |
-| `isTargeted`        | The feature's owner is one of the action's targets                             |
-| `hasDamage`         | There is a pending damage effect targeting the feature's owner with amount > 0 |
-| `hasPhysicalDamage` | Same as `hasDamage`, but only for `damageType: 'physical'`                     |
+| Predicate              | True when...                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `isActing`             | The feature's owner is the one currently acting                                |
+| `isTargeted`           | The feature's owner is one of the action's targets                             |
+| `armorUseCommitted`    | The owner committed to use armor on this hit (`useArmorByTargetId` / `useArmor` on damage effects; §C.3) |
+| `hasDamage`            | There is a pending damage effect targeting the feature's owner with amount > 0 |
+| `hasPhysicalDamage`    | Same as `hasDamage`, but only for `damageType: 'physical'`                     |
 
 
 ---
@@ -239,6 +240,8 @@ table.me.rangeFromTarget // e.g. 'melee' or 'far'
 // Feature local state
 table.feature.set('timesUsed', 3) // Remember something across turns
 table.feature.get('timesUsed') // e.g. 3
+// Read-only view of the full feature-state bag (same reference as game state)
+table.featureState // e.g. { Reinforced: { reinforcedActive: true } }
 
 // Automatic dice rolling (for inevitable mechanics — not player choices)
 table.rollDie('d6') // Roll 1d6, returns the face value (e.g. 4)
@@ -843,6 +846,29 @@ If multiple active features each declare `rangeOverrides`, their maps are merged
 
 `applyDeclarativeFeatures` returns the merged `rangeOverrides` object in its result. Consumers (target-selection logic, weapon card display) apply it by looking up a weapon's `range` in the map and using the value when present, or the original range when absent.
 
+#### `onRender` (weapon properties)
+
+Optional **root-level** function on **weapon property** features (not inside `hooks`). Runs during **`applyDeclarativeFeatures`** with the usual character snapshot (`table.me` is the owning character). Return a **weapon card hint** for that property’s weapon (`_weaponId`):
+
+```javascript
+// SRD Pompous — must have Presence 0 or lower
+onRender(table) {
+  const presence = table.me?.traits?.presence ?? 0;
+  if (presence > 0) {
+    return { isDisabled: true, disabledReason: 'Requires Presence ≤ 0' };
+  }
+  return { isDisabled: false };
+}
+```
+
+- The inner function may be wrapped in **`when(...)`** so the hint only applies when predicates pass.
+- If the return value is a **plain object** (not a function), it is used as the hint directly (after `unwrap`).
+- **`applyDeclarativeFeatures`** returns **`weaponRenderHints`**: `{ [weaponId]: { isDisabled?: boolean, disabledReason?: string } }`. **Merge onto the character element** before building table snapshots (same pattern as `_rangeOverrides` / `substituteArmorForHope`).
+- **`table.me.primaryWeapon`**, **`secondaryWeapon`**, and **`weapons`** copy **`isDisabled`** / **`disabledReason`** onto each **Weapon Object** when a hint exists for that weapon id.
+- **Host UI** (Game Table / character sheet) must respect **`isDisabled`** on weapon views when V2 integration is enabled — see **V2 UI integration backlog** in `docs/v2-migration-tracker.md`.
+
+**Persisted feature state during declarative rendering:** For character sheet / stat recomputation, `applyDeclarativeFeatures` merges, in order: `tableBase.featureState` (from `buildTableSnapshot`, i.e. the live game-state bag), then `character.featureState` (character wins on overlapping keys). Values in that bag should come from runtime `table.feature.set(...)` (e.g. in hooks), not from ad hoc element fields. Export `mergeDeclarativeFeatureState(character, tableBase)` if you need the merged bag outside `applyDeclarativeFeatures`.
+
 ### B. Hooks and Chips Reference
 
 This section provides a complete reference for defining Hooks and Chips in your features.
@@ -852,6 +878,7 @@ This section provides a complete reference for defining Hooks and Chips in your 
 Hooks are functions defined inside the `hooks` object of a feature. They are called automatically by the engine at specific phases of the game lifecycle. Every feature on the table has its hooks executed for every event, so you should almost always use `when()` to filter when your hook actually runs.
 
 - `onIntent(table)`: **Intercept Rolls.** Fires during the Intent phase of an Action Loop, *before* dice are rolled. This is the correct place to add modifiers, extra dice, or advantage to a roll (e.g., using `table.rolls.action.addStatic()`).
+- `onStateChange(table)`: **Post-mutation logic (outside the Action Loop).** Fires when the host calls `dispatchStateChangeHooks(gameState, features, mutationBatch)` after applying a batch of table mutations (e.g. clearing armor on the character, rest moves). **`gameState` must already reflect post-mutation truth**; `mutationBatch` is the same batch, for predicates. During this hook only, `table.mutationBatch` is a read-only copy of that batch (each entry `{ type, payload }` matches queued mutations such as `clearArmor`, `markArmor`). In all other snapshots `table.mutationBatch` is `[]`. Use `when()` so the hook runs only when the batch is relevant (e.g. “this batch includes `clearArmor` for `table.me`”).
 - `onReviewAction(table)`: **Intercept Raw Damage.** Fires during the Review Action phase, *after* dice are rolled but *before* damage thresholds are applied. Effects in `table.action.effects` at this stage have `type: 'damage'` with a raw `amount` (the number that will be compared against thresholds). Mutate `amount` here to change damage before it becomes HP loss. If the feature has a toggle chip at `reviewAction` without `onUse`, this hook is automatically gated by that chip (see Section 4.7).
 - `onReviewOutcome(table)`: **React to Rolls & Intercept Effects.** Fires during the Review Outcome phase, *after* dice are rolled and *after* the engine has applied damage thresholds to convert raw damage into HP/Stress loss. Effects here have `stat: 'currentHP'` or `stat: 'currentStress'` with `amount` representing the number of boxes to mark. Mutate these to reduce or increase the final HP/Stress impact.
 - `onResolve(table)`: **React to Effects.** Fires during the Resolve phase, *after* the GM has approved the banner and the world has been permanently mutated. You can read `table.action.appliedEffects` to see what actually happened and trigger follow-up actions (e.g., "When you deal damage, clear 1 Stress").
@@ -964,6 +991,11 @@ When these properties are defined on a chip, the engine automatically handles de
 
 Because `table.feature.set()` updates the snapshot's in-memory state synchronously, any value stored by `onUse` is immediately visible to a subsequent `stressCost` function call on the same snapshot.
 
+**Armor-for-Hope substitution:** Armor property features that set the declarative boolean **`substituteArmorForHope: true`** (e.g. the SRD **Hopeful** property) cause `applyDeclarativeFeatures` to return **`substituteArmorForHope`** in its result. The **client must merge** that onto the character element (`element.substituteArmorForHope = true`) before building table snapshots so `table.me.substituteArmorForHope` is accurate. The engine never looks up armor by SRD name (see **CONV-029**).
+
+- Manual calls: `table.me.spendHope(amount, { armorInstead: true })` queues **`markArmor`** for that many slots instead of `spendHope`. Throws if `substituteArmorForHope` is not true on the element or there are not enough available armor slots (`armor`).
+- Chip costs: `deductChipCosts(chip, table, { armorInsteadOfHope: true })` uses substitution only when `table.me.substituteArmorForHope` **and** there are enough armor slots; otherwise it spends Hope normally.
+
 *(Note: If a feature only has a single chip, you can place these properties directly at the root of the feature object to define the "Default Card Action".)*
 
 ### C. Game Table Snapshot Reference
@@ -995,7 +1027,10 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `isActing` *(boolean)*: True if this actor initiated the current Action Loop.
 - `isTargeted` *(boolean)*: True if this actor is one of the targets of the current Action Loop.
 - `currentHP`, `maxHP`, `currentStress`, `maxStress`, `hope`, `armor`, `maxArmor` *(numbers)*: Current resource values. `armor` is the number of currently available (unmarked) armor slots; `maxArmor` is the total number of slots.
+- `armorScore` *(number)*: Static Armor Score from equipped armor (used for rules that reduce damage by “your Armor Score,” e.g. Warded). Distinct from slot counts `armor` / `maxArmor`. Defaults to `0` when not set on the element.
+- `substituteArmorForHope` *(boolean)*: When true, this actor may pay Hope costs by marking armor slots (`spendHope` with `{ armorInstead: true }`). Populated from declarative feature data via `applyDeclarativeFeatures` → merge onto the element (not by hardcoding SRD names in the engine).
 - `traits` *(object)*: The character's six trait scores as an object: `{ agility, strength, finesse, instinct, presence, knowledge }`. Each value is a number (e.g. `table.me.traits.agility`). Defaults to `{}` for adversaries (traits not applicable).
+- `weaponRenderHints` *(object)*: Map of weapon id → `{ isDisabled?, disabledReason? }` from weapon property **`onRender`** (merge **`weaponRenderHints`** from `applyDeclarativeFeatures` onto the element). Read-only getter returns a shallow copy. Empty when no hints apply.
 - `proficiency` *(number)*: The character's current Proficiency score (base 1, increases with advancement picks). Defaults to `1` when not explicitly set on the element.
 - `level` *(number)*: The character's level (typically 1–10). Distinct from proficiency — use this for SRD effects keyed to level (e.g. damage bonuses, token caps). Defaults to `1` when not explicitly set on the element.
 - `experiences` *(array of `{ id, name }`)*: The character's experience list. Use in `isSelect` callbacks to populate a picker for create-time choices. Also use to detect whether the player used an experience on the current roll: when a player applies an experience during the Intent phase, the engine adds `{ name: experienceName, value: 2 }` to `table.rolls.action.statics`. Cross-referencing `table.me.experiences` names against `table.rolls.action.statics` tells you whether any experience was used:
@@ -1016,6 +1051,8 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `trait` *(string | null)*: The trait used to attack with this weapon.
 - `damage` *(string | null)*: The damage die expression (e.g. `'d8'`).
 - `features` *(string[])*: Names of weapon features attached to this weapon.
+- `isDisabled` *(boolean, optional)*: When `true`, the host should not allow attacks with this weapon until the disabling condition clears (e.g. Pompous / **`onRender`** + merged **`weaponRenderHints`**).
+- `disabledReason` *(string, optional)*: Tooltip or banner text when `isDisabled` is true.
 
 - `rangeFromTarget` *(string)*: Distance to `table.action.target`. Returns one of: `'melee'` (≤5'), `'veryClose'` (≤10'), `'close'` (≤30'), `'far'` (≤100'), `'veryFar'` (≤300'), or `null` if positions are unknown.
 - `rangeFrom(actor)` *(method → string | null)*: Same band strings as `rangeFromTarget`, measured from this actor to another (e.g., `table.me.rangeFrom(table.action.actor)`). Use this instead of reading raw token coordinates when the reference actor is not the action target — e.g., checking whether an ally is within Close range of you.
@@ -1033,7 +1070,7 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 
 - `markStress(amount)`, `clearStress(amount)`
 - `markHP(amount)`, `clearHP(amount)`
-- `spendHope(amount)`, `gainHope(amount)`
+- `spendHope(amount, opts?)`, `gainHope(amount)` — optional second argument `{ armorInstead: true }` or `{ payWithArmorSlot: true }` marks armor slots instead of spending Hope when `substituteArmorForHope` is true on the element and slots are available (throws otherwise); see **Armor-for-Hope substitution** under Resource Costs above.
 - `markArmor(amount)`, `clearArmor(amount)`
 - `addCondition(conditionName)`, `removeCondition(conditionName)`
 - `addExperienceBonus(experienceId, amount)`: Queues a permanent +`amount` bonus to the experience with the given id. Typically called from a `create`-phase `isSelect` chip's `onUse` when the player makes their selection.
@@ -1147,6 +1184,36 @@ This requires tokens to be placed on the map. When positions are unknown, `range
   - During `onReviewAction`: `{ type: 'damage', target, amount, damageType, source }` — raw damage before thresholds.
   - During `onReviewOutcome`: `{ stat: 'currentHP'|'currentStress', target, amount, damageType, source }` — HP/Stress boxes to mark after threshold conversion.
   - During `onResolve`: same shape as `onReviewOutcome`, representing what actually occurred.
+  - Damage-line effects (`type === 'damage'`) may also carry **`armorSlotReductionDisallowed`** *(boolean)* — when `true`, the target cannot use armor slots against that damage type (e.g. Physical armor vs magic damage); features that care about “will they use armor?” should treat commitment as irrelevant for that effect.
+
+**Armor commitment (banner / VTT)**
+
+These fields describe whether a character **committed** to mark armor slot(s) to reduce an incoming hit — the same choice as the Game Table damage banner’s “Use armor” toggle, once the VTT copies it into the action loop (`gameState.action`).
+
+- **`table.action.useArmorByTargetId`** *(object or undefined)*: `{ [targetInstanceId: string]: boolean }`. **`true`** means that target committed to use armor for **this** action’s resolution. **Missing keys** (or `false`) mean not committed. **Do not** read the pending roll’s `_useArmorByTargetId` in feature code — use this map only (**CONV-026** in `docs/v2-code-conventions.md`).
+- **`useArmor`** on a **`{ type: 'damage', target, ... }`** entry in `table.action.effects`: optional boolean; **`true`** means the same commitment for that effect’s `target`. Prefer reading `useArmor` when iterating damage effects; use `useArmorByTargetId` for bulk lookup by instance id.
+
+**Phases:** Typically populated for **`onReviewOutcome`** and **`onResolve`**; often absent during **`onReviewAction`**. Unit tests may set these fields on `gameState.action` / `effects` explicitly.
+
+**Last armor slot (Resilient):** When `table.me.armor === 1` (exactly one unmarked slot) and armor use is committed (`armorUseCommitted`), an `onReviewOutcome` hook may call `table.rollDie('d6')`. On a **6**, reduce the wearer’s pending HP loss by one threshold step (mutate `effects` the same way as **Fortified** — `stat: 'currentHP'` or `type: 'damage'` `amount`) and **revoke** armor commitment by setting `table.action.useArmorByTargetId[targetId]` to `false` and `useArmor` to `false` on matching `type: 'damage'` effects so no armor slot is consumed. On any other die result, leave commitment unchanged.
+
+**Example** (detect commitment for the feature owner taking damage):
+
+```javascript
+const id = table.me?.instanceId;
+const committed =
+  table.action?.useArmorByTargetId?.[id] === true ||
+  (table.action?.effects ?? []).some(
+    (e) =>
+      e.type === 'damage' &&
+      e.target?.instanceId === id &&
+      e.amount > 0 &&
+      e.useArmor === true
+  );
+```
+
+*Example feature:* **Sheltering** (`src/features-v2/weapon_properties/Sheltering.js`) uses this pattern in `onReviewOutcome` (ally spread: same-hit cohort + Melee range).
+
 - `addNarration(text)` *(method)*: Appends a line of text to the action's banner.
 - `addDamageRoll({ name, dice, damageType, targets })` *(method)*: Queues a separate damage roll that the engine will resolve independently from the main weapon damage. The `dice` string (e.g. `'1d12'`) is rolled once by the engine; the resulting damage is applied as a new `{ type: 'damage' }` effect to each Actor in the `targets` array and enters the normal threshold pipeline. Use this in `reviewAction`-phase chips for AOE features that deal their own damage (e.g. Charge). When `targets` is empty, no effects are created.
 
@@ -1258,5 +1325,5 @@ For **testability**, inject a deterministic RNG by passing `_rng: () => someValu
 ---
 
 > **⚠️ A Note for AI Assistants & Developers:**
-> Do not look at or attempt to mimic the legacy code in `src/features/` or `src/client/components/` when writing features based on this guide. The legacy system used entirely different concepts (`isVisible`, `onBanner`, `acknowledge`, `onChipAck`, `roll.isMine`, etc.) that do not exist in this new unified architecture. Stick strictly to the concepts defined in this document (`table`, `chips`, `onIntent`, `onReviewAction`, `onReviewOutcome`, `onResolve`, `when`).
+> Do not look at or attempt to mimic the legacy code in `src/features/` or `src/client/components/` when writing features based on this guide. The legacy system used entirely different concepts (`isVisible`, `onBanner`, `acknowledge`, `onChipAck`, `roll.isMine`, etc.) that do not exist in this new unified architecture. Stick strictly to the concepts defined in this document (`table`, `chips`, `onIntent`, `onStateChange`, `onReviewAction`, `onReviewOutcome`, `onResolve`, `when`).
 

@@ -64,6 +64,13 @@ Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessa
 - `selectTargets` *(function)*: `(table) => Actor[]`. Returns valid combat target actors for a target picker UI. Selected instance IDs stored in chip state as `selectedTargetIds` (array). Read via `chip.get('selectedTargetIds')` in `onUse`.
 - `multiSelect` *(boolean)*: When `true` (with `selectTargets`), player can select multiple targets. Default single-select.
 
+**V2 declarative (armor properties, `applyDeclarativeFeatures`):**
+- **`substituteArmorForHope`**: When `true` on a feature, the loader sets `substituteArmorForHope` on its return value; the client merges that onto the character element so `table.me.substituteArmorForHope` authorizes `spendHope(..., { armorInstead: true })`. The engine must not check SRD feature names (**CONV-029**).
+
+**V2 Game Table snapshot (`table` in hooks / `passiveStatMods`):**
+- **`table.source`**: Registry row the active feature was collected from (class, weapon, armor, …). **Prefer this** for tier, damage strings, and other registry fields. See `docs/feature-authoring-guide.md` (§C.2 and passive stat mods).
+- **`table.action.useArmorByTargetId`**: `{ [instanceId]: boolean }` — per-target commitment to use armor for this hit (VTT/banner). **`useArmor`** on `{ type: 'damage' }` entries in `table.action.effects` mirrors the same for that effect’s target. See `docs/feature-authoring-guide.md` §C.3 (CONV-026).
+
 ---
 
 ## 3. Menu of hooks

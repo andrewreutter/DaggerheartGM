@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { when, isActing, isTargeted, hasDamage, hasPhysicalDamage, isWhen, unwrap, unwrapAll } from '../../../../src/features-v2/engine/when.js';
+import {
+  when,
+  isActing,
+  isTargeted,
+  armorUseCommitted,
+  hasDamage,
+  hasPhysicalDamage,
+  isWhen,
+  unwrap,
+  unwrapAll,
+} from '../../../../src/features-v2/engine/when.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -84,6 +94,63 @@ describe('isTargeted', () => {
   it('returns false when action is undefined', () => {
     const me = { instanceId: 'char-1' };
     expect(isTargeted({ me })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// armorUseCommitted
+// ---------------------------------------------------------------------------
+
+describe('armorUseCommitted', () => {
+  it('returns true when useArmorByTargetId is true for the owner', () => {
+    const me = { instanceId: 'char-1' };
+    const table = {
+      me,
+      action: {
+        useArmorByTargetId: { 'char-1': true },
+        effects: [],
+      },
+    };
+    expect(armorUseCommitted(table)).toBe(true);
+  });
+
+  it('returns true when a damage effect for the owner has useArmor true', () => {
+    const me = { instanceId: 'char-1' };
+    const table = {
+      me,
+      action: {
+        effects: [
+          {
+            type: 'damage',
+            target: { instanceId: 'char-1' },
+            amount: 4,
+            useArmor: true,
+          },
+        ],
+      },
+    };
+    expect(armorUseCommitted(table)).toBe(true);
+  });
+
+  it('returns false when neither map nor damage line indicates commitment', () => {
+    const me = { instanceId: 'char-1' };
+    const table = {
+      me,
+      action: {
+        effects: [
+          { type: 'damage', target: { instanceId: 'char-1' }, amount: 4, useArmor: false },
+        ],
+      },
+    };
+    expect(armorUseCommitted(table)).toBe(false);
+  });
+
+  it('returns false when table.me has no instanceId', () => {
+    const table = {
+      me: {},
+      action: { useArmorByTargetId: { 'char-1': true }, effects: [] },
+    };
+    expect(armorUseCommitted(table)).toBe(false);
   });
 });
 
