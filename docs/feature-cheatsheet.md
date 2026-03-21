@@ -60,6 +60,10 @@ Declarative options the system reads from the feature descriptor. Only include t
 
 Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessage, onChipAck, onChipReject, onBannerAck, toggleKey, render, renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive) are documented in Section 4 (banner) and Section 3 (onBanner / onChipAck). All chips use the unified context shape: `{ roll, character, feature, characters, system, banner? }` (properties not applicable to the current placement are undefined).
 
+**V2 chip properties (chip-system.js):**
+- `selectTargets` *(function)*: `(table) => Actor[]`. Returns valid combat target actors for a target picker UI. Selected instance IDs stored in chip state as `selectedTargetIds` (array). Read via `chip.get('selectedTargetIds')` in `onUse`.
+- `multiSelect` *(boolean)*: When `true` (with `selectTargets`), player can select multiple targets. Default single-select.
+
 ---
 
 ## 3. Menu of hooks
