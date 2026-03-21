@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
@@ -17,6 +17,7 @@ import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
+import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -78,6 +79,8 @@ function App() {
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
+  // pendingPlayerIntent: pre-roll intent broadcast by a player before dice are rolled (GM sees this)
+  const [pendingPlayerIntent, setPendingPlayerIntent] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
   const [featureRequestedBannerIdsByKey, setFeatureRequestedBannerIdsByKey] = useState(() => ({}));
   // Player-only: banner IDs for which Ranger's Focus reroll was requested
@@ -89,6 +92,7 @@ function App() {
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [tableFlash, setTableFlash] = useState(false);
   const [deleteTablePending, setDeleteTablePending] = useState(null); // { id, name } when confirming delete
@@ -503,6 +507,10 @@ function App() {
       es.addEventListener('banners', (e) => {
         const data = JSON.parse(e.data);
         setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
+      });
+      es.addEventListener('intent', (e) => {
+        const intent = JSON.parse(e.data);
+        setPendingPlayerIntent(intent); // null clears the banner
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
@@ -1082,6 +1090,16 @@ function App() {
               {userMenuOpen && (
                 <div className="absolute right-0 top-full mt-1 w-52 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-1">
                   <button
+                    type="button"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      setFeatureAuthoringGuideOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    <ScrollText size={15} /> Feature authoring guide
+                  </button>
+                  <button
                     onClick={handleExport}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                   >
@@ -1209,6 +1227,7 @@ function App() {
                 gmUid={route.gmUid || user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
+                pendingPlayerIntent={pendingPlayerIntent}
                 onFeatureRequestSuccess={effectiveIsPlayer ? (bannerId, stateKey) => {
                   if (stateKey == null) return;
                   setFeatureRequestedBannerIdsByKey(prev => ({
@@ -1247,6 +1266,12 @@ function App() {
           </>
         )}
       </main>
+      {user && (
+        <FeatureAuthoringGuideModal
+          open={featureAuthoringGuideOpen}
+          onClose={() => setFeatureAuthoringGuideOpen(false)}
+        />
+      )}
       {pendingSceneAdd && (
         <SceneAdoptDialog
           scene={pendingSceneAdd.scene}

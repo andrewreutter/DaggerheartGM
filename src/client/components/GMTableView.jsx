@@ -12,7 +12,7 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { buildSystemContext } from '../lib/feature-context.js';
-import { postRoll, postRollSilent, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postBannerRallyToggle, postBannerRallyAck, postBannerHeartD4Ack, postBannerHeartD4Toggle, postBannerChipResolve, postBannerAddDamage, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postRollSilent, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerFelineRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerPrayerDieSelect, postBannerMakeASceneTarget, postBannerRallyToggle, postBannerRallyAck, postBannerHeartD4Ack, postBannerHeartD4Toggle, postBannerChipResolve, postBannerAddDamage, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
@@ -230,7 +230,7 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const sendOp = useCallback((op) => postTableOp(op, tableId), [tableId]);
@@ -2656,6 +2656,27 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     dismissAllHoverCards();
     setPreRollBanner({ rollWrapper, chips: canvas.chips, characterEl, onProceed, getFeatureStateFor, pending });
     setSelectedPreRollChips(canvas.chips.map(() => false));
+
+    // Broadcast the intent to the GM so they can see the pre-roll banner too.
+    // Serialize chips to plain objects (strip functions) for JSON transport.
+    if (isPlayer && tableId) {
+      const serializableChips = canvas.chips
+        .filter(c => !c._difficultyChip)
+        .map(c => ({
+          label: c.label || c._featureName || '',
+          description: c.description || '',
+          hopeCost: c.hopeCost || 0,
+          stressCost: c.stressCost || 0,
+          frequency: c.frequency || null,
+          isToggle: c.isToggle || false,
+        }));
+      postPlayerIntent(tableId, {
+        characterName: characterEl?.name || '',
+        characterInstanceId: characterEl?.instanceId || '',
+        rollText: pending.rollText,
+        chips: serializableChips,
+      });
+    }
   };
 
   const clearPreRollBanner = () => {
@@ -2663,11 +2684,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     setSelectedPreRollChips([]);
     setPreRollAdvantages([]);
     setPreRollDisadvantages([]);
+    if (isPlayer && tableId) clearPlayerIntent(tableId);
   };
 
   const handlePreRollProceed = async () => {
     if (!preRollBanner) return;
     const { rollWrapper, chips, characterEl, onProceed, getFeatureStateFor, pending } = preRollBanner;
+    // Clear the GM's intent banner as dice are now rolling
+    if (isPlayer && tableId) clearPlayerIntent(tableId);
     const charEl = activeElements.find(e => e.instanceId === characterEl.instanceId) || characterEl;
     const hasDifficultyChip = chips.some(c => c._difficultyChip);
     if (hasDifficultyChip) {
@@ -4301,6 +4325,36 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           </div>,
           document.body
         )}
+        {/* GM read-only intent banner: shown when a player has opened their pre-roll banner */}
+        {!isPlayer && pendingPlayerIntent && createPortal(
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-slate-900/95 border border-violet-500/50 text-slate-200 flex flex-col gap-1.5 pointer-events-none">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-violet-300">Intent</span>
+              <span className="text-[11px] font-semibold text-slate-100 truncate">{pendingPlayerIntent.characterName}</span>
+            </div>
+            {pendingPlayerIntent.rollText && (
+              <p className="text-[10px] text-slate-400 truncate font-mono">{pendingPlayerIntent.rollText}</p>
+            )}
+            {pendingPlayerIntent.chips?.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {pendingPlayerIntent.chips.map((chip, i) => {
+                  const costParts = [];
+                  if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
+                  if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
+                  return (
+                    <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-900/50 border border-violet-700/50 text-violet-200">
+                      {chip.label || chip.description}
+                      {costParts.length > 0 && <span className="text-violet-400">({costParts.join(', ')})</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[9px] text-slate-500 italic">Player is deciding — dice haven't rolled yet.</p>
+          </div>,
+          document.body
+        )}
+
         {/* Whiteboard — self-managing; relative so the DiceRoller overlay anchors here */}
         <div className="flex-1 min-h-0 p-4 overflow-hidden flex flex-col relative">
           <DiceRoller

@@ -449,6 +449,17 @@ export const fetchMe = async () => {
   return res.json();
 };
 
+/** Loads `docs/feature-authoring-guide.md` from the server at request time. Returns `{ markdown }`. */
+export const fetchFeatureAuthoringGuide = async () => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/docs/feature-authoring-guide', {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
 /**
  * Sync a character from Daggerstack.com.
  * Returns { character } with all resolved stats.
@@ -547,6 +558,31 @@ export const postAddCharacter = async (tableId, charData) => {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+};
+
+/**
+ * Broadcast a pre-roll intent banner to the GM.
+ * chips must be plain serializable objects (no functions) — strip onUse etc. before calling.
+ * Intent shape: { characterName, characterInstanceId, rollText, chips }
+ */
+export const postPlayerIntent = async (tableId, intent) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  fetch(`/api/room/${tableId}/intent`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(intent),
+  }).catch(() => {});
+};
+
+/** Clear the pending pre-roll intent (call after Proceed or Cancel). */
+export const clearPlayerIntent = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) return;
+  fetch(`/api/room/${tableId}/intent`, {
+    method: 'DELETE',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  }).catch(() => {});
 };
 
 /** GM: broadcast a table operation to all room clients (best-effort, fire-and-forget). */
