@@ -14,6 +14,9 @@
  * they are listed in the final "Ready for Review" report so you can inspect and merge them
  * when you wake up.
  *
+ * State is tracked in .orchestrator-state.json (gitignored).  On restart after Ctrl+C,
+ * the orchestrator recovers in-flight agents and resumes polling — no duplicate dispatch.
+ *
  * Prerequisites:
  *   - CURSOR_API_KEY in .env  (create at https://cursor.com/dashboard/cloud-agents)
  *   - Repo pushed to GitHub (git remote origin = GitHub URL)
@@ -33,7 +36,7 @@
  *   --batch-size N    max features per impl/val agent batch (default: 5)
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
@@ -52,6 +55,7 @@ const NO_UNBLOCK   = hasFlag('--no-unblock');
 const MAX_ROUNDS   = parseInt(getArg('--max-rounds', '100'), 10);
 const BATCH_SIZE   = parseInt(getArg('--batch-size', '5'),   10);
 const POLL_MS      = 60_000;
+const STALE_MS     = 4 * 60 * 60 * 1000; // 4 hours — prune agents older than this
 
 const CURSOR_API_KEY = process.env.CURSOR_API_KEY;
 if (!CURSOR_API_KEY) {
@@ -80,6 +84,49 @@ async function apiPost(path, body) {
   return res.json();
 }
 
+// ── Orchestrator state file ───────────────────────────────────────────────────
+
+const STATE_FILE = '.orchestrator-state.json';
+
+function loadState() {
+  if (!existsSync(STATE_FILE)) return { inFlight: [], reviewQueue: [] };
+  try {
+    return JSON.parse(readFileSync(STATE_FILE, 'utf8'));
+  } catch {
+    return { inFlight: [], reviewQueue: [] };
+  }
+}
+
+function saveState(state) {
+  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n', 'utf8');
+}
+
+function addInFlight(state, entry) {
+  state.inFlight.push(entry);
+  saveState(state);
+}
+
+function removeInFlight(state, agentId) {
+  state.inFlight = state.inFlight.filter(e => e.agentId !== agentId);
+  saveState(state);
+}
+
+function getInFlightItemNames(state) {
+  const names = new Set();
+  for (const entry of state.inFlight) {
+    for (const item of (entry.items || [])) names.add(item);
+  }
+  return names;
+}
+
+function getInFlightResolutions(state) {
+  const resolutions = new Set();
+  for (const entry of state.inFlight) {
+    if (entry.mode === 'unblock' && entry.resolution) resolutions.add(entry.resolution);
+  }
+  return resolutions;
+}
+
 // ── Git helpers ───────────────────────────────────────────────────────────────
 
 function git(cmd, opts = {}) {
@@ -88,8 +135,6 @@ function git(cmd, opts = {}) {
 
 function getGitRemote() {
   let url = execSync('git remote get-url origin', { encoding: 'utf8' }).trim().replace(/\.git$/, '');
-  // Cloud Agents API requires HTTPS — convert SSH format if needed
-  // git@github.com:owner/repo  →  https://github.com/owner/repo
   url = url.replace(/^git@([^:]+):/, 'https://$1/');
   return url;
 }
@@ -165,53 +210,6 @@ function parseFeatureRows(statusFilter) {
   return features;
 }
 
-/**
- * Immediately mark features as claimed in the tracker so a subsequent orchestrator
- * run (after Ctrl+C) won't dispatch duplicate agents for in-flight work.
- *
- * mode:
- *   'impl'    — Unclaimed → In Progress
- *   'val'     — Done      → Validating
- *   'fix'     — Needs Fix → Fixing
- *   'unblock' — Open      → In Progress  (in the Blocked table)
- */
-function claimInTracker(mode, items) {
-  if (!items || items.length === 0) return;
-
-  let content = readFileSync(TRACKER, 'utf8');
-
-  if (mode === 'unblock') {
-    // Blocked table rows: Resolution | Features | SRD Requirement | Status | Agent | Notes
-    // Match on resolution text and flip Open → In Progress
-    for (const item of items) {
-      const escaped = item.resolution.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      content = content.replace(
-        new RegExp(`(\\|\\s*${escaped}\\s*\\|[^|]*\\|[^|]*\\|\\s*)Open(\\s*\\|)`, 'g'),
-        '$1In Progress$2',
-      );
-    }
-  } else {
-    const [fromStatus, toStatus] = {
-      impl: ['Unclaimed',  'In Progress'],
-      val:  ['Done',       'Validating'],
-      fix:  ['Needs Fix',  'Fixing'],
-    }[mode];
-
-    for (const feature of items) {
-      // Feature table rows: | Name | sourceFile | Status | ...
-      // Match on name+sourceFile and flip the status column only.
-      const escapedName = feature.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const escapedSrc  = feature.sourceFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      content = content.replace(
-        new RegExp(`(\\|\\s*${escapedName}\\s*\\|\\s*${escapedSrc}\\s*\\|\\s*)${fromStatus}(\\s*\\|)`, 'g'),
-        `$1${toStatus}$2`,
-      );
-    }
-  }
-
-  writeFileSync(TRACKER, content, 'utf8');
-}
-
 /** Return Open blocked resolution rows (for dispatching Unblock agents and the report). */
 function parseBlockedRows() {
   const content = readFileSync(TRACKER, 'utf8');
@@ -223,7 +221,6 @@ function parseBlockedRows() {
     if (!line.startsWith('| ') || line.includes('---') || line.includes('Resolution')) continue;
     const cols = line.split('|').map(c => c.trim()).filter(Boolean);
     if (cols.length < 4) continue;
-    // Columns: Resolution | Features | SRD Requirement | Status | Agent | Notes
     const [resolution, features, srdReq, status, , notes] = cols;
     if (status === 'Open') items.push({ resolution, features, srdReq: srdReq || '', notes: notes || '' });
   }
@@ -411,26 +408,44 @@ async function launchAgent(prompt, branchName, repo, model = MODEL, baseBranch =
 }
 
 /**
- * Poll agents until all reach a terminal state.
- * Returns { done: { [id]: { url, summary } }, failed: [id] }
+ * Check a single agent's status via the API.
+ * Returns { status: 'RUNNING'|'FINISHED'|'ERROR', url?, summary? }
  */
-async function pollUntilDone(agentIds) {
-  const done   = {}; // id → { url, summary }
-  const failed = new Set();
+async function checkAgent(agentId) {
+  const agent = await apiGet(`/v0/agents/${agentId}`);
+  return {
+    status:     agent.status,
+    url:        agent.target?.url ?? null,
+    branchName: agent.target?.branchName ?? null,
+    summary:    agent.summary ?? '',
+  };
+}
 
-  while (Object.keys(done).length + failed.size < agentIds.length) {
+/**
+ * Poll a set of agents until all reach a terminal state.
+ * Calls onFinished(entry, result) / onFailed(entry) for each.
+ */
+async function pollAgents(entries, { onFinished, onFailed } = {}) {
+  const pending = new Map(entries.map(e => [e.agentId, e]));
+  const done    = new Map();
+  const failed  = new Set();
+
+  while (pending.size > 0) {
     await sleep(POLL_MS);
 
-    for (const id of agentIds) {
-      if (done[id] || failed.has(id)) continue;
+    for (const [id, entry] of pending) {
       try {
-        const agent = await apiGet(`/v0/agents/${id}`);
-        if (agent.status === 'FINISHED') {
-          done[id] = { url: agent.target?.url ?? null, summary: agent.summary ?? '' };
-          console.log(`\n  ✓ ${id} (${agent.target?.branchName ?? '?'}) FINISHED`);
-        } else if (agent.status === 'ERROR') {
+        const result = await checkAgent(id);
+        if (result.status === 'FINISHED') {
+          pending.delete(id);
+          done.set(id, result);
+          console.log(`\n  ✓ ${id} (${result.branchName ?? '?'}) FINISHED`);
+          if (onFinished) onFinished(entry, result);
+        } else if (result.status === 'ERROR') {
+          pending.delete(id);
           failed.add(id);
-          console.log(`\n  ✗ ${id} ERROR: ${agent.summary ?? 'no summary'}`);
+          console.log(`\n  ✗ ${id} ERROR: ${result.summary ?? 'no summary'}`);
+          if (onFailed) onFailed(entry);
         } else {
           process.stdout.write('.');
         }
@@ -439,13 +454,12 @@ async function pollUntilDone(agentIds) {
       }
     }
 
-    const terminal = Object.keys(done).length + failed.size;
-    if (terminal < agentIds.length) {
-      console.log(`\n  ${terminal}/${agentIds.length} terminal (${Object.keys(done).length} done, ${failed.size} failed)`);
+    if (pending.size > 0) {
+      console.log(`\n  ${done.size + failed.size}/${entries.length} terminal (${done.size} done, ${failed.size} failed)`);
     }
   }
 
-  return { done, failed: [...failed] };
+  return { done, failed };
 }
 
 // ── Branch merging ────────────────────────────────────────────────────────────
@@ -503,7 +517,6 @@ function printFinalReport(reviewQueue) {
   const line    = '═'.repeat(56);
   const summary = readTrackerSummary();
 
-  // ── Section 1: Unblock branches awaiting engine sign-off ──────
   if (reviewQueue.length > 0) {
     console.log(`\n${line}`);
     console.log(`ENGINE CHANGES — READY FOR YOUR REVIEW`);
@@ -519,7 +532,6 @@ function printFinalReport(reviewQueue) {
     console.log(`    (then move resolution row to docs/v2-blocked-resolutions-done.md)`);
   }
 
-  // ── Section 2: Validated queue (your human promotion step) ────
   if ((summary.validated ?? 0) > 0) {
     console.log(`\n${line}`);
     console.log(`VALIDATED — READY FOR YOUR REVIEW`);
@@ -528,7 +540,6 @@ function printFinalReport(reviewQueue) {
     console.log(line);
   }
 
-  // ── Section 3: Anything autonomous couldn't finish ─────────────
   const needsFix = parseFeatureRows(['Needs Fix']);
   const blocked  = parseBlockedRows();
 
@@ -582,6 +593,93 @@ function formatSummary(s) {
   return `unclaimed=${s.unclaimed} done=${s.done} needsFix=${s.needsFix} fixing=${s.fixing} blocked=${s.blocked}`;
 }
 
+// ── Recovery: resume in-flight agents from a previous run ─────────────────────
+
+async function recoverInFlightAgents(state, baseBranch) {
+  if (state.inFlight.length === 0) return;
+
+  const now = Date.now();
+  const stale = state.inFlight.filter(e => now - new Date(e.launchedAt).getTime() > STALE_MS);
+  if (stale.length > 0) {
+    console.log(`  Pruning ${stale.length} stale agent(s) (>4h old):`);
+    for (const e of stale) {
+      console.log(`    • ${e.agentId} [${e.mode}] ${e.label}`);
+      removeInFlight(state, e.agentId);
+    }
+  }
+
+  if (state.inFlight.length === 0) return;
+
+  console.log(`\n── Recovering ${state.inFlight.length} in-flight agent(s) from previous run ──`);
+
+  // Check each agent's current status
+  const stillRunning = [];
+  const autoMergeable = [];
+
+  for (const entry of [...state.inFlight]) {
+    try {
+      const result = await checkAgent(entry.agentId);
+      if (result.status === 'FINISHED') {
+        console.log(`  ✓ ${entry.agentId} [${entry.mode}] FINISHED`);
+        removeInFlight(state, entry.agentId);
+        if (entry.mode === 'unblock') {
+          state.reviewQueue.push({
+            mode: entry.mode, label: entry.label,
+            branchName: entry.branchName, url: result.url,
+          });
+          saveState(state);
+        } else {
+          autoMergeable.push(entry.branchName);
+        }
+      } else if (result.status === 'ERROR') {
+        console.log(`  ✗ ${entry.agentId} [${entry.mode}] ERROR: ${result.summary}`);
+        removeInFlight(state, entry.agentId);
+      } else {
+        console.log(`  ⟳ ${entry.agentId} [${entry.mode}] still running — will resume polling`);
+        stillRunning.push(entry);
+      }
+    } catch (err) {
+      console.error(`  ? ${entry.agentId} — could not check: ${err.message}`);
+      stillRunning.push(entry);
+    }
+  }
+
+  // Merge any branches that finished while we were away
+  if (autoMergeable.length > 0) {
+    mergeBranches(autoMergeable, baseBranch);
+  }
+
+  // Poll remaining running agents
+  if (stillRunning.length > 0) {
+    console.log(`\n  Resuming poll of ${stillRunning.length} running agent(s)...`);
+    await pollAgents(stillRunning, {
+      onFinished(entry, result) {
+        removeInFlight(state, entry.agentId);
+        if (entry.mode === 'unblock') {
+          state.reviewQueue.push({
+            mode: entry.mode, label: entry.label,
+            branchName: entry.branchName, url: result.url,
+          });
+          saveState(state);
+        }
+      },
+      onFailed(entry) {
+        removeInFlight(state, entry.agentId);
+      },
+    });
+
+    // Merge auto-mergeable branches from the just-finished poll
+    const justFinished = stillRunning
+      .filter(e => !state.inFlight.some(s => s.agentId === e.agentId) && e.mode !== 'unblock')
+      .map(e => e.branchName);
+    if (justFinished.length > 0) {
+      mergeBranches(justFinished, baseBranch);
+    }
+  }
+
+  console.log('  Recovery complete.\n');
+}
+
 // ── Main orchestration loop ───────────────────────────────────────────────────
 
 async function main() {
@@ -605,7 +703,7 @@ async function main() {
   console.log(`Repo:   ${repo}`);
   console.log(`Branch: ${baseBranch}\n`);
 
-  // Preflight: verify the branch exists on the remote before launching any agents
+  // Preflight: verify the branch exists on the remote
   console.log('Checking remote branch...');
   try {
     const remoteBranches = execSync('git ls-remote --heads origin', { encoding: 'utf8' });
@@ -620,8 +718,15 @@ async function main() {
     console.error(`\nWarning: could not verify remote branch (${e.message}). Continuing anyway.`);
   }
 
-  // Accumulate fix/unblock review items across all rounds
-  const reviewQueue = []; // { mode, label, branchName, url }
+  // Load persistent state
+  const state = loadState();
+  if (state.reviewQueue.length > 0) {
+    console.log(`Loaded ${state.reviewQueue.length} review-queue item(s) from previous run.`);
+  }
+
+  // Recover in-flight agents from a previous interrupted run
+  await recoverInFlightAgents(state, baseBranch);
+
   let reportPrinted = false;
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -639,12 +744,20 @@ async function main() {
     const anyWork = hasImplWork || hasVal || hasFix || hasUnblock;
 
     if (!anyWork) {
-      printFinalReport(reviewQueue);
+      printFinalReport(state.reviewQueue);
       reportPrinted = true;
       break;
     }
 
-    // Allocate agents: Fix > Unblock > Val/Impl (priority matches work-agent)
+    // Build sets of in-flight item names/resolutions for dedup
+    const inFlightNames       = getInFlightItemNames(state);
+    const inFlightResolutions = getInFlightResolutions(state);
+
+    if (inFlightNames.size > 0 || inFlightResolutions.size > 0) {
+      console.log(`  In-flight: ${inFlightNames.size} feature(s), ${inFlightResolutions.size} resolution(s)`);
+    }
+
+    // Allocate agents: Fix > Unblock > Val/Impl
     let remaining = NUM_AGENTS;
     let numFix     = 0, numUnblock = 0, numVal = 0, numImpl = 0;
 
@@ -662,19 +775,22 @@ async function main() {
 
     console.log(`  Dispatching: ${numFix} fix, ${numUnblock} unblock, ${numVal} val, ${numImpl} impl`);
 
-    // Gather work items
-    const fixFeatures    = hasFix     ? parseFeatureRows(['Needs Fix']).slice(0, numFix)       : [];
-    const unblockItems   = hasUnblock ? parseBlockedRows().slice(0, numUnblock)                 : [];
-    const valFeatures    = hasVal     ? parseFeatureRows(['Done'])                              : [];
-    const implFeatures   = hasImplWork ? parseFeatureRows(['Unclaimed'])                        : [];
+    // Gather work items, filtering out anything already in-flight
+    const fixFeatures  = hasFix
+      ? parseFeatureRows(['Needs Fix']).filter(f => !inFlightNames.has(f.name)).slice(0, numFix) : [];
+    const unblockItems = hasUnblock
+      ? parseBlockedRows().filter(r => !inFlightResolutions.has(r.resolution)).slice(0, numUnblock) : [];
+    const valFeatures  = hasVal
+      ? parseFeatureRows(['Done']).filter(f => !inFlightNames.has(f.name)) : [];
+    const implFeatures = hasImplWork
+      ? parseFeatureRows(['Unclaimed']).filter(f => !inFlightNames.has(f.name)) : [];
 
     const valBatches  = assignBatches(valFeatures,  numVal);
     const implBatches = assignBatches(implFeatures, numImpl);
 
     // Build the full dispatch list
     const ts = timestamp();
-    const autoPairs   = []; // { id, branchName } — will be auto-merged after polling
-    const reviewPairs = []; // { id, branchName, mode, label } — queued for human review
+    const roundEntries = []; // state entries for this round's new agents
 
     const dispatches = [
       ...fixFeatures.map(   (f, i) => ({ mode: 'fix',     label: `${f.name} (${f.sourceFile})`,  data: f,         idx: i + 1 })),
@@ -695,49 +811,66 @@ async function main() {
 
       try {
         const id = await launchAgent(prompt, branchName, repo, agentModel, baseBranch);
-        const pair = { id, branchName, mode, label };
-        if (mode === 'unblock') reviewPairs.push(pair);  // engine changes need human sign-off before merge
-        else                    autoPairs.push(pair);    // impl, val, fix all auto-merge
         console.log(`    → Agent ${id}`);
-        // Mark items claimed immediately so a re-run after Ctrl+C won't dispatch duplicates.
-        const itemsToMark = mode === 'unblock' ? [data]
-                          : Array.isArray(data) ? data : [data];
-        claimInTracker(mode, itemsToMark);
+
+        // Build the state entry with item names for dedup
+        const items = mode === 'unblock'
+          ? []
+          : (Array.isArray(data) ? data : [data]).map(f => f.name);
+        const entry = {
+          agentId: id, branchName, mode, label,
+          items,
+          resolution: mode === 'unblock' ? data.resolution : null,
+          launchedAt: new Date().toISOString(),
+        };
+        addInFlight(state, entry);
+        roundEntries.push(entry);
       } catch (err) {
         console.error(`    ✗ Launch failed: ${err.message}`);
       }
 
-      await sleep(3_000); // small stagger between launches
+      await sleep(3_000);
     }
 
-    const allPairs = [...autoPairs, ...reviewPairs];
-    if (allPairs.length === 0) {
+    if (roundEntries.length === 0) {
       console.error('No agents launched this round.  Aborting.');
       break;
     }
 
-    // Poll until all agents reach a terminal state
-    console.log(`\n  Polling ${allPairs.length} agent(s) every ${POLL_MS / 1000}s...`);
-    const { done: doneMap } = await pollUntilDone(allPairs.map(a => a.id));
+    // Poll until all agents in this round reach a terminal state
+    console.log(`\n  Polling ${roundEntries.length} agent(s) every ${POLL_MS / 1000}s...`);
 
-    // Auto-merge impl/val branches
-    const mergeable = autoPairs.filter(a => doneMap[a.id]).map(a => a.branchName);
-    if (mergeable.length > 0) mergeBranches(mergeable, baseBranch);
+    const autoMergeableBranches = [];
 
-    // Collect fix/unblock branches for the review queue
-    for (const pair of reviewPairs) {
-      if (doneMap[pair.id]) {
-        reviewQueue.push({
-          mode:       pair.mode,
-          label:      pair.label,
-          branchName: pair.branchName,
-          url:        doneMap[pair.id].url,
-        });
-      }
+    await pollAgents(roundEntries, {
+      onFinished(entry, result) {
+        removeInFlight(state, entry.agentId);
+        if (entry.mode === 'unblock') {
+          state.reviewQueue.push({
+            mode: entry.mode, label: entry.label,
+            branchName: entry.branchName, url: result.url,
+          });
+          saveState(state);
+        } else {
+          autoMergeableBranches.push(entry.branchName);
+        }
+      },
+      onFailed(entry) {
+        removeInFlight(state, entry.agentId);
+      },
+    });
+
+    // Auto-merge impl/val/fix branches
+    if (autoMergeableBranches.length > 0) {
+      mergeBranches(autoMergeableBranches, baseBranch);
     }
   }
 
-  if (!reportPrinted) printFinalReport(reviewQueue);
+  if (!reportPrinted) printFinalReport(state.reviewQueue);
+
+  // Clear the state file on clean exit
+  saveState({ inFlight: [], reviewQueue: [] });
+
   console.log('\nOrchestrator finished.');
 }
 

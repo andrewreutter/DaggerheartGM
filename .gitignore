@@ -151,3 +151,6 @@ data/hod-crawl/
 # Supabase local dev runtime dirs
 supabase/.branches
 supabase/.temp
+
+# Orchestrator state (survives Ctrl+C, gitignored)
+.orchestrator-state.json
