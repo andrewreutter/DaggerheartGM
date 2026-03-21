@@ -57,10 +57,10 @@ export const RANGE_BAND_ORDER = ['melee', 'veryClose', 'close', 'far', 'veryFar'
  */
 export function isRangeWithin(range, maxRange) {
   if (!range || !maxRange) return false;
-  const r = range.toLowerCase();
-  const m = maxRange.toLowerCase();
-  const ri = RANGE_BAND_ORDER.indexOf(r);
-  const mi = RANGE_BAND_ORDER.indexOf(m);
+  const lower = (s) => s.toLowerCase();
+  const findIdx = (s) => RANGE_BAND_ORDER.findIndex((b) => lower(b) === lower(s));
+  const ri = findIdx(range);
+  const mi = findIdx(maxRange);
   if (ri === -1 || mi === -1) return false;
   return ri <= mi;
 }
