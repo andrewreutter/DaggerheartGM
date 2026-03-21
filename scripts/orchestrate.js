@@ -291,9 +291,16 @@ function assignBatches(features, numAgents) {
   const chunks = [];
   for (const key of Object.keys(groups)) {
     const group = groups[key];
-    for (let i = 0; i < group.length; i += BATCH_SIZE) chunks.push(group.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < group.length; i += BATCH_SIZE) {
+      chunks.push({ collection: key, features: group.slice(i, i + BATCH_SIZE) });
+    }
   }
   return chunks.slice(0, numAgents);
+}
+
+function batchLabel(batch) {
+  const names = batch.features.map(f => f.name).join(', ');
+  return `[${batch.collection}] ${names}`;
 }
 
 // ── Agent prompt builders ─────────────────────────────────────────────────────
@@ -793,15 +800,15 @@ async function main() {
     const roundEntries = []; // state entries for this round's new agents
 
     const dispatches = [
-      ...fixFeatures.map(   (f, i) => ({ mode: 'fix',     label: `${f.name} (${f.sourceFile})`,  data: f,         idx: i + 1 })),
-      ...unblockItems.map(  (r, i) => ({ mode: 'unblock', label: r.resolution,                   data: r,         idx: i + 1 })),
-      ...valBatches.map(    (b, i) => ({ mode: 'val',     label: b.map(f => f.name).join(', '),  data: b,         idx: i + 1 })),
-      ...implBatches.map(   (b, i) => ({ mode: 'impl',    label: b.map(f => f.name).join(', '),  data: b,         idx: i + 1 })),
+      ...fixFeatures.map(   (f, i) => ({ mode: 'fix',     label: `${f.name} (${f.sourceFile})`,               data: f,                idx: i + 1 })),
+      ...unblockItems.map(  (r, i) => ({ mode: 'unblock', label: r.resolution,                                data: r,                idx: i + 1 })),
+      ...valBatches.map(    (b, i) => ({ mode: 'val',     label: batchLabel(b),  data: b.features, idx: i + 1 })),
+      ...implBatches.map(   (b, i) => ({ mode: 'impl',    label: batchLabel(b),  data: b.features, idx: i + 1 })),
     ];
 
     for (const { mode, label, data, idx } of dispatches) {
       const branchName = `orchestrate/${mode}-${idx}-${ts}`;
-      console.log(`  [${mode.toUpperCase().padEnd(7)}] ${label.slice(0, 72)}`);
+      console.log(`  [${mode.toUpperCase().padEnd(7)}] ${label.slice(0, 100)}`);
 
       let prompt, agentModel;
       if      (mode === 'impl')    { prompt = buildImplPrompt(data);    agentModel = MODEL; }
