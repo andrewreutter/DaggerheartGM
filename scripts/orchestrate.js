@@ -447,7 +447,7 @@ async function pollAgents(entries, { onFinished, onFailed } = {}) {
           pending.delete(id);
           done.set(id, result);
           console.log(`\n  ✓ ${id} (${result.branchName ?? '?'}) FINISHED`);
-          if (onFinished) onFinished(entry, result);
+          if (onFinished) await onFinished(entry, result);
         } else if (result.status === 'ERROR') {
           pending.delete(id);
           failed.add(id);
@@ -467,6 +467,57 @@ async function pollAgents(entries, { onFinished, onFailed } = {}) {
   }
 
   return { done, failed };
+}
+
+// ── Pull request creation ─────────────────────────────────────────────────────
+
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+
+async function createPullRequest(branchName, baseBranch, entry, repo) {
+  if (!GITHUB_TOKEN) {
+    console.error('    ✗ GITHUB_TOKEN not set — cannot create PR. Add it to .env.');
+    return null;
+  }
+
+  // Extract owner/repo from HTTPS URL: https://github.com/owner/repo
+  const match = repo.match(/github\.com\/([^/]+\/[^/]+)/);
+  if (!match) {
+    console.error(`    ✗ Could not parse owner/repo from ${repo}`);
+    return null;
+  }
+  const ownerRepo = match[1];
+
+  const mode  = entry.mode.toUpperCase();
+  const title = `[${mode}] ${entry.label}`;
+  const features = entry.items?.join(', ') || entry.resolution || '—';
+  const body  = `## ${mode === 'VAL' ? 'Validation' : 'Unblock'} — ready for review\n\n` +
+    `**Mode:** ${entry.mode}\n` +
+    `**Features:** ${features}\n` +
+    `**Branch:** \`${branchName}\`\n\n` +
+    `Merge this PR to promote to Reviewed.`;
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${ownerRepo}/pulls`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/vnd.github+json',
+      },
+      body: JSON.stringify({ title, body, head: branchName, base: baseBranch }),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`    ✗ PR creation failed (${res.status}): ${errText}`);
+      return null;
+    }
+    const pr = await res.json();
+    console.log(`    PR created: ${pr.html_url}`);
+    return pr.html_url;
+  } catch (err) {
+    console.error(`    ✗ PR creation failed: ${err.message}`);
+    return null;
+  }
 }
 
 // ── Branch merging ────────────────────────────────────────────────────────────
@@ -524,25 +575,35 @@ function printFinalReport(reviewQueue) {
   const line    = '═'.repeat(56);
   const summary = readTrackerSummary();
 
-  if (reviewQueue.length > 0) {
+  const valPRs     = reviewQueue.filter(r => r.mode === 'val');
+  const unblockPRs = reviewQueue.filter(r => r.mode === 'unblock');
+
+  if (valPRs.length > 0) {
     console.log(`\n${line}`);
-    console.log(`ENGINE CHANGES — READY FOR YOUR REVIEW`);
-    console.log(`${reviewQueue.length} unblock branch${reviewQueue.length !== 1 ? 'es' : ''} need sign-off before merge`);
+    console.log(`VALIDATED — PULL REQUESTS READY FOR YOUR REVIEW`);
+    console.log(`${valPRs.length} PR${valPRs.length !== 1 ? 's' : ''} — review code, then merge to promote to Reviewed`);
     console.log(line);
-    for (const item of reviewQueue) {
-      console.log(`\n  [UNBLOCK] ${item.label}`);
-      console.log(`  Branch:   ${item.branchName}`);
-      if (item.url) console.log(`  View at:  ${item.url}`);
+    for (const item of valPRs) {
+      console.log(`  • ${item.label}`);
+      if (item.url) console.log(`    ${item.url}`);
     }
-    console.log(`\n  To approve a branch:`);
-    console.log(`    git fetch origin && git merge origin/<branch-name>`);
-    console.log(`    (then move resolution row to docs/v2-blocked-resolutions-done.md)`);
   }
 
-  if ((summary.validated ?? 0) > 0) {
+  if (unblockPRs.length > 0) {
+    console.log(`\n${line}`);
+    console.log(`ENGINE CHANGES — PULL REQUESTS READY FOR YOUR REVIEW`);
+    console.log(`${unblockPRs.length} PR${unblockPRs.length !== 1 ? 's' : ''} need sign-off before merge`);
+    console.log(line);
+    for (const item of unblockPRs) {
+      console.log(`  • ${item.label}`);
+      if (item.url) console.log(`    ${item.url}`);
+    }
+  }
+
+  if ((summary.validated ?? 0) > 0 && valPRs.length === 0) {
     console.log(`\n${line}`);
     console.log(`VALIDATED — READY FOR YOUR REVIEW`);
-    console.log(`${summary.validated} feature${summary.validated !== 1 ? 's' : ''} passed validation`);
+    console.log(`${summary.validated} feature${summary.validated !== 1 ? 's' : ''} passed validation (from previous runs)`);
     console.log(`Promote each to Reviewed after you've looked at the code.`);
     console.log(line);
   }
@@ -602,7 +663,7 @@ function formatSummary(s) {
 
 // ── Recovery: resume in-flight agents from a previous run ─────────────────────
 
-async function recoverInFlightAgents(state, baseBranch) {
+async function recoverInFlightAgents(state, baseBranch, repo) {
   if (state.inFlight.length === 0) return;
 
   const now = Date.now();
@@ -629,10 +690,11 @@ async function recoverInFlightAgents(state, baseBranch) {
       if (result.status === 'FINISHED') {
         console.log(`  ✓ ${entry.agentId} [${entry.mode}] FINISHED`);
         removeInFlight(state, entry.agentId);
-        if (entry.mode === 'unblock') {
+        if (entry.mode === 'val' || entry.mode === 'unblock') {
+          const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
           state.reviewQueue.push({
             mode: entry.mode, label: entry.label,
-            branchName: entry.branchName, url: result.url,
+            branchName: entry.branchName, url: prUrl || result.url,
           });
           saveState(state);
         } else {
@@ -660,12 +722,13 @@ async function recoverInFlightAgents(state, baseBranch) {
   if (stillRunning.length > 0) {
     console.log(`\n  Resuming poll of ${stillRunning.length} running agent(s)...`);
     await pollAgents(stillRunning, {
-      onFinished(entry, result) {
+      async onFinished(entry, result) {
         removeInFlight(state, entry.agentId);
-        if (entry.mode === 'unblock') {
+        if (entry.mode === 'val' || entry.mode === 'unblock') {
+          const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
           state.reviewQueue.push({
             mode: entry.mode, label: entry.label,
-            branchName: entry.branchName, url: result.url,
+            branchName: entry.branchName, url: prUrl || result.url,
           });
           saveState(state);
         }
@@ -677,7 +740,7 @@ async function recoverInFlightAgents(state, baseBranch) {
 
     // Merge auto-mergeable branches from the just-finished poll
     const justFinished = stillRunning
-      .filter(e => !state.inFlight.some(s => s.agentId === e.agentId) && e.mode !== 'unblock')
+      .filter(e => !state.inFlight.some(s => s.agentId === e.agentId) && e.mode !== 'unblock' && e.mode !== 'val')
       .map(e => e.branchName);
     if (justFinished.length > 0) {
       mergeBranches(justFinished, baseBranch);
@@ -732,7 +795,7 @@ async function main() {
   }
 
   // Recover in-flight agents from a previous interrupted run
-  await recoverInFlightAgents(state, baseBranch);
+  await recoverInFlightAgents(state, baseBranch, repo);
 
   let reportPrinted = false;
 
@@ -850,12 +913,13 @@ async function main() {
     const autoMergeableBranches = [];
 
     await pollAgents(roundEntries, {
-      onFinished(entry, result) {
+      async onFinished(entry, result) {
         removeInFlight(state, entry.agentId);
-        if (entry.mode === 'unblock') {
+        if (entry.mode === 'val' || entry.mode === 'unblock') {
+          const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
           state.reviewQueue.push({
             mode: entry.mode, label: entry.label,
-            branchName: entry.branchName, url: result.url,
+            branchName: entry.branchName, url: prUrl || result.url,
           });
           saveState(state);
         } else {
@@ -867,7 +931,7 @@ async function main() {
       },
     });
 
-    // Auto-merge impl/val/fix branches
+    // Auto-merge impl/fix branches (val and unblock go to PRs)
     if (autoMergeableBranches.length > 0) {
       mergeBranches(autoMergeableBranches, baseBranch);
     }
