@@ -94,6 +94,10 @@ function getGitRemote() {
   return url;
 }
 
+function getGitBranch() {
+  return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+}
+
 // ── Tracker helpers ───────────────────────────────────────────────────────────
 
 const TRACKER = 'docs/v2-migration-tracker.md';
@@ -159,6 +163,53 @@ function parseFeatureRows(statusFilter) {
     }
   }
   return features;
+}
+
+/**
+ * Immediately mark features as claimed in the tracker so a subsequent orchestrator
+ * run (after Ctrl+C) won't dispatch duplicate agents for in-flight work.
+ *
+ * mode:
+ *   'impl'    — Unclaimed → In Progress
+ *   'val'     — Done      → Validating
+ *   'fix'     — Needs Fix → Fixing
+ *   'unblock' — Open      → In Progress  (in the Blocked table)
+ */
+function claimInTracker(mode, items) {
+  if (!items || items.length === 0) return;
+
+  let content = readFileSync(TRACKER, 'utf8');
+
+  if (mode === 'unblock') {
+    // Blocked table rows: Resolution | Features | SRD Requirement | Status | Agent | Notes
+    // Match on resolution text and flip Open → In Progress
+    for (const item of items) {
+      const escaped = item.resolution.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      content = content.replace(
+        new RegExp(`(\\|\\s*${escaped}\\s*\\|[^|]*\\|[^|]*\\|\\s*)Open(\\s*\\|)`, 'g'),
+        '$1In Progress$2',
+      );
+    }
+  } else {
+    const [fromStatus, toStatus] = {
+      impl: ['Unclaimed',  'In Progress'],
+      val:  ['Done',       'Validating'],
+      fix:  ['Needs Fix',  'Fixing'],
+    }[mode];
+
+    for (const feature of items) {
+      // Feature table rows: | Name | sourceFile | Status | ...
+      // Match on name+sourceFile and flip the status column only.
+      const escapedName = feature.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escapedSrc  = feature.sourceFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      content = content.replace(
+        new RegExp(`(\\|\\s*${escapedName}\\s*\\|\\s*${escapedSrc}\\s*\\|\\s*)${fromStatus}(\\s*\\|)`, 'g'),
+        `$1${toStatus}$2`,
+      );
+    }
+  }
+
+  writeFileSync(TRACKER, content, 'utf8');
 }
 
 /** Return Open blocked resolution rows (for dispatching Unblock agents and the report). */
@@ -330,7 +381,11 @@ OVERRIDE 1 — Pre-assigned resolution to implement:
 
 If this resolution row is not in Open status when you check it, exit immediately without making any changes.
 
-OVERRIDE 2 — Do NOT stop and wait for human verification.  After implementing the engine change, updating the authoring guide, and running tests, write a clear summary of what you changed in the Notes column of the resolution row, then exit.  The orchestrator will present your branch to the human for review and approval.  Do NOT move the row to the archive (docs/v2-blocked-resolutions-done.md) — leave that for the human to do after reviewing.
+OVERRIDE 2 — Do NOT stop and wait for human verification.  After implementing the engine change, updating the authoring guide, and running tests, do all of the following and then exit:
+  a. Update affected feature rows in the feature checklists: set Status from Blocked to Done (so the val agent picks them up after the human merges your branch).  Follow the same eligibility check as Step 5: only promote a feature if no OTHER active Blocked row still lists it.
+  b. Write a brief summary of what you changed in the Notes column of the resolution row.
+  c. Leave the resolution row in the ACTIVE Blocked table — do NOT move it to docs/v2-blocked-resolutions-done.md.  The human will archive it after reviewing and merging your branch.
+  The orchestrator will present your branch for human sign-off before merging.
 
 OVERRIDE 3 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).
 
@@ -344,11 +399,11 @@ Now read docs/agent-prompts/unblocking-agent.md and implement the resolution abo
 
 // ── Cloud agent lifecycle ─────────────────────────────────────────────────────
 
-async function launchAgent(prompt, branchName, repo, model = MODEL) {
+async function launchAgent(prompt, branchName, repo, model = MODEL, baseBranch = 'main') {
   const body = {
     prompt: { text: prompt },
     model,
-    source: { repository: repo, ref: 'main' },
+    source: { repository: repo, ref: baseBranch },
     target: { branchName, autoCreatePr: false },
   };
   const res = await apiPost('/v0/agents', body);
@@ -395,10 +450,10 @@ async function pollUntilDone(agentIds) {
 
 // ── Branch merging ────────────────────────────────────────────────────────────
 
-function mergeBranches(branches) {
+function mergeBranches(branches, baseBranch) {
   console.log('\n── Merging branches ────────────────────────────────────────');
 
-  try { git('git pull origin main --no-rebase', { quiet: true }); } catch (_) {}
+  try { git(`git pull origin ${baseBranch} --no-rebase`, { quiet: true }); } catch (_) {}
   try { git('git fetch origin', { quiet: true }); } catch (e) { console.error('git fetch failed:', e.message); }
 
   for (const branch of branches) {
@@ -431,8 +486,8 @@ function mergeBranches(branches) {
   } catch (_) {}
 
   try {
-    git('git push origin main', { quiet: true });
-    console.log('  Pushed to main ✓');
+    git(`git push origin ${baseBranch}`, { quiet: true });
+    console.log(`  Pushed to ${baseBranch} ✓`);
   } catch (e) {
     console.error('  Push failed:', e.message);
   }
@@ -545,15 +600,32 @@ async function main() {
 
   console.log(divider);
 
-  const repo = getGitRemote();
-  console.log(`Repo: ${repo}\n`);
+  const repo       = getGitRemote();
+  const baseBranch = getGitBranch();
+  console.log(`Repo:   ${repo}`);
+  console.log(`Branch: ${baseBranch}\n`);
+
+  // Preflight: verify the branch exists on the remote before launching any agents
+  console.log('Checking remote branch...');
+  try {
+    const remoteBranches = execSync('git ls-remote --heads origin', { encoding: 'utf8' });
+    const branchRef = `refs/heads/${baseBranch}`;
+    if (!remoteBranches.includes(branchRef)) {
+      console.error(`\nError: branch "${baseBranch}" does not exist on the remote.`);
+      console.error(`Push it first:  git push -u origin ${baseBranch}`);
+      process.exit(1);
+    }
+    console.log('Remote branch verified ✓\n');
+  } catch (e) {
+    console.error(`\nWarning: could not verify remote branch (${e.message}). Continuing anyway.`);
+  }
 
   // Accumulate fix/unblock review items across all rounds
   const reviewQueue = []; // { mode, label, branchName, url }
   let reportPrinted = false;
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
-    try { git('git pull origin main --no-rebase', { quiet: true }); } catch (_) {}
+    try { git(`git pull origin ${baseBranch} --no-rebase`, { quiet: true }); } catch (_) {}
 
     const summary    = readTrackerSummary();
     const hasImplWork = !VAL_ONLY   && summary.unclaimed > 0;
@@ -622,11 +694,15 @@ async function main() {
       else                         { prompt = buildUnblockPrompt(data); agentModel = MODEL; }
 
       try {
-        const id = await launchAgent(prompt, branchName, repo, agentModel);
+        const id = await launchAgent(prompt, branchName, repo, agentModel, baseBranch);
         const pair = { id, branchName, mode, label };
         if (mode === 'unblock') reviewPairs.push(pair);  // engine changes need human sign-off before merge
         else                    autoPairs.push(pair);    // impl, val, fix all auto-merge
         console.log(`    → Agent ${id}`);
+        // Mark items claimed immediately so a re-run after Ctrl+C won't dispatch duplicates.
+        const itemsToMark = mode === 'unblock' ? [data]
+                          : Array.isArray(data) ? data : [data];
+        claimInTracker(mode, itemsToMark);
       } catch (err) {
         console.error(`    ✗ Launch failed: ${err.message}`);
       }
@@ -646,7 +722,7 @@ async function main() {
 
     // Auto-merge impl/val branches
     const mergeable = autoPairs.filter(a => doneMap[a.id]).map(a => a.branchName);
-    if (mergeable.length > 0) mergeBranches(mergeable);
+    if (mergeable.length > 0) mergeBranches(mergeable, baseBranch);
 
     // Collect fix/unblock branches for the review queue
     for (const pair of reviewPairs) {
