@@ -4,15 +4,15 @@
  *
  * Parallel overnight Cursor Cloud Agents orchestrator for DaggerheartGM V2 feature development.
  *
+ * Uses a **worker pool** pattern: maintains N concurrent agent slots.  When any agent
+ * finishes, its branch is merged (or a PR created) immediately and a new agent is
+ * dispatched into the freed slot — no waiting for the slowest agent in a batch.
+ *
  * Four agent modes run fully autonomously (finish dependency, not start dependency):
  *   impl    — implement Unclaimed features; branches auto-merged
- *   val     — validate Done features; branches auto-merged
- *   fix     — fix Needs Fix features; branches queued for human review
- *   unblock — implement Open blocked engine extensions; branches queued for human review
- *
- * Fix and Unblock agents do all their work and exit.  Their branches are NOT auto-merged —
- * they are listed in the final "Ready for Review" report so you can inspect and merge them
- * when you wake up.
+ *   val     — validate Done features; PRs created for human review
+ *   fix     — fix Needs Fix features; branches auto-merged
+ *   unblock — implement Open blocked engine extensions; PRs created for human review
  *
  * State is tracked in .orchestrator-state.json (gitignored).  On restart after Ctrl+C,
  * the orchestrator recovers in-flight agents and resumes polling — no duplicate dispatch.
@@ -25,15 +25,16 @@
  *   caffeinate -i npm run agents -- --agents 3   (prevents Mac sleep)
  *
  * Options:
- *   --agents N        parallel agents per round (default: 3)
+ *   --agents N        concurrent agent pool size (default: 3)
  *   --model M         model for impl / fix / unblock (default: claude-4.6-opus-high-thinking)
  *   --val-model M     model for val (default: claude-4.6-opus-high-thinking-fast)
  *   --impl-only       only run impl agents
  *   --val-only        only run val agents
  *   --no-fix          skip fix agents this run
  *   --no-unblock      skip unblock agents this run
- *   --max-rounds N    safety exit after N rounds (default: 100)
- *   --batch-size N    max features per impl/val agent batch (default: 5)
+ *   --max-polls N     safety exit after N poll cycles (~N minutes) (default: 300)
+ *   --batch-size N        max features per impl agent batch (default: 5)
+ *   --val-batch-size N   max features per val agent batch (default: 10)
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -52,9 +53,10 @@ const IMPL_ONLY    = hasFlag('--impl-only');
 const VAL_ONLY     = hasFlag('--val-only');
 const NO_FIX       = hasFlag('--no-fix');
 const NO_UNBLOCK   = hasFlag('--no-unblock');
-const MAX_ROUNDS   = parseInt(getArg('--max-rounds', '100'), 10);
-const BATCH_SIZE   = parseInt(getArg('--batch-size', '5'),   10);
-const POLL_MS      = 60_000;
+const MAX_POLLS    = parseInt(getArg('--max-polls', '300'),  10);
+const BATCH_SIZE       = parseInt(getArg('--batch-size',     '5'),  10);
+const VAL_BATCH_SIZE   = parseInt(getArg('--val-batch-size', '10'), 10);
+const POLL_MS          = 60_000;
 const STALE_MS     = 4 * 60 * 60 * 1000; // 4 hours — prune agents older than this
 
 const CURSOR_API_KEY = process.env.CURSOR_API_KEY;
@@ -281,7 +283,7 @@ function regenerateSummaryTable() {
 
 // ── Batch assignment ──────────────────────────────────────────────────────────
 
-function assignBatches(features, numAgents) {
+function assignBatches(features, numAgents, batchSize = BATCH_SIZE) {
   const groups = {};
   for (const f of features) {
     const key = f.collection || 'unknown';
@@ -291,8 +293,8 @@ function assignBatches(features, numAgents) {
   const chunks = [];
   for (const key of Object.keys(groups)) {
     const group = groups[key];
-    for (let i = 0; i < group.length; i += BATCH_SIZE) {
-      chunks.push({ collection: key, features: group.slice(i, i + BATCH_SIZE) });
+    for (let i = 0; i < group.length; i += batchSize) {
+      chunks.push({ collection: key, features: group.slice(i, i + batchSize) });
     }
   }
   return chunks.slice(0, numAgents);
@@ -670,6 +672,120 @@ function formatSummary(s) {
   return `unclaimed=${s.unclaimed} done=${s.done} needsFix=${s.needsFix} fixing=${s.fixing} blocked=${s.blocked}`;
 }
 
+// ── Worker pool: dynamic work selection and slot filling ──────────────────────
+
+/**
+ * Pick the single highest-priority work item that isn't already in-flight.
+ * Priority: fix (1 at a time) > unblock (1 at a time) > impl/val (balanced).
+ * Returns { mode, label, prompt, model, items, resolution } or null.
+ */
+function pickNextWork(state) {
+  const inFlightNames       = getInFlightItemNames(state);
+  const inFlightResolutions = getInFlightResolutions(state);
+  const summary             = readTrackerSummary();
+
+  // Priority 1: Fix (at most 1 in-flight at a time)
+  if (!NO_FIX && !IMPL_ONLY && !VAL_ONLY && summary.needsFix > 0) {
+    const inFlightFix = state.inFlight.filter(e => e.mode === 'fix').length;
+    if (inFlightFix === 0) {
+      const fix = parseFeatureRows(['Needs Fix']).find(f => !inFlightNames.has(f.name));
+      if (fix) return {
+        mode: 'fix', label: `${fix.name} (${fix.sourceFile})`,
+        prompt: buildFixPrompt(fix), model: MODEL,
+        items: [fix.name], resolution: null,
+      };
+    }
+  }
+
+  // Priority 2: Unblock (at most 1 in-flight at a time)
+  if (!NO_UNBLOCK && !IMPL_ONLY && !VAL_ONLY && summary.blocked > 0) {
+    const inFlightUnblock = state.inFlight.filter(e => e.mode === 'unblock').length;
+    if (inFlightUnblock === 0) {
+      const ub = parseBlockedRows().find(r => !inFlightResolutions.has(r.resolution));
+      if (ub) return {
+        mode: 'unblock', label: ub.resolution,
+        prompt: buildUnblockPrompt(ub), model: MODEL,
+        items: [], resolution: ub.resolution,
+      };
+    }
+  }
+
+  // Priority 3: Impl and Val
+  // Val agents are ~2x faster, so lean toward impl (3:1 target ratio).
+  // Val also gets larger batches (VAL_BATCH_SIZE) since each check is quick.
+  const hasImpl = !VAL_ONLY && summary.unclaimed > 0;
+  const hasVal  = !IMPL_ONLY && summary.done > 0;
+
+  const inFlightImpl = state.inFlight.filter(e => e.mode === 'impl').length;
+  const inFlightVal  = state.inFlight.filter(e => e.mode === 'val').length;
+
+  // Prefer impl unless val is significantly underrepresented (target ~3:1)
+  const implHeavy = inFlightImpl > inFlightVal * 3;
+  const tryOrder = (hasImpl && hasVal)
+    ? (implHeavy ? ['val', 'impl'] : ['impl', 'val'])
+    : hasImpl ? ['impl'] : hasVal ? ['val'] : [];
+
+  for (const mode of tryOrder) {
+    if (mode === 'impl') {
+      const features = parseFeatureRows(['Unclaimed']).filter(f => !inFlightNames.has(f.name));
+      const batch = assignBatches(features, 1)[0];
+      if (batch) return {
+        mode: 'impl', label: batchLabel(batch),
+        prompt: buildImplPrompt(batch.features), model: MODEL,
+        items: batch.features.map(f => f.name), resolution: null,
+      };
+    } else {
+      const features = parseFeatureRows(['Done']).filter(f => !inFlightNames.has(f.name));
+      const batch = assignBatches(features, 1, VAL_BATCH_SIZE)[0];
+      if (batch) return {
+        mode: 'val', label: batchLabel(batch),
+        prompt: buildValPrompt(batch.features), model: VAL_MODEL,
+        items: batch.features.map(f => f.name), resolution: null,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Launch agents into all free pool slots.  Pulls latest main before each
+ * dispatch so new agents start from the freshest merged state.
+ */
+async function fillAgentSlots(state, baseBranch, repo) {
+  let pulled = false;
+
+  while (state.inFlight.length < NUM_AGENTS) {
+    if (!pulled) {
+      try { git(`git pull origin ${baseBranch} --no-rebase`, { quiet: true }); } catch (_) {}
+      pulled = true;
+    }
+
+    const work = pickNextWork(state);
+    if (!work) break;
+
+    const ts     = timestamp();
+    const suffix = Math.random().toString(36).slice(2, 6);
+    const branchName = `orchestrate/${work.mode}-${ts}-${suffix}`;
+    console.log(`  [${work.mode.toUpperCase().padEnd(7)}] ${work.label.slice(0, 100)}`);
+
+    try {
+      const id = await launchAgent(work.prompt, branchName, repo, work.model, baseBranch);
+      console.log(`    → Agent ${id}`);
+      addInFlight(state, {
+        agentId: id, branchName, mode: work.mode, label: work.label,
+        items: work.items, resolution: work.resolution,
+        launchedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`    ✗ Launch failed: ${err.message}`);
+      break;
+    }
+
+    await sleep(3_000);
+  }
+}
+
 // ── Recovery: resume in-flight agents from a previous run ─────────────────────
 
 async function recoverInFlightAgents(state, baseBranch, repo) {
@@ -766,7 +882,7 @@ async function main() {
   console.log(`\n${divider}`);
   console.log('DaggerheartGM Overnight Agent Orchestrator');
   console.log(`Agents: ${NUM_AGENTS} | Impl/Fix/Unblock model: ${MODEL} | Val model: ${VAL_MODEL}`);
-  console.log(`Batch size: ${BATCH_SIZE} | Max rounds: ${MAX_ROUNDS}`);
+  console.log(`Impl batch: ${BATCH_SIZE} | Val batch: ${VAL_BATCH_SIZE} | Max poll cycles: ${MAX_POLLS} | Impl:Val target ~3:1`);
 
   const modeFlags = [];
   if (IMPL_ONLY)   modeFlags.push('impl-only');
@@ -806,147 +922,76 @@ async function main() {
   // Recover in-flight agents from a previous interrupted run
   await recoverInFlightAgents(state, baseBranch, repo);
 
-  let reportPrinted = false;
+  // ── Worker pool: fill slots, poll, merge/PR, refill ────────────────────────
 
-  for (let round = 1; round <= MAX_ROUNDS; round++) {
-    try { git(`git pull origin ${baseBranch} --no-rebase`, { quiet: true }); } catch (_) {}
+  console.log('\n── Filling initial agent pool ──────────────────────────────');
+  const summary = readTrackerSummary();
+  console.log(`  Tracker: ${formatSummary(summary)}`);
 
-    const summary    = readTrackerSummary();
-    const hasImplWork = !VAL_ONLY   && summary.unclaimed > 0;
-    const hasVal      = !IMPL_ONLY  && summary.done > 0;
-    const hasFix      = !NO_FIX    && !IMPL_ONLY && !VAL_ONLY && summary.needsFix > 0;
-    const hasUnblock  = !NO_UNBLOCK && !IMPL_ONLY && !VAL_ONLY && summary.blocked > 0;
+  await fillAgentSlots(state, baseBranch, repo);
 
-    console.log(`\n── Round ${round} ──────────────────────────────────────────`);
-    console.log(`  Tracker: ${formatSummary(summary)}`);
+  if (state.inFlight.length === 0) {
+    console.log('  No dispatchable work found.');
+    printFinalReport(state.reviewQueue);
+  } else {
+    console.log(`\n── Pool active: ${state.inFlight.length}/${NUM_AGENTS} slots ──────────────────────`);
+    console.log(`  Polling every ${POLL_MS / 1000}s...`);
 
-    const anyWork = hasImplWork || hasVal || hasFix || hasUnblock;
+    for (let poll = 1; poll <= MAX_POLLS && state.inFlight.length > 0; poll++) {
+      await sleep(POLL_MS);
 
-    if (!anyWork) {
-      printFinalReport(state.reviewQueue);
-      reportPrinted = true;
-      break;
-    }
+      const autoMerge = [];
+      let slotsFreed = false;
 
-    // Build sets of in-flight item names/resolutions for dedup
-    const inFlightNames       = getInFlightItemNames(state);
-    const inFlightResolutions = getInFlightResolutions(state);
-
-    if (inFlightNames.size > 0 || inFlightResolutions.size > 0) {
-      console.log(`  In-flight: ${inFlightNames.size} feature(s), ${inFlightResolutions.size} resolution(s)`);
-    }
-
-    // Allocate agents: Fix > Unblock > Val/Impl
-    let remaining = NUM_AGENTS;
-    let numFix     = 0, numUnblock = 0, numVal = 0, numImpl = 0;
-
-    if (hasFix && remaining > 0)     { numFix = 1;     remaining--; }
-    if (hasUnblock && remaining > 0) { numUnblock = 1; remaining--; }
-
-    if (hasImplWork && hasVal && remaining > 0) {
-      numImpl = Math.ceil(remaining / 2);
-      numVal  = remaining - numImpl;
-    } else if (hasImplWork && remaining > 0) {
-      numImpl = remaining;
-    } else if (hasVal && remaining > 0) {
-      numVal = remaining;
-    }
-
-    console.log(`  Dispatching: ${numFix} fix, ${numUnblock} unblock, ${numVal} val, ${numImpl} impl`);
-
-    // Gather work items, filtering out anything already in-flight
-    const fixFeatures  = hasFix
-      ? parseFeatureRows(['Needs Fix']).filter(f => !inFlightNames.has(f.name)).slice(0, numFix) : [];
-    const unblockItems = hasUnblock
-      ? parseBlockedRows().filter(r => !inFlightResolutions.has(r.resolution)).slice(0, numUnblock) : [];
-    const valFeatures  = hasVal
-      ? parseFeatureRows(['Done']).filter(f => !inFlightNames.has(f.name)) : [];
-    const implFeatures = hasImplWork
-      ? parseFeatureRows(['Unclaimed']).filter(f => !inFlightNames.has(f.name)) : [];
-
-    const valBatches  = assignBatches(valFeatures,  numVal);
-    const implBatches = assignBatches(implFeatures, numImpl);
-
-    // Build the full dispatch list
-    const ts = timestamp();
-    const roundEntries = []; // state entries for this round's new agents
-
-    const dispatches = [
-      ...fixFeatures.map(   (f, i) => ({ mode: 'fix',     label: `${f.name} (${f.sourceFile})`,               data: f,                idx: i + 1 })),
-      ...unblockItems.map(  (r, i) => ({ mode: 'unblock', label: r.resolution,                                data: r,                idx: i + 1 })),
-      ...valBatches.map(    (b, i) => ({ mode: 'val',     label: batchLabel(b),  data: b.features, idx: i + 1 })),
-      ...implBatches.map(   (b, i) => ({ mode: 'impl',    label: batchLabel(b),  data: b.features, idx: i + 1 })),
-    ];
-
-    for (const { mode, label, data, idx } of dispatches) {
-      const branchName = `orchestrate/${mode}-${idx}-${ts}`;
-      console.log(`  [${mode.toUpperCase().padEnd(7)}] ${label.slice(0, 100)}`);
-
-      let prompt, agentModel;
-      if      (mode === 'impl')    { prompt = buildImplPrompt(data);    agentModel = MODEL; }
-      else if (mode === 'val')     { prompt = buildValPrompt(data);     agentModel = VAL_MODEL; }
-      else if (mode === 'fix')     { prompt = buildFixPrompt(data);     agentModel = MODEL; }
-      else                         { prompt = buildUnblockPrompt(data); agentModel = MODEL; }
-
-      try {
-        const id = await launchAgent(prompt, branchName, repo, agentModel, baseBranch);
-        console.log(`    → Agent ${id}`);
-
-        // Build the state entry with item names for dedup
-        const items = mode === 'unblock'
-          ? []
-          : (Array.isArray(data) ? data : [data]).map(f => f.name);
-        const entry = {
-          agentId: id, branchName, mode, label,
-          items,
-          resolution: mode === 'unblock' ? data.resolution : null,
-          launchedAt: new Date().toISOString(),
-        };
-        addInFlight(state, entry);
-        roundEntries.push(entry);
-      } catch (err) {
-        console.error(`    ✗ Launch failed: ${err.message}`);
+      for (const entry of [...state.inFlight]) {
+        try {
+          const result = await checkAgent(entry.agentId);
+          if (result.status === 'FINISHED') {
+            console.log(`\n  ✓ ${entry.agentId} [${entry.mode}] (${entry.branchName ?? '?'}) FINISHED`);
+            removeInFlight(state, entry.agentId);
+            slotsFreed = true;
+            if (entry.mode === 'val' || entry.mode === 'unblock') {
+              const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
+              state.reviewQueue.push({
+                mode: entry.mode, label: entry.label,
+                branchName: entry.branchName, url: prUrl || result.url,
+              });
+              saveState(state);
+            } else {
+              autoMerge.push(entry.branchName);
+            }
+          } else if (result.status === 'ERROR') {
+            console.log(`\n  ✗ ${entry.agentId} [${entry.mode}] ERROR: ${result.summary ?? 'no summary'}`);
+            removeInFlight(state, entry.agentId);
+            slotsFreed = true;
+          } else {
+            process.stdout.write('.');
+          }
+        } catch (err) {
+          console.error(`\n  Poll error for ${entry.agentId}: ${err.message}`);
+        }
       }
 
-      await sleep(3_000);
+      // Batch-merge all auto-mergeable branches that finished this cycle
+      if (autoMerge.length > 0) {
+        mergeBranches(autoMerge, baseBranch);
+      }
+
+      // Fill any freed slots with new work
+      if (slotsFreed) {
+        await fillAgentSlots(state, baseBranch, repo);
+      }
+
+      if (state.inFlight.length > 0) {
+        const modes = {};
+        for (const e of state.inFlight) modes[e.mode] = (modes[e.mode] || 0) + 1;
+        const modeStr = Object.entries(modes).map(([m, n]) => `${n} ${m}`).join(', ');
+        console.log(`\n  [${state.inFlight.length}/${NUM_AGENTS} slots: ${modeStr}]`);
+      }
     }
 
-    if (roundEntries.length === 0) {
-      console.error('No agents launched this round.  Aborting.');
-      break;
-    }
-
-    // Poll until all agents in this round reach a terminal state
-    console.log(`\n  Polling ${roundEntries.length} agent(s) every ${POLL_MS / 1000}s...`);
-
-    const autoMergeableBranches = [];
-
-    await pollAgents(roundEntries, {
-      async onFinished(entry, result) {
-        removeInFlight(state, entry.agentId);
-        if (entry.mode === 'val' || entry.mode === 'unblock') {
-          const prUrl = await createPullRequest(entry.branchName, baseBranch, entry, repo);
-          state.reviewQueue.push({
-            mode: entry.mode, label: entry.label,
-            branchName: entry.branchName, url: prUrl || result.url,
-          });
-          saveState(state);
-        } else {
-          autoMergeableBranches.push(entry.branchName);
-        }
-      },
-      onFailed(entry) {
-        removeInFlight(state, entry.agentId);
-      },
-    });
-
-    // Auto-merge impl/fix branches (val and unblock go to PRs)
-    if (autoMergeableBranches.length > 0) {
-      mergeBranches(autoMergeableBranches, baseBranch);
-    }
+    printFinalReport(state.reviewQueue);
   }
-
-  if (!reportPrinted) printFinalReport(state.reviewQueue);
 
   // Clear the state file on clean exit
   saveState({ inFlight: [], reviewQueue: [] });
