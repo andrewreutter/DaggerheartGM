@@ -893,6 +893,65 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 }
 ```
 
+- `targetSelect` *(function | object)*: If provided, the chip renders a target picker (list of combat targets) instead of a plain button. The engine stores the selected ids in chip state (accessible via `chip.get('selectedTargetIds')`) and then calls `onUse`. Two forms:
+  - **Simple form (single target):** a function `(table) => [{ id, name }, ...]` returning valid targets.
+  - **Object form (multi-target):** `{ targets: (table) => [{ id, name }, ...], multi: true }` — allows the player to select multiple targets.
+
+  Each item in the returned array must have at least `id` (the actor's `instanceId`) and `name`. The chip's `onUse` reads the selection via `chip.get('selectedTargetIds')` — an array of selected ids (single-element for simple form, potentially many for multi).
+
+```javascript
+// Example: Bouncing — multi-target, variable stress cost
+import { isRangeWithin } from '../engine/table.js';
+
+when(isActing, (table) => table.action?.type === 'attack', {
+  description: 'Mark Stress to hit additional targets in range.',
+  placements: ['reviewAction'],
+  stressCost: (table) => (table.feature.get('bounceTargets') || []).length,
+  targetSelect: {
+    targets: (table) => {
+      const range = table.action?.range;
+      if (!range) return [];
+      return table.adversaries
+        .filter(a => a.instanceId !== table.action?.target?.instanceId
+                  && isRangeWithin(table.me?.rangeFrom(a), range))
+        .map(a => ({ id: a.instanceId, name: a.name }));
+    },
+    multi: true,
+  },
+  onUse(table, chip) {
+    const targetIds = chip.get('selectedTargetIds') || [];
+    table.feature.set('bounceTargets', targetIds);
+    const damage = table.me?.primaryWeapon?.damage;
+    if (!damage) return;
+    for (const id of targetIds) {
+      const target = table.actors.find(a => a.instanceId === id);
+      if (target) {
+        table.action.addDamageRoll({ name: 'Bouncing', dice: damage, targets: [target] });
+      }
+    }
+  },
+})
+
+// Example: Doubled Up — single target, no cost
+when(isActing, (table) => table.action?.type === 'attack', {
+  description: 'Deal damage to another target within Melee range.',
+  placements: ['reviewAction'],
+  targetSelect: (table) => table.adversaries
+    .filter(a => a.instanceId !== table.action?.target?.instanceId
+              && table.me?.rangeFrom(a) === 'melee')
+    .map(a => ({ id: a.instanceId, name: a.name })),
+  onUse(table, chip) {
+    const targetIds = chip.get('selectedTargetIds') || [];
+    const damage = table.me?.primaryWeapon?.damage;
+    if (!damage || !targetIds.length) return;
+    const target = table.actors.find(a => a.instanceId === targetIds[0]);
+    if (target) {
+      table.action.addDamageRoll({ name: 'Doubled Up', dice: damage, targets: [target] });
+    }
+  },
+})
+```
+
 **Resource Costs & Frequencies:**
 When these properties are defined on a chip, the engine automatically handles deducting the cost or tracking the usage cycle when the GM approves the action.
 
@@ -1191,6 +1250,22 @@ const anyMaxD8 = damageDice.some(d => d.die === 'd8' && d.value === 8);
 #### C.5 Board Queries (`table.actors`, `table.characters`, `table.adversaries`, `table.environments`)
 
 Arrays containing all entities and environments currently on the game table. Useful for features that affect allies or enemies in an area, or interact with the environment.
+
+**Range Utilities (imported from `engine/table.js`):**
+
+The engine exports two helpers for range-band comparisons, useful when filtering targets by weapon range:
+
+- `RANGE_BAND_ORDER` *(string[])*: `['melee', 'veryClose', 'close', 'far', 'veryFar']` — canonical ordering from closest to furthest.
+- `isRangeWithin(range, maxRange)` *(function → boolean)*: Returns `true` when `range` is at most `maxRange` in the band ordering. Case-insensitive. Returns `false` for `null`/`undefined` or unrecognized band names.
+
+```javascript
+import { isRangeWithin } from '../engine/table.js';
+
+// Filter adversaries within the attack's range
+const inRange = table.adversaries.filter(a =>
+  isRangeWithin(table.me?.rangeFrom(a), table.action?.range)
+);
+```
 
 #### C.6 Local State (`table.feature` and `chip`)
 
