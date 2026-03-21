@@ -6,17 +6,17 @@ This file is the single source of truth for tracking implementation progress of 
 
 | Collection | Total | Validated | Reviewed | Validating | Done | In Progress | Unclaimed | Needs Fix | Fixing | Blocked | Skipped |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Ancestries (features) | 36 | 2 | 32 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Communities (features) | 9 | 4 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Weapon Properties | 50 | 10 | 2 | 0 | 15 | 0 | 19 | 0 | 1 | 2 | 0 |
+| Ancestries (features) | 35 | 1 | 33 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Communities (features) | 9 | 2 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Weapon Properties | 50 | 12 | 2 | 0 | 15 | 0 | 19 | 0 | 0 | 2 | 0 |
 | Armor Properties | 21 | 5 | 0 | 0 | 4 | 0 | 11 | 0 | 0 | 1 | 0 |
 | Classes (features) | 24 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 0 | 0 | 0 |
-| Subclasses (features) | 74 | 0 | 0 | 0 | 0 | 0 | 74 | 0 | 0 | 0 | 0 |
+| Subclasses (features) | 75 | 0 | 0 | 0 | 0 | 0 | 75 | 0 | 0 | 0 | 0 |
 | Abilities | 189 | 0 | 0 | 0 | 0 | 0 | 189 | 0 | 0 | 0 | 0 |
 | Beastforms | 24 | 0 | 0 | 0 | 0 | 0 | 24 | 0 | 0 | 0 | 0 |
 | Items | 60 | 0 | 0 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 |
 | Consumables | 60 | 0 | 0 | 0 | 0 | 0 | 60 | 0 | 0 | 0 | 0 |
-| **TOTAL** | **547** | **21** | **39** | **0** | **20** | **0** | **461** | **0** | **1** | **3** | **0** |
+| **TOTAL** | **547** | **20** | **42** | **0** | **20** | **0** | **462** | **0** | **0** | **3** | **0** |
 
 ---
 
