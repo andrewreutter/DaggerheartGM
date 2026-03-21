@@ -89,6 +89,11 @@ export function activateChip(chip, table, chipState = makeChipState(), selectOpt
     chipState.set('selectedId', selectOpts.selectedId);
   }
 
+  // For target-select chips, persist the chosen target id into chip state before onUse
+  if (typeof chip.isTargetSelect === 'function' && selectOpts.selectedTargetId !== undefined) {
+    chipState.set('selectedTargetId', selectOpts.selectedTargetId);
+  }
+
   if (chip.isToggle && chip._gatedHookFn) {
     const effects = table.action?.effects;
     if (chipState.isOn) {

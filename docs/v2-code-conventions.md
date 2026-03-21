@@ -554,3 +554,32 @@ temporaryStatMods: {
   evasion: (table) => table.me?.armor ?? 0,
 }
 ```
+
+## CONV-027 — Use `isTargetSelect` for post-apply target selection in combat chips
+
+When a feature lets the player choose additional combat targets (e.g. Bouncing, Doubled Up), use a chip with `isTargetSelect` at the `resolve` placement. `isTargetSelect` is a function `(table) => Actor[]` that returns eligible target actors. The engine stores the chosen actor's `instanceId` in chip state as `'selectedTargetId'` before calling `onUse`, so `chip.get('selectedTargetId')` always returns the player's selection. Set `loop: true` when the player may pick multiple targets in sequence (e.g. Bouncing — each activation costs 1 Stress). The host manages excluding already-hit targets and offering a "Done" button.
+
+```js
+// ✓ Good — resolve-phase target selector with loop
+when(isActing, (table) => table.action?.type === 'attack', {
+  description: 'Mark 1 Stress to hit another target in range.',
+  placements: ['resolve'],
+  stressCost: 1,
+  loop: true,
+  isTargetSelect(table) {
+    return table.actors.filter(a =>
+      a.instanceId !== table.action?.target?.instanceId &&
+      a.instanceId !== table.me?.instanceId &&
+      table.me.rangeFrom(a) != null
+    );
+  },
+  onUse(table, chip) {
+    const target = table.actors.find(a => a.instanceId === chip.get('selectedTargetId'));
+    if (target) {
+      table.action?.addDamageRoll({ name: 'Bouncing', dice: 'd8', targets: [target] });
+    }
+  },
+})
+```
+
+Do **not** use `isSelect` for combat targets — `isSelect` is for permanent creation-time choices (CONV-021). Do **not** use `addDamageRoll` with pre-computed target lists for features that require player choice — that pattern is for AOE damage where all targets are hit (e.g. Charge).

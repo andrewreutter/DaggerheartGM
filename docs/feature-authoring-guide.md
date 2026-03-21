@@ -893,6 +893,38 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 }
 ```
 
+- `isTargetSelect` *(function)*: If provided, the chip renders as a target selector (target buttons) instead of a plain button. Must be a function `(table) => Actor[]` that returns the list of eligible target actors. The host renders each actor as a selectable target button. When the player selects a target, the engine stores the chosen actor's `instanceId` in chip state (accessible via `chip.get('selectedTargetId')`) and then calls `onUse`. Use this for features that need the player to choose combat targets — e.g. applying damage to additional enemies after the primary attack resolves. Typically used with `placements: ['resolve']` for post-apply interactions.
+
+```javascript
+// Example: Bouncing — mark Stress to hit additional targets in range
+when(isActing, (table) => table.action?.type === 'attack', {
+  description: 'Mark 1 Stress to hit another target in range.',
+  placements: ['resolve'],
+  stressCost: 1,
+  loop: true,
+  isTargetSelect(table) {
+    const primaryTargetId = table.action?.target?.instanceId;
+    return table.actors.filter(a => {
+      if (a.instanceId === primaryTargetId) return false;
+      if (a.instanceId === table.me?.instanceId) return false;
+      return table.me.rangeFrom(a) != null;
+    });
+  },
+  onUse(table, chip) {
+    const targetId = chip.get('selectedTargetId');
+    const target = table.actors.find(a => a.instanceId === targetId);
+    if (!target) return;
+    table.action?.addDamageRoll({
+      name: 'Bouncing',
+      dice: table.me?.primaryWeapon?.damage ?? 'd6',
+      targets: [target],
+    });
+  },
+})
+```
+
+- `loop` *(boolean)*: When `true`, the chip can be activated multiple times in sequence. After `onUse` executes, the host re-offers the chip for another activation (e.g., selecting another target). The host is responsible for excluding already-selected targets and showing a "Done"/"Skip" option to end the loop. Typically used with `isTargetSelect` for features like Bouncing where the player can mark 1 or more Stress to hit that many additional targets.
+
 **Resource Costs & Frequencies:**
 When these properties are defined on a chip, the engine automatically handles deducting the cost or tracking the usage cycle when the GM approves the action.
 

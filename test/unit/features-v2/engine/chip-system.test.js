@@ -203,6 +203,19 @@ describe('activateChip()', () => {
     expect(() => activateChip(chip, table, makeChipState())).not.toThrow();
   });
 
+  it('stores selectedTargetId for isTargetSelect chips', () => {
+    const calls = [];
+    const chip = {
+      isTargetSelect: () => [{ instanceId: 'adv-1', name: 'Goblin' }],
+      onUse: (table, cs) => calls.push(cs.get('selectedTargetId')),
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetId: 'adv-1' });
+    expect(chipState.get('selectedTargetId')).toBe('adv-1');
+    expect(calls).toEqual(['adv-1']);
+  });
+
   it('resolves function-valued temporaryStatMods on toggle-on and caches for toggle-off', () => {
     const char = mockCharacter({ instanceId: 'char-1', currentArmor: 4 });
     const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
