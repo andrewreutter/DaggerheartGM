@@ -531,17 +531,26 @@ function mergeBranches(branches, baseBranch) {
   for (const branch of branches) {
     console.log(`  Merging origin/${branch}...`);
     try {
-      git(`git merge origin/${branch} --no-edit -m "chore: merge agent branch ${branch}"`, { quiet: true });
+      // First try: auto-resolve conflicts favoring the agent's changes
+      git(`git merge -X theirs origin/${branch} --no-edit -m "chore: merge agent branch ${branch}"`, { quiet: true });
     } catch (_) {
-      console.log(`  Conflict in ${branch} — auto-resolving...`);
+      // -X theirs still leaves conflicts for adds/deletes and renames.
+      // Fall back to per-file resolution: tracker stays ours, everything else theirs.
+      console.log(`  Conflict in ${branch} — resolving per-file...`);
       try {
         const conflicted = execSync('git diff --name-only --diff-filter=U', { encoding: 'utf8' })
           .trim().split('\n').filter(Boolean);
-        for (const file of conflicted) {
-          execSync(`git checkout ${file === TRACKER ? '--ours' : '--theirs'} "${file}"`, { encoding: 'utf8' });
-          execSync(`git add "${file}"`, { encoding: 'utf8' });
+        if (conflicted.length === 0) {
+          // No unmerged files — merge may have partially succeeded; just commit what we have
+          git(`git commit --no-edit --allow-empty -m "chore: merge ${branch}"`, { quiet: true });
+        } else {
+          for (const file of conflicted) {
+            execSync(`git checkout ${file === TRACKER ? '--ours' : '--theirs'} "${file}"`, { encoding: 'utf8' });
+            execSync(`git add "${file}"`, { encoding: 'utf8' });
+          }
+          // --allow-empty handles the case where resolution matches HEAD exactly
+          git(`git commit --allow-empty -m "chore: merge ${branch} (conflict resolved)"`, { quiet: true });
         }
-        git(`git commit -m "chore: merge ${branch} (conflict resolved)"`, { quiet: true });
         console.log(`  Resolved.`);
       } catch (e2) {
         console.error(`  Could not resolve merge for ${branch}: ${e2.message}`);
