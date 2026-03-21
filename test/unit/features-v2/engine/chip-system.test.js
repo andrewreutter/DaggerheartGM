@@ -7,9 +7,9 @@ import {
   resetChipFrequency,
   makeChipState,
 } from '../../../../src/features-v2/engine/chip-system.js';
-import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
+import { buildTableSnapshot, applyMutations, isRangeWithin, RANGE_BAND_ORDER } from '../../../../src/features-v2/engine/table.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
-import { mockTable, mockGameState, mockCharacter } from '../helpers.js';
+import { mockTable, mockGameState, mockCharacter, mockAdversary } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // collectChips
@@ -443,5 +443,102 @@ describe('makeChipState()', () => {
     const cs2 = makeChipState();
     cs1.set('x', 1);
     expect(cs2.get('x')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// targetSelect support in activateChip
+// ---------------------------------------------------------------------------
+
+describe('activateChip() — targetSelect', () => {
+  it('stores selectedTargetIds in chipState when targetSelect is present', () => {
+    const chip = {
+      targetSelect: () => [{ id: 'adv-1', name: 'Goblin' }],
+      onUse: () => {},
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1'] });
+    expect(chipState.get('selectedTargetIds')).toEqual(['adv-1']);
+  });
+
+  it('stores multiple target ids for multi-select targetSelect', () => {
+    const chip = {
+      targetSelect: { targets: () => [], multi: true },
+      onUse: () => {},
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1', 'adv-2', 'adv-3'] });
+    expect(chipState.get('selectedTargetIds')).toEqual(['adv-1', 'adv-2', 'adv-3']);
+  });
+
+  it('does not set selectedTargetIds when targetSelect is absent', () => {
+    const chip = { onUse: () => {} };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1'] });
+    expect(chipState.get('selectedTargetIds')).toBeUndefined();
+  });
+
+  it('onUse can read selectedTargetIds from chip state', () => {
+    const captured = [];
+    const chip = {
+      targetSelect: () => [],
+      onUse: (_table, cs) => captured.push(cs.get('selectedTargetIds')),
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-2'] });
+    expect(captured).toEqual([['adv-2']]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRangeWithin
+// ---------------------------------------------------------------------------
+
+describe('isRangeWithin()', () => {
+  it('returns true when range equals maxRange', () => {
+    expect(isRangeWithin('melee', 'melee')).toBe(true);
+    expect(isRangeWithin('far', 'far')).toBe(true);
+  });
+
+  it('returns true when range is closer than maxRange', () => {
+    expect(isRangeWithin('melee', 'far')).toBe(true);
+    expect(isRangeWithin('close', 'veryFar')).toBe(true);
+    expect(isRangeWithin('veryClose', 'close')).toBe(true);
+  });
+
+  it('returns false when range exceeds maxRange', () => {
+    expect(isRangeWithin('far', 'melee')).toBe(false);
+    expect(isRangeWithin('veryFar', 'close')).toBe(false);
+  });
+
+  it('returns false for null or undefined inputs', () => {
+    expect(isRangeWithin(null, 'melee')).toBe(false);
+    expect(isRangeWithin('melee', null)).toBe(false);
+    expect(isRangeWithin(undefined, 'far')).toBe(false);
+  });
+
+  it('handles case-insensitive inputs', () => {
+    expect(isRangeWithin('Melee', 'far')).toBe(true);
+    expect(isRangeWithin('melee', 'Far')).toBe(true);
+    expect(isRangeWithin('CLOSE', 'VERYFAR')).toBe(true);
+  });
+
+  it('returns false for unrecognized range band names', () => {
+    expect(isRangeWithin('pointBlank', 'melee')).toBe(false);
+    expect(isRangeWithin('melee', 'unknown')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RANGE_BAND_ORDER
+// ---------------------------------------------------------------------------
+
+describe('RANGE_BAND_ORDER', () => {
+  it('exports all five range bands in ascending order', () => {
+    expect(RANGE_BAND_ORDER).toEqual(['melee', 'veryClose', 'close', 'far', 'veryFar']);
   });
 });

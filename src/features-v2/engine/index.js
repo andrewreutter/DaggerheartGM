@@ -5,7 +5,7 @@
  */
 
 export { when, isActing, isTargeted, isWhen, unwrap, unwrapAll } from './when.js';
-export { buildTableSnapshot, applyMutations } from './table.js';
+export { buildTableSnapshot, applyMutations, RANGE_BAND_ORDER, isRangeWithin } from './table.js';
 export {
   collectChips,
   activateChip,

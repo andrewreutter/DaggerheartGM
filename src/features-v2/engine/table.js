@@ -35,6 +35,37 @@
 const MUTATIONS_KEY = Symbol('mutations');
 
 // ---------------------------------------------------------------------------
+// Range band ordering
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical ordering of Daggerheart range bands from closest to furthest.
+ * Used by isRangeWithin() to compare range band strings.
+ */
+export const RANGE_BAND_ORDER = ['melee', 'veryClose', 'close', 'far', 'veryFar'];
+
+/**
+ * Return true when `range` is at most `maxRange` in the Daggerheart range
+ * band ordering (melee < veryClose < close < far < veryFar).
+ *
+ * Case-insensitive: accepts 'Melee', 'melee', 'MELEE', etc.
+ * Returns false when either argument is null/undefined or not a recognized band.
+ *
+ * @param {string|null} range     — the actual range band (e.g. from actor.rangeFrom())
+ * @param {string|null} maxRange  — the maximum allowed range band
+ * @returns {boolean}
+ */
+export function isRangeWithin(range, maxRange) {
+  if (!range || !maxRange) return false;
+  const r = range.toLowerCase();
+  const m = maxRange.toLowerCase();
+  const ri = RANGE_BAND_ORDER.indexOf(r);
+  const mi = RANGE_BAND_ORDER.indexOf(m);
+  if (ri === -1 || mi === -1) return false;
+  return ri <= mi;
+}
+
+// ---------------------------------------------------------------------------
 // Die rolling
 // ---------------------------------------------------------------------------
 

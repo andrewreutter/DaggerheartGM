@@ -1,4 +1,5 @@
 export * from './Barrier.js';
+export * from './Bouncing.js';
 export * from './Brave.js';
 export * from './Brutal.js';
 export * from './Burning.js';
@@ -10,6 +11,7 @@ export * from './Deflecting.js';
 export * from './Destructive.js';
 export * from './Devastating.js';
 export * from './DoubleDuty.js';
+export * from './DoubledUp.js';
 export * from './Dueling.js';
 export * from './Healing.js';
 export * from './Heavy.js';
