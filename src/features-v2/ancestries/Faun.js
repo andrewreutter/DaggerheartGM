@@ -34,7 +34,7 @@ export const Kick = {
         name: 'Kick (push target)',
         description:
           'Mark 1 Stress to deal an extra 2d6 damage and knock the target to Very Close range.',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         stressCost: 1,
         onUse(table) {
           table.rolls?.damage?.addDie({ name: 'Kick', die: '2d6' });
@@ -52,13 +52,12 @@ export const Kick = {
         name: 'Kick (leap back)',
         description:
           'Mark 1 Stress to deal an extra 2d6 damage and leap to Very Close range from the target.',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         stressCost: 1,
         onUse(table) {
           table.rolls?.damage?.addDie({ name: 'Kick', die: '2d6' });
           table.me.move(
-            (t) =>
-              t.action.target != null && t.me.rangeFrom(t.action.target) === 'veryClose',
+            (t) => t.me.rangeFrom(t.action.target) === 'veryClose',
             'Kick: leap to Very Close range from the target'
           );
         },

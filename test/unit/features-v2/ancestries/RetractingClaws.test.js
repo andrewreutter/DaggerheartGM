@@ -13,7 +13,7 @@ describe('Retracting Claws', () => {
     expect(resolved[0].name).toBe('Retracting Claws');
     expect(resolved[0].trait).toBe('agility');
     expect(resolved[0].range).toBe('melee');
-    expect(resolved[0].damage).toBe('d6');
+    expect(resolved[0].damage).toBeUndefined();
   });
 
   it('applies Vulnerable condition on successful attack', () => {

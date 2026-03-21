@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { Fearless } from '../../../../src/features-v2/ancestries/Infernis.js';
-import { runReviewOutcome, mockTable, mockChipState } from '../helpers.js';
+import { runReviewAction, mockTable, mockChipState } from '../helpers.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
 
 describe('Fearless', () => {
   it('shows a chip on action roll with fear die', () => {
-    const result = runReviewOutcome(Fearless, {
+    const result = runReviewAction(Fearless, {
       action: {
         type: 'action',
         actorInstanceId: 'char-1',
@@ -30,7 +30,7 @@ describe('Fearless', () => {
   });
 
   it('does not show chip when not acting', () => {
-    const result = runReviewOutcome(Fearless, {
+    const result = runReviewAction(Fearless, {
       action: {
         type: 'action',
         actorInstanceId: 'char-2',
@@ -50,8 +50,8 @@ describe('Fearless', () => {
     expect(result.chips).toHaveLength(0);
   });
 
-  it('rerolls fear die when chip is used', () => {
-    const result = runReviewOutcome(Fearless, {
+  it('sets roll outcome to hope when chip is used', () => {
+    const result = runReviewAction(Fearless, {
       action: {
         type: 'action',
         actorInstanceId: 'char-1',
@@ -70,7 +70,7 @@ describe('Fearless', () => {
 
     expect(result.chips).toHaveLength(1);
     const chip = result.chips[0];
-    
+
     const table = mockTable({
       action: {
         type: 'action',
@@ -86,14 +86,14 @@ describe('Fearless', () => {
         },
       },
     });
-    
+
     chip.onUse(table, mockChipState());
     const mutations = applyMutations(table);
-    
+
     expect(mutations).toContainEqual(
       expect.objectContaining({
-        type: 'rerollDie',
-        payload: { rollKey: 'action', dieType: 'fearDie' }
+        type: 'setRollOutcome',
+        payload: { rollKey: 'action', outcome: 'hope' },
       })
     );
   });

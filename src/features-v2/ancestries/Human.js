@@ -21,14 +21,15 @@ export const Adaptability = {
     when(
       isActing,
       (table) => table.rolls?.action?.isSuccess === false,
+      (table) => {
+        const expNames = new Set((table.me?.experiences || []).map((e) => e.name));
+        return (table.rolls?.action?.statics || []).some((s) => expNames.has(s.name));
+      },
       {
         description: 'Mark 1 Stress to reroll.',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         stressCost: 1,
         onUse: (table) => {
-          // Reroll both Hope and Fear dice
-          // NOTE: SRD requires "when you fail a roll that utilized one of your Experiences"
-          // but the V2 API does not expose experienceId, so this chip appears on any failed roll
           table.rolls?.action?.hopeDie?.reroll();
           table.rolls?.action?.fearDie?.reroll();
         },

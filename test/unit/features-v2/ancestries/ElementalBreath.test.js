@@ -14,7 +14,12 @@ describe('ElementalBreath', () => {
     expect(weapon.damageType).toBe('magic');
   });
 
-  it('does not have hooks or chips (blocked: V2 API lacks multiTarget support for virtualWeapons)', () => {
+  it('declares multiTarget: true to enable group targeting per SRD', () => {
+    const weapon = ElementalBreath.virtualWeapons[0];
+    expect(weapon.multiTarget).toBe(true);
+  });
+
+  it('does not have hooks or chips', () => {
     expect(ElementalBreath.hooks).toBeUndefined();
     expect(ElementalBreath.chips).toBeUndefined();
   });

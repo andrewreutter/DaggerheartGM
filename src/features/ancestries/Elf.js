@@ -21,10 +21,6 @@ export default {
       },
     ],
   },
-  'Celestial Trance': {
-    onRest(ctx) {
-      ctx.rest.addShortMoveSlot('Celestial Trance');
-      ctx.rest.addLongMoveSlot('Celestial Trance');
-    },
-  },
+  // Celestial Trance: rest slots from V2 passiveStatMods + getRestMovesForCharacter (see src/client/lib/rest-moves.js)
+  'Celestial Trance': {},
 };

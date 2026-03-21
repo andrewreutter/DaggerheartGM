@@ -4,17 +4,16 @@
  * SRD source: daggerheart-srd/ancestries/Galapa.md
  */
 
-import { when } from '../engine/when.js';
+import { when, isActing } from '../engine/when.js';
 
-/**
- * Blocked: SRD grants +Proficiency to damage thresholds. The V2 table snapshot does
- * not expose proficiency (or tier/level) for passiveStatMods / dynamic thresholds.
- * Revisit when `table.me` (or equivalent) can supply proficiency at character-render time.
- */
 export const Shell = {
   name: 'Shell',
   description:
     'Gain a bonus to your damage thresholds equal to your Proficiency.',
+  passiveStatMods: {
+    majorThreshold: (table) => table.me?.proficiency ?? 1,
+    severeThreshold: (table) => table.me?.proficiency ?? 1,
+  },
 };
 
 export const Retract = {
@@ -31,14 +30,22 @@ export const Retract = {
       onUse(table, chip) {
         table.feature.set('retracted', chip.isOn);
         if (chip.isOn) {
+          table.me.restrictMovement("Can't move — retracted into shell.");
           table.me.actionLoop('Retract', 'Retracting into shell for protection.');
         } else {
+          table.me.allowMovement();
           table.me.actionLoop('Retract', 'Emerging from shell.');
         }
       },
     },
   ],
   hooks: {
+    // When retracted and acting, the character's action rolls have disadvantage.
+    onIntent: when(
+      isActing,
+      (table) => table.feature.get('retracted') === true,
+      (table) => table.rolls?.action?.addDisadvantageDie('Retract')
+    ),
     // Raw damage only — see feature-authoring-guide: Review Action vs Review Outcome.
     onReviewAction: when(
       (table) => table.feature.get('retracted') === true,
@@ -59,6 +66,5 @@ export const Retract = {
   },
 };
 
-// Blocked (remaining SRD for Retract): disadvantage on action rolls and “can’t move” need
-// engine support (roll pipeline + movement validation). Physical resistance is handled in
-// onReviewAction using raw `type: 'damage'` effects (see feature-authoring-guide).
+// Retract is fully implemented: physical resistance (onReviewAction), disadvantage on action rolls
+// (onIntent), and movement restriction (restrictMovement / allowMovement chip toggle).

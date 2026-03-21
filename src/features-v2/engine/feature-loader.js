@@ -92,7 +92,14 @@ export function loadCharacterFeatures(character, registry) {
       const propName = wf.name || wf;
       const propImpl = registry.weapon_properties?.[propName];
       if (propImpl) {
-        features.push({ ...propImpl, _ownerInstanceId: instanceId, _source: 'weapon_property', _weaponId: weaponId });
+        features.push({
+          ...propImpl,
+          _ownerInstanceId: instanceId,
+          _source: 'weapon_property',
+          _weaponId: weaponId,
+          // Keep raw feature text for any implementation that needs it
+          _weaponFeatureText: typeof wf === 'object' ? wf.text : undefined,
+        });
       } else if (typeof wf === 'object') {
         // No registered implementation yet — include as a display-only feature
         features.push({ name: propName, description: wf.text, _ownerInstanceId: instanceId, _source: 'weapon_property', _weaponId: weaponId });
@@ -164,12 +171,17 @@ export function applyDeclarativeFeatures(features, character, table) {
     instinct: character.traits?.instinct ?? 0,
     presence: character.traits?.presence ?? 0,
     knowledge: character.traits?.knowledge ?? 0,
+    // Rest downtime (CONV-011) — consumed by client rest UI via getRestMovesForCharacter
+    numShortRestSlots: 0,
+    numLongRestSlots: 0,
+    numLongMovesInShortRest: 0,
   };
 
   const virtualWeapons = [];
   const advantageTriggers = [];
   const damageAffinities = { resistances: [], immunities: [], vulnerabilities: [] };
   const movementModes = [];
+  const rangeOverrides = {}; // { [sourceRange]: effectiveRange } — e.g. { melee: 'veryClose' }
 
   for (const feature of features) {
     // Set table.me to the feature owner before evaluating
@@ -179,7 +191,11 @@ export function applyDeclarativeFeatures(features, character, table) {
     const mods = unwrap(feature.passiveStatMods, table);
     if (mods && typeof mods === 'object') {
       for (const [key, value] of Object.entries(mods)) {
-        const resolvedValue = unwrap(value, table);
+        let resolvedValue = unwrap(value, table);
+        // Allow function values: (table, feature?) => number
+        // The feature object is passed as the second arg so weapon properties
+        // can access per-weapon context (e.g. `self._weaponTier`).
+        if (typeof resolvedValue === 'function') resolvedValue = resolvedValue(table, feature);
         if (typeof resolvedValue === 'number' && key in stats) {
           stats[key] += resolvedValue;
         }
@@ -209,6 +225,12 @@ export function applyDeclarativeFeatures(features, character, table) {
     const modes = unwrapAll(feature.movementModes, table);
     if (Array.isArray(modes)) movementModes.push(...modes);
     else if (typeof modes === 'string') movementModes.push(modes);
+
+    // rangeOverrides — merge each feature's map into the accumulated result
+    const overrides = unwrap(feature.rangeOverrides, table);
+    if (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) {
+      Object.assign(rangeOverrides, overrides);
+    }
   }
 
   return {
@@ -217,5 +239,6 @@ export function applyDeclarativeFeatures(features, character, table) {
     advantageTriggers,
     damageAffinities,
     movementModes,
+    rangeOverrides,
   };
 }

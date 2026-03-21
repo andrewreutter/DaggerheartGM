@@ -12,6 +12,14 @@ export const PurposefulDesign = {
     {
       description: 'Choose an Experience to gain a permanent +1 bonus.',
       placements: ['create'],
+      isSelect: (table) =>
+        (table.me?.experiences || []).map((e) => ({ id: e.id, name: e.name })),
+      onUse: (table, chip) => {
+        const selectedId = chip.get('selectedId');
+        if (selectedId) {
+          table.me?.addExperienceBonus(selectedId, 1);
+        }
+      },
     },
   ],
 };

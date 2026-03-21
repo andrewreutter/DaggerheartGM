@@ -14,9 +14,6 @@ export default {
   'Purposeful Design': {
     experienceBonus: 1,
   },
-  Efficient: {
-    onRest(ctx) {
-      ctx.rest.longMoves.forEach(m => ctx.rest.addShortMove(m));
-    },
-  },
+  // Efficient: rest behavior lives in V2 passiveStatMods + getRestMovesForCharacter (see src/client/lib/rest-moves.js)
+  Efficient: {},
 };

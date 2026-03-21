@@ -15,16 +15,13 @@ export const Fearless = {
       (table) => table.rolls?.action?.fearDie,
       {
         description: 'Mark 2 Stress to change Fear into Hope.',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         stressCost: 2,
+        // NOTE: SRD requires "When you roll with Fear" but V2 API cannot distinguish
+        // "rolling with Fear" vs "rolling with Hope" at chip-display time, so the chip
+        // appears on any roll with a fearDie (accepted best-effort per tracker).
         onUse: (table) => {
-          // NOTE: SRD requires "When you roll with Fear" but V2 API cannot distinguish
-          // "rolling with Fear" vs "rolling with Hope". This is a best-effort implementation.
-          // Reroll the fear die - the engine should interpret this as Hope instead of Fear
-          // This may require engine support for changing roll type
-          if (table.rolls?.action?.fearDie) {
-            table.rolls.action.fearDie.reroll();
-          }
+          table.rolls?.action?.setOutcome('hope');
         },
       }
     ),

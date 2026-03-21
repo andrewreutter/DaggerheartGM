@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { runReviewOutcome, mockTable, mockChipState } from '../helpers.js';
+import { runReviewAction, mockTable, mockChipState } from '../helpers.js';
 import { Luckbender } from '../../../../src/features-v2/ancestries/Faerie.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
 
 describe('Luckbender', () => {
   it('shows chip when acting character makes action roll', () => {
-    const result = runReviewOutcome(Luckbender, {
+    const result = runReviewAction(Luckbender, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -28,7 +28,7 @@ describe('Luckbender', () => {
   });
 
   it('does not show chip when not acting and no action roll', () => {
-    const result = runReviewOutcome(Luckbender, {
+    const result = runReviewAction(Luckbender, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-2',
@@ -55,7 +55,7 @@ describe('Luckbender', () => {
       currentHp: 4, maxHp: 6, currentStress: 0, maxStress: 6, hope: 3, maxHope: 6,
       currentArmor: 3, maxArmor: 3, conditions: [], traits: {},
       tokenX: 20, tokenY: 0 }; // 20ft away — within Close (30ft)
-    const result = runReviewOutcome(Luckbender, {
+    const result = runReviewAction(Luckbender, {
       activeElements: [meChar, allyChar],
       action: {
         type: 'attack',
@@ -80,7 +80,7 @@ describe('Luckbender', () => {
       currentHp: 4, maxHp: 6, currentStress: 0, maxStress: 6, hope: 3, maxHope: 6,
       currentArmor: 3, maxArmor: 3, conditions: [], traits: {},
       tokenX: 50, tokenY: 0 }; // 50ft away — outside Close (30ft)
-    const result = runReviewOutcome(Luckbender, {
+    const result = runReviewAction(Luckbender, {
       activeElements: [meChar, allyChar],
       action: {
         type: 'attack',
@@ -96,7 +96,7 @@ describe('Luckbender', () => {
   });
 
   it('rerolls both Hope and Fear dice when chip is used', () => {
-    const result = runReviewOutcome(Luckbender, {
+    const result = runReviewAction(Luckbender, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',

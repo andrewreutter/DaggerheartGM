@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
 import { randomInt } from 'crypto';
 import { watchFile } from 'fs';
+import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
@@ -134,6 +135,19 @@ app.get('/api/config', (req, res) => {
 // --- Current user info ---
 app.get('/api/me', requireAuth, (req, res) => {
   res.json({ isAdmin: ADMIN_EMAILS.includes(req.email?.toLowerCase()) });
+});
+
+/** Feature authoring guide — reads `docs/feature-authoring-guide.md` on each request (always current on disk). */
+app.get('/api/docs/feature-authoring-guide', requireAuth, async (req, res) => {
+  try {
+    const path = join(__dirname, 'docs', 'feature-authoring-guide.md');
+    const markdown = await readFile(path, 'utf8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ markdown });
+  } catch (err) {
+    console.error('GET /api/docs/feature-authoring-guide failed:', err);
+    res.status(500).json({ error: 'Failed to load guide' });
+  }
 });
 
 // --- Dev live reload (SSE) ---
@@ -613,6 +627,18 @@ function broadcastPresenceToTable(tableId) {
   if (!room) return;
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   const msg = `event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`;
+  for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
+}
+
+// In-memory pending player intents (pre-roll banner state): tableId → intent object
+// Intent shape: { characterName, characterInstanceId, rollText, chips, timestamp }
+// chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
+const pendingIntents = new Map();
+
+function broadcastIntentToGm(tableId, intent) {
+  const room = rooms.get(tableId);
+  if (!room) return;
+  const msg = `event: intent\ndata: ${JSON.stringify(intent)}\n\n`;
   for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
 }
 
@@ -1498,6 +1524,13 @@ app.get('/api/room/my/players', async (req, res) => {
 
   subscriptionManager.subscribe('banners', user.uid, res);
   subscriptionManager.subscribe('table_state', tableId, res);
+
+  // Send any current pending player intent so GM sees it on reconnect
+  const existingIntent = pendingIntents.get(tableId);
+  if (existingIntent) {
+    res.write(`event: intent\ndata: ${JSON.stringify(existingIntent)}\n\n`);
+    res.flush?.();
+  }
 
   const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
   req.on('close', () => {
@@ -2499,6 +2532,29 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
     console.error('POST /api/room/my/op error:', err);
     res.status(500).json({ error: 'Failed to apply op' });
   }
+});
+
+
+// POST /api/room/:tableId/intent — Player (or GM) broadcasts a pre-roll intent banner to the GM.
+// Body: { characterName, characterInstanceId, rollText, chips }
+// chips must be plain serializable objects (no functions).
+app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { characterName, characterInstanceId, rollText, chips } = req.body;
+  const intent = { characterName, characterInstanceId, rollText, chips: chips || [], timestamp: Date.now() };
+  pendingIntents.set(req.params.tableId, intent);
+  broadcastIntentToGm(req.params.tableId, intent);
+  res.json({ ok: true });
+});
+
+// DELETE /api/room/:tableId/intent — Clear the pending intent (called after Proceed or Cancel).
+app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  pendingIntents.delete(req.params.tableId);
+  broadcastIntentToGm(req.params.tableId, null);
+  res.json({ ok: true });
 });
 
 

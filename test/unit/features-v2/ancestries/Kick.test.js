@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { runReviewOutcome, mockTable, mockChipState } from '../helpers.js';
+import { runReviewAction, mockTable, mockChipState } from '../helpers.js';
 import { Kick } from '../../../../src/features-v2/ancestries/Faun.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
 
 describe('Kick', () => {
   it('shows two review chips on successful melee attack', () => {
-    const result = runReviewOutcome(Kick, {
+    const result = runReviewAction(Kick, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -32,11 +32,11 @@ describe('Kick', () => {
     expect(names).toContain('Kick (push target)');
     expect(names).toContain('Kick (leap back)');
     expect(result.chips[0].stressCost).toBe(1);
-    expect(result.chips[0].placements).toContain('reviewOutcome');
+    expect(result.chips[0].placements).toContain('reviewAction');
   });
 
   it('does not show chips when attack is not successful', () => {
-    const result = runReviewOutcome(Kick, {
+    const result = runReviewAction(Kick, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -58,7 +58,7 @@ describe('Kick', () => {
   });
 
   it('does not show chips when range is not melee', () => {
-    const result = runReviewOutcome(Kick, {
+    const result = runReviewAction(Kick, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -80,7 +80,7 @@ describe('Kick', () => {
   });
 
   it('does not show chips when not acting', () => {
-    const result = runReviewOutcome(Kick, {
+    const result = runReviewAction(Kick, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-2',
@@ -102,7 +102,7 @@ describe('Kick', () => {
   });
 
   it('push chip: adds 2d6 damage and queues target move with veryClose condition', () => {
-    const result = runReviewOutcome(Kick, {
+    const result = runReviewAction(Kick, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -170,7 +170,7 @@ describe('Kick', () => {
   });
 
   it('leap chip: adds 2d6 damage and queues self move with veryClose condition', () => {
-    const result = runReviewOutcome(Kick, {
+    const result = runReviewAction(Kick, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',

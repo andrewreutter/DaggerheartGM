@@ -4,12 +4,17 @@
  * SRD source: daggerheart-srd/ancestries/Simiah.md
  */
 
+import { when } from '../engine/when.js';
+
 export const NaturalClimber = {
   name: 'Natural Climber',
   description:
     'You have advantage on Agility Rolls that involve balancing and climbing.',
   advantageTriggers: [
-    'Agility Rolls that involve balancing and climbing',
+    when(
+      (table) => table.action?.trait === 'Agility',
+      'Agility Rolls that involve balancing and climbing'
+    ),
   ],
 };
 

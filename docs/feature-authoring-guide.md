@@ -220,7 +220,7 @@ table.action.attacker // Same as actor, but only defined on attacks
 table.rolls.action.hopeDie.value // e.g. 4
 table.rolls.action.fearDie.value // e.g. 2
 table.rolls.damage.addDie({ name: 'Fire', die: 'd4' }) // Add a die to the damage roll
-table.rolls.damage.static[0] // e.g. { name: 'Ice', value: 2, die: undefined }
+table.rolls.damage.statics[0] // e.g. { name: 'Ice', value: 2 }
 table.rolls.other.Parry // Dynamic extra rolls
 
 // All entities on the board
@@ -239,6 +239,10 @@ table.me.rangeFromTarget // e.g. 'melee' or 'far'
 // Feature local state
 table.feature.set('timesUsed', 3) // Remember something across turns
 table.feature.get('timesUsed') // e.g. 3
+
+// Automatic dice rolling (for inevitable mechanics — not player choices)
+table.rollDie('d6') // Roll 1d6, returns the face value (e.g. 4)
+table.rollDie('2d8') // Roll 2d8, returns the sum
 
 // Chip local state (only available via the `chip` argument in `onUse`)
 chip.isOn // True if the current toggle chip is active
@@ -304,8 +308,8 @@ The `placements` array tells the engine where in the UI (and when in the Action 
 - `'statblock'`: The chip appears in the character's core statblock (e.g., next to their Armor or Experiences).
 - `'create'`: The chip appears in the character editor during the **Character Creation** phase. This is useful for features that require a choice (like picking a beastform) and can render as a dropdown or selection UI.
 - `'intent'`': The chip appears during the **Intent** phase, *before* dice are rolled. 
-- `'reviewAction'`: The chip appears during the **Review Action** phase, *after* dice are rolled but *before* the engine applies damage thresholds to calculate HP/Stress loss. This is for modifying raw damage values (e.g., halving incoming physical damage).
-- `'reviewOutcome'`: The chip appears during the **Review Outcome** phase, *after* dice are rolled and *after* damage thresholds have converted raw damage into HP/Stress loss effects.
+- `'reviewAction'`: The chip appears during the **Review Action** phase, *after* dice are rolled but *before* the engine applies damage thresholds to calculate HP/Stress loss. Use this for: rerolling dice (e.g. spending Hope to reroll the Hope Die), adding extra damage dice, modifying raw damage values (e.g. halving incoming physical damage before thresholds), temporary Evasion reactions, and movement/positioning reactions. In short: if your chip reacts to the roll *result* but changes something *before* HP boxes are marked, it is `reviewAction`.
+- `'reviewOutcome'`: The chip appears during the **Review Outcome** phase, *after* dice are rolled and *after* damage thresholds have already converted raw damage into HP/Stress loss effects. Use this **only** when the feature reduces (or otherwise modifies) the final number of HP or Stress *boxes* that will be marked — e.g., "mark 1 fewer Hit Point" or "mark 2 Stress instead of 1 HP". If you are not reading `e.stat === 'currentHP'` or `e.stat === 'currentStress'` effects, you almost certainly want `reviewAction` instead.
 
 ### 3.3 Costs, Frequencies, and Lifting
 
@@ -464,6 +468,8 @@ export const ThickSkin = {
 
 *(Note: If a feature requires the player to spend Hope to reduce damage, that is a **Chip** with `placements: ['reviewAction']` or `placements: ['reviewOutcome']`, not a Hook! Hooks are only for automatic, inevitable changes).*
 
+> **Scoping effects to the right target:** `table.action.effects` contains entries for *every* entity affected by the action (the target, the attacker, and any bystanders). Always check `e.target?.instanceId` before mutating an effect. For attacker-perspective features ("when you deal damage…"), scope to `table.action?.target?.instanceId`; for defender-perspective features ("when you take damage…"), scope to `table.me?.instanceId`. Implementation detail and rule ID: **CONV-026** in `docs/v2-code-conventions.md`.
+
 ### 4.5 Reacting to Effects (onResolve)
 
 During the Resolve phase, the engine has mutated the world. `table.action?.effects` contains exactly what happened (e.g., `{ stat: 'currentHP', target: Actor, amount: 1 }`).
@@ -487,7 +493,52 @@ export const Lifestealing = {
 }
 ```
 
-### 4.6 Bridging Chips and Hooks
+### 4.6 Automatic Dice Rolls in Hooks (`table.rollDie`)
+
+Some features automatically roll a die as part of their effect — not as a player choice, but as an *inevitable mechanic*. For these cases, use `table.rollDie(notation)`.
+
+```javascript
+export const Unshakable = {
+  name: "Unshakable",
+  description: "When you would mark a Stress, roll a d6. On a result of 6, don't mark it.",
+  hooks: {
+    onReviewOutcome(table) {
+      // Find a pending stress effect targeting me
+      const stressEffect = table.action?.effects?.find(
+        (e) =>
+          e.stat === 'currentStress' &&
+          e.target?.instanceId === table.me?.instanceId &&
+          e.amount > 0
+      );
+      if (!stressEffect) return;
+
+      // Roll the d6 — the result is synchronous
+      const roll = table.rollDie('d6');
+      if (roll === 6) {
+        stressEffect.amount = 0; // Cancel the stress marking
+      }
+    },
+  },
+};
+```
+
+**Supported notation:** `'dN'` (e.g. `'d6'`, `'d20'`) or `'NdM'` (e.g. `'2d8'`). Multi-die notations return the sum.
+
+**Testability:** In tests, inject a deterministic RNG via `_rng` in the game state (passed to `runReviewOutcome` / `mockTable` / `mockGameState`):
+
+```javascript
+// Force the d6 to roll a 6
+runReviewOutcome(Unshakable, { _rng: () => 5 / 6, ... });
+
+// Force the d6 to roll a 1
+runReviewOutcome(Unshakable, { _rng: () => 0, ... });
+```
+
+**When to use this vs. a Chip:** Use `table.rollDie()` only for *automatic, inevitable* rolls (no player choice). If the player needs to decide whether to roll (e.g. "spend 1 Hope to roll a d6"), use a Chip with `onUse` calling `table.rollDie()`.
+
+---
+
+### 4.7 Bridging Chips and Hooks
 
 Sometimes a feature requires a player choice (a Chip) that changes what happens after the roll (a Hook). 
 
@@ -612,7 +663,12 @@ passiveStatMods: {
 
 #### `passiveStatMods`
 
-An object containing static modifiers to the character's core attributes. These are added together across all active features.
+An object containing modifiers to the character's core attributes. These are added together across all active features.
+
+Each value can be either a **static number** or a **function** for values that depend on runtime state. Functions receive two arguments: `(table, feature)` — the current Game Table Snapshot and the feature object itself.
+
+- `(table) => number` — scales with game state (e.g., Proficiency, level)
+- `(table, self) => number` — scales with per-instance weapon data (e.g., `self._weaponTier` for weapon properties)
 
 ```javascript
 passiveStatMods: {
@@ -641,6 +697,33 @@ passiveStatMods: {
   numLongRestSlots: 1,       // Extra long-rest downtime move slots
   numLongMovesInShortRest: 1 // Short-rest slots that may use long-rest move list
 }
+
+// Example: dynamic value scaling with Proficiency
+passiveStatMods: {
+  majorThreshold: (table) => table.me?.proficiency ?? 1,
+  severeThreshold: (table) => table.me?.proficiency ?? 1,
+}
+
+// Example: tier-varying weapon property (e.g. Barrier)
+passiveStatMods: {
+  armorScore: (table, self) => (self?._weaponTier ?? 1) + 1,
+  evasion: -1,
+}
+```
+
+**Weapon property context fields** — when a `passiveStatMods` function runs for a weapon property feature, the `self` object carries these fields injected by the engine:
+
+- `self._weaponId` *(string)*: The ID of the source weapon. Use this with `table.me.weapons` to look up the weapon object and read its tier, range, etc.
+- `self._weaponFeatureText` *(string | undefined)*: The raw feature text from the weapon's SRD entry (e.g. `"+3 to Armor Score; -1 to Evasion"`). Available as a last-resort fallback.
+
+Prefer reading tier via `table.me.weapons` rather than any field on `self`:
+
+```javascript
+// ✓ Preferred — reads tier from the live weapon object
+armorScore: (table, self) => {
+  const weapon = table.me?.weapons?.find((w) => w.id === self?._weaponId);
+  return (weapon?.tier ?? 1) + 1;
+},
 ```
 
 #### `virtualWeapons`
@@ -657,12 +740,44 @@ virtualWeapons: [
     range: "melee",
     damage: "d8",
     description: "Your natural claws.",
-    // Virtual weapons can also have their own hooks and chips!
-    chips: [ ... ],
+    // Virtual weapons can also have their own hooks!
     hooks: { ... }
   }
 ]
 ```
+
+**Activation costs:** If the SRD requires the player to spend a resource to use the weapon (e.g. "Mark a Stress to use your tongue"), declare the cost directly on the virtual weapon object using the same cost properties you would use on a chip:
+
+```javascript
+virtualWeapons: [
+  {
+    name: "Long Tongue",
+    trait: "finesse",
+    range: "close",
+    damage: "d12",
+    stressCost: 1,   // SRD: "Mark a Stress to use your tongue as a weapon"
+  }
+]
+```
+
+Supported cost properties on virtual weapons: `hopeCost`, `stressCost`, `armorMark`, `armorClear`. The engine automatically deducts these when the weapon is used. Do **not** add a `chips` array inside a virtual weapon object to express a cost — that pattern is not documented and not supported.
+
+**`multiTarget: true`** — Set this when the SRD says the attack can target "a target or group of targets". The engine will enable multi-target selection in the UI so the player can choose one or more targets before the attack resolves.
+
+```javascript
+virtualWeapons: [
+  {
+    name: "Elemental Breath",
+    trait: "instinct",
+    range: "veryClose",
+    damage: "d8",
+    damageType: "magic",
+    multiTarget: true,   // SRD: "against a target or group of targets"
+  }
+]
+```
+
+> **Important:** Only include `damage` when the SRD explicitly states a damage expression (e.g. "deals **d8** magic damage"). If the SRD describes an attack that only applies a condition or narrative effect on success, omit `damage` entirely — do not invent a value.
 
 #### `advantageTriggers`
 
@@ -674,6 +789,20 @@ advantageTriggers: [
   when((table) => table.action?.range === 'melee', "melee attacks against larger foes")
 ]
 ```
+
+**Rule:** If the SRD text specifies a particular trait (e.g. "Agility Rolls", "Presence Rolls"), you **must** wrap the trigger string in a `when()` predicate that checks `table.action?.trait === 'TraitName'`. Without the guard the engine will offer the Advantage chip on every roll, regardless of trait.
+
+```javascript
+// SRD: "You have advantage on Agility Rolls that involve balancing and climbing."
+advantageTriggers: [
+  when(
+    (table) => table.action?.trait === 'Agility',
+    'Agility Rolls that involve balancing and climbing'
+  )
+]
+```
+
+Plain narrative conditions (e.g. "rolls to intimidate hostile creatures") that describe *what* you are doing rather than *which trait* you are rolling are fine as plain strings.
 
 #### `damageAffinities`
 
@@ -698,6 +827,21 @@ movementModes: [
   when((table) => table.feature.get('wingsActive'), 'fly')
 ]
 ```
+
+#### `rangeOverrides`
+
+A plain object that remaps range band names. When this character uses a weapon, ability, spell, or feature, any stated range that matches a key in `rangeOverrides` is treated as the corresponding value instead. The engine and map system use this when computing target eligibility.
+
+```javascript
+// Treat any Melee-range weapon or feature as Very Close range
+rangeOverrides: { melee: 'veryClose' }
+```
+
+Valid range band names (both keys and values): `'melee'`, `'veryClose'`, `'close'`, `'far'`, `'veryFar'`.
+
+If multiple active features each declare `rangeOverrides`, their maps are merged. In the rare case of a conflict on the same key, the last-loaded feature wins.
+
+`applyDeclarativeFeatures` returns the merged `rangeOverrides` object in its result. Consumers (target-selection logic, weapon card display) apply it by looking up a weapon's `range` in the map and using the value when present, or the original range when absent.
 
 ### B. Hooks and Chips Reference
 
@@ -734,16 +878,46 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 
 - `name` *(string)*: The title of the chip. If omitted, defaults to the Feature's name.
 - `isToggle` *(boolean)*: If `true`, the chip acts as an on/off switch. The `onUse` function fires immediately on toggle, and you can check `chip.isOn` to apply or remove effects.
+- `isSelect` *(function)*: If provided, the chip renders as a dropdown (`<select>`) instead of a button. Must be a function `(table) => [{ id, name, description? }, ...]` that returns the list of options to display. When the player confirms a selection, the engine stores the chosen id in chip state (accessible via `chip.get('selectedId')`) and then calls `onUse`. Use this for permanent one-time choices made during character creation — e.g. picking an Experience to receive a permanent bonus.
+
+```javascript
+// Example: a create-time choice that grants a permanent bonus
+{
+  description: 'Choose an Experience to gain +1.',
+  placements: ['create'],
+  isSelect: (table) => table.me?.experiences.map(e => ({ id: e.id, name: e.name })),
+  onUse: (table, chip) => {
+    const selectedId = chip.get('selectedId');
+    if (selectedId) table.me?.addExperienceBonus(selectedId, 1);
+  },
+}
+```
 
 **Resource Costs & Frequencies:**
 When these properties are defined on a chip, the engine automatically handles deducting the cost or tracking the usage cycle when the GM approves the action.
 
-- `hopeCost` *(number)*: Amount of Hope to spend.
-- `stressCost` *(number)*: Amount of Stress to mark.
-- `armorMark` *(number)*: Number of Armor slots to mark.
-- `armorClear` *(number)*: Number of Armor slots to clear.
+- `hopeCost` *(number | `(table) => number`)*: Amount of Hope to spend. Can be a function evaluated at deduction time.
+- `stressCost` *(number | `(table) => number`)*: Amount of Stress to mark. Can be a function evaluated at deduction time.
+- `armorMark` *(number | `(table) => number`)*: Number of Armor slots to mark. Can be a function evaluated at deduction time.
+- `armorClear` *(number | `(table) => number`)*: Number of Armor slots to clear. Can be a function evaluated at deduction time.
 - `frequency` *(string)*: Limits how often the chip can be used. Valid values: `'session'`, `'shortRest'`, `'longRest'`, or `'rest'` (resets on both short and long rests).
-- `temporaryStatMods` *(object)*: A declarative object of stat boosts to apply for the duration of the current action loop when this chip is used (e.g., `{ evasion: 2 }`).
+- `temporaryStatMods` *(object)*: A declarative object of stat boosts to apply for the duration of the current action loop when this chip is used. Each value can be a static number (e.g., `{ evasion: 2 }`) or a function `(table) => number` for dynamic boosts (e.g., `{ evasion: (table) => table.me?.armor ?? 0 }`). Function values are resolved at activation time and cached so toggle-off removes the same amount.
+
+**Variable costs:** When `stressCost` (or any cost property) is a function, the engine calls it with the current `table` at the moment the cost is deducted (after GM approval). The typical pattern is for the chip's `onUse` to store the player's chosen amount in feature state, and for the cost function to read it back:
+
+```javascript
+{
+  description: "Mark Stress to bounce to that many targets.",
+  placements: ['reviewAction'],
+  stressCost: (table) => table.feature.get('bounceTargets') ?? 1,
+  onUse: (table, chip) => {
+    const count = table.feature.get('bounceTargets') ?? 1;
+    // queue count additional attack effects…
+  }
+}
+```
+
+Because `table.feature.set()` updates the snapshot's in-memory state synchronously, any value stored by `onUse` is immediately visible to a subsequent `stressCost` function call on the same snapshot.
 
 *(Note: If a feature only has a single chip, you can place these properties directly at the root of the feature object to define the "Default Card Action".)*
 
@@ -775,9 +949,40 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `isCharacter` / `isAdversary` *(boolean)*: Entity type flags.
 - `isActing` *(boolean)*: True if this actor initiated the current Action Loop.
 - `isTargeted` *(boolean)*: True if this actor is one of the targets of the current Action Loop.
-- `currentHP`, `maxHP`, `currentStress`, `maxStress`, `hope`, `armor` *(numbers)*: Current resource values.
+- `currentHP`, `maxHP`, `currentStress`, `maxStress`, `hope`, `armor`, `maxArmor` *(numbers)*: Current resource values. `armor` is the number of currently available (unmarked) armor slots; `maxArmor` is the total number of slots.
+- `traits` *(object)*: The character's six trait scores as an object: `{ agility, strength, finesse, instinct, presence, knowledge }`. Each value is a number (e.g. `table.me.traits.agility`). Defaults to `{}` for adversaries (traits not applicable).
+- `proficiency` *(number)*: The character's current Proficiency score (base 1, increases with advancement picks). Defaults to `1` when not explicitly set on the element.
+- `level` *(number)*: The character's level (typically 1–10). Distinct from proficiency — use this for SRD effects keyed to level (e.g. damage bonuses, token caps). Defaults to `1` when not explicitly set on the element.
+- `experiences` *(array of `{ id, name }`)*: The character's experience list. Use in `isSelect` callbacks to populate a picker for create-time choices. Also use to detect whether the player used an experience on the current roll: when a player applies an experience during the Intent phase, the engine adds `{ name: experienceName, value: 2 }` to `table.rolls.action.statics`. Cross-referencing `table.me.experiences` names against `table.rolls.action.statics` tells you whether any experience was used:
+
+  ```javascript
+  const expNames = new Set((table.me?.experiences || []).map(e => e.name));
+  const usedExperience = (table.rolls?.action?.statics || []).some(s => expNames.has(s.name));
+  ```
+- `primaryWeapon` *(object | null)*: The character's primary weapon, or `null` if none. See Weapon Object below.
+- `secondaryWeapon` *(object | null)*: The character's secondary weapon, or `null` if none.
+- `weapons` *(array)*: All equipped weapons (primary + secondary) plus any pre-computed virtual weapons. Each entry is a Weapon Object. Use `weapons.find(w => w.id === self._weaponId)` inside a weapon-property `passiveStatMods` function to look up the specific weapon that owns the feature.
+
+**Weapon Object** — each entry in `primaryWeapon`, `secondaryWeapon`, and `weapons` has:
+- `id` *(string | null)*: The SRD weapon ID.
+- `name` *(string)*: The weapon's display name.
+- `tier` *(number)*: The weapon's tier (1–4). Always a number regardless of how the raw data stored it.
+- `range` *(string | null)*: The weapon's effective range (after any `rangeOverrides` are applied). Values: `'melee'`, `'veryClose'`, `'close'`, `'far'`, `'veryFar'`.
+- `trait` *(string | null)*: The trait used to attack with this weapon.
+- `damage` *(string | null)*: The damage die expression (e.g. `'d8'`).
+- `features` *(string[])*: Names of weapon features attached to this weapon.
+
 - `rangeFromTarget` *(string)*: Distance to `table.action.target`. Returns one of: `'melee'` (≤5'), `'veryClose'` (≤10'), `'close'` (≤30'), `'far'` (≤100'), `'veryFar'` (≤300'), or `null` if positions are unknown.
 - `rangeFrom(actor)` *(method → string | null)*: Same band strings as `rangeFromTarget`, measured from this actor to another (e.g., `table.me.rangeFrom(table.action.actor)`). Use this instead of reading raw token coordinates when the reference actor is not the action target — e.g., checking whether an ally is within Close range of you.
+- `lastPosition` *(object | null)*: The actor's position immediately before their most recent `move`. Returns `null` when no prior position is recorded (e.g., the actor has not moved this session, or their token is not on the map). When not `null`, exposes the same range interface as the actor itself:
+  - `rangeFrom(otherActor)` *(method → string | null)*: Range band from this actor's **previous** position to another actor's current position.
+  - `rangeFromTarget` *(getter → string | null)*: Range band from this actor's **previous** position to the current action target's position.
+
+  ```javascript
+  // SRD: "move from Far or Very Far range into Melee range"
+  const lastRange = table.me.lastPosition?.rangeFrom(table.action?.target);
+  const wasFarAway = lastRange === 'far' || lastRange === 'veryFar';
+  ```
 
 **Write Methods (Queued Mutations):**
 
@@ -786,7 +991,20 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `spendHope(amount)`, `gainHope(amount)`
 - `markArmor(amount)`, `clearArmor(amount)`
 - `addCondition(conditionName)`, `removeCondition(conditionName)`
-- `actionLoop(title, description)`: Triggers a brand new Action Loop (useful for features that grant free attacks or actions).
+- `addExperienceBonus(experienceId, amount)`: Queues a permanent +`amount` bonus to the experience with the given id. Typically called from a `create`-phase `isSelect` chip's `onUse` when the player makes their selection.
+- `actionLoop(title, description, opts?)`: Triggers a brand new Action Loop (useful for features that grant free attacks or actions). Optional `opts` fields:
+  - `trait` *(string)*: The trait name to roll (e.g. `'Instinct'`). When provided, the engine scopes the roll to that trait.
+  - `difficulty` *(number)*: The DC for the roll. When provided, the engine evaluates success/failure against this threshold.
+
+  ```js
+  // Plain action loop
+  table.me.actionLoop("Charge Up", "Gaining charges.");
+  // Trait roll at a specific DC
+  table.me.actionLoop("Fungril Network", "Communicate across any distance on success.", { trait: 'Instinct', difficulty: 12 });
+  ```
+
+- `restrictMovement(reason?)` *(method)*: Prevents this actor's token from being manually dragged on the battle map. See "Movement and Positioning" below for details and usage pattern.
+- `allowMovement()` *(method)*: Lifts a restriction set by `restrictMovement()`.
 
 **Movement and Positioning:**
 
@@ -794,6 +1012,28 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 *Example:* `table.action.target.move(t => t.action.target.rangeFrom(t.action.attacker) !== 'melee', "Push target out of melee")`  
 *Example (end at Very Close):* `table.me.move(t => t.me.rangeFrom(t.action.target) === 'veryClose', "Leap to Very Close")` — requires tokens on the map; if positions are unknown, `rangeFrom` is `null` and no valid placement.  
 When the SRD lets the player choose **who** moves (e.g. you or the target), add **two** `when()` chips with distinct `name` strings (e.g. `Kick (push target)` vs `Kick (leap back)`) so each option queues a single `move` on the correct actor. For predicates inside `move`, see §0.4.
+
+- `restrictMovement(reason?)`: Prevents this actor's token from being manually dragged on the battle map. `reason` is an optional string shown to the player when they attempt to move the token (e.g. `"Can't move — retracted into shell."`). The restriction persists until `allowMovement()` is called. This is the correct implementation for SRD text like "you can't move" or "this character cannot move this turn." Queue the restriction inside a toggle chip's `onUse` so it lifts automatically when the toggle is turned off.
+
+- `allowMovement()`: Lifts a movement restriction previously set by `restrictMovement()`. Call this in the `else` branch of a toggle chip's `onUse` (when the toggle is turned off) to restore the actor's ability to move.
+
+```javascript
+// Example: toggle chip that prevents movement while active
+chips: [{
+  description: "Retract into your shell — you can't move while retracted.",
+  placements: ['card'],
+  stressCost: 1,
+  isToggle: true,
+  onUse(table, chip) {
+    table.feature.set('retracted', chip.isOn);
+    if (chip.isOn) {
+      table.me.restrictMovement("Can't move — retracted into shell.");
+    } else {
+      table.me.allowMovement();
+    }
+  },
+}]
+```
 
 **Inventory and Loadout:**
 
@@ -870,24 +1110,83 @@ This requires tokens to be placed on the map. When positions are unknown, `range
 Contains information about the dice involved in the current Action Loop. *Note: Undefined for narrative or rest loops that don't involve dice.*
 
 **Roll Objects (`table.rolls.action`, `table.rolls.damage`, etc.):**
-All roll objects share a common set of methods for modifying their totals.
+All roll objects share a common set of read properties and write methods.
+
+**Read Properties (available on any roll object):**
+
+- `dice` *(array of `{ name, die, value? }`)*: All dynamic dice added to this roll. Each entry has:
+  - `name` *(string)*: A label for the die (e.g. `'Reliable'`, `'Fire'`). Used for display and to target removal via `removeDie(name)`.
+  - `die` *(string)*: The die notation that will be rolled (e.g. `'d6'`, `'2d8'`).
+  - `value` *(number | undefined)*: The resolved face total for this entry — populated after the dice have been rolled (Review/Resolve phases). `undefined` during `onIntent`.
+  - `_advantage` *(boolean | undefined)*: Set to `true` for advantage dice added via `addAdvantageDie()`.
+  - `_disadvantage` *(boolean | undefined)*: Set to `true` for disadvantage dice added via `addDisadvantageDie()`.
+- `advantageDice` *(array)*: A filtered array of all dice in the pool that have `_advantage: true`.
+- `disadvantageDice` *(array)*: A filtered array of all dice in the pool that have `_disadvantage: true`.
+
+- `statics` *(array of `{ name, value }`)*: All flat bonuses added to this roll. Each entry has:
+  - `name` *(string)*: A label for the modifier (e.g. `'Reliable'`, `'Proficiency'`).
+  - `value` *(number)*: The flat number added to the roll total.
+
+```javascript
+// Check whether a bonus has already been added (avoid double-adding)
+const hasFireBonus = table.rolls?.damage?.dice.some(d => d.name === 'Fire');
+
+// Sum all flat modifiers currently on the roll
+const totalStatic = table.rolls?.damage?.statics.reduce((sum, s) => sum + s.value, 0);
+
+// Inspect the resolved value of a specific die during Review
+const fireDie = table.rolls?.damage?.dice.find(d => d.name === 'Fire');
+// fireDie?.value is the rolled face (undefined if still in onIntent)
+```
+
+**Write Methods (available on any roll object):**
 
 - `addStatic({ name, value })` *(method)*: Adds a flat modifier to the roll total.
 - `addDie({ name, die, value? })` *(method)*: Adds dice to the roll. Use `die` for the **notation** the engine will roll or display: a single die (`'d6'`, `'d8'`) or a full expression (`'2d6'`, `'1d4'`). Omit `value` until the die has been rolled and you are recording the **resolved total** for that entry—do **not** use `value` to mean “how many dice” (e.g. extra **2d6** damage is `die: '2d6'`, not `die: 'd6', value: 2`).
 - `addAdvantageDie(name)` *(method)*: Adds an advantage die (d6) to the roll.
-- `removeDie(name)` *(method)*: Removes a previously added die.
+- `addDisadvantageDie(name)` *(method)*: Adds a disadvantage die (d6) to the roll. Use this when a feature causes a roll to be made with disadvantage (e.g., "attacks against you have disadvantage", "you have disadvantage on action rolls").
+- `removeDie(name)` *(method)*: Removes a previously added die by name.
+- `removeAdvantageDie(name)` *(method)*: Removes a previously added advantage die by name.
+- `removeDisadvantageDie(name)` *(method)*: Removes a previously added disadvantage die by name. Use this for features that grant immunity to disadvantage (e.g., "You ignore disadvantage on Agility Rolls"):
+  ```javascript
+  hooks: {
+    onIntent: when(
+      (table) => table.action?.trait === 'Agility',
+      (table) => {
+        (table.rolls?.action?.disadvantageDice ?? []).forEach((dd) => {
+          table.rolls?.action?.removeDisadvantageDie(dd.name);
+        });
+      }
+    )
+  }
+  ```
+- `setOutcome(outcome)` *(method, action roll only)*: Forces the roll result type to the given outcome regardless of which die dominates. Valid values: `'hope'`, `'fear'`. Use this for features that say "change it into a roll with Hope/Fear instead" (e.g. Fearless).
 - `reroll()` *(method)*: Flags all dice in this roll to be rerolled.
 
 **Action Roll Specifics (`table.rolls.action`):**
 
-- `hopeDie`, `fearDie` *(Die Object)*: The d12s rolled.
-- `isSuccess` *(boolean)*: True if the total meets or beats the difficulty (available during Review/Resolve).
-- `isCritical` *(boolean)*: True if the hope and fear dice matched.
+- `hopeDie` *(Die Object | null)*: The Hope d12. `null` before the action roll exists.
+- `fearDie` *(Die Object | null)*: The Fear d12. `null` before the action roll exists.
+- `isSuccess` *(boolean | null)*: True if the total meets or beats the difficulty (available during Review/Resolve). `null` during `onIntent`.
+- `isCritical` *(boolean | null)*: True if the Hope and Fear dice showed the same face value. `null` during `onIntent`.
 
-**Die Objects:**
+**Die Objects (`hopeDie`, `fearDie`):**
 
-- `value` *(number)*: The face value of the rolled die (undefined during `onIntent`).
-- `reroll()` *(method)*: Flags the die to be rerolled.
+- `value` *(number | undefined)*: The face value of the rolled die. `undefined` during `onIntent` (before the roll), populated during Review and Resolve phases.
+- `reroll()` *(method)*: Flags this specific die to be rerolled (e.g. `table.rolls?.action?.hopeDie.reroll()`).
+- `setDie(die)` *(method)*: Changes the die notation for this specific die (e.g. `table.rolls?.action?.hopeDie.setDie('d20')`). Use this for features that replace the standard d12 with a different die.
+
+```javascript
+// Read the Hope die's rolled value (only meaningful after the roll)
+const hopeVal = table.rolls?.action?.hopeDie?.value; // undefined during onIntent, number during Review
+
+// Check if both duality dice rolled the same face (Critical)
+const isCrit = table.rolls?.action?.isCritical; // true/false/null
+
+// Check if any damage die rolled its maximum face
+const damageDice = table.rolls?.damage?.dice ?? [];
+const anyMaxD8 = damageDice.some(d => d.die === 'd8' && d.value === 8);
+```
 
 #### C.5 Board Queries (`table.actors`, `table.characters`, `table.adversaries`, `table.environments`)
 
@@ -900,6 +1199,16 @@ Features and Chips can store temporary state to remember things across phases or
 - `table.feature.set(key, value)` / `table.feature.get(key)`: State scoped to the feature.
 - `chip.set(key, value)` / `chip.get(key)`: State scoped to a specific chip (only accessible inside `onUse`).
 - `chip.isOn` *(boolean)*: True if the chip is a toggle and is currently active.
+
+#### C.7 Automatic Dice Rolling (`table.rollDie`)
+
+For features that automatically roll a die as part of an inevitable mechanic (no player choice required), use `table.rollDie(notation)`.
+
+- `table.rollDie(notation)` *(method → number)*: Rolls the die(s) described by `notation` and returns the total. A `rollDie` mutation is queued for auditing/logging. Supported formats: `'dN'` (e.g. `'d6'`, `'d20'`) or `'NdM'` (e.g. `'2d8'`); multi-die expressions return the sum.
+
+For **testability**, inject a deterministic RNG by passing `_rng: () => someValue` in the game state (via `runReviewOutcome`, `mockGameState`, etc.). The function receives no arguments and must return a number in `[0, 1)`.
+
+**Use `table.rollDie()` only for automatic rolls.** If the feature lets the player choose whether to roll, implement it as a Chip with `onUse` calling `table.rollDie()`.
 
 ---
 

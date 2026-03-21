@@ -14,10 +14,10 @@ export const FungrilNetwork = {
         'Make an Instinct Roll (12) to communicate with other Fungril across any distance.',
       placements: ['card'],
       onUse(table) {
-        // Trigger an action loop for the Instinct roll
         table.me.actionLoop(
           'Fungril Network',
-          'Using mycelial array to communicate with other Fungril. Make an Instinct Roll (DC 12).'
+          'Using mycelial array to communicate with other Fungril. On a success, communicate across any distance.',
+          { trait: 'Instinct', difficulty: 12 }
         );
       },
     },

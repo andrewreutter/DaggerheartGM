@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  runReviewOutcome,
+  runReviewAction,
   mockCharacter,
   mockAdversary,
   mockRoll,
@@ -15,7 +15,7 @@ describe('Internal Compass', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    const result = runReviewOutcome(InternalCompass, {
+    const result = runReviewAction(InternalCompass, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
       action: {
@@ -30,14 +30,14 @@ describe('Internal Compass', () => {
 
     expect(result.chips).toHaveLength(1);
     expect(result.chips[0]._featureName).toBe('Internal Compass');
-    expect(result.chips[0].placements).toContain('reviewOutcome');
+    expect(result.chips[0].placements).toContain('reviewAction');
   });
 
   it('does not show chip when Hope Die value is not 1', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    const result = runReviewOutcome(InternalCompass, {
+    const result = runReviewAction(InternalCompass, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
       action: {
@@ -57,7 +57,7 @@ describe('Internal Compass', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
-    const result = runReviewOutcome(InternalCompass, {
+    const result = runReviewAction(InternalCompass, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
       action: {

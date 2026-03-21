@@ -4,7 +4,7 @@
  * SRD source: daggerheart-srd/ancestries/Orc.md
  */
 
-import { when, isTargeted } from '../engine/when.js';
+import { when, isActing, isTargeted } from '../engine/when.js';
 
 export const Sturdy = {
   name: 'Sturdy',
@@ -13,14 +13,9 @@ export const Sturdy = {
   hooks: {
     onIntent: when(
       isTargeted,
+      (table) => table.me?.maxHP - table.me?.currentHP === 1,
       (table) => {
-        // Only applies when I have exactly 1 HP remaining
-        return table.me?.currentHP === 1;
-      },
-      (table) => {
-        // Add disadvantage by subtracting a d6 from the attack roll
-        // This approximates disadvantage (roll twice, take lower)
-        table.rolls?.action?.addDie({ name: 'Sturdy (disadvantage)', die: 'd6', value: -1 });
+        table.rolls?.action?.addDisadvantageDie('Sturdy');
       }
     ),
   },
@@ -32,7 +27,7 @@ export const Tusks = {
     'When you succeed on an attack against a target within Melee range, you can spend a Hope to gore the target with your tusks, dealing an extra 1d6 damage.',
   chips: [
     when(
-      (table) => table.me?.isActing === true,
+      isActing,
       (table) => {
         // Only available on successful melee attacks
         return (
@@ -44,7 +39,7 @@ export const Tusks = {
       },
       {
         description: 'Spend 1 Hope to deal an extra 1d6 damage.',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         hopeCost: 1,
         onUse(table) {
           table.rolls?.damage?.addDie({ name: 'Tusks', die: 'd6' });

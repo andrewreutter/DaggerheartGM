@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { FelineInstincts } from '../../../../src/features-v2/ancestries/Katari.js';
-import { runReviewOutcome, mockTable, mockChipState } from '../helpers.js';
+import { runReviewAction, mockTable, mockChipState } from '../helpers.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
 
 describe('Feline Instincts', () => {
   it('shows a chip on Agility roll', () => {
-    const result = runReviewOutcome(FelineInstincts, {
+    const result = runReviewAction(FelineInstincts, {
       action: {
         type: 'trait',
         actorInstanceId: 'char-1',
@@ -28,7 +28,7 @@ describe('Feline Instincts', () => {
   });
 
   it('does not show chip on non-Agility roll', () => {
-    const result = runReviewOutcome(FelineInstincts, {
+    const result = runReviewAction(FelineInstincts, {
       action: {
         type: 'trait',
         actorInstanceId: 'char-1',
@@ -49,7 +49,7 @@ describe('Feline Instincts', () => {
   });
 
   it('does not show chip when not acting', () => {
-    const result = runReviewOutcome(FelineInstincts, {
+    const result = runReviewAction(FelineInstincts, {
       action: {
         type: 'trait',
         actorInstanceId: 'char-2',
@@ -70,7 +70,7 @@ describe('Feline Instincts', () => {
   });
 
   it('rerolls hope die when chip is used', () => {
-    const result = runReviewOutcome(FelineInstincts, {
+    const result = runReviewAction(FelineInstincts, {
       action: {
         type: 'trait',
         actorInstanceId: 'char-1',

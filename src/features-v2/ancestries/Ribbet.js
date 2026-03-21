@@ -6,9 +6,7 @@
 
 export const Amphibious = {
   name: 'Amphibious',
-  description:
-    'You can breathe and move naturally underwater.',
-  // Purely narrative feature - no mechanical effect
+  description: 'You can breathe and move naturally underwater.', // Purely narrative feature - no mechanical effect
 };
 
 export const LongTongue = {
@@ -21,18 +19,7 @@ export const LongTongue = {
       trait: 'finesse',
       range: 'close',
       damage: 'd12',
-      description: 'Mark 1 Stress to use your tongue as a weapon.',
-      chips: [
-        {
-          description: 'Mark 1 Stress to use your tongue.',
-          placements: ['card'],
-          stressCost: 1,
-          onUse(table) {
-            // The stress cost is handled automatically by the chip system
-            // The virtual weapon is already available, this chip just confirms usage
-          },
-        },
-      ],
+      stressCost: 1,
     },
   ],
 };

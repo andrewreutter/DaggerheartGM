@@ -12,10 +12,10 @@ export const FelineInstincts = {
   chips: [
     when(
       isActing,
-      (table) => table.action?.trait === 'Agility' && table.rolls?.action?.hopeDie,
+    (table) => table.action?.trait === 'Agility',
       {
         description: 'Spend 2 Hope to reroll your Hope Die.',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         hopeCost: 2,
         onUse: (table) => {
           table.rolls?.action?.hopeDie?.reroll();
@@ -33,7 +33,6 @@ export const RetractingClaws = {
       name: 'Retracting Claws',
       trait: 'agility',
       range: 'melee',
-      damage: 'd6',
       description: 'Your natural claws.',
       hooks: {
         onResolve: when(

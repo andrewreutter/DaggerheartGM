@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
-import { mockGameState, mockCharacter, mockAdversary } from '../helpers.js';
+import { mockGameState, mockCharacter, mockAdversary, mockRoll } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // buildTableSnapshot
@@ -258,6 +258,66 @@ describe('Roll write methods (mutation queueing)', () => {
       expect.objectContaining({ type: 'removeRollDie', payload: { rollKey: 'action', name: 'Aim' } })
     );
   });
+
+  it('exposes advantageDice and disadvantageDice getters', () => {
+    const table = buildTableSnapshot(mockGameState({
+      rolls: mockRoll({ actionDice: [
+        { name: 'Stumble', die: 'd6', _disadvantage: true },
+        { name: 'Aim', die: 'd6', _advantage: true },
+        { name: 'Extra', die: 'd6' },
+      ] }),
+    }));
+    expect(table.rolls.action.advantageDice).toHaveLength(1);
+    expect(table.rolls.action.advantageDice[0].name).toBe('Aim');
+    expect(table.rolls.action.disadvantageDice).toHaveLength(1);
+    expect(table.rolls.action.disadvantageDice[0].name).toBe('Stumble');
+  });
+
+  it('removeAdvantageDie queues removeAdvantageDie mutation and removes from local list', () => {
+    const table = buildTableSnapshot(mockGameState({
+      rolls: mockRoll({ actionDice: [
+        { name: 'Aim', die: 'd6', _advantage: true },
+      ] }),
+    }));
+    table.rolls.action.removeAdvantageDie('Aim');
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'removeAdvantageDie', payload: { rollKey: 'action', name: 'Aim' } })
+    );
+    expect(table.rolls.action.advantageDice).toHaveLength(0);
+  });
+
+  it('removeDisadvantageDie queues removeDisadvantageDie mutation and removes from local list', () => {
+    const table = buildTableSnapshot(mockGameState({
+      rolls: mockRoll({ actionDice: [
+        { name: 'Stumble', die: 'd6', _disadvantage: true },
+      ] }),
+    }));
+    table.rolls.action.removeDisadvantageDie('Stumble');
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'removeDisadvantageDie', payload: { rollKey: 'action', name: 'Stumble' } })
+    );
+    expect(table.rolls.action.disadvantageDice).toHaveLength(0);
+  });
+
+  it('setDie queues setDie mutation on hopeDie', () => {
+    const table = buildTableSnapshot(mockGameState());
+    table.rolls.action.hopeDie.setDie('d20');
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'setDie', payload: { rollKey: 'action', dieType: 'hopeDie', die: 'd20' } })
+    );
+  });
+
+  it('setDie queues setDie mutation on fearDie', () => {
+    const table = buildTableSnapshot(mockGameState());
+    table.rolls.action.fearDie.setDie('d6');
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'setDie', payload: { rollKey: 'action', dieType: 'fearDie', die: 'd6' } })
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -467,6 +527,42 @@ describe('table.action helper booleans', () => {
 // Feature state
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// table.me.proficiency
+// ---------------------------------------------------------------------------
+
+describe('table.me.proficiency', () => {
+  it('defaults to 1 when element has no proficiency field', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.proficiency).toBe(1);
+  });
+
+  it('reads proficiency from the element when present', () => {
+    const char = mockCharacter({ instanceId: 'c1', proficiency: 3 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.proficiency).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// table.me.level
+// ---------------------------------------------------------------------------
+
+describe('table.me.level', () => {
+  it('defaults to 1 when element has no level field', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.level).toBe(1);
+  });
+
+  it('reads level from the element when present', () => {
+    const char = mockCharacter({ instanceId: 'c1', level: 7 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.level).toBe(7);
+  });
+});
+
 describe('table.feature (local state)', () => {
   it('get returns undefined for unset keys', () => {
     const table = buildTableSnapshot(mockGameState({ _featureKey: 'MyFeature' }));
@@ -489,5 +585,183 @@ describe('table.feature (local state)', () => {
         payload: { featureKey: 'MyFeature', key: 'pushActive', value: true },
       })
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// table.me.lastPosition
+// ---------------------------------------------------------------------------
+
+describe('table.me.lastPosition', () => {
+  it('is null when _previousPositions is not provided', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.lastPosition).toBeNull();
+  });
+
+  it('is null when _previousPositions has no entry for the owner', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const table = buildTableSnapshot(
+      mockGameState({ activeElements: [char], _ownerInstanceId: 'c1', _previousPositions: {} })
+    );
+    expect(table.me?.lastPosition).toBeNull();
+  });
+
+  it('is null when the previous position has a null tokenX', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char],
+        _ownerInstanceId: 'c1',
+        _previousPositions: { 'c1': { tokenX: null, tokenY: 50 } },
+      })
+    );
+    expect(table.me?.lastPosition).toBeNull();
+  });
+
+  it('rangeFrom returns the correct range band from the previous position', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 0, tokenY: 0 });
+    // Previous position was 50 ft from the adversary → 'far'
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        _previousPositions: { 'c1': { tokenX: 50, tokenY: 0 } },
+      })
+    );
+    const advActor = table.adversaries[0];
+    expect(table.me?.lastPosition?.rangeFrom(advActor)).toBe('far');
+  });
+
+  it('rangeFrom returns veryFar when previous position was more than 100 ft away', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 0, tokenY: 0 });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        _previousPositions: { 'c1': { tokenX: 150, tokenY: 0 } },
+      })
+    );
+    const advActor = table.adversaries[0];
+    expect(table.me?.lastPosition?.rangeFrom(advActor)).toBe('veryFar');
+  });
+
+  it('rangeFrom returns null when the other actor has no token position', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'a1' }); // tokenX/Y default to null
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        _previousPositions: { 'c1': { tokenX: 50, tokenY: 0 } },
+      })
+    );
+    const advActor = table.adversaries[0];
+    expect(table.me?.lastPosition?.rangeFrom(advActor)).toBeNull();
+  });
+
+  it('rangeFromTarget returns the band from previous position to the action target', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 0, tokenY: 0 });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        _previousPositions: { 'c1': { tokenX: 80, tokenY: 0 } },
+        action: {
+          type: 'attack',
+          actorInstanceId: 'c1',
+          targetInstanceIds: ['a1'],
+          trait: 'Agility',
+          range: 'melee',
+          effects: [],
+          appliedEffects: [],
+        },
+      })
+    );
+    // Previous position (80, 0) to target (0, 0) = 80 ft → 'far'
+    expect(table.me?.lastPosition?.rangeFromTarget).toBe('far');
+  });
+
+  describe('table.me.weapons / primaryWeapon / secondaryWeapon', () => {
+    it('returns null for primaryWeapon when element has no weapons', () => {
+      const table = buildTableSnapshot(mockGameState());
+      expect(table.me.primaryWeapon).toBeNull();
+      expect(table.me.secondaryWeapon).toBeNull();
+      expect(table.me.weapons).toEqual([]);
+    });
+
+    it('builds primaryWeapon from element.primaryWeapon with tier as number', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        primaryWeapon: { id: 'w1', name: 'Sword', tier: '2', range: 'melee', trait: 'Agility', damage: 'd8' },
+      });
+      const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
+      expect(table.me.primaryWeapon).toMatchObject({ id: 'w1', name: 'Sword', tier: 2, range: 'melee' });
+    });
+
+    it('derives primaryWeapon from element.weapons[0] when primaryWeapon is absent', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        weapons: [
+          { id: 'w1', name: 'Sword', tier: '1', range: 'melee' },
+          { id: 'w2', name: 'Dagger', tier: '1', range: 'veryClose' },
+        ],
+      });
+      const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
+      expect(table.me.primaryWeapon.id).toBe('w1');
+      expect(table.me.secondaryWeapon.id).toBe('w2');
+      expect(table.me.weapons).toHaveLength(2);
+    });
+
+    it('applies _rangeOverrides to weapon ranges', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        primaryWeapon: { id: 'w1', name: 'Sword', tier: '1', range: 'melee' },
+        _rangeOverrides: { melee: 'veryClose' },
+      });
+      const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
+      expect(table.me.primaryWeapon.range).toBe('veryClose');
+      expect(table.me.weapons[0].range).toBe('veryClose');
+    });
+
+    it('does not override non-matching ranges', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        primaryWeapon: { id: 'w2', name: 'Bow', tier: '1', range: 'close' },
+        _rangeOverrides: { melee: 'veryClose' },
+      });
+      const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
+      expect(table.me.primaryWeapon.range).toBe('close');
+    });
+
+    it('includes pre-computed virtualWeapons in table.me.weapons', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        primaryWeapon: { id: 'w1', name: 'Sword', tier: '1', range: 'melee' },
+        virtualWeapons: [{ id: 'vw1', name: 'Claws', tier: '1', range: 'melee' }],
+      });
+      const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
+      expect(table.me.weapons).toHaveLength(2);
+      expect(table.me.weapons[1].id).toBe('vw1');
+    });
+  });
+
+  it('treats tokenX: 0 as a valid position (CONV-013)', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 0, tokenY: 0 });
+    // Previous position at (0, 8) — should NOT be treated as missing because tokenX is 0
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        _previousPositions: { 'c1': { tokenX: 0, tokenY: 8 } },
+      })
+    );
+    const advActor = table.adversaries[0];
+    // (0,8) to (0,0) = 8 ft → 'veryClose' (would be null if tokenX: 0 were misread as null)
+    expect(table.me?.lastPosition?.rangeFrom(advActor)).toBe('veryClose');
   });
 });

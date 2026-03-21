@@ -202,6 +202,46 @@ describe('activateChip()', () => {
     const table = mockTable();
     expect(() => activateChip(chip, table, makeChipState())).not.toThrow();
   });
+
+  it('resolves function-valued temporaryStatMods on toggle-on and caches for toggle-off', () => {
+    const char = mockCharacter({ instanceId: 'char-1', currentArmor: 4 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const chipState = makeChipState();
+
+    const chip = {
+      isToggle: true,
+      temporaryStatMods: { evasion: (t) => t.me?.armor ?? 0 },
+    };
+
+    // Toggle ON — should resolve function and add evasion: 4
+    const onMuts = activateChip(chip, table, chipState);
+    const addMut = onMuts.find((m) => m.type === 'addTemporaryStatMod');
+    expect(addMut).toBeDefined();
+    expect(addMut.payload).toMatchObject({ stat: 'evasion', value: 4 });
+
+    // Toggle OFF — should use cached value (4) for remove
+    const offMuts = activateChip(chip, table, chipState);
+    const removeMut = offMuts.find((m) => m.type === 'removeTemporaryStatMod');
+    expect(removeMut).toBeDefined();
+    expect(removeMut.payload).toMatchObject({ stat: 'evasion', value: 4 });
+  });
+
+  it('handles static temporaryStatMods as before', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const chipState = makeChipState();
+
+    const chip = {
+      isToggle: true,
+      temporaryStatMods: { evasion: 2 },
+    };
+
+    const onMuts = activateChip(chip, table, chipState);
+    const addMut = onMuts.find((m) => m.type === 'addTemporaryStatMod');
+    expect(addMut.payload).toMatchObject({ stat: 'evasion', value: 2 });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -251,6 +291,82 @@ describe('deductChipCosts()', () => {
   it('does nothing when table.me is null', () => {
     const table = buildTableSnapshot({});
     expect(() => deductChipCosts({ hopeCost: 1 }, table)).not.toThrow();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Function-valued costs
+  // ---------------------------------------------------------------------------
+
+  it('evaluates function hopeCost with table and deducts the result', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { hopeCost: () => 3 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendHope', payload: { instanceId: 'char-1', amount: 3 } })
+    );
+  });
+
+  it('evaluates function stressCost with table and deducts the result', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { stressCost: () => 2 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'markStress', payload: { instanceId: 'char-1', amount: 2 } })
+    );
+  });
+
+  it('evaluates function stressCost reading feature state set by onUse', () => {
+    // Simulates the Bouncing use-case: onUse stores a target count in feature
+    // state; stressCost reads it so the GM is charged the right amount.
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const state = mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'char-1',
+      _featureKey: 'Bouncing',
+    });
+    const table = buildTableSnapshot(state);
+
+    // Simulate onUse having stored bounceTargets = 3
+    table.feature.set('bounceTargets', 3);
+
+    const chip = { stressCost: (t) => t.feature.get('bounceTargets') ?? 1 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'markStress', payload: { instanceId: 'char-1', amount: 3 } })
+    );
+  });
+
+  it('evaluates function armorMark with table', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { armorMark: () => 1 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'markArmor', payload: { instanceId: 'char-1', amount: 1 } })
+    );
+  });
+
+  it('skips cost when function returns 0', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+
+    const chip = { stressCost: () => 0 };
+    deductChipCosts(chip, table);
+    const mutations = applyMutations(table);
+    expect(mutations.some((m) => m.type === 'markStress')).toBe(false);
   });
 });
 

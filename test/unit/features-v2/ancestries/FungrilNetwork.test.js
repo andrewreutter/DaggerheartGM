@@ -29,6 +29,8 @@ describe('Fungril Network', () => {
         type: 'actionLoop',
         payload: expect.objectContaining({
           title: 'Fungril Network',
+          trait: 'Instinct',
+          difficulty: 12,
         })
       })
     );

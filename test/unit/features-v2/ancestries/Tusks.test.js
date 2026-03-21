@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { Tusks } from '../../../../src/features-v2/ancestries/Orc.js';
-import { runReviewOutcome, mockTable, mockChipState } from '../helpers.js';
+import { runReviewAction, mockTable, mockChipState } from '../helpers.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
 
 describe('Tusks', () => {
   it('shows chip on successful melee attack', () => {
-    const result = runReviewOutcome(Tusks, {
+    const result = runReviewAction(Tusks, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -31,11 +31,11 @@ describe('Tusks', () => {
     expect(result.chips[0]._featureName).toBe('Tusks');
     expect(result.chips[0].description).toContain('Spend 1 Hope');
     expect(result.chips[0].hopeCost).toBe(1);
-    expect(result.chips[0].placements).toContain('reviewOutcome');
+    expect(result.chips[0].placements).toContain('reviewAction');
   });
 
   it('does not show chip on failed attack', () => {
-    const result = runReviewOutcome(Tusks, {
+    const result = runReviewAction(Tusks, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -57,7 +57,7 @@ describe('Tusks', () => {
   });
 
   it('does not show chip on non-melee attack', () => {
-    const result = runReviewOutcome(Tusks, {
+    const result = runReviewAction(Tusks, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -79,7 +79,7 @@ describe('Tusks', () => {
   });
 
   it('adds 1d6 damage when chip is used', () => {
-    const result = runReviewOutcome(Tusks, {
+    const result = runReviewAction(Tusks, {
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',

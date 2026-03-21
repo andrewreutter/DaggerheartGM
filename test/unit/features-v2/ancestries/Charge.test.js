@@ -4,13 +4,10 @@ import { Charge } from '../../../../src/features-v2/ancestries/Firbolg.js';
 import { applyMutations } from '../../../../src/features-v2/engine/table.js';
 
 describe('Charge', () => {
-  const baseAction = {
-    type: 'attack',
-    actorInstanceId: 'char-1',
-    targetInstanceIds: ['adv-1'],
-    traitKey: 'Agility',
-    range: 'melee',
-  };
+  // Charge is an Agility Trait Roll to MOVE from Far/Very Far into Melee.
+  // There is no attack target — the chip fires after a successful roll when
+  // adversaries are now in Melee range and the character's prior position
+  // was Far or Very Far from at least one of them.
 
   const successRolls = {
     action: {
@@ -22,12 +19,21 @@ describe('Charge', () => {
     },
   };
 
-  it('shows chip during reviewAction phase on successful Agility attack roll with melee range', () => {
-    const result = runReviewAction(Charge, {
-      action: baseAction,
-      rolls: successRolls,
-    });
+  // char at origin; adv in melee range (3 ft); char was 50 ft away → 'far'
+  const char = mockCharacter({ instanceId: 'char-1', tokenX: 0, tokenY: 0 });
+  const advMelee = mockAdversary({ instanceId: 'adv-1', tokenX: 3, tokenY: 0 });
+  const farPrior = { _previousPositions: { 'char-1': { tokenX: 50, tokenY: 0 } } };
 
+  const baseOverrides = {
+    activeElements: [char, advMelee],
+    actionType: 'trait',
+    action: { traitKey: 'Agility' },
+    rolls: successRolls,
+    ...farPrior,
+  };
+
+  it('shows chip after successful Agility trait roll when adversary is now in Melee and was previously Far', () => {
+    const result = runReviewAction(Charge, baseOverrides);
     expect(result.chips).toHaveLength(1);
     expect(result.chips[0]._featureName).toBe('Charge');
     expect(result.chips[0].stressCost).toBe(1);
@@ -36,67 +42,95 @@ describe('Charge', () => {
 
   it('does not show chip when roll is not successful', () => {
     const result = runReviewAction(Charge, {
-      action: baseAction,
+      ...baseOverrides,
       rolls: {
-        action: { ...successRolls.action, hopeDie: { value: 3 }, fearDie: { value: 2 }, isSuccess: false },
+        action: { ...successRolls.action, isSuccess: false },
       },
     });
-
     expect(result.chips).toHaveLength(0);
   });
 
   it('does not show chip when trait is not Agility', () => {
     const result = runReviewAction(Charge, {
-      action: { ...baseAction, traitKey: 'Strength' },
-      rolls: successRolls,
+      ...baseOverrides,
+      action: { traitKey: 'Strength' },
     });
-
     expect(result.chips).toHaveLength(0);
   });
 
-  it('does not show chip when range is not melee', () => {
+  it('does not show chip when action type is not trait', () => {
     const result = runReviewAction(Charge, {
-      action: { ...baseAction, range: 'close' },
-      rolls: successRolls,
+      ...baseOverrides,
+      actionType: 'attack',
     });
-
     expect(result.chips).toHaveLength(0);
   });
 
   it('does not show chip when not acting', () => {
     const result = runReviewAction(Charge, {
-      action: { ...baseAction, actorInstanceId: 'char-2' },
-      rolls: successRolls,
+      ...baseOverrides,
+      action: { actorInstanceId: 'char-2', traitKey: 'Agility' },
     });
-
     expect(result.chips).toHaveLength(0);
   });
 
-  it('queues addDamageRoll targeting melee-range adversaries when chip is used', () => {
-    const char = mockCharacter({ instanceId: 'char-1', tokenX: 0, tokenY: 0 });
-    const advClose = mockAdversary({ instanceId: 'adv-1', name: 'Goblin', tokenX: 5, tokenY: 0 });
-    const advFar = mockAdversary({ instanceId: 'adv-2', name: 'Archer', tokenX: 100, tokenY: 0 });
+  it('does not show chip when no adversaries are in Melee range', () => {
+    const advFar = mockAdversary({ instanceId: 'adv-1', tokenX: 60, tokenY: 0 }); // far, not melee
+    const result = runReviewAction(Charge, {
+      ...baseOverrides,
+      activeElements: [char, advFar],
+    });
+    expect(result.chips).toHaveLength(0);
+  });
+
+  it('does not show chip when no prior position is recorded', () => {
+    const result = runReviewAction(Charge, {
+      ...baseOverrides,
+      _previousPositions: undefined,
+    });
+    expect(result.chips).toHaveLength(0);
+  });
+
+  it('does not show chip when prior position was only Close (not Far/Very Far)', () => {
+    const result = runReviewAction(Charge, {
+      ...baseOverrides,
+      _previousPositions: { 'char-1': { tokenX: 15, tokenY: 0 } }, // 12 ft from adv-1 at (3,0) → close
+    });
+    expect(result.chips).toHaveLength(0);
+  });
+
+  it('shows chip when prior position was Very Far', () => {
+    const result = runReviewAction(Charge, {
+      ...baseOverrides,
+      _previousPositions: { 'char-1': { tokenX: 160, tokenY: 0 } }, // 157 ft from adv-1 at (3,0) → veryFar
+    });
+    expect(result.chips).toHaveLength(1);
+  });
+
+  it('queues addDamageRoll targeting all melee-range adversaries when chip is used', () => {
+    const advMelee2 = mockAdversary({ instanceId: 'adv-2', name: 'Goblin 2', tokenX: 4, tokenY: 0 });
+    const advDistant = mockAdversary({ instanceId: 'adv-3', name: 'Archer', tokenX: 80, tokenY: 0 });
 
     const result = runReviewAction(Charge, {
-      activeElements: [char, advClose, advFar],
-      action: { ...baseAction, targetInstanceIds: ['adv-1'] },
-      rolls: { ...successRolls, damage: { dice: [], statics: [] } },
+      ...baseOverrides,
+      activeElements: [char, advMelee, advMelee2, advDistant],
     });
 
     expect(result.chips).toHaveLength(1);
     const chip = result.chips[0];
 
     const table = mockTable({
-      activeElements: [char, advClose, advFar],
+      activeElements: [char, advMelee, advMelee2, advDistant],
+      actionType: 'trait',
       action: {
-        type: 'attack',
+        type: 'trait',
         actorInstanceId: 'char-1',
-        targetInstanceIds: ['adv-1'],
+        targetInstanceIds: [],
         trait: 'Agility',
-        range: 'melee',
         effects: [],
       },
       rolls: { damage: { dice: [], statics: [] } },
+      ...farPrior,
     });
 
     chip.onUse(table, mockChipState());
@@ -109,49 +143,13 @@ describe('Charge', () => {
           name: 'Charge',
           dice: '1d12',
           damageType: 'physical',
-          targetInstanceIds: ['adv-1'],
+          targetInstanceIds: expect.arrayContaining(['adv-1', 'adv-2']),
         }),
       })
     );
-  });
 
-  it('falls back to action targets when no adversaries are in melee range', () => {
-    const char = mockCharacter({ instanceId: 'char-1' });
-    const adv = mockAdversary({ instanceId: 'adv-1' });
-
-    const result = runReviewAction(Charge, {
-      activeElements: [char, adv],
-      action: baseAction,
-      rolls: { ...successRolls, damage: { dice: [], statics: [] } },
-    });
-
-    expect(result.chips).toHaveLength(1);
-    const chip = result.chips[0];
-
-    const table = mockTable({
-      activeElements: [char, adv],
-      action: {
-        type: 'attack',
-        actorInstanceId: 'char-1',
-        targetInstanceIds: ['adv-1'],
-        trait: 'Agility',
-        range: 'melee',
-        effects: [],
-      },
-      rolls: { damage: { dice: [], statics: [] } },
-    });
-
-    chip.onUse(table, mockChipState());
-    const mutations = applyMutations(table);
-
-    expect(mutations).toContainEqual(
-      expect.objectContaining({
-        type: 'addDamageRoll',
-        payload: expect.objectContaining({
-          name: 'Charge',
-          targetInstanceIds: ['adv-1'],
-        }),
-      })
-    );
+    // Distant adversary should NOT be targeted
+    const damageRoll = mutations.find((m) => m.type === 'addDamageRoll');
+    expect(damageRoll.payload.targetInstanceIds).not.toContain('adv-3');
   });
 });

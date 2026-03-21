@@ -192,6 +192,8 @@ hooks: {
 passiveStatMods: { numShortRestSlots: 1, numLongRestSlots: 1 }
 ```
 
+Implementation: `applyDeclarativeFeatures` in `src/features-v2/engine/feature-loader.js` accumulates `numShortRestSlots`, `numLongRestSlots`, and `numLongMovesInShortRest` into the returned `stats` object. The Rest banner uses `getRestMovesForCharacter` in `src/client/lib/rest-moves.js`, which applies the same modifiers by reading the V2 ancestry feature registry (so slot counts and Efficient’s long-move options stay in sync with CONV-011).
+
 ---
 
 ## CONV-012 — Damage halving rounds UP in Daggerheart
@@ -238,21 +240,144 @@ they apply.
 
 ---
 
-## CONV-015 — Disadvantage-granting features must be marked Blocked
+## CONV-015 — Use `addDisadvantageDie(name)` for disadvantage; never fake it with `value: -1`
 
-The V2 API has `addAdvantageDie(name)` for advantage but **no documented counterpart for disadvantage**. Using `addDie({ die: 'd6', value: -1 })` is not a documented use of `value` (the guide defines it as a positive multiplier for die count). Any feature that grants disadvantage on a roll (e.g., "attacks against you have disadvantage") must be marked **Blocked** in the tracker until the engine exposes a documented `addDisadvantageDie()` or equivalent method.
+The V2 API provides `addDisadvantageDie(name)` (symmetric counterpart to `addAdvantageDie(name)`) to grant disadvantage on a roll. Using `addDie({ die: 'd6', value: -1 })` is **not** a documented use of `value` and must not be used.
 
 ```js
 // ✗ Bad — value: -1 is undocumented
 table.rolls?.action?.addDie({ name: 'Disadvantage', die: 'd6', value: -1 });
 
-// ✓ Good — mark the feature Blocked; note the API gap
-// Blocked: V2 API has no addDisadvantageDie() method.
+// ✓ Good
+table.rolls?.action?.addDisadvantageDie('Sturdy');
 ```
+
+The mutation queued is `{ type: 'addDisadvantageDie', payload: { rollKey, name } }`. Features that still cannot be implemented due to missing *other* APIs (e.g., movement restriction, disadvantage immunity) should remain **Blocked** and note the specific remaining gap.
 
 ---
 
 *Add new conventions below this line. Use the next available CONV-NNN ID.*
+
+---
+
+## CONV-026 — When iterating effects, always scope to the correct target
+
+When iterating `table.action?.effects` to modify or react to effects, always check `e.target?.instanceId` against the intended target(s). Never mutate all effects that match a `stat` + `amount` condition alone — the effects array can contain entries for the attacker, allies, or other bystanders.
+
+For "on deal damage" features (attacker perspective): scope to `e.target?.instanceId === table.action?.target?.instanceId`.  
+For "when I take damage" features (defender perspective): scope to `e.target?.instanceId === table.me?.instanceId`.
+
+```js
+// ✗ Bad — modifies HP effects on ANY entity, including the attacker and allies
+for (const e of table.action?.effects || []) {
+  if (e.stat === 'currentHP' && e.amount >= 3) {
+    e.amount += 1;
+  }
+}
+
+// ✓ Good — scoped to the action's primary target
+const targetId = table.action?.target?.instanceId;
+for (const e of table.action?.effects || []) {
+  if (e.stat === 'currentHP' && e.amount >= 3 && e.target?.instanceId === targetId) {
+    e.amount += 1;
+  }
+}
+```
+
+---
+
+## CONV-025 — "On a successful attack" requires both `isSuccess` and `type === 'attack'`
+
+When the SRD says "on a successful attack", the feature must check **both** conditions. Checking `isSuccess === true` alone allows the feature to fire on successful trait rolls, spellcasts, and other non-attack actions.
+
+Always add `(table) => table.action?.type === 'attack'` as a predicate in the `when()` chain **before** the `isSuccess` check.
+
+```js
+// ✗ Bad — fires on any successful action, not just attacks
+hooks: {
+  onResolve: when(
+    isActing,
+    (table) => table.rolls?.action?.isSuccess === true,
+    (table) => { table.action?.target?.markStress(1); }
+  ),
+}
+
+// ✓ Good — scoped to attack actions only
+hooks: {
+  onResolve: when(
+    isActing,
+    (table) => table.action?.type === 'attack',
+    (table) => table.rolls?.action?.isSuccess === true,
+    (table) => { table.action?.target?.markStress(1); }
+  ),
+}
+```
+
+This applies to both hooks and chip `when()` conditions. Tests must include a negative case: a successful action of a different type (e.g. `type: 'trait'`) must not trigger the feature.
+
+---
+
+## CONV-021 — Use `isSelect` for permanent character-creation choices
+
+When a feature requires the player to permanently choose one item from a dynamic list at character creation (e.g. "pick one of your Experiences"), implement it as a `create`-phase chip with `isSelect`. Never implement this as a static dropdown hardcoded in the feature; the list must be populated at runtime from `table.me` (e.g. `table.me.experiences`).
+
+```js
+// ✓ Good
+{
+  description: 'Choose an Experience to gain a permanent +1 bonus.',
+  placements: ['create'],
+  isSelect: (table) => (table.me?.experiences || []).map((e) => ({ id: e.id, name: e.name })),
+  onUse: (table, chip) => {
+    const selectedId = chip.get('selectedId');
+    if (selectedId) table.me?.addExperienceBonus(selectedId, 1);
+  },
+}
+```
+
+`isSelect` is a function `(table) => [{ id, name, description? }, ...]`. The engine stores the chosen id in chip state as `'selectedId'` before calling `onUse`, so `chip.get('selectedId')` always returns the player's selection.
+
+---
+
+## CONV-020 — Virtual weapon `damage` must be stated in the SRD
+
+Only include the `damage` field on a virtual weapon if the SRD text explicitly states a damage expression (e.g. "deals **d8** magic damage"). Do not invent a damage value as a stand-in. If the SRD describes an attack that has no stated damage (e.g. it only applies a condition on success), omit `damage` entirely.
+
+```js
+// ✗ Bad — SRD says nothing about damage
+virtualWeapons: [{ name: 'Retracting Claws', trait: 'agility', range: 'melee', damage: 'd6' }]
+
+// ✓ Good — SRD says "deals d12 physical damage"
+virtualWeapons: [{ name: 'Long Tongue', trait: 'finesse', range: 'close', damage: 'd12' }]
+
+// ✓ Good — SRD has no damage; omit the field
+virtualWeapons: [{ name: 'Retracting Claws', trait: 'agility', range: 'melee' }]
+```
+
+---
+
+## CONV-020 — Trait-scoped advantage triggers must use `when()` to gate on that trait
+
+If the SRD text says "You have advantage on **[Trait] Rolls** to …", the entry in
+`advantageTriggers` must be wrapped in a `when()` predicate that checks
+`table.action?.trait === 'TraitName'`. Without the guard the engine will offer the
+advantage chip on *every* roll, not just rolls of that trait.
+
+Purely narrative conditions (e.g. "rolls to intimidate hostile creatures") that
+describe *what* you are doing rather than *which trait* you are rolling are fine as
+plain strings.
+
+```js
+// ✗ Bad — fires on all rolls, not just Agility
+advantageTriggers: ['Agility Rolls that involve balancing and climbing']
+
+// ✓ Good — engine only offers the chip when the action trait is Agility
+advantageTriggers: [
+  when(
+    (table) => table.action?.trait === 'Agility',
+    'Agility Rolls that involve balancing and climbing'
+  )
+]
+```
 
 ---
 
@@ -307,6 +432,44 @@ table.action?.target?.move(
 
 ---
 
+## CONV-019 — `reviewOutcome` is only for HP/Stress-loss reduction; use `reviewAction` for everything else
+
+`reviewOutcome` chips and hooks run **after** the engine has already applied damage thresholds and converted raw damage into HP/Stress loss counts (`e.stat === 'currentHP'` / `'currentStress'`). Use `reviewOutcome` only when the feature reads those post-threshold effects and reduces the number of boxes marked (e.g., "mark 1 fewer Hit Point", "mark 2 Stress instead of 1 HP").
+
+Everything else that reacts after the roll — rerolling dice, adding extra damage dice, modifying raw damage before thresholds, temporary stat boosts (Evasion reactions), and movement/positioning — belongs at `reviewAction`.
+
+```js
+// ✗ Bad — rerolling a die is a reviewAction concern, not reviewOutcome
+chips: [{
+  placements: ['reviewOutcome'],
+  onUse(table) { table.rolls?.action?.fearDie?.reroll(); }
+}]
+
+// ✓ Good — die rerolls happen before thresholds are applied
+chips: [{
+  placements: ['reviewAction'],
+  onUse(table) { table.rolls?.action?.fearDie?.reroll(); }
+}]
+
+// ✓ Good — HP-loss reduction correctly uses reviewOutcome
+chips: [{
+  placements: ['reviewOutcome'],
+  isToggle: true,
+}],
+hooks: {
+  onReviewOutcome(table) {
+    const hp = table.action?.effects?.find(
+      e => e.stat === 'currentHP' && e.target?.instanceId === table.me?.instanceId
+    );
+    if (hp) hp.amount -= 1;
+  }
+}
+```
+
+**Quick test:** if your feature's predicate reads `e.stat === 'currentHP'` or `e.stat === 'currentStress'`, use `reviewOutcome`. If it reads dice values, `isSuccess`, raw damage amounts, or anything else, use `reviewAction`.
+
+---
+
 ## CONV-017 — Multi-die damage: use `die: 'NdX'`, not `value` as a count
 
 `addDie({ name, die, value? })` records a **die pool entry**. The `value` field is for a **resolved numeric total** once dice are known, not for “how many dice.” Express multiple dice in the `die` string (e.g. `'2d6'`, `'3d8'`). Using `die: 'd6', value: 2` reads as one d6 showing **2**, not two d6.
@@ -317,4 +480,77 @@ table.rolls?.damage?.addDie({ name: 'Kick', die: 'd6', value: 2 });
 
 // ✓ Good — full expression, value omitted until the engine resolves the roll
 table.rolls?.damage?.addDie({ name: 'Kick', die: '2d6' });
+```
+
+---
+
+## CONV-022 — Virtual weapon activation costs go on the weapon object, not in a `chips` array
+
+If the SRD requires spending a resource to use a virtual weapon (e.g. "Mark a Stress to use your tongue"), declare the cost **directly on the virtual weapon object** using the standard chip cost properties (`hopeCost`, `stressCost`, `armorMark`, `armorClear`). Do **not** nest a `chips` array inside a virtual weapon entry — that pattern is undocumented and not supported by the engine.
+
+```js
+// ✗ Bad — chips array inside a virtualWeapons entry is not a documented API
+virtualWeapons: [{
+  name: 'Long Tongue',
+  trait: 'finesse',
+  range: 'close',
+  damage: 'd12',
+  chips: [{ placements: ['card'], stressCost: 1, onUse() {} }],
+}]
+
+// ✓ Good — cost declared directly on the weapon object
+virtualWeapons: [{
+  name: 'Long Tongue',
+  trait: 'finesse',
+  range: 'close',
+  damage: 'd12',
+  stressCost: 1,
+}]
+```
+
+Supported cost properties on virtual weapons: `hopeCost`, `stressCost`, `armorMark`, `armorClear`.
+
+---
+
+## CONV-020 — In Daggerheart, attacks against characters are always made by adversaries
+
+The Daggerheart system has no character-vs-character attack mechanic. Whenever `table.action.type === 'attack'` and the target is a character, the attacker is always an adversary. Features that react to "an adversary makes an attack against you" do **not** need to additionally check `table.action?.attacker?.isAdversary` — `isTargeted` is sufficient as a condition.
+
+```js
+// ✗ Over-specified — attacker.isAdversary is always true in this context
+when(
+  isTargeted,
+  (table) => table.action?.attacker?.isAdversary,
+  { ... }
+)
+
+// ✓ Correct — isTargeted is sufficient; attacks are always adversary→character in Daggerheart
+when(isTargeted, { ... })
+```
+
+---
+
+## CONV-023 — Use specific removal methods for advantage/disadvantage dice
+
+When removing advantage or disadvantage dice from a roll, always use `removeAdvantageDie(name)` or `removeDisadvantageDie(name)`. Do not use the generic `removeDie(name)` method. `removeDie` filters only by name, which can accidentally remove a regular die that happens to share the same name.
+
+```js
+// ✗ Bad — might accidentally remove a regular die named "Condition"
+table.rolls?.action?.removeDie('Condition');
+
+// ✓ Good — safely removes only disadvantage dice with that name
+table.rolls?.action?.removeDisadvantageDie('Condition');
+```
+
+---
+
+## CONV-024 — `temporaryStatMods` values may be functions `(table) => number`
+
+Like chip cost properties, `temporaryStatMods` values accept either a static number or a `(table) => number` function. The engine resolves the function at toggle-on time and caches the resolved value in chip state so toggle-off removes exactly the same amount.
+
+```js
+// ✓ Good — dynamic evasion bonus equal to available armor slots
+temporaryStatMods: {
+  evasion: (table) => table.me?.armor ?? 0,
+}
 ```

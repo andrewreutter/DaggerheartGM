@@ -1,0 +1,21 @@
+---
+description: V2 feature agent magic words — dispatches to the correct agent prompt
+globs: 
+alwaysApply: true
+---
+
+# V2 Feature Agent Dispatch
+
+When the user's message matches one of these phrases, read the referenced prompt file and follow its instructions exactly. Treat the phrase as equivalent to the full agent prompt.
+
+| User says | Read this file first | Then do |
+|---|---|---|
+| **Work features** | `docs/agent-prompts/work-agent.md` | Follow its STEP 1–4 protocol: read tracker summary, apply priority rule, announce chosen mode, then read and follow the chosen agent's prompt completely. |
+| **Implement features** | `docs/agent-prompts/implementation-agent.md` | Follow its ON STARTUP + ON EVERY BATCH protocol, then claim and implement a batch. |
+| **Validate features** | `docs/agent-prompts/validation-agent.md` | Follow its ON STARTUP + ON EVERY BATCH protocol, then claim and validate a batch. |
+| **Fix features** | `docs/agent-prompts/fixit-agent.md` | Follow its ON STARTUP + ON EVERY FIX protocol, then claim and fix one issue. |
+| **Unblock features** | `docs/agent-prompts/unblocking-agent.md` | Follow its ON STARTUP + ON EVERY RESOLUTION protocol, then claim and resolve one blocked item. |
+
+After the initial dispatch, **Continue** means "re-read the prompt and do the next unit of work" per each agent's ON CONTINUE section.
+
+These are the ONLY magic phrases. Do not infer agent behavior from other phrasing unless the user explicitly asks you to read one of the prompt files.

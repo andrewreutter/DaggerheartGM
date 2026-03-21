@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runReviewOutcome, mockTable, mockChipState } from '../helpers.js';
+import { runReviewAction, mockTable, mockChipState } from '../helpers.js';
 import { collectChips, activateChip } from '../../../../src/features-v2/engine/chip-system.js';
 import { Wings } from '../../../../src/features-v2/ancestries/Faerie.js';
 
@@ -42,7 +42,7 @@ describe('Wings', () => {
 
   describe('review chip (evasion reaction)', () => {
     it('shows chip when targeted by attack while flying', () => {
-      const result = runReviewOutcome(Wings, {
+      const result = runReviewAction(Wings, {
         action: {
           type: 'attack',
           actorInstanceId: 'adv-1',
@@ -61,7 +61,7 @@ describe('Wings', () => {
     });
 
     it('does not show chip when not flying', () => {
-      const result = runReviewOutcome(Wings, {
+      const result = runReviewAction(Wings, {
         action: {
           type: 'attack',
           actorInstanceId: 'adv-1',
@@ -78,7 +78,7 @@ describe('Wings', () => {
     });
 
     it('does not show chip when not targeted', () => {
-      const result = runReviewOutcome(Wings, {
+      const result = runReviewAction(Wings, {
         action: {
           type: 'attack',
           actorInstanceId: 'adv-1',
@@ -105,7 +105,7 @@ describe('Wings', () => {
         featureState: { Wings: { flying: true } },
         _featureKey: 'Wings',
       });
-      const chips = collectChips([annotatedWings], 'reviewOutcome', table);
+      const chips = collectChips([annotatedWings], 'reviewAction', table);
       expect(chips).toHaveLength(1);
       const mutations = activateChip(chips[0], table);
       expect(mutations).toContainEqual(

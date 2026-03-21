@@ -25,13 +25,10 @@ export const InternalCompass = {
   chips: [
     when(
       isActing,
-      (table) => {
-        // Available when Hope Die value is 1
-        return table.rolls?.action?.hopeDie?.value === 1;
-      },
+      (table) => table.rolls?.action?.hopeDie?.value === 1, // Available when Hope Die value is 1
       {
         description: 'Reroll your Hope Die (rolled a 1).',
-        placements: ['reviewOutcome'],
+        placements: ['reviewAction'],
         onUse(table) {
           table.rolls?.action?.hopeDie?.reroll();
         },

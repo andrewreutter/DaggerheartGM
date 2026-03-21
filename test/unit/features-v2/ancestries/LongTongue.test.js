@@ -5,7 +5,7 @@ describe('Long Tongue', () => {
   it('provides a virtual weapon', () => {
     expect(LongTongue.virtualWeapons).toBeDefined();
     expect(LongTongue.virtualWeapons).toHaveLength(1);
-    
+
     const weapon = LongTongue.virtualWeapons[0];
     expect(weapon.name).toBe('Long Tongue');
     expect(weapon.trait).toBe('finesse');
@@ -13,13 +13,13 @@ describe('Long Tongue', () => {
     expect(weapon.damage).toBe('d12');
   });
 
-  it('has a chip to mark stress for using the weapon', () => {
+  it('requires marking 1 Stress to use the weapon (stressCost on virtual weapon)', () => {
     const weapon = LongTongue.virtualWeapons[0];
-    expect(weapon.chips).toBeDefined();
-    expect(weapon.chips).toHaveLength(1);
-    
-    const chip = weapon.chips[0];
-    expect(chip.stressCost).toBe(1);
-    expect(chip.placements).toContain('card');
+    expect(weapon.stressCost).toBe(1);
+  });
+
+  it('does not use undocumented chips array on the virtual weapon', () => {
+    const weapon = LongTongue.virtualWeapons[0];
+    expect(weapon.chips).toBeUndefined();
   });
 });

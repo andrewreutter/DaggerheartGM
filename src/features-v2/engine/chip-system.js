@@ -69,14 +69,24 @@ export function collectChips(features, phase, table, usageStore = {}) {
  *  - Toggle ON:  snapshot effects, run the hook
  *  - Toggle OFF: restore the snapshotted effects
  *
- * @param {object} chip         — chip descriptor (from collectChips)
- * @param {object} table        — current Game Table Snapshot
- * @param {object} chipState    — mutable chip-local state object
- * @returns {object[]} mutations — queued mutations from the call
+ * For select chips (`isSelect` is a function), pass `{ selectedId }` in the
+ * fourth argument. The engine stores it in chipState so `onUse` can read it
+ * via `chip.get('selectedId')`.
+ *
+ * @param {object} chip                  — chip descriptor (from collectChips)
+ * @param {object} table                 — current Game Table Snapshot
+ * @param {object} chipState             — mutable chip-local state object
+ * @param {object} [selectOpts]          — { selectedId } for isSelect chips
+ * @returns {object[]} mutations          — queued mutations from the call
  */
-export function activateChip(chip, table, chipState = makeChipState()) {
+export function activateChip(chip, table, chipState = makeChipState(), selectOpts = {}) {
   if (chip.isToggle) {
     chipState._isOn = !chipState._isOn;
+  }
+
+  // For select chips, persist the chosen option id into chip state before onUse
+  if (typeof chip.isSelect === 'function' && selectOpts.selectedId !== undefined) {
+    chipState.set('selectedId', selectOpts.selectedId);
   }
 
   if (chip.isToggle && chip._gatedHookFn) {
@@ -100,13 +110,22 @@ export function activateChip(chip, table, chipState = makeChipState()) {
     chip.onUse(table, chipState);
   }
 
-  // Declarative temporary stat mods
+  // Declarative temporary stat mods (values may be static numbers or (table) => number functions)
   if (chip.temporaryStatMods && table.me) {
-    for (const [stat, value] of Object.entries(chip.temporaryStatMods)) {
+    for (const [stat, rawValue] of Object.entries(chip.temporaryStatMods)) {
+      const resolve = (v) => (typeof v === 'function' ? v(table) : v);
       if (!chip.isToggle || chipState.isOn) {
-        queueInternalMutation(table, 'addTemporaryStatMod', { instanceId: table.me.instanceId, stat, value });
+        const resolved = resolve(rawValue);
+        if (chip.isToggle) {
+          const stored = chipState.get('_temporaryStatMods') || {};
+          stored[stat] = resolved;
+          chipState.set('_temporaryStatMods', stored);
+        }
+        queueInternalMutation(table, 'addTemporaryStatMod', { instanceId: table.me.instanceId, stat, value: resolved });
       } else {
-        queueInternalMutation(table, 'removeTemporaryStatMod', { instanceId: table.me.instanceId, stat, value });
+        const stored = chipState.get('_temporaryStatMods') || {};
+        const resolved = stored[stat] ?? resolve(rawValue);
+        queueInternalMutation(table, 'removeTemporaryStatMod', { instanceId: table.me.instanceId, stat, value: resolved });
       }
     }
   }
@@ -122,16 +141,29 @@ export function activateChip(chip, table, chipState = makeChipState()) {
  * Queue resource-cost mutations for the chip's defined costs.
  * Respects hopeCost, stressCost, armorMark, armorClear.
  *
+ * Each cost property can be a static number OR a function `(table) => number`.
+ * Functions are evaluated at deduction time so that costs can depend on runtime
+ * state — for example, feature state set in a preceding onUse call:
+ *
+ *   stressCost: (table) => table.feature.get('bounceTargets') ?? 1
+ *
  * @param {object} chip   — chip descriptor
  * @param {object} table  — current Game Table Snapshot (table.me is the owner)
  */
 export function deductChipCosts(chip, table) {
   if (!table.me) return;
 
-  if (chip.hopeCost) table.me.spendHope(chip.hopeCost);
-  if (chip.stressCost) table.me.markStress(chip.stressCost);
-  if (chip.armorMark) table.me.markArmor(chip.armorMark);
-  if (chip.armorClear) table.me.clearArmor(chip.armorClear);
+  const resolve = (v) => (typeof v === 'function' ? v(table) : v);
+
+  const hopeCost = resolve(chip.hopeCost);
+  const stressCost = resolve(chip.stressCost);
+  const armorMark = resolve(chip.armorMark);
+  const armorClear = resolve(chip.armorClear);
+
+  if (hopeCost) table.me.spendHope(hopeCost);
+  if (stressCost) table.me.markStress(stressCost);
+  if (armorMark) table.me.markArmor(armorMark);
+  if (armorClear) table.me.clearArmor(armorClear);
 }
 
 // ---------------------------------------------------------------------------

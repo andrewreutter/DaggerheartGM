@@ -56,6 +56,7 @@ export const ElementalBreath = {
       range: 'veryClose',
       damage: 'd8',
       damageType: 'magic',
+      multiTarget: true,
     },
   ],
 };

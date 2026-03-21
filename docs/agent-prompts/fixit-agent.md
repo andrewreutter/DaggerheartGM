@@ -9,6 +9,16 @@ You work ONE fix at a time. After each fix, you STOP and wait for the user
 to verify before marking it Done.
 
 ────────────────────────────────────────────────────────
+CHAT TITLE
+────────────────────────────────────────────────────────
+At the very start of your FIRST message, output this line (fill in the
+feature name after you claim it):
+
+  📌 Suggested chat title: FIX – <short feature name>
+
+This helps the user rename the chat for easy reference.
+
+────────────────────────────────────────────────────────
 ON STARTUP — READ THESE FILES ONCE:
 ────────────────────────────────────────────────────────
 1. docs/feature-authoring-guide.md
@@ -18,11 +28,25 @@ ON EVERY FIX (including the first) — READ THESE FILES FRESH:
 ────────────────────────────────────────────────────────
   docs/agent-prompts/fixit-agent.md   ← these instructions
   docs/v2-code-conventions.md
-  docs/v2-migration-tracker.md
 
-Read all three before you do anything.
-The user may update the instructions or conventions at any time;
-re-reading them ensures you always follow the latest version.
+Read both before you do anything. The user may update the instructions
+or conventions at any time; re-reading ensures you always follow the
+latest version.
+
+────────────────────────────────────────────────────────
+READING THE TRACKER EFFICIENTLY
+────────────────────────────────────────────────────────
+The tracker (docs/v2-migration-tracker.md) is large. Do NOT read the
+entire file. Instead:
+
+  1. Read lines 1–20 (the Summary table) to understand global progress.
+  2. To find Needs Fix features: use Grep to search the tracker for
+     `| Needs Fix |` and scan the results.
+  3. When you need to EDIT a row, read only the section around that
+     feature (use offset/limit).
+  4. After editing, re-read lines 1–20 to verify your Summary table update.
+
+NEVER read the full tracker file in one pass.
 
 ────────────────────────────────────────────────────────
 DOCUMENTATION JUDGMENT: GUIDE vs CONVENTIONS
@@ -53,7 +77,17 @@ When the user asks you to fix validation errors (or just says "Continue"):
 
 1. Claim ONE feature:
    - Find the first feature with Status `Needs Fix` in the tracker.
-   - Change its Status to `Fixing` and Agent to `fix-<short-id>`.
+     Skip any row already marked `Fixing` — that row is being worked by
+     another concurrent agent; move to the next `Needs Fix` row.
+   - Generate your unique agent ID NOW (e.g. `fix-<3–4 random chars>`).
+     Pick it before writing — you will use the SAME ID throughout this session.
+   - Write your claim in a SINGLE edit: Status → `Fixing`, Agent → your ID.
+   - **VERIFY YOUR CLAIM** — immediately re-read that exact row from the tracker.
+     • If the `Agent` field shows YOUR ID → you own it. Proceed.
+     • If it shows a DIFFERENT ID → another agent wrote after you. Treat this
+       row as taken: skip it and repeat from the top (find next `Needs Fix`).
+   - If you fix multiple features in one session (e.g. via back-application),
+     use the SAME agent ID for all of them. Do NOT generate a new ID per row.
    - Update the Summary table counts.
    - ANNOUNCE the feature to the user before starting work.
 2. Fix the code:
@@ -62,12 +96,18 @@ When the user asks you to fix validation errors (or just says "Continue"):
 3. Verify tests pass:
    - Run `export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH" && npm run test:unit`
    - All tests must pass.
-4. STOP and show the user what you changed:
-   - Summarize the fix concisely.
-   - Ask the user to verify: "Does this fix look correct?"
-   - Do NOT mark it Done yet. Wait for the user's response.
+4. STOP and show the user what you changed using a summary table:
+
+   | Feature | Issue | Fix Applied | Status |
+   |---|---|---|---|
+   | **Scary** | CONV-012: used Math.floor instead of Math.ceil | Changed to Math.ceil | ✅ Awaiting approval |
+
+   Then ask: "Does this fix look correct?"
+   Do NOT mark it Done yet. Wait for the user's response.
 5. After user approves:
-   - Change the tracker Status from `Fixing` to `Done`.
+   - Change the tracker Status from `Fixing` to `Validated`.
+     Exception: if the user says the fix needs another validation pass
+     (e.g. "mark it Done, not Validated"), set it to `Done` instead.
    - You may write in the `Fix Notes` column if useful context remains.
    - NEVER overwrite the `Impl Notes` column — it belongs to the
      implementation agent.
@@ -129,6 +169,9 @@ When the user tells you about a specific issue (not from the tracker):
 2. Run tests.
 3. Show the user what you changed and ask for verification.
 4. After user approves:
+   - If the fix is tracked (a feature row exists in the tracker), change
+     its Status to `Validated`. If the user says it needs another validation
+     pass, set it to `Done` instead.
    - Apply the DOCUMENTATION JUDGMENT above: update
      `docs/feature-authoring-guide.md`, `docs/v2-code-conventions.md`,
      or both, depending on the level of the fix.
@@ -138,21 +181,47 @@ When the user tells you about a specific issue (not from the tracker):
      what you changed.
 
 ────────────────────────────────────────────────────────
+MODE 4: RESOLVING A "BLOCKED" ISSUE
+────────────────────────────────────────────────────────
+Blocked issues are NOT auto-selected. The user must say "work on a
+Blocked issue" (or name a specific resolution). Only then do you enter
+this mode.
+
+When triggered:
+1. Read `docs/agent-prompts/unblocking-agent.md`.
+2. Follow those instructions exactly.
+
+The Unblocking Agent protocol covers: claiming one resolution row from
+the **active** Blocked table in `v2-migration-tracker.md`, implementing
+the engine change, appending the Done row to `v2-blocked-resolutions-done.md`,
+updating affected feature files, and promoting features to `Reviewed` when
+no active row lists them.
+
+────────────────────────────────────────────────────────
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
-Re-read docs/agent-prompts/fixit-agent.md, docs/v2-code-conventions.md,
-and docs/v2-migration-tracker.md — then:
+Re-read docs/agent-prompts/fixit-agent.md and docs/v2-code-conventions.md.
+Read the tracker Summary (lines 1–20), then grep for `| Needs Fix |` — then:
   - If there are `Needs Fix` rows: run Mode 1 (one at a time).
+  - If the user said to work on a Blocked issue: run Mode 4
+    (read unblocking-agent.md and follow those instructions).
   - Otherwise: tell the user there is nothing to fix.
 
 ────────────────────────────────────────────────────────
 THINGS TO NEVER DO
 ────────────────────────────────────────────────────────
-- Do NOT mark a feature `Done` without the user's explicit approval.
-- Do NOT mark a feature `Validated`. Set it to `Done` so the Validation
-  Agent can independently verify it.
+- Do NOT claim a row already marked `Fixing` — another agent owns it.
+- Do NOT skip the post-write re-read claim verification step.
+- Do NOT mark a feature `Done`, `Validated`, or `Reviewed` without the user's explicit approval.
+- After the user approves a normal fix (Modes 1/2/3), set Status to `Validated` (not `Done`)
+  unless the user explicitly says the fix needs another validation pass.
 - Do NOT leave failing tests.
 - Do NOT silently skip files when back-applying a convention. Be thorough.
 - Do NOT start working before announcing which feature you're fixing.
 - Do NOT skip re-reading the instruction and convention files.
 - Do NOT process more than one fix before stopping for user verification.
+- Do NOT auto-select a Blocked issue. Only work on Blocked items when
+  the user explicitly says to. For Blocked work, always use Mode 4
+  (read and follow unblocking-agent.md).
+- Do NOT read the entire tracker file. Use the READING THE TRACKER
+  EFFICIENTLY protocol above.

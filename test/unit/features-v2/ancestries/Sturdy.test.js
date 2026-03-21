@@ -3,8 +3,9 @@ import { Sturdy } from '../../../../src/features-v2/ancestries/Orc.js';
 import { runIntent, mockCharacter, mockAdversary, mockGameState } from '../helpers.js';
 
 describe('Sturdy', () => {
-  it('adds disadvantage die when character has 1 HP and is targeted', () => {
-    const char = mockCharacter({ instanceId: 'char-1', currentHp: 1 });
+  it('adds disadvantage die when character has 1 HP remaining and is targeted', () => {
+    // currentHp = marked boxes; 1 remaining means maxHp - currentHp === 1
+    const char = mockCharacter({ instanceId: 'char-1', maxHp: 6, currentHp: 5 });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const result = runIntent(Sturdy, {
@@ -29,19 +30,18 @@ describe('Sturdy', () => {
 
     expect(result.mutations).toContainEqual(
       expect.objectContaining({
-        type: 'addRollDie',
+        type: 'addDisadvantageDie',
         payload: expect.objectContaining({
           rollKey: 'action',
-          name: 'Sturdy (disadvantage)',
-          die: 'd6',
-          value: -1,
+          name: 'Sturdy',
         }),
       })
     );
   });
 
-  it('does not add disadvantage when character has more than 1 HP', () => {
-    const char = mockCharacter({ instanceId: 'char-1', currentHp: 2 });
+  it('does not add disadvantage when character has more than 1 HP remaining', () => {
+    // currentHp: 4 with maxHp: 6 means 2 HP remaining
+    const char = mockCharacter({ instanceId: 'char-1', maxHp: 6, currentHp: 4 });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const result = runIntent(Sturdy, {
@@ -57,15 +57,12 @@ describe('Sturdy', () => {
     });
 
     expect(result.mutations).not.toContainEqual(
-      expect.objectContaining({
-        type: 'addRollDie',
-        payload: expect.objectContaining({ name: 'Sturdy (disadvantage)' }),
-      })
+      expect.objectContaining({ type: 'addDisadvantageDie' })
     );
   });
 
   it('does not add disadvantage when character is not targeted', () => {
-    const char = mockCharacter({ instanceId: 'char-1', currentHp: 1 });
+    const char = mockCharacter({ instanceId: 'char-1', maxHp: 6, currentHp: 5 });
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const result = runIntent(Sturdy, {
@@ -81,10 +78,7 @@ describe('Sturdy', () => {
     });
 
     expect(result.mutations).not.toContainEqual(
-      expect.objectContaining({
-        type: 'addRollDie',
-        payload: expect.objectContaining({ name: 'Sturdy (disadvantage)' }),
-      })
+      expect.objectContaining({ type: 'addDisadvantageDie' })
     );
   });
 });

@@ -14,12 +14,18 @@ export const Charge = {
     when(
       isActing,
       (table) => {
+        const meleeAdvs = table.adversaries.filter(
+          (a) => table.me.rangeFrom(a) === 'melee'
+        );
         return (
-          table.action?.type === 'attack' &&
+          table.action?.type === 'trait' &&
           table.action?.trait === 'Agility' &&
           table.rolls?.action?.isSuccess === true &&
-          table.action?.range === 'melee' &&
-          (table.action?.targets?.length ?? 0) > 0
+          meleeAdvs.length > 0 &&
+          meleeAdvs.some((a) => {
+            const last = table.me.lastPosition?.rangeFrom(a);
+            return last === 'far' || last === 'veryFar';
+          })
         );
       },
       {
@@ -35,7 +41,7 @@ export const Charge = {
             name: 'Charge',
             dice: '1d12',
             damageType: 'physical',
-            targets: meleeTargets.length > 0 ? meleeTargets : table.action?.targets ?? [],
+            targets: meleeTargets,
           });
         },
       }
@@ -47,4 +53,19 @@ export const Unshakable = {
   name: 'Unshakable',
   description:
     "When you would mark a Stress, roll a d6. On a result of 6, don't mark it.",
+  hooks: {
+    onReviewOutcome(table) {
+      const stressEffect = table.action?.effects?.find(
+        (e) =>
+          e.stat === 'currentStress' &&
+          e.target?.instanceId === table.me?.instanceId &&
+          e.amount > 0
+      );
+      if (!stressEffect) return;
+      const roll = table.rollDie('d6');
+      if (roll === 6) {
+        stressEffect.amount = 0;
+      }
+    },
+  },
 };
