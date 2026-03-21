@@ -554,3 +554,31 @@ temporaryStatMods: {
   evasion: (table) => table.me?.armor ?? 0,
 }
 ```
+
+---
+
+## CONV-027 — Use `selectTargets` for in-chip combat target selection
+
+When a chip needs the player to pick one or more combat targets (e.g. Bouncing, Doubled Up), use the `selectTargets` chip property — a function `(table) => Actor[]` that returns valid targets. The engine stores the player's selection as `selectedTargetIds` in chip state before calling `onUse`. Read it via `chip.get('selectedTargetIds')`.
+
+Set `multiSelect: true` when the player may pick more than one target (e.g. Bouncing). For single-target selection (e.g. Doubled Up), omit `multiSelect`.
+
+Use `addDamageRoll` to queue damage for each selected target.
+
+```js
+// ✓ Good — multi-target selection with variable Stress cost
+{
+  placements: ['reviewAction'],
+  multiSelect: true,
+  selectTargets: (table) => table.adversaries.filter(a =>
+    !new Set((table.action?.targets || []).map(t => t.instanceId)).has(a.instanceId)
+    && table.me?.rangeFrom(a) != null
+  ),
+  stressCost: (table) => table.feature.get('bounceTargets') ?? 0,
+  onUse(table, chip) {
+    const targetIds = chip.get('selectedTargetIds') || [];
+    table.feature.set('bounceTargets', targetIds.length);
+    // ... addDamageRoll per target
+  },
+}
+```

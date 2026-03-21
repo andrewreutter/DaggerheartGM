@@ -893,6 +893,67 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 }
 ```
 
+- `selectTargets` *(function)*: If provided, the chip renders a target picker (showing combat actors on the table) instead of a plain button. Must be a function `(table) => Actor[]` that returns the list of valid target Actors. When the player confirms their selection, the engine stores the chosen instance IDs in chip state (accessible via `chip.get('selectedTargetIds')`, an array of strings) and then calls `onUse`. Use this for features that need the player to pick one or more combat targets from within a chip — e.g. bouncing an attack to additional enemies, or dealing secondary damage to another target.
+- `multiSelect` *(boolean)*: When `true` (and `selectTargets` is provided), the target picker allows multiple targets to be selected. When `false` or omitted, only a single target can be selected. Use this for features where the player chooses a variable number of targets (e.g. Bouncing).
+
+```javascript
+// Example: Bouncing — select multiple targets; Stress cost = number selected
+{
+  description: 'Mark Stress to bounce to additional targets in range.',
+  placements: ['reviewAction'],
+  multiSelect: true,
+  selectTargets: (table) => {
+    const currentTargetIds = new Set(
+      (table.action?.targets || []).map(t => t.instanceId)
+    );
+    return table.adversaries.filter(a =>
+      !currentTargetIds.has(a.instanceId) &&
+      table.me?.rangeFrom(a) != null
+    );
+  },
+  stressCost: (table) => table.feature.get('bounceTargets') ?? 0,
+  onUse(table, chip) {
+    const targetIds = chip.get('selectedTargetIds') || [];
+    table.feature.set('bounceTargets', targetIds.length);
+    const targets = targetIds
+      .map(id => table.actors.find(a => a.instanceId === id))
+      .filter(Boolean);
+    for (const target of targets) {
+      table.action?.addDamageRoll({
+        name: 'Bouncing',
+        dice: table.me?.primaryWeapon?.damage || 'd6',
+        targets: [target],
+      });
+    }
+  },
+}
+
+// Example: Doubled Up — single target in Melee range; no extra cost
+{
+  description: 'Deal secondary weapon damage to another Melee target.',
+  placements: ['reviewAction'],
+  selectTargets: (table) => {
+    const currentTargetIds = new Set(
+      (table.action?.targets || []).map(t => t.instanceId)
+    );
+    return table.adversaries.filter(a =>
+      !currentTargetIds.has(a.instanceId) &&
+      table.me?.rangeFrom(a) === 'melee'
+    );
+  },
+  onUse(table, chip) {
+    const targetIds = chip.get('selectedTargetIds') || [];
+    const target = table.actors.find(a => a.instanceId === targetIds[0]);
+    if (!target) return;
+    table.action?.addDamageRoll({
+      name: 'Doubled Up',
+      dice: table.me?.secondaryWeapon?.damage || 'd6',
+      targets: [target],
+    });
+  },
+}
+```
+
 **Resource Costs & Frequencies:**
 When these properties are defined on a chip, the engine automatically handles deducting the cost or tracking the usage cycle when the GM approves the action.
 
@@ -907,12 +968,15 @@ When these properties are defined on a chip, the engine automatically handles de
 
 ```javascript
 {
-  description: "Mark Stress to bounce to that many targets.",
+  description: "Mark Stress to bounce to additional targets.",
   placements: ['reviewAction'],
-  stressCost: (table) => table.feature.get('bounceTargets') ?? 1,
-  onUse: (table, chip) => {
-    const count = table.feature.get('bounceTargets') ?? 1;
-    // queue count additional attack effects…
+  multiSelect: true,
+  selectTargets: (table) => table.adversaries.filter(a => table.me?.rangeFrom(a) != null),
+  stressCost: (table) => table.feature.get('bounceTargets') ?? 0,
+  onUse(table, chip) {
+    const targetIds = chip.get('selectedTargetIds') || [];
+    table.feature.set('bounceTargets', targetIds.length);
+    // queue damage to each bounce target…
   }
 }
 ```

@@ -73,10 +73,16 @@ export function collectChips(features, phase, table, usageStore = {}) {
  * fourth argument. The engine stores it in chipState so `onUse` can read it
  * via `chip.get('selectedId')`.
  *
+ * For target-select chips (`selectTargets` is a function), pass
+ * `{ selectedTargetIds }` (array of instanceId strings) in the fourth argument.
+ * The engine stores them in chipState so `onUse` can read them via
+ * `chip.get('selectedTargetIds')`.
+ *
  * @param {object} chip                  — chip descriptor (from collectChips)
  * @param {object} table                 — current Game Table Snapshot
  * @param {object} chipState             — mutable chip-local state object
- * @param {object} [selectOpts]          — { selectedId } for isSelect chips
+ * @param {object} [selectOpts]          — { selectedId } for isSelect chips;
+ *                                         { selectedTargetIds } for selectTargets chips
  * @returns {object[]} mutations          — queued mutations from the call
  */
 export function activateChip(chip, table, chipState = makeChipState(), selectOpts = {}) {
@@ -87,6 +93,11 @@ export function activateChip(chip, table, chipState = makeChipState(), selectOpt
   // For select chips, persist the chosen option id into chip state before onUse
   if (typeof chip.isSelect === 'function' && selectOpts.selectedId !== undefined) {
     chipState.set('selectedId', selectOpts.selectedId);
+  }
+
+  // For target-select chips, persist selected target instance ids before onUse
+  if (typeof chip.selectTargets === 'function' && selectOpts.selectedTargetIds !== undefined) {
+    chipState.set('selectedTargetIds', selectOpts.selectedTargetIds);
   }
 
   if (chip.isToggle && chip._gatedHookFn) {

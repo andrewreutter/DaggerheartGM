@@ -242,6 +242,28 @@ describe('activateChip()', () => {
     const addMut = onMuts.find((m) => m.type === 'addTemporaryStatMod');
     expect(addMut.payload).toMatchObject({ stat: 'evasion', value: 2 });
   });
+
+  it('stores selectedTargetIds in chipState for selectTargets chips', () => {
+    const calls = [];
+    const chip = {
+      selectTargets: () => [],
+      onUse: (_table, cs) => calls.push(cs.get('selectedTargetIds')),
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1', 'adv-2'] });
+    expect(chipState.get('selectedTargetIds')).toEqual(['adv-1', 'adv-2']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['adv-1', 'adv-2']);
+  });
+
+  it('does not store selectedTargetIds when selectTargets is not a function', () => {
+    const chip = { onUse: () => {} };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1'] });
+    expect(chipState.get('selectedTargetIds')).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
