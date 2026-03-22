@@ -1,23 +1,27 @@
 /**
- * Seraph class features.
+ * Seraph class features — per-feature descriptors.
  *
- * Prayer Dice flow:
- *   1. Clicking "Prayer Dice" in CharacterHoverCard rolls Nd4 (N = spellcast trait value).
- *   2. On banner dismiss, GMTableView builds _addModifiers from subItems and applies them
- *      via applyFeatureResources — one Prayer Die chip per d4 with usageModes: ['gainHope'].
- *   3. Each chip shows a "+Hope" button. Clicking it posts an ActionBanner (requires GM ack).
- *      On GM ack, handleBannerAcknowledge gains Hope equal to die value and removes the chip.
- *   4. Adding the die value to a roll: prayer die buttons appear directly in roll banners
- *      (for Seraph's own rolls and ally rolls). Clicking toggles a bonus to the displayed total;
- *      on Acknowledge the die is consumed.
- *   5. Reducing damage: a prayer die "-Dmg" toggle appears in damage banners when a character
- *      or ally is targeted. When toggled, subtracts die value from damage before thresholds;
- *      on Acknowledge the die is consumed.
- *   6. Chips with refreshOn: 'session' are auto-cleared on session start.
+ * SRD (class): Seraphs are divine fighters and healers imbued with sacred purpose. Their ethos traditionally aligns
+ * with the domain or goals of their god. It is better to be a seraph's ally than their enemy.
+ *
+ * SRD (Prayer Dice): At the beginning of each session, roll a number of **d4s** equal to your subclass's Spellcast trait
+ * and place them on your character sheet. These are your Prayer Dice. You can spend any number of Prayer Dice to aid
+ * yourself or an ally within Far range. You can use a spent die's value to reduce incoming damage, add to a roll's
+ * result after the roll is made, or gain Hope equal to the result. At the end of each session, clear all unspent Prayer Dice.
+ *
+ * SRD (Life Support, Hope): **Spend 3 Hope** to clear a Hit Point on an ally within Close range.
+ *
+ * Implementation: Prayer Dice is the hope ability; modifier usage (gainHope, add to roll, reduce damage) via
+ * ActionBanner and handleBannerAcknowledge. onModifierUsed invoked when a Prayer Die chip is used in non-roll mode.
  */
-export default {
-  name: 'Seraph',
-  // gainHope is handled via ActionBanner → GMTableView handleBannerAcknowledge
-  // (requires GM acknowledge before applying Hope).
-  onModifierUsed() {},
+
+/** @type {Record<string, object>} */
+const features = {
+  'Prayer Dice': {
+    name: 'Prayer Dice',
+    class: 'Seraph',
+    onModifierUsed() {},
+  },
 };
+
+export default features;

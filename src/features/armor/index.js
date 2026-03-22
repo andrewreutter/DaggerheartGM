@@ -1,12 +1,11 @@
 /**
- * Armor features barrel — builder pattern aligned with ancestries/communities.
+ * Armor features barrel.
  *
- * Each armor file exports { name, description, onCharacterBuild({ character, armor }) }.
- * The barrel creates a character builder (shared addFeature) and an armor context object,
- * then runs builder.onCharacterBuild({ character, armor }). Descriptors are registered
- * in armorFeatures only (no feature list / no character sheet feature cards).
+ * Each armor file exports a single feature descriptor: { name, description?, ...hooks }.
+ * The barrel builds and registers each descriptor. Descriptors are in armorFeatures only
+ * (no feature list / no character sheet feature cards).
  */
-import { createFeatureBuilder } from '../add-feature.js';
+import { buildFeatureDescriptor, registerFeature } from '../descriptor-util.js';
 import Fortified  from './Fortified.js';
 import Painful    from './Painful.js';
 import Resilient  from './Resilient.js';
@@ -28,23 +27,24 @@ import Shifting   from './Shifting.js';
 import Hopeful    from './Hopeful.js';
 import Impenetrable from './Impenetrable.js';
 
-const builders = [
+/** Dictionary of feature name → descriptor (each file exports a single descriptor). */
+const builderDict = {
   Fortified, Painful, Resilient, Reinforced, Warded, Physical, Magic,
   Flexible, Heavy, VeryHeavy, Gilded, Difficult, Channeling, Quiet,
   Sharp, Burning, Timeslowing, Shifting, Hopeful, Impenetrable,
-];
+};
 
 /** @type {Record<string, object>} feature name → descriptor */
 const armorFeatures = {};
 
-for (const builder of builders) {
-  const character = createFeatureBuilder({
+for (const builder of Object.values(builderDict)) {
+  const { name, description, ...hooks } = builder;
+  const descriptor = buildFeatureDescriptor(name, description, hooks, {
     targetMap: armorFeatures,
     sourceType: 'armor',
     source: builder.name,
   });
-  const armor = { name: builder.name, description: builder.description };
-  builder.onCharacterBuild({ character, armor });
+  registerFeature(descriptor, { targetMap: armorFeatures });
 }
 
 export default armorFeatures;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Dices, Trash2 } from 'lucide-react';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { getAuthToken } from '../lib/api.js';
@@ -152,12 +152,12 @@ function TokenDotRing({ size, groups }) {
 
 // ─── MapConfigToolbar ────────────────────────────────────────────────────────
 
-function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', onTableNameChange, onDeleteTable }) {
+function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable }) {
   const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
   const fileInputRef = useRef(null);
   const isNewTable = tableName === '' || tableName === 'New Table';
-  const [isEditingName, setIsEditingName] = useState(isNewTable);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(tableName || 'New Table');
   const nameInputRef = useRef(null);
 
@@ -165,7 +165,12 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
   useEffect(() => { setSizeInput(String(mapSizeFt)); }, [mapSizeFt]);
   useEffect(() => { setNameInput(tableName || 'New Table'); }, [tableName]);
 
-  // On new table, open editor and focus on first display
+  // Only open name editor when table state has loaded and name is empty or default
+  useEffect(() => {
+    if (tableStateReady) setIsEditingName(isNewTable);
+  }, [tableStateReady, isNewTable]);
+
+  // On new table, focus name input when editor is open
   useEffect(() => {
     if (!isNewTable || !isEditingName) return;
     const el = nameInputRef.current;
@@ -591,7 +596,25 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', onTableNameChange, onDeleteTable, onClearDice, className = '' }) {
+export function BattleMap({
+  gmUid,
+  user,
+  isPlayer = false,
+  activeElements = [],
+  updateActiveElement,
+  mapConfig,
+  onMapConfigChange,
+  tableName = '',
+  tableStateReady = false,
+  onTableNameChange,
+  onDeleteTable,
+  onClearDice,
+  diceCanvasHidden = false,
+  onToggleDiceVisibility,
+  className = '',
+  /** V2 Phase 4: called after a token drag commits (map or tray), with pre/post positions for `dispatchTokenMoveHooks` */
+  onTokenDragEnd,
+}) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -852,6 +875,10 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       tokenSize,
       grabOffsetX,
       grabOffsetY,
+      prevTokenFt:
+        element.tokenX != null && element.tokenY != null
+          ? { tokenX: element.tokenX, tokenY: element.tokenY }
+          : null,
     };
   }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt]);
 
@@ -919,6 +946,16 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       if (!ds.fromTray) {
         updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null });
         if (pinnedToken?.element.instanceId === ds.instanceId) setPinnedToken(null);
+        const postMove = activeElements.map((el) =>
+          el.instanceId === ds.instanceId ? { ...el, tokenX: null, tokenY: null } : el
+        );
+        onTokenDragEnd?.({
+          instanceId: ds.instanceId,
+          previousTokenFt: ds.prevTokenFt,
+          nextTokenFt: null,
+          fromTray: false,
+          postMoveActiveElements: postMove,
+        });
       }
       return;
     }
@@ -938,13 +975,29 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
         const clampedX = Math.max(0, Math.min(mapWidthFt - 5, ftX));
         const clampedY = Math.max(0, Math.min(mapHeightFt - 5, ftY));
         updateActiveElement(ds.instanceId, { tokenX: clampedX, tokenY: clampedY });
+        const postMove = activeElements.map((el) =>
+          el.instanceId === ds.instanceId ? { ...el, tokenX: clampedX, tokenY: clampedY } : el
+        );
+        onTokenDragEnd?.({
+          instanceId: ds.instanceId,
+          previousTokenFt: ds.fromTray ? null : ds.prevTokenFt,
+          nextTokenFt: { tokenX: clampedX, tokenY: clampedY },
+          fromTray: ds.fromTray,
+          postMoveActiveElements: postMove,
+        });
       } else if (!ds.fromTray) {
         // Dropped outside map and trays while dragging from map: return to tray
         updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null });
         if (pinnedToken?.element.instanceId === ds.instanceId) setPinnedToken(null);
+        onTokenDragEnd?.({
+          instanceId: ds.instanceId,
+          previousTokenFt: ds.prevTokenFt,
+          nextTokenFt: null,
+          fromTray: false,
+        });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd]);
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {
@@ -990,6 +1043,7 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
           isUploading={isUploading}
           onFileSelect={handleImageFile}
           tableName={tableName}
+          tableStateReady={tableStateReady}
           onTableNameChange={onTableNameChange}
           onDeleteTable={onDeleteTable}
         />
@@ -1018,19 +1072,32 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
                 pinnedInstanceId={pinnedToken?.element.instanceId}
               />
             </div>
-            {onClearDice && (
-              <div className="p-1.5 border-t border-slate-800 shrink-0">
-                <Tooltip label="Clear 3D dice from view">
-                  <button
-                    type="button"
-                    onClick={onClearDice}
-                    className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
-                    aria-label="Clear dice"
-                  >
-                    <Eraser size={14} />
-                    <Dices size={14} />
-                  </button>
-                </Tooltip>
+            {(onClearDice || onToggleDiceVisibility) && (
+              <div className="p-1.5 border-t border-slate-800 shrink-0 flex flex-col gap-1">
+                {onToggleDiceVisibility && (
+                  <Tooltip label={diceCanvasHidden ? 'Show 3D dice' : 'Hide 3D dice'}>
+                    <button
+                      type="button"
+                      onClick={onToggleDiceVisibility}
+                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                      aria-label={diceCanvasHidden ? 'Show dice' : 'Hide dice'}
+                    >
+                      {diceCanvasHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </button>
+                  </Tooltip>
+                )}
+                {onClearDice && (
+                  <Tooltip label="Clear 3D dice">
+                    <button
+                      type="button"
+                      onClick={onClearDice}
+                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                      aria-label="Clear dice"
+                    >
+                      <Eraser size={14} />
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             )}
           </div>

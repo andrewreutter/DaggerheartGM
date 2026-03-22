@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
 import { computeBattlePoints } from './lib/battle-points.js';
 import { RUNTIME_KEYS } from './lib/table-ops.js';
+import { useV2DeclarativeSheetEnabledLive, setV2DeclarativeSheetPreference } from './lib/v2-declarative-sheet.js';
 
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
@@ -17,6 +18,7 @@ import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
+import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -57,8 +59,11 @@ function App() {
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
   const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
+  /** V2 shared table bags (e.g. Bard Rally) — persisted in `table_state.featureState` */
+  const [tableFeatureState, setTableFeatureState] = useState({});
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
-  // tableStateReadyRef is set once initial state is loaded from the server (via REST or SSE).
+  // tableStateReady: true after we've applied table state for the current table (avoids opening name editor before load)
+  const [tableStateReady, setTableStateReady] = useState(false);
   const tableStateReadyRef = useRef(false);
   const scenesLoadedRef = useRef(false);
   const adventuresLoadedRef = useRef(false);
@@ -71,14 +76,18 @@ function App() {
   const charactersCacheRef = useRef([]);
   const charLoadResolversRef = useRef([]);
 
+  const v2DeclarativeSheetEnabled = useV2DeclarativeSheetEnabledLive();
+
   const [isAdmin, setIsAdmin] = useState(false);
   const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName }] — tables user is invited to
   const [myTables, setMyTables] = useState([]); // [{ id, name }] — tables user owns
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
-  // Player-only: banner IDs for which Feline Instincts reroll was requested (optimistic feedback)
-  const [felineRequestedBannerIds, setFelineRequestedBannerIds] = useState(() => new Set());
+  // pendingPlayerIntent: pre-roll intent broadcast by a player before dice are rolled (GM sees this)
+  const [pendingPlayerIntent, setPendingPlayerIntent] = useState(null);
+  // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
+  const [featureRequestedBannerIdsByKey, setFeatureRequestedBannerIdsByKey] = useState(() => ({}));
   // Player-only: banner IDs for which Ranger's Focus reroll was requested
   const [rangerFocusRequestedBannerIds, setRangerFocusRequestedBannerIds] = useState(() => new Set());
   const [actionLog, setActionLog] = useState([]);
@@ -88,6 +97,7 @@ function App() {
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [tableFlash, setTableFlash] = useState(false);
   const [deleteTablePending, setDeleteTablePending] = useState(null); // { id, name } when confirming delete
@@ -421,6 +431,8 @@ function App() {
       setTableName('');
       setLifeSupportSelections({});
       setRestMovesSelections({});
+      setTableFeatureState({});
+      setTableStateReady(false);
     }
     prevTableIdRef.current = route.tableId;
   }, [route.view, route.tableId]);
@@ -441,6 +453,8 @@ function App() {
         setMapConfig(DEFAULT_MAP_CONFIG);
         setLifeSupportSelections({});
         setRestMovesSelections({});
+        setTableFeatureState({});
+        setTableStateReady(true);
         tableStateReadyRef.current = true;
         return;
       }
@@ -453,6 +467,12 @@ function App() {
       if (tableState.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
       if (tableState.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
       if (tableState.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
+      if (tableState.featureState != null && typeof tableState.featureState === 'object') {
+        setTableFeatureState(tableState.featureState);
+      } else {
+        setTableFeatureState({});
+      }
+      setTableStateReady(true);
       tableStateReadyRef.current = true;
     }).catch(err => console.error('Failed to load table state:', err));
   }, [user?.uid, route.view, route.tableId]);
@@ -486,6 +506,12 @@ function App() {
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
+        if (state.featureState != null && typeof state.featureState === 'object') {
+          setTableFeatureState(state.featureState);
+        } else {
+          setTableFeatureState({});
+        }
+        setTableStateReady(true);
         tableStateReadyRef.current = true;
       });
       es.addEventListener('roll-history', (e) => {
@@ -498,6 +524,10 @@ function App() {
       es.addEventListener('banners', (e) => {
         const data = JSON.parse(e.data);
         setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
+      });
+      es.addEventListener('intent', (e) => {
+        const intent = JSON.parse(e.data);
+        setPendingPlayerIntent(intent); // null clears the banner
       });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
@@ -528,6 +558,12 @@ function App() {
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
+        if (state.featureState != null && typeof state.featureState === 'object') {
+          setTableFeatureState(state.featureState);
+        } else {
+          setTableFeatureState({});
+        }
+        setTableStateReady(true);
         setMyRooms(prev => {
           const hasRoom = prev.some(r => r.tableId === route.tableId);
           if (hasRoom && state.tableName != null)
@@ -1074,7 +1110,47 @@ function App() {
               </button>
 
               {userMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-52 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-1">
+                <div className="absolute right-0 top-full mt-1 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-1">
+                  <div className="px-4 py-2.5 border-b border-slate-700">
+                    <p className="text-[9px] uppercase tracking-wider text-slate-500 mb-2">Character sheet</p>
+                    <div className="flex rounded-md border border-slate-600 overflow-hidden text-xs font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setV2DeclarativeSheetPreference(false)}
+                        className={`flex-1 py-1.5 transition-colors ${
+                          !v2DeclarativeSheetEnabled
+                            ? 'bg-sky-700 text-white'
+                            : 'text-slate-400 hover:bg-slate-700/60'
+                        }`}
+                      >
+                        V1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setV2DeclarativeSheetPreference(true)}
+                        className={`flex-1 py-1.5 transition-colors ${
+                          v2DeclarativeSheetEnabled
+                            ? 'bg-sky-700 text-white'
+                            : 'text-slate-400 hover:bg-slate-700/60'
+                        }`}
+                      >
+                        V2
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-slate-500 mt-1.5 leading-snug">
+                      V2 uses the declarative engine for sheet hints (e.g. weapon disable).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      setFeatureAuthoringGuideOpen(true);
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    <ScrollText size={15} /> Feature authoring guide
+                  </button>
                   <button
                     onClick={handleExport}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
@@ -1187,6 +1263,7 @@ function App() {
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
                 tableName={tableName}
+                tableStateReady={tableStateReady}
                 onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
                 onDeleteTable={tableId && !effectiveIsPlayer ? () => {
                   const name = (tableName?.trim() || (tableId === user?.uid ? 'My Game Table' : 'Game Table'));
@@ -1202,8 +1279,24 @@ function App() {
                 gmUid={route.gmUid || user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
-                onFelineRerollRequestSuccess={effectiveIsPlayer ? (bannerId) => setFelineRequestedBannerIds(prev => new Set([...prev, bannerId])) : undefined}
-                onFelineRerollRequestCancel={effectiveIsPlayer ? (bannerId) => setFelineRequestedBannerIds(prev => { const next = new Set(prev); next.delete(bannerId); return next; }) : undefined}
+                pendingPlayerIntent={pendingPlayerIntent}
+                onFeatureRequestSuccess={effectiveIsPlayer ? (bannerId, stateKey) => {
+                  if (stateKey == null) return;
+                  setFeatureRequestedBannerIdsByKey(prev => ({
+                    ...prev,
+                    [stateKey]: new Set([...(prev[stateKey] || []), bannerId]),
+                  }));
+                } : undefined}
+                onFeatureRequestCancel={effectiveIsPlayer ? (bannerId, stateKey) => {
+                  if (stateKey == null) return;
+                  setFeatureRequestedBannerIdsByKey(prev => {
+                    const set = prev[stateKey];
+                    if (!set) return prev;
+                    const next = new Set(set);
+                    next.delete(bannerId);
+                    return { ...prev, [stateKey]: next };
+                  });
+                } : undefined}
                 rangerFocusRequestedBannerIds={rangerFocusRequestedBannerIds}
                 onRangerFocusRerollRequestSuccess={effectiveIsPlayer ? (bannerId) => setRangerFocusRequestedBannerIds(prev => new Set([...prev, bannerId])) : undefined}
                 onRangerFocusRerollRequestCancel={effectiveIsPlayer ? (bannerId) => setRangerFocusRequestedBannerIds(prev => { const next = new Set(prev); next.delete(bannerId); return next; }) : undefined}
@@ -1220,11 +1313,18 @@ function App() {
                 restMovesSelections={restMovesSelections}
                 onRestMoveSelect={sendRestMoveSelect}
                 onRestMoveClear={effectiveIsPlayer ? () => {} : sendRestMoveClear}
+                tableFeatureState={tableFeatureState}
               />
             </div>
           </>
         )}
       </main>
+      {user && (
+        <FeatureAuthoringGuideModal
+          open={featureAuthoringGuideOpen}
+          onClose={() => setFeatureAuthoringGuideOpen(false)}
+        />
+      )}
       {pendingSceneAdd && (
         <SceneAdoptDialog
           scene={pendingSceneAdd.scene}

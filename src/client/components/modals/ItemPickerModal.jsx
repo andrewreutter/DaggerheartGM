@@ -36,7 +36,9 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
   const actionLabel = title || `Add ${singular}`;
 
-  const search = useCollectionSearch(collection, { limit: 40, enabled: isPaginated, infinite: true });
+  // Add Adversary / Add Environment dialogs default to Mine + SRD (not just Mine).
+  const pickerDefaultFilters = isPaginated ? { defaultFilters: { includes: ['own', 'srd'] } } : {};
+  const search = useCollectionSearch(collection, { limit: 40, enabled: isPaginated, infinite: true, ...pickerDefaultFilters });
   const resultsRef = useRef(null);
   const sentinelRef = useRef(null);
   const [daggerstackOpen, setDaggerstackOpen] = useState(false);

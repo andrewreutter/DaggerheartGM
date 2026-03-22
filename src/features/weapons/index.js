@@ -1,12 +1,11 @@
 /**
- * Weapon features barrel — builder pattern aligned with ancestries/communities.
+ * Weapon features barrel.
  *
- * Each weapon file exports { name, description?, onCharacterBuild({ character, weapon }) }.
- * The barrel creates a character builder (shared addFeature) and a weapon context object,
- * then runs builder.onCharacterBuild({ character, weapon }). Descriptors are registered
- * in weaponFeatures only (no feature list / no character sheet feature cards).
+ * Each weapon file exports a single feature descriptor: { name, description?, ...hooks }.
+ * The barrel builds and registers each descriptor. Descriptors are in weaponFeatures only
+ * (no feature list / no character sheet feature cards).
  */
-import { createFeatureBuilder } from '../add-feature.js';
+import { buildFeatureDescriptor, registerFeature } from '../descriptor-util.js';
 import Painful       from './Painful.js';
 import Invigorating  from './Invigorating.js';
 import Lifestealing   from './Lifestealing.js';
@@ -57,7 +56,8 @@ import Sheltering    from './Sheltering.js';
 import LockedOn      from './LockedOn.js';
 import Deflecting    from './Deflecting.js';
 
-const builders = [
+/** Dictionary of feature name → descriptor (each file exports a single descriptor). */
+const builderDict = {
   Painful, Invigorating, Lifestealing, Charged, Startling,
   Reliable, Sharpwing, Bonded, Scary, Deadly,
   Powerful, Massive, Brutal, SelfCorrecting, Serrated,
@@ -66,19 +66,19 @@ const builders = [
   Cumbersome, Heavy, Protective, Barrier, DoubleDuty, Brave, Paired, Otherworldly, Parry,
   Destructive,
   Returning, Hooked, Eruptive, Persuasive, Dueling, Retractable, Timebending, Healing, Hot, Greedy, Concussive, Long, Grappling, Sheltering, LockedOn, Deflecting,
-];
+};
 
 /** @type {Record<string, object>} feature name → descriptor */
 const weaponFeatures = {};
 
-for (const builder of builders) {
-  const character = createFeatureBuilder({
+for (const builder of Object.values(builderDict)) {
+  const { name, description, ...hooks } = builder;
+  const descriptor = buildFeatureDescriptor(name, description, hooks, {
     targetMap: weaponFeatures,
     sourceType: 'weapon',
     source: builder.name,
   });
-  const weapon = { name: builder.name, description: builder.description };
-  builder.onCharacterBuild({ character, weapon });
+  registerFeature(descriptor, { targetMap: weaponFeatures });
 }
 
 export default weaponFeatures;

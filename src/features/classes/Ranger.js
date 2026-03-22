@@ -1,39 +1,37 @@
 /**
- * Ranger class features.
+ * Ranger class features — per-feature descriptors.
  *
- * Hooks implemented:
- *   onFeatureActivated — sets focusTargetId when "Ranger's Focus" is activated
- *   onHpDealt          — marks 1 Stress on the Ranger when they deal HP damage to their Focus target
+ * SRD (class): Rangers are highly skilled hunters who, despite their martial abilities, rarely lend their skills to an
+ * army. Through mastery of the body and a deep understanding of the wilderness, rangers become sly tacticians.
+ *
+ * SRD (Ranger's Focus): **Spend a Hope** and make an attack against a target. On a success, deal your attack's normal
+ * damage and temporarily make the attack's target your _Focus_. Until this feature ends or you make a different
+ * creature your _Focus_, you gain: You know precisely what direction they are in; when you deal damage to them, they
+ * must mark a Stress; when you fail an attack against them, you can end your Ranger's Focus to reroll your Duality Dice.
+ *
+ * SRD (Hold Them Off, Hope): **Spend 3 Hope** when you succeed on an attack with a weapon to use that same roll against
+ * two additional adversaries within range of the attack.
+ *
+ * Implementation: onFeatureActivated set focusTargetId; onHpDealt mark 1 Stress on Ranger when dealing HP to focus target.
  */
-export default {
-  name: 'Ranger',
 
-  /**
-   * "Ranger's Focus" — the Ranger picks an adversary as their Focus target.
-   * Stored as `focusTargetId` on the character element.
-   *
-   * Called from GMTableView's onFeatureActivated dispatch when the Ranger uses
-   * the feature and the GM selects a target via the ActionBanner target picker.
-   *
-   * @param {{ featureName: string, targetEl: object|null, selfEl: object, updateActiveElement: Function }} ctx
-   */
-  onFeatureActivated({ featureName, targetEl, selfEl, updateActiveElement }) {
-    if (featureName !== "Ranger's Focus") return;
-    if (!selfEl?.instanceId) return;
-    updateActiveElement(selfEl.instanceId, { focusTargetId: targetEl?.instanceId ?? null });
-  },
+/** @type {Record<string, object>} */
+const features = {
+  "Ranger's Focus": {
+    name: "Ranger's Focus",
+    class: 'Ranger',
+    onFeatureActivated({ targetEl, selfEl, updateActiveElement }) {
+      if (!selfEl?.instanceId) return;
+      updateActiveElement(selfEl.instanceId, { focusTargetId: targetEl?.instanceId ?? null });
+    },
 
-  /**
-   * When the Ranger deals ≥1 HP damage to their Focus target, mark 1 Stress on themselves.
-   *
-   * @param {{ character: object, hpDealt: number, target: object, updateActiveElement: Function }} ctx
-   *   character — the attacker (wrapped entity; has .class, .focusTargetId, .markStress, etc.)
-   *   target    — entity that received the damage (has .instanceId)
-   */
-  onHpDealt({ character, hpDealt, target }) {
-    if (hpDealt < 1) return;
-    if (!character.focusTargetId) return;
-    if (target?.instanceId !== character.focusTargetId) return;
-    character.markStress(1);
+    onHpDealt({ character, hpDealt, target }) {
+      if (hpDealt < 1) return;
+      if (!character.focusTargetId) return;
+      if (target?.instanceId !== character.focusTargetId) return;
+      character.markStress(1);
+    },
   },
 };
+
+export default features;

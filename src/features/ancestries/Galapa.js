@@ -1,45 +1,37 @@
 /**
- * Galapa ancestry builder.
+ * Galapa ancestry — feature hooks keyed by feature name.
  *
- * Features:
- *   Shell — +Proficiency (or 1) to both major and severe damage thresholds (addThresholdBonus).
- *   Retract — Toggle: resistance to physical, disadvantage on rolls, cannot move (onCard + entity methods; system-derived toggle key).
+ * SRD (ancestry): Galapa resemble anthropomorphic turtles with large, domed shells into which they can retract. Members
+ * of this ancestry can draw their head, arms, and legs into their shell for protection. Most galapa move slowly and can
+ * live approximately 150 years.
+ *
+ * SRD (Shell): Gain a bonus to your damage thresholds equal to your Proficiency.
+ *
+ * SRD (Retract): **Mark a Stress** to retract into your shell. While in your shell, you have resistance to physical
+ * damage, you have disadvantage on action rolls, and you can't move.
  */
 export default {
-  name: 'Galapa',
-  description: 'Galapa are turtle-like humanoids with protective shells and the ability to retract into them. They are known for their durability and defensive nature.',
-
-  onCharacterBuild(char) {
-    char.addFeature(
-      'Shell',
-      'Your shell provides natural protection. Add your Proficiency to both your Major and Severe damage thresholds.',
+  Shell: {
+    passiveStatMods: { majorThreshold: 1, severeThreshold: 1 },
+  },
+  Retract: {
+    chips: [
       {
-        onCharacterRender: (ctx) => ctx.addThresholdBonus(ctx.proficiency ?? 1),
-      }
-    );
-
-    char.addFeature(
-      'Retract',
-      'You can retract into your shell, gaining resistance to physical damage but suffering disadvantage on action rolls and being unable to move.',
-      {
-        onCard(card) {
+        placement: 'card',
+        label: 'Retract into your shell',
+        onToggle({ character, chip }) {
           const source = 'Galapa - Retract';
-          card.addChip({
-            label: 'Retract into your shell',
-            onToggle: (isActive, character) => {
-              if (isActive) {
-                character.addResistance('physical', source);
-                character.addDisadvantage(source);
-                character.disableMove(source);
-              } else {
-                character.removeResistance('physical', source);
-                character.removeDisadvantage(source);
-                character.enableMove(source);
-              }
-            },
-          });
+          if (chip.isActive) {
+            character.addResistance('physical', source);
+            character.addDisadvantage(source);
+            character.disableMove(source);
+          } else {
+            character.removeResistance('physical', source);
+            character.removeDisadvantage(source);
+            character.enableMove(source);
+          }
         },
-      }
-    );
+      },
+    ],
   },
 };

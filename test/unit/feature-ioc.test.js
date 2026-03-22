@@ -111,8 +111,8 @@ describe('runHook', () => {
     };
     const ctx = { roll: {} };
     runHook(map, new Set(['FeatureA', 'FeatureB']), 'myHook', ctx);
-    expect(hookA).toHaveBeenCalledWith(ctx);
-    expect(hookB).toHaveBeenCalledWith(ctx);
+    expect(hookA).toHaveBeenCalledWith({ roll: {}, feature: map.FeatureA });
+    expect(hookB).toHaveBeenCalledWith({ roll: {}, feature: map.FeatureB });
   });
 
   it('skips features not in tagNames', () => {

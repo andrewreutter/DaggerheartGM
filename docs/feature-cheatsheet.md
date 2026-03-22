@@ -1,490 +1,350 @@
 # Feature System Cheat Sheet
 
-Human-facing reference for programming **ancestries**, **communities**, **weapons**, and **armor** in the DaggerheartGM feature IoC system.
+**Context convention:** Each hook receives a **context object** made of **named subdocuments**. Subdocuments with the same name have the **same shape** everywhere (e.g. `roll` is always the wrapped roll; `character` is always the wrapped entity). **feature** is always the **feature descriptor object** (the object that defined the hook — name, description, hooks). Section 3 lists which subdocuments each hook receives; Section 4 defines each subdocument’s shape once.
 
 ---
 
-## 1. File shapes and registration
+## 1. The feature object
 
-### Ancestries
+A feature is an object with:
 
-- **Location:** `src/features/ancestries/<AncestryName>.js`
-- **Export:** A single default object: `{ name, description, onCharacterBuild(char) }`
-- **Registration:** In `ancestries/index.js`, add the import and append to the `builders` array.
+- `**name`** — string; identifies the feature in registries and UI.
+- `**description`** — optional string; flavor/rule text (often from SRD).
+- **Hooks** — functions the system calls at specific times (see Section 3). Keys like `onBanner`, `onCharacterRender`, `modifyPreThresholdDamage`, etc.
+- **Declarations** — declarative options the system reads without calling you (see Section 2). Keys like `passiveStatMods`, `cardChips`, `automated`, `armorReduction`, etc.
 
-```js
-export default {
-  name: 'Infernis',
-  description: '...',
-  onCharacterBuild(char) {
-    char.addFeature('Fearless', '...', { onBanner(banner) { ... } });
-    char.addFeature('Dread Visage', '...');  // no hooks = display-only
-  },
-};
-```
+You implement a feature by defining the right hooks and declarations for the behavior you want. The same descriptor shape is used regardless of where the feature lives.
 
-**Builder API (inside `onCharacterBuild`):**
+### Registries and attachment
 
-| Method | Args | Purpose |
-|--------|------|--------|
-| `char.addFeature(name, description, hooks?)` | `name`: string, `description`: string (markdown), `hooks`: optional object | Register one feature. All hook names below are valid keys. |
-| `char.addExperienceBonus(amount)` | `amount`: number | Call from **inside** an `onCharacterEdit(char)` hook for the feature that grants the bonus. Registers that the ancestry requires one experience choice for +N; form shows dropdown, choice in `experienceBonusChoices[featureName]`. |
+Features live in one of **four registries**: **origin** (ancestry + community merged), **class**, **weapon**, **armor**. The registry is determined by **which barrel file** you add the feature to (`ancestries/`, `communities/`, `weapons/`, `armor/`, `classes/`). It controls:
 
-### Communities
+- **How the feature is attached to the character** — Origin and class features come from character build (SRD resolution); weapon and armor features come from equipped items. Character-calc merges registry descriptors into a flat **activeFeatures** array.
+- **Which invocation paths see it** — Many hooks run over **activeFeatures** (all types together). Some paths also call **runHook(registry, names, ...)** with a specific registry and set of feature names (e.g. roll tags for weapons).
 
-- **Location:** `src/features/communities/<CommunityName>.js`
-- **Export:** Same shape as ancestries: `{ name, description, onCharacterBuild(char) }`
-- **Registration:** In `communities/index.js`. Descriptors get `sourceType: 'community'` and `source: builder.name`.
-
-Communities use the same `char.addFeature(name, description, hooks?)` API. All ancestry hooks are supported except `onCharacterEdit` (ancestry-only for experience bonuses). `onRest` is run for both ancestry and community features when building rest moves.
-
-### Weapons
-
-- **Location:** `src/features/weapons/<FeatureName>.js`
-- **Export:** Same builder shape as ancestries/communities: `{ name, description?, onCharacterBuild({ character, weapon }) }`. The barrel runs each builder at module load; descriptors get `sourceType: 'weapon'` and `source: name`. **Same addFeature as ancestries/communities** — call `character.addFeature(name, description, hooks)`. Weapon descriptors are registered in `weaponFeatures` only (no feature list), so they do **not** appear as character sheet feature cards; the same hooks (e.g. `prependRollParts`, `onDamageApplied`) are supported.
-- **Registration:** In `weapons/index.js`, import and add to the `builders` array.
-
-```js
-export default {
-  name: 'Reliable',
-  automated: true,
-  tagText: '+1 to attack roll (applied)',
-  description: '...',
-  prependRollParts() { return ['Reliable [1]']; },
-  onCharacterBuild({ character, weapon }) {
-    const { name, description, onCharacterBuild: _omit, ...hooks } = this;
-    character.addFeature(name, description, hooks);
-  },
-};
-```
-
-**Builder API:** `character.addFeature(name, description, hooks?)` — same as ancestry/community. All hook/option properties (e.g. `automated`, `tagText`, `prependRollParts`, `onDamageApplied`) go in `hooks`.
-
-### Armor
-
-- **Location:** `src/features/armor/<FeatureName>.js`
-- **Export:** Same builder shape: `{ name, description, onCharacterBuild({ character, armor }) }`. The barrel runs each builder at module load; descriptors get `sourceType: 'armor'` and `source: name`. **Same addFeature as ancestries/communities** — call `character.addFeature(name, description, hooks)`. Armor descriptors are registered in `armorFeatures` only (no feature list), so they do **not** appear as character sheet feature cards; the same hooks (e.g. `armorReduction`, `onAfterMarkArmor`) are supported.
-- **Registration:** In `armor/index.js`, import and add to the `builders` array.
-
-```js
-export default {
-  name: 'Fortified',
-  description: '...',
-  armorReduction: 2,
-  onCharacterBuild({ character, armor }) {
-    const { name, description, onCharacterBuild: _omit, ...hooks } = this;
-    character.addFeature(name, description, hooks);
-  },
-};
-```
-
-**Builder API:** `character.addFeature(name, description, hooks?)` — same as ancestry/community. All hook/option properties (e.g. `armorReduction`, `onAfterMarkArmor`) go in `hooks`.
-
-**Unified addFeature:** All four sources (ancestry, community, armor, weapon) use the same `character.addFeature(name, description, hooks)` from `src/features/add-feature.js`. The barrel creates the builder via `createFeatureBuilder(context)`; context controls `targetMap`, optional `featureList` (ancestry/community only — that’s why only they get feature cards), `sourceType`, `source`, and for ancestry `virtualWeaponBehaviors`, `ancestryEntry`, and `onAfterAdd` (runs `onCharacterEdit`). Armor and weapon use the same hooks (e.g. `onCharacterRender`, `onCard`) but do not push to a feature list.
+There is no behavioral branching on “source type.” `**source`** and `**sourceType`** on descriptors are for UI only (badges, toggle keys). Dispatch does not check them.
 
 ---
 
-## 2. Shared infrastructure
+## 2. Menu of declarations
 
-### Entity wrapper (`wrapEntity(el, updateActiveElement)`)
+Declarative options the system reads from the feature descriptor. Only include those you use.
 
-Returned by `entity.js`. Every hook that receives a “character” or “target” gets this wrapper. It spreads all source properties from the raw element and adds:
 
-**Snapshot getters (reflect in-call mutations):**  
-`currentStress`, `currentHp`, `hope`, `currentArmor`
+| Declaration                 | Purpose                                                                                                                                                                                                                                                                                                                         | Registry note                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **passiveStatMods**         | Stat modifiers (e.g. `{ maxHp: 1 }`, `{ evasion: 1 }`, `{ traits: { agility: 1 } }`, `{ rollModifiers: [{ trait, bonus, label }] }`, `{ majorThreshold: 1 }`, `{ severeThreshold: 1 }`). Applied at character computation; no banner tag. Threshold mods feed effectiveThresholds (damage pipeline).                            | Origin, class, weapon, armor (weapon/armor via computeWeaponModifiers / computeArmorModifiers). |
+| **chips**                   | **Unified chip array** for all chip placements. Each chip must have `placement: 'card'                                                                                                                                                                                                                                          | 'preroll'                                                                                       |
+| **advantageTriggers**       | Array of strings (e.g. `['intimidate hostile creatures']`). One advantage chip per condition.                                                                                                                                                                                                                                   | Origin.                                                                                         |
+| **experienceBonus**         | Number (e.g. `1`). Form requires one experience choice for +N in experienceBonusChoices[featureName].                                                                                                                                                                                                                           | Origin (ancestry only).                                                                         |
+| **automated**               | If true, tag on roll banner shown as “(applied)” style.                                                                                                                                                                                                                                                                         | Weapon.                                                                                         |
+| **showTag**                 | If true, feature is shown as a tag on the roll banner (opt-in).                                                                                                                                                                                                                                                                 | Weapon.                                                                                         |
+| **skipTag**                 | If true, this feature is not shown as a tag (e.g. when another feature represents it).                                                                                                                                                                                                                                          | Weapon.                                                                                         |
+| **tagText**                 | String or (ctx?) => string. Label for the tag on the roll banner.                                                                                                                                                                                                                                                               | Weapon.                                                                                         |
+| **prependRollParts**        | string[]. Tokens prepended to weapon roll text (e.g. `['Reliable [1]']`).                                                                                                                                                                                                                                                       | Weapon.                                                                                         |
+| **appendRollParts**         | string[]. Tokens appended to weapon roll text (e.g. `['Lifesteal [d6]']`).                                                                                                                                                                                                                                                      | Weapon.                                                                                         |
+| **rewriteDamage**           | ({ roll, ...ctx }) => void. Mutates `roll.damageStr` to transform damage string. Reads `damageStr` from `roll.damageStr` in context.                                                                                                                                                                                            | Weapon.                                                                                         |
+| **bannerStatus**            | () => { text?, style? }. Status text/style on banner.                                                                                                                                                                                                                                                                           | Weapon.                                                                                         |
+| **bannerInteraction**       | Object: `{ type: 'target-picker', phase: 'post-apply', loop?, prompt?, skipLabel? }`. Post-apply target-picker (e.g. Quick, Bouncing).                                                                                                                                                                                          | Weapon.                                                                                         |
+| **interactive**             | If true, tag gets interactive UI (e.g. Quick, Devastating).                                                                                                                                                                                                                                                                     | Weapon.                                                                                         |
+| **armorReduction**          | Number. Slots cleared per “use armor” (default 1); e.g. Fortified = 2.                                                                                                                                                                                                                                                          | Armor.                                                                                          |
+| **allowsArmorFor**          | `'phy'`                                                                                                                                                                                                                                                                                                                         | `'mag'`. “Use armor” only shown for that damage type.                                           |
+| **hopeAbility**             | Descriptor for the class hope ability (name, description, etc.).                                                                                                                                                                                                                                                                | Class.                                                                                          |
+| **forceActionNotification** | If true, feature use always posts an action notification for GM ack (e.g. Elemental Incarnation).                                                                                                                                                                                                                               | Class.                                                                                          |
+| **requiresInput**           | Spec object for player input before dispatch (e.g. Sorcerer Channel Raw Power): `{ type, label, min?, max?, default? }`.                                                                                                                                                                                                        | Class.                                                                                          |
+| **sessionStartOnce**        | If true, onSessionStart is called once with `feature: null`, `featureState: null` and `characters` (e.g. Halfling Luckbringer).                                                                                                                                                                                                 | Origin.                                                                                         |
+| **virtualWeapon**           | Single virtual weapon object: `trait`, `range`, `damage`, `description`, optional `stressCost`, `hopeCost`, `onAcknowledge({ target, self, roll })`, `damageType`, `damageProficiency`, `multiTarget`, `multiTargetMax`. Character-calc merges into weapons; ancestry barrel registers onAcknowledge in virtualWeaponBehaviors. | Origin.                                                                                         |
+| **virtualWeapons**          | Array of virtual weapon objects (same shape as virtualWeapon).                                                                                                                                                                                                                                                                  | Origin.                                                                                         |
+| **weaponsFilter**           | `(weapons) => weapons`. Called with the current weapons list (after declarative virtualWeapons are merged); return value replaces the list (e.g. Giant Reach: Melee → Very Close).                                                                                                                                              | Origin, class.                                                                                  |
 
-**Identity:**  
-`instanceId`, `id` (alias), `name`, `class`, `maxStress`, `maxHp`, `maxHope`, `maxArmor`
 
-**Mutators:**
+Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessage, onChipAck, onChipReject, onBannerAck, toggleKey, render, renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive) are documented in Section 4 (banner) and Section 3 (onBanner / onChipAck). All chips use the unified context shape: `{ roll, character, feature, characters, system, banner? }` (properties not applicable to the current placement are undefined).
 
-| Method | Effect |
-|--------|--------|
-| `markStress(n)` | Increase stress (cap at max). |
-| `clearStress(n)` | Decrease stress (floor 0). |
-| `markHp(n)` | Reduce HP (damage). |
-| `clearHp(n)` | Restore HP. |
-| `markArmor(n)` / `clearArmor(n)` | Mark/clear armor slots. |
-| `spendHope(n)` / `gainHope(n)` | Hope. |
-| `hasStress(n)` | True if at least n stress boxes are empty. |
-| `setFlag(key, value)` | Persist arbitrary state on element. |
-| `setFeatureUsed(featureKey, cycle)` | Mark feature used for `cycle` (`'session'` \| `'rest'` \| `'longRest'`). |
-| `addCondition(name)` | Append to conditions string. |
-| `addResistance(type, source)` / `removeResistance(type, source)` | e.g. `'physical'`, source e.g. `'Galapa - Retract'`. |
-| `addModifier(modifier)` | Add/replace active modifier (e.g. Timeslowing +1d4 Evasion); `modifier.id` used for replace. |
-| `addDisadvantage(source)` / `removeDisadvantage(source)` | Roll disadvantage source. |
-| `disableMove(source)` / `enableMove(source)` | Prevent/allow token drag on battle map. |
+**V2 chip properties (chip-system.js):**
+- `showOnOtherSheets` *(boolean)*: Opt-in for `collectChipsForOtherCharacterSheets` so a chip defined on **another** PC's feature (e.g. Bard **Rally**) can be shown on the viewer's sheet with `table.me` = viewer. See `chip-system.js` and `docs/feature-authoring-guide.md` B.2.
+- `selectTargets` *(function)*: `(table) => Actor[]`. Returns valid combat target actors for a target picker UI. Selected instance IDs stored in chip state as `selectedTargetIds` (array). Read via `chip.get('selectedTargetIds')` in `onUse`.
+- `multiSelect` *(boolean)*: When `true` (with `selectTargets`), player can select multiple targets. Default single-select.
 
-### Roll wrapper (`wrapRoll(roll, displayStore?, characterInstanceId?)`)
+**V2 declarative (armor properties, `applyDeclarativeFeatures`):**
+- **`substituteArmorForHope`**: When `true` on a feature, the loader sets `substituteArmorForHope` on its return value; the client merges that onto the character element so `table.me.substituteArmorForHope` authorizes `spendHope(..., { armorInstead: true })`. The engine must not check SRD feature names (**CONV-029**).
 
-Returned by `roll.js`. Used in banner chips and damage flow.
-
-**Read-only / derived:**  
-`isWithFear`, `isWithHope`, `isReaction`, `isMine`, `hasDuality`, `hasDamage`, `isSuccess`, `isFailure`, `hasExperience`, `attackRange`, `trait` (e.g. `{ name: 'Agility' }` when `_traitKey` set).
-
-**Objects:**  
-- `attacker`: `{ id, name, isMe }`  
-- `target`: `{ id, name, isMe, rangeFromMe }` (when characterInstanceId passed, isMe reflects feature owner)
-
-**Helpers:**  
-- `sub(pattern)` — find sub-item by label (string → case-insensitive regex); returns `{ values(), hasValue(n), ...sub }` or null.
-
-**Mutators (use in onChipAck etc.):**  
-- `reroll('Hope'|'Fear'|'Duality')` — request replacement banner with that die rerolled.  
-- `fullReroll()` — cancel and re-post same rollText.  
-- `setWithHope()` — convert to Hope (skip fear, grant 1 hope); only when displayStore + `_rollDbId` provided.  
-- `setDominantForDisplay(dominant)` — display-only; same requirement.  
-- `reduceHPLoss(n)` — subtract n from HP loss applied on acknowledge.  
-- `setDamageTotal(n)` — override damage total used for threshold/HP (e.g. halve damage).
+**V2 Game Table snapshot (`table` in hooks / `passiveStatMods`):**
+- **`table.source`**: Registry row the active feature was collected from (class, weapon, armor, …). **Prefer this** for tier, damage strings, and other registry fields. Shared option-level state: set **`sourceScopeKey`** on the registry row; details in `docs/feature-authoring-guide.md` §2.1 (**CONV-035**).
+- **`table.action.useArmorByTargetId`**: `{ [instanceId]: boolean }` — per-target commitment to use armor for this hit (VTT/banner). **`useArmor`** on `{ type: 'damage' }` entries in `table.action.effects` mirrors the same for that effect’s target. See `docs/feature-authoring-guide.md` §C.3 (CONV-026).
+- **`table.me.activeModifiers`** (read-only) and **`addActiveModifier(mod)`** / **`removeActiveModifier(id)`** — queue **`appendActiveModifier`** / **`removeActiveModifier`** mutations (same shape as Phase 1 **`element.activeModifiers`**). Host merges with **`applyV2ActiveModifierMutations`** in `src/client/lib/table-ops.js`.
 
 ---
 
-## 3. Ancestry & community hooks
+## 3. Menu of hooks
 
-These hooks are available on descriptors passed to `char.addFeature(..., hooks)`.
+Each hook: **name**, **when it runs**, **Context: list of subdocument names** with Section 4 reference. Pipeline hooks receive `(value, context)`; all others receive a single context object (or context as the only parameter).
 
-### 3.1 `onCharacterRender(ctx)`
+### Banner and chips
 
-**When:** During character computation (`runAncestryRender` in character-calc).
+- **onBanner** — When building banner reactions for a roll (GMTableView); weapon onBanner also when syncing rolls for narration. **Context:** `banner` (4.1), `character` (4.2), `characters` (4.9), `feature` (4.11).
+- **onChipAck** / **onChipReject** — User clicks Ack/Reject on a banner chip. **Context:** `roll` (4.3), `character` (4.2), `banner` (4.1 stub: addNarration, addDamage, setTreatAsMissForTarget), `feature` (4.11), `featureState` (4.6), `characterRaw`, `characters` (4.9).
+- **onBannerAck** (chip) — When GM acknowledges the whole banner (chip ran; legacy acknowledge). **Context:** `roll` (4.3), `character` (4.2), `feature` (4.11), `featureState` (4.6), `characterRaw`, `postRoll`, `system` (4.8).
+- **onBannerAck** (weapon) — When GM acknowledges; per tag per target. **Context:** `roll` (4.3), `target` (4.2).
 
-**Context `ctx`:**
+### Character computation
 
-| Property / method | Type | Purpose |
-|-------------------|------|--------|
-| `ctx.weapons` | mutable array | Copy of character weapons; can mutate (e.g. change range). |
-| `ctx.addStatMod(stat, value)` | function | Add stat modifier. `stat`: e.g. `'maxHp'`, `'maxStress'`, `'evasion'`. |
-| `ctx.addThresholdBonus(value)` | function | Add flat bonus to major and severe thresholds (e.g. Galapa Shell). |
-| `ctx.addVirtualWeapon(weapon)` | function | Add a virtual weapon card. |
-| `ctx.addAdvantageTrigger(condition)` | function | Declare advantage chip condition text (e.g. “intimidate hostile creatures”). |
-| `ctx._currentFeatureName` | string | Set by system; current feature name. |
-| Other character fields | — | `charData` is spread onto `ctx` (e.g. traits, proficiency). |
+- **onCharacterEdit** — Ancestry barrel only, immediately after feature is registered. **Context:** `char` (builder; addExperienceBonus(amount)).
 
-**Virtual weapon object for `addVirtualWeapon`:**
+### Pre-roll
 
-| Key | Type | Purpose |
-|-----|------|--------|
-| `trait` | string | e.g. `'Instinct'`. |
-| `range` | string | e.g. `'Very Close'`, `'Melee'`. |
-| `damage` | string | e.g. `'d8'`. |
-| `description` | string | Shown on card. |
-| `stressCost` | number? | Applied to attacker on acknowledge. |
-| `hopeCost` | number? | Applied to attacker on acknowledge. |
-| `onAcknowledge({ target, self })` | function? | After costs; `target` = wrapped target, `self` = wrapped attacker when character. |
-| `damageType` | string? | e.g. `'Mag'` for damage type tag. |
-| `damageProficiency` | boolean? | Add +Proficiency to damage. |
-| `multiTarget` | boolean? | Banner allows multi-target selection. |
-| `multiTargetMax` | number? | Default 10. |
+- **chips** (declarative, `placement: 'preroll'`) — Pre-roll chips are declared on the feature as **chips** with `placement: 'preroll'`. Each chip may define **isVisible** and **onUse** (see Section 4). Chips are collected by the runner from the descriptor; no **onAct** hook. Legacy `canvasChips` array is still supported.
+- **chip.isVisible** (preroll) — When building the pre-roll banner; decides whether (and how many) chips to show. **Signature:** `(ctx) => boolean | number`. Return `true` for one chip, number N > 0 for N copies, or false/0 to hide. **Context:** unified chip context (4.15): `{ roll, character, feature, characters, system }`. Legacy signature `(roll, featureState, context?)` is still supported for backward compatibility.
+- **chip.onUse** (preroll) — When the user has selected the chip and clicks Proceed, before the roll is sent. **Signature:** `(ctx) => void`. **Context:** unified chip context (4.15): `{ roll, character, feature, characters, system }`. Use `ctx.roll.addAdvantageDie(name)`, `ctx.roll.setFromText(text)`, `ctx.feature.get`/`set`, `ctx.system.postRoll`, etc.
+- **onRoll** — After Proceed or when no banner; roll text finalized. **Context:** `roll` (4.3), `characters` (4.9), `feature` (4.11); hooks inject `source`.
 
----
+### Rest and session
 
-### 3.2 `onBanner(banner)`
+- **onRest** — When building rest move options (getRestMovesForCharacter). **Context:** `rest` (4.4), `feature` (4.11).
+- **onSessionStart** — When GM clicks Start Session and acknowledges. **Context:** `characters` (4.9), `feature` (4.11 with get/set), `character` (4.2). When **sessionStartOnce: true**, called once with `feature: null` and `characters` = all party characters; otherwise called per character with `feature` = descriptor + get/set.
 
-**When:** When building banner reactions for a roll (GMTableView gathers origin features and calls this per feature). Weapon features with `onBanner` are also run when syncing rolls to the dice roller (so they can add narration via `banner.addNarration()`).
+### Targeted (adversary targets character)
 
-**Context:** `banner` — object with:
-- `addChip(descriptor)` — register a chip (ancestry/community only).
-- `addNarration(text, style?)` — add a narration line shown on the result banner (same as `ctx.addNarration` in onChipAck, but from onBanner so it appears without chip ack). Optional `style`: e.g. `'automated'` for green styling (effect is applied by the app). Use in ancestry/community or weapon features.
+- **onTargeted** — When an adversary attack targets this character, before roll is posted. **Context:** `roll` (4.3, mutable pending), `character` (4.2), `characters` (4.9), `system` (4.8), `feature` (4.11).
 
-**Chip descriptor (only include fields you use):**
+### Before-mark lifecycle
 
-| Field | Type | Purpose |
-|-------|------|--------|
-| `label` | string | Tooltip text. |
-| `hopeCost` / `stressCost` | number | Resource cost; system applies before `onChipAck`. |
-| `isVisible(roll, character)` | function | When chip appears. Default behavior: `roll.isMine`. Can return a **number** N to add N copies (each toggleable). |
-| `getDisabledMessage(roll, character, feature?)` | function? | When chip can be disabled for reasons other than cost. Return truthy string = disabled, tooltip. |
-| `onChipAck(roll, character, ctx, feature)` | function? | On Accept. See “Chip ack context” below. |
-| `onChipReject(roll, character, ctx, feature)` | function? | On Reject. |
-| `toggleKey` | string? | Override auto state key `_toggle.<origin>.<feature>`. |
-| `render(roll, character)` | function? | When toggled on (e.g. `roll.setWithHope()` for display). |
-| `renderWhenOff(roll, character)` | function? | When toggled off. |
-| `activate(roll, character, ctx)` | function? | Veto on toggle-on; return `{ cancel: true }` to abort. |
-| `isActive(roll, character)` | function? | Custom active state. |
-| `resetsOn` | `'rest'` \| `'session'` \| `'longRest'`? | System injects usage tracking and disables when used this cycle. |
+- **onMarkStress** — Just before marking stress (origin-lifecycle). **Context:** `character` (4.2), `amount`, `markSource`, `source` (feature.source), `feature` (4.11), `rollDice`, `featureName`, `postAction`, `characters` (4.9), `system` (4.8) when in table context.
+- **onMarkHP** — Just before marking HP. **Context:** `character` (4.2), `amount`, `markSource`, `source`, `feature` (4.11), `characters` (4.9), `system` (4.8) when in table context.
+- **onMarkArmor** — Just before marking an armor slot. **Context:** `character` (4.2), `amount`, `markSource`, `source`, `feature` (4.11), `characters` (4.9), `system` (4.8) when in table context.
 
-**Chip ack context `ctx` (onChipAck / onChipReject):**
+### Damage pipeline
 
-| Property / method | Purpose |
-|-------------------|--------|
-| `ctx.addDamage(expr)` | Add extra damage (e.g. `'2d6'`); cancels current banner and creates new one with augmented roll. |
-| `ctx.addNarration(text)` | Add narration line (prefixed with feature name by system). |
-| `ctx.setTreatAsMissForTarget(instanceId)` | Selected target takes no HP/Stress from this roll (e.g. Faerie Wings). |
-| `ctx.characterRaw` | Raw element (no wrapper). |
+- **modifyPreThresholdDamage** — In applyDamageToTarget, before threshold/HP. **Signature:** (context). **Context:** `damagePipelineCtx` (4.7), which includes `characters` (4.9), plus `feature` (4.11) per participant. Read the current damage from `roll.damageTotal` and return the new value; the pipeline updates `roll.damageTotal` with the result. `roll._initialDamageTotal` stores the original value before any modifications.
+- **modifyHpLoss** — After threshold computation, before armor reduction. **Signature:** (context). **Context:** `damagePipelineCtx` (4.7), which includes `characters` (4.9), plus `feature` (4.11) per participant. Read the current HP loss from `roll.hpLoss` and return the new value; the pipeline updates `roll.hpLoss` with the result. `roll._initialHpLoss` stores the original value before any modifications.
+- **onBeforeDamageApplied** — Before applying damage (e.g. Parry); async. **Signature:** (context). **Context:** `target` (4.2), `roll` (4.3), `feature` (4.11), `system` (4.8), `effectiveDmgTotal` (number), `characters` (4.9). Returns the new damage total (number).
+- **onAfterMarkArmor** — After the system marks an armor slot. **Context:** `character` (4.2), `amount: 1`, `source` (feature name), optional `roll`, `postRollSilent`, `tagNames`, `dmgType`, `characters` (4.9), `feature` (4.11).
+- **onLastArmorSlot** — When the last armor slot would be marked (e.g. Resilient). **Context:** `character` (4.2), `system` (4.8), `characters` (4.9), `feature` (4.11). **Return:** Promise<{ saveSlot: boolean }>.
+- **onDamageReceived** — After HP applied to character target. **Context:** `character` (4.2), `dmgTotal`, `hpLoss`, `updateActiveElement`, `characters` (4.9), `feature` (4.11).
+- **onHpDealt** — After attacker deals ≥1 HP to target. **Context:** `character` (4.2, attacker), `hpDealt`, `target` (4.2), `updateActiveElement`, `characters` (4.9), `feature` (4.11).
 
-**`character`** is the wrapped entity; **`feature`** is `{ get(key, default?), set(key, value) }` backed by `character._originFeatureState[featureName]`.
+### Class and weapon dispatch
 
-**Roll (in onChipAck):** Wrapped with `wrapRoll(roll, displayStore, characterInstanceId)` so `setWithHope()`, `reduceHPLoss(n)`, `setDamageTotal(n)`, `reroll(...)`, `fullReroll()` are available.
+- **onFeatureActivated** — After _featureUse banner acknowledged (class dispatch). **Context:** `featureName`, `subFeatureName`, `inputValue`, `targetEl` (raw or null), `selfEl` (4.2), `updateActiveElement`, `roll` (4.3), `characters` (4.9), `feature` (4.11), `system` (4.8).
+- **onRollComplete** — After roll is sent (weapon features). **Context:** `attacker`, `roll` (4.3), `characters` (4.9), `system` (4.8), `feature` (4.11).
+
+### Card chips
+
+- **cardChips.onUse** — Card chip “Use” clicked (getCardChipContext provided). **Context:** cardChipContext (4.10): `{ roll, character, feature }` plus `characters` (4.9), `system` (4.8) when in table context. `roll` is null on the feature card. `character` has postTraitRoll/postAction when in card context. `feature` has get/set (4.11).
+- **cardChips.onToggle** — Card toggle chip acknowledged by GM. **Signature:** (context). **Context:** `character` (4.2), `chip` (4.14: `{ isActive }`), `feature` (4.11 with get/set), `characters` (4.9), `system` (4.8).
 
 ---
 
-### 3.3 `onAct(ctx)`
+## 4. Context subdocuments
 
-**When:** When a **player** is about to send a roll (trait, weapon, feature, etc.). Not used for GM-initiated rolls.
+Same name = same shape across all hooks. Define each once here.
 
-**Context `ctx`:**
+### 4.1 banner
 
-| Property | Type | Purpose |
-|----------|------|--------|
-| `ctx.canvas` | object | Call `canvas.addChip(descriptor)` to add pre-roll chips. If any chips added, client shows pre-roll banner with toggles and Proceed. |
-| `ctx.roll` | object | Mutable roll wrapper. |
-| `ctx.char` | object | Wrapped character entity. |
-| `ctx.options` | object | `{ isReaction: boolean }`. |
-| `ctx.getFeatureStateFor(name)` | function | Returns `{ get, set }` for that feature’s state on this character. |
+Object passed to **onBanner** and (at ack time) into **onChipAck** / **onChipReject**. When the reaction came from onBanner, it is the same object from closure.
 
-**Pre-roll canvas chip descriptor:**
+**Methods:**  
 
-- `isVisible(r, feature)` — `r` = roll, `feature` = read-only state; return **number** N for N copies, or true/false.
-- `onUse(roll, feature)` — called on Proceed for each selected chip; `roll` is mutable.
-- Roll mutators (before send): `roll.addAdvantageDie(name)`, `roll.addDisadvantage(name)`, `roll.removeDisadvantage()`, `roll.addRollBonus(n)`; `roll.rollText`, `roll.meta` get/set.
+- `addChip(descriptor)` — register a chip (ancestry/community reactions).  
+- `addNarration(text, style?)` — add narration line; optional style e.g. `'automated'`.  
+- `addAutomatedNarration(text)` — same as addNarration(text, 'automated').  
+- `addDamage(expr)` — add extra damage; cancels current banner and creates new one with augmented roll.  
+- `setTreatAsMissForTarget(instanceId)` — selected target takes no HP/Stress from this roll (e.g. Faerie Wings).
 
-**Do not** pass `_featureName` in the descriptor; the system injects the current feature name.
+**Internal / ack-time:** chips, _narrations, _rollRef, _featureName, _extraDamage, _narration. Chip descriptor shape: label, hopeCost, stressCost, isVisible(roll, character), getDisabledMessage(roll, character, featureState?), onChipAck(context), onChipReject(context), onBannerAck(context), toggleKey, render(roll, character), renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive (hopeCost?, stressCost?, dmgType?, apply(total)=>number). Banner object at ack has **feature** (4.11), **featureState** (4.6).
 
----
+### 4.2 entity (character / target / char)
 
-### 3.4 `onRoll(ctx)`
+Returned by **wrapEntity(el, updateActiveElement, options?)** from `entity.js`. Every hook that receives a “character” or “target” gets this wrapper.
 
-**When:** When roll text is finalized: once in the no-banner path, and on Proceed after pre-roll chips (and GM difficulty/advantage/disadvantage) are applied.
+**Identity:** instanceId, id (alias), name, class, maxStress, maxHp, maxHope, maxArmor.  
+**Snapshot getters:** currentStress, currentHp, hope, currentArmor (reflect in-call mutations).  
+**Mutators:** markStress(n), clearStress(n), markHp(n), clearHp(n), markArmor(n), clearArmor(n), spendHope(n), gainHope(n), setFlag(key, value), setFeatureUsed(featureKey, cycle), addCondition(name), addResistance(type, source), removeResistance(type, source), addModifier(modifier), addDisadvantage(source), removeDisadvantage(source), disableMove(source), enableMove(source).  
+**Helper:** hasStress(n) — true when at least n stress boxes are empty.  
+**Optional (when caller passes options):** **postTraitRoll(traitKey, options?)** — post a trait roll (Hope/Fear + trait); **postAction(customLabel?)** — post an action banner. When options are omitted, these are no-ops.
 
-**Context:** `ctx = { roll }`. `roll` is the mutable roll wrapper (e.g. for `removeDisadvantage()`).
+### 4.3 roll
 
----
+Returned by **wrapRoll(roll, displayStore?, characterInstanceId?)** from `roll.js`. `wrapBanner` is an alias. The **pre-roll** roll (before the roll is sent) is a separate wrapper built in the view with the same semantic methods.
 
-### 3.5 `onRest(rest)`
+**Read-only / derived:** isWithFear, isWithHope, isReaction, isMine, hasDuality, hasDamage, isSuccess, isFailure, hasExperience, attackRange, trait (e.g. { name: 'Agility' }).  
+**Sub-item getters:** attackRoll, damageRoll (wrapped sub-items with .values(), .hasValue(n) or null).  
+**Objects:** attacker { id, name, isMe }, target { id, name, isMe, rangeFromMe }.  
+**Helpers:** sub(pattern), isAttacker(character), isTarget(character), isSourceWeapon(source).  
+**Mutators:** reroll('Hope'|'Fear'|'Duality'), fullReroll(), reduceHPLoss(n), setDamageTotal(n). With displayStore + _rollDbId: setWithHope(), setDominantForDisplay(dominant).  
+**Pre-roll only:** setFromText(text), setDisplayName(name), setMeta(m); addAdvantageDie(name), addDisadvantage(name), addRollBonus(n), removeDisadvantage(); rollText, displayName, meta get/set; getFinalRollText().
 
-**When:** When building rest move options for a character (`getRestMovesForCharacter` in rest-moves.js). Runs for each ancestry and community feature that has `onRest`.
+### 4.4 rest
 
-**Context `rest`:**
+Passed to **onRest**. Built in getRestMovesForCharacter.
 
-| Property / method | Type | Purpose |
-|-------------------|------|--------|
-| `rest.shortMoves` | array | Mutable copy of default short rest moves. |
-| `rest.longMoves` | array | Mutable copy of default long rest moves. |
-| `rest.addShortMove(move)` | function | Append one move to short list. |
-| `rest.addLongMove(move)` | function | Append one move to long list. |
-| `rest.addShortMoveSlot(name?)` | function | Add one extra short rest dropdown; optional `name` (e.g. `'Celestial Trance'`) for label. |
-| `rest.addLongMoveSlot(name?)` | function | Same for long rest. |
+**Properties:** shortMoves, longMoves (mutable arrays), shortMoveSlots, longMoveSlots, shortSlotLabels, longSlotLabels.  
+**Methods:** addShortMove(move), addLongMove(move), addShortMoveSlot(name?), addLongMoveSlot(name?). Move shape: { id, name, description, canTargetAlly?, rollDice?, onApply(rest, roll, target, char)? }.
 
-Move shape: `{ id, name, description, canTargetAlly?, rollDice?, onApply(rest, roll, target, char)? }`.
+### 4.5 canvas (pre-roll chips)
 
----
+Pre-roll chips are populated from **descriptor.chips** with `placement: 'preroll'` (or legacy `descriptor.canvasChips`). The runner injects `_featureName`, `_featureKey` (when `resetsOn` is set), and a default **isVisible** ("my roll and not yet used") when omitted.
 
-### 3.6 `onCard(card)`
+**Pre-roll chip hooks (on each chip descriptor with `placement: 'preroll'`):**
 
-**When:** When building the feature card on the character sheet (and at barrel load for ancestry).
+- **isVisible(ctx)** — Optional. Called when building the pre-roll banner. Return `true` (one chip), number N > 0 (N copies), or false/0 (hide). **Context:** unified chip context (4.15): `{ roll, character, feature, characters, system }`. Legacy signature `(roll, featureState, context?)` is still supported for backward compatibility.
+- **onUse(ctx)** — Optional. Called when the user selected the chip and clicked Proceed, before the roll is sent. **Context:** unified chip context (4.15): `{ roll, character, feature, characters, system }`. Use `ctx.roll.addAdvantageDie(name)`, `ctx.roll.setFromText(text)`, `ctx.feature.get`/`set`, `ctx.system.postRoll`, etc.
 
-**Context:** `card` — object with `addChip(descriptor)`.
+Roll mutators (before send): `roll.addAdvantageDie(name)`, `roll.addDisadvantage(name)`, `roll.removeDisadvantage()`, `roll.addRollBonus(n)`, `roll.setFromText(text)`; `roll.rollText`, `roll.meta` get/set.
 
-**Card chip descriptor:**
+### 4.6 featureState
 
-| Field | Purpose |
-|-------|--------|
-| `label` | Shown as banner action text and tooltip. |
-| `hopeCost` / `stressCost` | Applied on GM ack. |
-| `onUse(context)` | One-shot: `context` has `postAction(customLabel?)`, `postTraitRoll(traitKey, options?)`, `character`, `feature`. Call `postAction()` (or with label) to post the banner. |
-| `onToggle(isActive, character)` | Toggle chip: called when GM acknowledges. Apply only game effects (resistance, disadvantage, move); do not call `postAction`. |
+Per-feature persistent state (get/set). **feature** (4.11) is always augmented with **get(key, default?)** and **set(key, value)** whenever it appears in context (backed by character._originFeatureState[featureName]). Use **context.feature.get** / **context.feature.set** in hooks; a separate **featureState** key is still passed on the banner object for backward compatibility.
 
----
+### 4.7 damagePipelineCtx
 
-### 3.7 `onTargeted(roll, character)`
+Passed to **modifyPreThresholdDamage** and **modifyHpLoss**.
 
-**When:** When an **adversary** attack targets this character: after GM selects target but **before** the roll is posted.
+**Properties:** target (4.2), character (4.2), tagNames (Set), roll (4.3), dmgType ('phy'|'mag'|''), characters (4.9). The `roll.damageTotal` property is kept in sync with the damage pipeline accumulator (updated after each hook); `roll._initialDamageTotal` stores the original damage value before any modifications. The `roll.hpLoss` property is kept in sync with the HP loss pipeline accumulator (updated after each hook); `roll._initialHpLoss` stores the original HP loss value before any modifications.
 
-**Args:**  
-- `roll`: Mutable pending roll. `roll.rollText` (get/set). `roll.addDisadvantage(featureName?)` — subtracts 1d6 from first damage expression; omit to use current feature name.  
-- `character`: Wrapped entity (the target).
+### 4.8 system
 
----
+When present, `context.system` is a subdocument supplied wherever the view can construct it (e.g. GM Table). It may be omitted in headless or other contexts. **onCharacterEdit** is the only hook that does not receive `system` (character editing can run in the Library without a table).
 
-### 3.8 `onSessionStart(feature)` or `onSessionStart(feature, characters)`
+**Properties:**  
 
-**When:** When GM clicks “Start Session” and acknowledges the banner. Session-only state is cleared first.
+- **postRoll(rollText, displayName, rollMeta?)** — perform a server roll.  
+- **postRollSilent(rollText, displayName)** — perform a server roll without creating a banner (e.g. Parry, Resilient).  
+- **addActionBanner(notification)** — show an action banner in DiceRoller (e.g. Resilient d6 result).
 
-**Overloads:**  
-- **1 arg:** `onSessionStart(feature)`. Called **once per party character** that has this feature. `feature`: `{ get(key, default?), set(key, value) }` for that character’s feature state (e.g. clear tokens).  
-- **2 args:** `onSessionStart(null, characters)`. Called **once**. `characters`: array of **wrapped** party character entities (e.g. Halfling Luckbringer: `characters.forEach(c => c.gainHope(1))`).
+### 4.9 characters
 
----
+Array of wrapped entities (4.2) — all current party characters on the table. Passed to **onSessionStart** and, where easily available (table/game view), to most other hooks that run in that context: **onBanner**, **onChipAck** / **onChipReject**, **onRoll**, **onTargeted**, **onMarkStress** / **onMarkHP** / **onMarkArmor**, **modifyPreThresholdDamage** / **modifyHpLoss** (via damagePipelineCtx), **onAfterMarkArmor**, **onLastArmorSlot**, **onBeforeDamageApplied**, **onDamageReceived**, **onHpDealt**, **onFeatureActivated**, **onRollComplete**, **cardChips.onToggle**.
 
-### 3.9 Lifecycle: `onMarkStress(ctx)`, `onMarkHP(ctx)`, `onMarkArmor(ctx)`
+### 4.11 feature (descriptor)
 
-**When:** Just before the system would mark Stress, HP, or an armor slot on this character. Run from `origin-lifecycle.js`; collect feature names from ancestry + community + equipped weapon features + equipped armor feature.
+The **feature descriptor object** that defined the hook — the same object that was registered (name, description, hooks, declarations). Supplied in the context for **every** hook so handlers can read `feature.name`, `feature.description`, or other descriptor fields without closure. Same shape everywhere.
 
-**Context `ctx` (all three):**
+### 4.15 unified chip context
 
-| Property | Type | Purpose |
-|----------|------|--------|
-| `character` | wrapped entity | The character. |
-| `amount` | number | Amount to mark. |
-| `source` | string | Reason (e.g. `'chip'`, `'damage'`). |
+**Unified context for all chip types** (card, preroll, banner). All chip hooks (`isVisible`, `onUse`, `onToggle`, `onChipAck`, `onChipReject`) receive this context.
 
-**onMarkStress only:**
+**Shape:** `{ roll, character, feature, characters?, system?, banner? }`. Properties not applicable to the current placement are undefined:
 
-| Property | Type | Purpose |
-|----------|------|--------|
-| `rollDice(expr)` | async function | e.g. `'1d6'` → `Promise<{ value: number }>`. |
-| `featureName` | string | Current feature name. |
-| `postAction(actionText)` | function | Post action notification (character + feature name). |
+- **roll:** 4.3 (wrapped roll). Present for preroll and banner chips; `null` for card chips on the feature card.
+- **character:** 4.2 (the character). Always present.
+- **feature:** 4.11 with get/set. Always present.
+- **characters:** 4.9 (all party characters). Present when in table context.
+- **system:** 4.8 (postRoll, postRollSilent, addActionBanner). Present when in table context.
+- **banner:** 4.1 (banner object with addChip, addNarration, etc.). Present only for banner chips.
 
-**Return:**  
-- `{ cancel: true }` — prevent the mark.  
-- `{ reduceBy: n }` (0 < n ≤ amount) — cancel n of the amount (rest is marked).  
-- `{}` or undefined — allow all.  
-Can be sync or async.
+For card chips in card context, `character` has `postTraitRoll(traitKey, options?)` and `postAction(customLabel?)`. For toggle chips, context also includes **chip** (4.14: `{ isActive }`).
+
+### 4.14 chip (card toggle)
+
+Passed in the **context** to **cardChips.onToggle** when the GM acknowledges the toggle (e.g. Galapa Retract).
+
+**Properties:** **isActive** (boolean) — whether the chip has been toggled on (true) or off (false).
 
 ---
 
-### 3.10 `onCharacterEdit(char)`
+## 5. Hook dispatch
 
-**When:** By the ancestry barrel immediately after the feature is registered (only ancestries).
+**Map-based (feature name → descriptor):**  
 
-**Arg:** `char` — the builder object (same as in `onCharacterBuild`). Use to call `char.addExperienceBonus(amount)` for the feature you just added.
+- **runHook(featureMap, tagNames, hookName, context)** — Fire-and-forget; calls feature[hookName](context) for each feature in tagNames. Injects **feature** (descriptor) into context.  
+- **runPipelineHook(featureMap, tagNames, hookName, initialValue, context)** — Each feature gets (currentValue, context) with **feature** (descriptor) in context; returns new value. Sorted by priority (default 50; lower first).  
+- **runAsyncPipelineHook(...)** — Async variant.
 
----
+**Array-based (activeFeatures):**  
 
-## 4. Weapon feature hooks and options
-
-Weapon descriptors are keyed by `name`. Tags on the roll are matched to these names.
-
-### 4.1 Roll construction
-
-| Property | Signature / type | Purpose |
-|----------|------------------|--------|
-| `prependRollParts()` | `() => string[]` | Tokens prepended to roll text (e.g. `['Reliable [1]']`). |
-| `appendRollParts()` | `() => string[]` | Appended to roll text. |
-| `rewriteDamage(damageStr, ctx)` | `(string, ctx) => string` | Transform damage string. `ctx` may include `traits`, etc. |
-
-### 4.2 Display and automation
-
-| Property | Type | Purpose |
-|----------|------|--------|
-| `automated` | boolean | If true, tag shown as “(applied)” style. |
-| `showTag` | boolean | If true, feature is shown as a tag on the roll banner (opt-in; default is not shown). |
-| `tagText` | string or `(ctx?) => string` | Label for the tag (e.g. “+1 Stress (applied)”). |
-| `description` | string | Flavor/rule text. |
-
-### 4.3 Passive stat mods (no tag)
-
-| Property | Type | Purpose |
-|----------|------|--------|
-| `passiveStatMods` | `{ traits?, evasion?, armorScore?, severeThreshold? }` | Applied by `computeWeaponModifiers`; no banner tag. Prefer **onCharacterRender** + `ctx.addStatMod(stat, value)` (and for traits `ctx.addStatMod('agility', -1)` etc.) so the descriptor is built the same way as ancestry. |
-
-### 4.4 Damage pipeline
-
-**modifyHpLoss(hpLoss, ctx)**  
-- **When:** In `applyDamageToTarget`, after threshold computation, before armor reduction.  
-- **Signature:** `(hpLoss, ctx) => number`  
-- **Context `ctx`:** `{ target, character, tagNames, roll, dmgType }` (target/character wrapped, roll wrapped).
-
-**onDamageApplied(ctx)**  
-- **When:** After HP is applied in `applyDamageToTarget`.  
-- **Context:** Same `ctx`. Use e.g. `target.markStress(1)`.
-
-### 4.5 Before damage applied (async)
-
-**onBeforeDamageApplied(effectiveDmgTotal, context)**  
-- **When:** Before applying damage to a character that has this weapon (e.g. Parry).  
-- **Return:** New effective damage total (or Promise of it).  
-- **Context:** `{ target, roll, parryWeapon, postRoll, addActionBanner }`.  
-  - `postRoll(text, displayName)` — server roll.  
-  - `addActionBanner(notification)` — show banner in DiceRoller.
-
-### 4.6 Banner interaction (post-apply UI)
-
-| Property | Type | Purpose |
-|----------|------|--------|
-| `bannerStatus()` | `() => { text?, style? }` | Status text/style on banner. |
-| `bannerInteraction` | object | e.g. `{ type: 'target-picker', phase: 'post-apply', loop?, prompt?, skipLabel? }` for “mark Stress to hit another target” flows. |
-
-### 4.7 Interactive / non-automated
-
-| Property | Type | Purpose |
-|----------|------|--------|
-| `interactive` | boolean | Tag gets interactive UI (e.g. Quick, Devastating). |
+- **runCharacterHook(activeFeatures, hookName, context)** — Fire-and-forget over flat list. Injects **source**: feature.source and **feature** (descriptor).  
+- **runCharacterPipelineHook(activeFeatures, hookName, initialValue, context)** — Pipeline over activeFeatures; (value, context) with **source** and **feature** (descriptor) per participant.  
+- **runCharacterAsyncPipelineHook(...)** — Async pipeline over activeFeatures; same context shape.
 
 ---
 
-## 5. Armor feature hooks and options
+## 6. Registries and imports
 
-### 5.1 Passive
-
-| Property | Type | Purpose |
-|----------|------|--------|
-| `passiveStatMods` | `{ traits?, evasion?, rollModifiers?, ... }` | Applied by `computeArmorModifiers`. Prefer **onCharacterRender** + `ctx.addStatMod(stat, value)` or `ctx.addRollModifier({ trait, bonus, label })` so the descriptor is built the same way as ancestry. |
-| `armorReduction` | number | Slots cleared per “use armor” (default 1); e.g. Fortified = 2. |
-| `allowsArmorFor` | `'phy'` \| `'mag'` | When set, “Use armor” only shown for that damage type. |
-
-### 5.2 Damage pipeline
-
-**modifyPreThresholdDamage(dmgTotal, ctx)**  
-- **When:** In `applyDamageToTarget`, before threshold/HP calculation.  
-- **Signature:** `(dmgTotal, ctx) => number`  
-- **Context `ctx`:** `{ target, character, tagNames, roll, dmgType }`.  
-- Example: Warded subtracts `target.armorScore` from magic damage.
-
-### 5.3 Armor slot lifecycle
-
-**onAfterMarkArmor(ctx)**  
-- **When:** After the system marks an armor slot (e.g. when “Use armor” is used).  
-- **Context:** `{ character, amount: 1, source, roll?, postRollSilent?, tagNames?, dmgType? }` — `character` is the wrapped wearer; optional fields present when in damage flow.  
-- Example: Reinforced sets `character.setFlag('reinforcedActive', true)` when `character.currentArmor >= character.maxArmor`. Timeslowing uses `character` and `postRollSilent` to add an Evasion modifier.
-
-**onLastArmorSlot(ctx)**  
-- **When:** When the **last** armor slot would be marked (Resilient: roll d6, on 6 save slot).  
-- **Context:** `{ character, postRoll, addActionBanner }` — `character` is the wrapped wearer.  
-- **Return:** `Promise<{ saveSlot: boolean }>`. If `saveSlot: true`, the slot is not marked.
-
-### 5.4 Lifecycle (weapon/armor)
-
-Weapon and armor descriptors can also implement **onMarkStress**, **onMarkHP**, **onMarkArmor** with the same context shapes as in section 3.9. They are collected with origin features and run from `origin-lifecycle.js`.
+- **Origin:** originFeatures from `src/features/registry.js` (merge of ancestry + community). Single lookup for banner reactions, chips, character computation.
+- **Weapons:** weaponFeatures from `src/features/registry.js`.
+- **Armor:** armorFeatures from `src/features/registry.js`.
+- **Classes:** classFeatures, classFeatureNameToClass from `src/features/registry.js`.
+- **Entity/roll:** wrapEntity, wrapRoll from `src/features/entity.js`, `src/features/roll.js`.
+- **Lifecycle:** runBeforeMarkStress, runBeforeMarkHP, runBeforeMarkArmor from `src/client/lib/origin-lifecycle.js`.
+- **Hooks:** runHook, runPipelineHook, runAsyncPipelineHook, runCharacterHook, runCharacterPipelineHook, runCharacterAsyncPipelineHook from `src/features/hooks.js`.
 
 ---
 
-## 6. Pipeline and hook dispatch
+## 7. Quick reference: hook → context subdocuments
 
-- **runHook(featureMap, tagNames, hookName, context)** — Fire-and-forget; calls `feature[hookName](context)` for each feature in `tagNames`. Order not guaranteed.  
-- **runPipelineHook(featureMap, tagNames, hookName, initialValue, context)** — Each feature gets `(currentValue, context)` and can return a new value. Sorted by `priority` (default 50; lower first).  
-- **runAsyncPipelineHook(...)** — Async variant; each handler can return a Promise.
+
+| Hook                     | Context subdocuments (Section 4)                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| onBanner                 | banner (4.1), character (4.2), characters (4.9), system (4.8), feature (4.11)                                                                    |
+| chip.isVisible (preroll) | unified chip context (4.15): roll (4.3), character (4.2), feature (4.11), characters (4.9), system (4.8)                                         |
+| chip.onUse (preroll)     | unified chip context (4.15): roll (4.3), character (4.2), feature (4.11), characters (4.9), system (4.8)                                         |
+| onRoll                   | roll (4.3), characters (4.9), system (4.8), feature (4.11), source                                                                               |
+| onRest                   | rest (4.4), feature (4.11)                                                                                                                       |
+| onChipAck / onChipReject | roll (4.3), character (4.2), banner (4.1), feature (4.11), featureState (4.6), characterRaw, characters (4.9), system (4.8)                      |
+| onBannerAck (chip)       | roll (4.3), character (4.2), feature (4.11), featureState (4.6), characterRaw, postRoll, system (4.8)                                            |
+| onBannerAck (weapon)     | roll (4.3), target (4.2), system (4.8)                                                                                                           |
+| onSessionStart           | characters (4.9), system (4.8), feature (4.11), featureState (4.6; null when sessionStartOnce)                                                   |
+| onTargeted               | roll (4.3), character (4.2), characters (4.9), system (4.8), feature (4.11)                                                                      |
+| onMarkStress             | character (4.2), amount, markSource, source, feature (4.11), rollDice, featureName, postAction, characters (4.9), system (4.8)                   |
+| onMarkHP / onMarkArmor   | character (4.2), amount, markSource, source, feature (4.11), characters (4.9), system (4.8)                                                      |
+| onFeatureActivated       | featureName, subFeatureName, inputValue, targetEl, selfEl (4.2), updateActiveElement, roll (4.3), characters (4.9), feature (4.11), system (4.8) |
+| modifyPreThresholdDamage | damagePipelineCtx (4.7) with characters, system (4.8), feature (4.11) — reads from roll.damageTotal, returns new value                           |
+| modifyHpLoss             | damagePipelineCtx (4.7) with characters, system (4.8), feature (4.11) — reads from roll.hpLoss, returns new value                                |
+| onAfterMarkArmor         | character (4.2), amount, source, roll?, postRollSilent?, tagNames?, dmgType?, characters (4.9), feature (4.11), system (4.8)                     |
+| onLastArmorSlot          | character (4.2), system (4.8), characters (4.9), feature (4.11)                                                                                  |
+| onBeforeDamageApplied    | { target (4.2), roll (4.3), feature (4.11), system (4.8), effectiveDmgTotal (number), characters (4.9) } → returns new damage total (number)     |
+| onDamageReceived         | character (4.2), dmgTotal, hpLoss, updateActiveElement, characters (4.9), system (4.8), feature (4.11)                                           |
+| onHpDealt                | character (4.2), hpDealt, target (4.2), updateActiveElement, characters (4.9), system (4.8), feature (4.11)                                      |
+| onRollComplete           | attacker, roll (4.3), characters (4.9), system (4.8), feature (4.11)                                                                             |
+| chip.onUse (card)        | unified chip context (4.15): roll (4.3 or null), character (4.2), feature (4.11), characters (4.9), system (4.8) when in table context           |
+| chip.onToggle (card)     | unified chip context (4.15) plus chip (4.14): roll (4.3 or null), character (4.2), chip (4.14), feature (4.11), characters (4.9), system (4.8)   |
+
+
+### 7.1 Hook × context subdocument matrix
+
+Rows = hooks; columns = context subdocuments (Section 4), ordered by how many hooks receive each (most → least). • = hook receives that subdoc in its context. “Character” covers any 4.2 entity (character, target, char, selfEl, attacker).
+
+**Columns (most to least used):** feature (4.11), character (4.2), characters (4.9), roll (4.3), featureState (4.6), banner (4.1), damagePipelineCtx (4.7), system (4.8), rest (4.4), chip (4.14).
+
+
+| Hook                     | feature (4.11) | character (4.2) | characters (4.9) | roll (4.3) | featureState (4.6) | banner (4.1) | damagePipelineCtx (4.7) | system (4.8) | rest (4.4) | chip (4.14) |
+| ------------------------ | -------------- | --------------- | ---------------- | ---------- | ------------------ | ------------ | ----------------------- | ------------ | ---------- | ----------- |
+| onBanner                 | •              | •               | •                |            |                    | •            |                         | •            |            |             |
+| onChipAck / onChipReject | •              | •               | •                | •          | •                  | •            |                         | •            |            |             |
+| onBannerAck (chip)       | •              | •               | •                | •          | •                  | •            |                         | •            |            |             |
+| onBannerAck (weapon)     | •              | •               |                  | •          |                    |              |                         | •            |            |             |
+| onCharacterEdit          | •              | •               |                  |            |                    |              |                         |              |            |             |
+| canvasChip.isVisible     | •              | •               | •                | •          | •                  |              |                         | •            |            |             |
+| canvasChip.onUse         | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| onRoll                   | •              |                 | •                | •          |                    |              |                         | •            |            |             |
+| onRest                   | •              |                 |                  |            |                    |              |                         |              | •          |             |
+| onSessionStart           | •              |                 | •                |            | •                  |              |                         | •            |            |             |
+| onTargeted               | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| onMarkStress             | •              | •               | •                |            |                    |              |                         | •            |            |             |
+| onMarkHP                 | •              | •               | •                |            |                    |              |                         | •            |            |             |
+| onMarkArmor              | •              | •               | •                |            |                    |              |                         | •            |            |             |
+| modifyPreThresholdDamage | •              |                 | •                |            |                    |              | •                       | •            |            |             |
+| modifyHpLoss             | •              |                 | •                |            |                    |              | •                       | •            |            |             |
+| onBeforeDamageApplied    | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| onAfterMarkArmor         | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| onLastArmorSlot          | •              | •               | •                |            |                    |              |                         | •            |            |             |
+| onDamageReceived         | •              | •               | •                |            |                    |              |                         | •            |            |             |
+| onHpDealt                | •              | •               | •                |            |                    |              |                         | •            |            |             |
+| onFeatureActivated       | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| onRollComplete           | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| chip.onUse (card)        | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| chip.onToggle (card)     | •              | •               | •                |            |                    |              |                         | •            |            | •           |
+| chip.isVisible (preroll) | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+| chip.onUse (preroll)     | •              | •               | •                | •          |                    |              |                         | •            |            |             |
+
 
 ---
 
-## 7. Registries and imports
+## 8. Conventions
 
-- **Ancestry/community (origin):** `originFeatures` from `src/features/registry.js` (merge of ancestry + community maps).  
-- **Weapons:** `weaponFeatures` from `src/features/registry.js`.  
-- **Armor:** `armorFeatures` from `src/features/registry.js`.  
-- **Entity/roll:** `wrapEntity`, `wrapRoll` from `src/features/entity.js`, `src/features/roll.js`.  
-- **Lifecycle:** `runBeforeMarkStress`, `runBeforeMarkHP`, `runBeforeMarkArmor` from `src/client/lib/origin-lifecycle.js`.  
-- **Hooks:** `runHook`, `runPipelineHook`, `runAsyncPipelineHook` from `src/features/hooks.js`.
+- **Style:** Prefer arrow functions for one-line hook or chip fields. Use method shorthand for multi-statement bodies. Exception: write onBanner(banner) { ... } in method shorthand for readability.
+- **Do not duplicate feature names.** The system injects the current feature name. Never pass _featureName, featureKey, or the feature name as a string literal inside chip descriptors, isVisible, or similar; use the injected key or resetsOn usage tracking instead.
+- **Imitate existing features.** Before adding a new one, find a similar feature in the codebase and copy its structure (e.g. Fearless for fear→hope, Thick Skin for target chips, Retracting Claws for virtual weapons, Galapa Retract or Fungril for card chips).
+- **Where to add a feature:** Ancestry → `src/features/ancestries/<AncestryName>.js` + ancestryModules in ancestries/index.js. Community → `src/features/communities/<CommunityName>.js` + communityModules in communities/index.js. Weapon → `src/features/weapons/<FeatureName>.js` + builderDict in weapons/index.js. Armor → `src/features/armor/<FeatureName>.js` + builderDict in armor/index.js. Class → `src/features/classes/<ClassName>.js` + merge in classes/index.js. One file per ancestry; one file per community.
+- **Descriptions from the SRD.** Use the SRD text for ancestry/community descriptions and for each feature. Bold resource costs with **...** to match existing conventions.
 
----
-
-## 8. Quick reference: context shapes
-
-| Hook | Main context shape |
-|------|--------------------|
-| **onCharacterRender** | `ctx`: charData spread + `weapons`, `addStatMod`, `addThresholdBonus`, `addVirtualWeapon`, `addAdvantageTrigger` |
-| **onBanner** | `banner`: `{ addChip(descriptor) }` |
-| **onAct** | `ctx`: `canvas`, `roll`, `char`, `options`, `getFeatureStateFor` |
-| **onRoll** | `ctx`: `{ roll }` |
-| **onRest** | `rest`: `shortMoves`, `longMoves`, `addShortMove`, `addLongMove`, `addShortMoveSlot`, `addLongMoveSlot` |
-| **onCard** | `card`: `{ addChip(descriptor) }` |
-| **onTargeted** | `(roll, character)` — roll mutable, has `addDisadvantage(featureName?)` |
-| **onSessionStart** | `(feature)` per character, or `(null, characters)` once |
-| **onMarkStress/HP/Armor** | `ctx`: `character`, `amount`, `source`; Stress also has `rollDice`, `featureName`, `postAction` |
-| **onChipAck** | `(roll, character, ctx, feature)` — ctx: `addDamage`, `addNarration`, `setTreatAsMissForTarget`, `characterRaw` |
-| **modifyPreThresholdDamage** (armor/weapon) | `(dmgTotal, ctx)` — ctx: `target`, `character`, `tagNames`, `roll`, `dmgType` |
-| **modifyHpLoss** (weapon) | `(hpLoss, ctx)` — same ctx |
-| **onDamageApplied** (weapon) | `ctx` — same |
-| **onAfterMarkArmor** (armor) | `{ character, amount: 1, source, roll?, postRollSilent?, tagNames?, dmgType? }` |
-| **onLastArmorSlot** (armor) | `{ character, postRoll, addActionBanner }` |
-| **onBeforeDamageApplied** (weapon) | `(effectiveDmgTotal, { target, roll, parryWeapon, postRoll, addActionBanner })` |
-
----
-
-## 9. Conventions
-
-- **Style:** Prefer arrow functions for one-line hook or chip fields. Use method shorthand for multi-statement bodies. **Exception:** Always write `onBanner(banner) { ... }` in method shorthand — the chip descriptor is multi-line and a one-liner hurts readability.
-- **Do not duplicate feature names.** The system injects the current feature name into context. Never pass `_featureName`, `featureKey`, or the feature name as a string literal inside chip descriptors, `isVisible`, or similar; use the injected key or `resetsOn` usage tracking instead.
-- **Imitate existing features.** Before adding a new one, find a similar feature in the codebase and copy its structure (e.g. Fearless for fear→hope, Thick Skin for target chips, Retracting Claws for virtual weapons, Death Connection for onCard chips).
-- **One file per ancestry.** All features for an ancestry live in the same file. Communities: one file per community.
-- **Descriptions from the SRD.** Use the SRD text for ancestry/community descriptions and for each feature. Bold resource costs with `**...**` to match existing conventions.

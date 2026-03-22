@@ -1,46 +1,35 @@
 /**
- * Katari ancestry builder.
+ * Katari ancestry — feature hooks keyed by feature name.
  *
- * Features:
- *   Feline Instincts — On an Agility roll, spend 2 Hope to reroll the Hope die.
- *   Retracting Claws — Virtual weapon (Agility, Melee, no damage). On success, target becomes Vulnerable.
+ * SRD (ancestry): Katari are feline humanoids with retractable claws, vertically slit pupils, and high, triangular ears.
+ * Their height ranges from about 3 feet to 6 ½ feet, and they live to around 150 years.
+ *
+ * SRD (Feline Instincts): When you make an Agility Roll, you can **spend 2 Hope** to reroll your Hope Die.
+ *
+ * SRD (Retracting Claws): Make an **Agility Roll** to scratch a target within Melee range. On a success, they become
+ * temporarily _Vulnerable._
  */
 export default {
-  name: 'Katari',
-  description: 'Katari are feline humanoids with retractable claws, vertically slit pupils, and high, triangular ears. They can also have small, pointed canine teeth, soft fur, and long whiskers that assist their perception and navigation. Their ears can swivel nearly 180 degrees to detect sound, adding to their heightened senses. Katari may look more or less feline or humanoid, with catlike attributes in the form of hair, whiskers, and a muzzle. About half of the katari population have tails. Their skin and fur come in a wide range of hues and patterns, including solid colors, calico tones, tabby stripes, and an array of spots, patches, marbling, or bands. Their height ranges from about 3 feet to 6 ½ feet, and they live to around 150 years.',
-
-  onCharacterBuild(char) {
-    char.addFeature(
-      'Feline Instincts',
-      'When you make an Agility Roll, you can **spend 2 Hope** to reroll your Hope Die.',
+  'Feline Instincts': {
+    chips: [
       {
-        onBanner(banner) {
-          banner.addChip({
-            label: 'Spend 2 Hope to reroll Hope Die',
-            hopeCost: 2,
-            isVisible: (roll) => roll.isMine && roll.trait?.name === 'Agility',
-            onChipAck: (roll) => roll.reroll('Hope'),
-          });
-        },
-      }
-    );
-
-    char.addFeature(
-      'Retracting Claws',
-      'Make an **Agility Roll** to scratch a target within Melee range. On a success, they become temporarily _Vulnerable._',
-      {
-        onCharacterRender(ctx) {
-          ctx.addVirtualWeapon({
-            trait: 'Agility',
-            range: 'Melee',
-            damage: null,
-            description: 'On success, target becomes Vulnerable',
-            onAcknowledge({ target }) {
-              if (target) target.setFlag('vulnerable', true);
-            },
-          });
-        },
-      }
-    );
+        placement: 'banner',
+        label: 'Spend 2 Hope to reroll Hope Die',
+        hopeCost: 2,
+        isVisible: (ctx) => ctx.roll.isMine && ctx.roll.trait?.name === 'Agility',
+        onChipAck: ({ roll }) => roll.reroll('Hope'),
+      },
+    ],
+  },
+  'Retracting Claws': {
+    virtualWeapon: {
+      trait: 'Agility',
+      range: 'Melee',
+      damage: null,
+      description: 'On success, target becomes Vulnerable',
+      onAcknowledge({ target, roll }) {
+        if (roll?.isSuccess && target) target.setFlag('vulnerable', true);
+      },
+    },
   },
 };

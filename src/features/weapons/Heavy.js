@@ -1,9 +1,8 @@
+/**
+ * SRD: -1 to Evasion.
+ */
 export default {
   name: 'Heavy',
   description: '-1 to Evasion',
-  onCharacterBuild({ character, weapon }) {
-    character.addFeature('Heavy', '-1 to Evasion', {
-      onCharacterRender: (ctx) => ctx.addStatMod('evasion', -1),
-    });
-  },
+  passiveStatMods: { evasion: -1 },
 };

@@ -1,11 +1,10 @@
 /**
  * Community features barrel.
  *
- * Same builder shape as ancestries: { name, description, onCharacterBuild(char) }.
- * Uses shared createFeatureBuilder; descriptors get sourceType: 'community' and source: builder.name.
+ * Each community file exports a dictionary of feature hooks: { 'Feature Name': { ...hooks } }.
+ * Name/description come from the SRD. The barrel merges into communityFeatureMap and communityMap.
  */
 
-import { createFeatureBuilder } from '../add-feature.js';
 import Highborne from './Highborne.js';
 import Loreborne from './Loreborne.js';
 import Orderborne from './Orderborne.js';
@@ -16,7 +15,18 @@ import Underborne from './Underborne.js';
 import Wanderborne from './Wanderborne.js';
 import Wildborne from './Wildborne.js';
 
-const builders = [Highborne, Loreborne, Orderborne, Ridgeborne, Seaborne, Slyborne, Underborne, Wanderborne, Wildborne];
+/** [communityName, featureDict] for each file */
+const communityModules = [
+  ['Highborne', Highborne],
+  ['Loreborne', Loreborne],
+  ['Orderborne', Orderborne],
+  ['Ridgeborne', Ridgeborne],
+  ['Seaborne', Seaborne],
+  ['Slyborne', Slyborne],
+  ['Underborne', Underborne],
+  ['Wanderborne', Wanderborne],
+  ['Wildborne', Wildborne],
+];
 
 /** @type {Record<string, object>} feature name → descriptor */
 const communityFeatureMap = {};
@@ -27,23 +37,25 @@ const communityFeatureMap = {};
  */
 export const communityMap = {};
 
-for (const builder of builders) {
+for (const [communityName, featureDict] of communityModules) {
   const features = [];
-  const communityEntry = {
-    name: builder.name,
-    description: builder.description,
+
+  for (const [featureName, hooks] of Object.entries(featureDict)) {
+    const descriptor = {
+      name: featureName,
+      sourceType: 'community',
+      source: communityName,
+      ...hooks,
+    };
+    communityFeatureMap[featureName] = descriptor;
+    features.push(descriptor);
+  }
+
+  communityMap[communityName] = {
+    name: communityName,
+    description: '',
     features,
   };
-
-  const char = createFeatureBuilder({
-    targetMap: communityFeatureMap,
-    featureList: features,
-    sourceType: 'community',
-    source: builder.name,
-  });
-
-  builder.onCharacterBuild(char);
-  communityMap[builder.name] = communityEntry;
 }
 
 export default communityFeatureMap;

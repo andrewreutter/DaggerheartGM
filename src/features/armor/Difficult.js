@@ -1,17 +1,11 @@
+/**
+ * SRD: -1 to all character traits and Evasion.
+ */
 export default {
   name: 'Difficult',
   description: '-1 to all traits and Evasion.',
-  onCharacterBuild({ character, armor }) {
-    character.addFeature('Difficult', '-1 to all traits and Evasion.', {
-      onCharacterRender(ctx) {
-        ctx.addStatMod('evasion', -1);
-        ctx.addStatMod('agility', -1);
-        ctx.addStatMod('strength', -1);
-        ctx.addStatMod('finesse', -1);
-        ctx.addStatMod('instinct', -1);
-        ctx.addStatMod('presence', -1);
-        ctx.addStatMod('knowledge', -1);
-      },
-    });
+  passiveStatMods: {
+    evasion: -1,
+    traits: { agility: -1, strength: -1, finesse: -1, instinct: -1, presence: -1, knowledge: -1 },
   },
 };

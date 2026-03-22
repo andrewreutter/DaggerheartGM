@@ -5,6 +5,7 @@ import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
 import { randomInt } from 'crypto';
 import { watchFile } from 'fs';
+import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
@@ -84,7 +85,17 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-app.use(compression());
+app.use(compression({
+  // SSE connections (EventSource) must not be gzip-compressed. When connecting directly to Express
+  // (e.g. local dev), the browser sends Accept-Encoding: gzip and the compression middleware wraps
+  // the SSE stream, causing named events (banners, table_state) to be silently swallowed by the
+  // browser's EventSource parser. On production (Fly.io) the reverse proxy strips Accept-Encoding
+  // from SSE requests before forwarding, so this was never an issue there.
+  filter: (req, res) => {
+    if (req.headers.accept?.includes('text/event-stream')) return false;
+    return compression.filter(req, res);
+  },
+}));
 // JSON body parser with gzip support (reduces upload time for large payloads)
 const JSON_LIMIT = 10 * 1024 * 1024;
 app.use((req, res, next) => {
@@ -124,6 +135,19 @@ app.get('/api/config', (req, res) => {
 // --- Current user info ---
 app.get('/api/me', requireAuth, (req, res) => {
   res.json({ isAdmin: ADMIN_EMAILS.includes(req.email?.toLowerCase()) });
+});
+
+/** Feature authoring guide — reads `docs/feature-authoring-guide.md` on each request (always current on disk). */
+app.get('/api/docs/feature-authoring-guide', requireAuth, async (req, res) => {
+  try {
+    const path = join(__dirname, 'docs', 'feature-authoring-guide.md');
+    const markdown = await readFile(path, 'utf8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ markdown });
+  } catch (err) {
+    console.error('GET /api/docs/feature-authoring-guide failed:', err);
+    res.status(500).json({ error: 'Failed to load guide' });
+  }
 });
 
 // --- Dev live reload (SSE) ---
@@ -592,10 +616,10 @@ async function appendRollLog(gmUid, rollData) {
   try {
     const dbId = await appendDiceRoll(APP_ID, gmUid, rollData);
     rollData._rollDbId = dbId;
-    subscriptionManager.notifyChange('banners', gmUid);
   } catch (err) {
     console.error('[dice] DB write failed:', err.message);
   }
+  subscriptionManager.notifyChange('banners', gmUid);
 }
 
 function broadcastPresenceToTable(tableId) {
@@ -603,6 +627,18 @@ function broadcastPresenceToTable(tableId) {
   if (!room) return;
   const presence = [...room.players.entries()].map(([uid, p]) => ({ uid, name: p.name, email: p.email, photoURL: p.photoURL }));
   const msg = `event: presence\ndata: ${JSON.stringify({ players: presence })}\n\n`;
+  for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
+}
+
+// In-memory pending player intents (pre-roll banner state): tableId → intent object
+// Intent shape: { characterName, characterInstanceId, rollText, chips, timestamp }
+// chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
+const pendingIntents = new Map();
+
+function broadcastIntentToGm(tableId, intent) {
+  const room = rooms.get(tableId);
+  if (!room) return;
+  const msg = `event: intent\ndata: ${JSON.stringify(intent)}\n\n`;
   for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
 }
 
@@ -763,7 +799,14 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
     try {
       const tableId = req.query.tableId;
       if (tableId) {
-        const row = await getTableStateById(APP_ID, tableId);
+        let row = await getTableStateById(APP_ID, tableId);
+        // Auto-create the primary table row the first time a user accesses their own table
+        // (e.g. fresh local DB or new account with no prior table state).
+        if (!row && tableId === req.uid) {
+          const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0 };
+          await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
+          row = { userId: req.uid, data: emptyState };
+        }
         if (!row) return res.status(404).json({ error: 'Table not found' });
         const isOwner = row.userId === req.uid;
         const isPlayer = (row.data?.playerEmails || []).includes(req.email);
@@ -1482,6 +1525,13 @@ app.get('/api/room/my/players', async (req, res) => {
   subscriptionManager.subscribe('banners', user.uid, res);
   subscriptionManager.subscribe('table_state', tableId, res);
 
+  // Send any current pending player intent so GM sees it on reconnect
+  const existingIntent = pendingIntents.get(tableId);
+  if (existingIntent) {
+    res.write(`event: intent\ndata: ${JSON.stringify(existingIntent)}\n\n`);
+    res.flush?.();
+  }
+
   const heartbeat = setInterval(() => { res.write(':heartbeat\n\n'); res.flush?.(); }, 30000);
   req.on('close', () => {
     clearInterval(heartbeat);
@@ -1555,7 +1605,9 @@ app.post('/api/room/my/roll', requireAuth, async (req, res) => {
   const { rollText, displayName, _clientId, silent, ...extraMeta } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   const rollData = buildRollData(rollText, displayName, _clientId, extraMeta);
-  if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
+  if (!rollData) {
+    return res.status(400).json({ error: 'No dice expressions found in rollText' });
+  }
   if (!silent) await appendRollLog(req.uid, rollData);
   res.json(rollData);
 });
@@ -2463,7 +2515,13 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
   }
   const tableId = op.tableId || req.uid;
   try {
-    const row = await getTableStateById(APP_ID, tableId);
+    let row = await getTableStateById(APP_ID, tableId);
+    // Auto-create the primary table row if it doesn't exist yet (e.g. fresh local DB).
+    if (!row && tableId === req.uid) {
+      const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0 };
+      await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
+      row = { userId: req.uid, data: emptyState };
+    }
     if (!row || row.userId !== req.uid) {
       return res.status(403).json({ error: 'Not your table' });
     }
@@ -2474,6 +2532,29 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
     console.error('POST /api/room/my/op error:', err);
     res.status(500).json({ error: 'Failed to apply op' });
   }
+});
+
+
+// POST /api/room/:tableId/intent — Player (or GM) broadcasts a pre-roll intent banner to the GM.
+// Body: { characterName, characterInstanceId, rollText, chips }
+// chips must be plain serializable objects (no functions).
+app.post('/api/room/:tableId/intent', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { characterName, characterInstanceId, rollText, chips } = req.body;
+  const intent = { characterName, characterInstanceId, rollText, chips: chips || [], timestamp: Date.now() };
+  pendingIntents.set(req.params.tableId, intent);
+  broadcastIntentToGm(req.params.tableId, intent);
+  res.json({ ok: true });
+});
+
+// DELETE /api/room/:tableId/intent — Clear the pending intent (called after Proceed or Cancel).
+app.delete('/api/room/:tableId/intent', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  pendingIntents.delete(req.params.tableId);
+  broadcastIntentToGm(req.params.tableId, null);
+  res.json({ ok: true });
 });
 
 
@@ -2555,6 +2636,7 @@ app.post('/api/room/:tableId/add-character', requireAuth, async (req, res) => {
 
 // POST /api/room/:tableId/roll — Player rolls dice server-side; validates table membership, persists to DB.
 app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
+  if (process.env.NODE_ENV !== 'production') console.log('[roll] POST /api/room/:tableId/roll received', req.params.tableId, req.body?.rollText?.slice(0, 40));
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   const { gmUid } = ctx;
@@ -2564,7 +2646,10 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
   try {
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
-    if (!silent) await appendRollLog(gmUid, rollData);
+    if (!silent) {
+      await appendRollLog(gmUid, rollData);
+      if (process.env.NODE_ENV !== 'production') console.log('[roll] POST /api/room/:tableId/roll', rollData._rollDbId != null ? 'persisted' : 'in-memory', 'targetId:', extraMeta._selectedTargetInstanceId ?? null);
+    }
     res.json(rollData);
   } catch (err) {
     console.error('POST /api/room/:tableId/roll error:', err);

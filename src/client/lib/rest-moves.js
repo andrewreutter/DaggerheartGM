@@ -6,6 +6,7 @@
 
 import { ancestryMap } from '../../features/ancestries/index.js';
 import { communityMap } from '../../features/communities/index.js';
+import v2AncestryFeatures from '../../features-v2/ancestries/index.js';
 
 export const SHORT_REST_MOVES = [
   {
@@ -103,9 +104,39 @@ export function getRestMoveDefinition(moveId) {
 }
 
 /**
+ * Apply V2 ancestry passive rest modifiers (CONV-011) from src/features-v2/ancestries/index.js.
+ * Registry keys are `{AncestryName}.{FeatureName}` (e.g. `Clank.Efficient`).
+ */
+function applyV2AncestryRestMods(rest, character) {
+  const names = Array.isArray(character.ancestry)
+    ? character.ancestry
+    : character.ancestry
+      ? [character.ancestry]
+      : [];
+  if (!names.length || !v2AncestryFeatures) return;
+
+  for (const ancestryName of names) {
+    const prefix = `${ancestryName}.`;
+    for (const [regKey, feature] of Object.entries(v2AncestryFeatures)) {
+      if (!regKey.startsWith(prefix) || !feature || typeof feature !== 'object') continue;
+      const mods = feature.passiveStatMods;
+      if (!mods || typeof mods !== 'object') continue;
+      const label = feature.name || regKey;
+      const nShort = Number(mods.numShortRestSlots) || 0;
+      const nLong = Number(mods.numLongRestSlots) || 0;
+      for (let i = 0; i < nShort; i++) rest.addShortMoveSlot(label);
+      for (let i = 0; i < nLong; i++) rest.addLongMoveSlot(label);
+      const nLongInShort = Number(mods.numLongMovesInShortRest) || 0;
+      if (nLongInShort > 0) {
+        rest.longMoves.forEach(m => rest.addShortMove(m));
+      }
+    }
+  }
+}
+
+/**
  * Build the effective rest move list and slot counts for a character.
- * Runs ancestry onRest(rest) hooks so features like Clank Efficient can extend short rest moves,
- * and Elf Celestial Trance can add extra slots via addShortMoveSlot/addLongMoveSlot.
+ * Runs V2 passive rest mods, then ancestry onRest(rest) hooks for any remaining v1-only behavior.
  * @param {{ ancestry?: string | string[] }} character — resolved character with ancestry name(s)
  * @param {'short' | 'long'} restDuration
  * @returns {{ moves: Array<{ id: string, name: string, description: string }>, shortSlots: number, longSlots: number, shortSlotLabels: string[], longSlotLabels: string[] }}
@@ -131,12 +162,14 @@ export function getRestMovesForCharacter(character, restDuration) {
       this.longSlotLabels.push(name != null && name !== '' ? String(name) : `Move ${this.longMoveSlots}`);
     },
   };
+  applyV2AncestryRestMods(rest, character);
+
   const names = Array.isArray(character.ancestry) ? character.ancestry : (character.ancestry ? [character.ancestry] : []);
   for (const name of names) {
     const entry = ancestryMap[name];
     if (!entry?.features) continue;
     for (const f of entry.features) {
-      if (typeof f.onRest === 'function') f.onRest(rest);
+      if (typeof f.onRest === 'function') f.onRest({ rest, feature: f });
     }
   }
   const communityName = character.community || null;
@@ -144,7 +177,7 @@ export function getRestMovesForCharacter(character, restDuration) {
     const communityEntry = communityMap[communityName];
     if (communityEntry?.features) {
       for (const f of communityEntry.features) {
-        if (typeof f.onRest === 'function') f.onRest(rest);
+        if (typeof f.onRest === 'function') f.onRest({ rest, feature: f });
       }
     }
   }
