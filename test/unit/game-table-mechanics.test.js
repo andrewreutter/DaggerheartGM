@@ -1,45 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import {
-  shouldUsePhase1RegistryFallback,
   resolveParryWeaponFeature,
   resolveWeaponOnBannerAckDescriptor,
+  resolveOriginFeatureDescriptor,
+  resolveClassFeatureDescriptor,
+  resolveVirtualWeaponBehavior,
+  resolveWeaponTagDescriptor,
+  getWeaponTagAutomatedForBanner,
   wrapEntity,
 } from '../../src/client/lib/game-table-mechanics.js';
 
-describe('game-table-mechanics (Phase D facade)', () => {
-  let prev;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-  beforeEach(() => {
-    prev = globalThis.__DH_V2_DECLARATIVE_SHEET__;
-  });
-
-  afterEach(() => {
-    if (prev === undefined) delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
-    else globalThis.__DH_V2_DECLARATIVE_SHEET__ = prev;
-  });
-
-  it('shouldUsePhase1RegistryFallback is true when V2 flag is off', () => {
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = false;
-    expect(shouldUsePhase1RegistryFallback()).toBe(true);
-  });
-
-  it('shouldUsePhase1RegistryFallback is false when V2 flag is on', () => {
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
-    expect(shouldUsePhase1RegistryFallback()).toBe(false);
-  });
-
-  it('resolveParryWeaponFeature prefers activeFeatures row', () => {
+describe('game-table-mechanics (V2-only facade)', () => {
+  it('resolveParryWeaponFeature returns activeFeatures Parry row', () => {
     const parryRow = { name: 'Parry', onBeforeDamageApplied: async () => 3 };
     const charEl = {
       activeFeatures: [parryRow],
       weapons: [{ feature: { name: 'Parry' } }],
     };
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
     expect(resolveParryWeaponFeature(charEl)).toBe(parryRow);
   });
 
-  it('resolveWeaponOnBannerAckDescriptor returns null for unknown tag when V2 on', () => {
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
+  it('resolveWeaponOnBannerAckDescriptor returns null without a matching row', () => {
     expect(resolveWeaponOnBannerAckDescriptor({ activeFeatures: [] }, 'TotallyFakeTag')).toBe(null);
   });
 
@@ -49,5 +35,58 @@ describe('game-table-mechanics (Phase D facade)', () => {
     const w = wrapEntity(el, (id, u) => updates.push([id, u]));
     w.markStress(2);
     expect(updates).toEqual([['a', { currentStress: 2 }]]);
+  });
+
+  it('resolveOriginFeatureDescriptor returns ancestry row from activeFeatures', () => {
+    const row = { name: 'Luckbringer', type: 'ancestry', onSessionStart: () => {} };
+    expect(
+      resolveOriginFeatureDescriptor({ activeFeatures: [row] }, 'Luckbringer')
+    ).toBe(row);
+  });
+
+  it('resolveClassFeatureDescriptor returns class row from activeFeatures', () => {
+    const row = { name: 'Beastform', type: 'class', class: 'Druid', onFeatureActivated: () => {} };
+    expect(resolveClassFeatureDescriptor({ activeFeatures: [row] }, 'Beastform')).toBe(row);
+  });
+
+  it('resolveWeaponTagDescriptor returns weapon row from activeFeatures', () => {
+    const row = { name: 'Reliable', type: 'weapon', showTag: true, automated: true };
+    expect(
+      resolveWeaponTagDescriptor('Reliable', { activeFeatures: [row] })
+    ).toBe(row);
+  });
+
+  it('getWeaponTagAutomatedForBanner reads automated from activeFeatures', () => {
+    const attackerEl = {
+      activeFeatures: [{ name: 'Reliable', type: 'weapon', automated: true }],
+    };
+    expect(getWeaponTagAutomatedForBanner('Reliable', attackerEl)).toBe(true);
+  });
+
+  it('getWeaponTagAutomatedForBanner is false without attacker context', () => {
+    expect(getWeaponTagAutomatedForBanner('Reliable', null)).toBe(false);
+  });
+
+  it('resolveVirtualWeaponBehavior reads virtualWeapon from activeFeatures', () => {
+    const onAcknowledge = () => {};
+    const attackerEl = {
+      activeFeatures: [
+        {
+          name: 'Retracting Claws',
+          type: 'ancestry',
+          virtualWeapon: { onAcknowledge, stressCost: 1 },
+        },
+      ],
+    };
+    const b = resolveVirtualWeaponBehavior('Retracting Claws', attackerEl);
+    expect(b.onAcknowledge).toBe(onAcknowledge);
+    expect(b.stressCost).toBe(1);
+  });
+
+  it('game-table-mechanics.js does not import legacy Phase 1 registry paths', () => {
+    const path = join(__dirname, '../../src/client/lib/game-table-mechanics.js');
+    const src = readFileSync(path, 'utf8');
+    expect(src).not.toContain('../../features/');
+    expect(src).not.toContain('phase1-game-table-registry');
   });
 });

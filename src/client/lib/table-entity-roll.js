@@ -1,6 +1,5 @@
 /**
  * Table entity + roll wrappers — canonical copy for Game Table / client code.
- * (Phase D: `src/features/entity.js` and `src/features/roll.js` re-export from here.)
  */
 import { extractDetailsValues } from './dice-utils.js';
 

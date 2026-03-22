@@ -3,12 +3,14 @@
  * Pure functions that compute derived stats from character selections + SRD data.
  */
 
-import { originFeatures, weaponFeatures, armorFeatures, classFeatures } from '../../features/registry.js';
 import { BEASTFORM_ITEMS } from '../../features-v2/beastforms/srd-data.js';
 import { weapon_properties as v2WeaponProperties, armor_properties as v2ArmorProperties } from '../../features-v2/registry.js';
+import v2Abilities from '../../features-v2/abilities/index.js';
 import { unwrap, unwrapAll } from '../../features-v2/engine/when.js';
 import { buildTableSnapshot } from '../../features-v2/engine/table.js';
-import { isV2DeclarativeSheetEnabled } from './v2-declarative-sheet.js';
+import { v2OriginFeatureDescriptorsByName } from './v2-origin-feature-descriptors.js';
+import { v2ClassSubclassFeatureDescriptorsByName } from './v2-class-subclass-feature-descriptors.js';
+import { EXPERIENCE_BONUS_BY_FEATURE_NAME } from './ancestry-experience-bonus.js';
 
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 
@@ -226,26 +228,24 @@ function defaultGearSheetContext() {
 }
 
 /**
- * Resolve `passiveStatMods` from the V2 registry when the declarative sheet flag is on
- * (with `unwrap` / `unwrapAll`), otherwise Phase 1. If V2 yields no mods (failed `when`),
- * falls back to Phase 1 when present.
+ * Resolve `passiveStatMods` from the V2 weapon/armor registry (with `unwrap` / `unwrapAll`).
+ * Returns null when the feature has no static mods or `when()` predicates do not apply.
  */
-function resolveGearPassiveStatMods(v2Descriptor, p1Descriptor, featureName, sheetCtx) {
+function resolveGearPassiveStatMods(v2Descriptor, featureName, sheetCtx) {
   const ctx = sheetCtx || defaultGearSheetContext();
   const base = buildV2SheetUnwrapGameState(ctx.computed, ctx.raw);
-  const useV2 = isV2DeclarativeSheetEnabled();
-  if (useV2 && v2Descriptor && v2Descriptor.passiveStatMods !== undefined) {
-    const table = buildTableSnapshot({ ...base, _featureKey: featureName });
-    let mods = unwrap(v2Descriptor.passiveStatMods, table);
-    if (mods != null && typeof mods === 'object') {
-      mods = unwrapAll(mods, table);
-    }
-    if (mods != null && typeof mods === 'object') {
-      return mods;
-    }
+  if (!v2Descriptor || v2Descriptor.passiveStatMods === undefined) {
+    return null;
   }
-  const p1 = p1Descriptor?.passiveStatMods;
-  return p1 != null && typeof p1 === 'object' ? p1 : null;
+  const table = buildTableSnapshot({ ...base, _featureKey: featureName });
+  let mods = unwrap(v2Descriptor.passiveStatMods, table);
+  if (mods != null && typeof mods === 'object') {
+    mods = unwrapAll(mods, table);
+  }
+  if (mods != null && typeof mods === 'object') {
+    return mods;
+  }
+  return null;
 }
 
 /**
@@ -263,15 +263,11 @@ export function resolveArmor(armorItem) {
 }
 
 /**
- * Compute armor stat and roll modifiers from the registry only.
+ * Compute armor stat and roll modifiers from the V2 armor_properties registry only.
  * Returns { traits, evasion, rollModifiers, feature, sources }.
- * No parsing — armor features must have passiveStatMods in the armor feature registry.
- *
- * When {@link isV2DeclarativeSheetEnabled}, passive mods are resolved from `src/features-v2/armor_properties`
- * (with `when()` unwrapping); Phase 1 `armorFeatures` is used as fallback when V2 yields no static mods.
  *
  * @param {object | null} armorItem
- * @param {{ computed?: object, raw?: object }} [sheetCtx] — pass `{ computed: result, raw: data }` from `recomputeCharacter` for accurate unwrap; optional for callers that only need P1-shaped mods.
+ * @param {{ computed?: object, raw?: object }} [sheetCtx] — pass `{ computed: result, raw: data }` from `recomputeCharacter` for accurate `when()` unwrap
  */
 export function computeArmorModifiers(armorItem, sheetCtx) {
   const result = {
@@ -289,8 +285,7 @@ export function computeArmorModifiers(armorItem, sheetCtx) {
   const feat = features[0];
   result.feature = { name: feat.name, description: feat.description || feat.text || '' };
   const v2d = v2ArmorProperties[feat.name];
-  const p1d = armorFeatures[feat.name];
-  const mods = resolveGearPassiveStatMods(v2d, p1d, feat.name, sheetCtx);
+  const mods = resolveGearPassiveStatMods(v2d, feat.name, sheetCtx);
   if (!mods) return result;
 
   if (mods.traits && typeof mods.traits === 'object') {
@@ -371,19 +366,19 @@ export function getEffectiveWeaponRange(weapon, ancestryFeatures) {
 function buildActiveFeaturesForRender(result, srdClass, srdSubclass) {
   const active = [];
   for (const f of result.ancestryFeatures || []) {
-    const hooks = originFeatures[f.name] || {};
+    const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
     active.push({ ...f, ...hooks, type: 'ancestry', source: f.sourceItem ?? f.source });
   }
   for (const f of result.communityFeatures || []) {
-    const hooks = originFeatures[f.name] || {};
+    const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
     active.push({ ...f, ...hooks, type: 'community', source: f.sourceItem ?? f.source });
   }
   for (const f of result.classFeatures || []) {
-    const hooks = classFeatures[f.name] || {};
+    const hooks = v2ClassSubclassFeatureDescriptorsByName[f.name] || {};
     active.push({ ...f, ...hooks, type: 'class', source: srdClass ?? result.class });
   }
   for (const f of result.subclassFeatures || []) {
-    const hooks = classFeatures[f.name] || {};
+    const hooks = v2ClassSubclassFeatureDescriptorsByName[f.name] || {};
     active.push({ ...f, ...hooks, type: 'subclass', source: srdSubclass ?? result.subclass });
   }
   return active;
@@ -395,11 +390,11 @@ function buildActiveFeaturesForRender(result, srdClass, srdSubclass) {
 function getRenderActiveFeaturesFromCharData(charData) {
   const active = [];
   for (const f of charData.ancestryFeatures || []) {
-    const hooks = originFeatures[f.name] || {};
+    const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
     active.push({ ...f, ...hooks, type: 'ancestry', source: f.sourceItem ?? f.source });
   }
   for (const f of charData.communityFeatures || []) {
-    const hooks = originFeatures[f.name] || {};
+    const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
     active.push({ ...f, ...hooks, type: 'community', source: f.sourceItem ?? f.source });
   }
   return active;
@@ -501,8 +496,8 @@ function resolveFeatures(items, sourceType, sourceName) {
 }
 
 /**
- * Build the flat activeFeatures array: merge SRD data with registry hooks and attach type/source.
- * Each entry: { ...srdData, ...registryHooks, type, source }.
+ * Build the flat activeFeatures array: merge SRD data with V2 descriptors and attach type/source.
+ * Each entry: { ...srdData, ...v2Hooks, type, source }.
  * type: 'ancestry' | 'community' | 'class' | 'subclass' | 'weapon' | 'armor'
  * source: reference to the contributing item (ancestry/community/class/subclass/armor object, or weapon object with id).
  *
@@ -516,7 +511,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
   const active = [];
 
   for (const f of result.ancestryFeatures || []) {
-    const hooks = originFeatures[f.name] || {};
+    const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
     active.push({
       ...f,
       ...hooks,
@@ -526,7 +521,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
   }
 
   for (const f of result.communityFeatures || []) {
-    const hooks = originFeatures[f.name] || {};
+    const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
     active.push({
       ...f,
       ...hooks,
@@ -536,7 +531,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
   }
 
   for (const f of result.classFeatures || []) {
-    const hooks = classFeatures[f.name] || {};
+    const hooks = v2ClassSubclassFeatureDescriptorsByName[f.name] || {};
     active.push({
       ...f,
       ...hooks,
@@ -546,7 +541,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
   }
 
   for (const f of result.subclassFeatures || []) {
-    const hooks = classFeatures[f.name] || {};
+    const hooks = v2ClassSubclassFeatureDescriptorsByName[f.name] || {};
     active.push({
       ...f,
       ...hooks,
@@ -559,7 +554,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
   for (const weapon of allWeapons) {
     const feat = weapon.feature;
     if (!feat?.name) continue;
-    const hooks = weaponFeatures[feat.name] || {};
+    const hooks = v2WeaponProperties[feat.name] || {};
     active.push({
       name: feat.name,
       description: feat.description ?? '',
@@ -571,13 +566,28 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
 
   if (srdArmor?.features?.length) {
     const feat = srdArmor.features[0];
-    const hooks = armorFeatures[feat.name] || {};
+    const hooks = v2ArmorProperties[feat.name] || {};
     active.push({
       name: feat.name,
       description: feat.description ?? feat.text ?? '',
       ...hooks,
       type: 'armor',
       source: srdArmor,
+    });
+  }
+
+  const abilityIds = collectAbilityIds(result);
+  for (const aid of abilityIds) {
+    const hooks = v2Abilities[aid];
+    if (!hooks || typeof hooks !== 'object') continue;
+    const srdAbility = (result.abilities || []).find((a) => a.id === aid) || { id: aid, name: hooks.name };
+    active.push({
+      name: hooks.name,
+      description: hooks.description ?? srdAbility.description ?? '',
+      ...hooks,
+      type: 'ability',
+      source: srdAbility,
+      id: aid,
     });
   }
 
@@ -647,7 +657,7 @@ export function recomputeCharacter(data, srdData) {
     result.subclass = data.subclass || null;
   }
 
-  // Resolve ancestries — always from SRD; originFeatures supplies hooks at runtime
+  // Resolve ancestries — always from SRD; V2 descriptors merge at render / activeFeatures
   const ancestryIds = data.ancestryIds || [];
   const ancestryNames = [];
   const ancestryFeatures = [];
@@ -787,9 +797,11 @@ export function recomputeCharacter(data, srdData) {
 
   // Ancestry experience bonus (e.g. Clank Purposeful Design): apply to chosen experience for display.
   // Use base 2 for the chosen experience so we never double-add (saved data may already have score 3).
-  const expBonusFeat = result.ancestryFeatures?.find(f => typeof originFeatures[f.name]?.experienceBonus === 'number');
+  const expBonusFeat = result.ancestryFeatures?.find(
+    (f) => typeof EXPERIENCE_BONUS_BY_FEATURE_NAME[f.name] === 'number',
+  );
   const expBonus = expBonusFeat
-    ? { amount: originFeatures[expBonusFeat.name].experienceBonus, featureName: expBonusFeat.name }
+    ? { amount: EXPERIENCE_BONUS_BY_FEATURE_NAME[expBonusFeat.name], featureName: expBonusFeat.name }
     : null;
   if (expBonus) {
     const choice = data.experienceBonusChoices?.[expBonus.featureName];
@@ -821,12 +833,8 @@ const WEAPON_STAT_MAP = {
 };
 
 /**
- * Compute weapon stat modifiers from the registry only.
+ * Compute weapon stat modifiers from the V2 weapon_properties registry only.
  * Returns { traits, evasion, armorScore, severeThreshold, sources }.
- * No parsing — weapon features must have passiveStatMods in the weapon feature registry.
- *
- * When {@link isV2DeclarativeSheetEnabled}, passive mods come from `src/features-v2/weapon_properties`
- * first; Phase 1 `weaponFeatures` fills gaps (e.g. roll-only metadata not ported to V2).
  *
  * @param {object[]} weapons
  * @param {{ computed?: object, raw?: object }} [sheetCtx] — pass `{ computed: result, raw: data }` from `recomputeCharacter`
@@ -845,8 +853,7 @@ export function computeWeaponModifiers(weapons, sheetCtx) {
     const featureName = w.feature?.name;
     if (!featureName) continue;
     const v2d = v2WeaponProperties[featureName];
-    const p1d = weaponFeatures[featureName];
-    const mods = resolveGearPassiveStatMods(v2d, p1d, featureName, sheetCtx);
+    const mods = resolveGearPassiveStatMods(v2d, featureName, sheetCtx);
     if (!mods) continue;
 
     if (mods.traits && typeof mods.traits === 'object') {
@@ -1032,9 +1039,9 @@ export function isCharacterComplete(data, opts) {
   const ancestryId = data.ancestryIds?.[0];
   const srdAnc = opts?.srdData?.ancestriesById?.[ancestryId];
   const ancestryFeatureNames = srdAnc?.features?.map(f => f.name) ?? [];
-  const expBonusFeatName = ancestryFeatureNames.find(n => typeof originFeatures[n]?.experienceBonus === 'number');
+  const expBonusFeatName = ancestryFeatureNames.find((n) => typeof EXPERIENCE_BONUS_BY_FEATURE_NAME[n] === 'number');
   const expBonus = expBonusFeatName
-    ? { amount: originFeatures[expBonusFeatName].experienceBonus, featureName: expBonusFeatName }
+    ? { amount: EXPERIENCE_BONUS_BY_FEATURE_NAME[expBonusFeatName], featureName: expBonusFeatName }
     : null;
   if (expBonus) {
     const choice = data.experienceBonusChoices?.[expBonus.featureName];

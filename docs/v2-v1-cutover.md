@@ -1,12 +1,12 @@
 # V1 → V2 Game Table cutover matrix (Phase A inventory)
 
-**Scope:** Behaviors in [`src/client/components/GMTableView.jsx`](../src/client/components/GMTableView.jsx) that depend on Phase 1 [`src/features/`](../src/features/) (`wrapEntity`, `wrapRoll`, `runHook` / `runCharacterHook`, registry maps).  
-**Goal for V2-only mode:** Replace these with [`src/features-v2/`](../src/features-v2/) + bridges (`v2-action-loop-bridge.js`, `v2-cross-sheet-lifecycle.js`, `table-ops.js` apply helpers) per the V2-only Game Table plan (Phase A–F in repo planning docs).  
+**Scope:** Behaviors in [`src/client/components/GMTableView.jsx`](../src/client/components/GMTableView.jsx) that historically depended on Phase 1 IoC (`wrapEntity`, `wrapRoll`, `runHook` / `runCharacterHook`, registry maps). The legacy `src/features/` tree was **removed** in Phase D elimination; runtime uses `table-entity-roll.js`, `game-table-mechanics.js`, and merged V2 `activeFeatures` only.  
+**Goal for V2-only mode:** Full parity via [`src/features-v2/`](../src/features-v2/) + bridges (`v2-action-loop-bridge.js`, `v2-cross-sheet-lifecycle.js`, `table-ops.js` apply helpers) per the V2-only Game Table plan (Phase A–F in repo planning docs).  
 **Related:** Phase B bridge hardening — [`docs/v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md). Phase D table dispatch facade — [`docs/v2-ui-integration-phaseD-handoff.md`](v2-ui-integration-phaseD-handoff.md).
 
 ---
 
-## Import surface (Phase 1)
+## Import surface (historical Phase 1 — tree removed)
 
 | Symbol | Source | In `GMTableView` |
 |--------|--------|------------------|
@@ -17,6 +17,8 @@
 | `weaponFeatures`, `armorFeatures`, `classFeatures` | `features/registry.js` | Tag pipelines, armor, class activation, weapon banner narration |
 | `ancestryFeatures` | `registry.js` (alias of `originFeatures`) | Ancestry/community descriptors, session hooks, pre-roll chips |
 | `virtualWeaponBehaviors` | `features/ancestries/index.js` re-export | Virtual weapon ack (`_featureNeedsTarget`) |
+
+Current table code imports `wrapEntity` / `wrapRoll` / `runCharacterHook` and tag resolvers from [`src/client/lib/game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) (**V2-only** facade over merged `activeFeatures`). [`src/client/lib/character-calc.js`](../src/client/lib/character-calc.js) uses [`src/features-v2/registry.js`](../src/features-v2/registry.js) (and companion descriptor modules) for gear and character features — no Phase 1 registry.
 
 ---
 
@@ -66,6 +68,7 @@ Statuses: **V2 engine** = logic exists in `features-v2` + unit tests; **VTT** = 
 - `collectV2ReviewActionChips` → `v2ReviewChipsByRollDbId` → `handleV2ReviewChip` → `applyV2BannerMutations`
 - `runV2TokenMoveHooks` + `applyV2LifecycleMutations` on token drag end
 - `V2_REVIEW_ACTION_PHASE1_DEDUPE` (in bridge) — **empty after Phase E**; optional filter for tests / future use. Ranger duplicate UI avoided by gating Phase 1 Hold Them Off / Focus reroll in `DiceRoller` when the V2 sheet flag is on.
+- **Phase 2 (registry surfaces):** `game-table-mechanics.js` exports `resolveOriginFeatureDescriptor`, `resolveClassFeatureDescriptor`, and `resolveVirtualWeaponBehavior`. With the V2 declarative sheet flag on, `GMTableView` / `CharacterHoverCard` use these (plus merged `activeFeatures` rows) instead of direct `ancestryFeatures` / `classFeatures` / `virtualWeaponBehaviors` map lookups where a per-character row exists. **Start Session** runs `onSessionStart` from each party member’s merged `activeFeatures` (ancestry, community, class, subclass) instead of scanning the Phase 1 ancestry registry only.
 
 These do **not** remove Phase 1 imports; they run in parallel when the declarative sheet flag is on.
 

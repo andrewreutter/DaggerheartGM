@@ -19,22 +19,19 @@ import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
 import { CompanionSheet, getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
+import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { Tooltip } from './Tooltip.jsx';
 import {
   wrapEntity,
   wrapRoll,
-  runHook,
   runCharacterHook,
-  weaponFeatures,
-  armorFeatures,
-  classFeatures,
-  ancestryFeatures,
-  virtualWeaponBehaviors,
-  shouldUsePhase1RegistryFallback,
   resolveParryWeaponFeature,
   resolveResilientArmorFeature,
   resolveArmorModifyPreThresholdDescriptor,
   resolveWeaponOnBannerAckDescriptor,
+  resolveOriginFeatureDescriptor,
+  resolveClassFeatureDescriptor,
+  resolveVirtualWeaponBehavior,
 } from '../lib/game-table-mechanics.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt, distanceFtToRangeBandName } from '../lib/map-range.js';
@@ -580,24 +577,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           console.error(`[features] ${feature.name}.modifyHpLoss threw:`, err);
         }
       }
-    } else if (shouldUsePhase1RegistryFallback()) {
-      const participants = [];
-      for (const name of tagNames) {
-        const descriptor = weaponFeatures[name];
-        if (descriptor && typeof descriptor.modifyHpLoss === 'function') {
-          participants.push(descriptor);
-        }
-      }
-      participants.sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
-      for (const descriptor of participants) {
-        try {
-          const featureCtx = { ...ctx, feature: descriptor };
-          const result = descriptor.modifyHpLoss(featureCtx);
-          if (result !== undefined) wrappedRoll.hpLoss = result;
-        } catch (err) {
-          console.error(`[features] ${descriptor.name}.modifyHpLoss threw:`, err);
-        }
-      }
     }
 
     // Armor reduction when a slot is used
@@ -606,9 +585,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (target.elementType === 'character' && Array.isArray(target.activeFeatures) && feature) {
         const armorRow = target.activeFeatures.find((f) => f.type === 'armor' && f.name === feature);
         if (armorRow?.armorReduction != null) reduction = armorRow.armorReduction;
-        else if (shouldUsePhase1RegistryFallback()) reduction = armorFeatures[feature]?.armorReduction ?? 1;
-      } else if (shouldUsePhase1RegistryFallback()) {
-        reduction = armorFeatures[feature]?.armorReduction ?? 1;
       }
       wrappedRoll.hpLoss = Math.max(0, wrappedRoll.hpLoss - reduction);
     }
@@ -652,8 +628,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         const descriptor =
           target.elementType === 'character' && Array.isArray(target.activeFeatures)
             ? target.activeFeatures.find((f) => f.type === 'armor' && f.name === armorFeatureName && typeof f.onAfterMarkArmor === 'function')
-            : null
-          ?? (shouldUsePhase1RegistryFallback() ? armorFeatures[armorFeatureName] : null);
+            : null;
         const fn = descriptor?.onAfterMarkArmor;
         if (typeof fn === 'function') {
           const afterCtx = {
@@ -1481,7 +1456,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     const target = elements?.find(e => e.instanceId === roll._selectedTargetInstanceId);
     if (!target) return;
     const isAdversary = target.elementType === 'adversary' || target.type === 'adversary';
-    const defense = isAdversary ? target.difficulty : target.evasion;
+    let defense = isAdversary
+      ? target.difficulty
+      : (effectiveEvasion(target) ?? target.evasion ?? null);
+    if (!isAdversary && roll._rollDbId != null && target._iSeeItComingRollBonus?.[roll._rollDbId] != null) {
+      defense = (defense ?? 0) + target._iSeeItComingRollBonus[roll._rollDbId];
+    }
     if (defense == null) return;
     let effectiveTotal = roll.total ?? 0;
     if (roll.dominant != null) {
@@ -1557,10 +1537,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
     // Virtual weapon feature: apply stressCost/hopeCost then delegate to onAcknowledge if present.
     if (roll._featureNeedsTarget && options.selectedFeatureTargetInstanceId && roll._featureName) {
-      const behavior = virtualWeaponBehaviors[roll._featureName];
+      const selfEl = roll._attackerInstanceId ? activeElements.find(e => e.instanceId === roll._attackerInstanceId) : null;
+      const behavior = resolveVirtualWeaponBehavior(roll._featureName, selfEl);
       if (behavior) {
         const targetEl = activeElements.find(e => e.instanceId === options.selectedFeatureTargetInstanceId);
-        const selfEl = roll._attackerInstanceId ? activeElements.find(e => e.instanceId === roll._attackerInstanceId) : null;
         const self = selfEl ? wrapEntity(selfEl, updateActiveElement) : null;
         if (targetEl) {
           if (self) {
@@ -1610,7 +1590,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (roll._cardToggle) {
         const ct = roll._cardToggle;
         const el = activeElements.find(e => e.instanceId === ct.instanceId);
-        const descriptor = ancestryFeatures[ct.featureName];
+        const descriptor = resolveOriginFeatureDescriptor(el, ct.featureName);
         const cardChips = descriptor?.chips?.filter(c => c.placement === 'card') || descriptor?.cardChips || [];
         const toggleChip = cardChips.find(c => typeof c.onToggle === 'function');
         if (el && toggleChip) {
@@ -1667,7 +1647,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
         // Dispatch class feature activation hook by feature name (e.g. Druid Beastform, Bard Make a Scene)
         if (attackerEl && roll._featureName) {
-          const classFeat = classFeatures[roll._featureName];
+          const classFeat = resolveClassFeatureDescriptor(attackerEl, roll._featureName);
           if (classFeat?.onFeatureActivated && attackerEl.class === classFeat.class) {
             const selfEl = wrapEntity(attackerEl, batchCollect);
             // Action-with-adversary-target: pass selected adversary (e.g. Make a Scene difficultyMod)
@@ -1709,8 +1689,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (actionAttackerEl?.activeFeatures?.length && actionTagNames.size > 0) {
           const weaponFeaturesForRoll = actionAttackerEl.activeFeatures.filter(f => f.type === 'weapon' && actionTagNames.has(f.name));
           runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker: actionAttacker, roll, characters: wrappedPartyCharacters, system });
-        } else if (shouldUsePhase1RegistryFallback()) {
-          runHook(weaponFeatures, actionTagNames, 'onRollComplete', { attacker: actionAttacker, roll, characters: wrappedPartyCharacters, system });
         }
       }
       // Rousing Speech: clear 2 Stress from each character within Far range.
@@ -1855,8 +1833,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (attackerEl?.activeFeatures?.length && rollTagNames.size > 0) {
         const weaponFeaturesForRoll = attackerEl.activeFeatures.filter(f => f.type === 'weapon' && rollTagNames.has(f.name));
         runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
-      } else if (shouldUsePhase1RegistryFallback()) {
-        runHook(weaponFeatures, rollTagNames, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
       }
     }
     // Generic ancestry banner reaction acknowledge: run chip.onBannerAck (or legacy acknowledge) for each active reaction.
@@ -1997,7 +1973,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (selectedId === locked) updateActiveElement(roll._attackerInstanceId, { lockedOnTargetInstanceId: null });
       }
     }
-    if (!options?.alreadyAcked) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
+    if (!options?.alreadyAcked) {
+      if (roll._rollDbId) {
+        for (const el of activeElements) {
+          if (el.elementType !== 'character') continue;
+          const m = el._iSeeItComingRollBonus;
+          if (!m || !(roll._rollDbId in m)) continue;
+          const next = { ...m };
+          delete next[roll._rollDbId];
+          updateActiveElement(el.instanceId, { _iSeeItComingRollBonus: next });
+        }
+      }
+      postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
+    }
   };
 
   // GM cancels a banner: dismiss without any effects.
@@ -2157,9 +2145,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         updateActiveElement(char.instanceId, updates);
       }
     }
-    const featuresWithSessionStart = Object.entries(ancestryFeatures).filter(([, d]) => typeof d.onSessionStart === 'function').map(([name]) => name);
+    /** Unique session-start hooks from merged `activeFeatures` (ancestry, community, class, subclass). */
+    const sessionByName = new Map();
+    for (const char of charactersList) {
+      for (const f of char.activeFeatures || []) {
+        if (typeof f.onSessionStart !== 'function') continue;
+        const t = f.type;
+        if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
+        if (!sessionByName.has(f.name)) sessionByName.set(f.name, f);
+      }
+    }
     const getFeatureForCharacter = (el, featureName) => {
-      const descriptor = ancestryFeatures[featureName] ?? {};
+      const row = el.activeFeatures?.find((x) => x.name === featureName);
+      const descriptor = row || {};
       const get = (key, defaultVal) => { const bag = el._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : defaultVal; };
       const set = (key, value) => {
         const current = el._originFeatureState ?? {};
@@ -2169,18 +2167,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       return { ...descriptor, get, set };
     };
     const wrappedCharacters = charactersList.map(el => wrapEntity(el, updateActiveElement));
-    for (const name of featuresWithSessionStart) {
-      const charsWithFeature = charactersList.filter(el =>
-        [...(el.ancestryFeatures || []), ...(el.communityFeatures || [])].some(f => f.name === name)
-      );
-      if (charsWithFeature.length === 0) continue;
-      const descriptor = ancestryFeatures[name];
+    for (const [, descriptor] of sessionByName) {
       const hook = descriptor.onSessionStart;
+      if (typeof hook !== 'function') continue;
       if (descriptor.sessionStartOnce) {
         hook({ feature: null, characters: wrappedCharacters, system });
       } else {
+        const charsWithFeature = charactersList.filter((el) =>
+          (el.activeFeatures || []).some((af) => af.name === descriptor.name && typeof af.onSessionStart === 'function')
+        );
         for (const el of charsWithFeature) {
-          hook({ feature: getFeatureForCharacter(el, name), character: wrapEntity(el, updateActiveElement), characters: wrappedCharacters, system });
+          hook({ feature: getFeatureForCharacter(el, descriptor.name), character: wrapEntity(el, updateActiveElement), characters: wrappedCharacters, system });
         }
       }
     }
@@ -2646,7 +2643,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         merged._used = !!(merged._featureKey && canvas.isUsed(merged._featureKey));
       }
       const featureReader = { get(key, d) { const bag = characterEl._originFeatureState?.[featureName]; return bag != null && key in bag ? bag[key] : d; } };
-      const baseDescriptor = featureName ? ancestryFeatures[featureName] : null;
+      const baseDescriptor = featureName ? resolveOriginFeatureDescriptor(characterEl, featureName) : null;
       const featureWithState = baseDescriptor && getFeatureStateFor
         ? { ...baseDescriptor, ...getFeatureStateFor(characterEl, featureName) }
         : (getFeatureStateFor && featureName ? getFeatureStateFor(characterEl, featureName) : { get: () => undefined, set: () => {} });
@@ -2696,7 +2693,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     } else {
       const featureNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
       for (const name of featureNames) {
-        const descriptor = ancestryFeatures[name];
+        const descriptor = resolveOriginFeatureDescriptor(characterEl, name);
         const prerollChips = descriptor?.chips?.filter(c => c.placement === 'preroll') || descriptor?.canvasChips || [];
         for (const c of prerollChips) {
           canvas.addChip({ ...c, _featureName: name });
@@ -2705,11 +2702,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
 
     if (canvas.chips.length === 0) {
+      const onRollCtx = {
+        roll: rollWrapper,
+        characters: wrappedPartyCharacters,
+        system,
+        character: wrapEntity(characterEl, updateActiveElement),
+        updateActiveElement,
+        _characterEl: characterEl,
+      };
       if (Array.isArray(characterEl.activeFeatures) && characterEl.activeFeatures.length > 0) {
-        runCharacterHook(characterEl.activeFeatures, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
-      } else if (shouldUsePhase1RegistryFallback()) {
-        const featureNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
-        runHook(ancestryFeatures, featureNames, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
+        runCharacterHook(characterEl.activeFeatures, 'onRoll', onRollCtx);
+      } else {
+        const originNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
+        const originRows = originNames.map((n) => resolveOriginFeatureDescriptor(characterEl, n)).filter(Boolean);
+        if (originRows.length) {
+          runCharacterHook(originRows, 'onRoll', onRollCtx);
+        }
       }
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
       dismissAllHoverCards();
@@ -2774,11 +2782,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       for (const name of preRollAdvantages) rollWrapper.addAdvantageDie((name && name.trim()) || 'Advantage');
       for (const name of preRollDisadvantages) rollWrapper.addDisadvantage((name && name.trim()) || 'Disadvantage');
     }
+                    const onRollCtxProceed = {
+                      roll: rollWrapper,
+                      characters: wrappedPartyCharacters,
+                      system,
+                      character: wrapEntity(charEl, updateActiveElement),
+                      updateActiveElement,
+                      _characterEl: charEl,
+                    };
                     if (Array.isArray(charEl.activeFeatures) && charEl.activeFeatures.length > 0) {
-                      runCharacterHook(charEl.activeFeatures, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
-                    } else if (shouldUsePhase1RegistryFallback()) {
-                      const proceedFeatureNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
-                      runHook(ancestryFeatures, proceedFeatureNames, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
+                      runCharacterHook(charEl.activeFeatures, 'onRoll', onRollCtxProceed);
+                    } else {
+                      const proceedNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
+                      const proceedRows = proceedNames.map((n) => resolveOriginFeatureDescriptor(charEl, n)).filter(Boolean);
+                      if (proceedRows.length) {
+                        runCharacterHook(proceedRows, 'onRoll', onRollCtxProceed);
+                      }
                     }
     for (let i = 0; i < chips.length; i++) {
       const chip = chips[i];
@@ -2798,7 +2817,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (Object.keys(updates).length) updateActiveElement(charEl.instanceId, updates);
       if (chip.requestHopeDieUpgrade) postHopeDieUpgrade(rollWrapper.meta).catch(() => {});
       if (chip.resetsOn && chip._featureKey) wrapEntity(charEl, updateActiveElement).setFeatureUsed(chip._featureKey, chip.resetsOn);
-      const descriptor = chip._featureName ? ancestryFeatures[chip._featureName] : null;
+      const descriptor = chip._featureName ? resolveOriginFeatureDescriptor(charEl, chip._featureName) : null;
       const featureState = getFeatureStateFor && chip._featureName ? getFeatureStateFor(charEl, chip._featureName) : { get: () => undefined, set: () => {} };
       const feature = descriptor ? { ...descriptor, ...featureState } : { ...featureState };
       const character = wrapEntity(charEl, updateActiveElement);
@@ -2920,6 +2939,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           armorFeatureName: el.armorMods?.feature?.name ?? null,
           armorScore: el.armorScore ?? 0,
           evasion: effectiveEvasion(el) ?? el.evasion ?? null,
+          _iSeeItComingRollBonus: el._iSeeItComingRollBonus,
           featureUsage: el.featureUsage ?? {},
           conditions: el.conditions ?? '',
           resistance: el.resistance ?? [],
@@ -3238,14 +3258,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         } else if (f.kind === 'rerollDie') {
           if (currentBannerId == null) continue;
           try {
-            await postBannerRerollDie(currentBannerId, {
+            const newRoll = await postBannerRerollDie(currentBannerId, {
               dieType: f.dieType,
               suppressAncestryFeature: chip._featureName,
             });
+            if (newRoll?._rollDbId != null) currentBannerId = newRoll._rollDbId;
           } catch (e) {
             console.warn('[V2] postBannerRerollDie failed:', e);
           }
-          break;
         }
       }
 
@@ -3428,11 +3448,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       const weaponBanner = {
         addNarration(text, style) { parts.push(style != null ? { text, style } : { text }); },
       };
-      if (shouldUsePhase1RegistryFallback()) {
+      const attackerEl = roll._attackerInstanceId
+        ? activeElements.find((e) => e.instanceId === roll._attackerInstanceId && e.elementType === 'character')
+        : null;
+      if (attackerEl?.activeFeatures?.length) {
         for (const name of tagNames) {
-          const f = weaponFeatures[name];
+          const f = attackerEl.activeFeatures.find(
+            (row) => row.type === 'weapon' && row.name === name
+          );
+          if (!f) continue;
           weaponBanner.addAutomatedNarration = () => weaponBanner.addNarration(f.description, 'automated');
-          if (f?.onBanner) f.onBanner({ banner: weaponBanner, roll, characters: wrappedPartyCharacters, system });
+          if (f.onBanner) f.onBanner({ banner: weaponBanner, roll, characters: wrappedPartyCharacters, system });
         }
       }
       for (const r of ancestryBannerReactions) {
@@ -3513,7 +3539,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
     diceRollerRef.current?.setBannerReactionsFallback?.(ancestryBannerReactions);
-  }, [pendingBanners, ancestryBannerReactions, activeElements]);
+  }, [pendingBanners, ancestryBannerReactions, activeElements, wrappedPartyCharacters]);
 
   // Display overrides for banners: run chip.render for each pending roll and matching reaction.
   const displayOverridesByRollId = useMemo(() => {
@@ -4031,13 +4057,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 ))}
                 {/* Conditions */}
                 {(el.conditions || openConditions.has(el.instanceId)) && (
-                  <input
-                    type="text"
+                  <ConditionsTextInput
+                    instanceId={el.instanceId}
                     placeholder="Conditions..."
                     autoFocus={openConditions.has(el.instanceId) && !el.conditions}
                     value={el.conditions || ''}
                     readOnly={!isAssigned}
-                    onChange={isAssigned ? e => updateActiveElement(el.instanceId, { conditions: e.target.value }) : undefined}
+                    onCommit={isAssigned ? (v) => updateActiveElement(el.instanceId, { conditions: v }) : undefined}
                     onBlur={() => {
                       if (!el.conditions) {
                         setOpenConditions(prev => { const s = new Set(prev); s.delete(el.instanceId); return s; });
@@ -4051,7 +4077,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   const allFeatures = [...(el.ancestryFeatures || []), ...(el.communityFeatures || [])];
                   const toggleChips = [];
                   for (const f of allFeatures) {
-                    const descriptor = ancestryFeatures[f?.name];
+                    const descriptor = resolveOriginFeatureDescriptor(el, f?.name);
                     const cardChips = descriptor?.chips?.filter(c => c.placement === 'card') || descriptor?.cardChips || [];
                     if (!cardChips.length) continue;
                     for (const chip of cardChips) {
@@ -5043,12 +5069,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           </div>
                         )}
                         {(inst.conditions || openConditions.has(inst.instanceId)) && (
-                          <input
-                            type="text"
+                          <ConditionsTextInput
+                            instanceId={inst.instanceId}
                             placeholder="Conditions..."
                             autoFocus={openConditions.has(inst.instanceId) && !inst.conditions}
                             value={inst.conditions || ''}
-                            onChange={e => updateActiveElement(inst.instanceId, { conditions: e.target.value })}
+                            onCommit={(v) => updateActiveElement(inst.instanceId, { conditions: v })}
                             onBlur={() => {
                               if (!inst.conditions) {
                                 setOpenConditions(prev => { const s = new Set(prev); s.delete(inst.instanceId); return s; });

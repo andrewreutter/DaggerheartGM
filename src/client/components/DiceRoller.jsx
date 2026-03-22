@@ -10,12 +10,11 @@ import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../li
 import { rangeFtToLabel, RANGE_BANDS_FT } from '../lib/map-range.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import {
-  weaponFeatures,
   wrapRoll,
   getWeaponTagAutomatedForBanner,
   getConditionalWeaponTagStatus,
   getWeaponTagInteractive,
-  shouldUsePhase1RegistryFallback,
+  resolveWeaponTagDescriptor,
 } from '../lib/game-table-mechanics.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
@@ -238,20 +237,11 @@ function useBannerVisible() {
 // ── Result Banner ───────────────────────────────────────────────────────────
 
 /**
- * Returns true when a feature tag is auto-applied (green style) based on the
- * feature registry. Replaces the old AUTOMATED_TAGS hardcoded set.
+ * Compute conditional banner status for a tag using the merged weapon descriptor's
+ * `bannerStatus(tag, roll)` hook.
  */
-function isTagAutomated(tagName) {
-  return getWeaponTagAutomatedForBanner(tagName);
-}
-
-/**
- * Compute conditional banner status for a tag using the feature registry's
- * `bannerStatus(tag, roll)` hook. Replaces the old getConditionalTagStatus
- * switch-statement.
- */
-function getConditionalTagStatus(tag, roll) {
-  return getConditionalWeaponTagStatus(tag, roll);
+function getConditionalTagStatus(tag, roll, attackerEl) {
+  return getConditionalWeaponTagStatus(tag, roll, attackerEl);
 }
 
 function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerCharacter = {}, onRestMoveSelect, canEditColumn, isPlayer, onAcknowledge, onCancel, disableDismiss, gmUid = null }) {
@@ -850,13 +840,11 @@ function V2ReviewChipRow({
   );
 }
 
-/** Returns true when a feature tag requires explicit user interaction before dismissal. */
-function isTagInteractive(tagName) {
-  return getWeaponTagInteractive(tagName);
-}
-
 function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker }) {
   const visible = useBannerVisible();
+  const attackerEl = roll._attackerInstanceId
+    ? tableCharacters.find((c) => c.instanceId === roll._attackerInstanceId)
+    : null;
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
   // Active post-apply interaction: the name of the tag whose interaction phase is running.
@@ -870,8 +858,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Damage banners: target chips are selectors only; selection is applied when Acknowledge is pressed.
   const [selectedDamageTargetId, setSelectedDamageTargetId] = useState(() => roll._selectedTargetInstanceId ?? null);
   const [useArmorForSelected, setUseArmorForSelected] = useState(false);
-  // Phase E: when V2 declarative sheet is on, Ranger Hold Them Off / Focus reroll use V2 review chips only.
-  const usePhase1RangerBannerTools = shouldUsePhase1RegistryFallback();
+  // Hold Them Off / Focus reroll UI: Phase 1 banner tools removed; V2 review chips handle Ranger flows.
+  const usePhase1RangerBannerTools = false;
   const holdThemOffActive = usePhase1RangerBannerTools && !!roll._holdThemOffActive;
   const [selectedDamageTargetIds, setSelectedDamageTargetIds] = useState(() =>
     Array.isArray(roll._selectedTargetInstanceIds)
@@ -994,7 +982,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
   // Determine if this banner has any interactive actions that require user input before dismissal.
   const tags = roll.tags || [];
-  const hasInteractiveTags = tags.some(t => isTagInteractive(t.name));
+  const hasInteractiveTags = tags.some((t) => getWeaponTagInteractive(t.name, attackerEl));
   // Show target row for GM or for the initiating player (attacker) so they can select targets.
   const isInitiator = currentUserUid != null && roll._initiatorUid === currentUserUid;
   const canShowTargetRow = canApplyDamage || (isPlayer && isInitiator);
@@ -1118,8 +1106,15 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   for (const id of selectedTargetIds) {
     const target = filteredTargets.find(t => t.instanceId === id);
     if (!target) continue;
-    const defense = target.type === 'adversary' ? target.difficulty : target.evasion;
+    let defense = target.type === 'adversary' ? target.difficulty : target.evasion;
     if (defense == null) continue;
+    if (
+      target.type === 'character' &&
+      roll._rollDbId != null &&
+      target._iSeeItComingRollBonus?.[roll._rollDbId] != null
+    ) {
+      defense += target._iSeeItComingRollBonus[roll._rollDbId];
+    }
     if (effectiveAttackTotal >= defense) hitCount++;
     else missCount++;
   }
@@ -1427,11 +1422,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         })}
 
         {/* ── Feature tags (only show tag pill when feature has showTag: true; onBanner-only features use narration) ── */}
-        {(roll.tags || []).filter(t => weaponFeatures[t.name]?.showTag === true).length > 0 && (
+        {(roll.tags || []).filter((t) => resolveWeaponTagDescriptor(t.name, attackerEl)?.showTag === true).length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
-            {(roll.tags || []).filter(t => weaponFeatures[t.name]?.showTag === true).map((tag, i) => {
-              const isAuto = isTagAutomated(tag.name);
-              const conditional = getConditionalTagStatus(tag, roll);
+            {(roll.tags || []).filter((t) => resolveWeaponTagDescriptor(t.name, attackerEl)?.showTag === true).map((tag, i) => {
+              const isAuto = getWeaponTagAutomatedForBanner(tag.name, attackerEl);
+              const conditional = getConditionalTagStatus(tag, roll, attackerEl);
               const effectiveStyle = isAuto ? 'green'
                 : conditional ? conditional.style
                 : 'info';
@@ -1668,7 +1663,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         {showActionRow && (() => {
           // ── Post-apply interaction phase (Quick, Doubled Up, Bouncing) ──
           if (activeInteractionTag) {
-            const interactionFeature = weaponFeatures[activeInteractionTag];
+            const interactionFeature = resolveWeaponTagDescriptor(activeInteractionTag, attackerEl);
             const interaction = interactionFeature?.bannerInteraction;
             const prompt = typeof interaction?.getPrompt === 'function'
               ? interaction.getPrompt(tags, dmg)
@@ -1721,8 +1716,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
           // After applying damage, check if any tag needs a post-apply interaction phase.
           const enterPostApplyPhase = () => {
-            const firstPostApply = tags.find(t => {
-              const f = weaponFeatures[t.name];
+            const firstPostApply = tags.find((t) => {
+              const f = resolveWeaponTagDescriptor(t.name, attackerEl);
               return f?.bannerInteraction?.phase === 'post-apply';
             });
             if (firstPostApply) setActiveInteractionTag(firstPostApply.name);

@@ -1372,6 +1372,7 @@ const fireDie = table.rolls?.damage?.dice.find(d => d.name === 'Fire');
   }
   ```
 - `rerollAllDice()` *(method, damage roll only)*: Queues one `rerollDie` mutation per named die in `table.rolls.damage.dice` so the VTT can reroll the adversary’s damage pool (e.g. Wizard **Not This Time** when the banner is on the damage roll). See **CONV-031** in `docs/v2-code-conventions.md` for payload shape.
+- `rerollDiceBelow(maxExclusive)` *(method, damage roll only)*: Queues a `rerollDie` mutation for each damage die whose resolved `value` is strictly less than `maxExclusive` (e.g. `rerollDiceBelow(3)` for Blade **Not Good Enough** — reroll faces of 1 or 2).
 - `setOutcome(outcome)` *(method, action roll only)*: Forces the roll result type to the given outcome regardless of which die dominates. Valid values: `'hope'`, `'fear'`. Use this for features that say "change it into a roll with Hope/Fear instead" (e.g. Fearless).
 
 **Action Roll Specifics (`table.rolls.action`):**
@@ -1445,5 +1446,5 @@ For **testability**, inject a deterministic RNG by passing `_rng: () => someValu
 ---
 
 > **⚠️ A Note for AI Assistants & Developers:**
-> Do not look at or attempt to mimic the legacy code in `src/features/` or `src/client/components/` when writing features based on this guide. The legacy system used entirely different concepts (`isVisible`, `onBanner`, `acknowledge`, `onChipAck`, `roll.isMine`, etc.) that do not exist in this new unified architecture. Stick strictly to the concepts defined in this document (`table`, `chips`, `onIntent`, `onStateChange`, `onTokenMove`, `onSceneEnd`, `onReviewAction`, `onReviewOutcome`, `onResolve`, `when`).
+> Do not look at or attempt to mimic the **removed** legacy `src/features/` tree or ad hoc patterns in `src/client/components/` when writing features based on this guide. The old system used entirely different concepts (`isVisible`, `onBanner`, `acknowledge`, `onChipAck`, `roll.isMine`, etc.) that do not exist in this unified architecture. Stick strictly to the concepts defined in this document (`table`, `chips`, `onIntent`, `onStateChange`, `onTokenMove`, `onSceneEnd`, `onReviewAction`, `onReviewOutcome`, `onResolve`, `when`).
 

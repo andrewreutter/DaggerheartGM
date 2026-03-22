@@ -152,7 +152,7 @@ VALIDATION STEPS (per feature)
    □ Frequency (session / rest / at will) enforced if SRD specifies it?
    □ Targeting (self / ally / adversary) applied to the right actor?
    □ Uses only V2 API methods from docs/feature-authoring-guide.md?
-   □ No references to legacy src/features/ patterns?
+   □ No legacy Phase 1 IoC patterns (removed registry maps, map-based `runHook` on tag sets) — V2 APIs and `src/features-v2/` modules only?
    □ Mutations queued through table.me / table.action.target, not raw objects?
    □ At least one happy-path test? (N/A if **CONV-027** — name/description-only)
    □ At least one negative-path test? (N/A if **CONV-027** — name/description-only)
@@ -200,6 +200,8 @@ VALIDATION STEPS (per feature)
    Always include every feature in the batch. Use ✅ for Validated, ❌ for
    Needs Fix, and ⚠️ for Blocked.
 
+   Do **not** add “next steps,” “next to validate,” or upcoming-row lists — the tracker is authoritative.
+
 8. Propose Fixes and Conventions (Interactive).
    If you marked any feature as Needs Fix:
    - In your message to the user, briefly explain the issues you found.
@@ -233,3 +235,4 @@ THINGS TO NEVER DO
   each batch.
 - Do NOT read the entire tracker file. Use the READING THE TRACKER
   EFFICIENTLY protocol above.
+- Do NOT tell the user what to validate or implement next — see **Agent output** in `docs/v2-migration-tracker.md`.

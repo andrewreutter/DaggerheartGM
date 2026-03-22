@@ -259,3 +259,4 @@ THINGS TO NEVER DO
   (read and follow unblocking-agent.md).
 - Do NOT read the entire tracker file. Use the READING THE TRACKER
   EFFICIENTLY protocol above.
+- Do NOT suggest what to fix or implement next — see **Agent output** in `docs/v2-migration-tracker.md`.

@@ -8,7 +8,15 @@ import { TellNoLies } from '../../../../src/features-v2/abilities/Grace/TellNoLi
 import { Troublemaker } from '../../../../src/features-v2/abilities/Grace/Troublemaker.js';
 import { HypnoticShimmer } from '../../../../src/features-v2/abilities/Grace/HypnoticShimmer.js';
 import { Invisibility } from '../../../../src/features-v2/abilities/Grace/Invisibility.js';
-import { mockCharacter, mockGameState, runIntent } from '../helpers.js';
+import {
+  mockAdversary,
+  mockCharacter,
+  mockGameState,
+  mockRoll,
+  runIntent,
+  runResolve,
+  runReviewAction,
+} from '../helpers.js';
 
 function freeActionTable(charId, featureKey) {
   return buildTableSnapshot(
@@ -227,10 +235,20 @@ describe('Grace Tier 1 — Hypnotic Shimmer', () => {
 });
 
 describe('Grace Tier 1 — Invisibility', () => {
-  it('card queues Spellcast (10) actionLoop with token and disadvantage notes', () => {
+  it('card sets awaiting flag and queues Spellcast (10) actionLoop with token and disadvantage notes', () => {
     const tbl = freeActionTable('inv1', 'Invisibility');
     const chips = collectChips([{ ...Invisibility, _ownerInstanceId: 'inv1' }], 'card', tbl);
     const m = activateChip(chips[0], tbl, makeChipState());
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Invisibility',
+          key: 'invisibilityAwaitingRoll',
+          value: true,
+        }),
+      })
+    );
     expect(m).toContainEqual(
       expect.objectContaining({
         type: 'actionLoop',
@@ -238,12 +256,97 @@ describe('Grace Tier 1 — Invisibility', () => {
           title: 'Invisibility',
           description: expect.stringMatching(/\(10\).*Melee range/i),
           trait: 'Presence',
+          difficulty: 10,
         }),
       })
     );
     expect(
       m.find((x) => x.type === 'actionLoop')?.payload?.description
     ).toMatch(/disadvantage/i);
+  });
+
+  it('onReviewAction seeds Spellcast tokens and Stress after a successful Spellcast while awaiting', () => {
+    const { mutations } = runReviewAction(Invisibility, {
+      actionType: 'spellcast',
+      featureState: { Invisibility: { invisibilityAwaitingRoll: true } },
+      rolls: mockRoll({ isSuccess: true }),
+      activeElements: [
+        mockCharacter({
+          instanceId: 'char-1',
+          spellcastTrait: 'presence',
+          traits: { presence: 3 },
+        }),
+        mockAdversary({ instanceId: 'adv-1' }),
+      ],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Invisibility',
+          key: 'invisibilityTokens',
+          value: 3,
+        }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Invisibility',
+          key: 'invisibilitySubjectId',
+          value: 'char-1',
+        }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'markStress',
+        payload: expect.objectContaining({ instanceId: 'char-1', amount: 1 }),
+      })
+    );
+  });
+
+  it('onResolve spends one invisibility token when the subject resolves an action', () => {
+    const ally = mockCharacter({ instanceId: 'ally-1', name: 'Ally' });
+    const { mutations } = runResolve(Invisibility, {
+      featureState: {
+        Invisibility: {
+          invisibilityTokens: 2,
+          invisibilitySubjectId: 'ally-1',
+        },
+      },
+      action: { actorInstanceId: 'ally-1' },
+      activeElements: [mockCharacter({ instanceId: 'char-1' }), ally],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Invisibility',
+          key: 'invisibilityTokens',
+          value: 1,
+        }),
+      })
+    );
+  });
+
+  it('onResolve clears subject when the last token is spent', () => {
+    const { mutations } = runResolve(Invisibility, {
+      featureState: {
+        Invisibility: { invisibilityTokens: 1, invisibilitySubjectId: 'char-1' },
+      },
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Invisibility',
+          key: 'invisibilitySubjectId',
+          value: null,
+        }),
+      })
+    );
   });
 
   it('does not register intent-placement chips', () => {

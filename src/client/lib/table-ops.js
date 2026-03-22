@@ -473,21 +473,89 @@ export function applyV2BannerMutations(activeElements, mutations, ownerInstanceI
 }
 
 /**
+ * Mutations that adjust hydrated roll shape only (no `activeElements` patch). The Game Table does not
+ * yet persist these onto the pending banner — they are omitted from {@link applyV2BannerMutations} so
+ * they do not appear in `skipped` / console warnings.
+ */
+const V2_ENGINE_ROLL_DISPLAY_MUTATION_TYPES = new Set([
+  'addRollStatic',
+  'addRollDie',
+  'setDie',
+  'setRollOutcome',
+  'swapHopeFearDice',
+  'addAdvantageDie',
+  'addDisadvantageDie',
+  'removeAdvantageDie',
+  'removeDisadvantageDie',
+  'removeRollDie',
+  'addNarration',
+]);
+
+/**
+ * Merge adjacent Hope + Fear `rerollDie` mutations (e.g. Faerie **Luckbender** calling both
+ * `hopeDie.reroll()` and `fearDie.reroll()`) into one server round-trip via `dieType: 'Duality'`.
+ *
+ * @param {object[]} mutations
+ * @returns {object[]}
+ */
+export function normalizeV2BannerChipMutations(mutations) {
+  if (!Array.isArray(mutations) || mutations.length === 0) return mutations || [];
+  const out = [];
+  for (let i = 0; i < mutations.length; i++) {
+    const a = mutations[i];
+    const b = mutations[i + 1];
+    if (
+      a?.type === 'rerollDie' &&
+      b?.type === 'rerollDie'
+    ) {
+      const dt1 = a.payload?.dieType;
+      const dt2 = b.payload?.dieType;
+      if (
+        (dt1 === 'hopeDie' && dt2 === 'fearDie') ||
+        (dt1 === 'fearDie' && dt2 === 'hopeDie')
+      ) {
+        out.push({
+          type: 'rerollDie',
+          payload: { dieType: 'dualityDie', _mergedFrom: [a, b] },
+        });
+        i++;
+        continue;
+      }
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/**
  * Split V2 `activateChip` / `applyMutations` output into:
  * - **localMutations** — applied by {@link applyV2BannerMutations} (Hope/Stress, featureState, …)
  * - **serverFollowups** — must use `postBannerAddDamage` / `postBannerRerollDie` (banner dice replacement)
+ * - **engineRollDisplayOnly** — roll-shape / narration mutations not persisted on the VTT yet (not an error)
  * - **unsupported** — not representable on the current Game Table APIs (logged for diagnostics)
  *
  * @param {object[]} mutations — `{ type, payload }[]`
- * @returns {{ localMutations: object[], serverFollowups: object[], unsupported: object[] }}
+ * @returns {{
+ *   localMutations: object[],
+ *   serverFollowups: object[],
+ *   engineRollDisplayOnly: object[],
+ *   unsupported: object[]
+ * }}
  */
 export function partitionV2BannerChipMutations(mutations) {
   const localMutations = [];
   const serverFollowups = [];
+  const engineRollDisplayOnly = [];
   const unsupported = [];
-  for (const m of mutations || []) {
+  const normalized = normalizeV2BannerChipMutations(mutations || []);
+
+  for (const m of normalized) {
     if (!m?.type) continue;
     const { type, payload } = m;
+    if (V2_ENGINE_ROLL_DISPLAY_MUTATION_TYPES.has(type)) {
+      engineRollDisplayOnly.push(m);
+      continue;
+    }
     if (type === 'rerollDie') {
       const dt = payload?.dieType;
       if (dt === 'hopeDie') {
@@ -496,6 +564,10 @@ export function partitionV2BannerChipMutations(mutations) {
       }
       if (dt === 'fearDie') {
         serverFollowups.push({ kind: 'rerollDie', dieType: 'Fear', mutation: m });
+        continue;
+      }
+      if (dt === 'dualityDie') {
+        serverFollowups.push({ kind: 'rerollDie', dieType: 'Duality', mutation: m });
         continue;
       }
       unsupported.push(m);
@@ -507,7 +579,7 @@ export function partitionV2BannerChipMutations(mutations) {
     }
     localMutations.push(m);
   }
-  return { localMutations, serverFollowups, unsupported };
+  return { localMutations, serverFollowups, engineRollDisplayOnly, unsupported };
 }
 
 function mergeElementUpdatesByInstance(listA, listB) {

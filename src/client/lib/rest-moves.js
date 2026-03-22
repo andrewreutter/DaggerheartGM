@@ -4,8 +4,6 @@
  * Optional: canTargetAlly, rollDice (e.g. '1d4'), onApply(rest, roll, target, char).
  */
 
-import { ancestryMap } from '../../features/ancestries/index.js';
-import { communityMap } from '../../features/communities/index.js';
 import v2AncestryFeatures from '../../features-v2/ancestries/index.js';
 
 export const SHORT_REST_MOVES = [
@@ -136,7 +134,7 @@ function applyV2AncestryRestMods(rest, character) {
 
 /**
  * Build the effective rest move list and slot counts for a character.
- * Runs V2 passive rest mods, then ancestry onRest(rest) hooks for any remaining v1-only behavior.
+ * Applies V2 ancestry passive rest modifiers (e.g. Elf Celestial Trance slots, Clank Efficient long-in-short).
  * @param {{ ancestry?: string | string[] }} character — resolved character with ancestry name(s)
  * @param {'short' | 'long'} restDuration
  * @returns {{ moves: Array<{ id: string, name: string, description: string }>, shortSlots: number, longSlots: number, shortSlotLabels: string[], longSlotLabels: string[] }}
@@ -164,23 +162,6 @@ export function getRestMovesForCharacter(character, restDuration) {
   };
   applyV2AncestryRestMods(rest, character);
 
-  const names = Array.isArray(character.ancestry) ? character.ancestry : (character.ancestry ? [character.ancestry] : []);
-  for (const name of names) {
-    const entry = ancestryMap[name];
-    if (!entry?.features) continue;
-    for (const f of entry.features) {
-      if (typeof f.onRest === 'function') f.onRest({ rest, feature: f });
-    }
-  }
-  const communityName = character.community || null;
-  if (communityName) {
-    const communityEntry = communityMap[communityName];
-    if (communityEntry?.features) {
-      for (const f of communityEntry.features) {
-        if (typeof f.onRest === 'function') f.onRest({ rest, feature: f });
-      }
-    }
-  }
   return {
     moves: restDuration === 'long' ? rest.longMoves : rest.shortMoves,
     shortSlots: rest.shortMoveSlots,

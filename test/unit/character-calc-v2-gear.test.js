@@ -1,12 +1,17 @@
 /**
- * V2 declarative sheet: gear passiveStatMods resolve from features-v2 registries when the flag is on.
+ * character-calc gear: passiveStatMods resolve only from `src/features-v2` weapon_properties / armor_properties.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import {
   computeWeaponModifiers,
   computeArmorModifiers,
   buildV2SheetUnwrapGameState,
 } from '../../src/client/lib/character-calc.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('computeWeaponModifiers (V2 gear registry)', () => {
   const cumbersomeWeapon = {
@@ -28,19 +33,19 @@ describe('computeWeaponModifiers (V2 gear registry)', () => {
     expect(out.sources.some((s) => s.stat === 'finesse' && s.value === -1)).toBe(true);
   });
 
-  it('matches Phase 1 totals when the V2 flag is off (nested traits shape)', () => {
+  it('does not depend on the V2 declarative sheet localStorage flag', () => {
     delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
     const out = computeWeaponModifiers([cumbersomeWeapon]);
     expect(out.traits.finesse).toBe(-1);
   });
 });
 
-describe('computeArmorModifiers (V2 gear + P1 fallback)', () => {
+describe('computeArmorModifiers (V2 armor_properties only)', () => {
   afterEach(() => {
     delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
   });
 
-  it('with V2 on, Quiet falls back to Phase 1 rollModifiers (V2 has no passiveStatMods)', () => {
+  it('Quiet: stealth roll modifier from V2 passiveStatMods', () => {
     globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
     const armor = {
       name: 'Tyris Soft Armor',
@@ -58,5 +63,14 @@ describe('computeArmorModifiers (V2 gear + P1 fallback)', () => {
     );
     expect(gs.featureState.Reinforced?.reinforcedActive).toBe(true);
     expect(gs.activeElements[0].elementType).toBe('character');
+  });
+});
+
+describe('character-calc (no Phase 1 registry)', () => {
+  it('does not import ../../features/ or phase1-game-table-registry', () => {
+    const path = join(__dirname, '../../src/client/lib/character-calc.js');
+    const src = readFileSync(path, 'utf8');
+    expect(src).not.toContain('../../features/');
+    expect(src).not.toContain('phase1-game-table-registry');
   });
 });

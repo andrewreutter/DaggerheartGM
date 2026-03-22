@@ -264,6 +264,13 @@ function buildActor(element, gameState, mutations) {
     /** SRD class id (e.g. `srd-cls-bard`) when present on the character element. */
     classId: isChar ? element.classId ?? null : null,
 
+    /** SRD armor item id when equipped; `null` when unarmored (Valor **Bare Bones**, etc.). */
+    armorId: isChar ? element.armorId ?? null : null,
+
+    /** Pre-ability Major / Severe thresholds from the character element (damage tiers). */
+    armorThresholdMajor: isChar ? element.armorThresholds?.major ?? null : null,
+    armorThresholdSevere: isChar ? element.armorThresholds?.severe ?? null : null,
+
     /** SRD subclass id (e.g. `srd-sub-wordsmith`) when present on the character element. */
     subclassId: isChar ? element.subclassId ?? null : null,
 

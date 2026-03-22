@@ -24,14 +24,14 @@ import {
 import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
 import {
-  weaponFeatures,
-  classFeatures,
-  ancestryFeatures as ancestryFeaturesRegistry,
-  ancestryMap,
-  runHook,
+  runCharacterHook,
   wrapEntity,
   wrapRoll,
+  resolveWeaponTagDescriptor,
+  resolveOriginFeatureDescriptor,
+  resolveClassFeatureDescriptor,
 } from '../lib/game-table-mechanics.js';
+import { getAncestryExperienceBonus } from '../lib/ancestry-experience-bonus.js';
 import { getEffectiveWeaponRange, recomputeCharacter } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
 import { postTableOp } from '../lib/api.js';
@@ -86,17 +86,17 @@ function buildTraitRollText(charName, traitKey, traitScore, expName, experienceM
 }
 
 /** Returns true when the feature should be shown as a tag on the roll banner. */
-function isShowTagFeature(name) {
-  return weaponFeatures[name]?.showTag === true;
+function isShowTagFeature(name, characterEl) {
+  return resolveWeaponTagDescriptor(name, characterEl)?.showTag === true;
 }
 
 /**
  * Build descriptive tag text for a feature in the roll banner.
- * Delegates to the feature registry's `tagText` property (string or function).
+ * Delegates to the merged descriptor's `tagText` (string or function).
  * Falls back to SRD text or WEAPON_TAG_DESCRIPTIONS for unregistered features.
  */
-function buildFeatureTagText(feature, traits, level) {
-  const f = weaponFeatures[feature.name];
+function buildFeatureTagText(feature, traits, level, characterEl) {
+  const f = resolveWeaponTagDescriptor(feature.name, characterEl);
   if (f) {
     const t = f.tagText;
     if (typeof t === 'function') return t({ traits, level });
@@ -105,7 +105,7 @@ function buildFeatureTagText(feature, traits, level) {
   return feature.text || feature.description || WEAPON_TAG_DESCRIPTIONS[feature.name] || '';
 }
 
-function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName, damageStr, feature, traits, level, opts = {}, rollMeta = {}) {
+function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName, damageStr, feature, traits, level, opts = {}, rollMeta = {}, characterEl = null) {
   const experienceModifier = opts.experienceModifier ?? 2;
   const traitName = TRAIT_FULL[traitKey] || traitKey;
   const parts = [`${charName} ${weaponName} Hope [d12] Fear [d12]`];
@@ -121,7 +121,7 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
 
   // Pre-damage additions (e.g. Reliable [1])
   for (const name of featureSet) {
-    const f = weaponFeatures[name];
+    const f = resolveWeaponTagDescriptor(name, characterEl);
     const pre = f?.prependRollParts;
     if (Array.isArray(pre) && pre.length) parts.push(...pre);
   }
@@ -137,8 +137,12 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
       const syntheticRoll = { damageStr, ...rollMeta };
       const wrappedRoll = wrapRoll(syntheticRoll);
       rollCtx.roll = wrappedRoll;
-      // Run hooks (features mutate roll.damageStr directly)
-      runHook(weaponFeatures, featureSet, 'rewriteDamage', rollCtx);
+      const weaponRows = (characterEl?.activeFeatures || []).filter(
+        (row) => row.type === 'weapon' && featureSet.includes(row.name)
+      );
+      if (weaponRows.length) {
+        runCharacterHook(weaponRows, 'rewriteDamage', rollCtx);
+      }
       // Read the mutated value (fallback to original if no mutation occurred)
       effectiveDamage = wrappedRoll.damageStr ?? damageStr;
     }
@@ -151,20 +155,20 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
 
   // Post-damage additions (e.g. Reload [d6], Invigorate [d4], Lifesteal [d6])
   for (const name of featureSet) {
-    const f = weaponFeatures[name];
+    const f = resolveWeaponTagDescriptor(name, characterEl);
     const app = f?.appendRollParts;
     if (Array.isArray(app) && app.length) parts.push(...app);
   }
 
   // Feature tag when feature opts in with showTag: true, or has onBanner (so tag is in roll.tags for narration).
-  if (feature && (isShowTagFeature(feature.name) || weaponFeatures[feature.name]?.onBanner)) {
+  if (feature && (isShowTagFeature(feature.name, characterEl) || resolveWeaponTagDescriptor(feature.name, characterEl)?.onBanner)) {
     let tagText;
     if (opts.devastating) {
       tagText = 'd20 damage die, mark 1 Stress (active)';
     } else if (feature.name === 'Doubled Up' && opts.secondaryDamage) {
       tagText = `${opts.secondaryDamage} -- deal to another Melee target`;
     } else {
-      tagText = buildFeatureTagText(feature, traits, level);
+      tagText = buildFeatureTagText(feature, traits, level, characterEl);
     }
     if (tagText) parts.push(`{${feature.name}: ${tagText}}`);
   }
@@ -421,7 +425,7 @@ export function CharacterHoverCard({
     const allClassFeatures = [...(el.classFeatures || []), ...(el.subclassFeatures || [])];
     let result = {};
     for (const f of allClassFeatures) {
-      const descriptor = classFeatures[f.name];
+      const descriptor = resolveClassFeatureDescriptor(displayEl, f.name);
       if (descriptor?.computeModifierEligibility) {
         Object.assign(result, descriptor.computeModifierEligibility({
           el,
@@ -431,7 +435,7 @@ export function CharacterHoverCard({
       }
     }
     return result;
-  }, [el, activeElements, mapConfig]);
+  }, [el, displayEl, activeElements, mapConfig]);
 
   // Advantage chips: declared via addAdvantageTrigger for implemented ancestry features;
   // parsed from description text for all other features.
@@ -445,7 +449,8 @@ export function CharacterHoverCard({
       ...(el.communityFeatures || []),
     ];
     for (const f of featureArrays) {
-      const ancestryDescriptor = ancestryFeaturesRegistry[f.name];
+      const ancestryDescriptor =
+        resolveOriginFeatureDescriptor(displayEl, f.name) || resolveClassFeatureDescriptor(displayEl, f.name);
       // Fully-implemented origin features: use declared advantageTriggers or advantageTrigger (skip text parsing).
       if (ancestryDescriptor) {
         const conditions = ancestryDescriptor.advantageTriggers ?? (ancestryDescriptor.advantageTrigger ? [ancestryDescriptor.advantageTrigger] : []);
@@ -478,7 +483,7 @@ export function CharacterHoverCard({
       }
     }
     return chips;
-  }, [el]);
+  }, [el, displayEl]);
 
   // ── Feature roll text builder ────────────────────────────────────────────────
   // Builds the roll text string for a feature that has dice or a spellcast roll.
@@ -546,7 +551,7 @@ export function CharacterHoverCard({
     }
     // Sorcerer Channel Raw Power (and any future class feature) requires an input value
     // before dispatch. Show an inline prompt and defer actual dispatch until submitted. (Dispatch by feature name.)
-    const classFeatForInput = classFeatures[feature.name];
+    const classFeatForInput = resolveClassFeatureDescriptor(displayEl, feature.name);
     const requiredInputSpec = classFeatForInput?.requiresInput;
     if (requiredInputSpec && !featureInputPending) {
       const action = subFeature
@@ -619,7 +624,7 @@ export function CharacterHoverCard({
       : null;
     if (featureInputPending) setFeatureInputPending(null);
 
-    const forceAction = classFeatures[feature.name]?.forceActionNotification === true;
+    const forceAction = resolveClassFeatureDescriptor(displayEl, feature.name)?.forceActionNotification === true;
     const hasDice = !forceAction && (action.dice.length > 0 || action.spellcastDC != null);
     // Only add experience Hope cost when this feature use involves a roll (experience is used in the roll)
     const rollMeta = {
@@ -702,7 +707,7 @@ export function CharacterHoverCard({
   // Ancestry experience bonus (e.g. Clank Purposeful Design): +1 when selected experience matches choice
   const getExperienceModifier = (activeExpId) => {
     const ancestryName = Array.isArray(el.ancestry) && el.ancestry.length > 0 ? el.ancestry[0] : null;
-    const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+    const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
     if (!expBonus || !activeExpId) return 2;
     const choice = el.experienceBonusChoices?.[expBonus.featureName];
     return choice === activeExpId ? 2 + expBonus.amount : 2;
@@ -807,7 +812,7 @@ export function CharacterHoverCard({
     }
     let rollText = buildWeaponRollText(
       el.name, weapon.name, traitKey, effectiveTrait,
-      activeExp?.name, damageStr, weapon.feature, traits, el.level, opts, rollMeta,
+      activeExp?.name, damageStr, weapon.feature, traits, el.level, opts, rollMeta, el,
     );
     const rangeStr = (weapon.effectiveRange ?? getEffectiveWeaponRange(weapon, el.ancestryFeatures)) || weapon.range;
     if (rangeStr) rollText += ` ${rangeStr}`;
@@ -1202,7 +1207,7 @@ export function CharacterHoverCard({
             // Dispatch class feature onModifierUsed hook (per-feature)
             const selfEl = wrapEntity(el, updateFn);
             for (const f of el.classFeatures || []) {
-              const descriptor = classFeatures[f.name];
+              const descriptor = resolveClassFeatureDescriptor(displayEl, f.name);
               if (descriptor?.onModifierUsed) {
                 descriptor.onModifierUsed({ modifier: mod, mode, selfEl, updateActiveElement: updateFn });
               }
@@ -1427,7 +1432,7 @@ export function CharacterHoverCard({
         />
 
         {/* ── Domain Cards ── */}
-        <CharacterAbilityList el={el} />
+        <CharacterAbilityList el={displayEl} updateActiveElement={updateFn} />
 
         {/* ── Companion (hidden when shown as second card in overlay) ── */}
         {!hideCompanionSection && <CharacterCompanion el={el} />}

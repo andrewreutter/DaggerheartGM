@@ -64,7 +64,7 @@ When **WORK_AGENT_INCLUDE_UNBLOCK** is **`true`**:
   4. Unclaimed > 0           → MODE: Implement
      (Default: implement new features.)
 
-  5. Nothing left            → Tell the user the pipeline is clear.
+  5. Nothing left            → One line: no higher-priority mode applies (do **not** list remaining work or “what’s next”).
 
 When **WORK_AGENT_INCLUDE_UNBLOCK** is **`false`** (skip Unblock — **omit the
 Open Blocked step**; Open > 0 does not select Unblock):
@@ -72,7 +72,7 @@ Open Blocked step**; Open > 0 does not select Unblock):
   1. Needs Fix > 0            → MODE: Fix
   2. Done > 0               → MODE: Validate
   3. Unclaimed > 0           → MODE: Implement
-  4. Nothing left            → Tell the user the pipeline is clear.
+  4. Nothing left            → One line: no higher-priority mode applies (do **not** list remaining work or “what’s next”).
 
 ────────────────────────────────────────────────────────
 STEP 3 — ANNOUNCE THE DECISION
@@ -80,6 +80,7 @@ STEP 3 — ANNOUNCE THE DECISION
 Tell the user:
   - Which mode you are entering and why (cite the counts from the summary).
   - Then say: "Now following <mode> agent protocol."
+  Do **not** enumerate upcoming features, claimable rows, or “next in queue” — that duplicates `docs/v2-migration-tracker.md`.
 
 ────────────────────────────────────────────────────────
 STEP 4 — BECOME THAT AGENT
@@ -113,3 +114,4 @@ THINGS TO NEVER DO
 - Do NOT skip reading the chosen agent's prompt file in full.
 - Do NOT invent a hybrid mode — pick one agent and follow it completely.
 - Do NOT read the entire tracker file. Lines 8–22 (Status Summary) are enough for the decision.
+- Do NOT narrate the pipeline roadmap to the user (see **Agent output** in `docs/v2-migration-tracker.md`).

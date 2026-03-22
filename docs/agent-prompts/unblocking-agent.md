@@ -79,18 +79,19 @@ STEP 1 — CLAIM A RESOLUTION
 CLASS / SUBCLASS RESOLUTIONS — V1 AS INSPIRATION (NOT A TEMPLATE)
 ────────────────────────────────────────────────────────
 When the blocked work concerns a **class or subclass** feature (or you need
-semantics that were already solved in the legacy app), it is **acceptable
-and often desirable** to read Phase 1 code under `src/features/` (e.g.
-`src/features/classes/`, hooks in `GMTableView.jsx`, `CharacterHoverCard.jsx`)
-for **ideas and elegant patterns**: lifecycle ordering, edge cases, resource
-costs, and what the table UX ultimately needs from the engine.
+semantics that were already solved in an older build), it is **acceptable
+and often desirable** to read **`docs/v2-v1-cutover.md`**, UI code in
+`GMTableView.jsx` / `CharacterHoverCard.jsx`, and **git history** for the
+removed Phase 1 package for **ideas and elegant patterns**: lifecycle ordering,
+edge cases, resource costs, and what the table UX needs from the engine.
+**Live implementation paths** are **`src/features-v2/`** + **`docs/feature-authoring-guide.md`**.
 
 **Do not** lift anything that violates V2 principles: no hardcoded SRD
 feature-name branches in core engine code (**CONV-029**), no copying
 ad hoc UI coupling into `table.js` / `chip-system.js`, and no shortcuts
-forbidden in `docs/v2-code-conventions.md`. Translate v1 insights into
-declarative keys, documented hooks, and tests — the v1 IoC is a **reference**,
-not something to paste or mirror literally in the V2 engine.
+forbidden in `docs/v2-code-conventions.md`. Translate prior insights into
+declarative keys, documented hooks, and tests — old IoC patterns are a
+**reference**, not something to paste or mirror literally in the V2 engine.
 
 ────────────────────────────────────────────────────────
 STEP 2 — IMPLEMENT THE RESOLUTION

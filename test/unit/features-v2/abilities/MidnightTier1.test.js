@@ -8,6 +8,8 @@ import { RainOfBlades } from '../../../../src/features-v2/abilities/Midnight/Rai
 import { UncannyDisguise } from '../../../../src/features-v2/abilities/Midnight/UncannyDisguise.js';
 import { MidnightSpirit } from '../../../../src/features-v2/abilities/Midnight/MidnightSpirit.js';
 import { Shadowbind } from '../../../../src/features-v2/abilities/Midnight/Shadowbind.js';
+import { Chokehold } from '../../../../src/features-v2/abilities/Midnight/Chokehold.js';
+import { VeilOfNight } from '../../../../src/features-v2/abilities/Midnight/VeilOfNight.js';
 import { mockCharacter, mockGameState, runResolve, mockTable } from '../helpers.js';
 
 function freeActionTable(charId, featureKey) {
@@ -281,5 +283,57 @@ describe('Midnight Tier 1 — Shadowbind', () => {
         payload: expect.objectContaining({ title: 'Shadowbind', trait: 'Presence' }),
       })
     );
+  });
+});
+
+describe('Midnight Tier 1 — Chokehold', () => {
+  it('card marks Stress and queues actionLoop', () => {
+    const tbl = freeActionTable('ch1', 'Chokehold');
+    const chips = collectChips([{ ...Chokehold, _ownerInstanceId: 'ch1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState());
+    deductChipCosts(chips[0], tbl);
+    const mutations = [...m, ...applyMutations(tbl)];
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'markStress',
+        payload: expect.objectContaining({ instanceId: 'ch1', amount: 1 }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Chokehold' }),
+      })
+    );
+  });
+
+  it('does not register intent-placement chips', () => {
+    const tbl = freeActionTable('ch2', 'Chokehold');
+    const intent = collectChips([{ ...Chokehold, _ownerInstanceId: 'ch2' }], 'intent', tbl);
+    expect(intent).toEqual([]);
+  });
+});
+
+describe('Midnight Tier 1 — Veil of Night', () => {
+  it('card queues Spellcast (13) actionLoop', () => {
+    const tbl = freeActionTable('vn1', 'Veil of Night');
+    const chips = collectChips([{ ...VeilOfNight, _ownerInstanceId: 'vn1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState());
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Veil of Night',
+          trait: 'Presence',
+          difficulty: 13,
+        }),
+      })
+    );
+  });
+
+  it('does not register intent-placement chips', () => {
+    const tbl = freeActionTable('vn2', 'Veil of Night');
+    const intent = collectChips([{ ...VeilOfNight, _ownerInstanceId: 'vn2' }], 'intent', tbl);
+    expect(intent).toEqual([]);
   });
 });

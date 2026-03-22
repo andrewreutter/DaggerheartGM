@@ -5,6 +5,8 @@ todos: []
 isProject: false
 ---
 
+*Historical note:* This plan predates the removal of `src/features/`. Implement ancestry features under **`src/features-v2/ancestries/`** (see `docs/feature-authoring-guide.md`).
+
 # Plan: Clank, Drakona, Dwarf, and Elf Ancestries
 
 Implement the four ancestries using the same builder pattern as Faun, Giant, Infernis, and Katari. **Use the project’s SRD subrepo as the first and only source for ancestry text and structure** — do not look up SRD content on the web.

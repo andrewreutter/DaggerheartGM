@@ -4,6 +4,7 @@ import { FeatureDescription } from './FeatureDescription.jsx';
 import { parseAllCountdownValues, stripHtml } from '../lib/helpers.js';
 import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
 import { MarkdownText } from '../lib/markdown.js';
+import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { applyDamageBoost } from '../lib/battle-points.js';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
@@ -336,11 +337,11 @@ export function AdversaryCardContent({
                         />
                       </div>
                     )}
-                    <input
-                      type="text"
+                    <ConditionsTextInput
+                      instanceId={inst.instanceId}
                       placeholder="Conditions..."
                       value={inst.conditions || ''}
-                      onChange={e => updateFn(inst.instanceId, { conditions: e.target.value })}
+                      onCommit={(v) => updateFn(inst.instanceId, { conditions: v })}
                       className="w-full bg-slate-800/50 border border-slate-700 rounded px-2 py-1 text-sm text-white outline-none focus:border-blue-500"
                     />
                   </div>
