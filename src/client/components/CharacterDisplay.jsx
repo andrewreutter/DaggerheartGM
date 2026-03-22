@@ -10,7 +10,7 @@ import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { isCharacterComplete, recomputeCharacter, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runCharacterRender } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive } from '../lib/v2-declarative-sheet.js';
-import { ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
+import { v2OriginFeatureDescriptorsByName } from '../lib/v2-origin-feature-descriptors.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 import { CustomSelect } from './forms/CustomSelect.jsx';
 
@@ -867,7 +867,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
           {action.isActive && subFeatures.length < 2 && (
             <div className="pt-1 border-t border-slate-700/60 space-y-1">
               <CostBadgeStrip action={action} />
-              {onFeatureUse && (!ancestryFeaturesRegistry[feature.name] || !!ancestryFeaturesRegistry[feature.name]?.onUse) && !wingsOfLightProps ? (
+              {onFeatureUse && (!v2OriginFeatureDescriptorsByName[feature.name] || !!v2OriginFeatureDescriptorsByName[feature.name]?.onUse) && !wingsOfLightProps ? (
                 isUsed ? (
                   <p className="text-[10px] text-slate-500 italic">
                     Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
@@ -1702,8 +1702,18 @@ export function CharacterWeaponList({
   const startlingWeapons = weapons.filter(w => w.feature?.name === 'Startling');
 
   const weaponRenderHints = el.weaponRenderHints;
-  const hasV2WeaponHints =
-    weaponRenderHints && typeof weaponRenderHints === 'object' && Object.keys(weaponRenderHints).length > 0;
+
+  const weaponSlotSrdId = (weapon) => {
+    if (weapon.id === 'wep_0') return el.primaryWeaponId ?? null;
+    if (weapon.id === 'wep_1') return el.secondaryWeaponId ?? null;
+    return null;
+  };
+  const v2HintForWeapon = (weapon) => {
+    const id = weaponSlotSrdId(weapon);
+    return id && weaponRenderHints && typeof weaponRenderHints === 'object'
+      ? weaponRenderHints[id]
+      : undefined;
+  };
 
   // For Doubled Up: find the secondary weapon's damage string
   const primaryWeapon_ = weapons.find(w => w.isPrimary !== false && !w.feature?.name?.includes('Paired'));
@@ -1714,7 +1724,9 @@ export function CharacterWeaponList({
 
   const makeClick = (w, extraMeta = {}) => {
     if (!onWeaponClick) return undefined;
-    if (!hasV2WeaponHints && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return undefined;
+    const v2Hint = v2HintForWeapon(w);
+    if (v2Hint?.isDisabled === true) return undefined;
+    if (!v2Hint && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return undefined;
     if (w._charged && isStressMaxed) return undefined;
     const rollMeta = { ...extraMeta };
     if (w.feature?.name === 'Devastating' && devastatingActive) rollMeta.devastating = true;
@@ -1836,15 +1848,14 @@ export function CharacterWeaponList({
 
         {/* Normal weapon cards (skip Otherworldly originals) */}
         {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => {
-          const srdId = i === 0 ? el.primaryWeaponId : i === 1 ? el.secondaryWeaponId : null;
-          const v2Hint = srdId && weaponRenderHints ? weaponRenderHints[srdId] : undefined;
+          const v2Hint = v2HintForWeapon(w);
           const legacyPompous =
-            !hasV2WeaponHints && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0;
+            !v2Hint && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0;
           const v2DisableReason =
             v2Hint?.isDisabled === true ? (v2Hint.disabledReason || 'Cannot use this weapon') : undefined;
           return (
             <WeaponCard
-              key={i}
+              key={w.name ? `${w.name}-${i}` : i}
               weapon={w}
               traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
               onClick={makeClick(w)}
@@ -2025,8 +2036,8 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
               />
             );
           }
-          if (ancestryFeaturesRegistry[f.name]) {
-            const descriptor = ancestryFeaturesRegistry[f.name];
+          if (v2OriginFeatureDescriptorsByName[f.name]) {
+            const descriptor = v2OriginFeatureDescriptorsByName[f.name];
             return (
               <AncestryFeatureCard
                 key={key}
@@ -2085,10 +2096,26 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
   );
 }
 
-export function CharacterAbilityList({ el }) {
+export function CharacterAbilityList({ el, updateActiveElement }) {
   const abilities = el.abilities || [];
   if (!abilities.length) return null;
   const inBeastform = !!el.activeBeastform;
+  const interactive = typeof updateActiveElement === 'function' && !!el.instanceId;
+
+  const getFeatureState = (featureName) => {
+    const get = (key, defaultVal) => {
+      const bag = el._originFeatureState?.[featureName];
+      return bag != null && key in bag ? bag[key] : defaultVal;
+    };
+    const set = (key, value) => {
+      const current = el._originFeatureState ?? {};
+      const featureBag = current[featureName] ?? {};
+      const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
+      updateActiveElement(el.instanceId, { _originFeatureState: next });
+    };
+    return { get, set };
+  };
+
   return (
     <Section label="Domain Cards">
       {inBeastform && (
@@ -2098,7 +2125,13 @@ export function CharacterAbilityList({ el }) {
         </div>
       )}
       <div className={`space-y-1 ${inBeastform ? 'opacity-30 pointer-events-none select-none' : ''}`}>
-        {abilities.map((a, i) => (
+        {abilities.map((a, i) => {
+          const featRow = el.activeFeatures?.find((f) => f.type === 'ability' && f.name === a.name);
+          const cardChips =
+            interactive && featRow?.chips?.length
+              ? featRow.chips.filter((c) => c.placement === 'card')
+              : [];
+          return (
           <div key={a.id || i} className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-1.5">
             <div className="flex items-center gap-2 text-[11px]">
               <span className="font-semibold text-violet-200">{a.name}</span>
@@ -2110,8 +2143,64 @@ export function CharacterAbilityList({ el }) {
                 <MarkdownText text={a.description} className="dh-md" />
               </div>
             )}
+            {cardChips.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {cardChips.map((chip, ci) => {
+                  const fk = chip._featureKey ?? `${featRow.name}-${ci}`;
+                  const used =
+                    chip.resetsOn &&
+                    el.featureUsage?.[fk]?.used &&
+                    el.featureUsage?.[fk]?.cycle === chip.resetsOn;
+                  const maxS = el.maxStress ?? 6;
+                  const curS = el.currentStress ?? 0;
+                  const canStress = !chip.stressCost || maxS - curS >= chip.stressCost;
+                  const disabled = used || !canStress;
+                  return (
+                    <button
+                      key={chip.label || ci}
+                      type="button"
+                      disabled={disabled}
+                      title={chip.description}
+                      onClick={() => {
+                        if (disabled) return;
+                        const patch = {};
+                        if (chip.stressCost) {
+                          patch.currentStress = Math.min(curS + chip.stressCost, maxS);
+                        }
+                        if (chip.hopeCost) {
+                          const maxH = el.maxHope ?? 6;
+                          const curH = el.hope ?? maxH;
+                          patch.hope = Math.max(0, curH - chip.hopeCost);
+                        }
+                        if (chip.resetsOn && fk) {
+                          patch.featureUsage = { ...(el.featureUsage || {}), [fk]: { used: true, cycle: chip.resetsOn } };
+                        }
+                        if (Object.keys(patch).length) updateActiveElement(el.instanceId, patch);
+                        const fs = getFeatureState(featRow.name);
+                        const feature = { ...featRow, ...fs };
+                        if (typeof chip.onUse === 'function') {
+                          chip.onUse({
+                            character: el,
+                            feature,
+                            roll: null,
+                            characters: null,
+                            system: null,
+                          });
+                        }
+                      }}
+                      className="text-[10px] rounded px-1.5 py-0.5 border border-violet-600/60 bg-violet-900/40 text-violet-100 hover:bg-violet-800/50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {chip.label}
+                      {chip.stressCost ? ` · ${chip.stressCost} Stress` : ''}
+                      {chip.resetsOn === 'rest' ? ' · 1/rest' : ''}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </Section>
   );

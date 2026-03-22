@@ -14,6 +14,7 @@ import {
   applyV2ActiveModifierMutations,
   applyV2BannerMutations,
   partitionV2BannerChipMutations,
+  normalizeV2BannerChipMutations,
 } from '../../src/client/lib/table-ops.js';
 import { computeArmorModifiers, getEffectiveWeaponRange } from '../../src/client/lib/character-calc.js';
 
@@ -576,6 +577,28 @@ describe('applyV2BannerMutations', () => {
     expect(updates).toHaveLength(0);
     expect(skipped.length).toBe(1);
   });
+
+  it('applies setFeatureState on the owner character', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', featureState: {} }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'setFeatureState', payload: { featureKey: 'Rally', key: 'granted', value: true } }],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.featureState.Rally).toEqual({ granted: true });
+  });
+
+  it('applies gainHope', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', hope: 2, maxHope: 6 }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'gainHope', payload: { instanceId: 'c1', amount: 2 } }],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates).toEqual([{ instanceId: 'c1', updates: { hope: 4 } }]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -592,19 +615,51 @@ describe('partitionV2BannerChipMutations', () => {
       { type: 'rerollDie', payload: { rollKey: 'damage', dieType: 'damageDie', dieName: 'damage' } },
       { type: 'addRollStatic', payload: { rollKey: 'action', name: 'X', value: 2 } },
     ];
-    const { localMutations, serverFollowups, unsupported } = partitionV2BannerChipMutations(mutations);
-    expect(localMutations.map((m) => m.type)).toEqual(['spendHope', 'addRollStatic']);
-    expect(serverFollowups.map((f) => f.kind)).toEqual(['rerollDie', 'rerollDie', 'addDamage']);
-    expect(serverFollowups[0].dieType).toBe('Hope');
-    expect(serverFollowups[1].dieType).toBe('Fear');
+    const { localMutations, serverFollowups, engineRollDisplayOnly, unsupported } =
+      partitionV2BannerChipMutations(mutations);
+    expect(localMutations.map((m) => m.type)).toEqual(['spendHope']);
+    expect(engineRollDisplayOnly.map((m) => m.type)).toEqual(['addRollStatic']);
+    expect(serverFollowups.map((f) => f.kind)).toEqual(['rerollDie', 'addDamage']);
+    expect(serverFollowups[0].dieType).toBe('Duality');
     expect(unsupported.map((m) => m.type)).toEqual(['rerollDie']);
     expect(unsupported[0].payload.dieType).toBe('damageDie');
+  });
+
+  it('merges adjacent Hope+Fear rerolls into one Duality follow-up (Faerie Luckbender-style)', () => {
+    const mutations = [
+      { type: 'spendHope', payload: { instanceId: 'c1', amount: 3 } },
+      { type: 'rerollDie', payload: { rollKey: 'action', dieType: 'hopeDie' } },
+      { type: 'rerollDie', payload: { rollKey: 'action', dieType: 'fearDie' } },
+    ];
+    const { serverFollowups, unsupported } = partitionV2BannerChipMutations(mutations);
+    expect(serverFollowups).toHaveLength(1);
+    expect(serverFollowups[0].kind).toBe('rerollDie');
+    expect(serverFollowups[0].dieType).toBe('Duality');
+    expect(unsupported).toHaveLength(0);
+  });
+
+  it('normalizeV2BannerChipMutations merges Hope then Fear and Fear then Hope', () => {
+    const a = [
+      { type: 'rerollDie', payload: { dieType: 'hopeDie' } },
+      { type: 'rerollDie', payload: { dieType: 'fearDie' } },
+    ];
+    const b = [
+      { type: 'rerollDie', payload: { dieType: 'fearDie' } },
+      { type: 'rerollDie', payload: { dieType: 'hopeDie' } },
+    ];
+    expect(normalizeV2BannerChipMutations(a)).toEqual([
+      { type: 'rerollDie', payload: { dieType: 'dualityDie', _mergedFrom: [a[0], a[1]] } },
+    ]);
+    expect(normalizeV2BannerChipMutations(b)).toEqual([
+      { type: 'rerollDie', payload: { dieType: 'dualityDie', _mergedFrom: [b[0], b[1]] } },
+    ]);
   });
 
   it('empty input yields empty partitions', () => {
     expect(partitionV2BannerChipMutations(null)).toEqual({
       localMutations: [],
       serverFollowups: [],
+      engineRollDisplayOnly: [],
       unsupported: [],
     });
   });

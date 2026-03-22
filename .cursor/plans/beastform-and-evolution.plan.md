@@ -5,6 +5,8 @@ todos: []
 isProject: false
 ---
 
+*Historical note:* This plan predates the removal of `src/features/classes/`. Druid / beastform work lives under **`src/features-v2/`** (see `docs/feature-authoring-guide.md`).
+
 # Druid: Beastform and Evolution
 
 ## Context

@@ -8,7 +8,7 @@ import {
   resolveWeapon, resolveArmor, parseArmorThresholds, getEffectiveWeaponRange,
 } from '../../lib/character-calc.js';
 import { generateId } from '../../lib/helpers.js';
-import { ancestryMap } from '../../../features/ancestries/index.js';
+import { getAncestryExperienceBonus } from '../../lib/ancestry-experience-bonus.js';
 
 const TRAIT_LABELS = {
   agility: 'Agility', strength: 'Strength', finesse: 'Finesse',
@@ -355,7 +355,7 @@ export function CharacterForm({ value, onChange }) {
 
     const ancestryId = formData.ancestryIds?.[0];
     const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
-    const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+    const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
     let experienceBonusChoices = formData.experienceBonusChoices;
     if (expBonus) {
       const expIds = (formData.experiences || []).map(e => e.id).filter(Boolean);
@@ -809,7 +809,7 @@ export function CharacterForm({ value, onChange }) {
       {(() => {
         const ancestryId = formData.ancestryIds?.[0];
         const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
-        const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+        const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
         const chosenExpId = expBonus ? formData.experienceBonusChoices?.[expBonus.featureName] : null;
         return (
           <FormRow label="Experiences">
@@ -857,7 +857,7 @@ export function CharacterForm({ value, onChange }) {
       {(() => {
         const ancestryId = formData.ancestryIds?.[0];
         const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
-        const expBonus = ancestryName ? ancestryMap[ancestryName]?.experienceBonus : null;
+        const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
         if (!expBonus) return null;
         const { amount, featureName } = expBonus;
         const experiences = formData.experiences || [];

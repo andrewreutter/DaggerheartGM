@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } fr
 import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
+import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { getAuthToken } from '../lib/api.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
@@ -536,10 +537,10 @@ function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElemen
       {(canEdit || canEditAdv) && (
         <div>
           <div className="text-xs text-slate-500 mb-0.5">Conditions</div>
-          <input
-            type="text"
+          <ConditionsTextInput
+            instanceId={element.instanceId}
             value={element.conditions ?? ''}
-            onChange={e => updateActiveElement(element.instanceId, { conditions: e.target.value })}
+            onCommit={(v) => updateActiveElement(element.instanceId, { conditions: v })}
             placeholder="none"
             className="w-full px-1.5 py-0.5 rounded bg-slate-700 border border-slate-600 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
           />

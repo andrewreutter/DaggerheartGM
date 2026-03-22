@@ -5,7 +5,7 @@
 | Doc | Role |
 |-----|------|
 | This file | **Goals, phases, exit criteria, and order of operations** |
-| [`v2-v1-cutover.md`](v2-v1-cutover.md) | **Parity matrix** — behavior → Phase 1 vs V2 direction (update rows as call sites disappear) |
+| [`v2-v1-cutover.md`](v2-v1-cutover.md) | **Parity matrix** — behavior → historical Phase 1 vs V2 direction (update rows as call sites disappear) |
 | [`v2-migration-tracker.md`](v2-migration-tracker.md) | **SRD feature coverage** in `src/features-v2/` (separate from table wiring) |
 | [`v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md) | Bridge hardening history + deferred items |
 | [`v2-ui-integration-phase3-handoff.md`](v2-ui-integration-phase3-handoff.md) | Review-action / banner UX |
@@ -19,15 +19,14 @@
 
 The project is **done** with the Game Table cutover when **all** of the following are true:
 
-1. **No Phase 1 package on the Game Table critical path**  
-   With the V2 declarative sheet flag on (`isV2DeclarativeSheetEnabled` / live toggle / `?v2Sheet=1`), table code does **not** import or execute **`src/features/hooks.js`** or **`src/features/registry.js`** (directly or via `game-table-mechanics.js`).  
-   *Exception (temporary):* pure re-exports in `src/features/entity.js` / `roll.js` that only forward to `table-entity-roll.js` are OK until those entry points are deleted or inlined.
+1. **No legacy `src/features/` package**  
+   The removed Phase 1 tree must **not** be reintroduced. Table and character code should import **`src/client/lib/table-entity-roll.js`**, **`src/client/lib/feature-hook-dispatch.js`**, and **`src/client/lib/game-table-mechanics.js`** (V2 **`activeFeatures`** facade), not deleted `hooks.js` / `registry.js` paths.
 
 2. **Mechanics come from V2 + bridges**  
-   Rolls, damage, banners, chips, session/rest hooks, and virtual weapons are driven by `src/features-v2/` + `v2-action-loop-bridge.js` + `v2-cross-sheet-lifecycle.js` + `table-ops.js` apply helpers + `table-entity-roll.js` wrappers — not `runHook(weaponFeatures | ancestryFeatures, …)` or registry maps.
+   Rolls, damage, banners, chips, session/rest hooks, and virtual weapons are driven by **`src/features-v2/`** + `v2-action-loop-bridge.js` + `v2-cross-sheet-lifecycle.js` + `table-ops.js` apply helpers + `table-entity-roll.js` wrappers.
 
 3. **Shared recompute aligns**  
-   `character-calc.js` does not use Phase 1 `weaponFeatures` / `armorFeatures` / `classFeatures` / `originFeatures` as the **authoritative** path when the V2 sheet flag is on; V2 gear + declarative merge is the source of truth (Phase 1 may remain for flag-off or legacy Daggerstack paths until explicitly removed).
+   `character-calc.js` merges SRD data with **`src/features-v2/registry.js`** and related descriptors; character elements expose merged **`activeFeatures`** for the Game Table.
 
 4. **Debt is closed or explicitly out-of-scope**  
    Items listed under **§5** here are either implemented or recorded in [`v2-migration-tracker.md`](v2-migration-tracker.md) **Tech Debt** / handoff docs with a **won’t-fix / later** reason (not silently drifting).
@@ -50,8 +49,9 @@ Record the choice in [`v2-migration-tracker.md`](v2-migration-tracker.md) (summa
 
 ## 3. Current state (snapshot)
 
-- **Facade:** [`game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) centralizes Phase 1 imports and gates **registry fallbacks** with `shouldUsePhase1RegistryFallback()`. Table components import the facade, not `src/features/` paths — but **Phase 1 is still bundled and used** when the flag is off or where registry paths remain.
-- **Cutover matrix:** [`v2-v1-cutover.md`](v2-v1-cutover.md) lists parallel stacks and remaining Phase 1 call sites.
+- **Facade:** [`game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) re-exports **`wrapEntity` / `wrapRoll` / `wrapBanner`** from **`table-entity-roll.js`** and **`runCharacterHook`** from **`feature-hook-dispatch.js`**, and implements resolvers that read **only** merged **`activeFeatures`** (weapon/armor tags, Parry, etc.). Table components import the facade, not feature registry maps.
+- **Declarative sheet toggle:** `src/client/lib/v2-declarative-sheet.js` (`isV2DeclarativeSheetEnabled`, `?v2Sheet=1`, user menu preference).
+- **Cutover matrix:** [`v2-v1-cutover.md`](v2-v1-cutover.md) lists parallel stacks and remaining UX gaps.
 - **Phase B (bridge):** Partition + server follow-ups largely landed; some items deferred (Rally on non-owner banners, session vs scene end) — see tracker § V2 UI integration backlog.
 
 ---
@@ -70,41 +70,32 @@ Work **roughly** in this order; later phases can overlap once contracts are stab
 
 **Exit:** Each engine mutation type from V2 chip activation either applies locally, routes to `postBannerAddDamage` / `postBannerRerollDie`, or is listed as unsupported with a unit test asserting the partition.
 
-### Phase G — Session / ancestry / class surfaces off registry
+### Phase G — Session / ancestry / class surfaces
 
-**Goal:** `GMTableView` no longer needs `ancestryFeatures`, `classFeatures`, `virtualWeaponBehaviors` from Phase 1 for **session start**, **virtual weapon ack**, **onFeatureActivated**, **ancestry banner reactions** (or those paths are **one** thin adapter that calls V2-only APIs).
+**Goal:** Session start, virtual weapon ack, `onFeatureActivated`, and ancestry banner reactions are fully driven by V2 **`activeFeatures`** + engine hooks (or one thin adapter), without duplicate name-based UI.
 
 - Follow rows in [`v2-v1-cutover.md`](v2-v1-cutover.md) § parity matrix (#17–27, #29–30).
-- Prefer V2 `hooks.onSessionStart`, declarative `featureState`, and banner chip collection over `runHook` on registry maps.
-
-**Exit:** Matrix rows updated; no `runHook(registry, …)` for these behaviors when V2 flag on.
+- Prefer V2 `hooks.onSessionStart`, declarative `featureState`, and banner chip collection.
 
 ### Phase H — Weapon / armor tag pipeline (DiceRoller + HoverCard)
 
-**Goal:** `DiceRoller` and `CharacterHoverCard` do not depend on `weaponFeatures` for mechanical tag automation, `rewriteDamage`, `bannerInteraction`, or `buildWeaponRollText` when V2 owns the sheet.
+**Goal:** `DiceRoller` and `CharacterHoverCard` rely on **`activeFeatures`** + `game-table-mechanics.js` for mechanical tag automation, `rewriteDamage`, `bannerInteraction`, and `buildWeaponRollText` integration.
 
 - See [`v2-ui-integration-phaseD-handoff.md`](v2-ui-integration-phaseD-handoff.md) § Phase E items 4–5.
 - Unify with V2 weapon properties + `applyDeclarativeFeatures` / `activeFeatures` rows.
 - Retire duplicate **Pompous** / name-based gating in `CharacterDisplay` when V2 supplies `isDisabled` / reasons (tracker backlog: `weaponRenderHints`).
 
-**Exit:** `shouldUsePhase1RegistryFallback()` false ⇒ no Phase 1 weapon tag reads in those components.
+### Phase I — Facade hardening (optional)
 
-### Phase I — `game-table-mechanics.js` deletion or hollowing
+**Goal:** Keep `game-table-mechanics.js` as a thin surface: wrappers + resolvers over **`activeFeatures`** only; no dead imports.
 
-**Goal:** Remove `import … from '../../features/hooks.js'` and `'../../features/registry.js'` from the facade.
+**Exit:** Grep under `src/client/lib/game-table-mechanics.js` for **`src/features/`** → **no matches** (already true after Phase E).
 
-- Move any remaining helpers to `table-entity-roll.js`, `game-table-mechanics-v2.js`, or colocated modules that only import `src/features-v2/`.
-- Delete re-exports of `weaponFeatures`, `armorFeatures`, etc., from the table bundle.
+### Phase J — `character-calc.js` single authority
 
-**Exit:** Grep `src/features/` under `src/client/lib/game-table-mechanics.js` → **no matches**.
+**Goal:** Passive mods and thresholds come from V2 registry + merge overlay; no duplicate mechanical resolution paths.
 
-### Phase J — `character-calc.js` V2-only path
-
-**Goal:** With V2 flag on, passive mods and thresholds come from V2 registry + merge overlay; Phase 1 registry is not consulted for duplicates.
-
-- Follow **Phase C** in the original V2-only plan (merge helper / single authority).
-
-**Exit:** Conditional imports or branches: no `weaponFeatures[name]` for mechanical resolution when declarative V2 sheet enabled.
+**Exit:** Weapon/armor features resolve through merged descriptors, not parallel legacy maps.
 
 ### Phase K — Documentation + cleanup
 
@@ -136,8 +127,8 @@ These overlap the polestar but are **tracked in detail** elsewhere — pull into
 
 1. **Starting a table-focused task:** Read **§4** for phase, **§1** for exit checks, **v2-v1-cutover.md** for the exact call site.
 2. **Starting SRD coverage:** Use **v2-migration-tracker.md** and agent prompts — that work **feeds** Phase G–J but does not replace table wiring.
-3. **Closing the program:** Re-run **§1** checklist; update **v2-v1-cutover.md** status column to “VTT done” or remove rows when Phase 1 references are gone.
+3. **Closing the program:** Re-run **§1** checklist; update **v2-v1-cutover.md** status column to “VTT done” or remove rows when obsolete.
 
 ---
 
-*Last updated: 2026-03-22 — initial polestar (supersedes ad-hoc “V2-only plan” threads as the single entry point).*
+*Last updated: 2026-03-22 — Phase E doc sweep: removed references to deleted `src/features/`; current imports are `table-entity-roll.js`, `feature-hook-dispatch.js`, `game-table-mechanics.js`, `src/features-v2/`.*

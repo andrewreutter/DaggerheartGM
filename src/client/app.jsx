@@ -863,12 +863,12 @@ function App() {
 
   // --- Table op dispatchers ---
   // These call postTableOp (which POSTs to /api/room/my/op). The server applies the op to the
-  // DB state and notifies all subscribers. Token position updates are applied optimistically
-  // so the map responds immediately; the next table_state snapshot confirms.
+  // DB state and notifies all subscribers. Token positions and conditions text are applied
+  // optimistically so the UI stays responsive; the next table_state snapshot confirms.
   const tableId = route.view === 'gm-table' ? (route.tableId || user?.uid) : user?.uid;
 
   const sendUpdateActiveElement = (instanceId, updates) => {
-    if ('tokenX' in updates || 'tokenY' in updates) {
+    if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     postTableOp({ op: 'update-element', instanceId, updates }, tableId);
@@ -969,10 +969,10 @@ function App() {
   };
 
   // Player callback — sends update to server; state arrives via table_state SSE snapshot.
-  // Token position updates are applied optimistically so the map responds immediately.
+  // Token positions and conditions text are applied optimistically like the GM path.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.tableId) return;
-    if ('tokenX' in updates || 'tokenY' in updates) {
+    if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     try {

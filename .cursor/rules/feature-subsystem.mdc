@@ -1,6 +1,6 @@
 ---
 description: Daggerheart Feature Author Mode — plan/analyze/develop class, ancestry, community, weapon, armor features
-globs: src/features/**/*.js
+globs: src/features-v2/**/*.js
 alwaysApply: false
 ---
 

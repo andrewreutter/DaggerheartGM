@@ -4,7 +4,7 @@ A GM tool for the Daggerheart tabletop RPG.
 
 ## Architecture
 
-Express.js server serving a React SPA built from `src/client/`. Authentication is handled by Firebase (Google sign-in). Data persistence is backed by Postgres via Supabase. Client-side routing uses the History API (`src/client/lib/router.js`) so the browser back/forward buttons work across all views. Item detail modals have their own URLs (`/library/:tab/:id`, `/gm-table/:gmUid/:collection/:id` or `/gm-table/:gmUid/:tableId/:collection/:id`) for back/forward, link sharing, and reload. **Multi-table support**: each user has a primary table at `/gm-table/:gmUid` (tableId = gmUid) and can create more via "+ New Table" (secondary tables at `/gm-table/:gmUid/:tableId`). `GET /api/my-rooms` returns `[{ tableId, gmUid, gmName, tableName }]` so invited players open the correct table. The GM's primary table URL is shareable with players; the GM manages which emails can join via "Manage Invited Players".
+Express.js server serving a React SPA built from `src/client/`. **SRD feature mechanics** are implemented in **`src/features-v2/`** (declarative engine + per-collection modules); see **`docs/feature-authoring-guide.md`**. Authentication is handled by Firebase (Google sign-in). Data persistence is backed by Postgres via Supabase. Client-side routing uses the History API (`src/client/lib/router.js`) so the browser back/forward buttons work across all views. Item detail modals have their own URLs (`/library/:tab/:id`, `/gm-table/:gmUid/:collection/:id` or `/gm-table/:gmUid/:tableId/:collection/:id`) for back/forward, link sharing, and reload. **Multi-table support**: each user has a primary table at `/gm-table/:gmUid` (tableId = gmUid) and can create more via "+ New Table" (secondary tables at `/gm-table/:gmUid/:tableId`). `GET /api/my-rooms` returns `[{ tableId, gmUid, gmName, tableName }]` so invited players open the correct table. The GM's primary table URL is shareable with players; the GM manages which emails can join via "Manage Invited Players".
 
 Data loading is **lazy and per-collection**: on sign-in the app renders immediately; `table_state` and admin status load in the background. Adversaries and environments are fetched on demand by `LibraryView`'s `useCollectionSearch` hook as the user browses. Scenes, adventures, and characters load when the user navigates to those tabs or opens the Add Scene/Adventure/Character picker on the Game Table. The `GET /api/data/:collection` endpoint uses a **unified query** over `items` + `external_item_cache` — no live external API calls. SRD, FCG, and HoD content is pre-loaded: SRD adversaries/environments are loaded into the cache at server startup (`loadSrdIntoDb`); FCG and HoD are synced by a background job (cron at 3 AM, or `npm run crawl` manually). Scene expansion uses a batch `POST /api/data/resolve` call (with `adopt: true`) to look up referenced IDs, auto-cloning any non-own items into the user's library. The resolve endpoint falls back to `external_item_cache`, SRD sub-application, or `fetchHoDFoundryDetail()` for IDs not in the user's DB. **Image optimization**: to avoid slow saves when scenes contain large base64 images, the client strips `imageUrl` and `_additionalImages` from normal PUT payloads; the server merges incoming data while preserving image fields. Image changes (AI generate, import) use a dedicated `PUT /api/data/:collection/:id/image` endpoint.
 
@@ -76,20 +76,20 @@ DaggerheartGM/
 │   │   │   ├── forms/          # Item forms (controlled+uncontrolled); ImageEditor for add/remove images; SceneForm has Battle Budget section; CharacterForm for characters
 │   │   │   │   ├── CharacterForm.jsx # Controlled-mode character builder (identity, class, ancestry, traits, equipment, experiences, domains, advancements)
 │   │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay; SceneBudgetBar for scenes)
-│   │   │   └── lib/                # API client, helpers, constants, battle-points.js, table-ops.js, v2-action-loop-bridge.js, v2-cross-sheet-lifecycle.js, v2-declarative-sheet.js, character-calc.js, useCharacterSrdData.js, dice-utils.js, feature-actions.js (parseFeatureAction, advantageCondition), router, hooks, markdown
-│   ├── features-v2/            # V2 engine: action loop, table snapshot, migrated SRD feature modules
+│   │   │   └── lib/                # API client, helpers, constants, battle-points.js, table-ops.js, game-table-mechanics.js (V2 activeFeatures facade), feature-hook-dispatch.js, v2-action-loop-bridge.js, v2-cross-sheet-lifecycle.js, v2-declarative-sheet.js, character-calc.js, useCharacterSrdData.js, dice-utils.js, feature-actions.js (parseFeatureAction, advantageCondition), router, hooks, markdown
+│   ├── features-v2/            # V2 engine: action loop, table snapshot, migrated SRD feature modules (single feature codepath)
+│   │   ├── registry.js         # Composes full registry for loadCharacterFeatures / character-calc
 │   │   ├── engine/             # table.js (buildTableSnapshot; table.source get/set when sourceScopeKey — CONV-035), action-loop.js, chip-system.js, feature-loader.js (loadCharacterFeatures + attachBeastformOptions + applyDeclarativeFeatures)
 │   │   ├── classes/            # Class features (per-class modules + index.js registry)
 │   │   ├── subclasses/         # Subclass features (per-subclass modules + index.js registry, e.g. Troubadour, Beastbound, Elemental Origin)
+│   │   ├── ancestries/         # Origin: ancestry feature modules
+│   │   ├── communities/        # Origin: community feature modules
+│   │   ├── weapon_properties/  # Weapon tag descriptors merged into activeFeatures
+│   │   ├── armor_properties/   # Armor property descriptors
 │   │   ├── abilities/          # Domain spells (per-domain subfolders, e.g. Arcana/; index.js flat registry keyed srd-abl-*)
-│   │   └── beastforms/         # srd-data.js + per-form modules (named exports + `features` array); marry.js attaches JSON ids; index.js default registry
-│   ├── features/               # Feature IoC system (game-mechanics registry)
-│   │   ├── entity.js           # wrapEntity() — game-semantic mutation API for active elements
-│   │   ├── hooks.js            # runHook, runPipelineHook, runAsyncPipelineHook dispatchers
-│   │   ├── registry.js         # Unified re-export: weaponFeatures, armorFeatures, classFeatures
-│   │   ├── weapons/            # 32 weapon feature modules (Painful, Scary, Burning, Reliable, Parry, …)
-│   │   ├── armor/              # 14 armor feature modules (Fortified, Resilient, Warded, …)
-│   │   └── classes/            # Class feature modules (Wizard, Bard)
+│   │   ├── beastforms/         # srd-data.js + per-form modules (named exports + `features` array); marry.js attaches JSON ids; index.js default registry
+│   │   ├── items/              # SRD item modules (when migrated)
+│   │   └── consumables/        # SRD consumable modules (when migrated)
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id

@@ -286,6 +286,8 @@ After marking all features Done, output a markdown summary table:
 Always include every feature in the batch. Use ✅ for Done, ❌ if a
 feature had to be skipped/failed, and ⚠️ for Blocked.
 
+Do **not** add a “next steps,” “next claimable,” or “suggested next batch” section — the tracker and `npm run v2:queue` output already define that.
+
 ────────────────────────────────────────────────────────
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
@@ -328,3 +330,4 @@ THINGS TO NEVER DO
   EFFICIENTLY protocol above.
 - Do NOT read engine source files (table.js, chip-system.js, etc.).
   The authoring guide is your API reference.
+- Do NOT tell the user what feature or batch is “next” in the pipeline after a batch — see **Agent output** in `docs/v2-migration-tracker.md`.

@@ -18,4 +18,6 @@ When the user's message matches one of these phrases, read the referenced prompt
 
 After the initial dispatch, **Continue** means "re-read the prompt and do the next unit of work" per each agent's ON CONTINUE section.
 
+V2 agents must **not** tell the user “what’s next” in the migration pipeline or list upcoming claimable rows — `docs/v2-migration-tracker.md` (**Agent output**) is explicit; summaries cover completed work only (Work Agent still announces **mode + counts**).
+
 These are the ONLY magic phrases. Do not infer agent behavior from other phrasing unless the user explicitly asks you to read one of the prompt files.

@@ -17,12 +17,14 @@ You implement a feature by defining the right hooks and declarations for the beh
 
 ### Registries and attachment
 
-Features live in one of **four registries**: **origin** (ancestry + community merged), **class**, **weapon**, **armor**. The registry is determined by **which barrel file** you add the feature to (`ancestries/`, `communities/`, `weapons/`, `armor/`, `classes/`). It controls:
+SRD feature modules live under **`src/features-v2/`**, grouped by collection (`ancestries/`, `communities/`, `classes/`, `subclasses/`, `weapon_properties/`, `armor_properties/`, `abilities/`, `beastforms/`, …). **`src/features-v2/registry.js`** composes the full registry consumed by **`loadCharacterFeatures`** in the V2 engine. **`character-calc.js`** merges SRD rows with those descriptors and produces a flat **`activeFeatures`** array on each character for the Game Table and sheet.
 
-- **How the feature is attached to the character** — Origin and class features come from character build (SRD resolution); weapon and armor features come from equipped items. Character-calc merges registry descriptors into a flat **activeFeatures** array.
-- **Which invocation paths see it** — Many hooks run over **activeFeatures** (all types together). Some paths also call **runHook(registry, names, ...)** with a specific registry and set of feature names (e.g. roll tags for weapons).
+- **How the feature is attached to the character** — Origin and class features come from character build (SRD resolution); weapon and armor properties come from equipped items. The merge pipeline attaches matching rows to **activeFeatures**.
+- **Which invocation paths see it** — Hooks run over **activeFeatures** (all types together). Weapon **tag** names on a roll are matched to a row via helpers in **`game-table-mechanics.js`** (e.g. `resolveWeaponTagDescriptor`) that scan **activeFeatures** — not a separate tag registry import.
 
 There is no behavioral branching on “source type.” `**source`** and `**sourceType`** on descriptors are for UI only (badges, toggle keys). Dispatch does not check them.
+
+**Authoring reference:** `docs/feature-authoring-guide.md`, `docs/v2-code-conventions.md`.
 
 ---
 
@@ -154,7 +156,7 @@ Object passed to **onBanner** and (at ack time) into **onChipAck** / **onChipRej
 
 ### 4.2 entity (character / target / char)
 
-Returned by **wrapEntity(el, updateActiveElement, options?)** from `entity.js`. Every hook that receives a “character” or “target” gets this wrapper.
+Returned by **wrapEntity(el, updateActiveElement, options?)** from **`src/client/lib/table-entity-roll.js`** (re-exported by **`game-table-mechanics.js`**). Every hook that receives a “character” or “target” gets this wrapper.
 
 **Identity:** instanceId, id (alias), name, class, maxStress, maxHp, maxHope, maxArmor.  
 **Snapshot getters:** currentStress, currentHp, hope, currentArmor (reflect in-call mutations).  
@@ -164,7 +166,7 @@ Returned by **wrapEntity(el, updateActiveElement, options?)** from `entity.js`. 
 
 ### 4.3 roll
 
-Returned by **wrapRoll(roll, displayStore?, characterInstanceId?)** from `roll.js`. `wrapBanner` is an alias. The **pre-roll** roll (before the roll is sent) is a separate wrapper built in the view with the same semantic methods.
+Returned by **wrapRoll(roll, displayStore?, characterInstanceId?)** from **`src/client/lib/table-entity-roll.js`**. **`wrapBanner`** is exported from the same module. The **pre-roll** roll (before the roll is sent) is a separate wrapper built in the view with the same semantic methods.
 
 **Read-only / derived:** isWithFear, isWithHope, isReaction, isMine, hasDuality, hasDamage, isSuccess, isFailure, hasExperience, attackRange, trait (e.g. { name: 'Agility' }).  
 **Sub-item getters:** attackRoll, damageRoll (wrapped sub-items with .values(), .hasValue(n) or null).  
@@ -244,29 +246,21 @@ Passed in the **context** to **cardChips.onToggle** when the GM acknowledges the
 
 ## 5. Hook dispatch
 
-**Map-based (feature name → descriptor):**  
+**Shipped client (merged `activeFeatures`):**
 
-- **runHook(featureMap, tagNames, hookName, context)** — Fire-and-forget; calls feature[hookName](context) for each feature in tagNames. Injects **feature** (descriptor) into context.  
-- **runPipelineHook(featureMap, tagNames, hookName, initialValue, context)** — Each feature gets (currentValue, context) with **feature** (descriptor) in context; returns new value. Sorted by priority (default 50; lower first).  
-- **runAsyncPipelineHook(...)** — Async variant.
+- **`runCharacterHook(activeFeatures, hookName, context)`** — Fire-and-forget over the flat list. Injects **`source`** (`feature.source`) and **`feature`** (descriptor). Implemented in **`src/client/lib/feature-hook-dispatch.js`** and re-exported by **`src/client/lib/game-table-mechanics.js`**.
 
-**Array-based (activeFeatures):**  
-
-- **runCharacterHook(activeFeatures, hookName, context)** — Fire-and-forget over flat list. Injects **source**: feature.source and **feature** (descriptor).  
-- **runCharacterPipelineHook(activeFeatures, hookName, initialValue, context)** — Pipeline over activeFeatures; (value, context) with **source** and **feature** (descriptor) per participant.  
-- **runCharacterAsyncPipelineHook(...)** — Async pipeline over activeFeatures; same context shape.
+**Historical (removed Phase 1 stack):** Map-based **`runHook` / `runPipelineHook`** over separate feature maps, and **`runCharacterPipelineHook`**, lived under the deleted **`src/features/`** tree. The Game Table no longer bundles those dispatchers; iterate **`activeFeatures`** in host code or use the V2 engine / **`game-table-mechanics.js`** resolvers for tag-scoped behavior.
 
 ---
 
 ## 6. Registries and imports
 
-- **Origin:** originFeatures from `src/features/registry.js` (merge of ancestry + community). Single lookup for banner reactions, chips, character computation.
-- **Weapons:** weaponFeatures from `src/features/registry.js`.
-- **Armor:** armorFeatures from `src/features/registry.js`.
-- **Classes:** classFeatures, classFeatureNameToClass from `src/features/registry.js`.
-- **Entity/roll:** wrapEntity, wrapRoll from `src/features/entity.js`, `src/features/roll.js`.
-- **Lifecycle:** runBeforeMarkStress, runBeforeMarkHP, runBeforeMarkArmor from `src/client/lib/origin-lifecycle.js`.
-- **Hooks:** runHook, runPipelineHook, runAsyncPipelineHook, runCharacterHook, runCharacterPipelineHook, runCharacterAsyncPipelineHook from `src/features/hooks.js`.
+- **V2 registry:** `src/features-v2/registry.js` composes class, subclass, ancestry, community, weapon/armor property, ability, beastform, and other modules for **`loadCharacterFeatures`** / **`character-calc`**. Character elements carry merged **`activeFeatures`** (flat descriptor rows), not a separate Phase 1 registry import.
+- **Entity/roll wrappers:** **`wrapEntity`**, **`wrapRoll`**, **`wrapBanner`** — `src/client/lib/table-entity-roll.js` (re-exported by **`game-table-mechanics.js`**).
+- **Character hook dispatch:** **`runCharacterHook`** — `src/client/lib/feature-hook-dispatch.js` (re-exported by **`game-table-mechanics.js`**).
+- **Weapon/armor tag resolution (no registry map import):** **`resolveWeaponTagDescriptor`**, **`resolveParryWeaponFeature`**, and related helpers in **`game-table-mechanics.js`** read **`activeFeatures`** on the character element.
+- **Lifecycle:** `runBeforeMarkStress`, `runBeforeMarkHP`, `runBeforeMarkArmor` from `src/client/lib/origin-lifecycle.js` (iterate **`activeFeatures`**).
 
 ---
 
@@ -345,6 +339,6 @@ Rows = hooks; columns = context subdocuments (Section 4), ordered by how many ho
 - **Style:** Prefer arrow functions for one-line hook or chip fields. Use method shorthand for multi-statement bodies. Exception: write onBanner(banner) { ... } in method shorthand for readability.
 - **Do not duplicate feature names.** The system injects the current feature name. Never pass _featureName, featureKey, or the feature name as a string literal inside chip descriptors, isVisible, or similar; use the injected key or resetsOn usage tracking instead.
 - **Imitate existing features.** Before adding a new one, find a similar feature in the codebase and copy its structure (e.g. Fearless for fear→hope, Thick Skin for target chips, Retracting Claws for virtual weapons, Galapa Retract or Fungril for card chips).
-- **Where to add a feature:** Ancestry → `src/features/ancestries/<AncestryName>.js` + ancestryModules in ancestries/index.js. Community → `src/features/communities/<CommunityName>.js` + communityModules in communities/index.js. Weapon → `src/features/weapons/<FeatureName>.js` + builderDict in weapons/index.js. Armor → `src/features/armor/<FeatureName>.js` + builderDict in armor/index.js. Class → `src/features/classes/<ClassName>.js` + merge in classes/index.js. One file per ancestry; one file per community.
+- **Where to add a feature:** Add or edit a module under **`src/features-v2/`** (e.g. `ancestries/`, `communities/`, `weapon_properties/`, `armor_properties/`, `classes/`, …) and wire it through the appropriate **`index.js`** + **`registry.js`**. Follow **`docs/feature-authoring-guide.md`** and **`docs/v2-code-conventions.md`** — do not reintroduce the removed **`src/features/`** tree as the implementation path.
 - **Descriptions from the SRD.** Use the SRD text for ancestry/community descriptions and for each feature. Bold resource costs with **...** to match existing conventions.
 
