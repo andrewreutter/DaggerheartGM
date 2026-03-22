@@ -3,6 +3,8 @@
 This file is read by the validation agent **at the start of every batch**.
 Add new rules here at any time — they will be enforced on the next batch.
 
+A **subset** of mechanical rules is also enforced by `npm run validate:v2-preflight` (see `scripts/validate-v2-conventions-preflight.mjs`). Validation agents still apply this full document; preflight does not replace phrase-by-phrase review.
+
 Each rule has a short **ID** (for referencing in Notes), a **description**,
 and a **✗ Bad / ✓ Good** example where helpful.
 
@@ -653,3 +655,99 @@ dispatchStateChangeHooks(state, flatFeatures, mutations);
 ```
 
 **Until** the client wires this path for V2, `onStateChange` is **engine-complete** and covered by unit tests; features can still implement it for when integration lands.
+
+---
+
+## CONV-031 — Pool-specific rerolls: Hope/Fear, GM die, or damage dice
+
+`rerollDie` payloads use `rollKey` + `dieType` (and sometimes `dieName`):
+
+| Pool | `rollKey` | `dieType` | Notes |
+|------|-----------|-----------|--------|
+| PC duality | `'action'` | `'hopeDie'` \| `'fearDie'` | `hopeDie.reroll()` / `fearDie.reroll()` |
+| Adversary / GM attack | `'action'` | `'gmDie'` | Adversaries do **not** roll Hope/Fear; use `gmDie.reroll()` (e.g. Wizard **Not This Time** on the attack banner). |
+| Damage | `'damage'` | `'damageDie'` | Requires `dieName` matching `rolls.damage.dice[].name`. Use `table.rolls.damage.rerollAllDice()` to queue one mutation per die. |
+
+```js
+// ✗ Bad — adversary attack banner has no Hope/Fear
+table.rolls?.action?.hopeDie?.reroll();
+
+// ✓ Good — adversary attack (GM die)
+table.rolls?.action?.gmDie?.reroll();
+
+// ✓ Good — damage-only review
+table.rolls?.damage?.rerollAllDice();
+```
+
+---
+
+## CONV-032 — `table.me` is always the feature owner; token moves use `table.tokenMove.mover`
+
+In **`dispatchTokenMoveHooks`** (and any future hook that mixes movement with features), **`table.me`** must remain the **feature owner** (`_ownerInstanceId`). The actor whose token moved is **`table.tokenMove.mover`** only. Do not set `_ownerInstanceId` to the mover for AoO-style features — that breaks predicates and resource methods.
+
+```js
+// ✗ Bad — treating the mover as “me”
+// (hypothetical wrong dispatch setting _ownerInstanceId = moverInstanceId for everyone)
+
+// ✓ Good — reactor is me; mover is on tokenMove
+onTokenMove: when(
+  (table) => table.tokenMove?.mover?.lastPosition?.rangeFrom(table.me) === 'melee',
+  ...
+)
+```
+
+**Related:** `docs/feature-authoring-guide.md` — `hooks.onTokenMove`, `table.tokenMove`.
+
+---
+
+## CONV-033 — Prefer `table.me.actionLoop` over `table.top.broadcast` for feature-driven prompts
+
+**Do not** use `table.top.broadcast()` for combat opportunities, reaction prompts, or any in-fiction notice tied to a **character** and a **mechanic**. Those must use **`table.me.actionLoop(title, description, opts?)`**, which queues an `actionLoop` mutation scoped to the actor and matches how the Game Table surfaces banners.
+
+```js
+// ✗ Bad — generic log line; easy to miss in integration
+table.top.broadcast(`${table.me.name} may take an Attack of Opportunity…`);
+
+// ✓ Good — structured action loop for the owning character
+table.me.actionLoop(
+  'Attack of Opportunity',
+  `Make a reaction roll vs ${mover.name}'s Difficulty (${dc}).`
+);
+```
+
+**`table.top.broadcast`** is reserved for **rare** cases: e.g. pure environment / GM voice with **no** owning actor, or tooling — not for SRD feature outcomes. If in doubt, use `actionLoop` with a descriptive `title`.
+
+**Related:** Feature Authoring Guide §C.1 (`table.top.broadcast`).
+
+---
+
+## CONV-034 — Beastform modules export features like weapon/armor properties
+
+Each `src/features-v2/beastforms/<Name>.js` file exports **named feature objects** (`{ name, description, … }` — no SRD `id` in source) and a single **`features`** array listing them in SRD order. Shared rules text (e.g. **Fragile**) lives in `beastforms/shared/`. **`marryBeastformFeatures`** in `beastforms/marry.js` merges those objects with generated JSON (`BEASTFORM_ITEMS`) by **`name`**, attaching stable **`id`** and **`type`**. The barrel `beastforms/index.js` performs that marriage; do not hand-copy ids into feature modules.
+
+```js
+// ✗ Bad — merge functions and ids duplicated from JSON
+export function mergeAgileScoutRow(row) {
+  return { ...row, features: [{ id: 'srd-bst-…', name: 'Agile', … }] };
+}
+
+// ✓ Good — clean exports; registry marries ids
+export const Agile = { name: 'Agile', description: '…' };
+export const features = [Agile, Fragile];
+```
+
+---
+
+## CONV-035 — Shared option state: `table.source.get` / `table.source.set`
+
+For **class**, **subclass**, **ancestry**, and **community** options, the registry row may define **`sourceScopeKey`** (one string bag name under `character.featureState`). **`loadCharacterFeatures`** copies that onto each feature as **`_sourceScopeKey`** and sets **`_sourceObject`** to the row; **`buildTableSnapshot`** can also take the scope from **`_sourceObject.sourceScopeKey`** alone. While evaluating a feature from that option, **`table.source`** is the registry row **plus** `get(key)` and `set(key, value)` that read/write that shared bag and queue **`setFeatureState`** — same mechanism as manual `queueInternalMutation(table, 'setFeatureState', { featureKey, key, value })`, but author-facing. Do **not** repeat **`_sourceScopeKey`** on every feature export unless you have a test harness without the loader; use **`_sourceScopeKey`** or **`_sourceObject: { sourceScopeKey }`** only in those tests. Do not put runtime state on the raw registry object; only use `table.source.set`.
+
+```js
+// ✓ Good — shared Warden subclass state
+table.source.set('channeledElement', 'air');
+
+// ✗ Bad — magic string + boilerplate when sourceScopeKey is available
+queueInternalMutation(table, 'setFeatureState', { featureKey: 'WardenOfTheElements', key: 'channeledElement', value: 'air' });
+```
+
+**Related:** Feature Authoring Guide §2.1 (`table.source`).

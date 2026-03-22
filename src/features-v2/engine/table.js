@@ -24,9 +24,14 @@
  *     useArmorByTargetId: object,  // { [targetInstanceId]: boolean } — VTT/banner: committed to spend armor on that target for this hit
  *     rollText: string,
  *     // In effects[], entries with type 'damage' may include useArmor: boolean (mirrors useArmorByTargetId for that target).
+ *     // Reaction context (optional): when type === 'reaction', the VTT sets this so features know *why* the reaction fired.
+ *     // leaveMelee — a foe is attempting to leave your Melee range (Attack of Opportunity, etc.).
+ *     reactionContext: { kind: 'leaveMelee', moverInstanceId: string } | undefined,
+ *     // Tag Team (co-op): initiator is `actorInstanceId`; partner is named explicitly for Hope-cost math.
+ *     tagTeamPartnerInstanceId: string | undefined,
  *   },
  *   rolls: {
- *     action: object,              // { hopeDie, fearDie, dice, statics, isSuccess, isCritical }
+ *     action: object,              // { hopeDie, fearDie, gmDie, dice, statics, isSuccess, isCritical }; swapHopeFear() → swapHopeFearDice mutation
  *     damage: object,              // { dice, statics }
  *     other: object,               // dynamic extra rolls keyed by name
  *   },
@@ -35,6 +40,9 @@
  *   _mutationBatch: object[],      // optional; read-only description of the last applied mutation
  *                                   // batch (e.g. from dispatchStateChangeHooks). Exposed on the
  *                                   // snapshot as table.mutationBatch (empty array when absent).
+ *   _tokenMove: { moverInstanceId: string },  // set only during dispatchTokenMoveHooks — which token
+ *                                               // just moved (post-move positions on elements;
+ *                                               // _previousPositions[moverId] = prior coords for lastPosition)
  * }
  */
 
@@ -42,6 +50,12 @@ const MUTATIONS_KEY = Symbol('mutations');
 
 /** One SRD “handful” of gold in the character’s integer `gold` field (base‑9 inventory). */
 export const GOLD_COINS_PER_HANDFUL = 9;
+
+/** Core rules: each PC may initiate a Tag Team Roll this many times per session before features add extras. */
+export const DEFAULT_TAG_TEAM_INITIATIONS_PER_SESSION = 1;
+
+/** Core rules: Hope spent by the initiator to start a Tag Team Roll (before partner discounts like **Camaraderie**). */
+export const DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST = 3;
 
 // ---------------------------------------------------------------------------
 // Die rolling
@@ -122,6 +136,8 @@ function buildWeaponView(w, rangeOverrides, weaponRenderHints) {
     id,
     name: w.name ?? 'Unknown Weapon',
     tier: parseInt(w.tier) || 1,
+    /** Band from the weapon item before `rangeOverrides` (Reach, Spirit Weapon, etc.). */
+    baseRange: baseRange,
     range: (rangeOverrides && baseRange && rangeOverrides[baseRange]) ?? baseRange,
     trait: w.trait ?? null,
     damage: w.damage ?? null,
@@ -189,14 +205,231 @@ function buildActor(element, gameState, mutations) {
         : {};
     },
 
+    /**
+     * When true, domain spell cards in loadout should not be cast (Druid **Beastform** — merged from
+     * `applyDeclarativeFeatures` → `domainLoadoutDisabled`).
+     */
+    domainLoadoutDisabled: isChar ? element.domainLoadoutDisabled === true : false,
+
     /** Gold carried (coins); used by spendGold / Greedy et al. */
     gold: element.gold ?? 0,
+
+    /**
+     * SRD Beastform rows for this character (tier-filtered), if the host merged them via
+     * `attachBeastformOptions` — used by Druid **Beastform** / **Evolution** `isSelect` cards.
+     */
+    get beastformOptions() {
+      if (!isChar) return [];
+      const o = element._beastformOptions;
+      return Array.isArray(o) ? o : [];
+    },
+
+    /**
+     * True while this character has an active beastform (Phase 1 **`element.activeBeastform`**
+     * with `id` / `beastformId`, per-element **`featureState`**, or top-level **`gameState.featureState`**
+     * Beastform / Evolution). Used to disable **Beastform** / **Evolution** transform cards until they drop out.
+     */
+    get inBeastform() {
+      if (!isChar) return false;
+      const ab = element.activeBeastform;
+      if (ab && typeof ab === 'object' && (ab.id || ab.beastformId)) return true;
+      const efs = element.featureState;
+      if (efs?.Beastform?.activeBeastform?.beastformId || efs?.Evolution?.activeBeastform?.beastformId) {
+        return true;
+      }
+      const fs = gameState.featureState;
+      return !!(
+        fs?.Beastform?.activeBeastform?.beastformId || fs?.Evolution?.activeBeastform?.beastformId
+      );
+    },
 
     // Character level (1–10 in SRD; distinct from proficiency)
     level: element.level ?? 1,
 
+    /**
+     * Character tier (1–4), used for Beastform eligibility and similar. Falls back from `level`
+     * when `tier` is absent: L1 → T1, L2–4 → T2, L5–7 → T3, L8+ → T4.
+     */
+    tier:
+      element.tier != null
+        ? Number(element.tier) || 1
+        : (() => {
+            const lv = Number(element.level) || 1;
+            if (lv >= 8) return 4;
+            if (lv >= 5) return 3;
+            if (lv >= 2) return 2;
+            return 1;
+          })(),
+
+    /** SRD class id (e.g. `srd-cls-bard`) when present on the character element. */
+    classId: isChar ? element.classId ?? null : null,
+
+    /** SRD subclass id (e.g. `srd-sub-wordsmith`) when present on the character element. */
+    subclassId: isChar ? element.subclassId ?? null : null,
+
+    /**
+     * Which trait key is this character's **Spellcast** trait for their subclass (e.g. `'presence'`).
+     * Used with `traits[spellcastTrait]` for mechanics that roll or count Spellcast dice (e.g. Seraph **Prayer Dice**).
+     */
+    spellcastTrait: isChar ? element.spellcastTrait ?? null : null,
+
+    /**
+     * **Contacts Everywhere** session cap (merged from `applyDeclarativeFeatures`; **Reliable Backup** → 3).
+     * Drives `frequencyMaxUses` on that feature’s card chip.
+     */
+    contactsEverywhereSessionUses: isChar ? Math.max(1, Math.floor(Number(element.contactsEverywhereSessionUses)) || 1) : 1,
+
+    /**
+     * When true, **Nightwalker** **Shadow Stepper** uses Very Far range (from **Fleeting Shadow** via `applyDeclarativeFeatures` / `mergeV2DeclarativeSheetOverlay`).
+     */
+    shadowStepperVeryFarUnlocked: isChar ? element.shadowStepperVeryFarUnlocked === true : false,
+
     // Experiences
     experiences: element.experiences || [],
+
+    /**
+     * **Runtime modifier tokens** (Phase 1 parity): `element.activeModifiers` is an array of
+     * `{ id, name, dice?, value?, mode?, bonus?, trait?, type?, refreshOn? }` — the same shape the
+     * Game Table persists ([`CHARACTER_RUNTIME_KEYS`](/src/client/lib/table-ops.js)). Use
+     * `addActiveModifier` / `removeActiveModifier` to queue mutations; the host merges onto the element.
+     */
+    get activeModifiers() {
+      if (!isChar) return [];
+      const arr = element.activeModifiers;
+      return Array.isArray(arr) ? arr.map((m) => (m && typeof m === 'object' ? { ...m } : m)) : [];
+    },
+
+    /**
+     * Append one modifier token for this character (queues `appendActiveModifier`).
+     * @param {object} mod — must include **`id`** and **`name`** (e.g. Bard **Rally**: `{ id, name: 'Rally Die', dice: 'd6', type: 'rally', refreshOn: 'session' }`).
+     */
+    addActiveModifier(mod) {
+      if (!isChar) return;
+      if (!mod || typeof mod !== 'object' || mod.id == null || mod.name == null) {
+        throw new Error('addActiveModifier requires a modifier object with id and name');
+      }
+      addMutation(mutations, 'appendActiveModifier', { instanceId, modifier: { ...mod } });
+    },
+
+    /**
+     * Remove a modifier by **`id`** (queues `removeActiveModifier`).
+     */
+    removeActiveModifier(modifierId) {
+      if (!isChar) return;
+      if (modifierId == null || modifierId === '') return;
+      addMutation(mutations, 'removeActiveModifier', { instanceId, id: String(modifierId) });
+    },
+
+    /**
+     * **Seraph — Prayer Dice** (session pool of d4 face values). Host persists `element.prayerDice.pool`.
+     */
+    get prayerDice() {
+      if (!isChar) return null;
+      const p = element.prayerDice;
+      const pool = p && typeof p === 'object' && Array.isArray(p.pool) ? [...p.pool] : [];
+      return { pool };
+    },
+
+    /**
+     * Replace the Prayer Dice pool (queues `setPrayerDicePool`). Call from `onSessionStart` after rolling.
+     */
+    setPrayerDicePool(pool) {
+      if (!isChar) return;
+      const arr = Array.isArray(pool) ? pool.map((x) => Math.round(Number(x)) || 0) : [];
+      addMutation(mutations, 'setPrayerDicePool', { instanceId, pool: arr });
+    },
+
+    /**
+     * Remove one die from the pool by index after spending (queues `removePrayerDieAt`).
+     */
+    removePrayerDieAt(index) {
+      if (!isChar) return;
+      addMutation(mutations, 'removePrayerDieAt', { instanceId, index: Math.floor(Number(index)) });
+    },
+
+    /** Clear the pool at session end (queues `setPrayerDicePool` with an empty array). */
+    clearPrayerDicePool() {
+      if (!isChar) return;
+      addMutation(mutations, 'setPrayerDicePool', { instanceId, pool: [] });
+    },
+
+    /**
+     * Extra Tag Team initiations per session from declarative features (e.g. **Camaraderie** +1).
+     * Host merges from `applyDeclarativeFeatures` onto the character element.
+     */
+    extraTagTeamInitiationsPerSession: isChar
+      ? Math.max(0, Math.floor(Number(element.extraTagTeamInitiationsPerSession) || 0))
+      : 0,
+
+    /**
+     * When an **ally** initiates a Tag Team Roll **with you**, reduce their Hope cost by this amount
+     * (e.g. Camaraderie `1` → ally pays 2 Hope instead of 3). Merged from declarative features.
+     */
+    tagTeamPartnerHopeDiscount: isChar
+      ? Math.max(0, Math.floor(Number(element.tagTeamPartnerHopeDiscount) || 0))
+      : 0,
+
+    /**
+     * Total Tag Team initiations available this session (core allowance + `extraTagTeamInitiationsPerSession`).
+     */
+    get tagTeamInitiationsBudget() {
+      if (!isChar) return 0;
+      return DEFAULT_TAG_TEAM_INITIATIONS_PER_SESSION + this.extraTagTeamInitiationsPerSession;
+    },
+
+    /**
+     * Initiations already used this session. Host persists `tagTeamInitiationsUsedThisSession` on the element.
+     */
+    get tagTeamInitiationsUsedThisSession() {
+      if (!isChar) return 0;
+      return Math.max(0, Math.floor(Number(element.tagTeamInitiationsUsedThisSession) || 0));
+    },
+
+    get tagTeamInitiationsRemaining() {
+      if (!isChar) return 0;
+      return Math.max(0, this.tagTeamInitiationsBudget - this.tagTeamInitiationsUsedThisSession);
+    },
+
+    /**
+     * Spend one initiation slot (queues `setTagTeamInitiationsUsed`). Throws when none remain.
+     */
+    consumeTagTeamInitiation() {
+      if (!isChar) return;
+      const next = this.tagTeamInitiationsUsedThisSession + 1;
+      if (next > this.tagTeamInitiationsBudget) {
+        throw new Error('No Tag Team initiations remaining this session');
+      }
+      addMutation(mutations, 'setTagTeamInitiationsUsed', { instanceId, value: next });
+    },
+
+    /**
+     * Reset session counter (queues `setTagTeamInitiationsUsed` with 0). Call from session-start handling.
+     */
+    resetTagTeamInitiationsForSession() {
+      if (!isChar) return;
+      addMutation(mutations, 'setTagTeamInitiationsUsed', { instanceId, value: 0 });
+    },
+
+    /** Adversary Difficulty (reaction rolls vs this stat block). Characters use `evasion` for defense instead. */
+    difficulty: element.difficulty ?? null,
+
+    /**
+     * Runtime modifier to base Difficulty (merged from **`runtimeStatMod`** mutations with `stat: 'difficulty'`).
+     * **Adversaries only** — `null` on characters. Hosts persist `difficultyMod` on the element;
+     * reaction rolls should compare against **`effectiveDifficulty`**, not raw `difficulty` alone.
+     */
+    difficultyMod: isAdversary ? element.difficultyMod ?? 0 : null,
+
+    /**
+     * **Adversaries only** — base `difficulty` + `difficultyMod`. Use for DC checks vs this stat block.
+     * `null` on characters.
+     */
+    get effectiveDifficulty() {
+      if (!isAdversary) return null;
+      const b = element.difficulty != null ? Number(element.difficulty) : 0;
+      const m = element.difficultyMod != null ? Number(element.difficultyMod) : 0;
+      return b + m;
+    },
 
     // Position (for range calculations)
     tokenX: element.tokenX ?? null,
@@ -207,6 +440,32 @@ function buildActor(element, gameState, mutations) {
     hasCondition(name) {
       return (element.conditions || []).includes(name);
     },
+
+    /**
+     * Instance id of this actor's **Focus** target (e.g. Ranger's Focus), if any.
+     * Reads `element.focusTargetInstanceId` or legacy `element.focusTargetId`.
+     */
+    focusTargetInstanceId: element.focusTargetInstanceId ?? element.focusTargetId ?? null,
+
+    /**
+     * True when `otherActor` is this actor's current Focus target.
+     */
+    isFocusTarget(otherActor) {
+      const fid = element.focusTargetInstanceId ?? element.focusTargetId ?? null;
+      if (fid == null || !otherActor) return false;
+      return otherActor.instanceId === fid;
+    },
+
+    /**
+     * When true, the next weapon attack should spend 1 Hope for a Ranger's Focus attempt (table parity with v1
+     * `rangerFocusOnNextAttack` on the character element).
+     */
+    rangerFocusOnNextAttack: element.rangerFocusOnNextAttack === true,
+
+    /**
+     * **Adversaries:** name of the character who currently has this creature as Ranger's Focus (v1 `focusedBy`).
+     */
+    focusedBy: element.focusedBy ?? null,
 
     // Weapons — read from element; range overrides (from Reach etc.) applied via element._rangeOverrides
     get primaryWeapon() {
@@ -330,6 +589,60 @@ function buildActor(element, gameState, mutations) {
     addExperienceBonus(experienceId, amount = 1) {
       addMutation(mutations, 'addExperienceBonus', { instanceId, experienceId, amount });
     },
+
+    /**
+     * Queue a **runtime** additive change to a named stat on **this** actor (session / encounter modifiers).
+     * Queues `runtimeStatMod` — the host merges `delta` into the right element field for `stat`.
+     *
+     * Supported `stat` keys:
+     * - **`difficulty`** — adversaries only; host adds `delta` to `element.difficultyMod` (e.g. Bard **Make a Scene**).
+     * Additional keys can be added later without new method names.
+     *
+     * @param {string} stat
+     * @param {number} delta
+     */
+    applyStatMod(stat, delta) {
+      const key = String(stat);
+      const d = Number(delta);
+      if (!Number.isFinite(d) || d === 0) return;
+      if (key === 'difficulty') {
+        if (!isAdversary) {
+          throw new Error('applyStatMod("difficulty"): only adversaries have Difficulty');
+        }
+        addMutation(mutations, 'runtimeStatMod', { instanceId, stat: 'difficulty', delta: d });
+        return;
+      }
+      throw new Error(`applyStatMod: unsupported stat "${key}"`);
+    },
+
+    /**
+     * Set or clear this actor's Focus target (cross-action persistent state on the element).
+     * Queues `setFocusTarget` — hosts should persist `focusTargetInstanceId` on the element
+     * (and may mirror to legacy `focusTargetId` for table state).
+     */
+    setFocusTarget(targetInstanceId) {
+      const v = targetInstanceId == null ? null : String(targetInstanceId);
+      addMutation(mutations, 'setFocusTarget', { instanceId, focusTargetInstanceId: v });
+    },
+
+    /**
+     * Arm or disarm the next weapon attack as a Ranger's Focus attempt (queues `setRangerFocusOnNextAttack`).
+     */
+    setRangerFocusOnNextAttack(value) {
+      addMutation(mutations, 'setRangerFocusOnNextAttack', {
+        instanceId,
+        value: value === true,
+      });
+    },
+
+    /**
+     * **Adversaries:** set who has this creature as Focus (`focusedBy` string or null). Host applies to adversary elements.
+     */
+    setFocusedBy(nameOrNull) {
+      const v = nameOrNull == null || nameOrNull === '' ? null : String(nameOrNull);
+      addMutation(mutations, 'setFocusedBy', { instanceId, focusedBy: v });
+    },
+
     actionLoop(title, description, opts = {}) {
       const { trait, difficulty } = opts;
       addMutation(mutations, 'actionLoop', { instanceId, title, description, trait, difficulty });
@@ -367,6 +680,33 @@ function buildActor(element, gameState, mutations) {
         addMutation(mutations, 'loadoutSwapCard', { instanceId, currentCardId, newCardId });
       },
     },
+
+    /**
+     * Domain spell cards in the character's **loadout** (active). Read-only; use `moveDomainCardToVault`.
+     * Each entry should include `id` and `level` (or `tier`) for mechanics that depend on card level.
+     */
+    get domainLoadout() {
+      const raw = element.domainLoadout;
+      return Array.isArray(raw) ? raw.map((c) => (c && typeof c === 'object' ? { ...c } : c)) : [];
+    },
+
+    /**
+     * Domain spell cards in the **vault** (inactive). Read-only; host moves cards here with
+     * `domainCardMoveToVault` mutations.
+     */
+    get domainVault() {
+      const raw = element.domainVault;
+      return Array.isArray(raw) ? raw.map((c) => (c && typeof c === 'object' ? { ...c } : c)) : [];
+    },
+
+    /**
+     * Queue moving one domain card from loadout to vault by `id`. The VTT applies the structural
+     * change to the character element's `domainLoadout` / `domainVault` arrays.
+     */
+    moveDomainCardToVault(cardId) {
+      if (cardId == null || cardId === '') return;
+      addMutation(mutations, 'domainCardMoveToVault', { instanceId, cardId: String(cardId) });
+    },
   };
 }
 
@@ -389,7 +729,9 @@ function buildRollObject(rollData, mutations, rollKey) {
     ...(rollKey === 'action' && {
       hopeDie: rollData.hopeDie
         ? {
-            value: rollData.hopeDie.value,
+            get value() {
+              return rollData.hopeDie.value;
+            },
             reroll() {
               addMutation(mutations, 'rerollDie', { rollKey, dieType: 'hopeDie' });
             },
@@ -400,12 +742,26 @@ function buildRollObject(rollData, mutations, rollKey) {
         : null,
       fearDie: rollData.fearDie
         ? {
-            value: rollData.fearDie.value,
+            get value() {
+              return rollData.fearDie.value;
+            },
             reroll() {
               addMutation(mutations, 'rerollDie', { rollKey, dieType: 'fearDie' });
             },
             setDie(die) {
               addMutation(mutations, 'setDie', { rollKey, dieType: 'fearDie', die });
+            },
+          }
+        : null,
+      /** GM / adversary attack roll die (d20 + trait vs Evasion — no Hope/Fear). */
+      gmDie: rollData.gmDie
+        ? {
+            value: rollData.gmDie.value,
+            reroll() {
+              addMutation(mutations, 'rerollDie', { rollKey, dieType: 'gmDie' });
+            },
+            setDie(die) {
+              addMutation(mutations, 'setDie', { rollKey, dieType: 'gmDie', die });
             },
           }
         : null,
@@ -445,6 +801,43 @@ function buildRollObject(rollData, mutations, rollKey) {
       this.dice = this.dice.filter((d) => d.name !== name);
     },
   };
+
+  if (rollKey === 'action') {
+    /**
+     * Swap Hope and Fear d12 **face values** after the roll (e.g. Vengeance **Nemesis**).
+     * Queues `swapHopeFearDice` for the host/banner to persist; updates backing `rolls.action` so
+     * subsequent reads in the same snapshot see swapped values.
+     */
+    obj.swapHopeFear = function swapHopeFear() {
+      const h = rollData.hopeDie;
+      const f = rollData.fearDie;
+      if (!h || !f || h.value == null || f.value == null) return;
+      addMutation(mutations, 'swapHopeFearDice', { rollKey });
+      const tmp = h.value;
+      h.value = f.value;
+      f.value = tmp;
+    };
+  }
+
+  if (rollKey === 'damage') {
+    obj.rerollAllDice = function rerollAllDice() {
+      for (const d of this.dice) {
+        if (d?.name != null) {
+          addMutation(mutations, 'rerollDie', { rollKey, dieType: 'damageDie', dieName: d.name });
+        }
+      }
+    };
+    /** Queue a reroll for each damage die whose face value is strictly less than `maxExclusive` (e.g. Proficiency). */
+    obj.rerollDiceBelow = function rerollDiceBelow(maxExclusive) {
+      const cap = Number(maxExclusive);
+      if (!(cap > 0)) return;
+      for (const d of this.dice) {
+        if (d?.name != null && d.value != null && d.value < cap) {
+          addMutation(mutations, 'rerollDie', { rollKey, dieType: 'damageDie', dieName: d.name });
+        }
+      }
+    };
+  }
 
   return obj;
 }
@@ -494,11 +887,11 @@ function buildActionContext(gameState, actorMap, mutations) {
   const type = actionData.type;
 
   // Types that use duality dice (hope + fear d12s)
-  const DUALITY_TYPES = new Set(['action', 'trait', 'attack', 'spellcast', 'reaction']);
+  const DUALITY_TYPES = new Set(['action', 'trait', 'attack', 'spellcast', 'reaction', 'tagTeam']);
   // Types that generate Hope/Fear and can move the spotlight
-  const HOPE_FEAR_TYPES = new Set(['action', 'trait', 'attack', 'spellcast']);
+  const HOPE_FEAR_TYPES = new Set(['action', 'trait', 'attack', 'spellcast', 'tagTeam']);
   // Types where the trait is locked in (cannot be mutated by features)
-  const TRAIT_FINAL_TYPES = new Set(['trait', 'attack', 'spellcast', 'reaction']);
+  const TRAIT_FINAL_TYPES = new Set(['trait', 'attack', 'spellcast', 'reaction', 'tagTeam']);
 
   const ctx = {
     type,
@@ -519,6 +912,16 @@ function buildActionContext(gameState, actorMap, mutations) {
     /** Per-target armor commitment for this action (banner sync). Missing key = not committed. */
     useArmorByTargetId: actionData.useArmorByTargetId,
 
+    /**
+     * Why this reaction was triggered. Set by the VTT when the player declares
+     * a reaction (e.g. `kind: 'leaveMelee'` when a foe leaves Melee).
+     * `moverInstanceId` should match the adversary target (usually `targetInstanceIds[0]`).
+     */
+    reactionContext: actionData.reactionContext,
+
+    // Tag Team (co-op): partner instance id for initiator Hope cost (see `tagTeamInitiatorHopeCost`)
+    tagTeamPartnerInstanceId: actionData.tagTeamPartnerInstanceId ?? null,
+
     // ── Helper booleans ────────────────────────────────────────────────────
     /** True for any roll that uses duality (Hope + Fear) dice. */
     get isDualityRoll() { return DUALITY_TYPES.has(type); },
@@ -526,8 +929,27 @@ function buildActionContext(gameState, actorMap, mutations) {
     get generatesHopeFear() { return HOPE_FEAR_TYPES.has(type); },
     /** True when this roll is a reaction (no Hope/Fear, no spotlight). */
     get isReaction() { return type === 'reaction'; },
+    /** True when the reaction is an interrupt because a foe left Melee range. */
+    get isLeaveMeleeReaction() {
+      return type === 'reaction' && actionData.reactionContext?.kind === 'leaveMelee';
+    },
     /** True when the trait die is locked; false for 'action' where the trait can still change. */
     get traitIsFinal() { return TRAIT_FINAL_TYPES.has(type); },
+
+    /**
+     * Hope the **initiator** pays to start a Tag Team Roll with `tagTeamPartnerInstanceId`.
+     * Core cost is {@link DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST} (3); reduced when the partner has
+     * `tagTeamPartnerHopeDiscount` on their element (e.g. **Camaraderie**).
+     */
+    get tagTeamInitiatorHopeCost() {
+      if (type !== 'tagTeam') return DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST;
+      const pid = actionData.tagTeamPartnerInstanceId;
+      if (pid == null || pid === '') return DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST;
+      const partner = actorMap.get(String(pid));
+      if (!partner) return DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST;
+      const disc = partner.tagTeamPartnerHopeDiscount ?? 0;
+      return Math.max(0, DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST - disc);
+    },
 
     addNarration(text) {
       addMutation(mutations, 'addNarration', { text });
@@ -542,9 +964,101 @@ function buildActionContext(gameState, actorMap, mutations) {
         targetInstanceIds: (rollTargets || []).map((t) => t.instanceId),
       });
     },
+
+    /**
+     * Reduce incoming **physical** damage by a number of HP steps (one threshold
+     * step per point). Mutates pending `{ type: 'damage' }` effects in place.
+     *
+     * Only effects whose `target.instanceId` equals `gameState._ownerInstanceId`
+     * are updated — use from hooks while `isTargeted` (the feature owner is the
+     * damage recipient).
+     */
+    reduceIncomingPhysicalSeverityBySteps(steps = 1) {
+      const n = Math.max(0, Math.floor(Number(steps)) || 0);
+      if (n <= 0) return;
+      const id = gameState._ownerInstanceId;
+      if (!id) return;
+      const list = actionData.effects || [];
+      for (const e of list) {
+        if (
+          e.type === 'damage' &&
+          e.target?.instanceId === id &&
+          e.damageType === 'physical' &&
+          typeof e.amount === 'number' &&
+          e.amount > 0
+        ) {
+          e.amount = Math.max(0, e.amount - n);
+        }
+      }
+    },
+
+    /**
+     * Mutates the first pending `{ type: 'damage' }` effect for `targetInstanceId`, subtracting
+     * `amount` from its numeric `amount` (floored, clamped to ≥ 0). No-op if no matching effect.
+     *
+     * If `targetInstanceId` is not the feature owner (`gameState._ownerInstanceId`), the target must be
+     * **within Far range** of the owner (any band except `veryFar` — i.e. distance ≤ 100').
+     */
+    reducePendingDamageForTarget(targetInstanceId, amount) {
+      const n = Math.max(0, Math.floor(Number(amount)) || 0);
+      if (n <= 0) return;
+      const owner = actorMap.get(gameState._ownerInstanceId);
+      if (!owner) return;
+      const tid = targetInstanceId != null ? String(targetInstanceId) : '';
+      if (!tid) return;
+      const targetActor = actorMap.get(tid);
+      if (!targetActor) return;
+      if (tid !== owner.instanceId) {
+        const band = owner.rangeFrom(targetActor);
+        if (!band || band === 'veryFar') return;
+      }
+      const list = actionData.effects || [];
+      for (const e of list) {
+        if (
+          e.type === 'damage' &&
+          e.target?.instanceId === tid &&
+          typeof e.amount === 'number' &&
+          e.amount > 0
+        ) {
+          e.amount = Math.max(0, e.amount - n);
+          break;
+        }
+      }
+    },
   };
 
   return ctx;
+}
+
+/**
+ * Option row (class/subclass/ancestry/…) plus `get`/`set` for **shared** runtime state
+ * keyed under `featureState[sourceScopeKey]` — same bag for every feature from that option.
+ * Backed by `setFeatureState` mutations; does not mutate the registry object.
+ *
+ * @param {object|null} sourceObject — registry row (`_sourceObject`), or null
+ * @param {string|null} sourceScopeKey — from registry `sourceScopeKey` or `activeFeature._sourceScopeKey`
+ * @param {object} gameState
+ * @param {object} store — mutation store
+ */
+function buildSourceFacade(sourceObject, sourceScopeKey, gameState, store) {
+  if (!sourceScopeKey) return sourceObject;
+
+  if (!gameState.featureState) gameState.featureState = {};
+
+  const base =
+    sourceObject && typeof sourceObject === 'object' ? { ...sourceObject } : {};
+
+  return {
+    ...base,
+    get(key) {
+      return gameState.featureState[sourceScopeKey]?.[key];
+    },
+    set(key, value) {
+      if (!gameState.featureState[sourceScopeKey]) gameState.featureState[sourceScopeKey] = {};
+      gameState.featureState[sourceScopeKey][key] = value;
+      addMutation(store, 'setFeatureState', { featureKey: sourceScopeKey, key, value });
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -591,15 +1105,26 @@ export function buildTableSnapshot(gameState = {}) {
   const sourceObject =
     gameState._sourceObject ?? activeFeature?._sourceObject ?? null;
 
+  const sourceScopeKey =
+    activeFeature?._sourceScopeKey ??
+    (sourceObject && sourceObject.sourceScopeKey) ??
+    null;
+
   const table = {
     /** Feature object for the current hook/chip (set by action loop / tests). */
     get activeFeature() {
       return activeFeature;
     },
 
-    /** Source row (weapon, armor, …) for the active feature when applicable. */
+    /**
+     * Source row (class, subclass, weapon, …) for the active feature when applicable.
+     * When the registry option defines `sourceScopeKey` (or the feature sets `_sourceScopeKey`),
+     * this object also has **`get(key)`** / **`set(key, value)`** for shared option-level state
+     * (`featureState[sourceScopeKey]`), so subclass features can share one bag without
+     * `queueInternalMutation(..., 'setFeatureState', { featureKey: ... })` boilerplate.
+     */
     get source() {
-      return sourceObject;
+      return buildSourceFacade(sourceObject, sourceScopeKey, gameState, store);
     },
 
     // Global state
@@ -658,6 +1183,22 @@ export function buildTableSnapshot(gameState = {}) {
     get mutationBatch() {
       const b = gameState._mutationBatch;
       return Array.isArray(b) ? [...b] : [];
+    },
+
+    /**
+     * Set only while `hooks.onTokenMove` runs (`dispatchTokenMoveHooks`). **`table.me` is always the
+     * feature owner** — use `tokenMove.mover` for the actor whose token moved.
+     */
+    get tokenMove() {
+      const tm = gameState._tokenMove;
+      if (!tm || typeof tm !== 'object' || !tm.moverInstanceId) return undefined;
+      const mid = tm.moverInstanceId;
+      return {
+        moverInstanceId: mid,
+        get mover() {
+          return actorMap.get(mid) || null;
+        },
+      };
     },
 
     /**

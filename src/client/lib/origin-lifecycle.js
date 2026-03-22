@@ -7,7 +7,7 @@
  * Context passed to hooks: character, amount, markSource (reason string), source (contributing item), etc.
  */
 
-import { wrapEntity } from '../../features/entity.js';
+import { wrapEntity } from './table-entity-roll.js';
 
 /**
  * Run onMarkStress handlers for this character. If any returns { cancel: true }, the mark is cancelled.

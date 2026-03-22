@@ -16,6 +16,7 @@ export {
 export { buildTableSnapshot, applyMutations } from './table.js';
 export {
   collectChips,
+  collectChipsForOtherCharacterSheets,
   activateChip,
   resolveChipDisabled,
   deductChipCosts,
@@ -23,9 +24,20 @@ export {
   resetChipFrequency,
   makeChipState,
 } from './chip-system.js';
-export { createActionLoop, dispatchStateChangeHooks } from './action-loop.js';
+export {
+  createActionLoop,
+  collectPhaseChipsOnly,
+  mergeGameStateWithActionConfig,
+  dispatchStateChangeHooks,
+  dispatchSceneEndHooks,
+  dispatchTokenMoveHooks,
+} from './action-loop.js';
 export {
   loadCharacterFeatures,
   applyDeclarativeFeatures,
   mergeDeclarativeFeatureState,
+  attachBeastformOptions,
+  parseBeastformStatBonus,
+  parseBeastformAttackLine,
 } from './feature-loader.js';
+export { findWeaponDamageDieForPool } from './weapon-damage-die.js';

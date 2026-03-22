@@ -38,17 +38,88 @@ instructions or conventions at any time; re-reading ensures you always
 follow the latest version.
 
 ────────────────────────────────────────────────────────
+CROSS-COLLECTION PRIORITY (mandatory)
+────────────────────────────────────────────────────────
+Claim and implement features in this **global** order. **Do not** claim rows
+from a **later** collection while **any** row in an **earlier** collection in
+this list is still `Unclaimed`. Grep `docs/v2-migration-tracker.md` for
+`| Unclaimed |` in these collections (ignore `subclasses/` for gating — see below).
+
+  1. **Abilities** (`abilities/`, domain spell cards) — subject to **Domain
+     abilities — tier order** below
+  2. **Beastforms** (`beastforms/`)
+  3. **Items** (`items/`)
+  4. **Consumables** (`consumables/`)
+
+**Procedure before every claim:** Grep the tracker for `| Unclaimed |` and
+inspect each hit’s **Source File** column (or the row’s `collection/` path).
+Apply the chain **only** to the four collections above:
+
+  - If **any** hit is under `abilities/`, you may **only** claim **Abilities**
+    rows (and you **must** follow tier + priority-domain rules below).
+  - Else if **any** hit is under `beastforms/`, you may **only** claim Beastform rows.
+  - Else if **any** hit is under `items/`, you may **only** claim Item rows.
+  - Else claim **Consumables** rows.
+
+**Not part of this chain:** Row-level **Weapon Properties** and **Subclasses**
+in `docs/v2-migration-to-review.md` use that file for per-feature rows and do
+**not** block Abilities, Beastforms, Items, or Consumables. Claim **subclasses/**
+batches only when you are implementing subclass work; **Unclaimed** subclass
+rows do **not** force you to work on subclasses before other collections.
+**Archived** collections (0 Unclaimed in the Summary table) do not block.
+**Blocked** / **Needs Fix** rows are handled by other agents and do **not**
+count as `Unclaimed` for this gating.
+
+────────────────────────────────────────────────────────
 READING THE TRACKER EFFICIENTLY
 ────────────────────────────────────────────────────────
 The tracker (docs/v2-migration-tracker.md) is large. Do NOT read the
 entire file. Instead:
 
-  1. Read lines 1–20 (the Summary table) to understand global progress.
-  2. To find Unclaimed features: use Grep to search the tracker for
-     `| Unclaimed |` and scan the results to pick your batch.
+  0. Run `npm run v2:queue` — it prints the next **claimable** rows using **Cross-collection priority**,
+     **Domain abilities — tier order**, and Blade/Bone gating (same rules as below). You may also read the
+     **Implementation queue (generated)** section near the top of the tracker (between `<!-- v2-queue:start -->`
+     and `<!-- v2-queue:end -->`); refresh that block after tracker edits with `npm run v2:queue -- --write`.
+  1. Read lines 8–22 (the **Status Summary** table) to understand global progress.
+  2. Apply **Cross-collection priority** above, then find Unclaimed features in
+     the **current** collection: use Grep to search the tracker for
+     `| Unclaimed |` and scan the results to pick your batch (fallback if you cannot run the script).
+     **Domain abilities (`abilities/`):** Rows are grouped under **Tier 1**,
+     **Tier 2**, and **Tier 3** (spell card tier). You may only consider
+     Unclaimed rows in the **current tier** — see **Domain abilities — tier
+     order** below. Within that tier, prefer Unclaimed rows in **priority
+     domains** (Arcana, Codex, Grace, Midnight, Sage, Splendor, Valor) before
+     Blade or Bone — the tracker lists priority domains first in each tier block.
+     Do not grep or read Tier 2/3 tables
+     for new claims until Tier 1 has no `Unclaimed` or `In Progress` rows.
   3. When you need to EDIT a row, read only the section header + the rows
      around the feature you are modifying (use offset/limit).
-  4. After editing, re-read lines 1–20 to verify your Summary table update.
+  4. After editing, re-read lines 8–22 to verify your Summary table update and run `npm run v2:queue -- --write` if you use the generated queue block.
+
+**Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 8–22 when those status counts change. **Not part of cross-collection gating** — see **CROSS-COLLECTION PRIORITY** above.
+
+**Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 8–22 when those status counts change.
+
+**Domain abilities — tier order (mandatory):** The tracker lists all domain spell
+cards in three blocks: **Tier 1** (63 abilities), **Tier 2** (63), **Tier 3** (63).
+Implementation order is **all Tier 1 across every domain**, then **all Tier 2**,
+then **all Tier 3** — do **not** finish one domain’s full 21 cards before touching
+another domain’s Tier 1 cards.
+
+  - **Current tier:** You may only **claim** Unclaimed rows in Tier *N* when **no**
+    row in Tier 1 … Tier *N*−1 has status `Unclaimed` or `In Progress`. (Parallel
+    agents must finish the lower tier before anyone starts the next.)
+  - **Batches:** Every feature in a batch must belong to the **same tier**; still
+    group by **similar mechanical pattern** within that tier (e.g. several Tier 1
+    “Book of …” Codex cards, or several `-Touched` Tier 2 cards across domains).
+  - **Priority domains (within each tier):** Implement **Arcana, Codex, Grace,
+    Midnight, Sage, Splendor, Valor** before **Blade** or **Bone**. Those seven
+    are the domains used by **Bard** (Grace, Codex), **Rogue** (Midnight, Grace),
+    **Seraph** (Splendor, Valor), and **Druid** (Sage, Arcana). You may only
+    **claim** Blade or Bone rows in a tier when **no** row in that tier for any
+    priority domain is still `Unclaimed` or `In Progress`. The tracker sorts rows
+    accordingly within each tier block (priority domains first, then Blade, then
+    Bone).
 
 NEVER read the full tracker file in one pass. Most of it is empty
 Unclaimed rows that waste your context window.
@@ -66,15 +137,23 @@ Status lifecycle for every feature row:
    `docs/v2-blocked-resolutions-done.md`.)
 
 Claiming a batch:
-  1. Pick 3–5 SIMILAR Unclaimed features. Similarity means:
+  1. **Cross-collection priority** must already allow this collection (no
+     `Unclaimed` rows remain in earlier collections). Pick 3–5 SIMILAR Unclaimed
+     features **in the current collection**. Similarity means:
      - Same collection (e.g. all weapon_properties, all Blade abilities)
      - Same mechanical pattern (e.g. all passive stat mods, all card-action
        features with a Hope cost, all advantage triggers)
      - Prefer features from the same file when one file has multiple features
        (e.g. both features of an ancestry, all features of a subclass)
+     **Domain abilities (`abilities/`):** All features in the batch must be from
+     the **same spell card tier** (Tier 1, 2, or 3), and that tier must be the
+     **current tier** per **Domain abilities — tier order** above. Prefer
+     Unclaimed rows from **priority domains** before Blade/Bone when building a
+     batch. Prefer cross-domain batches that share a pattern when it fits (e.g.
+     parallel Tier 1 implementations in multiple priority domains).
      Scan the Unclaimed rows (via Grep) and group by pattern before claiming.
      If no natural group exists, fall back to picking consecutive rows
-     from the same collection.
+     from the same collection (within the allowed tier for `abilities/`).
      - NEVER touch a row already marked In Progress, Fixing, Done, Validating,
        Validated, or Needs Fix.
   2. Generate your unique agent ID NOW (e.g. `impl-<3–4 random chars>`).
@@ -211,9 +290,11 @@ feature had to be skipped/failed, and ⚠️ for Blocked.
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
 Re-read docs/agent-prompts/implementation-agent.md and
-docs/v2-code-conventions.md — then read the tracker Summary (lines 1–20),
-grep for Unclaimed rows, claim 3–5 more similar features → announce →
-implement → mark Done. Always re-read the instructions and conventions;
+docs/v2-code-conventions.md — then read the tracker Summary (lines 8–22),
+apply **Cross-collection priority**, then grep for Unclaimed rows in the allowed
+collection (**in the correct tier and domain priority for `abilities/`** when
+that collection is active), claim 3–5 more
+similar features → announce → implement → mark Done. Always re-read the instructions and conventions;
 the user may have changed them since the last batch.
 
 ────────────────────────────────────────────────────────
@@ -229,6 +310,18 @@ THINGS TO NEVER DO
 - Do NOT skip re-reading docs/v2-code-conventions.md at the start of
   each batch.
 - Do NOT claim a grab-bag of unrelated features. Always group by similarity.
+- Do NOT claim **Tier 2 or Tier 3** domain abilities while **any** Tier 1 row is
+  still `Unclaimed` or `In Progress`. Do NOT claim **Tier 3** while any Tier 2
+  row is still `Unclaimed` or `In Progress`.
+- Do NOT claim **Blade** or **Bone** abilities in a tier while **any** **priority
+  domain** row (Arcana, Codex, Grace, Midnight, Sage, Splendor, Valor) in that
+  **same tier** is still `Unclaimed` or `In Progress`.
+- Do NOT claim `beastforms/`, `items/`, or `consumables/` while **any**
+  **Abilities** row is still `Unclaimed` (per **Cross-collection priority**);
+  do not claim `items/` or `consumables/` while **any** **Beastform** row is
+  still `Unclaimed`; do not claim `consumables/` while **any** **Item** row is
+  still `Unclaimed`. **Subclass** `Unclaimed` rows do **not** block these
+  collections.
 - Do NOT skip the self-check step — catching your own mistakes saves
   an entire validation + fix cycle.
 - Do NOT read the entire tracker file. Use the READING THE TRACKER

@@ -33,6 +33,9 @@ export {
   loadCharacterFeatures,
   applyDeclarativeFeatures,
   mergeDeclarativeFeatureState,
+  attachBeastformOptions,
+  parseBeastformStatBonus,
+  parseBeastformAttackLine,
 } from './engine/index.js';
 
 // Registry

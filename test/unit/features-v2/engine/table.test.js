@@ -80,6 +80,65 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.primaryWeapon?.disabledReason).toBe('Requires Presence ≤ 0');
   });
 
+  it('exposes beastformOptions from element._beastformOptions for characters', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      _beastformOptions: [{ id: 'srd-bst-test', name: 'Test Form', tier: 1 }],
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.beastformOptions).toHaveLength(1);
+    expect(table.me?.beastformOptions[0].id).toBe('srd-bst-test');
+  });
+
+  it('returns [] for beastformOptions on adversaries even if _beastformOptions is set', () => {
+    const adv = mockAdversary({
+      instanceId: 'a1',
+      _beastformOptions: [{ id: 'x', name: 'n', tier: 1 }],
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'a1' }));
+    expect(table.me?.beastformOptions).toEqual([]);
+  });
+
+  it('exposes inBeastform when element has activeBeastform with id', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      _beastformOptions: [{ id: 'srd-bst-test', name: 'Test Form', tier: 1 }],
+      activeBeastform: { id: 'srd-bst-test', name: 'Test Form' },
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.inBeastform).toBe(true);
+  });
+
+  it('exposes inBeastform when element uses beastformId', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      activeBeastform: { beastformId: 'srd-bst-agile-scout' },
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.inBeastform).toBe(true);
+  });
+
+  it('exposes inBeastform from gameState.featureState.Beastform', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'c1',
+      featureState: {
+        Beastform: { activeBeastform: { beastformId: 'srd-bst-agile-scout' } },
+      },
+    }));
+    expect(table.me?.inBeastform).toBe(true);
+  });
+
+  it('inBeastform is false when no active form', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      _beastformOptions: [{ id: 'x', name: 'n', tier: 1 }],
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me?.inBeastform).toBe(false);
+  });
+
   it('separates characters and adversaries', () => {
     const char = mockCharacter({ instanceId: 'c1' });
     const adv = mockAdversary({ instanceId: 'a1' });
@@ -150,6 +209,170 @@ describe('buildTableSnapshot()', () => {
     const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
     expect(table.me?.armorScore).toBe(3);
     expect(table.me?.gold).toBe(18);
+  });
+
+  it('exposes difficulty on adversary actors', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1', difficulty: 12 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'adv-1' }));
+    expect(table.me?.difficulty).toBe(12);
+  });
+
+  it('exposes difficultyMod, effectiveDifficulty on adversaries', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1', difficulty: 12, difficultyMod: -2 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'adv-1' }));
+    expect(table.me?.difficultyMod).toBe(-2);
+    expect(table.me?.effectiveDifficulty).toBe(10);
+  });
+
+  it('queues runtimeStatMod via actor.applyStatMod("difficulty", …)', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1', difficulty: 14 });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'adv-1' }));
+    table.me.applyStatMod('difficulty', -2);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'runtimeStatMod',
+        payload: { instanceId: 'adv-1', stat: 'difficulty', delta: -2 },
+      })
+    );
+  });
+
+  it('applyStatMod("difficulty") throws on a character', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
+    expect(() => table.me.applyStatMod('difficulty', -2)).toThrow(/adversaries/);
+  });
+
+  it('applyStatMod throws for an unknown stat key', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'adv-1' }));
+    expect(() => table.me.applyStatMod('evasion', 1)).toThrow(/unsupported stat/);
+  });
+
+  it('exposes focusTargetInstanceId and isFocusTarget on actors', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const char = mockCharacter({ instanceId: 'char-1', focusTargetInstanceId: 'adv-1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char, adv], _ownerInstanceId: 'char-1' }));
+    expect(table.me?.focusTargetInstanceId).toBe('adv-1');
+    expect(table.me?.isFocusTarget(table.adversaries[0])).toBe(true);
+  });
+
+  it('falls back legacy focusTargetId to focusTargetInstanceId', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const char = mockCharacter({ instanceId: 'char-1', focusTargetId: 'adv-1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char, adv], _ownerInstanceId: 'char-1' }));
+    expect(table.me?.focusTargetInstanceId).toBe('adv-1');
+  });
+
+  it('queues setFocusTarget when table.me.setFocusTarget is called', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
+    table.me.setFocusTarget('adv-9');
+    const mutations = applyMutations(table);
+    expect(mutations.some((m) => m.type === 'setFocusTarget')).toBe(true);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFocusTarget',
+        payload: { instanceId: 'char-1', focusTargetInstanceId: 'adv-9' },
+      })
+    );
+  });
+
+  it('exposes rangerFocusOnNextAttack and focusedBy on actors', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1', focusedBy: 'Aria' });
+    const char = mockCharacter({ instanceId: 'char-1', rangerFocusOnNextAttack: true });
+    const tAdv = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'adv-1' }));
+    const tChar = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
+    expect(tChar.me?.rangerFocusOnNextAttack).toBe(true);
+    expect(tAdv.me?.focusedBy).toBe('Aria');
+  });
+
+  it('queues setRangerFocusOnNextAttack and setFocusedBy mutations', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' }));
+    table.me.setRangerFocusOnNextAttack(true);
+    const m1 = applyMutations(table);
+    expect(m1).toContainEqual(
+      expect.objectContaining({
+        type: 'setRangerFocusOnNextAttack',
+        payload: { instanceId: 'char-1', value: true },
+      })
+    );
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const t2 = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'adv-1' }));
+    t2.me.setFocusedBy('Aria');
+    const m2 = applyMutations(t2);
+    expect(m2).toContainEqual(
+      expect.objectContaining({
+        type: 'setFocusedBy',
+        payload: { instanceId: 'adv-1', focusedBy: 'Aria' },
+      })
+    );
+  });
+
+  it('exposes focus target id on table.me for comparison to table.action.target (no action-level Focus helper)', () => {
+    const char = mockCharacter({ instanceId: 'char-1', focusTargetId: 'adv-1' });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const state = mockGameState({
+      activeElements: [char, adv],
+      _ownerInstanceId: 'char-1',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'char-1',
+        targetInstanceIds: ['adv-1'],
+        effects: [],
+        appliedEffects: [],
+      },
+    });
+    const table = buildTableSnapshot(state);
+    const stored = table.me?.focusTargetInstanceId;
+    const targetId = table.action?.target?.instanceId;
+    expect(stored).toBe('adv-1');
+    expect(targetId).toBe('adv-1');
+    expect(stored === targetId).toBe(true);
+  });
+
+  it('exposes reactionContext and isLeaveMeleeReaction on table.action', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const adv = mockAdversary({ instanceId: 'a1' });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        action: {
+          type: 'reaction',
+          actorInstanceId: 'c1',
+          targetInstanceIds: ['a1'],
+          trait: 'Agility',
+          reactionContext: { kind: 'leaveMelee', moverInstanceId: 'a1' },
+          effects: [],
+          appliedEffects: [],
+        },
+      })
+    );
+    expect(table.action.reactionContext).toEqual({ kind: 'leaveMelee', moverInstanceId: 'a1' });
+    expect(table.action.isLeaveMeleeReaction).toBe(true);
+  });
+
+  it('exposes table.tokenMove only when _tokenMove is set', () => {
+    const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 10, tokenY: 0 });
+    const t1 = buildTableSnapshot(
+      mockGameState({ activeElements: [char, adv], _ownerInstanceId: 'c1' })
+    );
+    expect(t1.tokenMove).toBeUndefined();
+
+    const t2 = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'c1',
+        _tokenMove: { moverInstanceId: 'a1' },
+        _previousPositions: { a1: { tokenX: 2, tokenY: 0 } },
+      })
+    );
+    expect(t2.tokenMove?.moverInstanceId).toBe('a1');
+    expect(t2.tokenMove?.mover?.instanceId).toBe('a1');
+    expect(t2.me?.instanceId).toBe('c1');
   });
 
   it('queues spendGold mutation from table.me.spendGold', () => {
@@ -260,6 +483,25 @@ describe('Actor write methods (mutation queueing)', () => {
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({ type: 'gainHope', payload: { instanceId: 'c1', amount: 1 } })
+    );
+  });
+
+  it('domainLoadout / domainVault are snapshots; moveDomainCardToVault queues domainCardMoveToVault', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      domainLoadout: [{ id: 'a', level: 1 }],
+      domainVault: [{ id: 'b', level: 2 }],
+    });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.me.domainLoadout).toEqual([{ id: 'a', level: 1 }]);
+    expect(table.me.domainVault).toEqual([{ id: 'b', level: 2 }]);
+    table.me.moveDomainCardToVault('a');
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'domainCardMoveToVault',
+        payload: { instanceId: 'c1', cardId: 'a' },
+      })
     );
   });
 
@@ -463,6 +705,81 @@ describe('Roll write methods (mutation queueing)', () => {
       expect.objectContaining({ type: 'setDie', payload: { rollKey: 'action', dieType: 'fearDie', die: 'd6' } })
     );
   });
+
+  it('swapHopeFear queues swapHopeFearDice and swaps backing die values', () => {
+    const gs = mockGameState({
+      rolls: {
+        action: {
+          hopeDie: { value: 3 },
+          fearDie: { value: 9 },
+          dice: [],
+          statics: [],
+          isSuccess: true,
+          isCritical: false,
+        },
+        damage: {},
+      },
+    });
+    const table = buildTableSnapshot(gs);
+    table.rolls.action.swapHopeFear();
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'swapHopeFearDice', payload: { rollKey: 'action' } })
+    );
+    expect(table.rolls.action.hopeDie.value).toBe(9);
+    expect(table.rolls.action.fearDie.value).toBe(3);
+  });
+
+  it('gmDie reroll queues rerollDie with dieType gmDie (adversary / GM attack)', () => {
+    const table = buildTableSnapshot(
+      mockGameState({
+        rolls: mockRoll({
+          action: {
+            gmDie: { value: 12 },
+            hopeDie: null,
+            fearDie: null,
+            dice: [],
+            statics: [],
+            isSuccess: true,
+            isCritical: false,
+          },
+        }),
+      })
+    );
+    table.rolls.action.gmDie.reroll();
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'rerollDie', payload: { rollKey: 'action', dieType: 'gmDie' } })
+    );
+  });
+
+  it('damage rerollAllDice queues rerollDie for each named die', () => {
+    const table = buildTableSnapshot(
+      mockGameState({
+        rolls: mockRoll({
+          damageDice: [
+            { name: 'A', die: 'd8', value: 3 },
+            { name: 'B', die: 'd6', value: 2 },
+          ],
+        }),
+      })
+    );
+    table.rolls.damage.rerollAllDice();
+    const mutations = applyMutations(table);
+    expect(mutations).toHaveLength(2);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'rerollDie',
+        payload: { rollKey: 'damage', dieType: 'damageDie', dieName: 'A' },
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'rerollDie',
+        payload: { rollKey: 'damage', dieType: 'damageDie', dieName: 'B' },
+      })
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -614,11 +931,11 @@ describe('table.action helper booleans', () => {
     }));
   }
 
-  const DUALITY_TYPES = ['action', 'trait', 'attack', 'spellcast', 'reaction'];
+  const DUALITY_TYPES = ['action', 'trait', 'attack', 'spellcast', 'reaction', 'tagTeam'];
   const NON_DUALITY_TYPES = ['damage', 'free', 'shortRest', 'longRest', 'sessionStart'];
-  const HOPE_FEAR_TYPES = ['action', 'trait', 'attack', 'spellcast'];
+  const HOPE_FEAR_TYPES = ['action', 'trait', 'attack', 'spellcast', 'tagTeam'];
   const NO_HOPE_FEAR_TYPES = ['reaction', 'damage', 'free'];
-  const TRAIT_FINAL_TYPES = ['trait', 'attack', 'spellcast', 'reaction'];
+  const TRAIT_FINAL_TYPES = ['trait', 'attack', 'spellcast', 'reaction', 'tagTeam'];
   const TRAIT_MUTABLE_TYPES = ['action'];
 
   for (const type of DUALITY_TYPES) {
@@ -649,7 +966,7 @@ describe('table.action helper booleans', () => {
     expect(makeTableWithType('reaction').action.isReaction).toBe(true);
   });
 
-  for (const type of ['action', 'trait', 'attack', 'spellcast', 'damage']) {
+  for (const type of ['action', 'trait', 'attack', 'spellcast', 'tagTeam', 'damage']) {
     it(`isReaction is false for type '${type}'`, () => {
       expect(makeTableWithType(type).action.isReaction).toBe(false);
     });
@@ -728,6 +1045,53 @@ describe('table.feature (local state)', () => {
       expect.objectContaining({
         type: 'setFeatureState',
         payload: { featureKey: 'MyFeature', key: 'pushActive', value: true },
+      })
+    );
+  });
+});
+
+describe('table.source (shared option state)', () => {
+  it('is null when there is no source row', () => {
+    const table = buildTableSnapshot(mockGameState({}));
+    expect(table.source).toBeNull();
+  });
+
+  it('is the raw row when sourceScopeKey is absent', () => {
+    const row = { name: 'Plain', tier: 1 };
+    const table = buildTableSnapshot(
+      mockGameState({
+        _activeFeature: { name: 'X', _sourceObject: row },
+        _sourceObject: row,
+      })
+    );
+    expect(table.source).toBe(row);
+  });
+
+  it('adds get/set that share one featureState bag and queue setFeatureState', () => {
+    const row = { name: 'Warden of the Elements', sourceScopeKey: 'WardenOfTheElements' };
+    const fs = {};
+    const table = buildTableSnapshot(
+      mockGameState({
+        _featureKey: 'Elemental Incarnation',
+        _activeFeature: {
+          name: 'Elemental Incarnation',
+          _sourceScopeKey: 'WardenOfTheElements',
+          _sourceObject: row,
+        },
+        _sourceObject: row,
+        featureState: fs,
+      })
+    );
+    expect(table.source.name).toBe('Warden of the Elements');
+    expect(table.source.get('channeledElement')).toBeUndefined();
+    table.source.set('channeledElement', 'air');
+    expect(table.source.get('channeledElement')).toBe('air');
+    expect(fs.WardenOfTheElements?.channeledElement).toBe('air');
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: { featureKey: 'WardenOfTheElements', key: 'channeledElement', value: 'air' },
       })
     );
   });
@@ -891,6 +1255,285 @@ describe('table.me.lastPosition', () => {
       const table = buildTableSnapshot(mockGameState({ character: char, _ownerInstanceId: 'c1' }));
       expect(table.me.weapons).toHaveLength(2);
       expect(table.me.weapons[1].id).toBe('vw1');
+    });
+  });
+
+  describe('table.action.reduceIncomingPhysicalSeverityBySteps', () => {
+    it('reduces incoming physical damage amounts for the feature owner', () => {
+      const char = mockCharacter({ instanceId: 'char-1' });
+      const adv = mockAdversary({ instanceId: 'adv-1' });
+      const effects = [
+        {
+          type: 'damage',
+          target: { instanceId: 'char-1' },
+          amount: 3,
+          damageType: 'physical',
+        },
+      ];
+      const gs = mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'char-1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['char-1'],
+          trait: 'Agility',
+          range: 'melee',
+          effects,
+          appliedEffects: [],
+        },
+      });
+      const table = buildTableSnapshot(gs);
+      table.action.reduceIncomingPhysicalSeverityBySteps(1);
+      expect(effects[0].amount).toBe(2);
+      table.action.reduceIncomingPhysicalSeverityBySteps(2);
+      expect(effects[0].amount).toBe(0);
+    });
+
+    it('ignores magic damage and damage to other targets', () => {
+      const char = mockCharacter({ instanceId: 'char-1' });
+      const adv = mockAdversary({ instanceId: 'adv-1' });
+      const effects = [
+        {
+          type: 'damage',
+          target: { instanceId: 'char-1' },
+          amount: 3,
+          damageType: 'magic',
+        },
+        {
+          type: 'damage',
+          target: { instanceId: 'adv-1' },
+          amount: 2,
+          damageType: 'physical',
+        },
+      ];
+      const gs = mockGameState({
+        activeElements: [char, adv],
+        _ownerInstanceId: 'char-1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['char-1'],
+          trait: 'Agility',
+          range: 'melee',
+          effects,
+          appliedEffects: [],
+        },
+      });
+      const table = buildTableSnapshot(gs);
+      table.action.reduceIncomingPhysicalSeverityBySteps(1);
+      expect(effects[0].amount).toBe(3);
+      expect(effects[1].amount).toBe(2);
+    });
+  });
+
+  describe('activeModifiers (actor API)', () => {
+    it('exposes activeModifiers from element.activeModifiers', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        activeModifiers: [{ id: 'm1', name: 'Rally Die', dice: 'd8' }],
+      });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(t.me.activeModifiers).toEqual([{ id: 'm1', name: 'Rally Die', dice: 'd8' }]);
+    });
+
+    it('addActiveModifier and removeActiveModifier queue mutations', () => {
+      const char = mockCharacter({ instanceId: 'c1' });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      t.me.addActiveModifier({ id: 'x1', name: 'Test', dice: 'd6', refreshOn: 'session' });
+      let m = applyMutations(t);
+      expect(
+        m.some(
+          (x) =>
+            x.type === 'appendActiveModifier' &&
+            x.payload.instanceId === 'c1' &&
+            x.payload.modifier?.id === 'x1'
+        )
+      ).toBe(true);
+      t.me.removeActiveModifier('x1');
+      m = applyMutations(t);
+      expect(m.some((x) => x.type === 'removeActiveModifier' && x.payload.id === 'x1')).toBe(true);
+    });
+
+    it('derives tier from level when element.tier is absent', () => {
+      const char = mockCharacter({ instanceId: 'c1', level: 1 });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(t.me.tier).toBe(1);
+      const char5 = mockCharacter({ instanceId: 'c2', level: 5 });
+      const t2 = buildTableSnapshot(mockGameState({ activeElements: [char5], _ownerInstanceId: 'c2' }));
+      expect(t2.me.tier).toBe(3);
+    });
+
+    it('exposes contactsEverywhereSessionUses (default 1)', () => {
+      const char = mockCharacter({ instanceId: 'c1' });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(t.me.contactsEverywhereSessionUses).toBe(1);
+      const char3 = mockCharacter({ instanceId: 'c2', contactsEverywhereSessionUses: 3 });
+      const t2 = buildTableSnapshot(mockGameState({ activeElements: [char3], _ownerInstanceId: 'c2' }));
+      expect(t2.me.contactsEverywhereSessionUses).toBe(3);
+    });
+
+    it('exposes shadowStepperVeryFarUnlocked (default false)', () => {
+      const char = mockCharacter({ instanceId: 'c1' });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(t.me.shadowStepperVeryFarUnlocked).toBe(false);
+      const char2 = mockCharacter({ instanceId: 'c2', shadowStepperVeryFarUnlocked: true });
+      const t2 = buildTableSnapshot(mockGameState({ activeElements: [char2], _ownerInstanceId: 'c2' }));
+      expect(t2.me.shadowStepperVeryFarUnlocked).toBe(true);
+    });
+  });
+
+  describe('Prayer Dice pool + reducePendingDamageForTarget', () => {
+    it('exposes spellcastTrait and prayerDice from element', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        spellcastTrait: 'presence',
+        prayerDice: { pool: [2, 3] },
+      });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(t.me.spellcastTrait).toBe('presence');
+      expect(t.me.prayerDice).toEqual({ pool: [2, 3] });
+    });
+
+    it('setPrayerDicePool, removePrayerDieAt, clearPrayerDicePool queue mutations', () => {
+      const char = mockCharacter({ instanceId: 'c1' });
+      const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      t.me.setPrayerDicePool([1, 4]);
+      let m = applyMutations(t);
+      expect(m.some((x) => x.type === 'setPrayerDicePool' && x.payload.pool.length === 2)).toBe(true);
+      t.me.removePrayerDieAt(0);
+      m = applyMutations(t);
+      expect(m.some((x) => x.type === 'removePrayerDieAt' && x.payload.index === 0)).toBe(true);
+      t.me.clearPrayerDicePool();
+      m = applyMutations(t);
+      expect(m.some((x) => x.type === 'setPrayerDicePool' && x.payload.pool.length === 0)).toBe(true);
+    });
+
+    it('reducePendingDamageForTarget reduces damage when ally within Far, not when veryFar', () => {
+      const seraph = mockCharacter({ instanceId: 's1', tokenX: 0, tokenY: 0 });
+      const ally = mockCharacter({ instanceId: 'ally-1', tokenX: 40, tokenY: 0, hope: 3 });
+      const effects = [{ type: 'damage', target: { instanceId: 'ally-1' }, amount: 10, damageType: 'physical' }];
+      const gs = mockGameState({
+        activeElements: [seraph, ally],
+        _ownerInstanceId: 's1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['ally-1'],
+          effects,
+          appliedEffects: [],
+        },
+      });
+      const table = buildTableSnapshot(gs);
+      table.action.reducePendingDamageForTarget('ally-1', 3);
+      expect(effects[0].amount).toBe(7);
+
+      const allyFar = { ...ally, instanceId: 'ally-2', tokenX: 200, tokenY: 0 };
+      const effects2 = [{ type: 'damage', target: { instanceId: 'ally-2' }, amount: 10, damageType: 'physical' }];
+      const gs2 = mockGameState({
+        activeElements: [seraph, allyFar],
+        _ownerInstanceId: 's1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['ally-2'],
+          effects: effects2,
+          appliedEffects: [],
+        },
+      });
+      const table2 = buildTableSnapshot(gs2);
+      table2.action.reducePendingDamageForTarget('ally-2', 3);
+      expect(effects2[0].amount).toBe(10);
+    });
+
+    it('reducePendingDamageForTarget works for self without range check', () => {
+      const seraph = mockCharacter({ instanceId: 's1', tokenX: 0, tokenY: 0 });
+      const effects = [{ type: 'damage', target: { instanceId: 's1' }, amount: 5, damageType: 'physical' }];
+      const gs = mockGameState({
+        activeElements: [seraph],
+        _ownerInstanceId: 's1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['s1'],
+          effects,
+          appliedEffects: [],
+        },
+      });
+      const table = buildTableSnapshot(gs);
+      table.action.reducePendingDamageForTarget('s1', 2);
+      expect(effects[0].amount).toBe(3);
+    });
+  });
+
+  describe('Tag Team session API', () => {
+    it('exposes budget, remaining, consume, and reset mutations', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        extraTagTeamInitiationsPerSession: 1,
+        tagTeamInitiationsUsedThisSession: 0,
+      });
+      const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(table.me.tagTeamInitiationsBudget).toBe(2);
+      expect(table.me.tagTeamInitiationsRemaining).toBe(2);
+      table.me.consumeTagTeamInitiation();
+      let m = applyMutations(table);
+      expect(m.some((x) => x.type === 'setTagTeamInitiationsUsed' && x.payload.value === 1)).toBe(true);
+      table.me.resetTagTeamInitiationsForSession();
+      m = applyMutations(table);
+      expect(m.some((x) => x.type === 'setTagTeamInitiationsUsed' && x.payload.value === 0)).toBe(true);
+    });
+
+    it('throws when consumeTagTeamInitiation exceeds budget', () => {
+      const char = mockCharacter({
+        instanceId: 'c1',
+        tagTeamInitiationsUsedThisSession: 1,
+      });
+      const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+      expect(table.me.tagTeamInitiationsRemaining).toBe(0);
+      expect(() => table.me.consumeTagTeamInitiation()).toThrow(/No Tag Team initiations remaining/);
+    });
+
+    it('tagTeamInitiatorHopeCost uses partner discount when type is tagTeam', () => {
+      const partner = mockCharacter({ instanceId: 'partner', tagTeamPartnerHopeDiscount: 1 });
+      const initiator = mockCharacter({ instanceId: 'init' });
+      const gs = mockGameState({
+        activeElements: [partner, initiator],
+        _ownerInstanceId: 'init',
+        action: {
+          type: 'tagTeam',
+          actorInstanceId: 'init',
+          targetInstanceIds: [],
+          tagTeamPartnerInstanceId: 'partner',
+          trait: 'Agility',
+          range: 'melee',
+          effects: [],
+          appliedEffects: [],
+        },
+      });
+      const table = buildTableSnapshot(gs);
+      expect(table.action.tagTeamPartnerInstanceId).toBe('partner');
+      expect(table.action.tagTeamInitiatorHopeCost).toBe(2);
+    });
+
+    it('tagTeamInitiatorHopeCost is 3 when type is not tagTeam', () => {
+      const partner = mockCharacter({ instanceId: 'partner', tagTeamPartnerHopeDiscount: 1 });
+      const initiator = mockCharacter({ instanceId: 'init' });
+      const gs = mockGameState({
+        activeElements: [partner, initiator],
+        _ownerInstanceId: 'init',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'init',
+          targetInstanceIds: [partner.instanceId],
+          trait: 'Agility',
+          range: 'melee',
+          effects: [],
+          appliedEffects: [],
+        },
+      });
+      const table = buildTableSnapshot(gs);
+      expect(table.action.tagTeamInitiatorHopeCost).toBe(3);
     });
   });
 

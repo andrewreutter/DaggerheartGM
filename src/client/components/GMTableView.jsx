@@ -20,14 +20,30 @@ import { CharacterHoverCard } from './CharacterHoverCard.jsx';
 import { CompanionSheet, getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
 import { Tooltip } from './Tooltip.jsx';
-import { wrapEntity } from '../../features/entity.js';
-import { wrapRoll } from '../../features/roll.js';
-import { runHook, runCharacterHook, runPipelineHook, runCharacterPipelineHook } from '../../features/hooks.js';
-import { weaponFeatures, armorFeatures, classFeatures, ancestryFeatures } from '../../features/registry.js';
+import {
+  wrapEntity,
+  wrapRoll,
+  runHook,
+  runCharacterHook,
+  weaponFeatures,
+  armorFeatures,
+  classFeatures,
+  ancestryFeatures,
+  virtualWeaponBehaviors,
+  shouldUsePhase1RegistryFallback,
+  resolveParryWeaponFeature,
+  resolveResilientArmorFeature,
+  resolveArmorModifyPreThresholdDescriptor,
+  resolveWeaponOnBannerAckDescriptor,
+} from '../lib/game-table-mechanics.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt, distanceFtToRangeBandName } from '../lib/map-range.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
+import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
+import { collectV2ReviewActionChips, activateV2ReviewChip, resolveV2ReviewChipPicker as resolveV2ReviewChipPickerFromBridge } from '../lib/v2-action-loop-bridge.js';
+import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
+import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
 
 
 /**
@@ -230,9 +246,11 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {} }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
+  const v2SheetLive = useV2DeclarativeSheetEnabledLive();
+  const v2Registry = useMemo(() => (srdData ? buildV2RegistryWithSrdItems(srdData) : null), [srdData]);
   const sendOp = useCallback((op) => postTableOp(op, tableId), [tableId]);
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
@@ -520,8 +538,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           console.error(`[features] ${feature.name}.modifyPreThresholdDamage threw:`, err);
         }
       }
-    } else if (target.armorFeatureName) {
-      const descriptor = armorFeatures[target.armorFeatureName];
+    } else {
+      const descriptor = resolveArmorModifyPreThresholdDescriptor(target);
       if (descriptor && typeof descriptor.modifyPreThresholdDamage === 'function') {
         try {
           const featureCtx = { ...ctx, feature: descriptor };
@@ -562,7 +580,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           console.error(`[features] ${feature.name}.modifyHpLoss threw:`, err);
         }
       }
-    } else {
+    } else if (shouldUsePhase1RegistryFallback()) {
       const participants = [];
       for (const name of tagNames) {
         const descriptor = weaponFeatures[name];
@@ -584,7 +602,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
     // Armor reduction when a slot is used
     if (applyReduction) {
-      const reduction = armorFeatures[feature]?.armorReduction ?? 1;
+      let reduction = 1;
+      if (target.elementType === 'character' && Array.isArray(target.activeFeatures) && feature) {
+        const armorRow = target.activeFeatures.find((f) => f.type === 'armor' && f.name === feature);
+        if (armorRow?.armorReduction != null) reduction = armorRow.armorReduction;
+        else if (shouldUsePhase1RegistryFallback()) reduction = armorFeatures[feature]?.armorReduction ?? 1;
+      } else if (shouldUsePhase1RegistryFallback()) {
+        reduction = armorFeatures[feature]?.armorReduction ?? 1;
+      }
       wrappedRoll.hpLoss = Math.max(0, wrappedRoll.hpLoss - reduction);
     }
 
@@ -624,7 +649,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
       const armorFeatureName = feature ?? null;
       if (armorFeatureName) {
-        const descriptor = armorFeatures[armorFeatureName];
+        const descriptor =
+          target.elementType === 'character' && Array.isArray(target.activeFeatures)
+            ? target.activeFeatures.find((f) => f.type === 'armor' && f.name === armorFeatureName && typeof f.onAfterMarkArmor === 'function')
+            : null
+          ?? (shouldUsePhase1RegistryFallback() ? armorFeatures[armorFeatureName] : null);
         const fn = descriptor?.onAfterMarkArmor;
         if (typeof fn === 'function') {
           const afterCtx = {
@@ -694,7 +723,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       const charEl = activeElements.find(el => el.instanceId === target.instanceId);
       const parryWeapon = (charEl?.weapons || []).find(w => w.feature?.name === 'Parry');
       if (parryWeapon) {
-        const parryFeature = weaponFeatures['Parry'];
+        const parryFeature = resolveParryWeaponFeature(charEl);
         if (parryFeature?.onBeforeDamageApplied) {
           const wrappedTarget = wrapEntity(charEl || target, updateActiveElement);
           const wrappedRoll = wrapRoll(roll);
@@ -722,7 +751,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
       // Resilient: on the last slot, invoke the Resilient hook which may save the slot
       if (feature === 'Resilient' && isLastSlot) {
-        const resilientFeature = armorFeatures['Resilient'];
+        const resilientFeature = resolveResilientArmorFeature(target);
         if (resilientFeature?.onLastArmorSlot) {
           const character = wrapEntity(target, updateActiveElement);
           const result = await resilientFeature.onLastArmorSlot({
@@ -914,6 +943,40 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     dismissAllHoverCards();
     postActionNotification(notification).catch(() => {});
   };
+
+  /** V2 Phase 4: token move hooks (e.g. Cloaked, Attack of Opportunity) after map drag commit. */
+  const handleTokenDragEnd = useCallback(
+    ({ instanceId, previousTokenFt, postMoveActiveElements }) => {
+      if (!v2SheetLive || !v2Registry || !postMoveActiveElements?.length || isPlayer) return;
+      const { mutations } = runV2TokenMoveHooks(
+        {
+          moverInstanceId: instanceId,
+          previousTokenFt: previousTokenFt || null,
+          postMoveActiveElements,
+          tableFeatureState,
+          fearCount,
+          mapConfig,
+        },
+        v2Registry
+      );
+      if (!mutations?.length) return;
+      const { updates, actionLoopNotifications } = applyV2LifecycleMutations(postMoveActiveElements, mutations, undefined);
+      if (updates.length > 0) {
+        sendOp({ op: 'update-elements', updates });
+      }
+      for (const p of actionLoopNotifications) {
+        postActionNotification({
+          _action: true,
+          rollUser: 'Table',
+          actionName: p.title,
+          actionText: p.description,
+          _v2ActionLoop: true,
+          _reactorInstanceId: p.instanceId,
+        }).catch(() => {});
+      }
+    },
+    [v2SheetLive, v2Registry, isPlayer, tableFeatureState, fearCount, mapConfig, sendOp]
+  );
 
   // Player action notification — fire-and-forget broadcast to GM room.
   const handlePlayerActionNotification = (notification) => {
@@ -1529,8 +1592,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       : (roll._selectedTargetInstanceId ? [roll._selectedTargetInstanceId] : []);
     if (tagNames.length > 0 && targetIds.length > 0) {
       const wr = wrapRoll(roll);
+      const attackerEl = roll._attackerInstanceId
+        ? activeElements.find(e => e.instanceId === roll._attackerInstanceId)
+        : null;
       for (const name of tagNames) {
-        const f = weaponFeatures[name];
+        const f = resolveWeaponOnBannerAckDescriptor(attackerEl, name);
         if (typeof f?.onBannerAck !== 'function') continue;
         for (const id of targetIds) {
           const targetEl = activeElements.find(e => e.instanceId === id);
@@ -1643,7 +1709,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         if (actionAttackerEl?.activeFeatures?.length && actionTagNames.size > 0) {
           const weaponFeaturesForRoll = actionAttackerEl.activeFeatures.filter(f => f.type === 'weapon' && actionTagNames.has(f.name));
           runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker: actionAttacker, roll, characters: wrappedPartyCharacters, system });
-        } else {
+        } else if (shouldUsePhase1RegistryFallback()) {
           runHook(weaponFeatures, actionTagNames, 'onRollComplete', { attacker: actionAttacker, roll, characters: wrappedPartyCharacters, system });
         }
       }
@@ -1789,7 +1855,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (attackerEl?.activeFeatures?.length && rollTagNames.size > 0) {
         const weaponFeaturesForRoll = attackerEl.activeFeatures.filter(f => f.type === 'weapon' && rollTagNames.has(f.name));
         runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
-      } else {
+      } else if (shouldUsePhase1RegistryFallback()) {
         runHook(weaponFeatures, rollTagNames, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
       }
     }
@@ -2077,6 +2143,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (char.activeModifiers?.length > 0) {
         const kept = char.activeModifiers.filter(m => !cyclesToClear.includes(m.refreshOn));
         if (kept.length !== char.activeModifiers.length) updates.activeModifiers = kept;
+      }
+      if (char.featureState?.Rally) {
+        const fs = { ...char.featureState };
+        const rally = { ...fs.Rally };
+        delete rally.partyDice;
+        delete rally.maestroRallyChoices;
+        if (Object.keys(rally).length === 0) delete fs.Rally;
+        else fs.Rally = rally;
+        updates.featureState = fs;
       }
       if (Object.keys(updates).length > 0) {
         updateActiveElement(char.instanceId, updates);
@@ -2632,7 +2707,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (canvas.chips.length === 0) {
       if (Array.isArray(characterEl.activeFeatures) && characterEl.activeFeatures.length > 0) {
         runCharacterHook(characterEl.activeFeatures, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
-      } else {
+      } else if (shouldUsePhase1RegistryFallback()) {
         const featureNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
         runHook(ancestryFeatures, featureNames, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
       }
@@ -2701,7 +2776,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
                     if (Array.isArray(charEl.activeFeatures) && charEl.activeFeatures.length > 0) {
                       runCharacterHook(charEl.activeFeatures, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
-                    } else {
+                    } else if (shouldUsePhase1RegistryFallback()) {
                       const proceedFeatureNames = [...(charEl.ancestryFeatures || []).map(f => f.name), ...(charEl.communityFeatures || []).map(f => f.name)];
                       runHook(ancestryFeatures, proceedFeatureNames, 'onRoll', { roll: rollWrapper, characters: wrappedPartyCharacters, system });
                     }
@@ -3078,10 +3153,109 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (!srdData) return new Map();
     const map = new Map();
     for (const el of tableCharacters) {
-      map.set(el.instanceId, recomputeCharacter(el, srdData));
+      const base = recomputeCharacter(el, srdData);
+      map.set(
+        el.instanceId,
+        mergeV2DeclarativeSheetOverlay(base, el, srdData, {
+          fearCount,
+          mapConfig,
+        })
+      );
     }
     return map;
-  }, [srdData, tableCharacters]);
+  }, [srdData, tableCharacters, fearCount, mapConfig, v2SheetLive]);
+
+  /** V2 engine `reviewAction` chips for pending banners (Phase 2 — keyed by `_rollDbId`). */
+  const v2ReviewChipsByRollDbId = useMemo(() => {
+    const m = new Map();
+    if (!v2SheetLive || !srdData) return m;
+    for (const roll of pendingBanners || []) {
+      const id = roll._rollDbId;
+      if (id == null) continue;
+      const chips = collectV2ReviewActionChips({
+        roll,
+        activeElements,
+        srdData,
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+      if (chips.length) m.set(id, chips);
+    }
+    return m;
+  }, [pendingBanners, activeElements, srdData, fearCount, mapConfig, v2SheetLive, tableFeatureState]);
+
+  const getV2ReviewChipPicker = useCallback(
+    (chip, roll) =>
+      resolveV2ReviewChipPickerFromBridge(chip, roll, activeElements, srdData, {
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      }),
+    [activeElements, srdData, fearCount, mapConfig, tableFeatureState]
+  );
+
+  const handleV2ReviewChip = useCallback(
+    async (chip, roll, selectOpts = {}) => {
+      if (isPlayer) return;
+      if (typeof chip.isSelect === 'function') {
+        if (chip.multiSelect) {
+          if (!Array.isArray(selectOpts.selectedIds) || selectOpts.selectedIds.length === 0) return;
+        } else if (selectOpts.selectedId == null || selectOpts.selectedId === '') return;
+      }
+      if (typeof chip.selectTargets === 'function' && !(selectOpts.selectedTargetIds?.length > 0)) return;
+
+      const { mutations, error } = activateV2ReviewChip(chip, roll, activeElements, srdData, {
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+        selectOpts,
+      });
+      if (error) return;
+
+      const { localMutations, serverFollowups, unsupported } = partitionV2BannerChipMutations(mutations);
+      const { updates, skipped } = applyV2BannerMutations(activeElements, localMutations, chip._ownerInstanceId);
+      if (updates.length) {
+        sendOp({ op: 'update-elements', updates });
+      }
+
+      let currentBannerId = roll._rollDbId;
+      for (const f of serverFollowups) {
+        if (f.kind === 'addDamage') {
+          const dice = String(f.payload?.dice ?? '').trim();
+          if (!dice || currentBannerId == null) continue;
+          const extraDamageLabel = String(f.payload?.name || chip._featureName || 'V2').slice(0, 80);
+          try {
+            const newRoll = await postBannerAddDamage(currentBannerId, {
+              extraDamage: dice,
+              extraDamageLabel,
+              suppressAncestryFeature: chip._featureName,
+            });
+            if (newRoll?._rollDbId != null) currentBannerId = newRoll._rollDbId;
+          } catch (e) {
+            console.warn('[V2] postBannerAddDamage failed:', e);
+          }
+        } else if (f.kind === 'rerollDie') {
+          if (currentBannerId == null) continue;
+          try {
+            await postBannerRerollDie(currentBannerId, {
+              dieType: f.dieType,
+              suppressAncestryFeature: chip._featureName,
+            });
+          } catch (e) {
+            console.warn('[V2] postBannerRerollDie failed:', e);
+          }
+          break;
+        }
+      }
+
+      const unhandled = [...skipped, ...unsupported];
+      if (unhandled.length) {
+        console.warn('[V2] Banner mutations not applied (engine/VTT follow-up required):', unhandled.map((m) => m.type));
+      }
+    },
+    [isPlayer, activeElements, srdData, fearCount, mapConfig, tableFeatureState, sendOp]
+  );
 
   // Banner reactions from all characters' activeFeatures (onBanner / bannerAction chips).
   const ancestryBannerReactions = useMemo(() => {
@@ -3254,10 +3428,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       const weaponBanner = {
         addNarration(text, style) { parts.push(style != null ? { text, style } : { text }); },
       };
-      for (const name of tagNames) {
-        const f = weaponFeatures[name];
-        weaponBanner.addAutomatedNarration = () => weaponBanner.addNarration(f.description, 'automated');
-        if (f?.onBanner) f.onBanner({ banner: weaponBanner, roll, characters: wrappedPartyCharacters, system });
+      if (shouldUsePhase1RegistryFallback()) {
+        for (const name of tagNames) {
+          const f = weaponFeatures[name];
+          weaponBanner.addAutomatedNarration = () => weaponBanner.addNarration(f.description, 'automated');
+          if (f?.onBanner) f.onBanner({ banner: weaponBanner, roll, characters: wrappedPartyCharacters, system });
+        }
       }
       for (const r of ancestryBannerReactions) {
         if (r.matchesRoll(roll) && r.bannerNarrations?.length) parts.push(...r.bannerNarrations);
@@ -4424,6 +4600,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             onHeartD4Toggle={!isPlayer && tableId ? handleHeartD4Toggle : undefined}
             onHeartD4ToggleRequest={isPlayer && tableId ? handleHeartD4ToggleRequest : undefined}
             bannerStripLeftOffset={tableCharacters.length > 0 ? CHARACTER_TRAY_WIDTH_PX : 0}
+            v2ReviewChipsByRollDbId={v2ReviewChipsByRollDbId}
+            onV2ReviewChip={!isPlayer ? handleV2ReviewChip : undefined}
+            resolveV2ReviewChipPicker={!isPlayer ? getV2ReviewChipPicker : undefined}
           />
           <BattleMap
             gmUid={tableId}
@@ -4440,6 +4619,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             onClearDice={() => diceRollerRef.current?.clearDice?.()}
             diceCanvasHidden={diceCanvasHidden}
             onToggleDiceVisibility={() => setDiceCanvasHidden(v => !v)}
+            onTokenDragEnd={!isPlayer ? handleTokenDragEnd : undefined}
             className="flex-1 min-h-0"
           />
         </div>
@@ -5507,6 +5687,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               return (
                 <CharacterHoverCard
                   el={liveEl}
+                  fearCount={fearCount}
                   updateFn={allowInteract ? updateActiveElement : undefined}
                   expandedKeys={featureExpanded[liveEl.instanceId] ?? []}
                   onToggleFeature={(key) => toggleFeatureExpanded(liveEl.instanceId, key)}
@@ -5532,6 +5713,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   targetMenuOpenRef={characterTargetMenuOpenRef}
                   system={system}
                   characters={wrappedPartyCharacters}
+                  tableFeatureState={tableFeatureState}
+                  tableId={tableId}
                 />
               );
             })()}

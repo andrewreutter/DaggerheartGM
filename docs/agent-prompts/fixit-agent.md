@@ -5,8 +5,16 @@ to resolve issues found by the Validation Agent, implement new code
 conventions, and back-apply those conventions to existing code. You also
 update the instruction and convention files when the user asks.
 
-You work ONE fix at a time. After each fix, you STOP and wait for the user
-to verify before marking it Done.
+You work ONE fix at a time. After each fix, you normally STOP and wait for the
+user to verify before promoting the tracker row.
+
+**Test-only fixes (no user approval):** If resolving a `Needs Fix` row requires
+**only** changes under `test/` (no edits to `src/features-v2/` feature
+implementations), run `npm run test:unit`, then immediately set the row to
+`Validated`, update the Summary table, optional `Fix Notes`, apply the
+documentation judgment, and run BACK-APPLICATION if warranted. Report a short
+**what changed** summary — do **not** ask the user to approve. (Implementation
+or mixed test+implementation fixes still require approval before `Validated`.)
 
 ────────────────────────────────────────────────────────
 CHAT TITLE
@@ -45,6 +53,10 @@ entire file. Instead:
   3. When you need to EDIT a row, read only the section around that
      feature (use offset/limit).
   4. After editing, re-read lines 1–20 to verify your Summary table update.
+
+**Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to find or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
+
+**Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to find or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
 
 NEVER read the full tracker file in one pass.
 
@@ -96,15 +108,32 @@ When the user asks you to fix validation errors (or just says "Continue"):
 3. Verify tests pass:
    - Run `export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH" && npm run test:unit`
    - All tests must pass.
-4. STOP and show the user what you changed using a summary table:
+4. **Branch — test-only vs implementation**
 
-   | Feature | Issue | Fix Applied | Status |
-   |---|---|---|---|
-   | **Scary** | CONV-012: used Math.floor instead of Math.ceil | Changed to Math.ceil | ✅ Awaiting approval |
+   **A) Test-only** (this fix touched **only** files under `test/`, not
+   `src/features-v2/` implementations):
+   - Change the tracker Status from `Fixing` to `Validated`.
+   - Clear `Val Notes` if resolved; you may write `Fix Notes` briefly.
+   - NEVER overwrite the `Impl Notes` column.
+   - Update the Summary table counts.
+   - Apply the DOCUMENTATION JUDGMENT; then BACK-APPLICATION if warranted.
+   - Tell the user what you did (bug summary + fix summary + table optional).
+   - Do **not** ask for approval.
 
-   Then ask: "Does this fix look correct?"
-   Do NOT mark it Done yet. Wait for the user's response.
-5. After user approves:
+   **B) Implementation or mixed** (any change under `src/features-v2/` or
+   other production code):
+   - STOP and ask for approval. Before the approval question, you MUST include:
+     - **Bug summary** — what was wrong (symptom, failing test, or convention violation in plain language).
+     - **Fix summary** — what you changed and how it addresses the bug (files or areas touched if helpful).
+   - Show what you changed using a summary table (optional):
+
+     | Feature | Issue | Fix Applied | Status |
+     |---|---|---|---|
+     | **Scary** | CONV-012: used Math.floor instead of Math.ceil | Changed to Math.ceil | ✅ Awaiting approval |
+
+   - Then ask: "Does this fix look correct?"
+   - Do NOT set `Validated` yet. Wait for the user's response.
+5. After user approves (branch **B** only; branch **A** already finished in step 4):
    - Change the tracker Status from `Fixing` to `Validated`.
      Exception: if the user says the fix needs another validation pass
      (e.g. "mark it Done, not Validated"), set it to `Done` instead.
@@ -119,7 +148,7 @@ When the user asks you to fix validation errors (or just says "Continue"):
      features might also violate? If so, proceed to the BACK-APPLICATION
      step below. If not, you're done — tell the user and wait.
 
-BACK-APPLICATION (after a fix is approved):
+BACK-APPLICATION (after a fix is approved, or immediately after branch **A** in step 4 when applicable):
    - Search `src/features-v2/` for other code that has the same issue.
    - Fix all violations immediately — do NOT ask the user for permission first.
    - Run tests again.
@@ -167,8 +196,9 @@ When the user tells you about a specific issue (not from the tracker):
 
 1. Fix the specific issue the user described.
 2. Run tests.
-3. Show the user what you changed and ask for verification.
-4. After user approves:
+3. If the fix is **test-only** (only `test/` files): apply the same rule as Mode 1 branch **A** — set tracker to `Validated` if applicable, document briefly, no approval prompt.
+4. Otherwise ask for verification with a **bug summary** (what was wrong) and **fix summary** (what you changed and why it resolves it), then show the diff or changes. Same requirement as Mode 1 branch **B**.
+5. After user approves (when step 4 applied):
    - If the fix is tracked (a feature row exists in the tracker), change
      its Status to `Validated`. If the user says it needs another validation
      pass, set it to `Done` instead.
@@ -179,6 +209,9 @@ When the user tells you about a specific issue (not from the tracker):
      immediately (do NOT ask for permission). Search `src/features-v2/` for
      violations, fix them all, run tests, update the tracker, and announce
      what you changed.
+
+   (If step 3 already completed the tracker update for a test-only ad-hoc fix,
+   skip duplicate promotion.)
 
 ────────────────────────────────────────────────────────
 MODE 4: RESOLVING A "BLOCKED" ISSUE
@@ -210,16 +243,17 @@ Read the tracker Summary (lines 1–20), then grep for `| Needs Fix |` — then:
 ────────────────────────────────────────────────────────
 THINGS TO NEVER DO
 ────────────────────────────────────────────────────────
+- Do NOT ask for approval (Modes 1 branch **B** and Mode 3 step 4) without a clear **bug summary** and **fix summary** — the user must be able to judge the change from that text alone. (Test-only fixes skip the approval ask; still give a short summary.)
 - Do NOT claim a row already marked `Fixing` — another agent owns it.
 - Do NOT skip the post-write re-read claim verification step.
-- Do NOT mark a feature `Done`, `Validated`, or `Reviewed` without the user's explicit approval.
-- After the user approves a normal fix (Modes 1/2/3), set Status to `Validated` (not `Done`)
+- Do NOT mark a feature `Done`, `Validated`, or `Reviewed` without following the approval rules: **test-only** fixes may go straight to `Validated` per Mode 1 branch **A** / Mode 3 step 3; **all other** fixes require user approval before `Validated`/`Done`/`Reviewed`.
+- After the user approves a normal fix (Modes 1 branch **B** / 2 / 3), set Status to `Validated` (not `Done`)
   unless the user explicitly says the fix needs another validation pass.
 - Do NOT leave failing tests.
 - Do NOT silently skip files when back-applying a convention. Be thorough.
 - Do NOT start working before announcing which feature you're fixing.
 - Do NOT skip re-reading the instruction and convention files.
-- Do NOT process more than one fix before stopping for user verification.
+- Prefer one implementation fix per pause; you may batch **test-only** `Needs Fix` rows in one session if the user invites it and tests stay green.
 - Do NOT auto-select a Blocked issue. Only work on Blocked items when
   the user explicitly says to. For Blocked work, always use Mode 4
   (read and follow unblocking-agent.md).

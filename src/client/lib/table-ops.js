@@ -26,7 +26,20 @@ export const CHARACTER_RUNTIME_KEYS = [
   'disadvantageSources',       // string[] sources that add disadvantage to this character's rolls
   'moveDisabledSources',       // string[] sources that prevent token move (e.g. Retract)
   'lockedOnTargetInstanceId',  // Locked On (weapon): instanceId of target; next primary attack vs them auto-succeeds, cleared on ack
+  /**
+   * V2 engine: per-character persistent feature bags (`{ [featureKey]: { ... } }`), merged with
+   * optional table-level `featureState` in `mergeDeclarativeFeatureState` (see `src/features-v2/engine/feature-loader.js`).
+   */
+  'featureState',
 ];
+
+/**
+ * Optional top-level keys on the `table_state` JSON document (alongside `elements`, `fearCount`, …)
+ * used by the V2 engine for **session-wide** `gameState.featureState` (e.g. Bard **Rally** `partyDice`
+ * stored under `featureState.Rally` when the host merges table + character state).
+ * The DB stores the full `table_state` blob; these keys are not stripped (only character elements are stripped).
+ */
+export const TABLE_STATE_V2_ROOT_KEYS = ['featureState'];
 
 export const RUNTIME_KEYS = [
   'instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope',
@@ -124,6 +137,8 @@ export function applyTableOp(op, state) {
       };
     case 'set-gm-display-name':
       return { gmDisplayName: op.gmDisplayName };
+    case 'set-table-feature-state':
+      return { featureState: op.featureState ?? {} };
     case 'set-table-name':
       return { tableName: op.tableName ?? '' };
     case 'life-support-select': {
@@ -162,5 +177,422 @@ export function applyTableOp(op, state) {
     default:
       return {};
   }
+}
+
+/**
+ * Apply V2 engine mutations that target **`element.activeModifiers`** (Phase 1 shape) in order.
+ * Ignores other mutation types (Hope/Stress, rolls, etc.) — those are handled by the VTT separately.
+ *
+ * @param {object[]} activeElements — current table elements
+ * @param {object[]} mutations — `{ type, payload }[]` from `applyMutations(table)` (V2)
+ * @returns {object[]} — new **`activeElements`** array (copied elements; only character rows touched)
+ */
+export function applyV2ActiveModifierMutations(activeElements, mutations) {
+  if (!Array.isArray(activeElements) || !Array.isArray(mutations) || mutations.length === 0) {
+    return activeElements;
+  }
+  const idxByInstance = new Map(activeElements.map((el, i) => [el.instanceId, i]));
+  const out = activeElements.map(el => ({ ...el }));
+
+  for (const m of mutations) {
+    if (!m?.type || !m?.payload) continue;
+    const { type, payload } = m;
+    if (type === 'appendActiveModifier') {
+      const { instanceId, modifier } = payload;
+      if (!instanceId || !modifier?.id || !modifier?.name) continue;
+      const i = idxByInstance.get(instanceId);
+      if (i === undefined || out[i].elementType !== 'character') continue;
+      const el = out[i];
+      const cur = [...(el.activeModifiers || [])];
+      const ix = cur.findIndex(x => x.id === modifier.id);
+      if (ix >= 0) cur[ix] = { ...modifier };
+      else cur.push({ ...modifier });
+      out[i] = { ...el, activeModifiers: cur };
+    } else if (type === 'removeActiveModifier') {
+      const { instanceId, id } = payload;
+      if (!instanceId || id == null) continue;
+      const i = idxByInstance.get(instanceId);
+      if (i === undefined || out[i].elementType !== 'character') continue;
+      const el = out[i];
+      const rid = String(id);
+      const next = (el.activeModifiers || []).filter(x => x.id !== rid);
+      if (next.length === (el.activeModifiers || []).length) continue;
+      out[i] = { ...el, activeModifiers: next };
+    }
+  }
+  return out;
+}
+
+/**
+ * Apply V2 engine mutations from a banner chip (`activateChip` / `deductChipCosts`) to character
+ * (and adversary) rows. Mutations that need server-side dice rolls or banner patches are not applied
+ * and are returned in `skipped`.
+ *
+ * @param {object[]} activeElements — current table elements (read-only basis; caller merges)
+ * @param {object[]} mutations — `{ type, payload }[]`
+ * @param {string} ownerInstanceId — feature owner (`chip._ownerInstanceId`) for `setFeatureState` rows
+ * @returns {{ updates: { instanceId: string, updates: object }[], skipped: object[] }}
+ */
+export function applyV2BannerMutations(activeElements, mutations, ownerInstanceId) {
+  const skipped = [];
+  const byId = new Map();
+  const getBase = (id) => {
+    const patch = byId.get(id);
+    const base = activeElements.find((e) => e.instanceId === id);
+    return patch ? { ...base, ...patch } : base && { ...base };
+  };
+
+  const merge = (instanceId, partial) => {
+    if (!instanceId) return;
+    const prev = byId.get(instanceId) || {};
+    byId.set(instanceId, { ...prev, ...partial });
+  };
+
+  const modMuts = [];
+
+  for (const m of mutations || []) {
+    if (!m?.type || !m?.payload) continue;
+    const { type, payload } = m;
+
+    const skip = () => skipped.push(m);
+
+    if (type === 'appendActiveModifier' || type === 'removeActiveModifier') {
+      modMuts.push(m);
+      continue;
+    }
+
+    switch (type) {
+      case 'setFeatureState': {
+        const { featureKey, key, value } = payload;
+        if (!ownerInstanceId || !featureKey) {
+          skip();
+          break;
+        }
+        const el = getBase(ownerInstanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const fs = { ...(el.featureState || {}) };
+        const bag = { ...(fs[featureKey] || {}) };
+        bag[key] = value;
+        fs[featureKey] = bag;
+        merge(ownerInstanceId, { featureState: fs });
+        break;
+      }
+      case 'spendHope': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const max = el.maxHope ?? 6;
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const hope = Math.max(0, (el.hope ?? max) - n);
+        merge(instanceId, { hope });
+        break;
+      }
+      case 'gainHope': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const max = el.maxHope ?? 6;
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const hope = Math.min(max, (el.hope ?? max) + n);
+        merge(instanceId, { hope });
+        break;
+      }
+      case 'markStress': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const maxS = el.maxStress ?? 6;
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const currentStress = Math.min(maxS, (el.currentStress ?? 0) + n);
+        merge(instanceId, { currentStress });
+        break;
+      }
+      case 'clearStress': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const currentStress = Math.max(0, (el.currentStress ?? 0) - n);
+        merge(instanceId, { currentStress });
+        break;
+      }
+      case 'markHP': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el) {
+          skip();
+          break;
+        }
+        const maxH = el.maxHp ?? 6;
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const currentHp = Math.max(0, Math.min(maxH, (el.currentHp ?? maxH) - n));
+        merge(instanceId, { currentHp });
+        break;
+      }
+      case 'clearHP': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el) {
+          skip();
+          break;
+        }
+        const maxH = el.maxHp ?? 6;
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const currentHp = Math.min(maxH, (el.currentHp ?? maxH) + n);
+        merge(instanceId, { currentHp });
+        break;
+      }
+      case 'markArmor': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const maxA = el.maxArmor ?? 0;
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const currentArmor = Math.min(maxA, (el.currentArmor ?? 0) + n);
+        merge(instanceId, { currentArmor });
+        break;
+      }
+      case 'clearArmor': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const currentArmor = Math.max(0, (el.currentArmor ?? 0) - n);
+        merge(instanceId, { currentArmor });
+        break;
+      }
+      case 'spendGold': {
+        const { instanceId, amount } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const n = Math.max(0, Math.floor(Number(amount)) || 0);
+        const gold = Math.max(0, (el.gold ?? 0) - n);
+        merge(instanceId, { gold });
+        break;
+      }
+      case 'setFocusTarget': {
+        const { instanceId, focusTargetInstanceId } = payload;
+        merge(instanceId, {
+          focusTargetInstanceId: focusTargetInstanceId ?? null,
+          focusTargetId: focusTargetInstanceId ?? null,
+        });
+        break;
+      }
+      case 'setRangerFocusOnNextAttack': {
+        const { instanceId, value } = payload;
+        merge(instanceId, { rangerFocusOnNextAttack: value === true });
+        break;
+      }
+      case 'setFocusedBy': {
+        const { instanceId, focusedBy } = payload;
+        merge(instanceId, { focusedBy: focusedBy ?? null });
+        break;
+      }
+      case 'runtimeStatMod': {
+        if (payload.stat === 'difficulty') {
+          const el = getBase(payload.instanceId);
+          if (!el || el.elementType !== 'adversary') {
+            skip();
+            break;
+          }
+          const cur = el.difficultyMod ?? 0;
+          const next = cur + (Number(payload.delta) || 0);
+          merge(payload.instanceId, { difficultyMod: next });
+        } else skip();
+        break;
+      }
+      case 'setPrayerDicePool': {
+        const { instanceId, pool } = payload;
+        merge(instanceId, { prayerDice: { pool: Array.isArray(pool) ? [...pool] : [] } });
+        break;
+      }
+      case 'removePrayerDieAt': {
+        const { instanceId, index } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const pool = [...(el.prayerDice?.pool || [])];
+        const idx = Math.floor(Number(index));
+        if (idx >= 0 && idx < pool.length) pool.splice(idx, 1);
+        merge(instanceId, { prayerDice: { pool } });
+        break;
+      }
+      default:
+        skip();
+    }
+  }
+
+  let mergedEls = activeElements.map((el) => {
+    const u = byId.get(el.instanceId);
+    return u ? { ...el, ...u } : { ...el };
+  });
+  if (modMuts.length > 0) {
+    mergedEls = applyV2ActiveModifierMutations(mergedEls, modMuts);
+  }
+
+  const updates = [];
+  for (const el of mergedEls) {
+    const orig = activeElements.find((e) => e.instanceId === el.instanceId);
+    if (!orig) continue;
+    const partial = {};
+    for (const k of Object.keys(el)) {
+      if (el[k] !== orig[k]) partial[k] = el[k];
+    }
+    if (Object.keys(partial).length > 0) {
+      updates.push({ instanceId: el.instanceId, updates: partial });
+    }
+  }
+
+  return { updates, skipped };
+}
+
+/**
+ * Split V2 `activateChip` / `applyMutations` output into:
+ * - **localMutations** — applied by {@link applyV2BannerMutations} (Hope/Stress, featureState, …)
+ * - **serverFollowups** — must use `postBannerAddDamage` / `postBannerRerollDie` (banner dice replacement)
+ * - **unsupported** — not representable on the current Game Table APIs (logged for diagnostics)
+ *
+ * @param {object[]} mutations — `{ type, payload }[]`
+ * @returns {{ localMutations: object[], serverFollowups: object[], unsupported: object[] }}
+ */
+export function partitionV2BannerChipMutations(mutations) {
+  const localMutations = [];
+  const serverFollowups = [];
+  const unsupported = [];
+  for (const m of mutations || []) {
+    if (!m?.type) continue;
+    const { type, payload } = m;
+    if (type === 'rerollDie') {
+      const dt = payload?.dieType;
+      if (dt === 'hopeDie') {
+        serverFollowups.push({ kind: 'rerollDie', dieType: 'Hope', mutation: m });
+        continue;
+      }
+      if (dt === 'fearDie') {
+        serverFollowups.push({ kind: 'rerollDie', dieType: 'Fear', mutation: m });
+        continue;
+      }
+      unsupported.push(m);
+      continue;
+    }
+    if (type === 'addDamageRoll') {
+      serverFollowups.push({ kind: 'addDamage', payload, mutation: m });
+      continue;
+    }
+    localMutations.push(m);
+  }
+  return { localMutations, serverFollowups, unsupported };
+}
+
+function mergeElementUpdatesByInstance(listA, listB) {
+  const m = new Map();
+  for (const { instanceId, updates } of [...listA, ...listB]) {
+    if (!instanceId || !updates) continue;
+    m.set(instanceId, { ...(m.get(instanceId) || {}), ...updates });
+  }
+  return [...m.entries()].map(([instanceId, updates]) => ({ instanceId, updates }));
+}
+
+function applyV2ConditionMutations(activeElements, mutations) {
+  let working = activeElements.map((e) => ({ ...e }));
+  const idx = Object.fromEntries(working.map((e, i) => [e.instanceId, i]));
+  for (const m of mutations) {
+    if (m.type === 'removeCondition') {
+      const i = idx[m.payload.instanceId];
+      if (i == null) continue;
+      const el = working[i];
+      working[i] = {
+        ...el,
+        conditions: [...(el.conditions || [])].filter((c) => c !== m.payload.condition),
+      };
+    } else if (m.type === 'addCondition') {
+      const i = idx[m.payload.instanceId];
+      if (i == null) continue;
+      const el = working[i];
+      const c = [...(el.conditions || [])];
+      if (!c.includes(m.payload.condition)) c.push(m.payload.condition);
+      working[i] = { ...el, conditions: c };
+    }
+  }
+  return working;
+}
+
+function diffElements(from, to) {
+  const updates = [];
+  for (const el of to) {
+    const orig = from.find((e) => e.instanceId === el.instanceId);
+    if (!orig) continue;
+    const partial = {};
+    for (const k of Object.keys(el)) {
+      if (el[k] !== orig[k]) partial[k] = el[k];
+    }
+    if (Object.keys(partial).length > 0) {
+      updates.push({ instanceId: el.instanceId, updates: partial });
+    }
+  }
+  return updates;
+}
+
+/**
+ * Apply V2 engine mutations from token-move hooks (`dispatchTokenMoveHooks`) and cross-sheet
+ * chip activation: conditions, `actionLoop` notifications, and banner-shaped rows.
+ *
+ * @param {object[]} activeElements
+ * @param {object[]} mutations
+ * @param {string|undefined} setFeatureStateOwnerId — `chip._ownerInstanceId` for `setFeatureState` rows (e.g. Bard for Rally); omit when none
+ * @returns {{ updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[], skipped: object[] }}
+ */
+export function applyV2LifecycleMutations(activeElements, mutations, setFeatureStateOwnerId) {
+  const actionLoopNotifications = [];
+  const conditionMuts = [];
+  const bannerMuts = [];
+  for (const m of mutations || []) {
+    if (!m?.type) continue;
+    if (m.type === 'actionLoop') {
+      actionLoopNotifications.push(m.payload);
+    } else if (m.type === 'removeCondition' || m.type === 'addCondition') {
+      conditionMuts.push(m);
+    } else {
+      bannerMuts.push(m);
+    }
+  }
+
+  const afterConditions = applyV2ConditionMutations(activeElements, conditionMuts);
+  const conditionUpdates = diffElements(activeElements, afterConditions);
+
+  const { updates: bannerUpdates, skipped } = applyV2BannerMutations(
+    afterConditions,
+    bannerMuts,
+    setFeatureStateOwnerId
+  );
+
+  const updates = mergeElementUpdatesByInstance(conditionUpdates, bannerUpdates);
+  return { updates, actionLoopNotifications, skipped };
 }
 

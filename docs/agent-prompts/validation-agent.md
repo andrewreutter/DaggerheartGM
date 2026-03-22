@@ -8,6 +8,13 @@ in the shared tracker.
 You do NOT write implementation code. You read, reason, and annotate.
 
 ────────────────────────────────────────────────────────
+WHAT EACH LAYER COVERS (avoid duplicate effort)
+────────────────────────────────────────────────────────
+- **Phrase-by-phrase SRD review** (step 4 below) answers: does behavior match the **published** rules text (every clause)? It does **not** prove tests match the SRD, catch every CONV rule by itself, or replace CI.
+- **Unit tests** answer: does the code do what the **tests** assert? Tests can be green while the SRD is wrong — keep both layers.
+- **`npm run validate:v2-preflight`** answers: a small set of **mechanical** checks (CONV-004 / CONV-002 smell / CONV-008 in V2 tests, legacy imports). It does **not** replace SRD review or the full conventions checklist in `docs/v2-code-conventions.md`.
+
+────────────────────────────────────────────────────────
 CHAT TITLE
 ────────────────────────────────────────────────────────
 At the very start of your FIRST message, output this line (fill in the
@@ -47,6 +54,10 @@ entire file. Instead:
      feature (use offset/limit).
   4. After editing, re-read lines 1–20 to verify your Summary table update.
 
+**Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
+
+**Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
+
 NEVER read the full tracker file in one pass. Most of it is empty
 Unclaimed rows that waste your context window.
 
@@ -60,7 +71,8 @@ Status lifecycle you care about:
   Fixed → Validating → Needs Fix   (if problems found)
 
 Claiming a batch:
-  1. Find up to 5 features whose Status is Done or Fixed.
+  1. Find up to **5** features whose Status is Done or Fixed (matches the orchestrator default
+     `--val-batch-size`; increase only if you intentionally want a larger batch).
      PREFER features from the same implementation batch (same Agent column
      prefix, e.g. all `impl-A3` features). This catches systematic errors
      early — one bad template produces the same bug in every feature of
@@ -110,12 +122,19 @@ VALIDATION STEPS (per feature)
 2. Read the implementation file. If the feature has executable behavior (hooks, chips, passiveStatMods, etc.), also read its test file when present.
    - Implementation: src/features-v2/<collection>/<FileName>.js
    - Tests (when applicable): test/unit/features-v2/<collection>/<FeatureName>.test.js
-   - **CONV-027**: features that are only `{ name, description }` do not require a dedicated test file—skip test-file requirements for those rows.
+   - **CONV-027 fast path** — If the row is **only** `{ name, description }` per **CONV-006/027** (purely narrative, no mechanics):
+     - Confirm the SRD text has no unstated mechanical clause; then **skip** deep implementation/test review beyond skimming for accidental hooks.
+     - Skip test-file requirements; do not hunt for happy/negative tests.
+     - Still run preflight + targeted Vitest for the collection (quick sanity); still apply conventions that apply to minimal objects (e.g. named export).
 
-3. Run the tests:
+3. Mechanical preflight + targeted tests (default — do **not** run the full unit suite every batch):
        export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
-       npm run test:unit
-   If tests fail: mark Needs Fix with note "tests failing" and move on.
+       npm run validate:v2-preflight
+       npx vitest run test/unit/features-v2/<collection>
+     Use one `vitest run` per distinct `<collection>` in your batch (e.g. `ancestries` and `classes` → two paths). If a batch spans many collections, you may use a single parent path only when it stays reasonably scoped.
+   - If **preflight** fails: mark Needs Fix with the cited CONV (or fix false positives in the script — that is rare).
+   - If **targeted** tests fail: run **`npm run test:unit` once** for full-suite signal, then mark Needs Fix with "tests failing" or a specific note.
+   - Run **`npm run test:unit`** (full suite) when: targeted tests pass but you touched or suspect **shared engine** code (`src/features-v2/engine/`), or when the Summary/tracker indicates cross-collection risk — otherwise rely on CI for full-suite coverage.
 
 4. Apply the SRD checklist:
 
@@ -140,8 +159,9 @@ VALIDATION STEPS (per feature)
    □ Tests verify specific mutation types and payloads (not just truthiness)? (N/A if **CONV-027**; when tests exist, **CONV-008** applies)
 
 5. Apply the code conventions checklist.
-   For each rule in docs/v2-code-conventions.md (re-read this batch),
-   check whether the feature violates it. Reference violations by CONV-NNN.
+   Preflight already covers a **narrow** mechanical subset (see "What each layer covers" above).
+   For the rest, use docs/v2-code-conventions.md (re-read this batch) and check whether the
+   feature violates any rule. Reference violations by CONV-NNN.
 
    **Adversary reaction rolls vs a fixed DC:** If the SRD text names a reaction roll
    with a number in parentheses and the code only rolls for **adversaries**, read
@@ -197,6 +217,7 @@ Re-read docs/agent-prompts/validation-agent.md and docs/v2-code-conventions.md.
 Read the tracker Summary (lines 1–20), then grep for `| Done |` or
 `| Fixed |` rows to claim. Do NOT re-read the full tracker.
 Claim up to 5 rows → announce → validate → mark Validated or Needs Fix.
+  (Same as step 1 batch size; orchestrator `--val-batch-size` defaults to 5.)
 
 ────────────────────────────────────────────────────────
 THINGS TO NEVER DO

@@ -6,7 +6,15 @@
  * No browser, no DOM, no Firebase needed.
  */
 import { describe, it, expect } from 'vitest';
-import { applyTableOp, RUNTIME_KEYS, CHARACTER_RUNTIME_KEYS } from '../../src/client/lib/table-ops.js';
+import {
+  applyTableOp,
+  RUNTIME_KEYS,
+  CHARACTER_RUNTIME_KEYS,
+  TABLE_STATE_V2_ROOT_KEYS,
+  applyV2ActiveModifierMutations,
+  applyV2BannerMutations,
+  partitionV2BannerChipMutations,
+} from '../../src/client/lib/table-ops.js';
 import { computeArmorModifiers, getEffectiveWeaponRange } from '../../src/client/lib/character-calc.js';
 
 // ---------------------------------------------------------------------------
@@ -216,6 +224,25 @@ describe('applyTableOp', () => {
     expect(updated.assignedPlayerEmail).toBe('p@example.com');
     expect(updated.assignedPlayerUid).toBe('uid-p');
     expect(updated.playerName).toBe('Player');
+  });
+
+  it('character-library-update preserves V2 featureState on the character element', () => {
+    const fs = { Rally: { granted: true }, 'Channel Raw Power': { channelRawPowerDamageBonus: 1 } };
+    const char = {
+      id: 'char-1', instanceId: 'inst-c', elementType: 'character',
+      name: 'Hero', tier: 1, maxHp: 6,
+      featureState: fs,
+    };
+    const state = { activeElements: [char] };
+    const newBaseData = { id: 'char-1', name: 'Hero Renamed', tier: 2, maxHp: 8 };
+    const result = applyTableOp({ op: 'character-library-update', characterId: 'char-1', newBaseData }, state);
+    const updated = result.activeElements[0];
+    expect(updated.name).toBe('Hero Renamed');
+    expect(updated.featureState).toEqual(fs);
+  });
+
+  it('TABLE_STATE_V2_ROOT_KEYS lists session-wide V2 featureState root key', () => {
+    expect(TABLE_STATE_V2_ROOT_KEYS).toContain('featureState');
   });
 
   it('character-library-update does not affect non-matching elements', () => {
@@ -468,6 +495,118 @@ describe('computeArmorModifiers', () => {
     const result = computeArmorModifiers(armor);
     expect(result.evasion).toBe(1);
     expect(result.feature.description).toBe('+1 to Evasion');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyV2ActiveModifierMutations — V2 engine → Phase 1 activeModifiers
+// ---------------------------------------------------------------------------
+
+describe('applyV2ActiveModifierMutations', () => {
+  const char = (id, mods = []) => ({
+    id: 'lib-1',
+    instanceId: id,
+    elementType: 'character',
+    name: 'Hero',
+    activeModifiers: mods,
+  });
+
+  it('appends a modifier with id+name', () => {
+    const els = [char('c1')];
+    const next = applyV2ActiveModifierMutations(els, [
+      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'rally-die-c1', name: 'Rally Die', dice: 'd6', type: 'rally' } } },
+    ]);
+    expect(next[0].activeModifiers).toEqual([{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd6', type: 'rally' }]);
+  });
+
+  it('replaces modifier with same id (upsert)', () => {
+    const els = [char('c1', [{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd6' }])];
+    const next = applyV2ActiveModifierMutations(els, [
+      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'rally-die-c1', name: 'Rally Die', dice: 'd8' } } },
+    ]);
+    expect(next[0].activeModifiers).toEqual([{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd8' }]);
+  });
+
+  it('removeActiveModifier drops by id', () => {
+    const els = [char('c1', [{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd6' }])];
+    const next = applyV2ActiveModifierMutations(els, [
+      { type: 'removeActiveModifier', payload: { instanceId: 'c1', id: 'rally-die-c1' } },
+    ]);
+    expect(next[0].activeModifiers).toEqual([]);
+  });
+
+  it('ignores non-character instanceIds and skips invalid append payloads', () => {
+    const els = [{ instanceId: 'a1', elementType: 'adversary', name: 'Goblin' }, char('c1')];
+    const next = applyV2ActiveModifierMutations(els, [
+      { type: 'appendActiveModifier', payload: { instanceId: 'a1', modifier: { id: 'x', name: 'X' } } },
+      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'm1', name: 'M' } } },
+      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: '', name: 'bad' } } },
+    ]);
+    expect(next[0]).toEqual(els[0]);
+    expect(next[1].activeModifiers).toEqual([{ id: 'm1', name: 'M' }]);
+  });
+
+  it('returns original array reference when mutations empty', () => {
+    const els = [char('c1')];
+    expect(applyV2ActiveModifierMutations(els, [])).toBe(els);
+  });
+});
+
+describe('applyV2BannerMutations', () => {
+  it('applies spendHope to hope on a character', () => {
+    const activeElements = [
+      { instanceId: 'c1', elementType: 'character', hope: 4, maxHope: 6 },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'spendHope', payload: { instanceId: 'c1', amount: 2 } }],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates).toEqual([{ instanceId: 'c1', updates: { hope: 2 } }]);
+  });
+
+  it('returns skipped for unknown mutation types', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', hope: 4, maxHope: 6 }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'rerollDie', payload: { rollKey: 'damage' } }],
+      'c1'
+    );
+    expect(updates).toHaveLength(0);
+    expect(skipped.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// partitionV2BannerChipMutations — V2 banner chip → local vs server follow-up
+// ---------------------------------------------------------------------------
+
+describe('partitionV2BannerChipMutations', () => {
+  it('routes Hope/Fear rerolls and addDamageRoll to server follow-ups; keeps resource mutations local', () => {
+    const mutations = [
+      { type: 'spendHope', payload: { instanceId: 'c1', amount: 1 } },
+      { type: 'rerollDie', payload: { rollKey: 'action', dieType: 'hopeDie' } },
+      { type: 'rerollDie', payload: { rollKey: 'action', dieType: 'fearDie' } },
+      { type: 'addDamageRoll', payload: { name: 'Extra', dice: 'd6', targetInstanceIds: ['a1'] } },
+      { type: 'rerollDie', payload: { rollKey: 'damage', dieType: 'damageDie', dieName: 'damage' } },
+      { type: 'addRollStatic', payload: { rollKey: 'action', name: 'X', value: 2 } },
+    ];
+    const { localMutations, serverFollowups, unsupported } = partitionV2BannerChipMutations(mutations);
+    expect(localMutations.map((m) => m.type)).toEqual(['spendHope', 'addRollStatic']);
+    expect(serverFollowups.map((f) => f.kind)).toEqual(['rerollDie', 'rerollDie', 'addDamage']);
+    expect(serverFollowups[0].dieType).toBe('Hope');
+    expect(serverFollowups[1].dieType).toBe('Fear');
+    expect(unsupported.map((m) => m.type)).toEqual(['rerollDie']);
+    expect(unsupported[0].payload.dieType).toBe('damageDie');
+  });
+
+  it('empty input yields empty partitions', () => {
+    expect(partitionV2BannerChipMutations(null)).toEqual({
+      localMutations: [],
+      serverFollowups: [],
+      unsupported: [],
+    });
   });
 });
 

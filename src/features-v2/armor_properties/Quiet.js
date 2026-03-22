@@ -7,6 +7,7 @@ export const Quiet = {
     when(isActing, {
       description: "Apply +2 bonus (rolling to move silently).",
       placements: ['intent'],
+      isToggle: true,
       onUse: (table) => {
         table.rolls?.action?.addStatic({ name: 'Quiet', value: 2 });
       },

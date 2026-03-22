@@ -61,6 +61,7 @@ Declarative options the system reads from the feature descriptor. Only include t
 Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessage, onChipAck, onChipReject, onBannerAck, toggleKey, render, renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive) are documented in Section 4 (banner) and Section 3 (onBanner / onChipAck). All chips use the unified context shape: `{ roll, character, feature, characters, system, banner? }` (properties not applicable to the current placement are undefined).
 
 **V2 chip properties (chip-system.js):**
+- `showOnOtherSheets` *(boolean)*: Opt-in for `collectChipsForOtherCharacterSheets` so a chip defined on **another** PC's feature (e.g. Bard **Rally**) can be shown on the viewer's sheet with `table.me` = viewer. See `chip-system.js` and `docs/feature-authoring-guide.md` B.2.
 - `selectTargets` *(function)*: `(table) => Actor[]`. Returns valid combat target actors for a target picker UI. Selected instance IDs stored in chip state as `selectedTargetIds` (array). Read via `chip.get('selectedTargetIds')` in `onUse`.
 - `multiSelect` *(boolean)*: When `true` (with `selectTargets`), player can select multiple targets. Default single-select.
 
@@ -68,8 +69,9 @@ Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessa
 - **`substituteArmorForHope`**: When `true` on a feature, the loader sets `substituteArmorForHope` on its return value; the client merges that onto the character element so `table.me.substituteArmorForHope` authorizes `spendHope(..., { armorInstead: true })`. The engine must not check SRD feature names (**CONV-029**).
 
 **V2 Game Table snapshot (`table` in hooks / `passiveStatMods`):**
-- **`table.source`**: Registry row the active feature was collected from (class, weapon, armor, …). **Prefer this** for tier, damage strings, and other registry fields. See `docs/feature-authoring-guide.md` (§C.2 and passive stat mods).
+- **`table.source`**: Registry row the active feature was collected from (class, weapon, armor, …). **Prefer this** for tier, damage strings, and other registry fields. Shared option-level state: set **`sourceScopeKey`** on the registry row; details in `docs/feature-authoring-guide.md` §2.1 (**CONV-035**).
 - **`table.action.useArmorByTargetId`**: `{ [instanceId]: boolean }` — per-target commitment to use armor for this hit (VTT/banner). **`useArmor`** on `{ type: 'damage' }` entries in `table.action.effects` mirrors the same for that effect’s target. See `docs/feature-authoring-guide.md` §C.3 (CONV-026).
+- **`table.me.activeModifiers`** (read-only) and **`addActiveModifier(mod)`** / **`removeActiveModifier(id)`** — queue **`appendActiveModifier`** / **`removeActiveModifier`** mutations (same shape as Phase 1 **`element.activeModifiers`**). Host merges with **`applyV2ActiveModifierMutations`** in `src/client/lib/table-ops.js`.
 
 ---
 

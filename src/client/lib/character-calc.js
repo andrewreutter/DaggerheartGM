@@ -4,8 +4,46 @@
  */
 
 import { originFeatures, weaponFeatures, armorFeatures, classFeatures } from '../../features/registry.js';
+import { BEASTFORM_ITEMS } from '../../features-v2/beastforms/srd-data.js';
+import { weapon_properties as v2WeaponProperties, armor_properties as v2ArmorProperties } from '../../features-v2/registry.js';
+import { unwrap, unwrapAll } from '../../features-v2/engine/when.js';
+import { buildTableSnapshot } from '../../features-v2/engine/table.js';
+import { isV2DeclarativeSheetEnabled } from './v2-declarative-sheet.js';
 
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
+
+const DRUID_CLASS_ID = 'srd-cls-druid';
+
+function resolveBeastformRowById(id, srdData) {
+  if (!id) return null;
+  const fromApi = srdData?.beastformsById?.[id];
+  if (fromApi) return fromApi;
+  return BEASTFORM_ITEMS.find((r) => r.id === id) || null;
+}
+
+/**
+ * Display-only rows for the Features list while a Druid has `activeBeastform` set.
+ * Filled during `recomputeCharacter` from the SRD beastform row (`srdData.beastformsById` or
+ * generated `BEASTFORM_ITEMS` fallback) so the UI does not import registries.
+ */
+function assignBeastformDisplayFeatures(result, data, srdData) {
+  result.beastformFeatures = [];
+  const isDruid = data.classId === DRUID_CLASS_ID || result.class === 'Druid';
+  if (!isDruid) return;
+  const ab = data.activeBeastform;
+  if (!ab || typeof ab !== 'object') return;
+  const id = ab.id || ab.beastformId;
+  const row = resolveBeastformRowById(id, srdData);
+  if (!row?.features?.length) return;
+  const formName = row.name || ab.name || 'Beastform';
+  result.beastformFeatures = row.features.map((f) => ({
+    name: f.name,
+    description: f.description || '',
+    source: formName,
+    sourceType: 'beastform',
+    id: f.id,
+  }));
+}
 
 export function tierFromLevel(level) {
   if (level >= 8) return 4;
@@ -138,6 +176,79 @@ export function parseArmorThresholds(thresholdStr) {
 }
 
 /**
+ * Minimal game-state shape for `buildTableSnapshot` when unwrapping V2 `when()` on gear
+ * `passiveStatMods` during `recomputeCharacter`. Mirrors P1 `reinforcedActive` into
+ * `featureState.Reinforced` so V2 Reinforced predicates can see it.
+ *
+ * @param {object} computed — partial recompute output (traits, tier, …)
+ * @param {object} raw — library / table element (runtime keys, featureState, …)
+ */
+export function buildV2SheetUnwrapGameState(computed = {}, raw = {}) {
+  const instanceId = computed.instanceId || raw.instanceId || '__sheet__';
+  const traits = computed.traits || {};
+  const el = {
+    ...computed,
+    ...raw,
+    elementType: 'character',
+    instanceId,
+    name: computed.name || raw.name || 'Character',
+    traits,
+    tier: computed.tier ?? tierFromLevel(raw.level ?? computed.level ?? 1),
+    level: raw.level ?? computed.level ?? 1,
+    proficiency: computed.proficiency ?? 1,
+    armorScore: computed.armorScore ?? 0,
+    maxArmor: computed.maxArmor ?? 0,
+    currentArmor: raw.currentArmor ?? computed.currentArmor ?? 0,
+  };
+  const featureState = { ...(raw.featureState || {}) };
+  if (raw.reinforcedActive === true) {
+    featureState.Reinforced = { ...(featureState.Reinforced || {}), reinforcedActive: true };
+  }
+  return {
+    fear: 0,
+    mapConfig: null,
+    activeElements: [el],
+    _ownerInstanceId: instanceId,
+    featureState,
+  };
+}
+
+function defaultGearSheetContext() {
+  return {
+    computed: {
+      traits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+      tier: 1,
+      level: 1,
+      proficiency: 1,
+    },
+    raw: {},
+  };
+}
+
+/**
+ * Resolve `passiveStatMods` from the V2 registry when the declarative sheet flag is on
+ * (with `unwrap` / `unwrapAll`), otherwise Phase 1. If V2 yields no mods (failed `when`),
+ * falls back to Phase 1 when present.
+ */
+function resolveGearPassiveStatMods(v2Descriptor, p1Descriptor, featureName, sheetCtx) {
+  const ctx = sheetCtx || defaultGearSheetContext();
+  const base = buildV2SheetUnwrapGameState(ctx.computed, ctx.raw);
+  const useV2 = isV2DeclarativeSheetEnabled();
+  if (useV2 && v2Descriptor && v2Descriptor.passiveStatMods !== undefined) {
+    const table = buildTableSnapshot({ ...base, _featureKey: featureName });
+    let mods = unwrap(v2Descriptor.passiveStatMods, table);
+    if (mods != null && typeof mods === 'object') {
+      mods = unwrapAll(mods, table);
+    }
+    if (mods != null && typeof mods === 'object') {
+      return mods;
+    }
+  }
+  const p1 = p1Descriptor?.passiveStatMods;
+  return p1 != null && typeof p1 === 'object' ? p1 : null;
+}
+
+/**
  * Resolve armor stats from an SRD armor item.
  */
 export function resolveArmor(armorItem) {
@@ -155,8 +266,14 @@ export function resolveArmor(armorItem) {
  * Compute armor stat and roll modifiers from the registry only.
  * Returns { traits, evasion, rollModifiers, feature, sources }.
  * No parsing — armor features must have passiveStatMods in the armor feature registry.
+ *
+ * When {@link isV2DeclarativeSheetEnabled}, passive mods are resolved from `src/features-v2/armor_properties`
+ * (with `when()` unwrapping); Phase 1 `armorFeatures` is used as fallback when V2 yields no static mods.
+ *
+ * @param {object | null} armorItem
+ * @param {{ computed?: object, raw?: object }} [sheetCtx] — pass `{ computed: result, raw: data }` from `recomputeCharacter` for accurate unwrap; optional for callers that only need P1-shaped mods.
  */
-export function computeArmorModifiers(armorItem) {
+export function computeArmorModifiers(armorItem, sheetCtx) {
   const result = {
     traits: {},
     evasion: 0,
@@ -171,14 +288,11 @@ export function computeArmorModifiers(armorItem) {
 
   const feat = features[0];
   result.feature = { name: feat.name, description: feat.description || feat.text || '' };
-  const descriptor = armorFeatures[feat.name];
-  const mods = descriptor?.passiveStatMods;
+  const v2d = v2ArmorProperties[feat.name];
+  const p1d = armorFeatures[feat.name];
+  const mods = resolveGearPassiveStatMods(v2d, p1d, feat.name, sheetCtx);
   if (!mods) return result;
 
-  if (mods.evasion != null) {
-    result.evasion += mods.evasion;
-    result.sources.push({ armor: armorItem.name, feature: feat.name, stat: 'evasion', value: mods.evasion });
-  }
   if (mods.traits && typeof mods.traits === 'object') {
     for (const [key, value] of Object.entries(mods.traits)) {
       if (TRAIT_KEYS.includes(key)) {
@@ -186,6 +300,16 @@ export function computeArmorModifiers(armorItem) {
         result.sources.push({ armor: armorItem.name, feature: feat.name, stat: key, value });
       }
     }
+  }
+  for (const key of TRAIT_KEYS) {
+    if (mods[key] != null && typeof mods[key] === 'number' && !(mods.traits && key in mods.traits)) {
+      result.traits[key] = (result.traits[key] || 0) + mods[key];
+      result.sources.push({ armor: armorItem.name, feature: feat.name, stat: key, value: mods[key] });
+    }
+  }
+  if (mods.evasion != null && typeof mods.evasion === 'number') {
+    result.evasion += mods.evasion;
+    result.sources.push({ armor: armorItem.name, feature: feat.name, stat: 'evasion', value: mods.evasion });
   }
   if (Array.isArray(mods.rollModifiers)) {
     for (const rm of mods.rollModifiers) {
@@ -577,7 +701,8 @@ export function recomputeCharacter(data, srdData) {
   }
 
   // Apply armor feature modifiers BEFORE weapon modifiers
-  const armorMods = computeArmorModifiers(srdArmor);
+  const gearSheetCtx = { computed: result, raw: data };
+  const armorMods = computeArmorModifiers(srdArmor, gearSheetCtx);
   result.armorMods = armorMods;
   for (const [k, v] of Object.entries(armorMods.traits)) {
     if (result.traits && k in result.traits) result.traits[k] += v;
@@ -637,7 +762,7 @@ export function recomputeCharacter(data, srdData) {
   }
 
   // Apply weapon property modifiers (e.g. Cumbersome -1 Finesse, Heavy -1 Evasion)
-  const weaponMods = computeWeaponModifiers(result.weapons || []);
+  const weaponMods = computeWeaponModifiers(result.weapons || [], gearSheetCtx);
   result.weaponMods = weaponMods;
   for (const [k, v] of Object.entries(weaponMods.traits)) {
     if (result.traits && k in result.traits) result.traits[k] += v;
@@ -675,6 +800,8 @@ export function recomputeCharacter(data, srdData) {
     }));
   }
 
+  assignBeastformDisplayFeatures(result, data, srdData);
+
   result.activeFeatures = buildActiveFeatures(result, srdClass, srdSubclass, srdArmor);
 
   return result;
@@ -697,8 +824,14 @@ const WEAPON_STAT_MAP = {
  * Compute weapon stat modifiers from the registry only.
  * Returns { traits, evasion, armorScore, severeThreshold, sources }.
  * No parsing — weapon features must have passiveStatMods in the weapon feature registry.
+ *
+ * When {@link isV2DeclarativeSheetEnabled}, passive mods come from `src/features-v2/weapon_properties`
+ * first; Phase 1 `weaponFeatures` fills gaps (e.g. roll-only metadata not ported to V2).
+ *
+ * @param {object[]} weapons
+ * @param {{ computed?: object, raw?: object }} [sheetCtx] — pass `{ computed: result, raw: data }` from `recomputeCharacter`
  */
-export function computeWeaponModifiers(weapons) {
+export function computeWeaponModifiers(weapons, sheetCtx) {
   const result = {
     traits: {},
     evasion: 0,
@@ -711,8 +844,9 @@ export function computeWeaponModifiers(weapons) {
   for (const w of weapons) {
     const featureName = w.feature?.name;
     if (!featureName) continue;
-    const descriptor = weaponFeatures[featureName];
-    const mods = descriptor?.passiveStatMods;
+    const v2d = v2WeaponProperties[featureName];
+    const p1d = weaponFeatures[featureName];
+    const mods = resolveGearPassiveStatMods(v2d, p1d, featureName, sheetCtx);
     if (!mods) continue;
 
     if (mods.traits && typeof mods.traits === 'object') {
@@ -723,15 +857,21 @@ export function computeWeaponModifiers(weapons) {
         }
       }
     }
-    if (mods.evasion != null) {
+    for (const key of TRAIT_KEYS) {
+      if (mods[key] != null && typeof mods[key] === 'number' && !(mods.traits && key in mods.traits)) {
+        result.traits[key] = (result.traits[key] || 0) + mods[key];
+        result.sources.push({ weapon: w.name, feature: featureName, stat: key, value: mods[key] });
+      }
+    }
+    if (mods.evasion != null && typeof mods.evasion === 'number') {
       result.evasion += mods.evasion;
       result.sources.push({ weapon: w.name, feature: featureName, stat: 'evasion', value: mods.evasion });
     }
-    if (mods.armorScore != null) {
+    if (mods.armorScore != null && typeof mods.armorScore === 'number') {
       result.armorScore += mods.armorScore;
       result.sources.push({ weapon: w.name, feature: featureName, stat: 'armor score', value: mods.armorScore });
     }
-    if (mods.severeThreshold != null) {
+    if (mods.severeThreshold != null && typeof mods.severeThreshold === 'number') {
       result.severeThreshold += mods.severeThreshold;
       result.sources.push({ weapon: w.name, feature: featureName, stat: 'severe damage threshold', value: mods.severeThreshold });
     }

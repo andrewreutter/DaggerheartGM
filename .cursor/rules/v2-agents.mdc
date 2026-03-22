@@ -10,7 +10,7 @@ When the user's message matches one of these phrases, read the referenced prompt
 
 | User says | Read this file first | Then do |
 |---|---|---|
-| **Work features** | `docs/agent-prompts/work-agent.md` | Follow its STEP 1–4 protocol: read tracker summary, apply priority rule, announce chosen mode, then read and follow the chosen agent's prompt completely. |
+| **Work features** | `docs/agent-prompts/work-agent.md` | Follow its STEP 1–4 protocol: read tracker summary, apply priority rule (see **`WORK_AGENT_INCLUDE_UNBLOCK`** at top of that file — when `false`, Unblock is not auto-selected), announce chosen mode, then read and follow the chosen agent's prompt completely. |
 | **Implement features** | `docs/agent-prompts/implementation-agent.md` | Follow its ON STARTUP + ON EVERY BATCH protocol, then claim and implement a batch. |
 | **Validate features** | `docs/agent-prompts/validation-agent.md` | Follow its ON STARTUP + ON EVERY BATCH protocol, then claim and validate a batch. |
 | **Fix features** | `docs/agent-prompts/fixit-agent.md` | Follow its ON STARTUP + ON EVERY FIX protocol, then claim and fix one issue. |

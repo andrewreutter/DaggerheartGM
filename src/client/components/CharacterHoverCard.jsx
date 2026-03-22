@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   AlertCircle, Sparkles, Heart, Shield,
   ChevronDown, ChevronRight, ExternalLink, RefreshCw, Bug, Pencil,
@@ -23,12 +23,23 @@ import {
 } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
-import { weaponFeatures, classFeatures, ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
-import { ancestryMap } from '../../features/ancestries/index.js';
-import { runHook } from '../../features/hooks.js';
-import { wrapEntity } from '../../features/entity.js';
-import { wrapRoll } from '../../features/roll.js';
+import {
+  weaponFeatures,
+  classFeatures,
+  ancestryFeatures as ancestryFeaturesRegistry,
+  ancestryMap,
+  runHook,
+  wrapEntity,
+  wrapRoll,
+} from '../lib/game-table-mechanics.js';
 import { getEffectiveWeaponRange, recomputeCharacter } from '../lib/character-calc.js';
+import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
+import { postTableOp } from '../lib/api.js';
+import {
+  collectV2CrossSheetChips,
+  activateV2CrossSheetChip,
+} from '../lib/v2-cross-sheet-lifecycle.js';
+import { applyV2LifecycleMutations } from '../lib/table-ops.js';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
 
@@ -290,6 +301,10 @@ export function CharacterHoverCard({
   targetMenuOpenRef,
   system,
   characters,
+  fearCount = 0,
+  tableFeatureState,
+  /** Game Table id — required for V2 cross-sheet chip `postTableOp` (GM only) */
+  tableId,
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
@@ -324,9 +339,74 @@ export function CharacterHoverCard({
   }, [targetMenuPending]);
 
   const { srdData } = useCharacterSrdData();
+  const v2SheetLive = useV2DeclarativeSheetEnabledLive();
+
+  const v2Registry = useMemo(
+    () => (srdData ? buildV2RegistryWithSrdItems(srdData) : null),
+    [srdData]
+  );
+
+  const crossSheetChips = useMemo(() => {
+    if (!v2SheetLive || !v2Registry || !el.instanceId || !Array.isArray(activeElements)) return [];
+    return collectV2CrossSheetChips(el.instanceId, activeElements, v2Registry, 'card', {
+      tableFeatureState,
+      fearCount,
+      mapConfig,
+    });
+  }, [v2SheetLive, v2Registry, el.instanceId, activeElements, tableFeatureState, fearCount, mapConfig]);
+
+  const handleCrossSheetChipClick = useCallback(
+    (chip) => {
+      if (!v2SheetLive || !v2Registry || !el.instanceId || isPlayer || !tableId) return;
+      if (chip.disabled) return;
+      const { mutations } = activateV2CrossSheetChip(chip, el.instanceId, activeElements, v2Registry, {
+        tableFeatureState,
+        fearCount,
+        mapConfig,
+      });
+      const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+        activeElements,
+        mutations,
+        chip._ownerInstanceId
+      );
+      if (updates.length > 0) {
+        postTableOp({ op: 'update-elements', updates }, tableId);
+      }
+      for (const p of actionLoopNotifications) {
+        onActionNotification?.({
+          _action: true,
+          rollUser: 'Table',
+          actionName: p.title,
+          actionText: p.description,
+          _v2ActionLoop: true,
+          _reactorInstanceId: p.instanceId,
+        });
+      }
+    },
+    [
+      v2SheetLive,
+      v2Registry,
+      el.instanceId,
+      isPlayer,
+      tableId,
+      activeElements,
+      tableFeatureState,
+      fearCount,
+      mapConfig,
+      onActionNotification,
+    ]
+  );
 
   // Recompute for display so experiences (and other derived fields) reflect ancestry bonus on game table
-  const displayEl = useMemo(() => (srdData ? recomputeCharacter(el, srdData) : el), [el, srdData]);
+  const displayEl = useMemo(() => {
+    if (!srdData) return el;
+    const base = recomputeCharacter(el, srdData);
+    return mergeV2DeclarativeSheetOverlay(base, el, srdData, {
+      fearCount,
+      mapConfig,
+      tableFeatureState,
+    });
+  }, [el, srdData, fearCount, mapConfig, tableFeatureState, v2SheetLive]);
 
   const traits = el.traits || {};
   const hasDaggerstack = !!el.daggerstackUrl;
@@ -1083,6 +1163,8 @@ export function CharacterHoverCard({
             : undefined}
           selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
           onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
+          crossSheetChips={crossSheetChips}
+          onCrossSheetChipClick={!isPlayer && tableId ? handleCrossSheetChipClick : undefined}
           onUseMod={updateFn ? (mod) => {
             // clearStress mode chips (Rally Die, Rogue's Dodge, etc.)
             if (mod.mode === 'clearStress' && mod.dice) {

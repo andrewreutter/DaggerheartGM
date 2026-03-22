@@ -34,6 +34,73 @@ const PHASE_CHIP_PLACEMENT = {
 };
 
 /**
+ * Merge `gameState` with `actionConfig` the same way {@link createActionLoop} does, preserving
+ * `gameState.action.effects` / `appliedEffects` when the VTT hydrates pending damage (Phase 3 banner bridge).
+ *
+ * @param {object} gameState
+ * @param {object} actionConfig
+ * @returns {object}
+ */
+export function mergeGameStateWithActionConfig(gameState, actionConfig) {
+  const prev = gameState?.action || {};
+  return {
+    ...gameState,
+    action: {
+      type: actionConfig.type,
+      actorInstanceId: actionConfig.actorInstanceId,
+      targetInstanceIds: actionConfig.targetInstanceIds || [],
+      trait: actionConfig.traitKey,
+      range: actionConfig.range,
+      weaponId: actionConfig.weaponId ?? null,
+      useArmorByTargetId: prev.useArmorByTargetId,
+      reactionContext: actionConfig.reactionContext ?? prev.reactionContext,
+      tagTeamPartnerInstanceId:
+        actionConfig.tagTeamPartnerInstanceId ?? prev.tagTeamPartnerInstanceId ?? null,
+      effects: Array.isArray(prev.effects) ? [...prev.effects] : [],
+      appliedEffects: Array.isArray(prev.appliedEffects) ? [...prev.appliedEffects] : [],
+    },
+  };
+}
+
+/**
+ * Collect chips for a single phase **without** running lifecycle hooks or harvesting mutations.
+ * Used by the VTT banner bridge so intent / reviewAction / reviewOutcome chips can be shown together
+ * without executing `onIntent` / `onReviewAction` / `onReviewOutcome` side effects.
+ *
+ * @param {object} gameState
+ * @param {object} actionConfig
+ * @param {object[]} features
+ * @param {'intent'|'reviewAction'|'reviewOutcome'|'resolveAction'|'resolve'} phase
+ * @param {object} [usageStore]
+ * @returns {object[]} chips with `_v2Phase` set to `phase`
+ */
+export function collectPhaseChipsOnly(gameState, actionConfig, features, phase, usageStore = {}) {
+  const placement = PHASE_CHIP_PLACEMENT[phase];
+  if (!placement) return [];
+
+  const stateWithAction = mergeGameStateWithActionConfig(gameState, actionConfig);
+  const activeChips = [];
+
+  for (const feature of features) {
+    const featureState = {
+      ...stateWithAction,
+      _ownerInstanceId: feature._ownerInstanceId,
+      _featureKey: feature.name,
+      _activeFeature: feature,
+      featureState: gameState.featureState,
+    };
+
+    const table = buildTableSnapshot(featureState);
+    const chips = collectChips([feature], placement, table, usageStore);
+    for (const c of chips) {
+      activeChips.push({ ...c, _v2Phase: phase });
+    }
+  }
+
+  return activeChips;
+}
+
+/**
  * Create an Action Loop instance.
  *
  * @param {object} gameState     — raw game state (see table.js for shape)
@@ -48,23 +115,8 @@ const PHASE_CHIP_PLACEMENT = {
  * @returns {object} loop
  */
 export function createActionLoop(gameState, actionConfig, features = [], usageStore = {}) {
-  // Merge action config into the game state so table snapshots see it
-  const stateWithAction = {
-    ...gameState,
-    action: {
-      type: actionConfig.type,
-      actorInstanceId: actionConfig.actorInstanceId,
-      targetInstanceIds: actionConfig.targetInstanceIds || [],
-      trait: actionConfig.traitKey,
-      range: actionConfig.range,
-      /** Which weapon the actor is using for this attack (e.g. primary vs secondary). */
-      weaponId: actionConfig.weaponId ?? null,
-      /** Carried from `gameState.action` when hydrating mid-banner (e.g. roll `_useArmorByTargetId`). */
-      useArmorByTargetId: gameState.action?.useArmorByTargetId,
-      effects: [],
-      appliedEffects: [],
-    },
-  };
+  // Merge action config into the game state so table snapshots see it (preserve hydrated effects)
+  const stateWithAction = mergeGameStateWithActionConfig(gameState, actionConfig);
 
   const phaseResults = {};
 
@@ -149,6 +201,10 @@ export function createActionLoop(gameState, actionConfig, features = [], usageSt
     getPhaseResult(phase) {
       return phaseResults[phase] || null;
     },
+    /** Mutable merged state (`gameState` + action config) — used by tests and VTT helpers. */
+    get gameState() {
+      return stateWithAction;
+    },
     /**
      * Update the shared action effects list (e.g. after dice are resolved by
      * the server). Allows onReviewOutcome hooks to read actual roll results.
@@ -197,6 +253,105 @@ export function dispatchStateChangeHooks(gameState, features = [], mutationBatch
 
     const table = buildTableSnapshot(featureState);
     const hookFnRaw = feature.hooks?.onStateChange;
+    if (hookFnRaw) {
+      const hookFn = unwrap(hookFnRaw, table);
+      if (typeof hookFn === 'function') {
+        hookFn(table);
+      }
+    }
+
+    const mutations = applyMutations(table);
+    allMutations.push(...mutations);
+    for (const m of mutations) {
+      if (m.type === 'addNarration') allNarrations.push(m.payload.text);
+    }
+  }
+
+  return { mutations: allMutations, narrations: allNarrations };
+}
+
+/**
+ * Run `hooks.onTokenMove` for every feature after a battle-map token position change.
+ *
+ * **`table.me` is always the feature owner** (same as other hook dispatches). The moved token is
+ * **`table.tokenMove.mover`** — compare `mover.lastPosition.rangeFrom(table.me)` vs
+ * `mover.rangeFrom(table.me)` to detect leaving Melee, etc.
+ *
+ * **Contract:** `gameState` must reflect **post-move** positions on elements. **`gameState._previousPositions[moverInstanceId]`**
+ * must hold that token’s coordinates **before** the move so `Actor.lastPosition` works on the mover.
+ *
+ * @param {object} gameState          — authoritative state after the move
+ * @param {object[]} [features]       — flat list of features with `_ownerInstanceId`
+ * @param {{ moverInstanceId: string }} tokenMove — which instance moved (required)
+ * @returns {{ mutations: object[], narrations: string[] }}
+ */
+/**
+ * Run `hooks.onSceneEnd` for every feature when a **scene** ends (VTT-level event).
+ *
+ * **Contract:** Call when the table leaves an encounter scene — not the same as session
+ * start/end. Queues a synthetic `sceneEnd` entry on `table.mutationBatch` for predicates.
+ *
+ * @param {object} gameState       — authoritative table state
+ * @param {object[]} [features]    — flat list of features with `_ownerInstanceId`
+ * @returns {{ mutations: object[], narrations: string[] }}
+ */
+export function dispatchSceneEndHooks(gameState, features = []) {
+  const batch = [{ type: 'sceneEnd', payload: {} }];
+  const allMutations = [];
+  const allNarrations = [];
+
+  for (const feature of features) {
+    const featureState = {
+      ...gameState,
+      _ownerInstanceId: feature._ownerInstanceId,
+      _featureKey: feature.name,
+      _activeFeature: feature,
+      featureState: gameState.featureState,
+      _mutationBatch: batch,
+    };
+
+    const table = buildTableSnapshot(featureState);
+    const hookFnRaw = feature.hooks?.onSceneEnd;
+    if (hookFnRaw) {
+      const hookFn = unwrap(hookFnRaw, table);
+      if (typeof hookFn === 'function') {
+        hookFn(table);
+      }
+    }
+
+    const mutations = applyMutations(table);
+    allMutations.push(...mutations);
+    for (const m of mutations) {
+      if (m.type === 'addNarration') allNarrations.push(m.payload.text);
+    }
+  }
+
+  return { mutations: allMutations, narrations: allNarrations };
+}
+
+export function dispatchTokenMoveHooks(gameState, features = [], tokenMove = {}) {
+  const moverInstanceId = tokenMove?.moverInstanceId;
+  if (!moverInstanceId) {
+    return { mutations: [], narrations: [] };
+  }
+
+  const batch = [{ type: 'tokenMove', payload: { moverInstanceId } }];
+  const allMutations = [];
+  const allNarrations = [];
+
+  for (const feature of features) {
+    const featureState = {
+      ...gameState,
+      _ownerInstanceId: feature._ownerInstanceId,
+      _featureKey: feature.name,
+      _activeFeature: feature,
+      featureState: gameState.featureState,
+      _tokenMove: { moverInstanceId },
+      _mutationBatch: batch,
+    };
+
+    const table = buildTableSnapshot(featureState);
+    const hookFnRaw = feature.hooks?.onTokenMove;
     if (hookFnRaw) {
       const hookFn = unwrap(hookFnRaw, table);
       if (typeof hookFn === 'function') {

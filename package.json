@@ -10,6 +10,7 @@
     "crawl:fcg": "node --env-file=.env scripts/crawl.js fcg",
     "crawl:hod": "node --env-file=.env scripts/crawl.js hod",
     "refresh:daggerstack": "node scripts/refresh-daggerstack-uuids.js",
+    "generate:beastforms": "node scripts/generate-beastform-srd-data.mjs",
     "dev": "node --env-file=.env --watch server.js & npm run dev:css & npm run dev:js",
     "build": "npm run build:css && npm run build:js",
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
@@ -19,9 +20,12 @@
     "db:local": "supabase start",
     "db:local:stop": "supabase stop",
     "test": "vitest run && npx playwright test",
+    "validate:v2-preflight": "node scripts/validate-v2-conventions-preflight.mjs",
+    "v2:queue": "node scripts/v2-migration-queue.mjs",
     "test:unit": "vitest run",
     "test:browser": "npx playwright test",
-    "agents": "node --env-file=.env scripts/orchestrate.js"
+    "agents": "node --env-file=.env scripts/orchestrate.js",
+    "seed:v2-browser-chars": "node --env-file=.env scripts/seed-v2-browser-test-characters.mjs"
   },
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",

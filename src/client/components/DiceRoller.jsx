@@ -9,8 +9,14 @@ import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
 import { rangeFtToLabel, RANGE_BANDS_FT } from '../lib/map-range.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
-import { weaponFeatures } from '../../features/registry.js';
-import { wrapRoll } from '../../features/roll.js';
+import {
+  weaponFeatures,
+  wrapRoll,
+  getWeaponTagAutomatedForBanner,
+  getConditionalWeaponTagStatus,
+  getWeaponTagInteractive,
+  shouldUsePhase1RegistryFallback,
+} from '../lib/game-table-mechanics.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -236,7 +242,7 @@ function useBannerVisible() {
  * feature registry. Replaces the old AUTOMATED_TAGS hardcoded set.
  */
 function isTagAutomated(tagName) {
-  return weaponFeatures[tagName]?.automated ?? false;
+  return getWeaponTagAutomatedForBanner(tagName);
 }
 
 /**
@@ -245,9 +251,7 @@ function isTagAutomated(tagName) {
  * switch-statement.
  */
 function getConditionalTagStatus(tag, roll) {
-  const feature = weaponFeatures[tag.name];
-  if (feature?.bannerStatus) return feature.bannerStatus(tag, wrapRoll(roll));
-  return null;
+  return getConditionalWeaponTagStatus(tag, roll);
 }
 
 function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerCharacter = {}, onRestMoveSelect, canEditColumn, isPlayer, onAcknowledge, onCancel, disableDismiss, gmUid = null }) {
@@ -632,12 +636,226 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
   );
 }
 
-/** Returns true when a feature tag requires explicit user interaction before dismissal. */
-function isTagInteractive(tagName) {
-  return weaponFeatures[tagName]?.interactive ?? false;
+/**
+ * V2 engine review chip: optional `isSelect` / `selectTargets` pickers + Confirm (Phase B).
+ */
+function V2ReviewChipRow({
+  chip,
+  roll,
+  phaseKey,
+  rowIndex,
+  resolveV2ReviewChipPicker,
+  onV2ReviewChip,
+  isPlayer,
+  primaryDamageTargetId,
+}) {
+  const needsIsSelect = typeof chip.isSelect === 'function';
+  const needsTargets = typeof chip.selectTargets === 'function';
+  const picker = resolveV2ReviewChipPicker?.(chip, roll);
+  const label = chip.description || chip.name || chip._featureName || 'Feature';
+  const costParts = [];
+  if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
+  if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
+  const costStr = costParts.join(', ');
+  const stableKey = chip._chipKey || `${phaseKey}-${chip._featureName}-${rowIndex}`;
+
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedTargetIds, setSelectedTargetIds] = useState([]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+    setSelectedTargetIds([]);
+  }, [stableKey, roll._rollDbId]);
+
+  const maxSel = Math.max(1, Math.min(99, picker?.maxSelections ?? 1));
+  const options = Array.isArray(picker?.isSelectOptions) ? picker.isSelectOptions : [];
+  const pickTargets = Array.isArray(picker?.selectTargets) ? picker.selectTargets : [];
+
+  const optionId = (o) => (o && (o.id != null ? o.id : o.value));
+  const optionLabel = (o) => (o && (o.name ?? o.label ?? String(optionId(o) ?? ''))) || '';
+
+  const actorInstanceId = (t) => (t && (t.instanceId != null ? t.instanceId : t.id));
+
+  const toggleId = (id) => {
+    setSelectedIds((prev) => {
+      if (!chip.multiSelect) return [id];
+      const has = prev.includes(id);
+      if (has) return prev.filter((x) => x !== id);
+      if (prev.length >= maxSel) return [...prev.slice(1), id];
+      return [...prev, id];
+    });
+  };
+
+  const toggleTarget = (tid) => {
+    setSelectedTargetIds((prev) => {
+      if (!chip.multiSelect) return [tid];
+      const has = prev.includes(tid);
+      if (has) return prev.filter((x) => x !== tid);
+      if (prev.length >= maxSel) return [...prev.slice(1), tid];
+      return [...prev, tid];
+    });
+  };
+
+  const needsPrimaryFirst = needsTargets && !primaryDamageTargetId;
+  const canConfirm = () => {
+    if (needsPrimaryFirst) return false;
+    if (needsIsSelect) {
+      if (chip.multiSelect) return selectedIds.length > 0 && selectedIds.length <= maxSel;
+      return selectedIds.length === 1 && selectedIds[0] != null && selectedIds[0] !== '';
+    }
+    if (needsTargets) return selectedTargetIds.length > 0;
+    return true;
+  };
+
+  const doConfirm = () => {
+    const selectOpts = {};
+    if (needsIsSelect) {
+      if (chip.multiSelect) selectOpts.selectedIds = [...selectedIds];
+      else selectOpts.selectedId = selectedIds[0];
+    }
+    if (needsTargets) selectOpts.selectedTargetIds = [...selectedTargetIds];
+    onV2ReviewChip?.(chip, roll, selectOpts);
+  };
+
+  const blockedBase = chip.disabled || isPlayer;
+  const needsPickerUi = needsIsSelect || needsTargets;
+  const pickerMissing = needsPickerUi && !picker;
+  const blocked = blockedBase || pickerMissing || (needsPickerUi && needsPrimaryFirst);
+
+  if (!needsPickerUi) {
+    return (
+      <Tooltip key={stableKey} label={label} placement="bottom-left">
+        <button
+          type="button"
+          disabled={blockedBase}
+          onClick={() => onV2ReviewChip?.(chip, roll)}
+          className={`w-full text-left px-2 py-1 rounded text-[11px] border transition-colors ${
+            blockedBase
+              ? 'border-slate-700/50 bg-slate-900/40 text-slate-500 cursor-not-allowed'
+              : 'border-violet-600/60 bg-violet-900/40 text-violet-100 hover:bg-violet-800/50'
+          }`}
+        >
+          <span className="font-semibold text-violet-200">{chip._featureName}</span>
+          {chip.name && chip.name !== chip._featureName ? (
+            <span className="text-violet-300/80"> — {chip.name}</span>
+          ) : null}
+          {costStr ? <span className="text-slate-400"> ({costStr})</span> : null}
+        </button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div
+      key={stableKey}
+      className="rounded border border-violet-600/40 bg-violet-950/40 px-2 py-1.5 space-y-1.5"
+    >
+      <div className="text-[11px] text-violet-100">
+        <span className="font-semibold text-violet-200">{chip._featureName}</span>
+        {chip.name && chip.name !== chip._featureName ? (
+          <span className="text-violet-300/80"> — {chip.name}</span>
+        ) : null}
+        {costStr ? <span className="text-slate-400"> ({costStr})</span> : null}
+      </div>
+      {needsIsSelect && options.length === 0 ? (
+        <p className="text-[9px] text-slate-500">No options available for this chip.</p>
+      ) : null}
+      {needsIsSelect && options.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {chip.multiSelect
+            ? options.map((o) => {
+                const id = optionId(o);
+                const checked = id != null && selectedIds.includes(id);
+                return (
+                  <label
+                    key={String(id)}
+                    className="flex items-center gap-2 text-[10px] text-slate-200 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-600"
+                      checked={checked}
+                      onChange={() => id != null && toggleId(id)}
+                      disabled={blockedBase}
+                    />
+                    <span>{optionLabel(o)}</span>
+                  </label>
+                );
+              })
+            : (
+              <select
+                className="w-full text-[10px] bg-slate-900 border border-slate-600 rounded px-1 py-1 text-slate-100"
+                value={selectedIds[0] ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelectedIds(v ? [v] : []);
+                }}
+                disabled={blockedBase}
+              >
+                <option value="">Choose…</option>
+                {options.map((o) => {
+                  const id = optionId(o);
+                  if (id == null) return null;
+                  return (
+                    <option key={String(id)} value={id}>
+                      {optionLabel(o)}
+                    </option>
+                  );
+                })}
+              </select>
+            )}
+        </div>
+      ) : null}
+      {needsTargets && pickTargets.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {pickTargets.map((t) => {
+            const tid = actorInstanceId(t);
+            if (!tid) return null;
+            const name = t.name || t.label || tid;
+            const on = selectedTargetIds.includes(tid);
+            return (
+              <button
+                key={tid}
+                type="button"
+                disabled={blockedBase || needsPrimaryFirst}
+                onClick={() => toggleTarget(tid)}
+                className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                  on
+                    ? 'border-amber-500 bg-amber-900/50 text-amber-100'
+                    : 'border-slate-600 bg-slate-900/60 text-slate-200'
+                }`}
+              >
+                {name}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {needsPrimaryFirst ? (
+        <p className="text-[9px] text-slate-500">Select a damage target above first.</p>
+      ) : null}
+      {pickerMissing ? (
+        <p className="text-[9px] text-slate-500">Could not load chip options.</p>
+      ) : null}
+      <button
+        type="button"
+        disabled={blocked || !canConfirm()}
+        onClick={doConfirm}
+        aria-label={label}
+        className="w-full px-2 py-1 rounded text-[10px] font-medium border border-violet-500/70 bg-violet-800/40 text-violet-100 hover:bg-violet-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Apply
+      </button>
+    </div>
+  );
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest }) {
+/** Returns true when a feature tag requires explicit user interaction before dismissal. */
+function isTagInteractive(tagName) {
+  return getWeaponTagInteractive(tagName);
+}
+
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker }) {
   const visible = useBannerVisible();
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
@@ -652,12 +870,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Damage banners: target chips are selectors only; selection is applied when Acknowledge is pressed.
   const [selectedDamageTargetId, setSelectedDamageTargetId] = useState(() => roll._selectedTargetInstanceId ?? null);
   const [useArmorForSelected, setUseArmorForSelected] = useState(false);
-  // Multi-target: Hold Them Off (Ranger) or weapon/feature with _multiTarget (e.g. Elemental Breath).
-  const holdThemOffActive = !!roll._holdThemOffActive;
+  // Phase E: when V2 declarative sheet is on, Ranger Hold Them Off / Focus reroll use V2 review chips only.
+  const usePhase1RangerBannerTools = shouldUsePhase1RegistryFallback();
+  const holdThemOffActive = usePhase1RangerBannerTools && !!roll._holdThemOffActive;
   const [selectedDamageTargetIds, setSelectedDamageTargetIds] = useState(() =>
     Array.isArray(roll._selectedTargetInstanceIds)
       ? roll._selectedTargetInstanceIds
-      : (roll._holdThemOffActive
+      : (holdThemOffActive
           ? [roll._selectedTargetInstanceId].filter(Boolean)
           : (roll._multiTarget ? (roll._selectedTargetInstanceId ? [roll._selectedTargetInstanceId] : []) : []))
   );
@@ -865,11 +1084,12 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // rangerFocusRerollChars carries focusedAdversaryInstanceId derived from adversary focusedBy field.
   const attackerRanger = rangerFocusRerollChars?.find(c => c.instanceId === roll._attackerInstanceId);
   const rangerFocusRerollChar = attackerRanger && attackerRanger.focusedAdversaryInstanceId === effectiveFocusTargetId ? attackerRanger : null;
+  const phase1RangerFocusReroll = usePhase1RangerBannerTools && rangerFocusRerollChar;
   // Stress note: visible to everyone — show whenever the attacker is focused on the target being attacked.
   const focusedByStressNote = !!rangerFocusRerollChar;
 
   // Hold Them Off (Ranger): character attack with damage, attacker has feature and ≥3 Hope.
-  const holdThemOffChar = hasDamage && roll._attackerInstanceId
+  const holdThemOffChar = usePhase1RangerBannerTools && hasDamage && roll._attackerInstanceId
     ? holdThemOffChars.find(c => c.instanceId === roll._attackerInstanceId)
     : null;
 
@@ -1246,6 +1466,53 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           </div>
         )}
 
+        {/* V2 engine chips: intent + reviewAction + reviewOutcome (declarative sheet flag) — v2-action-loop-bridge.js */}
+        {Array.isArray(v2ReviewChips) && v2ReviewChips.length > 0 && (() => {
+          const byPhase = { intent: [], reviewAction: [], reviewOutcome: [] };
+          for (const c of v2ReviewChips) {
+            const p = c._v2Phase && byPhase[c._v2Phase] != null ? c._v2Phase : 'reviewAction';
+            byPhase[p].push(c);
+          }
+          const phaseLabel = {
+            intent: 'V2 intent',
+            reviewAction: 'V2 review',
+            reviewOutcome: 'V2 outcome',
+          };
+          const primaryDamageTargetId =
+            selectedDamageTargetId ||
+            roll._selectedTargetInstanceId ||
+            (Array.isArray(selectedDamageTargetIds) && selectedDamageTargetIds[0]) ||
+            null;
+          return (
+            <div className="mt-2 rounded-lg border border-violet-600/40 bg-violet-950/30 px-2 py-1.5 space-y-2">
+              {(['intent', 'reviewAction', 'reviewOutcome']).map((pk) =>
+                byPhase[pk].length > 0 ? (
+                  <div key={pk}>
+                    <div className="text-[9px] font-semibold uppercase tracking-wider text-violet-300/90 mb-1">
+                      {phaseLabel[pk]}
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {byPhase[pk].map((chip, i) => (
+                        <V2ReviewChipRow
+                          key={chip._chipKey || `${pk}-${chip._featureName}-${i}`}
+                          chip={chip}
+                          roll={roll}
+                          phaseKey={pk}
+                          rowIndex={i}
+                          resolveV2ReviewChipPicker={resolveV2ReviewChipPicker}
+                          onV2ReviewChip={onV2ReviewChip}
+                          isPlayer={isPlayer}
+                          primaryDamageTargetId={primaryDamageTargetId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : null
+              )}
+            </div>
+          );
+        })()}
+
         {/* Focused-by Stress note: visible to everyone when the attack targets the Ranger's Focus adversary */}
         {focusedByStressNote && (
           <div className="text-[10px] text-emerald-300/90 mt-1.5">
@@ -1478,7 +1745,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               ))}
               {/* Ancestry banner reactions inside showActions (GM-visible) are handled by the generic block below */}
               {/* Ranger's Focus: End Focus to reroll Duality dice — Fear result, attack vs Focus target (GM only in showActions block) */}
-              {dominant === 'fear' && hasDamage && rangerFocusRerollChar && onRangerFocusReroll && (() => {
+              {dominant === 'fear' && hasDamage && phase1RangerFocusReroll && onRangerFocusReroll && (() => {
                 const rangerRequested = !!(roll._rangerFocusRerollRequestedBy || (rangerFocusRequestedBannerIds && rangerFocusRequestedBannerIds.has(roll._rollDbId)));
                 return (
                   <Tooltip label={rangerRequested ? 'Reroll requested — waiting for GM' : "End Ranger's Focus to reroll Duality dice"}>
@@ -2180,7 +2447,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         )}
         {/* Feline Instincts and other ancestry reactions are handled by the generic banner reaction buttons above */}
         {/* Ranger's Focus: "End Focus to reroll Duality" — visible to player when not showActions so they can request GM */}
-        {!showActions && dominant === 'fear' && hasDamage && rangerFocusRerollChar && onRangerFocusRerollRequest && (() => {
+        {!showActions && dominant === 'fear' && hasDamage && phase1RangerFocusReroll && onRangerFocusRerollRequest && (() => {
           const rangerRequested = !!(roll._rangerFocusRerollRequestedBy || (rangerFocusRequestedBannerIds && rangerFocusRequestedBannerIds.has(roll._rollDbId)));
           return (
             <div className="mt-2.5 pt-2 border-t border-white/10">
@@ -2403,6 +2670,9 @@ export const DiceRoller = forwardRef(function DiceRoller({
   heartOfAPoetChars = [],
   onHeartD4Toggle,
   onHeartD4ToggleRequest,
+  v2ReviewChipsByRollDbId = new Map(),
+  onV2ReviewChip,
+  resolveV2ReviewChipPicker,
   restMovesSelections = {},
   onRestMoveSelect,
   onRestMoveClear,
@@ -3011,6 +3281,9 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 currentUserUid={currentUserUid}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}
                 onReplayDice={entry.resolved ? () => replayDiceForBanner(entry._bannerId) : undefined}
+                v2ReviewChips={v2ReviewChipsByRollDbId?.get(entry.roll._rollDbId) ?? []}
+                onV2ReviewChip={onV2ReviewChip}
+                resolveV2ReviewChipPicker={resolveV2ReviewChipPicker}
               />
             )
           ))}

@@ -139,6 +139,26 @@ describe('collectChips()', () => {
     expect(chips).toHaveLength(0);
   });
 
+  it('respects frequencyMaxUses > 1 before excluding a session chip', () => {
+    const feature = {
+      name: 'Triple',
+      _ownerInstanceId: 'char-1',
+      chips: [
+        {
+          description: 'Three times',
+          placements: ['card'],
+          frequency: 'session',
+          frequencyMaxUses: 3,
+        },
+      ],
+    };
+    const table = mockTable();
+    const chipKey = 'Triple::Triple::card';
+    const usageStore = { [chipKey]: { cycle: 'session', count: 2, used: false } };
+    const chips = collectChips([feature], 'card', table, usageStore);
+    expect(chips).toHaveLength(1);
+  });
+
   it('annotates each chip with _featureName and _ownerInstanceId', () => {
     const feature = {
       name: 'Cool Feature',
@@ -278,6 +298,18 @@ describe('activateChip()', () => {
     const chipState = makeChipState();
     activateChip(chip, table, chipState, { selectedTargetIds: ['adv-1'] });
     expect(chipState.get('selectedTargetIds')).toBeUndefined();
+  });
+
+  it('stores selectedIds in chip state for multiSelect + isSelect chips', () => {
+    const chip = {
+      multiSelect: true,
+      isSelect: () => [{ id: 'a' }, { id: 'b' }],
+      onUse: (table, cs) => {},
+    };
+    const table = mockTable();
+    const chipState = makeChipState();
+    activateChip(chip, table, chipState, { selectedIds: ['a', 'b'] });
+    expect(chipState.get('selectedIds')).toEqual(['a', 'b']);
   });
 
   it('resolves function-valued temporaryStatMods on toggle-on and caches for toggle-off', () => {
@@ -538,6 +570,19 @@ describe('trackChipFrequency()', () => {
     trackChipFrequency('key1', 'session', store);
     const available = trackChipFrequency('key1', 'session', store);
     expect(available).toBe(false);
+  });
+
+  it('allows multiple uses per cycle when maxUses > 1', () => {
+    const store = {};
+    expect(trackChipFrequency('k', 'session', store, 3)).toBe(true);
+    expect(store.k.count).toBe(1);
+    expect(store.k.used).toBe(false);
+    expect(trackChipFrequency('k', 'session', store, 3)).toBe(true);
+    expect(store.k.count).toBe(2);
+    expect(trackChipFrequency('k', 'session', store, 3)).toBe(true);
+    expect(store.k.count).toBe(3);
+    expect(store.k.used).toBe(true);
+    expect(trackChipFrequency('k', 'session', store, 3)).toBe(false);
   });
 });
 

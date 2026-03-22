@@ -3,12 +3,13 @@ import {
   ChevronDown, ChevronRight, Dices, Zap, Megaphone, X, Flame, Mountain, Droplets, Wind,
   Share2, CheckSquare, Square,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { Tooltip } from './Tooltip.jsx';
 import { effectiveThresholds } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { isCharacterComplete, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runCharacterRender } from '../lib/character-calc.js';
+import { isCharacterComplete, recomputeCharacter, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runCharacterRender } from '../lib/character-calc.js';
+import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive } from '../lib/v2-declarative-sheet.js';
 import { ancestryFeatures as ancestryFeaturesRegistry } from '../../features/registry.js';
 import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
 import { CustomSelect } from './forms/CustomSelect.jsx';
@@ -203,6 +204,7 @@ function BeastformFeatureCard({
             feature.sourceType === 'subclass' ? 'bg-sky-900/60 text-sky-300' :
             feature.sourceType === 'ancestry' ? 'bg-amber-900/60 text-amber-300' :
             feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' :
+            feature.sourceType === 'beastform' ? 'bg-teal-900/60 text-teal-300' :
             'bg-emerald-900/60 text-emerald-300'
           }`}>{feature.source}</span>
         )}
@@ -387,9 +389,10 @@ function SpellcastChip({ onClick }) {
 
 // ─── Weapon card ──────────────────────────────────────────────────────────────
 
-function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastating, onDevastatingToggle, pompousWarning }) {
+function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastating, onDevastatingToggle, pompousWarning, v2DisableReason }) {
   const [justRolled, setJustRolled] = useState(false);
-  const clickable = !!onClick && !pompousWarning;
+  const disableMsg = v2DisableReason || (pompousWarning ? 'Requires Presence ≤ 0' : null);
+  const clickable = !!onClick && !disableMsg;
   const traitKey = (weapon.trait || '').toLowerCase();
   const traitLabel = TRAIT_LABELS[traitKey];
   const traitScore_ = traitScore ?? 0;
@@ -411,7 +414,7 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
     baseBorder = justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-purple-700/50 bg-purple-950/30';
   } else if (isVirtual) {
     baseBorder = justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-amber-700/50 bg-amber-950/30';
-  } else if (pompousWarning) {
+  } else if (disableMsg) {
     baseBorder = 'border-amber-600/60 bg-amber-950/20 opacity-60';
   } else {
     baseBorder = justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-slate-700 bg-slate-800/60';
@@ -432,7 +435,7 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
       tabIndex={clickable ? 0 : undefined}
       onClick={handleClick}
       onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e); } : undefined}
-      title={pompousWarning ? 'Requires Presence ≤ 0' : clickable && traitLabel ? `Roll ${weapon.name} (${TRAIT_FULL[traitKey]})` : undefined}
+      title={disableMsg ? disableMsg : clickable && traitLabel ? `Roll ${weapon.name} (${TRAIT_FULL[traitKey]})` : undefined}
       className={`rounded border px-2 py-1.5 select-none text-[11px] transition-all
         ${baseBorder}
         ${clickable ? 'cursor-pointer hover:brightness-125 hover:border-sky-500/50 group' : ''}`}
@@ -479,10 +482,10 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
           {devastating ? 'd20 damage ON (1 Stress)' : 'd20 damage (1 Stress)'}
         </button>
       )}
-      {pompousWarning && (
+      {disableMsg && (
         <div className="text-[9px] mt-1 ml-5 text-amber-400 flex items-center gap-1">
           <AlertCircle size={9} className="shrink-0" />
-          Requires Presence ≤ 0
+          {disableMsg}
         </div>
       )}
     </div>
@@ -797,6 +800,7 @@ function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureU
             feature.sourceType === 'subclass'  ? 'bg-sky-900/60 text-sky-300' :
             feature.sourceType === 'ancestry'  ? 'bg-amber-900/60 text-amber-300' :
             feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' :
+            feature.sourceType === 'beastform' ? 'bg-teal-900/60 text-teal-300' :
             'bg-emerald-900/60 text-emerald-300'
           }`}>{feature.source}</span>
         )}
@@ -1252,10 +1256,10 @@ export function CharacterDefenseRow({ el }) {
         {thresholds && (
           <div className="text-slate-400" title={thresholdModTooltip || severeModTooltip || undefined}>
             Thresholds:{' '}
-            {(earthBonus > 0 || ancestryBonus > 0) ? (
+            {(earthBonus > 0 || ancestryMajorBonus > 0) ? (
               <>
-                <span className="text-yellow-300/50 font-semibold">{thresholds.major - earthBonus - ancestryBonus}</span>
-                {ancestryBonus > 0 && <span className="text-slate-500"> +{ancestryBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
+                <span className="text-yellow-300/50 font-semibold">{thresholds.major - earthBonus - ancestryMajorBonus}</span>
+                {ancestryMajorBonus > 0 && <span className="text-slate-500"> +{ancestryMajorBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
                 {earthBonus > 0 && <span className="text-slate-500"> +{earthBonus} (Earth)</span>}
                 <span className="text-slate-500"> = </span>
               </>
@@ -1263,10 +1267,10 @@ export function CharacterDefenseRow({ el }) {
             <span className="text-yellow-300 font-semibold">{thresholds.major}</span>
             <span className="text-slate-500"> / </span>
             <span className={`font-semibold ${wm.severeThreshold ? 'text-amber-300' : 'text-red-300'}`} title={severeModTooltip || undefined}>
-              {(earthBonus > 0 || ancestryBonus > 0) ? (
+              {(earthBonus > 0 || ancestrySevereBonus > 0) ? (
                 <>
-                  <span className="opacity-50">{thresholds.severe - earthBonus - ancestryBonus}</span>
-                  {ancestryBonus > 0 && <span className="text-slate-500 font-normal"> +{ancestryBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
+                  <span className="opacity-50">{thresholds.severe - earthBonus - ancestrySevereBonus}</span>
+                  {ancestrySevereBonus > 0 && <span className="text-slate-500 font-normal"> +{ancestrySevereBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
                   {earthBonus > 0 && <span className="text-slate-500 font-normal"> +{earthBonus} (Earth)</span>}
                   <span className="text-slate-500 font-normal"> = </span>
                 </>
@@ -1287,14 +1291,17 @@ export function CharacterDefenseRow({ el }) {
  *   selectedIndex             — currently selected experience index (interactive mode)
  *   onSelect(i)               — selection callback; when absent, renders static chips
  *   hope / maxHope            — current Hope values for gating
+ *   crossSheetChips           — optional V2 engine chips from other PCs' features (`showOnOtherSheets`), rendered in Modifiers (host builds via `collectChipsForOtherCharacterSheets`)
+ *   onCrossSheetChipClick     — when set, cross-sheet chips render as buttons (GM / V2 integration)
  */
-export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility, advantageChips, selectedAdvIds, onSelectAdv, beastformAdvantages, selectedBeastformAdvantage, onSelectBeastformAdvantage }) {
+export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility, advantageChips, selectedAdvIds, onSelectAdv, beastformAdvantages, selectedBeastformAdvantage, onSelectBeastformAdvantage, crossSheetChips, onCrossSheetChipClick }) {
   const experiences = el.experiences || [];
   const hasRollMods = rollModifiers?.length > 0;
   const activeModifiers = el.activeModifiers || [];
   const hasAdvantageChips = advantageChips?.length > 0;
   const hasBeastformAdvantages = beastformAdvantages?.length > 0;
-  const hasModifiers = hasRollMods || activeModifiers.length > 0 || hasAdvantageChips || hasBeastformAdvantages;
+  const hasCrossSheet = (crossSheetChips?.length ?? 0) > 0;
+  const hasModifiers = hasRollMods || activeModifiers.length > 0 || hasAdvantageChips || hasBeastformAdvantages || hasCrossSheet;
   if (!experiences.length && !hasModifiers) return null;
 
   if (!onSelect) {
@@ -1358,6 +1365,38 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
                   {selectedBeastformAdvantage === adv && <span className="ml-1 text-emerald-400">+d6</span>}
                 </span>
               ))}
+              {hasCrossSheet &&
+                crossSheetChips.map((c) => {
+                  const key = c._chipKey || `${c._featureName}::${c.name}`;
+                  const title = c.description || c.name;
+                  if (onCrossSheetChipClick) {
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        title={title}
+                        disabled={!!c.disabled}
+                        onClick={() => onCrossSheetChipClick(c)}
+                        className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
+                          c.disabled
+                            ? 'opacity-40 cursor-not-allowed bg-violet-950/20 border-violet-800/40 text-violet-400/80'
+                            : 'bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
+                        }`}
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  }
+                  return (
+                    <span
+                      key={key}
+                      title={title}
+                      className="text-[11px] rounded px-1.5 py-0.5 border bg-violet-950/40 border-violet-700/50 text-violet-200"
+                    >
+                      {c.name}
+                    </span>
+                  );
+                })}
             </div>
           </Section>
         )}
@@ -1482,6 +1521,38 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
                 </button>
               );
             })}
+            {hasCrossSheet &&
+              crossSheetChips.map((c) => {
+                const key = c._chipKey || `${c._featureName}::${c.name}`;
+                const title = c.description || c.name;
+                if (onCrossSheetChipClick) {
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      title={title}
+                      disabled={!!c.disabled}
+                      onClick={() => onCrossSheetChipClick(c)}
+                      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
+                        c.disabled
+                          ? 'opacity-40 cursor-not-allowed bg-violet-950/20 border-violet-800/40 text-violet-400/80'
+                          : 'bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  );
+                }
+                return (
+                  <span
+                    key={key}
+                    title={title}
+                    className="text-[11px] rounded px-1.5 py-0.5 border bg-violet-950/40 border-violet-700/50 text-violet-200"
+                  >
+                    {c.name}
+                  </span>
+                );
+              })}
           </div>
         </Section>
       )}
@@ -1630,6 +1701,10 @@ export function CharacterWeaponList({
   const otherworldlyOriginals = new Set(otherworldlyPairs.map(o => o.original));
   const startlingWeapons = weapons.filter(w => w.feature?.name === 'Startling');
 
+  const weaponRenderHints = el.weaponRenderHints;
+  const hasV2WeaponHints =
+    weaponRenderHints && typeof weaponRenderHints === 'object' && Object.keys(weaponRenderHints).length > 0;
+
   // For Doubled Up: find the secondary weapon's damage string
   const primaryWeapon_ = weapons.find(w => w.isPrimary !== false && !w.feature?.name?.includes('Paired'));
   const secondaryWeapon_ = weapons.find(w => w !== primaryWeapon_);
@@ -1639,7 +1714,7 @@ export function CharacterWeaponList({
 
   const makeClick = (w, extraMeta = {}) => {
     if (!onWeaponClick) return undefined;
-    if (w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return undefined;
+    if (!hasV2WeaponHints && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return undefined;
     if (w._charged && isStressMaxed) return undefined;
     const rollMeta = { ...extraMeta };
     if (w.feature?.name === 'Devastating' && devastatingActive) rollMeta.devastating = true;
@@ -1760,17 +1835,26 @@ export function CharacterWeaponList({
         ))}
 
         {/* Normal weapon cards (skip Otherworldly originals) */}
-        {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => (
-          <WeaponCard
-            key={i}
-            weapon={w}
-            traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(w)}
-            devastating={w.feature?.name === 'Devastating' ? devastatingActive : undefined}
-            onDevastatingToggle={w.feature?.name === 'Devastating' && onWeaponClick ? onDevastatingToggle : undefined}
-            pompousWarning={w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0}
-          />
-        ))}
+        {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => {
+          const srdId = i === 0 ? el.primaryWeaponId : i === 1 ? el.secondaryWeaponId : null;
+          const v2Hint = srdId && weaponRenderHints ? weaponRenderHints[srdId] : undefined;
+          const legacyPompous =
+            !hasV2WeaponHints && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0;
+          const v2DisableReason =
+            v2Hint?.isDisabled === true ? (v2Hint.disabledReason || 'Cannot use this weapon') : undefined;
+          return (
+            <WeaponCard
+              key={i}
+              weapon={w}
+              traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
+              onClick={makeClick(w)}
+              devastating={w.feature?.name === 'Devastating' ? devastatingActive : undefined}
+              onDevastatingToggle={w.feature?.name === 'Devastating' && onWeaponClick ? onDevastatingToggle : undefined}
+              pompousWarning={legacyPompous}
+              v2DisableReason={v2DisableReason}
+            />
+          );
+        })}
 
         {/* Startling action cards */}
         {startlingWeapons.map((w, i) => {
@@ -1842,6 +1926,7 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
 
   const allFeatures = [
     ...(el.classFeatures || []),
+    ...(el.beastformFeatures || []),
     ...(el.subclassFeatures || []),
     ...(el.ancestryFeatures || []),
     ...(el.communityFeatures || []),
@@ -1927,8 +2012,8 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
           );
         })()}
         {allFeatures.map((f, i) => {
-          const key = `${f.name}-${i}`;
-          if (f.name === 'Beastform' && el.class === 'Druid' && beastformProps) {
+          const key = f.sourceType === 'beastform' && f.id ? `bf-${f.id}` : `${f.name}-${i}`;
+          if (f.name === 'Beastform' && (el.class === 'Druid' || el.classId === 'srd-cls-druid') && beastformProps) {
             return (
               <BeastformFeatureCard
                 key={key}
@@ -2194,7 +2279,13 @@ export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActR
  * Full character detail pane for use in ItemDetailModal display side.
  */
 export function CharacterDetailPane({ item, srdData }) {
-  const el = item || {};
+  const v2SheetLive = useV2DeclarativeSheetEnabledLive();
+  const el = useMemo(() => {
+    const raw = item || {};
+    if (!srdData) return raw;
+    const base = recomputeCharacter(raw, srdData);
+    return mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
+  }, [item, srdData, v2SheetLive]);
   const { complete, missing } = isCharacterComplete(el, srdData ? { srdData } : undefined);
   return (
     <div className="flex flex-col gap-3">

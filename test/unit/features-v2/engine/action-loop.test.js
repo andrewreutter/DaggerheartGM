@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { createActionLoop, dispatchStateChangeHooks } from '../../../../src/features-v2/engine/action-loop.js';
+import {
+  createActionLoop,
+  dispatchStateChangeHooks,
+  dispatchSceneEndHooks,
+  dispatchTokenMoveHooks,
+} from '../../../../src/features-v2/engine/action-loop.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
 import { Reinforced } from '../../../../src/features-v2/armor_properties/Reinforced.js';
 import { mockGameState, mockCharacter, mockAdversary, mockAction } from '../helpers.js';
@@ -75,6 +80,35 @@ describe('createActionLoop()', () => {
       [feature]
     );
     loop.runPhase('reviewOutcome');
+  });
+
+  it('carries reactionContext from actionConfig into the loop snapshot', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const gameState = mockGameState({
+      activeElements: [char, adv],
+      _ownerInstanceId: 'char-1',
+    });
+    const feature = makeFeature({
+      hooks: {
+        onIntent: (table) => {
+          expect(table.action.reactionContext).toEqual({ kind: 'leaveMelee', moverInstanceId: 'adv-1' });
+          expect(table.action.isLeaveMeleeReaction).toBe(true);
+        },
+      },
+    });
+    const loop = createActionLoop(
+      gameState,
+      mockAction({
+        type: 'reaction',
+        actorInstanceId: 'char-1',
+        targetInstanceIds: ['adv-1'],
+        traitKey: 'Agility',
+        reactionContext: { kind: 'leaveMelee', moverInstanceId: 'adv-1' },
+      }),
+      [feature]
+    );
+    loop.runPhase('intent');
   });
 
   it('returns a loop object with runPhase and getPhaseResult', () => {
@@ -427,6 +461,121 @@ describe('dispatchStateChangeHooks()', () => {
           m.type === 'setFeatureState' &&
           m.payload.featureKey === 'Reinforced' &&
           m.payload.key === 'reinforcedActive' &&
+          m.payload.value === false
+      )
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatchTokenMoveHooks
+// ---------------------------------------------------------------------------
+
+describe('dispatchTokenMoveHooks()', () => {
+  it('returns empty mutations when moverInstanceId is missing', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const gameState = mockGameState({ activeElements: [char] });
+    const { mutations } = dispatchTokenMoveHooks(gameState, [makeFeature()], {});
+    expect(mutations).toHaveLength(0);
+  });
+
+  it('runs onTokenMove with table.me = feature owner and table.tokenMove.mover set', () => {
+    const char = mockCharacter({ instanceId: 'char-1', tokenX: 0, tokenY: 0 });
+    const advMoved = mockAdversary({ instanceId: 'adv-1', tokenX: 30, tokenY: 0, difficulty: 13 });
+    const gameState = {
+      fear: 0,
+      mapConfig: null,
+      activeElements: [char, advMoved],
+      featureState: {},
+      _previousPositions: { 'adv-1': { tokenX: 4, tokenY: 0 } },
+    };
+
+    let meId;
+    let moverId;
+    const feature = makeFeature({
+      hooks: {
+        onTokenMove: (table) => {
+          meId = table.me?.instanceId;
+          moverId = table.tokenMove?.mover?.instanceId;
+        },
+      },
+    });
+
+    dispatchTokenMoveHooks(gameState, [feature], { moverInstanceId: 'adv-1' });
+    expect(meId).toBe('char-1');
+    expect(moverId).toBe('adv-1');
+  });
+
+  it('includes tokenMove in table.mutationBatch', () => {
+    const char = mockCharacter({ instanceId: 'char-1', tokenX: 0, tokenY: 0 });
+    const advMoved = mockAdversary({ instanceId: 'adv-1', tokenX: 30, tokenY: 0 });
+    const gameState = {
+      fear: 0,
+      activeElements: [char, advMoved],
+      featureState: {},
+      _previousPositions: { 'adv-1': { tokenX: 4, tokenY: 0 } },
+    };
+
+    const batches = [];
+    const feature = makeFeature({
+      hooks: {
+        onTokenMove: (table) => {
+          batches.push([...table.mutationBatch]);
+        },
+      },
+    });
+
+    dispatchTokenMoveHooks(gameState, [feature], { moverInstanceId: 'adv-1' });
+    expect(batches[0]).toContainEqual(
+      expect.objectContaining({ type: 'tokenMove', payload: { moverInstanceId: 'adv-1' } })
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatchSceneEndHooks
+// ---------------------------------------------------------------------------
+
+describe('dispatchSceneEndHooks()', () => {
+  it('runs onSceneEnd and exposes sceneEnd in table.mutationBatch', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const gameState = mockGameState({ activeElements: [char] });
+
+    let batch;
+    const feature = makeFeature({
+      hooks: {
+        onSceneEnd: (table) => {
+          batch = [...table.mutationBatch];
+        },
+      },
+    });
+
+    dispatchSceneEndHooks(gameState, [feature]);
+    expect(batch).toContainEqual(expect.objectContaining({ type: 'sceneEnd', payload: {} }));
+  });
+
+  it('queues feature state mutations from onSceneEnd', () => {
+    const char = mockCharacter({ instanceId: 'char-1' });
+    const gameState = mockGameState({
+      activeElements: [char],
+      featureState: { 'Test Feature': { unstoppableActive: true } },
+    });
+
+    const feature = makeFeature({
+      name: 'Test Feature',
+      hooks: {
+        onSceneEnd: (table) => {
+          table.feature.set('unstoppableActive', false);
+        },
+      },
+    });
+
+    const { mutations } = dispatchSceneEndHooks(gameState, [feature]);
+    expect(
+      mutations.some(
+        (m) =>
+          m.type === 'setFeatureState' &&
+          m.payload.key === 'unstoppableActive' &&
           m.payload.value === false
       )
     ).toBe(true);

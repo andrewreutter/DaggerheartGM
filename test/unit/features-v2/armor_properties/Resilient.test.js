@@ -27,8 +27,11 @@ describe('Resilient', () => {
     );
     expect(action.effects[0].amount).toBe(1);
     expect(action.useArmorByTargetId['char-1']).toBe(false);
-    expect(mutations.some((m) => m.type === 'rollDie' && m.payload.notation === 'd6' && m.payload.total === 6)).toBe(
-      true
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'rollDie',
+        payload: expect.objectContaining({ notation: 'd6', total: 6 }),
+      })
     );
   });
 

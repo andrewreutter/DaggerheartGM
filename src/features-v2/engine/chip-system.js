@@ -7,7 +7,8 @@
  */
 
 import { unwrapAll, unwrap } from './when.js';
-import { applyMutations, queueInternalMutation } from './table.js';
+import { applyMutations, queueInternalMutation, buildTableSnapshot } from './table.js';
+import { loadCharacterFeatures } from './feature-loader.js';
 
 // ---------------------------------------------------------------------------
 // resolveChipDisabled
@@ -37,7 +38,7 @@ export function resolveChipDisabled(chip, table) {
  * @param {object[]} features      — flat array of resolved feature objects (with _ownerInstanceId)
  * @param {string}   phase         — 'card' | 'statblock' | 'create' | 'intent' | 'reviewAction' | 'reviewOutcome'
  * @param {object}   table         — current Game Table Snapshot
- * @param {object}   [usageStore]  — { [chipKey]: { used, cycle } }  for frequency checks
+ * @param {object}   [usageStore]  — { [chipKey]: { used?, cycle, count? } }  for frequency checks
  * @returns {object[]}  active chips with metadata
  */
 export function collectChips(features, phase, table, usageStore = {}) {
@@ -59,7 +60,13 @@ export function collectChips(features, phase, table, usageStore = {}) {
 
       // Check frequency availability
       if (chip.frequency) {
-        if (!isChipAvailable(chipKey, chip.frequency, usageStore)) continue;
+        let maxUses = 1;
+        if (chip.frequencyMaxUses !== undefined) {
+          const raw =
+            typeof chip.frequencyMaxUses === 'function' ? chip.frequencyMaxUses(table) : chip.frequencyMaxUses;
+          maxUses = Math.max(1, Math.floor(Number(raw)) || 1);
+        }
+        if (!isChipAvailable(chipKey, chip.frequency, usageStore, maxUses)) continue;
       }
 
       result.push({
@@ -69,6 +76,63 @@ export function collectChips(features, phase, table, usageStore = {}) {
         _ownerInstanceId: feature._ownerInstanceId,
         _chipKey: chipKey,
       });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Collect chips from **other** party members' loaded features that opt in with
+ * `showOnOtherSheets: true`, evaluating predicates with **`table.me` = the viewer**
+ * (the character sheet being rendered) while each chip still carries
+ * `_ownerInstanceId` / `_crossSheetFromOwnerInstanceId` from the **source** feature.
+ *
+ * Use this when a mechanic is authored on one class (e.g. Bard **Rally**) but the
+ * spend UI must appear on allies who do not have that feature on their own card list.
+ *
+ * @param {string} viewerInstanceId   — sheet subject (`table.me` in each snapshot)
+ * @param {object[]} partyCharacters    — character elements to scan (typically all PCs; viewer may be included; skipped when iterating "other")
+ * @param {object} registry             — V2 registry for `loadCharacterFeatures`
+ * @param {string} phase                — same as `collectChips` (`'card'`, `'reviewAction'`, …)
+ * @param {object} [baseGameState]      — merged into each snapshot: must include `activeElements`, `featureState`, etc.
+ * @param {object} [usageStore]         — chip frequency tracking (same as `collectChips`)
+ * @returns {object[]}
+ */
+export function collectChipsForOtherCharacterSheets(
+  viewerInstanceId,
+  partyCharacters,
+  registry,
+  phase,
+  baseGameState = {},
+  usageStore = {}
+) {
+  const result = [];
+  if (!viewerInstanceId || !Array.isArray(partyCharacters)) return result;
+
+  for (const other of partyCharacters) {
+    const oid = other.instanceId || other.id;
+    if (!oid || oid === viewerInstanceId) continue;
+
+    const feats = loadCharacterFeatures(other, registry);
+    for (const feature of feats) {
+      const table = buildTableSnapshot({
+        ...baseGameState,
+        activeElements: baseGameState.activeElements ?? partyCharacters,
+        _ownerInstanceId: viewerInstanceId,
+        _featureKey: feature.name,
+        _activeFeature: feature,
+      });
+      const chips = collectChips([feature], phase, table, usageStore);
+      for (const c of chips) {
+        if (!c.showOnOtherSheets) continue;
+        result.push({
+          ...c,
+          _crossSheetFromOwnerInstanceId: feature._ownerInstanceId,
+          /** Sheet subject (`table.me`) during collection — {@link activateV2ReviewChip} must mirror for costs. */
+          _crossSheetViewerInstanceId: viewerInstanceId,
+        });
+      }
     }
   }
 
@@ -89,12 +153,18 @@ export function collectChips(features, phase, table, usageStore = {}) {
  *
  * For select chips (`isSelect` is a function), pass `{ selectedId }` in the
  * fourth argument. The engine stores it in chipState so `onUse` can read it
- * via `chip.get('selectedId')`.
+ * via `chip.get('selectedId')`. **Evolution** (Druid) may also pass `{ evolutionTraitKey }`
+ * (trait key to raise by +1 until the form ends).
+ *
+ * When `multiSelect: true` and `isSelect` is set, pass `{ selectedIds: string[] }`
+ * (e.g. Attack of Opportunity outcomes). Use `chip.get('selectedIds')` in `onUse`.
+ * Optional `maxSelections` on the chip (number or `(table) => number`) caps how many
+ * IDs the UI should allow; the engine does not validate counts.
  *
  * @param {object} chip                  — chip descriptor (from collectChips)
  * @param {object} table                 — current Game Table Snapshot
  * @param {object} chipState             — mutable chip-local state object
- * @param {object} [selectOpts]          — { selectedId } for isSelect chips
+ * @param {object} [selectOpts]          — { selectedId } or { selectedIds } for isSelect chips
  * @returns {object[]} mutations          — queued mutations from the call
  */
 export function activateChip(chip, table, chipState = makeChipState(), selectOpts = {}) {
@@ -104,9 +174,16 @@ export function activateChip(chip, table, chipState = makeChipState(), selectOpt
     chipState._isOn = !chipState._isOn;
   }
 
-  // For select chips, persist the chosen option id into chip state before onUse
-  if (typeof chip.isSelect === 'function' && selectOpts.selectedId !== undefined) {
-    chipState.set('selectedId', selectOpts.selectedId);
+  // For select chips, persist the chosen option id(s) into chip state before onUse
+  if (typeof chip.isSelect === 'function') {
+    if (chip.multiSelect === true && selectOpts.selectedIds !== undefined) {
+      chipState.set('selectedIds', selectOpts.selectedIds);
+    } else if (selectOpts.selectedId !== undefined) {
+      chipState.set('selectedId', selectOpts.selectedId);
+    }
+    if (selectOpts.evolutionTraitKey !== undefined) {
+      chipState.set('evolutionTraitKey', selectOpts.evolutionTraitKey);
+    }
   }
 
   // For target-select chips, persist chosen target instance IDs into chip state before onUse
@@ -208,17 +285,32 @@ export function deductChipCosts(chip, table, costOpts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Mark a chip as used for its frequency cycle. Returns whether the chip was
- * available (i.e., not already used this cycle) before marking it used.
+ * Read how many times a chip has been consumed this frequency cycle.
+ * Legacy entries used `{ used: true }` without `count` (treated as 1).
+ */
+function getFrequencyUsedCount(entry) {
+  if (!entry) return 0;
+  if (typeof entry.count === 'number') return entry.count;
+  if (entry.used) return 1;
+  return 0;
+}
+
+/**
+ * Mark a chip as used for its frequency cycle. Returns whether another use was
+ * still available before incrementing.
  *
  * @param {string} chipKey       — stable key for the chip
  * @param {string} frequency     — 'session' | 'shortRest' | 'longRest' | 'rest'
- * @param {object} usageStore    — mutable object: { [chipKey]: { used, cycle } }
+ * @param {object} usageStore    — mutable object: { [chipKey]: { used?, cycle, count? } }
+ * @param {number} [maxUses]     — max uses per cycle (default 1). When >1, `count` tracks consumption.
  * @returns {boolean} wasAvailable
  */
-export function trackChipFrequency(chipKey, frequency, usageStore) {
-  if (usageStore[chipKey]?.used) return false;
-  usageStore[chipKey] = { used: true, cycle: frequency };
+export function trackChipFrequency(chipKey, frequency, usageStore, maxUses = 1) {
+  const max = Math.max(1, Math.floor(Number(maxUses)) || 1);
+  const used = getFrequencyUsedCount(usageStore[chipKey]);
+  if (used >= max) return false;
+  const next = used + 1;
+  usageStore[chipKey] = { cycle: frequency, count: next, used: next >= max };
   return true;
 }
 
@@ -265,7 +357,8 @@ function buildChipsForFeature(feature) {
     feature.armorClear !== undefined ||
     feature.frequency !== undefined ||
     feature.temporaryStatMods !== undefined ||
-    typeof feature.onUse === 'function';
+    typeof feature.onUse === 'function' ||
+    typeof feature.isSelect === 'function';
 
   if (hasDefaultAction) {
     return [
@@ -278,8 +371,11 @@ function buildChipsForFeature(feature) {
         armorMark: feature.armorMark,
         armorClear: feature.armorClear,
         frequency: feature.frequency,
+        frequencyMaxUses: feature.frequencyMaxUses,
         isToggle: feature.isToggle,
         temporaryStatMods: feature.temporaryStatMods,
+        isSelect: feature.isSelect,
+        isDisabled: feature.isDisabled,
         onUse: feature.onUse,
       },
     ];
@@ -298,9 +394,11 @@ function buildChipsForFeature(feature) {
 
 /**
  * Check if a chip is available given its frequency and the current usageStore.
+ * @param {number} [maxUses]  — default 1
  */
-function isChipAvailable(chipKey, frequency, usageStore) {
-  return !usageStore[chipKey]?.used;
+function isChipAvailable(chipKey, frequency, usageStore, maxUses = 1) {
+  const max = Math.max(1, Math.floor(Number(maxUses)) || 1);
+  return getFrequencyUsedCount(usageStore[chipKey]) < max;
 }
 
 /**

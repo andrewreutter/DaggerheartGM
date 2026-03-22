@@ -89,6 +89,38 @@ export function mockRoll(overrides = {}) {
 }
 
 /**
+ * Rolls for an adversary / GM attack banner — primary check is **gmDie** (d20 + trait vs Evasion), not Hope/Fear.
+ */
+export function mockAdversaryAttackRoll(overrides = {}) {
+  const {
+    action: actionOver,
+    damage,
+    rolls,
+    gmValue,
+    actionDice,
+    actionStatics,
+    isSuccess,
+    isCritical,
+    ...rest
+  } = overrides;
+  return mockRoll({
+    ...rest,
+    action: {
+      gmDie: { value: gmValue ?? 14 },
+      hopeDie: null,
+      fearDie: null,
+      dice: actionDice ?? [],
+      statics: actionStatics ?? [],
+      isSuccess: isSuccess ?? true,
+      isCritical: isCritical ?? false,
+      ...actionOver,
+    },
+    damage,
+    rolls,
+  });
+}
+
+/**
  * Build a mock action config for createActionLoop.
  */
 export function mockAction(overrides = {}) {
@@ -187,6 +219,55 @@ export function runReviewOutcome(feature, tableOverrides = {}) {
  */
 export function runReviewAction(feature, tableOverrides = {}) {
   return _runPhase(feature, 'reviewAction', tableOverrides);
+}
+
+/**
+ * Run `reviewAction` then `reviewOutcome` on one shared loop so `table.feature` state persists between phases.
+ */
+export function runReviewActionThenReviewOutcome(feature, tableOverrides = {}) {
+  const char = mockCharacter({ instanceId: 'char-1' });
+  const adv = mockAdversary({ instanceId: 'adv-1' });
+
+  const annotatedFeature = {
+    ...feature,
+    _ownerInstanceId: feature._ownerInstanceId ?? 'char-1',
+  };
+
+  const actionType = tableOverrides.actionType ?? 'attack';
+
+  const gameState = mockGameState({
+    ...tableOverrides,
+    activeElements: tableOverrides.activeElements ?? [char, adv],
+    _ownerInstanceId: annotatedFeature._ownerInstanceId,
+    _featureKey: feature.name ?? 'TestFeature',
+  });
+
+  const loop = createActionLoop(
+    gameState,
+    mockAction({
+      type: actionType,
+      actorInstanceId: annotatedFeature._ownerInstanceId,
+      ...tableOverrides.action,
+    }),
+    [annotatedFeature],
+    tableOverrides.usageStore ?? {}
+  );
+
+  if (tableOverrides.action?.effects) {
+    loop.setEffects(tableOverrides.action.effects);
+  }
+
+  const reviewAction = loop.runPhase('reviewAction');
+  const reviewOutcome = loop.runPhase('reviewOutcome');
+
+  return {
+    reviewAction,
+    reviewOutcome,
+    mutations: [...reviewAction.mutations, ...reviewOutcome.mutations],
+    narrations: [...reviewAction.narrations, ...reviewOutcome.narrations],
+    loop,
+    gameState,
+  };
 }
 
 /**

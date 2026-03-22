@@ -596,7 +596,25 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
 
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
-export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], updateActiveElement, mapConfig, onMapConfigChange, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, onClearDice, diceCanvasHidden = false, onToggleDiceVisibility, className = '' }) {
+export function BattleMap({
+  gmUid,
+  user,
+  isPlayer = false,
+  activeElements = [],
+  updateActiveElement,
+  mapConfig,
+  onMapConfigChange,
+  tableName = '',
+  tableStateReady = false,
+  onTableNameChange,
+  onDeleteTable,
+  onClearDice,
+  diceCanvasHidden = false,
+  onToggleDiceVisibility,
+  className = '',
+  /** V2 Phase 4: called after a token drag commits (map or tray), with pre/post positions for `dispatchTokenMoveHooks` */
+  onTokenDragEnd,
+}) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const leftTrayRef = useRef(null);
@@ -857,6 +875,10 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       tokenSize,
       grabOffsetX,
       grabOffsetY,
+      prevTokenFt:
+        element.tokenX != null && element.tokenY != null
+          ? { tokenX: element.tokenX, tokenY: element.tokenY }
+          : null,
     };
   }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt]);
 
@@ -924,6 +946,16 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
       if (!ds.fromTray) {
         updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null });
         if (pinnedToken?.element.instanceId === ds.instanceId) setPinnedToken(null);
+        const postMove = activeElements.map((el) =>
+          el.instanceId === ds.instanceId ? { ...el, tokenX: null, tokenY: null } : el
+        );
+        onTokenDragEnd?.({
+          instanceId: ds.instanceId,
+          previousTokenFt: ds.prevTokenFt,
+          nextTokenFt: null,
+          fromTray: false,
+          postMoveActiveElements: postMove,
+        });
       }
       return;
     }
@@ -943,13 +975,29 @@ export function BattleMap({ gmUid, user, isPlayer = false, activeElements = [], 
         const clampedX = Math.max(0, Math.min(mapWidthFt - 5, ftX));
         const clampedY = Math.max(0, Math.min(mapHeightFt - 5, ftY));
         updateActiveElement(ds.instanceId, { tokenX: clampedX, tokenY: clampedY });
+        const postMove = activeElements.map((el) =>
+          el.instanceId === ds.instanceId ? { ...el, tokenX: clampedX, tokenY: clampedY } : el
+        );
+        onTokenDragEnd?.({
+          instanceId: ds.instanceId,
+          previousTokenFt: ds.fromTray ? null : ds.prevTokenFt,
+          nextTokenFt: { tokenX: clampedX, tokenY: clampedY },
+          fromTray: ds.fromTray,
+          postMoveActiveElements: postMove,
+        });
       } else if (!ds.fromTray) {
         // Dropped outside map and trays while dragging from map: return to tray
         updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null });
         if (pinnedToken?.element.instanceId === ds.instanceId) setPinnedToken(null);
+        onTokenDragEnd?.({
+          instanceId: ds.instanceId,
+          previousTokenFt: ds.prevTokenFt,
+          nextTokenFt: null,
+          fromTray: false,
+        });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd]);
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {

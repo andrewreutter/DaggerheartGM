@@ -40,7 +40,7 @@
  *   --no-unblock      skip unblock agents this run
  *   --max-polls N     safety exit after N poll cycles (~N minutes) (default: 300)
  *   --batch-size N        max features per impl agent batch (default: 5)
- *   --val-batch-size N   max features per val agent batch (default: 10)
+ *   --val-batch-size N   max features per val agent batch (default: 5; same as manual validation batches)
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -115,7 +115,7 @@ const NO_FIX       = hasFlag('--no-fix');
 const NO_UNBLOCK   = hasFlag('--no-unblock');
 const MAX_POLLS    = parseInt(getArg('--max-polls', '300'),  10);
 const BATCH_SIZE       = parseInt(getArg('--batch-size',     '5'),  10);
-const VAL_BATCH_SIZE   = parseInt(getArg('--val-batch-size', '10'), 10);
+const VAL_BATCH_SIZE   = parseInt(getArg('--val-batch-size', '5'), 10);
 const POLL_MS          = 60_000;
 const STALE_MS     = 4 * 60 * 60 * 1000; // 4 hours — prune agents older than this
 
@@ -479,6 +479,20 @@ function batchLabel(batch) {
   return `[${batch.collection}] ${names}`;
 }
 
+/** Unique `test/unit/features-v2/<collection>` dirs from tracker Source File paths (e.g. ancestries/Foo.js). */
+function vitestDirsFromFeatures(features) {
+  const cols = [...new Set(features.map(f => f.sourceFile.split('/')[0]).filter(Boolean))];
+  return cols.map(c => `test/unit/features-v2/${c}`);
+}
+
+/** One shell line: targeted vitest dirs, or full suite if none parsed. */
+function vitestRunLineForFeatures(features) {
+  const dirs = vitestDirsFromFeatures(features);
+  if (dirs.length)
+    return `npx vitest run ${dirs.join(' ')}`;
+  return 'npm run test:unit  # no collection segments in Source File — run full suite';
+}
+
 // ── Agent prompt builders ─────────────────────────────────────────────────────
 
 function buildImplPrompt(features) {
@@ -494,10 +508,12 @@ If any feature in your list is already In Progress, Done, or otherwise not Uncla
 
 OVERRIDE 2 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).  Only update the specific feature rows listed above.  The orchestrator regenerates the Summary table after merging all branches.
 
-OVERRIDE 3 — Before running tests, ensure dependencies are installed:
+OVERRIDE 3 — Tests (streamlined — same collections as this batch):
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
   npm install
-  npm run test:unit
+  npm run validate:v2-preflight
+  ${vitestRunLineForFeatures(features)}
+  If preflight or targeted Vitest fails, run \`npm run test:unit\` once for full-suite context before fixing.
 
 Now read docs/agent-prompts/implementation-agent.md and implement each feature above.`;
 }
@@ -515,10 +531,12 @@ If any feature in your list is already Validating, Validated, or otherwise not i
 
 OVERRIDE 2 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).  Only update the specific feature rows listed above.  The orchestrator regenerates the Summary table after merging all branches.
 
-OVERRIDE 3 — Before running tests:
+OVERRIDE 3 — Tests (streamlined — collections in this batch):
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
   npm install
-  npm run test:unit
+  npm run validate:v2-preflight
+  ${vitestRunLineForFeatures(features)}
+  If preflight or targeted Vitest fails, run \`npm run test:unit\` once for full-suite context.
 
 Now read docs/agent-prompts/validation-agent.md and validate each feature above.`;
 }
@@ -540,10 +558,12 @@ OVERRIDE 2 — After fixing the code and passing tests, update the tracker row:
 
 OVERRIDE 3 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).
 
-OVERRIDE 4 — Before running tests:
+OVERRIDE 4 — Tests (streamlined — this feature's collection):
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
   npm install
-  npm run test:unit
+  npm run validate:v2-preflight
+  ${vitestRunLineForFeatures([feature])}
+  If preflight or targeted Vitest fails, run \`npm run test:unit\` once for full-suite context.
 
 Now read docs/agent-prompts/fixit-agent.md and fix the feature above.`;
 }
@@ -914,7 +934,7 @@ function pickNextWork(state) {
 
   // Priority 3: Impl and Val
   // Ratio auto-tunes from observed completion times (default 3:1 impl:val).
-  // Val also gets larger batches (VAL_BATCH_SIZE) since each check is quick.
+  // Val batch size matches manual validation-agent default (VAL_BATCH_SIZE).
   const hasImpl = !VAL_ONLY && summary.unclaimed > 0;
   const hasVal  = !IMPL_ONLY && summary.done > 0;
 

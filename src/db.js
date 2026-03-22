@@ -766,6 +766,7 @@ export async function saveWhiteboardSnapshot(appId, gmUid, snapshot) {
 // CHARACTER_PERSIST_KEYS mirrors the set in table-ops.js. Kept here to avoid a circular import.
 // Any _ prefixed key on a character element is also preserved automatically
 // (ancestry/class feature state uses _ prefix by convention, e.g. _fearlessToggle).
+// Keep in sync with CHARACTER_RUNTIME_KEYS in src/client/lib/table-ops.js
 const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
@@ -774,12 +775,15 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'reinforcedActive', 'selectedExperienceIndex',
   'featureUsage', 'activeModifiers', 'focusTargetId', 'rangerFocusOnNextAttack', 'companion',
   'activeBeastform', 'selectedBeastformAdvantage',
-  'wingsOfLightFlying', 'activeChanneledElement',
-  'faerieWingsFlying', // Faerie Wings: flying state for Wings chip
-  'retractedActive',   // Galapa Retract: in shell (toggle state for card chip)
-  'resistance',        // [{ type, source }] e.g. physical from Galapa Retract
-  'disadvantageSources',  // string[] sources that add disadvantage to this character's rolls
-  'moveDisabledSources',  // string[] sources that prevent token move (e.g. Retract)
+  'activeChanneledElement',
+  'wingsOfLightFlying',
+  'faerieWingsFlying',
+  'retractedActive',
+  'resistance',
+  'disadvantageSources',
+  'moveDisabledSources',
+  'lockedOnTargetInstanceId',
+  'featureState', // V2 per-character feature bags (see mergeDeclarativeFeatureState)
 ]);
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 

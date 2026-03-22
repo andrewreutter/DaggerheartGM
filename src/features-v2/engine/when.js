@@ -106,6 +106,55 @@ export function hasMagicDamage(table) {
 }
 
 /**
+ * True when `otherActor` is within **Far** range of the feature owner — i.e. any range band except
+ * `veryFar` (distance ≤ 100'). Returns false when positions are unknown (`rangeFrom` is null).
+ */
+export function isWithinFarRangeOfMe(table, otherActor) {
+  if (!table.me || !otherActor) return false;
+  const b = table.me.rangeFrom(otherActor);
+  if (!b) return false;
+  return b !== 'veryFar';
+}
+
+/** True when the character has at least one Prayer Die remaining in the session pool. */
+export function isPrayerDicePoolNonEmpty(table) {
+  return (table.me?.prayerDice?.pool ?? []).length > 0;
+}
+
+/**
+ * True when there is pending `{ type: 'damage' }` with positive `amount` targeting the feature owner
+ * or another **character** ally within Far range (Seraph **Prayer Dice**).
+ */
+export function hasPrayerDiceAidableDamage(table) {
+  const me = table.me;
+  if (!me?.instanceId) return false;
+  return (
+    table.action?.effects?.some((e) => {
+      if (e.type !== 'damage' || !(e.amount > 0)) return false;
+      const tid = e.target?.instanceId;
+      if (!tid) return false;
+      if (tid === me.instanceId) return true;
+      const other = table.characters.find((c) => c.instanceId === tid);
+      if (!other) return false;
+      return isWithinFarRangeOfMe(table, other);
+    }) === true
+  );
+}
+
+/**
+ * True when there is an action or damage roll in progress and the feature owner may spend Prayer Dice
+ * for the **actor** — themselves, or an ally PC within Far range.
+ */
+export function prayerDiceAidRollEligible(table) {
+  if (!table.rolls?.action && !table.rolls?.damage) return false;
+  const actor = table.action?.actor;
+  if (!actor || !table.me) return false;
+  if (actor.instanceId === table.me.instanceId) return true;
+  if (actor.isCharacter && isWithinFarRangeOfMe(table, actor)) return true;
+  return false;
+}
+
+/**
  * Test whether a value is a when-wrapper.
  */
 export function isWhen(value) {
