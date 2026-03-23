@@ -1,0 +1,52 @@
+import { describe, it, expect } from 'vitest';
+import { computePlayerV2CrossSheetChipApply } from '../../src/server/v2-player-cross-sheet-chip.js';
+import { collectV2CrossSheetChips } from '../../src/client/lib/v2-cross-sheet-lifecycle.js';
+import { buildV2RegistryWithSrdItems } from '../../src/client/lib/v2-declarative-sheet.js';
+import { mockCharacter } from './features-v2/helpers.js';
+
+describe('computePlayerV2CrossSheetChipApply', () => {
+  it('returns 400 when chipKey is missing', () => {
+    const ally = mockCharacter({ instanceId: 'c2' });
+    const r = computePlayerV2CrossSheetChipApply({
+      activeElements: [ally],
+      tableState: {},
+      viewerInstanceId: 'c2',
+      chipKey: '',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe(400);
+  });
+
+  it('applies Rally clear stress for ally viewer (deterministic rng)', () => {
+    const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
+    const ally = mockCharacter({ instanceId: 'c2', currentStress: 4 });
+    const activeElements = [bard, ally];
+    const tableState = {
+      featureState: { Rally: { partyDice: { c2: { dice: 'd6' } } } },
+      fearCount: 0,
+      mapConfig: null,
+    };
+    const registry = buildV2RegistryWithSrdItems(null);
+    const chips = collectV2CrossSheetChips('c2', activeElements, registry, 'card', {
+      tableFeatureState: tableState.featureState,
+      fearCount: 0,
+      mapConfig: null,
+    });
+    const stressChip = chips.find((c) => c.name === 'Spend Rally Die — Clear Stress');
+    expect(stressChip).toBeDefined();
+    expect(stressChip._chipKey).toBeDefined();
+
+    const r = computePlayerV2CrossSheetChipApply({
+      activeElements,
+      tableState,
+      viewerInstanceId: 'c2',
+      chipKey: stressChip._chipKey,
+      rng: () => 0.99,
+    });
+    expect(r.ok).toBe(true);
+    const clear = r.updates.find((u) => u.instanceId === 'c2' && u.updates.currentStress !== undefined);
+    expect(clear).toBeDefined();
+    const bardFs = r.updates.find((u) => u.instanceId === 'b1' && u.updates.featureState?.Rally);
+    expect(bardFs).toBeDefined();
+  });
+});
