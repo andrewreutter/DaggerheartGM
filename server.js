@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState } from './src/db.js';
 import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -26,6 +26,8 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
+import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
+import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
 import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 
@@ -2487,6 +2489,255 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/room/:tableId/v2-cross-sheet-chip error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:tableId/v2-review-chip — Player applies V2 review banner chips for their assigned character (same engine as GM).
+app.post('/api/room/:tableId/v2-review-chip', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid, tableState } = ctx;
+  if (req.uid === gmUid) {
+    return res.status(400).json({ error: 'GM clients use postTableOp' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
+  }
+  const { viewerInstanceId, bannerId, activationKey, selectOpts } = req.body || {};
+  const bid = bannerId != null ? Number(bannerId) : null;
+  if (!viewerInstanceId || bid == null || Number.isNaN(bid) || !activationKey) {
+    return res.status(400).json({ error: 'viewerInstanceId, bannerId, and activationKey required' });
+  }
+  try {
+    const rawElements = tableState.elements || [];
+    const activeElements = await resolveCharacterElements(rawElements);
+    const viewerEl = activeElements.find(
+      (e) => e.elementType === 'character' && e.instanceId === viewerInstanceId
+    );
+    if (!viewerEl) return res.status(404).json({ error: 'Character not found' });
+    const assignedByUid = viewerEl.assignedPlayerUid === req.uid;
+    const assignedByEmail =
+      !!req.email &&
+      (viewerEl.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
+    if (!assignedByUid && !assignedByEmail) {
+      return res.status(403).json({ error: 'Not assigned to this character' });
+    }
+
+    const diceRow = await getDiceRollById(APP_ID, gmUid, bid);
+    if (!diceRow || diceRow.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const roll = diceRow.data || {};
+    const srdData = await loadSrdDataForV2Engine();
+    const computed = computePlayerV2ReviewChipApply({
+      activeElements,
+      tableState,
+      viewerInstanceId,
+      roll,
+      activationKey,
+      selectOpts,
+      srdData,
+    });
+    if (!computed.ok) {
+      return res.status(computed.status).json({ error: computed.error });
+    }
+    const {
+      chip,
+      updates: elementUpdates,
+      serverFollowups,
+      engineRollDisplayOnly,
+      unsupported,
+      skipped,
+    } = computed;
+
+    if (elementUpdates?.length) {
+      await applyOpToTableState(tableId, { op: 'update-elements', updates: elementUpdates });
+    }
+
+    let currentBannerId = bid;
+    const bannerMigrations = [];
+
+    async function refreshResolvedElements() {
+      const resolved = await getResolvedTableState(APP_ID, tableId);
+      return resolved?.elements || [];
+    }
+
+    let elsForMigrate = await refreshResolvedElements();
+
+    for (const f of serverFollowups || []) {
+      if (f.kind === 'addDamage') {
+        const dice = String(f.payload?.dice ?? '').trim();
+        if (!dice || currentBannerId == null) continue;
+        const extraDamageLabel = String(f.payload?.name || chip._featureName || 'V2').slice(0, 80);
+        const pendingRow = await getDiceRollById(APP_ID, gmUid, currentBannerId);
+        if (!pendingRow || pendingRow.status !== 'pending') continue;
+        const copyData = buildAugmentedRollWithExtraDamage(
+          pendingRow.data,
+          dice,
+          extraDamageLabel,
+          undefined,
+          chip._featureName
+        );
+        if (!copyData) continue;
+        const prevRollId = currentBannerId;
+        copyData._replacedRollDbId = prevRollId;
+        await setBannerStatus(prevRollId, 'cancelled');
+        const newDbId = await appendDiceRoll(APP_ID, gmUid, copyData);
+        copyData._rollDbId = newDbId;
+        currentBannerId = newDbId;
+        bannerMigrations.push({ from: prevRollId, to: currentBannerId });
+        subscriptionManager.notifyChange('banners', gmUid);
+        const mig = migrateV2PendingMapRollId(prevRollId, currentBannerId, elsForMigrate);
+        if (mig.length) {
+          await applyOpToTableState(tableId, { op: 'update-elements', updates: mig });
+        }
+        elsForMigrate = await refreshResolvedElements();
+      } else if (f.kind === 'rerollDie') {
+        if (currentBannerId == null) continue;
+        const pendingRow = await getDiceRollById(APP_ID, gmUid, currentBannerId);
+        if (!pendingRow || pendingRow.status !== 'pending') continue;
+        const dieType = f.dieType;
+        const copyData =
+          dieType === 'Duality'
+            ? buildRerollDualityRoll(pendingRow.data, chip._featureName ?? null)
+            : buildRerollDieRoll(pendingRow.data, dieType, chip._featureName ?? null);
+        const prevRollId = currentBannerId;
+        copyData._replacedRollDbId = prevRollId;
+        await setBannerStatus(prevRollId, 'cancelled');
+        const newDbId = await appendDiceRoll(APP_ID, gmUid, copyData);
+        copyData._rollDbId = newDbId;
+        currentBannerId = newDbId;
+        bannerMigrations.push({ from: prevRollId, to: currentBannerId });
+        subscriptionManager.notifyChange('banners', gmUid);
+        const mig = migrateV2PendingMapRollId(prevRollId, currentBannerId, elsForMigrate);
+        if (mig.length) {
+          await applyOpToTableState(tableId, { op: 'update-elements', updates: mig });
+        }
+        elsForMigrate = await refreshResolvedElements();
+      } else if (f.kind === 'patchActionRollAddDie') {
+        const die = String(f.payload?.die ?? '').trim();
+        if (!die || currentBannerId == null) continue;
+        const dieExpr = parseAllowedV2ActionDieExpr(die);
+        if (!dieExpr) continue;
+        const rolled = rollDice(dieExpr);
+        if (!rolled) continue;
+        const pendingRow = await getDiceRollById(APP_ID, gmUid, currentBannerId);
+        if (!pendingRow || pendingRow.status !== 'pending') continue;
+        const originalData = pendingRow.data || {};
+        const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+        const extraName = String(f.payload?.name ?? chip._featureName ?? 'Bonus').slice(0, 120);
+        const subItem = {
+          pre: extraName,
+          input: rolled.input,
+          result: String(rolled.result),
+          details: rolled.details,
+          post: '',
+        };
+        const fearIdx = origSubItems.findIndex(s => /fear/i.test(s.pre || ''));
+        const insertIdx = fearIdx >= 0 ? fearIdx + 1 : origSubItems.findIndex(s => /damage/i.test(s.pre || ''));
+        const newSubItems =
+          insertIdx >= 0
+            ? [...origSubItems.slice(0, insertIdx), subItem, ...origSubItems.slice(insertIdx)]
+            : [...origSubItems, subItem];
+        const dh = parseDaggerheartResult(newSubItems);
+        const patch = { subItems: newSubItems, timestamp: Date.now() };
+        if (dh) {
+          Object.assign(patch, {
+            total: dh.total,
+            hopeResult: dh.hopeResult,
+            fearResult: dh.fearResult,
+            dominant: dh.dominant,
+            rollUser: dh.characterName || originalData.rollUser || '',
+          });
+        } else {
+          let total = 0;
+          for (const sub of newSubItems) {
+            if (/damage/i.test(sub.pre || '')) continue;
+            if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+            const v = parseInt(sub.result, 10);
+            if (!isNaN(v)) total += v;
+          }
+          patch.total = total;
+          if (originalData.rollUser) patch.rollUser = originalData.rollUser;
+        }
+        const ok = await updateDiceRollData(APP_ID, gmUid, currentBannerId, patch);
+        if (ok) subscriptionManager.notifyChange('banners', gmUid);
+      } else if (f.kind === 'patchActionRollAddStatic') {
+        const v = Number(f.payload?.value);
+        if (!Number.isFinite(v) || currentBannerId == null) continue;
+        const pendingRow = await getDiceRollById(APP_ID, gmUid, currentBannerId);
+        if (!pendingRow || pendingRow.status !== 'pending') continue;
+        const originalData = pendingRow.data || {};
+        const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
+        const extraName = String(f.payload?.name ?? chip._featureName ?? 'Bonus').slice(0, 120);
+        const subItem = {
+          pre: extraName,
+          input: String(v),
+          result: String(v),
+          details: `(${v})`,
+          post: '',
+        };
+        const fearIdx = origSubItems.findIndex(s => /fear/i.test(s.pre || ''));
+        const insertIdx = fearIdx >= 0 ? fearIdx + 1 : origSubItems.findIndex(s => /damage/i.test(s.pre || ''));
+        const newSubItems =
+          insertIdx >= 0
+            ? [...origSubItems.slice(0, insertIdx), subItem, ...origSubItems.slice(insertIdx)]
+            : [...origSubItems, subItem];
+        const dh = parseDaggerheartResult(newSubItems);
+        const patch = { subItems: newSubItems, timestamp: Date.now() };
+        if (dh) {
+          Object.assign(patch, {
+            total: dh.total,
+            hopeResult: dh.hopeResult,
+            fearResult: dh.fearResult,
+            dominant: dh.dominant,
+            rollUser: dh.characterName || originalData.rollUser || '',
+          });
+        } else {
+          let total = 0;
+          for (const sub of newSubItems) {
+            if (/damage/i.test(sub.pre || '')) continue;
+            if (EXTRA_PRE_RE.test(sub.pre || '')) continue;
+            const v2 = parseInt(sub.result, 10);
+            if (!isNaN(v2)) total += v2;
+          }
+          patch.total = total;
+          if (originalData.rollUser) patch.rollUser = originalData.rollUser;
+        }
+        const ok = await updateDiceRollData(APP_ID, gmUid, currentBannerId, patch);
+        if (ok) subscriptionManager.notifyChange('banners', gmUid);
+      }
+    }
+
+    if (unsupported?.length && process.env.NODE_ENV !== 'production') {
+      console.warn('[V2] Player review chip unsupported mutations:', unsupported.map((m) => m.type));
+    }
+    if (skipped?.length && process.env.NODE_ENV !== 'production') {
+      console.warn('[V2] Player review chip skipped mutations:', skipped.map((m) => m.type));
+    }
+
+    let hopeConvertedRollDbId = null;
+    for (const m of engineRollDisplayOnly || []) {
+      if (
+        m?.type === 'setRollOutcome' &&
+        m.payload?.rollKey === 'action' &&
+        m.payload?.outcome === 'hope'
+      ) {
+        hopeConvertedRollDbId = bid;
+        break;
+      }
+    }
+
+    res.json({
+      ok: true,
+      currentRollDbId: currentBannerId,
+      initialRollDbId: bid,
+      bannerMigrations,
+      hopeConvertedRollDbId,
+    });
+  } catch (err) {
+    console.error('POST /api/room/:tableId/v2-review-chip error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

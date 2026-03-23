@@ -581,6 +581,25 @@ export const postV2CrossSheetChip = async (tableId, body) => {
   return res.json();
 };
 
+/**
+ * Player: apply a V2 review banner chip (same engine as GM `handleV2ReviewChip`).
+ * Body: { viewerInstanceId, bannerId, activationKey, selectOpts? }.
+ */
+export const postPlayerV2ReviewChip = async (tableId, body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${tableId}/v2-review-chip`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /** Player: add a new character to the table (auto-assigned to self). */
 export const postAddCharacter = async (tableId, charData) => {
   const token = await getAuthToken();

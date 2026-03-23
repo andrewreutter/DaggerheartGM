@@ -667,6 +667,8 @@ function V2ReviewChipRow({
   isPlayer,
   primaryDamageTargetId,
   getV2ReviewChipDisableHint,
+  /** When true, assigned players may use V2 review chips (same as GM). */
+  canUseV2ReviewChips,
 }) {
   const needsIsSelect = typeof chip.isSelect === 'function';
   const needsTargets = typeof chip.selectTargets === 'function';
@@ -742,7 +744,9 @@ function V2ReviewChipRow({
     onV2ReviewChip?.(chip, roll, selectOpts);
   };
 
-  const blockedBase = chip.disabled || chip.resourceUnaffordable || isPlayer;
+  const playerMayUse =
+    canUseV2ReviewChips !== undefined ? canUseV2ReviewChips : !isPlayer;
+  const blockedBase = chip.disabled || chip.resourceUnaffordable || !playerMayUse;
   const needsPickerUi = needsIsSelect || needsTargets;
   /** Single `isSelect` only (e.g. Prayer Die — Action): apply on pick — same UX as GuideFeatureCard. */
   const singleSelectImmediate =
@@ -752,8 +756,8 @@ function V2ReviewChipRow({
   const blocked = blockedBase || pickerMissing || (needsPickerUi && needsPrimaryFirst);
 
   const blockHint =
-    isPlayer
-      ? 'Only the GM can apply V2 review chips.'
+    isPlayer && !playerMayUse
+      ? 'Assign a character to you to use V2 review chips.'
       : [chip.disableHint, getV2ReviewChipDisableHint?.(chip, roll)].find(Boolean) ||
         (chip.resourceUnaffordable ? 'Cannot afford resource costs.' : null) ||
         (chip.disabled ? 'Unavailable right now.' : null);
@@ -924,7 +928,7 @@ function V2ReviewChipRow({
   return panel;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
   const visible = useBannerVisible();
   const attackerEl = roll._attackerInstanceId
     ? tableCharacters.find((c) => c.instanceId === roll._attackerInstanceId)
@@ -1606,6 +1610,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                           isPlayer={isPlayer}
                           primaryDamageTargetId={primaryDamageTargetId}
                           getV2ReviewChipDisableHint={getV2ReviewChipDisableHint}
+                          canUseV2ReviewChips={canUseV2ReviewChips}
                         />
                       ))}
                     </div>
@@ -2615,6 +2620,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onV2ReviewChip,
   resolveV2ReviewChipPicker,
   getV2ReviewChipDisableHint,
+  canUseV2ReviewChips,
   restMovesSelections = {},
   onRestMoveSelect,
   onRestMoveClear,
@@ -3248,6 +3254,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onV2ReviewChip={onV2ReviewChip}
                 resolveV2ReviewChipPicker={resolveV2ReviewChipPicker}
                 getV2ReviewChipDisableHint={getV2ReviewChipDisableHint}
+                canUseV2ReviewChips={canUseV2ReviewChips}
                 v2PendingMoveInfo={getV2PendingMoveBlockInfo?.(entry.roll) ?? { blocked: false, desiredCondition: '', description: '', featureName: '' }}
               />
             )

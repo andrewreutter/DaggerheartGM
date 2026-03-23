@@ -12,7 +12,7 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { buildSystemContext } from '../lib/feature-context.js';
-import { postRoll, postRollSilent, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerGenericRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerMakeASceneTarget, postBannerChipResolve, postBannerAddDamage, postBannerActionAddDie, postBannerActionAddStatic, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll, postRollSilent, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerGenericRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerMakeASceneTarget, postBannerChipResolve, postBannerAddDamage, postBannerActionAddDie, postBannerActionAddStatic, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, postPlayerV2ReviewChip, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
@@ -50,6 +50,7 @@ import {
   resolveV2ReviewChipPicker as resolveV2ReviewChipPickerFromBridge,
   getV2ReviewChipDisableHint,
   annotateV2ReviewChipsBannerConsumed,
+  v2BannerChipActivationKey,
   migrateV2BannerConsumedOnUseKeys,
   recordV2BannerConsumedOnUse,
   pruneV2BannerConsumedOnUseKeys,
@@ -3605,6 +3606,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
   const tableCharacters = activeElements.filter(e => e.elementType === 'character');
+  /** Assigned character for the current player — used for V2 review chips on pending banners. */
+  const playerViewerCharacterInstanceId = useMemo(() => {
+    if (!isPlayer) return null;
+    const email = (previewAsPlayerEmail || playerEmail || '').toLowerCase();
+    const uid = user?.uid;
+    const el = tableCharacters.find(
+      (c) =>
+        (uid && c.assignedPlayerUid === uid) ||
+        (email && (c.assignedPlayerEmail || '').toLowerCase() === email)
+    );
+    return el?.instanceId ?? null;
+  }, [isPlayer, previewAsPlayerEmail, playerEmail, user?.uid, tableCharacters]);
+
   const wizardsWithHope = tableCharacters.filter(c => {
     const cls = (c.class || '').toLowerCase();
     const hope = c.hope ?? (c.maxHope ?? 6);
@@ -3841,6 +3855,48 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       setV2BannerConsumedOnUseByRollDbId((prev) => recordV2BannerConsumedOnUse(currentBannerId, chip, prev));
     },
     [isPlayer, activeElements, srdData, fearCount, mapConfig, tableFeatureState, sendOp, tableId]
+  );
+
+  const handlePlayerV2ReviewChip = useCallback(
+    async (chip, roll, selectOpts = {}) => {
+      if (!isPlayer || !tableId) return;
+      if (chip?._v2BannerOnUseConsumed) return;
+      const vid = playerViewerCharacterInstanceId;
+      if (!vid || roll._rollDbId == null) return;
+      if (typeof chip.isSelect === 'function') {
+        if (chip.multiSelect) {
+          if (!Array.isArray(selectOpts.selectedIds) || selectOpts.selectedIds.length === 0) return;
+        } else if (selectOpts.selectedId == null || selectOpts.selectedId === '') return;
+      }
+      if (typeof chip.selectTargets === 'function' && !(selectOpts.selectedTargetIds?.length > 0)) return;
+
+      const activationKey = v2BannerChipActivationKey(chip);
+      try {
+        const data = await postPlayerV2ReviewChip(tableId, {
+          viewerInstanceId: vid,
+          bannerId: roll._rollDbId,
+          activationKey,
+          selectOpts,
+        });
+        if (data?.hopeConvertedRollDbId != null) {
+          setChipHopeConvertedIds((prev) => new Set([...prev, data.hopeConvertedRollDbId]));
+        }
+        for (const m of data?.bannerMigrations || []) {
+          if (m.from != null && m.to != null) {
+            setV2BannerConsumedOnUseByRollDbId((prev) =>
+              migrateV2BannerConsumedOnUseKeys(m.from, m.to, prev)
+            );
+          }
+        }
+        const finalDbId = data?.currentRollDbId ?? roll._rollDbId;
+        setV2BannerConsumedOnUseByRollDbId((prev) =>
+          recordV2BannerConsumedOnUse(finalDbId, chip, prev)
+        );
+      } catch (e) {
+        console.warn('[V2] player review chip failed:', e);
+      }
+    },
+    [isPlayer, tableId, playerViewerCharacterInstanceId]
   );
 
   const getV2PendingMoveBlockInfo = useCallback(
@@ -5350,9 +5406,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             getV2DamageBannerAckNotices={!isPlayer ? getV2DamageBannerAckNotices : undefined}
             bannerStripLeftOffset={tableCharacters.length > 0 ? CHARACTER_TRAY_WIDTH_PX : 0}
             v2ReviewChipsByRollDbId={v2ReviewChipsByRollDbId}
-            onV2ReviewChip={!isPlayer ? handleV2ReviewChip : undefined}
-            resolveV2ReviewChipPicker={!isPlayer ? getV2ReviewChipPicker : undefined}
-            getV2ReviewChipDisableHint={!isPlayer ? getV2ReviewChipDisableHintCb : undefined}
+            onV2ReviewChip={isPlayer ? handlePlayerV2ReviewChip : handleV2ReviewChip}
+            resolveV2ReviewChipPicker={getV2ReviewChipPicker}
+            getV2ReviewChipDisableHint={getV2ReviewChipDisableHintCb}
+            canUseV2ReviewChips={!isPlayer || !!playerViewerCharacterInstanceId}
             getV2PendingMoveBlockInfo={!isPlayer ? getV2PendingMoveBlockInfo : undefined}
           />
           <BattleMap
