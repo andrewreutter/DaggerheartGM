@@ -69,7 +69,10 @@ describe('Retract', () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'allowMovement',
-        payload: expect.objectContaining({ instanceId: 'char-1' }),
+        payload: expect.objectContaining({
+          instanceId: 'char-1',
+          reason: "Can't move — retracted into shell.",
+        }),
       })
     );
     expect(mutations).not.toContainEqual(
@@ -90,7 +93,7 @@ describe('Retract', () => {
     const result = runIntent(Retract, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
-      featureState: { Retract: { retracted: true } },
+      featureState: { Retract: { '_v2t:Retract::Retract::card': true } },
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -123,7 +126,7 @@ describe('Retract', () => {
     const result = runIntent(Retract, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
-      featureState: { Retract: { retracted: false } },
+      featureState: { Retract: { '_v2t:Retract::Retract::card': false } },
       action: {
         type: 'attack',
         actorInstanceId: 'char-1',
@@ -152,7 +155,7 @@ describe('Retract', () => {
     runReviewAction(Retract, {
       activeElements: [char, adv],
       _ownerInstanceId: 'char-1',
-      featureState: { Retract: { retracted: true } },
+      featureState: { Retract: { '_v2t:Retract::Retract::card': true } },
       action: {
         type: 'attack',
         actorInstanceId: adv.instanceId,

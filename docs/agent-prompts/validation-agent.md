@@ -41,6 +41,8 @@ Read both before you claim anything. The user may update the instructions
 or conventions at any time; re-reading ensures you always follow the
 latest version.
 
+**Framework boundaries:** When reviewing implementations or related PRs, flag violations of **CONV-029** and `.cursor/rules/v2-framework-boundaries.mdc` (feature-specific logic in `engine/` or `v2-*.js` bridge code).
+
 ────────────────────────────────────────────────────────
 READING THE TRACKER EFFICIENTLY
 ────────────────────────────────────────────────────────
@@ -57,6 +59,8 @@ entire file. Instead:
 **Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
 
 **Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
+
+**Abilities, Beastforms, Items, Consumables:** Full gated-collection tables live in `docs/v2-migration-to-review.md` (main tracker has a pointer); edit rows there when validating those features. Update **Status Summary** in the tracker when counts change.
 
 NEVER read the full tracker file in one pass. Most of it is empty
 Unclaimed rows that waste your context window.

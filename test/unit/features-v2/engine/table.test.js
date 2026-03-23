@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../../../src/features-v2/engine/feature-scope-keys.js';
 import { mockGameState, mockCharacter, mockAdversary, mockRoll } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,36 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.instanceId).toBe('owner-123');
   });
 
+  it('resolves table.me when _ownerInstanceId is the library id but the element also has a distinct instanceId', () => {
+    const char = mockCharacter({
+      instanceId: 'runtime-table-id',
+      id: 'lib-char-id',
+      name: 'Malakai',
+    });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'lib-char-id' });
+    const table = buildTableSnapshot(state);
+    expect(table.me?.name).toBe('Malakai');
+    expect(table.me?.instanceId).toBe('runtime-table-id');
+  });
+
+  it('table.adversaries and table.characters do not duplicate when an element has both instanceId and library id', () => {
+    const pc = mockCharacter({ instanceId: 'c1', id: 'lib-char-1', name: 'PC' });
+    const adv = mockAdversary({
+      instanceId: 'adv-runtime',
+      id: 'srd-adv-goblin',
+      name: 'Goblin',
+    });
+    const table = buildTableSnapshot(
+      mockGameState({ activeElements: [pc, adv], _ownerInstanceId: 'c1' })
+    );
+    expect(table.adversaries).toHaveLength(1);
+    expect(table.adversaries[0].name).toBe('Goblin');
+    expect(table.characters).toHaveLength(1);
+    expect(table.characters[0].name).toBe('PC');
+    expect(table.actors.filter((a) => a.isAdversary)).toHaveLength(1);
+    expect(table.actors.filter((a) => a.isCharacter)).toHaveLength(1);
+  });
+
   it('table.me.weaponRenderHints and primaryWeapon.isDisabled respect merged hints on the element', () => {
     const char = mockCharacter({
       instanceId: 'c1',
@@ -80,29 +111,25 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.primaryWeapon?.disabledReason).toBe('Requires Presence ≤ 0');
   });
 
-  it('exposes beastformOptions from element._beastformOptions for characters', () => {
-    const char = mockCharacter({
-      instanceId: 'c1',
-      _beastformOptions: [{ id: 'srd-bst-test', name: 'Test Form', tier: 1 }],
-    });
-    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
-    expect(table.me?.beastformOptions).toHaveLength(1);
-    expect(table.me?.beastformOptions[0].id).toBe('srd-bst-test');
+  it('exposes gameState.registry on the snapshot as table.registry', () => {
+    const reg = { beastforms: { 'srd-bst-test': { id: 'srd-bst-test', name: 'Test Form', tier: 1 } } };
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(
+      mockGameState({ activeElements: [char], _ownerInstanceId: 'c1', registry: reg })
+    );
+    expect(table.registry).toBe(reg);
+    expect(table.registry.beastforms['srd-bst-test'].name).toBe('Test Form');
   });
 
-  it('returns [] for beastformOptions on adversaries even if _beastformOptions is set', () => {
-    const adv = mockAdversary({
-      instanceId: 'a1',
-      _beastformOptions: [{ id: 'x', name: 'n', tier: 1 }],
-    });
-    const table = buildTableSnapshot(mockGameState({ activeElements: [adv], _ownerInstanceId: 'a1' }));
-    expect(table.me?.beastformOptions).toEqual([]);
+  it('defaults table.registry to { beastforms: {} } when gameState.registry is absent', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
+    expect(table.registry.beastforms).toEqual({});
   });
 
   it('exposes inBeastform when element has activeBeastform with id', () => {
     const char = mockCharacter({
       instanceId: 'c1',
-      _beastformOptions: [{ id: 'srd-bst-test', name: 'Test Form', tier: 1 }],
       activeBeastform: { id: 'srd-bst-test', name: 'Test Form' },
     });
     const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
@@ -130,10 +157,21 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.inBeastform).toBe(true);
   });
 
+  it('exposes inBeastform from scoped Druid class featureState bag', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'c1',
+      featureState: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: { activeBeastform: { beastformId: 'srd-bst-agile-scout' } },
+      },
+    }));
+    expect(table.me?.inBeastform).toBe(true);
+  });
+
   it('inBeastform is false when no active form', () => {
     const char = mockCharacter({
       instanceId: 'c1',
-      _beastformOptions: [{ id: 'x', name: 'n', tier: 1 }],
     });
     const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
     expect(table.me?.inBeastform).toBe(false);
@@ -811,16 +849,20 @@ describe('Fear write methods (table.top)', () => {
 // ---------------------------------------------------------------------------
 
 describe('actor.move() (mutation queueing)', () => {
-  it('queues a move mutation with conditionFn and description', () => {
+  it('queues a move mutation with conditionFn, desiredCondition, and optional description', () => {
     const char = mockCharacter({ instanceId: 'c1' });
     const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
     const condition = (t) => t.me.rangeFromTarget !== 'melee';
-    table.me.move(condition, 'Push out of melee');
+    table.me.move(condition, 'Not in melee with attacker', 'Push target out of melee.');
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'move',
-        payload: expect.objectContaining({ instanceId: 'c1', description: 'Push out of melee' }),
+        payload: expect.objectContaining({
+          instanceId: 'c1',
+          desiredCondition: 'Not in melee with attacker',
+          description: 'Push target out of melee.',
+        }),
       })
     );
     // conditionFn must be preserved as a function in the mutation payload
@@ -828,13 +870,16 @@ describe('actor.move() (mutation queueing)', () => {
     expect(typeof moveMutation.payload.conditionFn).toBe('function');
   });
 
-  it('queues a move mutation without description when omitted', () => {
+  it('queues a move mutation with only desiredCondition when description omitted', () => {
     const char = mockCharacter({ instanceId: 'c1' });
     const table = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
-    table.me.move(() => true);
+    table.me.move(() => true, 'Any valid map position');
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
-      expect.objectContaining({ type: 'move', payload: expect.objectContaining({ instanceId: 'c1' }) })
+      expect.objectContaining({
+        type: 'move',
+        payload: expect.objectContaining({ instanceId: 'c1', desiredCondition: 'Any valid map position', description: '' }),
+      })
     );
   });
 
@@ -853,14 +898,25 @@ describe('actor.move() (mutation queueing)', () => {
       },
     });
     const table = buildTableSnapshot(state);
-    table.action.target.move(() => true, 'Knockback');
+    table.action.target.move(() => true, 'Knocked back');
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'move',
-        payload: expect.objectContaining({ instanceId: 'adv-1', description: 'Knockback' }),
+        payload: expect.objectContaining({ instanceId: 'adv-1', desiredCondition: 'Knocked back', description: '' }),
       })
     );
+  });
+
+  it('includes rollDbId on move payload when gameState._rollDbId is set', () => {
+    const char = mockCharacter({ instanceId: 'c1' });
+    const table = buildTableSnapshot(
+      mockGameState({ activeElements: [char], _ownerInstanceId: 'c1', _rollDbId: 42 })
+    );
+    table.me.move(() => true, 'Test position');
+    const mutations = applyMutations(table);
+    const moveMutation = mutations.find((m) => m.type === 'move');
+    expect(moveMutation.payload.rollDbId).toBe(42);
   });
 });
 
@@ -1331,10 +1387,10 @@ describe('table.me.lastPosition', () => {
     it('exposes activeModifiers from element.activeModifiers', () => {
       const char = mockCharacter({
         instanceId: 'c1',
-        activeModifiers: [{ id: 'm1', name: 'Rally Die', dice: 'd8' }],
+        activeModifiers: [{ id: 'm1', name: 'Bonus Die', dice: 'd8' }],
       });
       const t = buildTableSnapshot(mockGameState({ activeElements: [char], _ownerInstanceId: 'c1' }));
-      expect(t.me.activeModifiers).toEqual([{ id: 'm1', name: 'Rally Die', dice: 'd8' }]);
+      expect(t.me.activeModifiers).toEqual([{ id: 'm1', name: 'Bonus Die', dice: 'd8' }]);
     });
 
     it('addActiveModifier and removeActiveModifier queue mutations', () => {

@@ -7,7 +7,8 @@ import { CustomSelect } from './forms/CustomSelect.jsx';
 import { SHORT_REST_MOVES, LONG_REST_MOVES, getRestMoveDefinition } from '../lib/rest-moves.js';
 import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
-import { rangeFtToLabel, RANGE_BANDS_FT } from '../lib/map-range.js';
+import { rangeFtToLabel } from '../lib/map-range.js';
+import { rollShouldUseMapFilteredTargets, rollIsHitMissEligibleAttack } from '../lib/banner-target-roll.js';
 import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
 import {
   wrapRoll,
@@ -16,6 +17,10 @@ import {
   getWeaponTagInteractive,
   resolveWeaponTagDescriptor,
 } from '../lib/game-table-mechanics.js';
+import { MarkdownText } from '../lib/markdown.js';
+import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
+import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
+import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -267,6 +272,13 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
     return true;
   });
 
+  const handleRestAcknowledge = () => {
+    if (!allFilled) {
+      if (!window.confirm('Not all rest moves are filled in. Acknowledge this rest anyway?')) return;
+    }
+    onAcknowledge?.();
+  };
+
   const handleSelect = (instanceId, slot, moveId, options = {}) => {
     if (rollDbId == null || !onRestMoveSelect) return;
     const def = moveId ? getRestMoveDefinition(moveId) : null;
@@ -399,9 +411,10 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
           <div className="flex items-center justify-center gap-1.5 mt-3">
             {!disableDismiss && (
               <button
-                onClick={() => onAcknowledge?.()}
-                disabled={!allFilled}
-                className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-amber-900/50 disabled:hover:text-amber-200"
+                type="button"
+                onClick={handleRestAcknowledge}
+                title={!allFilled ? 'Not all moves are chosen — click to confirm and acknowledge anyway' : undefined}
+                className={`flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors ${!allFilled ? 'ring-1 ring-amber-500/40' : ''}`}
               >
                 Acknowledge
               </button>
@@ -441,6 +454,21 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
     (!needsLifeSupportSelection || selectedLifeSupportInstanceId != null) &&
     (!needsActionAdversarySelection || selectedActionAdversaryInstanceId != null);
 
+  // Hide Cancel when Ack would not change table state (mirrors GMTableView handleBannerAcknowledge for _action).
+  // V2 actionLoop notices (mutations already applied) and other informational actions only need Acknowledge.
+  const actionAckTouchesTableState =
+    !!roll._manualTrackEdit ||
+    !!roll._featureUse ||
+    !!roll._cardToggle ||
+    (roll._v2DeferUntilBannerAck === true && typeof roll._v2DeferToggleNext === 'boolean') ||
+    roll._wingsOfLightFlightDefer === true ||
+    !!roll._prayerDieGainHope ||
+    (Array.isArray(roll._rousingSpeechTargets) && roll._rousingSpeechTargets.length > 0) ||
+    needsLifeSupportSelection ||
+    needsActionAdversarySelection ||
+    ((roll.tags || []).length > 0 && roll._attackerInstanceId);
+  const showActionBannerCancel = onCancel != null && actionAckTouchesTableState;
+
   const handleAcknowledge = () => {
     const extra = {};
     if (isLifeSupport && selectedLifeSupportInstanceId) extra.selectedLifeSupportTargetInstanceId = selectedLifeSupportInstanceId;
@@ -473,17 +501,17 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
         )}
         <div className="text-base font-bold text-amber-200 mb-1">{actionTitle}</div>
         {roll.actionText && (
-          <div className="text-[12px] text-slate-300 mb-2">{roll.actionText}</div>
+          <MarkdownText text={roll.actionText} className="text-[12px] text-slate-300 mb-2 text-left dh-md" />
         )}
         {(roll.tags || []).length > 0 && (
           <div className="flex flex-col gap-1 mb-2">
             {(roll.tags || []).map((tag, i) => (
               <div key={i} className="flex items-start gap-1.5 rounded px-2 py-1 text-left border bg-amber-950/50 border-amber-700/50">
                 <Info size={10} className="text-amber-400 shrink-0 mt-0.5" />
-                <span className="text-[10px] leading-snug">
+                <div className="text-[10px] leading-snug min-w-0 flex-1">
                   <span className="font-bold text-amber-200">{tag.name}:</span>{' '}
-                  <span className="text-amber-400/80">{tag.text}</span>
-                </span>
+                  <MarkdownText text={tag.text || ''} className="text-amber-400/80 dh-md text-[10px] leading-snug" />
+                </div>
               </div>
             ))}
           </div>
@@ -600,7 +628,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
             )}
           </div>
         )}
-        {(!disableDismiss || onCancel != null) && (
+        {(!disableDismiss || showActionBannerCancel) && (
           <div className="flex items-center justify-center gap-1.5">
             {!disableDismiss && (
               <button
@@ -611,7 +639,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                 Acknowledge
               </button>
             )}
-            {onCancel != null && (
+            {showActionBannerCancel && (
               <button
                 onClick={onCancel}
                 className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
@@ -638,24 +666,29 @@ function V2ReviewChipRow({
   onV2ReviewChip,
   isPlayer,
   primaryDamageTargetId,
+  getV2ReviewChipDisableHint,
 }) {
   const needsIsSelect = typeof chip.isSelect === 'function';
   const needsTargets = typeof chip.selectTargets === 'function';
   const picker = resolveV2ReviewChipPicker?.(chip, roll);
   const label = chip.description || chip.name || chip._featureName || 'Feature';
-  const costParts = [];
-  if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
-  if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
-  const costStr = costParts.join(', ');
   const stableKey = chip._chipKey || `${phaseKey}-${chip._featureName}-${rowIndex}`;
+  const consumed = chip._v2BannerOnUseConsumed === true;
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedTargetIds, setSelectedTargetIds] = useState([]);
 
   useEffect(() => {
     setSelectedIds([]);
-    setSelectedTargetIds([]);
-  }, [stableKey, roll._rollDbId]);
+    const p = resolveV2ReviewChipPicker?.(chip, roll);
+    const pickTargets = Array.isArray(p?.selectTargets) ? p.selectTargets : [];
+    const validIds = new Set(pickTargets.map((t) => t.instanceId ?? t.id).filter(Boolean));
+    if (needsTargets && primaryDamageTargetId && validIds.has(primaryDamageTargetId)) {
+      setSelectedTargetIds([primaryDamageTargetId]);
+    } else {
+      setSelectedTargetIds([]);
+    }
+  }, [stableKey, roll._rollDbId, primaryDamageTargetId, needsTargets, chip, roll, resolveV2ReviewChipPicker]);
 
   const maxSel = Math.max(1, Math.min(99, picker?.maxSelections ?? 1));
   const options = Array.isArray(picker?.isSelectOptions) ? picker.isSelectOptions : [];
@@ -667,12 +700,13 @@ function V2ReviewChipRow({
   const actorInstanceId = (t) => (t && (t.instanceId != null ? t.instanceId : t.id));
 
   const toggleId = (id) => {
+    const sid = String(id);
     setSelectedIds((prev) => {
-      if (!chip.multiSelect) return [id];
-      const has = prev.includes(id);
-      if (has) return prev.filter((x) => x !== id);
-      if (prev.length >= maxSel) return [...prev.slice(1), id];
-      return [...prev, id];
+      if (!chip.multiSelect) return [sid];
+      const has = prev.some((x) => String(x) === sid);
+      if (has) return prev.filter((x) => String(x) !== sid);
+      if (prev.length >= maxSel) return [...prev.slice(1), sid];
+      return [...prev, sid];
     });
   };
 
@@ -687,6 +721,7 @@ function V2ReviewChipRow({
   };
 
   const needsPrimaryFirst = needsTargets && !primaryDamageTargetId;
+
   const canConfirm = () => {
     if (needsPrimaryFirst) return false;
     if (needsIsSelect) {
@@ -700,21 +735,52 @@ function V2ReviewChipRow({
   const doConfirm = () => {
     const selectOpts = {};
     if (needsIsSelect) {
-      if (chip.multiSelect) selectOpts.selectedIds = [...selectedIds];
-      else selectOpts.selectedId = selectedIds[0];
+      if (chip.multiSelect) selectOpts.selectedIds = selectedIds.map((x) => String(x));
+      else if (selectedIds[0] != null && selectedIds[0] !== '') selectOpts.selectedId = String(selectedIds[0]);
     }
     if (needsTargets) selectOpts.selectedTargetIds = [...selectedTargetIds];
     onV2ReviewChip?.(chip, roll, selectOpts);
   };
 
-  const blockedBase = chip.disabled || isPlayer;
+  const blockedBase = chip.disabled || chip.resourceUnaffordable || isPlayer;
   const needsPickerUi = needsIsSelect || needsTargets;
+  /** Single `isSelect` only (e.g. Prayer Die — Action): apply on pick — same UX as GuideFeatureCard. */
+  const singleSelectImmediate =
+    needsIsSelect && !needsTargets && !chip.multiSelect && options.length > 0;
+  const showApply = needsPickerUi && !singleSelectImmediate;
   const pickerMissing = needsPickerUi && !picker;
   const blocked = blockedBase || pickerMissing || (needsPickerUi && needsPrimaryFirst);
 
-  if (!needsPickerUi) {
+  const blockHint =
+    isPlayer
+      ? 'Only the GM can apply V2 review chips.'
+      : [chip.disableHint, getV2ReviewChipDisableHint?.(chip, roll)].find(Boolean) ||
+        (chip.resourceUnaffordable ? 'Cannot afford resource costs.' : null) ||
+        (chip.disabled ? 'Unavailable right now.' : null);
+
+  if (consumed) {
     return (
-      <Tooltip key={stableKey} label={label} placement="bottom-left">
+      <Tooltip key={stableKey} label="Applied" placement="bottom-left" className="relative flex w-full min-w-0">
+        <div
+          role="status"
+          className="w-full flex items-center gap-2 text-left px-2 py-1 rounded text-[11px] border border-slate-600/50 bg-slate-900/50 text-slate-400"
+        >
+          <CheckSquare className="shrink-0 text-emerald-500/90" size={14} strokeWidth={2.5} aria-hidden />
+          <span className="min-w-0">
+            <span className="font-semibold text-slate-300">{chip._featureName}</span>
+            {chip.name && chip.name !== chip._featureName ? (
+              <span className="text-slate-500"> — {chip.name}</span>
+            ) : null}
+          </span>
+        </div>
+      </Tooltip>
+    );
+  }
+
+  if (!needsPickerUi) {
+    const tip = blockedBase ? blockHint || 'Unavailable' : label;
+    return (
+      <Tooltip key={stableKey} label={tip} placement="bottom-left" className="relative flex w-full min-w-0">
         <button
           type="button"
           disabled={blockedBase}
@@ -729,23 +795,23 @@ function V2ReviewChipRow({
           {chip.name && chip.name !== chip._featureName ? (
             <span className="text-violet-300/80"> — {chip.name}</span>
           ) : null}
-          {costStr ? <span className="text-slate-400"> ({costStr})</span> : null}
+          <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />
         </button>
       </Tooltip>
     );
   }
 
-  return (
+  const panel = (
     <div
       key={stableKey}
       className="rounded border border-violet-600/40 bg-violet-950/40 px-2 py-1.5 space-y-1.5"
     >
-      <div className="text-[11px] text-violet-100">
+      <div className="text-[11px] text-violet-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
         <span className="font-semibold text-violet-200">{chip._featureName}</span>
         {chip.name && chip.name !== chip._featureName ? (
           <span className="text-violet-300/80"> — {chip.name}</span>
         ) : null}
-        {costStr ? <span className="text-slate-400"> ({costStr})</span> : null}
+        <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />
       </div>
       {needsIsSelect && options.length === 0 ? (
         <p className="text-[9px] text-slate-500">No options available for this chip.</p>
@@ -755,7 +821,8 @@ function V2ReviewChipRow({
           {chip.multiSelect
             ? options.map((o) => {
                 const id = optionId(o);
-                const checked = id != null && selectedIds.includes(id);
+                const idStr = id != null ? String(id) : '';
+                const checked = id != null && selectedIds.some((x) => String(x) === idStr);
                 return (
                   <label
                     key={String(id)}
@@ -765,7 +832,7 @@ function V2ReviewChipRow({
                       type="checkbox"
                       className="rounded border-slate-600"
                       checked={checked}
-                      onChange={() => id != null && toggleId(id)}
+                      onChange={() => id != null && toggleId(idStr)}
                       disabled={blockedBase}
                     />
                     <span>{optionLabel(o)}</span>
@@ -773,26 +840,32 @@ function V2ReviewChipRow({
                 );
               })
             : (
-              <select
-                className="w-full text-[10px] bg-slate-900 border border-slate-600 rounded px-1 py-1 text-slate-100"
-                value={selectedIds[0] ?? ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setSelectedIds(v ? [v] : []);
-                }}
+              <CustomSelect
+                className="text-[10px] [&_button]:py-1.5 [&_button]:px-2 [&_button]:min-h-0 [&_button]:text-[10px]"
+                value={
+                  needsTargets
+                    ? options.find((o) => String(optionId(o)) === String(selectedIds[0] ?? '')) ?? null
+                    : null
+                }
+                placeholder="Choose…"
+                options={options}
+                getOptionKey={(o) => String(optionId(o) ?? '')}
+                getOptionLabel={(o) => optionLabel(o)}
+                getOptionDescription={(o) => (typeof o?.description === 'string' ? o.description : undefined)}
                 disabled={blockedBase}
-              >
-                <option value="">Choose…</option>
-                {options.map((o) => {
-                  const id = optionId(o);
-                  if (id == null) return null;
-                  return (
-                    <option key={String(id)} value={id}>
-                      {optionLabel(o)}
-                    </option>
-                  );
-                })}
-              </select>
+                disabledReason={blockedBase ? blockHint : undefined}
+                onChange={(opt) => {
+                  if (opt == null || blockedBase) return;
+                  const id = optionId(opt);
+                  if (id == null) return;
+                  const sid = String(id);
+                  if (singleSelectImmediate) {
+                    onV2ReviewChip?.(chip, roll, { selectedId: sid });
+                  } else {
+                    setSelectedIds([sid]);
+                  }
+                }}
+              />
             )}
         </div>
       ) : null}
@@ -827,26 +900,46 @@ function V2ReviewChipRow({
       {pickerMissing ? (
         <p className="text-[9px] text-slate-500">Could not load chip options.</p>
       ) : null}
-      <button
-        type="button"
-        disabled={blocked || !canConfirm()}
-        onClick={doConfirm}
-        aria-label={label}
-        className="w-full px-2 py-1 rounded text-[10px] font-medium border border-violet-500/70 bg-violet-800/40 text-violet-100 hover:bg-violet-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Apply
-      </button>
+      {showApply ? (
+        <button
+          type="button"
+          disabled={blocked || !canConfirm()}
+          onClick={doConfirm}
+          aria-label={label}
+          className="w-full px-2 py-1 rounded text-[10px] font-medium border border-violet-500/70 bg-violet-800/40 text-violet-100 hover:bg-violet-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Apply
+        </button>
+      ) : null}
     </div>
   );
+
+  if (blockedBase) {
+    return (
+      <Tooltip key={stableKey} label={blockHint || 'Unavailable'} placement="bottom-left" className="relative flex w-full min-w-0">
+        {panel}
+      </Tooltip>
+    );
+  }
+  return panel;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getWaterRetaliationNames, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, prayerDiceChars = [], onPrayerDieSelect, rallyDieInstanceIds, onRallyDieToggle, heartOfAPoetChars = [], onHeartD4Toggle, onHeartD4ToggleRequest, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
   const visible = useBannerVisible();
   const attackerEl = roll._attackerInstanceId
     ? tableCharacters.find((c) => c.instanceId === roll._attackerInstanceId)
     : null;
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
+  const v2MoveBlocksAck = !isPlayer && v2PendingMoveInfo?.blocked === true;
+  const v2MoveFeatureName = (v2PendingMoveInfo?.featureName || '').trim() || 'Feature';
+  const v2MoveDesiredCond = (v2PendingMoveInfo?.desiredCondition || v2PendingMoveInfo?.description || '').trim();
+  const v2MoveAckLabel = v2MoveBlocksAck ? `Apply ${v2MoveFeatureName} to acknowledge` : 'Acknowledge';
+  const v2MoveAckTooltip = v2MoveBlocksAck
+    ? v2MoveDesiredCond
+      ? `Drop the token so the map satisfies: ${v2MoveDesiredCond}. Then acknowledge.`
+      : `Drop the token so the map matches ${v2MoveFeatureName}, then acknowledge`
+    : null;
   // Active post-apply interaction: the name of the tag whose interaction phase is running.
   // Replaces the three separate quickPhase / doubledUpPhase / bouncingPhase states.
   const [activeInteractionTag, setActiveInteractionTag] = useState(null);
@@ -928,14 +1021,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     return () => document.removeEventListener('keydown', onKey);
   }, [targetMenuAnchorRect]);
 
-  // Prayer Dice: selection state for this banner.
-  // selectedAddRollDie: die whose value is added to the DH action total before ack.
-  // selectedDmgReduceDie: die whose value is subtracted from damage before threshold comparison.
-  // Prayer die selections live on the roll object (server-authoritative shared state).
+  // Legacy roll fields (may remain on old pending banners): prayer die add / damage reduction.
   const selectedAddRollDie = roll._prayerAddRollDie ?? null;
   const selectedDmgReduceDie = roll._prayerDmgReduceDie ?? null;
-  const selectAddRollDie = (die) => onPrayerDieSelect?.(roll._rollDbId, { addRollDie: die });
-  const selectDmgReduceDie = (die) => onPrayerDieSelect?.(roll._rollDbId, { dmgReduceDie: die });
 
   // Pre-ack display: features can set dominantForDisplay via chip.render (e.g. Fearless setWithHope()).
   const effectiveDominant = (displayOverridesByRollId && roll._rollDbId != null && displayOverridesByRollId[roll._rollDbId]?.dominantForDisplay) ?? dominant;
@@ -965,20 +1053,17 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Unified multi-target mode: Hold Them Off toggle or roll._multiTarget (e.g. Elemental Breath).
   const isMultiTargetMode = holdThemOffActive || (!!roll._multiTarget && (hasDamage || !!roll._featureNeedsTarget));
   const multiTargetCap = holdThemOffActive ? 3 : (roll._multiTargetMax ?? 10);
-  // For multiple damage sub-items (e.g. augmented Kick), parse each for combined display.
-  const damageParts = multiDamage ? damageSubs.map(s => ({ sub: s, parsed: parseDiceSub(s) })) : null;
-  // Precompute part labels: original damage as dice breakdown (e.g. "d8 3 + 1"), added damage as "<name> <dice>(result)" (e.g. "Tusks 1d6(2)").
-  const damagePartDisplays = damageParts?.map(({ sub, parsed }) => {
+  // One damage sub-item string: breakdown for generic "damage" rows or "Name (result)" for labeled extras (Kick, Tusks, …).
+  const formatDamageSubDisplay = (sub) => {
+    const parsed = parseDiceSub(sub);
     const damageLabel = (sub.pre || '').replace(/\s+damage$/i, '').trim();
-    // Extra-damage parts (Tusks, Kick, etc.) have a label like "Tusks 1d6"; show "Tusks 1d6(2)". Skip generic "damage" (from pre " damage ") so we use dice breakdown for preset parts.
     if (damageLabel && damageLabel.toLowerCase() !== 'damage') return `${damageLabel}(${sub.result})`;
-    // Original/preset parts: show dice breakdown (e.g. "d8 3 + 1") so we don't collapse to "damage(4)".
     if (parsed) {
       const modStr = parsed.modifier !== 0 ? ` + ${parsed.modifier}` : '';
       return `${parsed.notation} ${parsed.dieValue}${modStr}`;
     }
     return sub.result;
-  }) ?? null;
+  };
 
   // Determine if this banner has any interactive actions that require user input before dismissal.
   const tags = roll.tags || [];
@@ -986,7 +1071,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // Show target row for GM or for the initiating player (attacker) so they can select targets.
   const isInitiator = currentUserUid != null && roll._initiatorUid === currentUserUid;
   const canShowTargetRow = canApplyDamage || (isPlayer && isInitiator);
-  const needsInteraction = (canShowTargetRow || roll._featureNeedsTarget) && (hasDamage || hasInteractiveTags || roll._featureNeedsTarget);
+  const needsPcWeaponRangeTarget = roll._attackerInstanceId && roll._weaponRangeFt != null && roll._attackerType !== 'adversary' && !hasDamage;
+  const needsInteraction = (canShowTargetRow || roll._featureNeedsTarget) && (hasDamage || hasInteractiveTags || roll._featureNeedsTarget || needsPcWeaponRangeTarget);
 
   // Whether to show action buttons (Acknowledge / Apply damage)
   const showActions = !disableDismiss;
@@ -996,16 +1082,19 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   // DH rolls: label + numeric value for each non-damage sub-item. Include input to detect static parts.
   // Use dice expression (e.g. "1d8") as label when pre is blank so builder extra dice show in banner.
   // Disadvantage sub-items (e.g. Galapa Retract) are subtracted; carry isDisadvantage for display (minus, short label).
+  // `_preset` marks sub-items carried over when augmenting a banner (add damage, partial reroll) — show values while new dice animate.
   const dhParts = hasDuality
     ? actionItems
         .map(s => {
           const isDisadvantage = /disadvantage/i.test(s.pre || '');
           const rawLabel = extractBannerLabel(s.pre) || (s.input && s.input.trim()) || 'Dice';
           const label = isDisadvantage ? (rawLabel.replace(/\s*disadvantage\s*/i, '').trim() || 'disadvantage') : rawLabel;
-          return { label, value: parseInt(s.result, 10), input: s.input, isDisadvantage };
+          return { label, value: parseInt(s.result, 10), input: s.input, isDisadvantage, preset: !!s._preset };
         })
         .filter(p => p.label && (resolved ? (!isNaN(p.value) && p.value !== 0) : true))
     : [];
+  const dualityActionTotalKnown = resolved
+    || (actionItems.length > 0 && actionItems.every(s => s._preset || isStaticDiceInput(s.input)));
 
   // Generic rolls: parsed dice detail for the first action expression.
   const genericActionSub = !hasDuality
@@ -1013,6 +1102,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     : null;
   const genericAction = parseDiceSub(genericActionSub);
   const genericTotal  = total ?? computeActionTotal(roll.subItems);
+  const genericDiceSubs = !hasDuality ? actionItems.filter(s => /d\d/i.test(s.input || '')) : [];
+  const genericDiceTotalKnown = resolved
+    || (genericDiceSubs.length > 0 && genericDiceSubs.every(s => s._preset || isStaticDiceInput(s.input)));
   // Trailing " + N" from rollText (e.g. Know the Tide) — show in dice string; total already includes it.
   const staticModFromRollText = getStaticModifierFromRollText(roll.rollText);
   // " — disadvantage removed: label1, label2" from rollText (e.g. Goblin Surefooted).
@@ -1033,10 +1125,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
   // Character rolls target adversaries; adversary/other rolls target characters.
   // Use getTargetsForRoll for virtual weapon features, character attacks with weapon range, or adversary attacks with range.
-  const useGetTargetsForRoll = !!(getTargetsForRoll && (
-    roll._featureNeedsTarget ||
-    (hasDamage && roll._attackerInstanceId && (roll._weaponRangeFt != null || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)))
-  ));
+  const useGetTargetsForRoll = !!(getTargetsForRoll && rollShouldUseMapFilteredTargets(roll, hasDamage));
   const allTargets = useGetTargetsForRoll ? (getTargetsForRoll(roll) || []) : (targets || []);
   const rollSrc = (rollUser || characterName || '').toLowerCase().trim();
   // Character rolls target adversaries. Treat as character roll when the attacker is a character (not adversary).
@@ -1081,25 +1170,52 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     ? holdThemOffChars.find(c => c.instanceId === roll._attackerInstanceId)
     : null;
 
-  // Heart of a Poet (Wordsmith): non-attack action roll (has _traitKey, no damage, hasDuality, not the die-copy banner).
-  const heartOfAPoetChar = !hasDamage && roll._attackerInstanceId && roll._traitKey && hasDuality && !roll._heartOfAPoetApplied
-    ? heartOfAPoetChars.find(c => c.instanceId === roll._attackerInstanceId)
-    : null;
+  // Hide GM banner "Cancel" when Ack would not apply meaningful mechanical effects (Ack is the only dismissal that matters).
+  const isAdversaryNotThisTimeRoll = !isCharacterRoll && wizardsWithHope.length > 0 && (hasDuality || hasDamage);
+  const selectedTargetForLockedOn = selectedDamageTargetId || roll._selectedTargetInstanceId || selectedDamageTargetIds[0];
+  const ackClearsLockedOn =
+    !!(attackerEl?.lockedOnTargetInstanceId && selectedTargetForLockedOn && attackerEl.lockedOnTargetInstanceId === selectedTargetForLockedOn);
+  const hasISeeItComingCleanup =
+    roll._rollDbId != null &&
+    tableCharacters.some((el) => el._iSeeItComingRollBonus && roll._rollDbId in el._iSeeItComingRollBonus);
+  const ackWouldApplyMechanicalEffectsWhenResolved =
+    needsInteraction ||
+    v2MoveBlocksAck ||
+    applicableReactions.length > 0 ||
+    ((roll.tags || []).length > 0 && roll._attackerInstanceId) ||
+    (Number(roll._stressCost) > 0 ||
+      Number(roll._hopeCost) > 0 ||
+      Number(roll._armorMark) > 0 ||
+      Number(roll._armorClear) > 0) ||
+    roll._featureUse ||
+    Number(roll._experienceHopeCost) > 0 ||
+    Number(roll._notThisTimeHopeCost) > 0 ||
+    roll._prayerDieGainHope ||
+    roll._isPrayerDiceRoll ||
+    roll._usedModifierId ||
+    roll._prayerAddRollDie ||
+    roll._prayerDmgReduceDie ||
+    (hasDuality &&
+      (effectiveDominant === 'fear' || effectiveDominant === 'hope' || effectiveDominant === 'critical')) ||
+    (hasDHLabels && effectiveDominant == null) ||
+    isAdversaryNotThisTimeRoll ||
+    (Array.isArray(v2ReviewChips) && v2ReviewChips.length > 0) ||
+    !!roll._holdThemOffActive ||
+    !!roll._multiTarget ||
+    (Number(roll._rangerFocusAttempt) > 0 && Number(roll._hopeCost) > 0) ||
+    !!roll._wingsOfLightAddD8 ||
+    ackClearsLockedOn ||
+    hasISeeItComingCleanup;
 
-  // Rally Die: character has a Rally Die modifier and this is an attack/action roll (not the clear-stress roll itself).
-  const hasRallyDie = !roll._rallyClearStress && !roll._rallyDieApplied
-    && roll._rollDbId != null && roll._attackerInstanceId
-    && rallyDieInstanceIds?.has(roll._attackerInstanceId)
-    && (actionItems.length > 0 || hasDamage);
-  const rallyAddToRoll = !!roll._rallyDieAddToRoll;
-  const rallyAddToDamage = !!roll._rallyDieAddToDamage;
+  const showBannerDismissCancel =
+    onCancel != null && (!resolved || ackWouldApplyMechanicalEffectsWhenResolved);
 
   // Attack success/failure: total >= target Difficulty (adversary) or Evasion (character).
   const selectedTargetIds = isMultiTargetMode
     ? selectedDamageTargetIds
     : (selectedDamageTargetId || roll._selectedTargetInstanceId ? [selectedDamageTargetId || roll._selectedTargetInstanceId] : []);
   const effectiveAttackTotal = hasDuality
-    ? (total + (selectedAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0))
+    ? (total + (selectedAddRollDie?.value ?? 0))
     : genericTotal;
   let hitCount = 0;
   let missCount = 0;
@@ -1118,7 +1234,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     if (effectiveAttackTotal >= defense) hitCount++;
     else missCount++;
   }
-  const showHitMiss = hasDamage && resolved && (hitCount + missCount) > 0;
+  const showHitMiss =
+    resolved &&
+    (hitCount + missCount) > 0 &&
+    rollIsHitMissEligibleAttack(roll, hasDamage);
   const hitMissLabel = showHitMiss
     ? (hitCount + missCount === 1
         ? (hitCount === 1 ? 'Hit' : 'Miss')
@@ -1194,13 +1313,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               {dhParts.length > 0 && (
                 <span className={`text-[11px] ${scheme.detail}`}>
                   {dhParts.map((p, i) => {
-                    const displayVal = resolved ? p.value : (isStaticDiceInput(p.input) ? parseStaticValue(p.input) : undefined);
+                    const partKnown = resolved || p.preset || isStaticDiceInput(p.input);
+                    const displayVal = (resolved || p.preset) ? p.value : (isStaticDiceInput(p.input) ? parseStaticValue(p.input) : undefined);
                     const sep = i > 0 ? (p.isDisadvantage ? ' \u2212 ' : (isNaN(p.value) || p.value >= 0 ? ' + ' : ' \u2212 ')) : '';
                     return (
                       <span key={i}>
                         {sep}
                         {p.isDisadvantage ? (
-                          resolved ? (
+                          partKnown ? (
                             <span className="text-amber-300/90">{p.label} (−{Math.abs(displayVal ?? 0)})</span>
                           ) : (
                             <span className="text-amber-300/70">{p.label} <Spinner /></span>
@@ -1218,13 +1338,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 </span>
               )}
               <span className="text-2xl font-black tabular-nums ml-1">
-                {resolved ? (total + (selectedAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0)) : <Spinner lg />}
+                {dualityActionTotalKnown ? (total + (selectedAddRollDie?.value ?? 0)) : <Spinner lg />}
               </span>
               {selectedAddRollDie && resolved && (
                 <span className="text-[10px] text-teal-400/80 ml-0.5">+{selectedAddRollDie.value} Prayer Die</span>
-              )}
-              {roll._heartOfAPoetD4Result != null && resolved && (
-                <span className="text-[10px] text-violet-400/80 ml-0.5">+{roll._heartOfAPoetD4Result} Heart of a Poet</span>
               )}
               <span className="text-sm font-semibold opacity-80 ml-0.5">
                 {(resolved || dominantFromPreset)
@@ -1240,7 +1357,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           ) : genericAction ? (
             <>
               <span className={`text-[11px] ${scheme.detail}`}>
-                {genericAction.notation} {resolved ? genericAction.dieValue : <Spinner />}
+                {genericAction.notation} {(resolved || genericActionSub?._preset) ? genericAction.dieValue : <Spinner />}
                 {genericAction.modifier !== 0 && (
                   <> {genericAction.modifier > 0 ? '+' : '-'} {Math.abs(genericAction.modifier)}</>
                 )}
@@ -1250,7 +1367,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                     const notation = (s.input || '1d6').trim();
                     const label = (s.pre || '').replace(/\s*disadvantage\s*/i, '').trim() || 'disadvantage';
                     return (
-                      <span key={i}> - {notation} ({resolved ? val : <Spinner />}) {label}</span>
+                      <span key={i}> - {notation} ({(resolved || s._preset) ? val : <Spinner />}) {label}</span>
                     );
                   })}</>
                 )}
@@ -1260,7 +1377,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 {' ='}
               </span>
               <span className="text-2xl font-black tabular-nums ml-1">
-                {resolved ? genericTotal : <Spinner lg />}
+                {genericDiceTotalKnown ? genericTotal : <Spinner lg />}
               </span>
               {resultLabel && (
                 <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
@@ -1292,39 +1409,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           </div>
         )}
 
-        {/* ── Prayer Die: add-to-roll buttons (DH rolls only, visible to all) ── */}
-        {hasDuality && prayerDiceChars.length > 0 && (
-          <div className="flex items-center justify-center flex-wrap gap-1 mt-1">
-            {prayerDiceChars.map(die => {
-              const isSelected = selectedAddRollDie?.id === die.id;
-              const usedForReduce = selectedDmgReduceDie?.id === die.id;
-              return (
-                <button
-                  key={die.id}
-                  type="button"
-                  disabled={usedForReduce}
-                    onClick={() => selectAddRollDie(isSelected ? null : die)}
-                  className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                    isSelected
-                      ? 'border-teal-500 bg-teal-900/50 text-teal-200'
-                      : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
-                  } disabled:opacity-40 disabled:cursor-not-allowed`}
-                >
-                  <Tooltip label={isSelected ? 'Remove Prayer Die from roll' : `Add ${die.ownerName}'s Prayer Die (${die.value}) to this roll`}>
-                    <span>{die.ownerName}: +{die.value} Prayer Die</span>
-                  </Tooltip>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
         {/* ── Damage line (single or combined when augmented e.g. Kick) ── */}
         {(dmg || multiDamage) && (() => {
           const dmgReduction = selectedDmgReduceDie?.value ?? 0;
           const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-          const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-          const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+          const baseDmg = baseDamage + wingsBonus;
           const displayDmg = Math.max(0, baseDmg - dmgReduction);
           const firstDmgType = dmg?.type ?? (damageSubs[0] && parseDiceSub(damageSubs[0])?.type);
           const selectedTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
@@ -1336,19 +1425,17 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <span className="text-[11px] text-red-300/60">
                 {multiDamage ? (
                   <>
-                    {resolved ? (
-                      damagePartDisplays?.map((partDisplay, i) => (
-                        <span key={i}>
-                          {i > 0 && ' + '}
-                          {partDisplay}
-                        </span>
-                      ))
-                    ) : <Spinner />}
+                    {damageSubs.map((sub, i) => (
+                      <span key={i}>
+                        {i > 0 && ' + '}
+                        {(resolved || sub._preset) ? formatDamageSubDisplay(sub) : <Spinner />}
+                      </span>
+                    ))}
                   </>
                 ) : (
                   <>
                     {dmg.notation}{' '}
-                    {resolved ? (
+                    {(resolved || damageSubs[0]?._preset) ? (
                       <>
                         {(dmg.discarded || []).map((v, i) => (
                           <span key={i} className="line-through text-red-300/30 mr-0.5">{v}</span>
@@ -1364,16 +1451,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 {roll._wingsOfLightD8Result != null && (
                   <> + d8({roll._wingsOfLightD8Result})</>
                 )}
-                {roll._rallyDieDamageResult != null && (
-                  <> + Rally({roll._rallyDieDamageResult})</>
-                )}
                 {dmgReduction > 0 && (
                   <> <span className="text-teal-400/80">− Prayer Die({dmgReduction})</span></>
                 )}
                 {' ='}
               </span>
               <span className="text-lg font-black tabular-nums text-red-300 ml-1">
-                {resolved
+                {(resolved || (damageSubs.length > 0 && damageSubs.every((s) => s._preset)))
                   ? (roll._damageTotalOverride != null
                       ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
                       : hasPhysicalResistance && isPhysicalDmg
@@ -1451,40 +1535,63 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               return (
                 <div key={i} className={`flex items-start gap-1.5 rounded px-2 py-1 text-left border ${cardCls}`}>
                   <Icon size={10} className={`${iconCls} shrink-0 mt-0.5`} />
-                  <span className="text-[10px] leading-snug">
+                  <div className="text-[10px] leading-snug min-w-0 flex-1">
                     <span className={`font-bold ${nameCls}`}>{tag.name}:</span>{' '}
-                    <span className={textCls}>{displayText}</span>
-                  </span>
+                    <MarkdownText text={String(displayText ?? '')} className={`${textCls} dh-md text-[10px] leading-snug`} />
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
 
-        {/* V2 engine chips: intent + reviewAction + reviewOutcome (declarative sheet flag) — v2-action-loop-bridge.js */}
-        {Array.isArray(v2ReviewChips) && v2ReviewChips.length > 0 && (() => {
-          const byPhase = { intent: [], reviewAction: [], reviewOutcome: [] };
-          for (const c of v2ReviewChips) {
-            const p = c._v2Phase && byPhase[c._v2Phase] != null ? c._v2Phase : 'reviewAction';
+        {/* V2 engine: pre-roll intent choices are logged on the roll (`_v2IntentUsedLog`); banner shows reviewAction + reviewOutcome only — v2-action-loop-bridge.js */}
+        {(() => {
+          const v2NonIntent = Array.isArray(v2ReviewChips)
+            ? v2ReviewChips.filter((c) => c._v2Phase !== 'intent')
+            : [];
+          const intentUsedLines = Array.isArray(roll._v2IntentUsedLog) ? roll._v2IntentUsedLog : [];
+          if (v2NonIntent.length === 0 && intentUsedLines.length === 0) return null;
+          const byPhase = { reviewAction: [], reviewOutcome: [] };
+          for (const c of v2NonIntent) {
+            const p = c._v2Phase === 'reviewOutcome' ? 'reviewOutcome' : 'reviewAction';
             byPhase[p].push(c);
           }
           const phaseLabel = {
-            intent: 'V2 intent',
-            reviewAction: 'V2 review',
-            reviewOutcome: 'V2 outcome',
+            reviewAction: ACTION_LOOP_PHASE_UI.reviewAction.sectionHeader,
+            reviewOutcome: ACTION_LOOP_PHASE_UI.reviewOutcome.sectionHeader,
           };
           const primaryDamageTargetId =
             selectedDamageTargetId ||
+            (roll._featureNeedsTarget ? featureTargetSelectedId : null) ||
             roll._selectedTargetInstanceId ||
             (Array.isArray(selectedDamageTargetIds) && selectedDamageTargetIds[0]) ||
             null;
           return (
             <div className="mt-2 rounded-lg border border-violet-600/40 bg-violet-950/30 px-2 py-1.5 space-y-2">
-              {(['intent', 'reviewAction', 'reviewOutcome']).map((pk) =>
-                byPhase[pk].length > 0 ? (
+              {intentUsedLines.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1 mb-1 text-[9px] font-semibold uppercase tracking-wider text-violet-300/90">
+                    <ACTION_LOOP_PHASE_UI.intent.Icon size={10} className="shrink-0 text-violet-300/85" aria-hidden />
+                    <span>
+                      {ACTION_LOOP_PHASE_UI.intent.sectionHeader} (used)
+                    </span>
+                  </div>
+                  <ul className="text-[10px] text-violet-100/90 space-y-0.5 list-disc list-inside pl-0.5">
+                    {intentUsedLines.map((line, li) => (
+                      <li key={li}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(['reviewAction', 'reviewOutcome']).map((pk) => {
+                if (byPhase[pk].length === 0) return null;
+                const PhaseIcon = ACTION_LOOP_PHASE_UI[pk].Icon;
+                return (
                   <div key={pk}>
-                    <div className="text-[9px] font-semibold uppercase tracking-wider text-violet-300/90 mb-1">
-                      {phaseLabel[pk]}
+                    <div className="flex items-center gap-1 mb-1 text-[9px] font-semibold uppercase tracking-wider text-violet-300/90">
+                      <PhaseIcon size={10} className="shrink-0 text-violet-300/85" aria-hidden />
+                      <span>{phaseLabel[pk]}</span>
                     </div>
                     <div className="flex flex-col gap-1">
                       {byPhase[pk].map((chip, i) => (
@@ -1498,12 +1605,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                           onV2ReviewChip={onV2ReviewChip}
                           isPlayer={isPlayer}
                           primaryDamageTargetId={primaryDamageTargetId}
+                          getV2ReviewChipDisableHint={getV2ReviewChipDisableHint}
                         />
                       ))}
                     </div>
                   </div>
-                ) : null
-              )}
+                );
+              })}
             </div>
           );
         })()}
@@ -1673,6 +1781,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
             // Per-tag callback dispatch
             const handleInteractiveTarget = (t) => {
+              if (v2MoveBlocksAck) return;
               if (activeInteractionTag === 'Quick') {
                 onQuickTarget?.(t, dmg?.total, tags, roll, dmg?.type || '');
               } else if (activeInteractionTag === 'Doubled Up') {
@@ -1702,7 +1811,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   ))}
                   <button
                     onClick={() => { setActiveInteractionTag(null); onAcknowledge?.(); }}
-                    className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                    disabled={v2MoveBlocksAck}
+                    className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {skipLabel}
                   </button>
@@ -1716,6 +1826,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
           // After applying damage, check if any tag needs a post-apply interaction phase.
           const enterPostApplyPhase = () => {
+            if (v2MoveBlocksAck) return;
             const firstPostApply = tags.find((t) => {
               const f = resolveWeaponTagDescriptor(t.name, attackerEl);
               return f?.bannerInteraction?.phase === 'post-apply';
@@ -1779,34 +1890,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   </button>
                 </Tooltip>
               )}
-              {/* Rally Die: add to roll / damage — visible to GM and player; state shared across windows */}
-              {hasRallyDie && onRallyDieToggle && roll._rollDbId && (
-                <>
-                  {actionItems.length > 0 && (
-                    <Tooltip label={rallyAddToRoll ? 'Rally Die will be added to roll on Acknowledge — click to cancel' : 'Add Rally Die result to roll total on Acknowledge'}>
-                      <button
-                        onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
-                        className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                      >
-                        {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
-                        {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
-                      </button>
-                    </Tooltip>
-                  )}
-                  {hasDamage && (
-                    <Tooltip label={rallyAddToDamage ? 'Rally Die will be added to damage on Acknowledge — click to cancel' : 'Add Rally Die result to damage on Acknowledge'}>
-                      <button
-                        onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
-                        className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                      >
-                        {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
-                        {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
-                      </button>
-                    </Tooltip>
-                  )}
-                </>
-              )}
-              {(hasDamage || roll._featureNeedsTarget) && canShowTargetRow && (filteredTargets.length > 0 || roll._featureNeedsTarget || (roll._attackerType === 'adversary' && roll._attackRangeFt != null)) ? (
+              {(hasDamage || roll._featureNeedsTarget || (roll._attackerInstanceId && roll._weaponRangeFt != null && roll._attackerType !== 'adversary')) && canShowTargetRow && (filteredTargets.length > 0 || roll._featureNeedsTarget || (roll._attackerType === 'adversary' && roll._attackRangeFt != null) || (roll._attackerInstanceId && roll._weaponRangeFt != null && roll._attackerType !== 'adversary')) ? (
                 <>
                   <div className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider">
                     {(() => {
@@ -1913,8 +1997,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                             {selectedDamageTargetIds.length > 0 && (() => {
                               const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                               const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                              const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-                              const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                              const baseDmg = baseDamage + wingsBonus;
                               const displayDmg = Math.max(0, baseDmg - dmgReduction);
                               return (
                                 <div className="mt-1 space-y-0.5 w-full">
@@ -1972,8 +2055,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     {(() => {
                                       const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                                       const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                                      const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-                                      const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                                      const baseDmg = baseDamage + wingsBonus;
                                       const displayDmg = Math.max(0, baseDmg - dmgReduction);
                                       return filteredTargets.map((t) => {
                                         const sum = formatTargetSummary(t, { hideMax: isPlayer });
@@ -2067,8 +2149,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const currentHp = selectedTarget.currentHp ?? selectedTarget.maxHp ?? 0;
                                     const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                                     const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                                    const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-                                    const displayDmg = Math.max(0, baseDamage + wingsBonus + rallyDmgBonus - dmgReduction);
+                                    const displayDmg = Math.max(0, baseDamage + wingsBonus - dmgReduction);
                                     const hpLoss = selectedTarget.thresholds != null ? computeHpLoss(displayDmg, selectedTarget.thresholds) : 0;
                                     const wouldBeZero = currentHp - hpLoss <= 0;
                                     const hasImpenetrable = selectedTarget.armorFeatureName === 'Impenetrable';
@@ -2122,28 +2203,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       </Tooltip>
                                     </button>
                                   )}
-                                  {/* Prayer Die: damage reduction toggles */}
-                                  {prayerDiceChars.map(die => {
-                                    const isSelected = selectedDmgReduceDie?.id === die.id;
-                                    const usedForRoll = selectedAddRollDie?.id === die.id;
-                                    return (
-                                      <button
-                                        key={die.id}
-                                        type="button"
-                                        disabled={usedForRoll}
-                                        onClick={() => selectDmgReduceDie(isSelected ? null : die)}
-                                        className={`flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
-                                          isSelected
-                                            ? 'border-teal-500 bg-teal-900/50 text-teal-200'
-                                            : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
-                                        } disabled:opacity-40 disabled:cursor-not-allowed`}
-                                      >
-                                        <Tooltip label={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}>
-                                          <span>{isSelected ? `−${die.value} Prayer Die` : `${die.ownerName}: −${die.value} Prayer Die`}</span>
-                                        </Tooltip>
-                                      </button>
-                                    );
-                                  })}
                                 </>
                               );
                             })()}
@@ -2152,8 +2211,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               if (!t) return null;
                               const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                               const wingsBonus = roll._wingsOfLightD8Result ?? 0;
-                              const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-                              const baseDmg = baseDamage + wingsBonus + rallyDmgBonus;
+                              const baseDmg = baseDamage + wingsBonus;
                               const displayDmg = Math.max(0, baseDmg - dmgReduction);
                               const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
                               return (
@@ -2220,43 +2278,32 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         )
                       )}
                     </div>
-                    {/* Elemental Incarnation notices — shown before Acknowledge so GM can anticipate side effects */}
-                    {(() => {
-                      const notes = [];
-                      // Fire: adversary Melee attack on a Fire-channeling character → retaliation 1d10
-                      if (roll._attackerType === 'adversary' && roll._attackRangeFt != null && roll._attackRangeFt <= RANGE_BANDS_FT.MELEE) {
-                        const fireTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
-                        if (fireTarget?.activeChanneledElement === 'fire') {
-                          notes.push(<div key="fire" className="text-[10px] text-orange-300/90 mt-1">🔥 Fire: {fireTarget.name} retaliates 1d10 magic damage.</div>);
-                        }
-                      }
-                      // Water: character Melee attack on adversary → other nearby adversaries mark Stress
-                      if (hasDamage && isCharacterRoll && roll._attackerInstanceId && getWaterRetaliationNames) {
-                        const waterTargetId = selectedDamageTargetId;
-                        if (waterTargetId) {
-                          const waterNames = getWaterRetaliationNames(roll._attackerInstanceId, waterTargetId);
-                          if (waterNames.length > 0) {
-                            notes.push(<div key="water" className="text-[10px] text-cyan-300/90 mt-1">💧 Water: {waterNames.join(', ')} will mark Stress.</div>);
-                          }
-                        }
-                      }
-                      return notes.length > 0 ? <div className="mt-1">{notes}</div> : null;
-                    })()}
+                    {typeof getV2DamageBannerAckNotices === 'function' ? (() => {
+                      const lines = getV2DamageBannerAckNotices(roll, selectedDamageTargetId) || [];
+                      if (!lines.length) return null;
+                      return (
+                        <div className="mt-1 space-y-0.5">
+                          {lines.map((text, i) => (
+                            <div key={i} className="text-[10px] text-slate-300/90">{text}</div>
+                          ))}
+                        </div>
+                      );
+                    })() : null}
                     <div className="flex flex-wrap justify-center gap-1.5">
                       {roll._featureNeedsTarget ? (
                         <>
                           {!isPlayer && onAcknowledge != null && (
-                            <Tooltip label={featureTargetSelectedId ? 'Acknowledge' : filteredTargets.length === 0 ? 'Acknowledge' : 'Select a target first'}>
+                            <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : featureTargetSelectedId ? 'Acknowledge' : filteredTargets.length === 0 ? 'Acknowledge' : 'Select a target first'}>
                               <button
                                 onClick={() => onAcknowledge(featureTargetSelectedId ? { selectedFeatureTargetInstanceId: featureTargetSelectedId } : undefined)}
-                                disabled={filteredTargets.length > 0 && !featureTargetSelectedId}
+                                disabled={(filteredTargets.length > 0 && !featureTargetSelectedId) || v2MoveBlocksAck}
                                 className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
                               >
-                                Acknowledge
+                                {v2MoveAckLabel}
                               </button>
                             </Tooltip>
                           )}
-                          {!isPlayer && onCancel != null && (
+                          {!isPlayer && showBannerDismissCancel && (
                             <button
                               onClick={onCancel}
                               className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
@@ -2269,7 +2316,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <>
                           {!isPlayer && (
                             <>
-                              <Tooltip label={selectedDamageTargetIds.length === 0 ? 'Select at least one target' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? 'Acknowledge and apply damage (3 Hope)' : 'Acknowledge and apply damage'}>
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : selectedDamageTargetIds.length === 0 ? 'Select at least one target' : holdThemOffActive && selectedDamageTargetIds.length >= 2 ? 'Acknowledge and apply damage (3 Hope)' : 'Acknowledge and apply damage'}>
                                 <button
                                   onClick={async () => {
                                     const dmgType = dmg?.type || '';
@@ -2291,21 +2338,22 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       onAcknowledge?.();
                                     }
                                   }}
-                                  disabled={selectedDamageTargetIds.length === 0}
+                                  disabled={selectedDamageTargetIds.length === 0 || v2MoveBlocksAck}
                                   className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
                                 >
-                                  Acknowledge
+                                  {v2MoveAckLabel}
                                 </button>
                               </Tooltip>
-                              <Tooltip label="Acknowledge without applying damage">
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : 'Acknowledge without applying damage'}>
                                 <button
                                   onClick={() => onAcknowledge?.()}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                                  disabled={v2MoveBlocksAck}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Skip
                                 </button>
                               </Tooltip>
-                              {onCancel != null && (
+                              {showBannerDismissCancel && (
                                 <button
                                   onClick={onCancel}
                                   className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
@@ -2320,7 +2368,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <>
                           {!isPlayer && (
                             <>
-                              <Tooltip label={filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : 'Acknowledge and apply damage to selected target'}>
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : filteredTargets.length > 0 && !selectedDamageTargetId ? 'Select a target first' : 'Acknowledge and apply damage to selected target'}>
                                 <button
                                   onClick={async () => {
                                     let d8Extra = 0;
@@ -2330,11 +2378,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       if (roll._wingsOfLightD8Result == null && d8Extra > 0) alreadyAcked = true;
                                     }
                                     const dmgReduction = selectedDmgReduceDie?.value ?? 0;
-                                    const rallyDmgBonus = roll._rallyDieDamageResult ?? 0;
-                                    const totalDamage = Math.max(0, (hasDamage ? baseDamage : 0) + d8Extra + rallyDmgBonus - dmgReduction);
-                                    // Skip damage application when a rally toggle is active — the copy banner handles it.
-                                    const rallyPending = rallyAddToRoll || rallyAddToDamage;
-                                    if (!rallyPending && selectedDamageTargetId && hasDamage && onApplyDamage) {
+                                    const totalDamage = Math.max(0, (hasDamage ? baseDamage : 0) + d8Extra - dmgReduction);
+                                    if (selectedDamageTargetId && hasDamage && onApplyDamage) {
                                       const selectedTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
                                       if (selectedTarget) {
                                         const dmgType = dmg?.type || '';
@@ -2346,26 +2391,41 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                         await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                       }
                                     }
+                                    // Katari Retracting Claws: no damage line; V2 virtual weapon has no Phase-1 onAcknowledge — `_featureNeedsTarget` is false, so GMTableView virtual-weapon ack never runs. Apply Vulnerable on successful hit here.
+                                    if (
+                                      !hasDamage &&
+                                      onApplyVulnerable &&
+                                      selectedDamageTargetId &&
+                                      roll._featureName === 'Retracting Claws' &&
+                                      hitCount > 0 &&
+                                      missCount === 0
+                                    ) {
+                                      const vulnTarget = filteredTargets.find(t => t.instanceId === selectedDamageTargetId);
+                                      if (vulnTarget?.type === 'adversary') {
+                                        onApplyVulnerable(vulnTarget);
+                                      }
+                                    }
                                     if (concussiveKnockActive && onConcussiveKnock && selectedDamageTargetId) onConcussiveKnock(roll, selectedDamageTargetId);
                                     const ackOpts = {};
                                     if (alreadyAcked) ackOpts.alreadyAcked = true;
                                     onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
                                   }}
-                                  disabled={filteredTargets.length > 0 && !selectedDamageTargetId}
+                                  disabled={(filteredTargets.length > 0 && !selectedDamageTargetId) || v2MoveBlocksAck}
                                   className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
                                 >
-                                  Acknowledge
+                                  {v2MoveAckLabel}
                                 </button>
                               </Tooltip>
-                              <Tooltip label="Acknowledge without applying damage">
+                              <Tooltip label={v2MoveBlocksAck ? (v2MoveAckTooltip || '') : 'Acknowledge without applying damage'}>
                                 <button
                                   onClick={() => onAcknowledge?.()}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                                  disabled={v2MoveBlocksAck}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Skip
                                 </button>
                               </Tooltip>
-                              {onCancel != null && (
+                              {showBannerDismissCancel && (
                                 <button
                                   onClick={onCancel}
                                   className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
@@ -2382,39 +2442,18 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 </>
               ) : (
                 <div className="flex flex-col gap-1.5">
-                  {/* Heart of a Poet (Wordsmith): toggle to add d4 on Acknowledge — GM view */}
-                  {heartOfAPoetChar && onHeartD4Toggle && roll._rollDbId && (() => {
-                    const heartActive = !!roll._heartOfAPoetAddD4;
-                    const noHope = (heartOfAPoetChar?.hope ?? 1) < 1;
-                    return (
-                      <Tooltip label={noHope ? 'No Hope remaining to spend' : heartActive ? 'Heart of a Poet d4 will be added on Acknowledge — click to cancel' : 'Add Heart of a Poet d4 to roll on Acknowledge (spend 1 Hope)'}>
-                        <button
-                          type="button"
-                          onClick={() => { if (!noHope) onHeartD4Toggle(roll._rollDbId, !heartActive); }}
-                          disabled={noHope}
-                          className={`w-full mb-1 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
-                            noHope
-                              ? 'border-violet-900/40 bg-violet-950/20 text-violet-400/50 cursor-not-allowed'
-                              : heartActive
-                                ? 'border-violet-500 bg-violet-800/80 text-violet-100'
-                                : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
-                          } disabled:cursor-default`}
-                        >
-                          {heartActive ? <Check size={12} className="shrink-0" /> : null}
-                          {heartActive ? 'Heart of a Poet → roll (on Ack)' : 'Add Heart of a Poet d4'}
-                        </button>
-                      </Tooltip>
-                    );
-                  })()}
                   {!isPlayer && (
                     <div className="flex items-center justify-center gap-1.5">
-                      <button
-                        onClick={() => onAcknowledge?.()}
-                        className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                      >
-                        Acknowledge
-                      </button>
-                      {onCancel != null && (
+                      <Tooltip label={v2MoveAckTooltip || 'Acknowledge'}>
+                        <button
+                          onClick={() => onAcknowledge?.()}
+                          disabled={v2MoveBlocksAck}
+                          className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {v2MoveAckLabel}
+                        </button>
+                      </Tooltip>
+                      {showBannerDismissCancel && (
                         <button
                           onClick={onCancel}
                           className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
@@ -2511,97 +2550,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             })()}
           </div>
         )}
-        {/* Heart of a Poet (Wordsmith): toggle intent to add d4 — visible to player when not showActions */}
-        {!showActions && heartOfAPoetChar && onHeartD4ToggleRequest && roll._rollDbId && (
-          <div className="mt-2.5 pt-2 border-t border-white/10">
-            {(() => {
-              const heartActive = !!roll._heartOfAPoetAddD4;
-              const heartResult = roll._heartOfAPoetD4Result;
-              return (
-                <Tooltip label={heartResult != null ? `+d4: ${heartResult} (Heart of a Poet, applied on GM Acknowledge)` : heartActive ? 'Intent set — waiting for GM to apply' : 'Spend 1 Hope to add d4 (Heart of a Poet) — GM will apply'}>
-                  <button
-                    type="button"
-                    onClick={() => { if (heartResult == null) onHeartD4ToggleRequest(roll._rollDbId, !heartActive); }}
-                    disabled={heartResult != null}
-                    className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1 ${
-                      heartResult != null
-                        ? 'border-violet-500 bg-violet-900/60 text-violet-100 opacity-80 cursor-default'
-                        : heartActive
-                          ? 'border-violet-500 bg-violet-800/80 text-violet-100'
-                          : 'border-violet-700 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60 hover:text-violet-100'
-                    } disabled:cursor-default`}
-                  >
-                    {heartActive || heartResult != null ? <Check size={12} className="shrink-0" /> : null}
-                    {heartResult != null ? `+d4: ${heartResult} (Heart of a Poet)` : 'Spend 1 Hope → d4 (Heart of a Poet)'}
-                  </button>
-                </Tooltip>
-              );
-            })()}
-          </div>
-        )}
-        {/* Rally Die: add to roll / damage — visible to player (GM sees same buttons inside showActions) */}
-        {!showActions && hasRallyDie && onRallyDieToggle && roll._rollDbId && (
-          <div className="mt-2.5 pt-2 border-t border-white/10 space-y-1">
-            {actionItems.length > 0 && (
-              <Tooltip label={rallyAddToRoll ? 'Rally Die will be added to roll on GM Acknowledge — click to cancel' : 'Add Rally Die result to roll total (applied on GM Acknowledge)'}>
-                <button
-                  type="button"
-                  onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToRoll', !rallyAddToRoll)}
-                  className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToRoll ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                >
-                  {rallyAddToRoll ? <Check size={12} className="shrink-0" /> : null}
-                  {rallyAddToRoll ? 'Rally Die → roll (on Ack)' : 'Add Rally Die to roll'}
-                </button>
-              </Tooltip>
-            )}
-            {hasDamage && (
-              <Tooltip label={rallyAddToDamage ? 'Rally Die will be added to damage on GM Acknowledge — click to cancel' : 'Add Rally Die result to damage (applied on GM Acknowledge)'}>
-                <button
-                  type="button"
-                  onClick={() => onRallyDieToggle(roll._rollDbId, '_rallyDieAddToDamage', !rallyAddToDamage)}
-                  className={`w-full px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${rallyAddToDamage ? 'border-green-500 bg-green-800/80 text-green-100' : 'border-green-700 bg-green-900/50 text-green-200 hover:bg-green-800 hover:text-green-100'}`}
-                >
-                  {rallyAddToDamage ? <Check size={12} className="shrink-0" /> : null}
-                  {rallyAddToDamage ? 'Rally Die → damage (on Ack)' : 'Add Rally Die to damage'}
-                </button>
-              </Tooltip>
-            )}
-          </div>
-        )}
-        {/* Prayer Die: damage-reduction display for players (GM sees it in the target area above) */}
-        {!showActions && hasDamage && prayerDiceChars.length > 0 && (
-          <div className="mt-2.5 pt-2 border-t border-white/10">
-            <div className="flex flex-wrap justify-center gap-1">
-              {prayerDiceChars.map(die => {
-                const isSelected = selectedDmgReduceDie?.id === die.id;
-                return (
-                  <Tooltip key={die.id} label={isSelected ? 'Remove Prayer Die damage reduction' : `Use ${die.ownerName}'s Prayer Die (${die.value}) to reduce damage`}>
-                    <button
-                      type="button"
-                      onClick={() => selectDmgReduceDie(isSelected ? null : die)}
-                      className={`flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
-                        isSelected
-                          ? 'border-teal-500 bg-teal-900/50 text-teal-200'
-                          : 'border-teal-700/60 text-teal-300/90 hover:bg-teal-950/40'
-                      }`}
-                    >
-                      {isSelected ? <Check size={10} /> : null}
-                      {die.ownerName}: −{die.value} Prayer Die
-                    </button>
-                  </Tooltip>
-                );
-              })}
-            </div>
-            {selectedDmgReduceDie && (
-              <p className="text-[10px] text-teal-400/70 text-center mt-0.5">Prayer Die reduces damage — ask GM to apply</p>
-            )}
-          </div>
-        )}
         {/* Narration (e.g. Faun Kick knockback, Burning automated) */}
         {((roll._narrations?.length) ? roll._narrations : (roll._narration ? [{ text: roll._narration }] : [])).map((item, i) => {
           const isAutomated = item.style === 'automated';
-          const cls = isAutomated ? 'text-[10px] text-green-400/90 italic text-center mt-1' : 'text-[10px] text-slate-400 italic text-center mt-1';
-          return <p key={i} className={cls}>{item.text}</p>;
+          const cls = isAutomated ? 'text-[10px] text-green-400/90 italic text-center mt-1 dh-md' : 'text-[10px] text-slate-400 italic text-center mt-1 dh-md';
+          return <MarkdownText key={i} text={item.text || ''} className={cls} />;
         })}
       </div>
       </div>
@@ -2657,17 +2610,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onWingsD8Toggle,
   onWingsD8ToggleRequest,
   onGetWingsD8Extra,
-  getWaterRetaliationNames,
-  prayerDiceChars = [],
-  onPrayerDieSelect,
-  rallyDieInstanceIds,
-  onRallyDieToggle,
-  heartOfAPoetChars = [],
-  onHeartD4Toggle,
-  onHeartD4ToggleRequest,
+  getV2DamageBannerAckNotices,
   v2ReviewChipsByRollDbId = new Map(),
   onV2ReviewChip,
   resolveV2ReviewChipPicker,
+  getV2ReviewChipDisableHint,
   restMovesSelections = {},
   onRestMoveSelect,
   onRestMoveClear,
@@ -2677,7 +2624,13 @@ export const DiceRoller = forwardRef(function DiceRoller({
   restGmUid = null,
   bannerStripLeftOffset = 0,
   diceCanvasHidden = false,
+  getV2PendingMoveBlockInfo,
 }, ref) {
+  const diceCanvasHiddenRef = useRef(diceCanvasHidden);
+  useEffect(() => {
+    diceCanvasHiddenRef.current = diceCanvasHidden;
+  }, [diceCanvasHidden]);
+
   const containerRef   = useRef(null);
   const containerIdRef = useRef(`dice-canvas-container-${Date.now()}`);
   const diceBoxRef     = useRef(null);
@@ -2823,8 +2776,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
       const groups = isReplay
         ? parseRollDice(entry.roll.subItems || [])
         : parseRollDice(subItemsForAnimation(entry.roll.subItems));
-      if (!groups.length) {
-        // No dice groups — resolve immediately without animation
+      if (!groups.length || diceCanvasHiddenRef.current) {
+        // No dice groups, or 3D canvas hidden — resolve immediately without animation
         diceQueueRef.current.shift();
         syncBanners(activeBannersRef.current.map(b =>
           b._bannerId === nextId ? { ...b, resolved: true } : b
@@ -2853,10 +2806,17 @@ export const DiceRoller = forwardRef(function DiceRoller({
   function dismissBannerById(bannerId) {
     const entry = activeBannersRef.current.find(b => b._bannerId === bannerId);
     if (!entry) return;
-    if (animatingIdRef.current === bannerId) {
+    if (
+      shouldClearDiceCanvasOnBannerDismiss({
+        animatingBannerId: animatingIdRef.current,
+        dismissedBannerId: bannerId,
+        dismissedResolved: !!entry.resolved,
+      })
+    ) {
       diceBoxRef.current?.clearDice();
-      animatingIdRef.current = null;
+      if (animatingIdRef.current === bannerId) animatingIdRef.current = null;
     }
+    diceQueueRef.current = diceQueueRef.current.filter(id => id !== bannerId);
     syncBanners(activeBannersRef.current.filter(b => b._bannerId !== bannerId));
     processNextDice();
   }
@@ -2948,11 +2908,22 @@ export const DiceRoller = forwardRef(function DiceRoller({
     processNextDice();
   }
 
+  // Hiding the 3D canvas: show numeric results immediately (no banner spinners).
+  useEffect(() => {
+    if (!diceCanvasHidden) return;
+    resolveCurrentAndQueueInstantly();
+    processNextDice();
+  }, [diceCanvasHidden]);
+
   // ── Public API (imperative) ────────────────────────────────────────────────
 
   function addRoll(roll) {
-    // Action notifications are always banner-only and immediately resolved.
     const isAction = !!roll._action;
+    const hasAnimatableDice =
+      Array.isArray(roll.subItems) &&
+      roll.subItems.some((s) => s && typeof s.input === 'string' && /\d*d\d+/i.test(s.input));
+    /** V2 engine-backed die (e.g. Rally clear stress): same action banner, but run 3D dice. */
+    const v2ActionDiceAnim = !!(isAction && roll._v2AnimateDice && hasAnimatableDice);
 
     // History rolls restored on reconnect are already resolved — show as interactive banners
     // without dice animation so the GM can acknowledge them immediately.
@@ -2969,10 +2940,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
     }
 
     // Decide whether to animate dice for this roll.
+    // Default: non-action rolls animate; pure action rolls do not unless V2 opt-in + subItems.
     // In player mode: only animate the player's own roll (_playerInitiated).
     //   Others' rolls skip dice if our own roll is animating or queued.
-    // In GM mode: always animate.
-    let animateDice = !isAction;
+    // In GM mode: always animate when animateDice is true.
+    let animateDice = !isAction || v2ActionDiceAnim;
     if (animateDice && isPlayer) {
       if (roll._playerInitiated) {
         animateDice = true;
@@ -2981,6 +2953,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
         animateDice = animatingIdRef.current === null && diceQueueRef.current.length === 0;
       }
     }
+    if (diceCanvasHiddenRef.current) animateDice = false;
 
     // If this roll will animate and something is already rolling or queued, resolve those instantly
     // so only this roll gets the dice animation.
@@ -2989,7 +2962,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
     }
 
     const bannerId = `b-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const resolved = isAction || !animateDice;
+    const resolved = !animateDice;
     const entry = { _bannerId: bannerId, roll: { ...roll, _bannerId: bannerId }, resolved };
 
     // If at cap, evict oldest resolved banner to make room
@@ -3030,10 +3003,11 @@ export const DiceRoller = forwardRef(function DiceRoller({
     const entry = current[idx];
     const mergedRoll = { ...newRoll, _bannerId: entry._bannerId };
     const groups = parseRollDice(subItemsForAnimation(newRoll.subItems || []));
-    const resolved = groups.length === 0;
+    const shouldAnimateDice = groups.length > 0 && !diceCanvasHiddenRef.current;
+    const resolved = !shouldAnimateDice;
     const updatedEntry = { ...entry, roll: mergedRoll, resolved };
     syncBanners(current.map((b, i) => i === idx ? updatedEntry : b));
-    if (groups.length > 0) {
+    if (shouldAnimateDice) {
       diceQueueRef.current.push(entry._bannerId);
       processNextDice();
     }
@@ -3068,12 +3042,12 @@ export const DiceRoller = forwardRef(function DiceRoller({
     if (animatingIdRef.current === bannerId) {
       if (initDoneRef.current) {
         const groups = parseRollDice(subItemsForAnimation(realData.subItems));
-        if (groups.length) {
+        if (groups.length && !diceCanvasHiddenRef.current) {
           // Remove from diceQueue (it wasn't shifted yet since it was optimistic)
           diceQueueRef.current = diceQueueRef.current.filter(id => id !== bannerId);
           startAnimation(groups, bannerId);
         } else {
-          // No dice groups — resolve immediately
+          // No dice groups or 3D hidden — resolve immediately
           animatingIdRef.current = null;
           syncBanners(activeBannersRef.current.map(b =>
             b._bannerId === bannerId ? { ...b, roll: updatedRoll, resolved: true } : b
@@ -3123,7 +3097,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
           const entry = activeBannersRef.current.find(b => b._bannerId === animatingIdRef.current);
           if (entry && !entry.roll._optimistic && !entry.resolved) {
             const groups = parseRollDice(subItemsForAnimation(entry.roll.subItems));
-            if (groups.length) {
+            if (groups.length && !diceCanvasHiddenRef.current) {
               startAnimation(groups, animatingIdRef.current);
             } else {
               animatingIdRef.current = null;
@@ -3171,6 +3145,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
             bottom: '2.5rem',
             left: bannerStripLeftOffset,
             right: 0,
+            marginLeft: '16px',
             display: 'flex',
             alignItems: 'flex-end',
             gap: '0.5rem',
@@ -3264,14 +3239,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onWingsD8Toggle={onWingsD8Toggle}
                 onWingsD8ToggleRequest={onWingsD8ToggleRequest}
                 onGetWingsD8Extra={onGetWingsD8Extra}
-                prayerDiceChars={prayerDiceChars}
-                onPrayerDieSelect={onPrayerDieSelect}
-                rallyDieInstanceIds={rallyDieInstanceIds}
-                onRallyDieToggle={onRallyDieToggle}
-                heartOfAPoetChars={heartOfAPoetChars}
-                onHeartD4Toggle={onHeartD4Toggle}
-                onHeartD4ToggleRequest={onHeartD4ToggleRequest}
-                getWaterRetaliationNames={getWaterRetaliationNames}
+                getV2DamageBannerAckNotices={getV2DamageBannerAckNotices}
                 isPlayer={isPlayer}
                 currentUserUid={currentUserUid}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}
@@ -3279,6 +3247,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 v2ReviewChips={v2ReviewChipsByRollDbId?.get(entry.roll._rollDbId) ?? []}
                 onV2ReviewChip={onV2ReviewChip}
                 resolveV2ReviewChipPicker={resolveV2ReviewChipPicker}
+                getV2ReviewChipDisableHint={getV2ReviewChipDisableHint}
+                v2PendingMoveInfo={getV2PendingMoveBlockInfo?.(entry.roll) ?? { blocked: false, desiredCondition: '', description: '', featureName: '' }}
               />
             )
           ))}

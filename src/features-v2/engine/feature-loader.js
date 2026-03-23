@@ -7,58 +7,100 @@
  * phase.
  */
 
+import { enrichHoverActionMeta } from './hover-action-enrich.js';
 import { unwrap, unwrapAll } from './when.js';
 import { buildTableSnapshot } from './table.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from './feature-scope-keys.js';
 import beastformsRegistryDefault from '../beastforms/index.js';
+import { getActiveBeastformRow } from './beastform-virtual-weapon-decl.js';
 
-/** Registry key for Druid — used only to attach beastform picker options (not SRD feature-name branching). */
-const DRUID_CLASS_SRD_ID = 'srd-cls-druid';
+export { parseBeastformAttackLine } from './beastform-parse.js';
+export { attachBeastformOptions } from './beastform-virtual-weapon-decl.js';
 
 /**
- * Resolves which beastform is active for feature loading — V2 `featureState` first, then
- * legacy Phase 1 **`character.activeBeastform`** (`id` or `beastformId` on the full SRD row).
+ * Stable scope for `featureState[scope]` / `table.source` — explicit registry `sourceScopeKey` wins, else `collection:id`.
  */
-function getActiveBeastformIdFromCharacter(character) {
-  const fs = character?.featureState || {};
-  const fromState =
-    fs.Beastform?.activeBeastform?.beastformId ||
-    fs.Evolution?.activeBeastform?.beastformId ||
-    null;
-  if (fromState) return fromState;
-  const ab = character?.activeBeastform;
-  if (ab && typeof ab === 'object') {
-    return ab.beastformId || ab.id || null;
+export function resolveSourceScopeKey(collection, id, option) {
+  const explicit = option?.sourceScopeKey;
+  if (explicit != null && explicit !== '') return explicit;
+  return `${collection}:${id}`;
+}
+
+/** Match SRD `makeId('items', name)` in `src/srd/parser.js`. */
+function slugifySrdItemName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/** Maps `registry` collection keys to `_source` tags on pushed rows. */
+const VIRTUAL_SOURCE_COLLECTION_TO_TAG = {
+  beastforms: 'beastform',
+  classes: 'class',
+  subclasses: 'subclass',
+  ancestries: 'ancestry',
+  communities: 'community',
+};
+
+/**
+ * Append feature rows from `registry[collection][id]` — same shape as the inner `addFeatures`
+ * in {@link loadCharacterFeatures} (used for virtual registry sources + normal loads).
+ *
+ * @param {object[]} features — array to mutate
+ * @param {string} sourceTag — `_source` on each row (`'class'`, `'beastform'`, …)
+ */
+function appendFeaturesFromRegistryOption(features, collection, id, registry, instanceId, sourceTag) {
+  if (!id || !registry[collection]) return;
+  const option = registry[collection][id];
+  if (!option) return;
+
+  let optionFeatures = Array.isArray(option.features)
+    ? option.features
+    : option.feature
+      ? Array.isArray(option.feature)
+        ? option.feature
+        : [option.feature]
+      : [];
+
+  if (
+    (collection === 'items' || collection === 'ancestries') &&
+    optionFeatures.length === 0
+  ) {
+    optionFeatures = [option];
   }
-  return null;
-}
 
-function characterTierFromLevel(level) {
-  const n = Number(level) || 1;
-  if (n >= 8) return 4;
-  if (n >= 5) return 3;
-  if (n >= 2) return 2;
-  return 1;
+  for (const feat of optionFeatures) {
+    if (feat && typeof feat === 'object') {
+      const row = {
+        ...feat,
+        _ownerInstanceId: instanceId,
+        _source: sourceTag,
+        _sourceObject: option,
+        _sourceScopeKey: resolveSourceScopeKey(collection, id, option),
+      };
+      if (collection === 'beastforms') row._beastformId = id;
+      features.push(row);
+    }
+  }
 }
 
 /**
- * Merge SRD beastform rows (tier ≤ character tier) onto `character._beastformOptions` so
- * `table.me.beastformOptions` is available for Druid **Beastform** / **Evolution** `isSelect` cards.
+ * Expand `{ collection, id }` refs from **`virtualSources`** into annotated feature rows
+ * (same pipeline as {@link loadCharacterFeatures} for supported collections).
  *
- * Call when hydrating a character for the V2 engine (after resolving `classId` / `level` / `tier`).
- *
- * @param {object} character — character element (`classId`, `level` or `tier`)
- * @param {object} [registry] — V2 registry; uses `registry.beastforms` or the default beastform map
- * @returns {object} shallow copy with `_beastformOptions` set, or the original reference when unchanged
+ * @param {{ collection: string, id: string }} ref
+ * @returns {object[]}
  */
-export function attachBeastformOptions(character, registry) {
-  if (!character || typeof character !== 'object') return character;
-  const map = registry?.beastforms ?? beastformsRegistryDefault;
-  if (!map || character.classId !== DRUID_CLASS_SRD_ID) return character;
-
-  const tier = character.tier ?? characterTierFromLevel(character.level);
-  const list = Object.values(map).filter((b) => b.tier <= tier);
-  list.sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
-  return { ...character, _beastformOptions: list };
+export function expandVirtualSourceRef(ref, registry, instanceId) {
+  if (!ref || typeof ref !== 'object') return [];
+  const { collection, id } = ref;
+  if (!collection || !id || !registry?.[collection]) return [];
+  const sourceTag = VIRTUAL_SOURCE_COLLECTION_TO_TAG[collection];
+  if (!sourceTag) return [];
+  const out = [];
+  appendFeaturesFromRegistryOption(out, collection, id, registry, instanceId, sourceTag);
+  return out;
 }
 
 /**
@@ -98,7 +140,7 @@ export function mergeDeclarativeFeatureState(character = {}, tableBase = {}) {
  * Snapshot for one feature during declarative evaluation so `table.source` /
  * `table.activeFeature` match the feature being applied (mirrors the action loop).
  */
-function snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState) {
+function snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState, registry) {
   // Weapon rows come from the shared registry; shallow-copy so `onRender` can set
   // `table.source.isDisabled` without mutating `registry.weapons[id]` for all tables.
   let sourceObject = feature._sourceObject;
@@ -111,15 +153,23 @@ function snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeat
     // Full beastform registry row — copy so hooks cannot mutate shared registry data.
     sourceObject = { ...sourceObject };
   }
+  const ownerId =
+    feature._ownerInstanceId ?? character.instanceId ?? character.id ?? '__declarative__';
+  const charEl = {
+    ...character,
+    elementType: character.elementType || 'character',
+    instanceId: character.instanceId || character.id || ownerId,
+  };
   return buildTableSnapshot({
     fear: tableBase?.top?.fear ?? 0,
     mapConfig: tableBase?.top?.map ?? null,
-    activeElements: [character],
-    _ownerInstanceId: feature._ownerInstanceId ?? character.instanceId,
+    activeElements: [charEl],
+    _ownerInstanceId: ownerId,
     _featureKey: feature.name ?? 'Feature',
     _activeFeature: feature,
     _sourceObject: sourceObject,
     featureState: mergedFeatureState,
+    registry,
   });
 }
 
@@ -135,47 +185,20 @@ function snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeat
  * class, weapon, armor, ancestry, etc. row the feature came from.
  *
  * @param {object} character  — character data including chosen option IDs
- * @param {object} registry   — { ancestries, communities, classes, subclasses,
- *                               weapon_properties, armor_properties, abilities,
- *                               beastforms, items, consumables }
+ * @param {object} registry   — full V2 registry (`items`, `consumables`, classes, …). Inventory
+ *                               entries on **`character.inventory`** with **`id`** = **`registry.items[id]`**
+ *                               load that row’s **`features`**.
  * @returns {object[]} flat array of feature objects
  *
- * **Druid + active beastform:** When `classId` is the Druid SRD id and a form is active
- * (`featureState` or legacy `activeBeastform.id`), each entry in **`registry.beastforms[id].features`**
- * is appended — these are V2 descriptors married to SRD metadata in `beastforms/index.js`
- * (`marryBeastformFeatures`). Annotated with `_source: 'beastform'`, `_beastformId`, `_sourceObject`
- * (full beastform row). In snapshots, **`table.source`** is that row; **`table.activeFeature`** is the sub-feature.
+ * **Druid + active beastform:** Sub-features are **not** appended here — use **`virtualSources`**
+ * on the **Beastform** class feature (see `classes/Druid.js`), expanded in **`applyDeclarativeFeatures`**.
  */
 export function loadCharacterFeatures(character, registry) {
   const features = [];
-  const instanceId = character.instanceId || character.id;
+  const instanceId = character.instanceId || character.id || '__v2_owner__';
 
   function addFeatures(collection, id, source) {
-    if (!id || !registry[collection]) return;
-    const option = registry[collection][id];
-    if (!option) return;
-
-    const optionFeatures = Array.isArray(option.features)
-      ? option.features
-      : option.feature
-      ? Array.isArray(option.feature)
-        ? option.feature
-        : [option.feature]
-      : [];
-
-    for (const feat of optionFeatures) {
-      if (feat && typeof feat === 'object') {
-        features.push({
-          ...feat,
-          _ownerInstanceId: instanceId,
-          _source: source,
-          _sourceObject: option,
-          ...(option.sourceScopeKey != null && option.sourceScopeKey !== ''
-            ? { _sourceScopeKey: option.sourceScopeKey }
-            : {}),
-        });
-      }
-    }
+    appendFeaturesFromRegistryOption(features, collection, id, registry, instanceId, source);
   }
 
   // Class
@@ -224,6 +247,10 @@ export function loadCharacterFeatures(character, registry) {
       // Look up the property implementation in weapon_properties
       const propName = wf.name || wf;
       const propImpl = registry.weapon_properties?.[propName];
+      const weaponScope =
+        weapon.sourceScopeKey != null && weapon.sourceScopeKey !== ''
+          ? weapon.sourceScopeKey
+          : `weapons:${weaponId}`;
       if (propImpl) {
         features.push({
           ...propImpl,
@@ -231,6 +258,7 @@ export function loadCharacterFeatures(character, registry) {
           _source: 'weapon_property',
           _weaponId: weaponId,
           _sourceObject: weapon,
+          _sourceScopeKey: weaponScope,
           // Keep raw feature text for any implementation that needs it
           _weaponFeatureText: typeof wf === 'object' ? wf.text : undefined,
         });
@@ -243,6 +271,7 @@ export function loadCharacterFeatures(character, registry) {
           _source: 'weapon_property',
           _weaponId: weaponId,
           _sourceObject: weapon,
+          _sourceScopeKey: weaponScope,
         });
       }
     }
@@ -260,6 +289,10 @@ export function loadCharacterFeatures(character, registry) {
             ? [armor.feature]
             : [];
 
+      const armorScope =
+        armor.sourceScopeKey != null && armor.sourceScopeKey !== ''
+          ? armor.sourceScopeKey
+          : `armor:${character.armorId}`;
       for (const af of armorFeatures) {
         const propName = af.name || af;
         const propImpl = registry.armor_properties?.[propName];
@@ -269,6 +302,7 @@ export function loadCharacterFeatures(character, registry) {
             _ownerInstanceId: instanceId,
             _source: 'armor_property',
             _sourceObject: armor,
+            _sourceScopeKey: armorScope,
           });
         } else if (typeof af === 'object') {
           features.push({
@@ -277,6 +311,7 @@ export function loadCharacterFeatures(character, registry) {
             _ownerInstanceId: instanceId,
             _source: 'armor_property',
             _sourceObject: armor,
+            _sourceScopeKey: armorScope,
           });
         }
       }
@@ -292,131 +327,169 @@ export function loadCharacterFeatures(character, registry) {
         _ownerInstanceId: instanceId,
         _source: 'ability',
         _sourceObject: ability,
+        _sourceScopeKey: resolveSourceScopeKey('abilities', abilityId, ability),
       });
     }
   }
 
-  // Beastform sub-features (Druid only, while a form is active — same ids as registry.beastforms rows)
-  if (character.classId === DRUID_CLASS_SRD_ID) {
-    const beastformId = getActiveBeastformIdFromCharacter(character);
-    if (beastformId && registry.beastforms?.[beastformId]) {
-      const row = registry.beastforms[beastformId];
-      const subfeats = Array.isArray(row.features) ? row.features : [];
-      for (const feat of subfeats) {
-        if (feat && typeof feat === 'object') {
-          features.push({
-            ...feat,
-            _ownerInstanceId: instanceId,
-            _source: 'beastform',
-            _sourceObject: row,
-            _beastformId: beastformId,
-          });
-        }
+  // Items — registry row may be `{ features: [...] }`, a single mechanical V2 feature (`hooks` / `chips` / `passiveStatMods`),
+  // or a minimal narrative-only descriptor (`name` + `description` only).
+  const itemIdsSeen = new Set();
+  function pushItemFeaturesForId(itemId) {
+    if (!itemId || itemIdsSeen.has(itemId) || !registry.items) return;
+    const opt = registry.items[itemId];
+    if (!opt || typeof opt !== 'object') return;
+    itemIdsSeen.add(itemId);
+
+    const nested = Array.isArray(opt.features)
+      ? opt.features
+      : opt.feature
+        ? Array.isArray(opt.feature)
+          ? opt.feature
+          : [opt.feature]
+        : [];
+    const list =
+      nested.length > 0
+        ? nested
+        : Array.isArray(opt.features) && opt.features.length === 0
+          ? []
+          : opt.name && (opt.hooks != null || opt.chips != null || opt.passiveStatMods != null)
+            ? [opt]
+            : opt.name &&
+                typeof opt.description === 'string' &&
+                opt.features === undefined &&
+                opt.feature == null
+              ? [opt]
+              : [];
+
+    for (const feat of list) {
+      if (feat && typeof feat === 'object') {
+        features.push({
+          ...feat,
+          _ownerInstanceId: instanceId,
+          _source: 'item',
+          _sourceObject: opt,
+          _itemId: itemId,
+          _sourceScopeKey: resolveSourceScopeKey('items', itemId, opt),
+        });
       }
     }
   }
 
-  return features;
+  // Consumables — same resolution pattern as items (`inventory` entries with `srd-cns-*` id or SRD name).
+  const consumableIdsSeen = new Set();
+  function pushConsumableFeaturesForId(consumableId) {
+    if (!consumableId || consumableIdsSeen.has(consumableId) || !registry.consumables) return;
+    const opt = registry.consumables[consumableId];
+    if (!opt || typeof opt !== 'object') return;
+    consumableIdsSeen.add(consumableId);
+
+    const nested = Array.isArray(opt.features)
+      ? opt.features
+      : opt.feature
+        ? Array.isArray(opt.feature)
+          ? opt.feature
+          : [opt.feature]
+        : [];
+    const list =
+      nested.length > 0
+        ? nested
+        : Array.isArray(opt.features) && opt.features.length === 0
+          ? []
+          : opt.name &&
+              (opt.hooks != null ||
+                opt.chips != null ||
+                opt.passiveStatMods != null ||
+                opt.onUse != null)
+            ? [opt]
+            : opt.name &&
+                typeof opt.description === 'string' &&
+                opt.features === undefined &&
+                opt.feature == null
+              ? [opt]
+              : [];
+
+    for (const feat of list) {
+      if (feat && typeof feat === 'object') {
+        features.push({
+          ...feat,
+          _ownerInstanceId: instanceId,
+          _source: 'consumable',
+          _sourceObject: opt,
+          _consumableId: consumableId,
+          _sourceScopeKey: resolveSourceScopeKey('consumables', consumableId, opt),
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(character.itemIds)) {
+    for (const id of character.itemIds) {
+      if (typeof id === 'string') pushItemFeaturesForId(id);
+    }
+  }
+  const inv = character.inventory;
+  if (Array.isArray(inv)) {
+    for (const entry of inv) {
+      if (!entry || typeof entry !== 'object') continue;
+      let itemId = null;
+      if (typeof entry.id === 'string' && registry.items?.[entry.id]) {
+        itemId = entry.id;
+      } else if (entry.name && registry.items) {
+        const candidate = `srd-itm-${slugifySrdItemName(entry.name)}`;
+        if (registry.items[candidate]) itemId = candidate;
+      }
+      if (itemId) pushItemFeaturesForId(itemId);
+
+      let consumableId = null;
+      if (typeof entry.id === 'string' && registry.consumables?.[entry.id]) {
+        consumableId = entry.id;
+      } else if (entry.name && registry.consumables) {
+        const candidate = `srd-cns-${slugifySrdItemName(entry.name)}`;
+        if (registry.consumables[candidate]) consumableId = candidate;
+      }
+      if (consumableId) pushConsumableFeaturesForId(consumableId);
+    }
+  }
+
+  return features.map((f) => enrichHoverActionMeta(f));
 }
 
 // ---------------------------------------------------------------------------
 // Beastform — declarative overlay (Druid Beastform / Evolution)
 // ---------------------------------------------------------------------------
 
-/**
- * Parse SRD strings like `"Agility +1"` or `"Evasion +2"` (same shape as client `parseBeastformBonus`).
- * @returns {{ stat: string, bonus: number } | null}
- */
-export function parseBeastformStatBonus(str) {
-  if (!str || typeof str !== 'string') return null;
-  const m = str.trim().match(/^(\w+)\s*([+-]\d+)$/i);
-  if (!m) return null;
-  return { stat: m[1].toLowerCase(), bonus: parseInt(m[2], 10) };
-}
-
-function normalizeBeastformRangeBand(rangeStr) {
-  const x = String(rangeStr).trim().toLowerCase();
-  if (x === 'very close') return 'veryClose';
-  if (x === 'very far') return 'veryFar';
-  return x;
-}
+export {
+  parseBeastformStatBonus,
+  advantageTriggersFromBeastformRow,
+} from '../beastforms/beastform-row-stat-mods.js';
 
 /**
- * Parse a beastform `attack` line such as `"Melee Agility d4 phy"`.
- * @returns {{ trait: string, range: string, damage: string, damageType: 'physical'|'magic' } | null}
- */
-export function parseBeastformAttackLine(line) {
-  if (!line || typeof line !== 'string') return null;
-  const m = line
-    .trim()
-    .match(/^(Melee|Very Close|Close|Far|Very Far)\s+(\w+)\s+(d\d+)(?:\s+(phy|mag))?/i);
-  if (!m) return null;
-  return {
-    trait: m[2].toLowerCase(),
-    range: normalizeBeastformRangeBand(m[1]),
-    damage: m[3],
-    damageType: m[4]?.toLowerCase() === 'mag' ? 'magic' : 'physical',
-  };
-}
-
-function pickActiveBeastformRef(mergedFeatureState) {
-  const b = mergedFeatureState?.Beastform?.activeBeastform;
-  const e = mergedFeatureState?.Evolution?.activeBeastform;
-  if (b?.beastformId) return { ref: b, viaEvolution: false };
-  if (e?.beastformId) return { ref: e, viaEvolution: true };
-  return null;
-}
-
-/**
- * Apply SRD beastform row bonuses, virtual natural weapon, weapon disable hints, and domain lockout
+ * Apply SRD beastform row bonuses, weapon disable hints, and domain lockout
  * when the druid has an active beastform (feature state or legacy full `character.activeBeastform`).
+ *
+ * Virtual natural weapon is contributed by the **Beastform** class feature via
+ * `virtualWeapon: when(hasActiveBeastformInTable, resolveBeastformVirtualWeapon)` in `classes/Druid.js`.
  *
  * @returns {{ domainLoadoutDisabled: boolean }}
  */
 function applyBeastformDeclarativeOverlay({
   stats,
-  virtualWeapons,
   mergeWeaponRenderHint,
   character,
   mergedFeatureState,
   beastformMap,
 }) {
-  const picked = pickActiveBeastformRef(mergedFeatureState);
-  let row = null;
-  let viaEvolution = false;
-
-  if (picked) {
-    row = beastformMap[picked.ref.beastformId];
-    viaEvolution = picked.viaEvolution;
-  }
-  if (!row && character.activeBeastform?.attack) {
-    row = character.activeBeastform;
-    viaEvolution = row.viaEvolution === true;
-  }
-
-  if (!row) return { domainLoadoutDisabled: false };
-
-  const tb = parseBeastformStatBonus(row.trait_bonus);
-  if (tb && tb.stat !== 'evasion' && typeof stats[tb.stat] === 'number') {
-    stats[tb.stat] += tb.bonus;
-  }
-  const eb = parseBeastformStatBonus(row.evasion_bonus);
-  if (eb?.stat === 'evasion' && typeof stats.evasion === 'number') {
-    stats.evasion += eb.bonus;
-  }
+  const resolved = getActiveBeastformRow(character, mergedFeatureState, beastformMap);
+  if (!resolved) return { domainLoadoutDisabled: false };
+  const { row, viaEvolution } = resolved;
 
   if (viaEvolution) {
-    const ek = mergedFeatureState?.Evolution?.evolutionTraitKey || character.evolutionTraitKey;
+    const ek =
+      mergedFeatureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.evolutionTraitKey ??
+      mergedFeatureState?.Evolution?.evolutionTraitKey ??
+      character.evolutionTraitKey;
     if (ek && typeof stats[ek] === 'number') stats[ek] += 1;
-  }
-
-  const atk = parseBeastformAttackLine(row.attack);
-  if (atk) {
-    virtualWeapons.push({
-      id: '__beastform_natural__',
-      name: row.name ? `${row.name} (Beastform)` : 'Beastform attack',
-      ...atk,
-    });
   }
 
   const hint = { isDisabled: true, disabledReason: 'Beastform active' };
@@ -445,7 +518,8 @@ function applyBeastformDeclarativeOverlay({
  * @param {object}   character  — raw character data
  * @param {object}   tableBase  — optional base snapshot (fear/map); per-feature `table` is rebuilt so `table.source` / `table.activeFeature` are set
  * @param {object}   [registry] — optional V2 registry (for `registry.beastforms` id lookup); defaults to generated SRD beastform map
- * @returns {{ stats: object, virtualWeapons: object[], advantageTriggers: object[], damageAffinities: object, movementModes: object[], rangeOverrides: object, substituteArmorForHope: boolean, weaponRenderHints: object, extraTagTeamInitiationsPerSession: number, tagTeamPartnerHopeDiscount: number, domainLoadoutDisabled: boolean, contactsEverywhereSessionUses: number, shadowStepperVeryFarUnlocked: boolean }}
+ * @returns {{ stats: object, virtualWeapons: object[], advantageTriggers: object[], damageAffinities: object, rangeOverrides: object, weaponTraitOverrides: Record<string, string>, substituteArmorForHope: boolean, weaponRenderHints: object, extraTagTeamInitiationsPerSession: number, tagTeamPartnerHopeDiscount: number, domainLoadoutDisabled: boolean, contactsEverywhereSessionUses: number, shadowStepperVeryFarUnlocked: boolean, virtualFeaturesExpanded: object[], mergedFeatures: object[] }}
+ *          **`virtualFeaturesExpanded`** — rows from **`virtualSource` / `virtualSources`** (registry refs only).
  */
 export function applyDeclarativeFeatures(features, character, tableBase, registry) {
   const stats = {
@@ -457,6 +531,8 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
     maxArmor: character.maxArmor ?? 0,
     majorThreshold: character.armorThresholds?.major ?? 0,
     severeThreshold: character.armorThresholds?.severe ?? 0,
+    /** Base proficiency (advancement picks); consumables/features may add via passiveStatMods. */
+    proficiency: character.proficiency ?? 1,
     agility: character.traits?.agility ?? 0,
     strength: character.traits?.strength ?? 0,
     finesse: character.traits?.finesse ?? 0,
@@ -472,8 +548,9 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
   const virtualWeapons = [];
   const advantageTriggers = [];
   const damageAffinities = { resistances: [], immunities: [], vulnerabilities: [] };
-  const movementModes = [];
   const rangeOverrides = {}; // { [sourceRange]: effectiveRange } — e.g. { melee: 'veryClose' }
+  /** @type {Record<string, string>} SRD weapon id → attack trait label (e.g. Gems of …) */
+  const weaponTraitOverrides = {};
   /** @type {Record<string, { isDisabled?: boolean, disabledReason?: string }>} */
   const weaponRenderHints = {};
   let substituteArmorForHope = !!character.substituteArmorForHope;
@@ -497,6 +574,50 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
   let shadowStepperVeryFarUnlocked = character.shadowStepperVeryFarUnlocked === true;
 
   const mergedFeatureState = mergeDeclarativeFeatureState(character, tableBase);
+  const beastformMap = registry?.beastforms ?? beastformsRegistryDefault;
+  const declarativeVirtualCtx = { mergedFeatureState, registry, beastformMap };
+  const instanceId = character.instanceId || character.id || '__v2_owner__';
+
+  /** Rows from `virtualSource` / `virtualSources`. */
+  const virtualFeaturesExpanded = [];
+  for (const feature of features) {
+    const table = snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState, registry);
+
+    const vsOne = unwrap(feature.virtualSource, table);
+    if (vsOne != null) {
+      let resolved = vsOne;
+      if (typeof resolved === 'function') {
+        resolved = resolved(table, feature, character, declarativeVirtualCtx);
+      }
+      if (resolved != null) {
+        const refs = Array.isArray(resolved) ? resolved : [resolved];
+        for (const ref of refs) {
+          if (ref && typeof ref === 'object' && ref.collection && ref.id) {
+            virtualFeaturesExpanded.push(...expandVirtualSourceRef(ref, registry, instanceId));
+          }
+        }
+      }
+    }
+
+    let vSources = unwrapAll(feature.virtualSources, table);
+    if (typeof vSources === 'function') {
+      vSources = vSources(table, feature, character, declarativeVirtualCtx);
+    }
+    if (Array.isArray(vSources)) {
+      for (const ref of vSources) {
+        if (ref && typeof ref === 'object' && ref.collection && ref.id) {
+          virtualFeaturesExpanded.push(...expandVirtualSourceRef(ref, registry, instanceId));
+        }
+      }
+    }
+  }
+
+  const allFeatures = features.concat(virtualFeaturesExpanded);
+
+  /** Apply `_sourceObject.passiveStatMods` at most once per `_sourceScopeKey` (e.g. beastform row bonuses). */
+  const appliedSourcePassiveStatMods = new Set();
+  /** Apply `_sourceObject.advantageTriggers` at most once per beastform row (SRD `advantages` keywords). */
+  const appliedSourceAdvantageTriggers = new Set();
 
   function mergeWeaponRenderHint(weaponId, hint) {
     if (!weaponId || !hint || typeof hint !== 'object') return;
@@ -516,8 +637,8 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
     weaponRenderHints[weaponId] = merged;
   }
 
-  for (const feature of features) {
-    const table = snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState);
+  for (const feature of allFeatures) {
+    const table = snapshotForDeclarativeFeature(feature, character, tableBase, mergedFeatureState, registry);
 
     const subHope = unwrap(feature.substituteArmorForHope, table);
     if (subHope === true) substituteArmorForHope = true;
@@ -543,6 +664,44 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
     const ssFar = unwrap(feature.shadowStepperVeryFarUnlocked, table);
     if (ssFar === true) shadowStepperVeryFarUnlocked = true;
 
+    const scopeKey = feature._sourceScopeKey;
+    const srcObj = feature._sourceObject;
+    // Row-level `passiveStatMods` on the registry object (e.g. beastform trait/evasion strings).
+    // Restrict to beastform: items/consumables often use one object as both `_sourceObject` and the
+    // sole feature row — applying source + feature would double-count.
+    if (
+      feature._source === 'beastform' &&
+      scopeKey &&
+      srcObj &&
+      srcObj.passiveStatMods != null &&
+      !appliedSourcePassiveStatMods.has(scopeKey)
+    ) {
+      appliedSourcePassiveStatMods.add(scopeKey);
+      const srcMods = unwrap(srcObj.passiveStatMods, table);
+      if (srcMods && typeof srcMods === 'object') {
+        for (const [key, value] of Object.entries(srcMods)) {
+          let resolvedValue = unwrap(value, table);
+          if (typeof resolvedValue === 'function') resolvedValue = resolvedValue(table, feature);
+          if (typeof resolvedValue === 'number' && key in stats) {
+            stats[key] += resolvedValue;
+          }
+        }
+      }
+    }
+
+    if (
+      feature._source === 'beastform' &&
+      scopeKey &&
+      srcObj &&
+      Array.isArray(srcObj.advantageTriggers) &&
+      srcObj.advantageTriggers.length > 0 &&
+      !appliedSourceAdvantageTriggers.has(scopeKey)
+    ) {
+      appliedSourceAdvantageTriggers.add(scopeKey);
+      const srcAdv = unwrapAll(srcObj.advantageTriggers, table);
+      if (Array.isArray(srcAdv)) advantageTriggers.push(...srcAdv);
+    }
+
     // passiveStatMods
     const mods = unwrap(feature.passiveStatMods, table);
     if (mods && typeof mods === 'object') {
@@ -558,8 +717,24 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
       }
     }
 
+    // virtualWeapon (singular) — supports when() and (table, feature, character, ctx) => object | array | null
+    const vOne = unwrap(feature.virtualWeapon, table);
+    if (vOne != null) {
+      let resolved = vOne;
+      if (typeof resolved === 'function') {
+        resolved = resolved(table, feature, character, declarativeVirtualCtx);
+      }
+      if (resolved != null) {
+        if (Array.isArray(resolved)) virtualWeapons.push(...resolved);
+        else virtualWeapons.push(resolved);
+      }
+    }
+
     // virtualWeapons
-    const vWeapons = unwrapAll(feature.virtualWeapons, table);
+    let vWeapons = unwrapAll(feature.virtualWeapons, table);
+    if (typeof vWeapons === 'function') {
+      vWeapons = vWeapons(table, feature, character, declarativeVirtualCtx);
+    }
     if (Array.isArray(vWeapons)) virtualWeapons.push(...vWeapons);
 
     // advantageTriggers
@@ -577,15 +752,29 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
         damageAffinities.vulnerabilities.push(...affinities.vulnerabilities);
     }
 
-    // movementModes
-    const modes = unwrapAll(feature.movementModes, table);
-    if (Array.isArray(modes)) movementModes.push(...modes);
-    else if (typeof modes === 'string') movementModes.push(modes);
-
     // rangeOverrides — merge each feature's map into the accumulated result
     const overrides = unwrap(feature.rangeOverrides, table);
     if (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) {
       Object.assign(rangeOverrides, overrides);
+    }
+
+    // weaponTraitOverrides — { [srdWeaponId]: trait label } (Gems of …, etc.); last feature wins on the same id
+    const wTraitOv = unwrap(feature.weaponTraitOverrides, table);
+    let resolvedWT = wTraitOv;
+    if (typeof resolvedWT === 'function') resolvedWT = resolvedWT(table, feature, character);
+    if (resolvedWT && typeof resolvedWT === 'object' && !Array.isArray(resolvedWT)) {
+      Object.assign(weaponTraitOverrides, resolvedWT);
+    }
+
+    // Per-weapon effective range (e.g. Flickerfly Pendant — physical melee only); overrides merged `rangeOverrides` for that weapon id.
+    const hintBuilder = unwrap(feature.computeWeaponRenderHints, table);
+    if (typeof hintBuilder === 'function') {
+      const hints = hintBuilder(table, character, registry);
+      if (hints && typeof hints === 'object') {
+        for (const [weaponId, hint] of Object.entries(hints)) {
+          mergeWeaponRenderHint(weaponId, hint);
+        }
+      }
     }
 
     // Weapon property rendering: `onRender(table)` mutates ephemeral `table.source` (weapon shallow copy).
@@ -602,10 +791,8 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
     }
   }
 
-  const beastformMap = registry?.beastforms ?? beastformsRegistryDefault;
   const { domainLoadoutDisabled } = applyBeastformDeclarativeOverlay({
     stats,
-    virtualWeapons,
     mergeWeaponRenderHint,
     character,
     mergedFeatureState,
@@ -617,8 +804,11 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
     virtualWeapons,
     advantageTriggers,
     damageAffinities,
-    movementModes,
     rangeOverrides,
+    /**
+     * Client merges onto `recomputeCharacter` weapons: `{ [srdWeaponId]: 'Agility' }` style maps.
+     */
+    weaponTraitOverrides,
     /**
      * Merge onto the character element — max uses per session for the **Contacts Everywhere** card chip
      * (`frequency` + `frequencyMaxUses`). Base **1**; **Reliable Backup** raises to **3**.
@@ -648,5 +838,9 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
      * When true, merge onto the character element so `table.me.domainLoadoutDisabled` is true (Druid **Beastform** / **Evolution** — no domain spell cards while transformed).
      */
     domainLoadoutDisabled,
+    /** Feature rows from `virtualSource(s)` registry expansion (not in `loadCharacterFeatures`). */
+    virtualFeaturesExpanded,
+    /** `loadCharacterFeatures` output plus virtual expansions — use for chips, hooks, and Game Table. */
+    mergedFeatures: allFeatures,
   };
 }

@@ -5,6 +5,7 @@
  */
 
 import v2AncestryFeatures from '../../features-v2/ancestries/index.js';
+import v2Abilities from '../../features-v2/abilities/index.js';
 
 export const SHORT_REST_MOVES = [
   {
@@ -133,6 +134,31 @@ function applyV2AncestryRestMods(rest, character) {
 }
 
 /**
+ * Apply V2 domain ability passive rest modifiers (CONV-011) from `character.abilityIds`
+ * and `src/features-v2/abilities/index.js` (e.g. Bone Recovery, Sage Forager).
+ */
+function applyV2AbilityRestMods(rest, character) {
+  const ids = character.abilityIds;
+  if (!Array.isArray(ids) || !ids.length || !v2Abilities) return;
+
+  for (const id of ids) {
+    const feature = v2Abilities[id];
+    if (!feature || typeof feature !== 'object') continue;
+    const mods = feature.passiveStatMods;
+    if (!mods || typeof mods !== 'object') continue;
+    const label = feature.name || id;
+    const nShort = Number(mods.numShortRestSlots) || 0;
+    const nLong = Number(mods.numLongRestSlots) || 0;
+    const nLongInShort = Number(mods.numLongMovesInShortRest) || 0;
+    for (let i = 0; i < nShort; i++) rest.addShortMoveSlot(label);
+    for (let i = 0; i < nLong; i++) rest.addLongMoveSlot(label);
+    if (nLongInShort > 0) {
+      rest.longMoves.forEach((m) => rest.addShortMove(m));
+    }
+  }
+}
+
+/**
  * Build the effective rest move list and slot counts for a character.
  * Applies V2 ancestry passive rest modifiers (e.g. Elf Celestial Trance slots, Clank Efficient long-in-short).
  * @param {{ ancestry?: string | string[] }} character — resolved character with ancestry name(s)
@@ -161,6 +187,7 @@ export function getRestMovesForCharacter(character, restDuration) {
     },
   };
   applyV2AncestryRestMods(rest, character);
+  applyV2AbilityRestMods(rest, character);
 
   return {
     moves: restDuration === 'long' ? rest.longMoves : rest.shortMoves,

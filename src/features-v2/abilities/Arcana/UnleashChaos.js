@@ -39,7 +39,8 @@ export const UnleashChaos = {
       placements: ['card'],
       description:
         'Spellcast vs Far. Choose how many tokens to spend. On success, roll that many d10s as magic damage (GM resolves the roll).',
-      isDisabled: (table) => (table.feature.get('unleashChaosTokens') ?? 0) < 1,
+      isDisabled: (table) =>
+        (table.feature.get('unleashChaosTokens') ?? 0) < 1 ? 'No Unleash Chaos tokens available.' : false,
       isSelect: (table) => {
         const cur = table.feature.get('unleashChaosTokens') ?? 0;
         const n = Math.max(0, Math.floor(Number(cur)) || 0);

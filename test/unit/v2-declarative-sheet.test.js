@@ -1,20 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   expandSrdAncestryIdsToV2Keys,
   resolveSrdAncestryRowToV2Keys,
   mergeV2DeclarativeSheetOverlay,
   buildV2RegistryWithSrdItems,
 } from '../../src/client/lib/v2-declarative-sheet.js';
+import { recomputeCharacter } from '../../src/client/lib/character-calc.js';
+import { parseBeastformBonus } from '../../src/client/lib/helpers.js';
 import v2registry from '../../src/features-v2/registry.js';
 
 describe('v2-declarative-sheet', () => {
-  beforeEach(() => {
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
-  });
-  afterEach(() => {
-    delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
-  });
-
   it('resolveSrdAncestryRowToV2Keys maps Human + High Stamina to Human.HighStamina', () => {
     const keys = resolveSrdAncestryRowToV2Keys(
       {
@@ -37,6 +32,47 @@ describe('v2-declarative-sheet', () => {
     };
     const keys = expandSrdAncestryIdsToV2Keys(['srd-anc-human'], srdData, v2registry.ancestries);
     expect(keys).toContain('Human.HighStamina');
+  });
+
+  it('mergeV2DeclarativeSheetOverlay copies _sourceScopeKey onto class activeFeatures (View implementation source)', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-bard': {
+          id: 'srd-cls-bard',
+          name: 'Bard',
+          hope_feature: { name: 'Rally', description: 'x' },
+          domains: [],
+          class_features: [{ name: 'Make a Scene', description: 'scene' }],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'pc1',
+      classId: 'srd-cls-bard',
+      level: 1,
+      baseTraits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      traits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      evasion: 10,
+      armorScore: 0,
+      maxHp: 6,
+      maxStress: 6,
+      maxHope: 6,
+      maxArmor: 0,
+      armorThresholds: { major: 5, severe: 7 },
+      weapons: [],
+      proficiency: 1,
+    };
+
+    const base = recomputeCharacter(raw, srdData);
+    const merged = mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
+    const mas = merged.activeFeatures.find((f) => f.name === 'Make a Scene');
+    expect(mas?._sourceScopeKey).toBe('classes:srd-cls-bard');
   });
 
   it('mergeV2DeclarativeSheetOverlay adds weaponRenderHints for Pompous when Presence > 0', () => {
@@ -93,5 +129,303 @@ describe('v2-declarative-sheet', () => {
     });
     expect(reg.weapons['w-a'].name).toBe('Spear');
     expect(reg.classes['srd-cls-bard']).toBeDefined();
+  });
+
+  it('mergeV2DeclarativeSheetOverlay does not throw when the character has library id but no instanceId', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-bard': {
+          id: 'srd-cls-bard',
+          name: 'Bard',
+          hope_feature: { name: 'Hope', description: 'x' },
+          domains: [],
+          class_features: [],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+    };
+
+    const raw = {
+      id: 'lib-char-abc',
+      classId: 'srd-cls-bard',
+      level: 1,
+      baseTraits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      traits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      evasion: 10,
+      armorScore: 0,
+      maxHp: 6,
+      maxStress: 6,
+      maxHope: 6,
+      maxArmor: 0,
+      armorThresholds: { major: 5, severe: 7 },
+      weapons: [],
+      proficiency: 1,
+    };
+
+    const recomputed = { ...raw, tier: 1 };
+
+    expect(() => mergeV2DeclarativeSheetOverlay(recomputed, raw, srdData, {})).not.toThrow();
+  });
+
+  it('mergeV2DeclarativeSheetOverlay keeps table activeModifiers from rawCharacter (not overwritten by recomputed)', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-rogue': {
+          id: 'srd-cls-rogue',
+          name: 'Rogue',
+          hope_feature: { name: 'Hope', description: 'x' },
+          domains: [],
+          class_features: [],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+    };
+
+    const tableMod = { id: 'rogues-dodge-evasion', type: 'evasion', value: 2, name: "Rogue's Dodge" };
+    const raw = {
+      instanceId: 'rogue-1',
+      classId: 'srd-cls-rogue',
+      level: 1,
+      baseTraits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      traits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      evasion: 10,
+      armorScore: 0,
+      maxHp: 6,
+      maxStress: 6,
+      maxHope: 6,
+      maxArmor: 0,
+      armorThresholds: { major: 5, severe: 7 },
+      weapons: [],
+      proficiency: 1,
+      activeModifiers: [tableMod],
+    };
+
+    const recomputed = {
+      ...raw,
+      tier: 1,
+      activeModifiers: [],
+    };
+
+    const merged = mergeV2DeclarativeSheetOverlay(recomputed, raw, srdData, {});
+    expect(merged.activeModifiers).toEqual([tableMod]);
+  });
+
+  it('mergeV2DeclarativeSheetOverlay appends V2 hope feature row (Evolution) onto activeFeatures', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-druid': {
+          id: 'srd-cls-druid',
+          name: 'Druid',
+          hope_feature: { name: 'Evolution', description: 'Spend 3 Hope to transform…' },
+          domains: [],
+          class_features: [
+            { name: 'Beastform', description: 'bf' },
+            { name: 'Wildtouch', description: 'wt' },
+          ],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'druid-1',
+      classId: 'srd-cls-druid',
+      level: 1,
+      baseTraits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      traits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 1, knowledge: 0 },
+      evasion: 10,
+      armorScore: 0,
+      maxHp: 6,
+      maxStress: 6,
+      maxHope: 6,
+      maxArmor: 0,
+      armorThresholds: { major: 5, severe: 7 },
+      weapons: [],
+      proficiency: 1,
+    };
+
+    const recomputed = {
+      ...raw,
+      tier: 1,
+      class: 'Druid',
+      hopeFeature: { name: 'Evolution', description: 'Spend 3 Hope to transform…' },
+      classFeatures: [
+        { name: 'Beastform', description: 'bf' },
+        { name: 'Wildtouch', description: 'wt' },
+      ],
+      activeFeatures: [
+        { name: 'Beastform', type: 'class', source: 'Druid', description: 'bf' },
+        { name: 'Wildtouch', type: 'class', source: 'Druid', description: 'wt' },
+      ],
+    };
+
+    const merged = mergeV2DeclarativeSheetOverlay(recomputed, raw, srdData, {});
+    const evo = merged.activeFeatures.find((f) => f.name === 'Evolution');
+    expect(evo).toBeDefined();
+    expect(Array.isArray(evo.chips)).toBe(true);
+    expect(evo.type).toBe('class');
+  });
+
+  it('mergeV2DeclarativeSheetOverlay appends Beastform virtual weapon with damage, Physical, Melee, trait', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {
+        'w-staff': {
+          id: 'w-staff',
+          name: 'Quarterstaff',
+          trait: 'Instinct',
+          range: 'Melee',
+          damage: 'd10',
+          physical_or_magical: 'Physical',
+          features: [],
+        },
+      },
+      armorById: {},
+      classesById: {
+        'srd-cls-druid': {
+          id: 'srd-cls-druid',
+          name: 'Druid',
+          domains: [],
+          class_features: [
+            { name: 'Beastform', description: 'x' },
+            { name: 'Wildtouch', description: 'y' },
+          ],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+      abilitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'druid-bf',
+      classId: 'srd-cls-druid',
+      level: 1,
+      baseTraits: { agility: 2, strength: 1, finesse: 1, instinct: 0, presence: 0, knowledge: -1 },
+      advancements: {},
+      primaryWeaponId: 'w-staff',
+      secondaryWeaponId: null,
+      armorId: null,
+      ancestryIds: [],
+      communityId: null,
+      abilityIds: [],
+      featureState: {
+        'classes:srd-cls-druid': {
+          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+        },
+      },
+    };
+
+    const base = recomputeCharacter(raw, srdData);
+    const merged = mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
+    const bf = merged.weapons.find((w) => w.id === '__beastform_natural__');
+    expect(bf).toBeDefined();
+    expect(bf.name).toContain('Agile Scout');
+    expect(bf.damage).toMatch(/d4\+/);
+    expect(bf.damageType).toBe('Physical');
+    expect(bf.range).toBe('Melee');
+    expect(bf.trait).toBe('agility');
+  });
+
+  it('mergeV2DeclarativeSheetOverlay enriches activeBeastform with SRD trait/evasion bonus strings (featureState-only)', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-druid': {
+          id: 'srd-cls-druid',
+          name: 'Druid',
+          domains: [],
+          class_features: [
+            { name: 'Beastform', description: 'x' },
+            { name: 'Wildtouch', description: 'y' },
+          ],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+      abilitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'druid-bf',
+      classId: 'srd-cls-druid',
+      level: 1,
+      baseTraits: { agility: 2, strength: 1, finesse: 1, instinct: 0, presence: 0, knowledge: -1 },
+      advancements: {},
+      featureState: {
+        'classes:srd-cls-druid': {
+          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+        },
+      },
+    };
+
+    const base = recomputeCharacter(raw, srdData);
+    const merged = mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
+    expect(merged.activeBeastform).toMatchObject({
+      beastformId: 'srd-bst-agile-scout',
+      trait_bonus: 'Agility +1',
+      evasion_bonus: 'Evasion +2',
+      attack: 'Melee Agility d4 phy',
+      advantages: 'deceive, locate, sneak',
+    });
+    expect(merged.activeBeastform.name).toBe('Agile Scout');
+  });
+
+  it('merged activeBeastform trait_bonus yields same trait roll modifier as CharacterHoverCard (base + parseBeastformBonus)', () => {
+    const srdData = {
+      ancestriesById: {},
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-druid': {
+          id: 'srd-cls-druid',
+          name: 'Druid',
+          domains: [],
+          class_features: [
+            { name: 'Beastform', description: 'x' },
+            { name: 'Wildtouch', description: 'y' },
+          ],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+      abilitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'druid-bf',
+      classId: 'srd-cls-druid',
+      level: 1,
+      baseTraits: { agility: 2, strength: 1, finesse: 1, instinct: 0, presence: 0, knowledge: -1 },
+      advancements: {},
+      featureState: {
+        'classes:srd-cls-druid': {
+          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+        },
+      },
+    };
+
+    const base = recomputeCharacter(raw, srdData);
+    const merged = mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
+    expect(raw.featureState['classes:srd-cls-druid'].activeBeastform.trait_bonus).toBeUndefined();
+    const traitKey = 'agility';
+    const baseScore = merged.traits[traitKey] ?? 0;
+    const bf = parseBeastformBonus(merged.activeBeastform?.trait_bonus);
+    const effective = baseScore + (bf?.stat === traitKey ? bf.bonus : 0);
+    expect(effective).toBe(3);
   });
 });

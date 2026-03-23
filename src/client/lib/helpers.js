@@ -1,3 +1,7 @@
+import { resolveRoguesDodgePassiveEvasion } from '../../features-v2/classes/Rogue.js';
+import { getV2ToggleStateKey } from '../../features-v2/engine/chip-system.js';
+import { getResolvedActiveBeastformBonuses } from './character-calc.js';
+
 export const generateId = () => crypto.randomUUID();
 
 // Returns the initial countdown value from feature description text like "Fear Countdown (8)", or null if none.
@@ -86,16 +90,120 @@ export function computeHpLoss(damage, thresholds) {
 }
 
 /**
- * Returns a character's effective Evasion including runtime modifiers (e.g. Timeslowing +1d4).
- * Used for attack roll comparison and display when activeModifiers include type 'evasion'.
+ * Returns a character's effective Evasion: sheet evasion (including beastform when folded in recompute),
+ * optional beastform bonus resolved from SRD when `srdData` is passed and `activeBeastform` has no bonus text,
+ * active evasion modifiers (e.g. Timeslowing), and Rogue's Dodge passive.
+ * Used for attack roll comparison vs PCs and banner hit/miss.
+ *
+ * @param {object} el
+ * @param {object} [srdData] — pass on the Game Table so beastform id → `evasion_bonus` resolves for hit/miss.
  */
-export function effectiveEvasion(el) {
+export function effectiveEvasion(el, srdData) {
   if (el == null) return null;
-  const base = el.evasion ?? 0;
+  let bfMod = 0;
+  if (!el.evasionIncludesActiveBeastformBonus) {
+    if (srdData) {
+      const bf = getResolvedActiveBeastformBonuses(el, srdData);
+      const p = bf?.evasion_bonus ? parseBeastformBonus(bf.evasion_bonus) : null;
+      bfMod = p?.stat === 'evasion' ? p.bonus : 0;
+    } else if (el.activeBeastform?.evasion_bonus) {
+      const p = parseBeastformBonus(el.activeBeastform.evasion_bonus);
+      bfMod = p?.stat === 'evasion' ? p.bonus : 0;
+    }
+  }
+  const base = (el.evasion ?? 0) + bfMod;
   const modBonus = (el.activeModifiers || [])
-    .filter(m => m.type === 'evasion')
-    .reduce((sum, m) => sum + (m.value ?? 0), 0);
-  return base + modBonus;
+    .filter((m) => m.type === 'evasion' && m.id !== 'rogues-dodge-evasion')
+    .reduce((sum, m) => sum + (Number(m.value) || 0), 0);
+  return base + modBonus + resolveRoguesDodgePassiveEvasion(el);
+}
+
+/**
+ * Parse a beastform stat bonus string like "Agility +1" or "Evasion +2".
+ * Returns { stat, bonus } or null if parsing fails.
+ */
+export function parseBeastformBonus(str) {
+  if (!str) return null;
+  const m = str.trim().match(/^(\w+)\s*([+-]\d+)$/i);
+  if (!m) return null;
+  return { stat: m[1].toLowerCase(), bonus: parseInt(m[2], 10) };
+}
+
+/**
+ * Sum of modifiers shown in parentheses next to Evasion on the sheet (weapon/armor/ancestry/beastform/active chips).
+ * The printed base is `el.evasion`; this is the parenthetical bonus total only.
+ */
+export function getEvasionModifierTotal(el) {
+  if (!el) return 0;
+  const wm = el.weaponMods || {};
+  const am = el.armorMods || {};
+  const ancestryEvasion = el.ancestryMods?.evasion ?? 0;
+  const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
+  const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
+  const activeModEvasion = (el.activeModifiers || [])
+    .filter((m) => m.type === 'evasion' && m.id !== 'rogues-dodge-evasion')
+    .reduce((sum, m) => sum + (Number(m.value) || 0), 0);
+  const roguesDodgeEvasion = resolveRoguesDodgePassiveEvasion(el);
+  return (wm.evasion || 0) + (am.evasion || 0) + ancestryEvasion + bfEvasionMod + activeModEvasion + roguesDodgeEvasion;
+}
+
+/**
+ * Human-readable breakdown of evasion modifiers (weapon, armor, ancestry, beastform, Rogue's Dodge, active chips).
+ * Same text as the Evasion row on the character sheet — use with {@link Tooltip} `content` prop.
+ *
+ * @returns {string} joined with "; ", or "" when there are no modifier lines
+ */
+export function formatEvasionModifierTooltip(el) {
+  if (!el) return '';
+  const wm = el.weaponMods || {};
+  const am = el.armorMods || {};
+  const ancestryEvasion = el.ancestryMods?.evasion ?? 0;
+  const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
+  const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
+  const parts = [];
+  if (wm.evasion) {
+    parts.push(
+      ...(wm.sources || [])
+        .filter((s) => s.stat === 'evasion')
+        .map((s) => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`),
+    );
+  }
+  if (am.evasion) {
+    parts.push(
+      ...(am.sources || [])
+        .filter((s) => s.stat === 'evasion')
+        .map((s) => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`),
+    );
+  }
+  if (ancestryEvasion) {
+    const ancestrySourceNames = (el.ancestryMods?.statMods || [])
+      .filter((m) => m.stat === 'evasion')
+      .map((m) => m.source)
+      .filter(Boolean);
+    if (ancestrySourceNames.length) {
+      parts.push(
+        ...ancestrySourceNames.map(
+          (name) => `${name}: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`,
+        ),
+      );
+    } else {
+      parts.push(`Ancestry: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`);
+    }
+  }
+  if (bfEvasionMod) {
+    parts.push(
+      `Beastform (${el.activeBeastform?.name || 'Beastform'}): ${bfEvasionMod > 0 ? '+' : ''}${bfEvasionMod} to Evasion`,
+    );
+  }
+  const roguesDodgeEva = resolveRoguesDodgePassiveEvasion(el);
+  if (roguesDodgeEva) parts.push(`Rogue's Dodge: +${roguesDodgeEva} to Evasion`);
+  (el.activeModifiers || [])
+    .filter((m) => m.type === 'evasion' && m.id !== 'rogues-dodge-evasion')
+    .forEach((m) => {
+      const v = m.value ?? 0;
+      if (v) parts.push(`${m.name || 'Modifier'}: +${v} to Evasion`);
+    });
+  return parts.join('; ');
 }
 
 /**
@@ -107,12 +215,13 @@ export const effectiveThresholds = (el) => {
   if (!el?.armorThresholds) return null;
   const level = el.level ?? 0;
   const reinforced = el.reinforcedActive ? 2 : 0;
-  const elementalBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
+  const v2Maj = el._v2MajorThresholdBonus ?? 0;
+  const v2Sev = el._v2SevereThresholdBonus ?? 0;
   const ancestryMajor = el.ancestryThresholdMajorBonus ?? el.ancestryThresholdBonus ?? 0;
   const ancestrySevere = el.ancestryThresholdSevereBonus ?? el.ancestryThresholdBonus ?? 0;
   return {
-    major: el.armorThresholds.major + level + reinforced + elementalBonus + ancestryMajor,
-    severe: el.armorThresholds.severe + level + reinforced + elementalBonus + ancestrySevere,
+    major: el.armorThresholds.major + level + reinforced + v2Maj + ancestryMajor,
+    severe: el.armorThresholds.severe + level + reinforced + v2Sev + ancestrySevere,
   };
 };
 
@@ -170,4 +279,54 @@ export function isAdversaryDefeated(element) {
   const maxHp = element.hp_max ?? 0;
   const currentHp = element.currentHp ?? element.hp_max ?? 0;
   return maxHp > 0 && currentHp <= 0;
+}
+
+/**
+ * Winged Sentinel — Wings of Light: flying from `featureState.WingedSentinel` (`_v2t` toggle key).
+ */
+export function isWingsOfLightFlying(el) {
+  if (!el || typeof el !== 'object') return false;
+  const ws = el.featureState?.WingedSentinel;
+  if (!ws || typeof ws !== 'object') return false;
+  const k = getV2ToggleStateKey(
+    { name: 'Wings of Light' },
+    { name: 'Flying', placements: ['card'] },
+    null,
+  );
+  return ws[k] === true;
+}
+
+/**
+ * Pending deferred V2 card chip toggle (`gameTableDeferUntilBannerAck` + `isToggle`): tentative on/off until GM ack.
+ * Matches banners with `_v2DeferUntilBannerAck`, `_v2DeferFeatureName`, `_v2DeferChipName`, `_v2DeferToggleNext`.
+ * @returns {boolean|undefined} — tentative next `isOn`; `undefined` = no matching pending banner
+ */
+export function getPendingV2DeferToggleNext(pendingBanners, instanceId, featureName, chipName) {
+  if (instanceId == null || instanceId === '' || !Array.isArray(pendingBanners)) return undefined;
+  if (!featureName || chipName == null || chipName === '') return undefined;
+  const sid = String(instanceId);
+  const fn = String(featureName);
+  const cn = String(chipName);
+  let last;
+  for (const r of pendingBanners) {
+    if (!r?._action) continue;
+    if (String(r._attackerInstanceId ?? '') !== sid) continue;
+    let nextBool;
+    if (r._v2DeferUntilBannerAck === true && typeof r._v2DeferToggleNext === 'boolean') {
+      if (String(r._v2DeferFeatureName ?? r._featureName ?? r.actionName ?? '') !== fn) continue;
+      if (String(r._v2DeferChipName ?? '') !== cn) continue;
+      nextBool = r._v2DeferToggleNext;
+    } else if (r._wingsOfLightFlightDefer === true && fn === 'Wings of Light' && (cn === 'Flight' || cn === 'Flying')) {
+      nextBool = r._wingsOfLightFlightNext === true;
+    } else {
+      continue;
+    }
+    last = nextBool;
+  }
+  return last;
+}
+
+/** @deprecated Use {@link getPendingV2DeferToggleNext} with `'Wings of Light'` and `'Flying'`. */
+export function getPendingWingsOfLightFlightNext(pendingBanners, instanceId) {
+  return getPendingV2DeferToggleNext(pendingBanners, instanceId, 'Wings of Light', 'Flying');
 }

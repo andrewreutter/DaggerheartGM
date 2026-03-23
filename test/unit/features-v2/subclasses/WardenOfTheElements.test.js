@@ -145,6 +145,44 @@ describe('Warden of the Elements — Elemental Incarnation', () => {
     expect(mutations.some((m) => m.type === 'rollDie')).toBe(true);
   });
 
+  it('Water channel: successful melee attack marks Stress on other adversaries Very Close to the primary target', () => {
+    const w = mockCharacter({ instanceId: 'w1', tokenX: 0, tokenY: 0 });
+    const advHit = mockAdversary({
+      instanceId: 'adv-hit',
+      tokenX: 5,
+      tokenY: 0,
+      maxStress: 6,
+      currentStress: 0,
+    });
+    const advSplash = mockAdversary({
+      instanceId: 'adv-splash',
+      tokenX: 13,
+      tokenY: 0,
+      maxStress: 6,
+      currentStress: 0,
+    });
+    const { mutations } = runReviewAction(
+      { ...ElementalIncarnation, _ownerInstanceId: 'w1', _sourceObject: WARDEN_SUBCLASS_ROW },
+      {
+        activeElements: [w, advHit, advSplash],
+        action: {
+          type: 'attack',
+          actorInstanceId: 'w1',
+          targetInstanceIds: ['adv-hit'],
+          trait: 'Strength',
+          range: 'melee',
+        },
+        featureState: { WardenOfTheElements: { channeledElement: 'water' } },
+        rolls: { action: { isSuccess: true }, damage: {} },
+      }
+    );
+    const stressOnSplash = mutations.filter(
+      (m) => m.type === 'markStress' && m.payload?.instanceId === 'adv-splash'
+    );
+    expect(stressOnSplash.length).toBeGreaterThanOrEqual(1);
+    expect(stressOnSplash[0].payload.amount).toBe(1);
+  });
+
   it('Fire channel: no retaliation when adversary is not in Melee range', () => {
     const w = mockCharacter({ instanceId: 'w1', tokenX: 0, tokenY: 0 });
     const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 200, tokenY: 0 });

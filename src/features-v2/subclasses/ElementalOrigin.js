@@ -2,7 +2,7 @@
  * Elemental Origin subclass (Sorcerer) — SRD: daggerheart-srd/subclasses/Elemental Origin.md
  */
 
-import { when, isActing, isTargeted } from '../engine/when.js';
+import { when, isActing, anAttackSucceeds, againstYou } from '../engine/when.js';
 
 const FS = 'ElementalOrigin';
 
@@ -99,8 +99,8 @@ export const NaturalEvasion = {
     'You can call forth your element to protect you from harm. When an attack roll against you succeeds, you can **mark a Stress** and describe how you use your element to defend you. When you do, roll a **d6** and add its result to your Evasion against the attack.',
   chips: [
     when(
-      isTargeted,
-      (table) => table.rolls?.action?.isSuccess === true,
+      anAttackSucceeds,
+      againstYou,
       {
         description: 'Mark 1 Stress, roll d6, and add it to your Evasion against this attack.',
         placements: ['reviewAction'],

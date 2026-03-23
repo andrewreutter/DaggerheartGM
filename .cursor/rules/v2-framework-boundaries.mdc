@@ -1,0 +1,37 @@
+---
+description: V2 engine and shared integration stay feature-agnostic — no special-casing SRD features in framework or bridge code
+alwaysApply: true
+---
+
+# V2 framework boundaries (mandatory)
+
+When implementing or refactoring **anything** touching the V2 **declarative engine** (`src/features-v2/engine/`), **shared loaders** (`feature-loader.js`, merge helpers), **registry composition**, or **Game Table V2 integration** (`src/client/lib/v2-*.js`, `applyV2*` paths in `table-ops.js`, `game-table-mechanics.js`, `normalize-persisted-character-element.js`), you **must not** embed knowledge of **specific** SRD features, classes, subclasses, ancestries, or spell names in that shared layer.
+
+This rule exists so the framework stays **clean, reusable, and testable**. Violations are “dirty framework” changes: they couple core code to one card or class and force future edits in the wrong place.
+
+## Forbidden outside a per-feature module
+
+Per-feature modules live under `src/features-v2/classes/`, `subclasses/`, `abilities/`, `ancestries/`, `communities/`, `weapon_properties/`, `armor_properties/`, `beastforms/`, `items/`, `consumables/`, and their barrel `index.js` files.
+
+In **framework** and **bridge** code, do **not**:
+
+- Branch on **SRD display name** string literals (e.g. `'Rally'`, `'Counterspell'`) or `feature.name === '…'`.
+- Branch on **`srd-*` IDs** (e.g. `classId === 'srd-cls-bard'`, `abilityId === 'srd-abl-…'`) to special-case one feature.
+- Add `switch` / long `if` chains keyed by **known feature names** in `engine/`, `chip-system.js`, `table.js`, `when.js`, `action-loop.js`, or client `v2-*.js` bridges.
+- Encode **one feature’s** UI or table behavior in `GMTableView.jsx` / `DiceRoller.jsx` **by name** instead of by **generic roll meta**, **mutation shapes**, or **data on `activeFeatures` rows** (see authoring guide).
+
+## Allowed
+
+- **`registry.js` and barrel `index.js`:** Import and re-export named feature objects. No **behavioral** `if (id === …)` for individual features — only wiring.
+- **Declarative fields and documented mutation types:** Features set generic flags or options; the engine applies **rules** that are not tied to a single SRD name.
+- **Tests:** Fixtures may name features for clarity; production framework code must not mirror that.
+- **User-visible copy** in a **single** feature file (description strings, chip labels) — not in the engine.
+
+## If the framework cannot express a behavior
+
+1. Prefer extending the **authoring guide** and **engine** with a **generic** capability (new declarative key, mutation type, or hook contract).
+2. If that needs design sign-off, use the **Blocked/API** path in the migration tracker — **do not** hardcode one feature into shared code as a shortcut.
+
+## Canonical doc
+
+`docs/v2-code-conventions.md` — **CONV-029** (engine + integration boundaries; examples).

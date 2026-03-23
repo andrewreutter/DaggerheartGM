@@ -39,6 +39,8 @@ ON EVERY RESOLUTION (including the first) — READ FRESH:
 
 Read these before you do anything.
 
+**API extensions must stay generic:** Unblocking work touches the engine — follow **CONV-029** and `.cursor/rules/v2-framework-boundaries.mdc`. Add **reusable** APIs and declarative hooks, not one-off branches for a single SRD feature name or `srd-*` id.
+
 ────────────────────────────────────────────────────────
 READING THE TRACKER EFFICIENTLY
 ────────────────────────────────────────────────────────

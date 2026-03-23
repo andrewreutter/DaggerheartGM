@@ -3,8 +3,11 @@ import { when, isActing } from '../engine/when.js';
 const isAttackSuccess = (table) =>
   table.action?.type === 'attack' && table.rolls?.action?.isSuccess === true;
 
-const lifestealChipsDisabled = (table) =>
-  table.feature.get('lifestealD6') !== 6 || table.feature.get('lifestealUsed') === true;
+const lifestealChipsDisabled = (table) => {
+  if (table.feature.get('lifestealUsed') === true) return 'Lifestealing already used on this attack.';
+  if (table.feature.get('lifestealD6') !== 6) return 'Roll a 6 on the Lifestealing d6 first.';
+  return false;
+};
 
 export const Lifestealing = {
   name: 'Lifestealing',

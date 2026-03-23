@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const Destructive = {
   name: "Destructive",
@@ -8,8 +8,7 @@ export const Destructive = {
   },
   hooks: {
     onResolve: when(
-      isActing,
-      (table) => table.action?.type === 'attack' && table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => {
         const targets = table.adversaries.filter(
           (adv) => table.me.rangeFrom(adv) === 'melee' || table.me.rangeFrom(adv) === 'veryClose'

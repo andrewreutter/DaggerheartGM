@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 
 /**
  * Ranger class features — SRD: daggerheart-srd/classes/Ranger.md
@@ -41,9 +41,7 @@ export const HoldThemOff = {
     'Spend 3 Hope when you succeed on an attack with a weapon to use that same roll against two additional adversaries within range of the attack.',
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => Boolean(table.action?.weaponId),
       {
         description:

@@ -2,8 +2,15 @@
  * Warden of the Elements subclass — SRD: daggerheart-srd/subclasses/Warden of the Elements.md
  */
 
-import { when, isActing, isTargeted, hasDamage } from '../engine/when.js';
-import { queueInternalMutation } from '../engine/table.js';
+import {
+  when,
+  isActing,
+  isTargeted,
+  hasDamage,
+  anAttackSucceeds,
+  againstYou,
+  youTakeSevereDamage,
+} from '../engine/when.js';
 
 const FS = 'WardenOfTheElements';
 
@@ -33,18 +40,10 @@ function isYouOrAllyCharacter(me, victim) {
   return victim.isCharacter === true;
 }
 
-/** Host should set `damageTier: 'severe'` on `stat: 'currentHP'` effects when the loss is Severe (VTT). */
-function severeHpLossOnMe(table) {
-  return (table.action?.effects ?? []).some(
-    (e) =>
-      e.stat === 'currentHP' &&
-      e.target?.instanceId === table.me?.instanceId &&
-      (e.damageTier === 'severe' || e.thresholdTier === 'severe')
-  );
-}
-
 export const ElementalIncarnation = {
   name: 'Elemental Incarnation',
+  /** Game Table: run `onReviewAction` after HP is applied (side effects only — not pre-HP mitigation). */
+  runOnReviewActionAfterHpApplied: true,
   description:
     'Mark a Stress to Channel one of the following elements until you take Severe damage or until your next rest:\n\n- Fire: When an adversary within Melee range deals damage to you, they take 1d10 magic damage.\n- Earth: Gain a bonus to your damage thresholds equal to your Proficiency.\n- Water: When you deal damage to an adversary within Melee range, all other adversaries within Very Close range must mark a Stress.\n- Air: You can hover, gaining advantage on Agility Rolls.',
   passiveStatMods: when(
@@ -54,11 +53,11 @@ export const ElementalIncarnation = {
       severeThreshold: (table) => table.me?.proficiency ?? 1,
     }
   ),
-  movementModes: [when((table) => warden(table).channeledElement === 'air', 'fly')],
   chips: [
     {
       placements: ['card'],
       stressCost: 1,
+      selectPresentation: 'iconGrid',
       isSelect: () => [
         { id: 'fire', name: 'Fire', description: 'Retaliation when struck in Melee; ends on Severe or rest.' },
         { id: 'earth', name: 'Earth', description: '+Proficiency to Major and Severe thresholds.' },
@@ -68,15 +67,7 @@ export const ElementalIncarnation = {
       onUse(table, chip) {
         const id = chip.get('selectedId');
         if (id !== 'fire' && id !== 'earth' && id !== 'water' && id !== 'air') return;
-        if (table.source && typeof table.source.set === 'function') {
-          table.source.set('channeledElement', id);
-        } else {
-          queueInternalMutation(table, 'setFeatureState', {
-            featureKey: FS,
-            key: 'channeledElement',
-            value: id,
-          });
-        }
+        table.source.set('channeledElement', id);
       },
     },
   ],
@@ -129,7 +120,8 @@ export const ElementalIncarnation = {
       ) {
         const tgt = table.action?.target;
         if (!tgt?.isAdversary) return;
-        if (table.me.rangeFrom(tgt) !== 'melee') return;
+        const meleeBand = table.me.rangeFrom(tgt);
+        if (meleeBand != null && meleeBand !== 'melee') return;
         for (const a of table.adversaries) {
           if (a.instanceId === tgt.instanceId) continue;
           if (tgt.rangeFrom(a) === 'veryClose') {
@@ -161,7 +153,7 @@ export const ElementalIncarnation = {
     },
     onReviewOutcome(table) {
       const w = warden(table);
-      if (w.channeledElement && severeHpLossOnMe(table)) {
+      if (w.channeledElement && youTakeSevereDamage(table)) {
         clearChannel(table);
         return;
       }
@@ -196,7 +188,11 @@ export const ElementalAura = {
       placements: ['card'],
       frequency: 'rest',
       description: 'Assume your elemental aura until Channeling ends.',
-      isDisabled: (table) => !warden(table).channeledElement || warden(table).auraUsedThisRest === true,
+      isDisabled: (table) => {
+        if (!warden(table).channeledElement) return 'Channel an element first (Elemental Incarnation).';
+        if (warden(table).auraUsedThisRest === true) return 'Elemental Aura already used this rest.';
+        return false;
+      },
       onUse(table) {
         table.source.set('auraActive', true);
         table.source.set('auraUsedThisRest', true);
@@ -252,9 +248,8 @@ export const ElementalDominion = {
   chips: [
     when(
       (table) => masteryUnlocked(table) && warden(table).channeledElement === 'water',
-      isTargeted,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      anAttackSucceeds,
+      againstYou,
       {
         name: 'Elemental Dominion (Water)',
         placements: ['reviewAction'],

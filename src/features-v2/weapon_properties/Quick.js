@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const Quick = {
   name: 'Quick',
@@ -9,9 +9,7 @@ export const Quick = {
   tagText: 'Stress: damage another target in range',
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       {
         description:
           'Mark 1 Stress to deal your primary weapon damage to another target within range of this attack.',

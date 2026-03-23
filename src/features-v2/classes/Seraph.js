@@ -14,7 +14,7 @@ function alliesInCloseWithMarkedHp(table) {
   const selfId = table.me?.instanceId;
   return table.characters.filter((c) => {
     if (c.instanceId === selfId) return false;
-    if (table.me.rangeFrom(c) !== 'close') return false;
+    if (!['melee', 'veryClose', 'close'].includes(table.me.rangeFrom(c))) return false;
     const hp = c.currentHP;
     const max = c.maxHP;
     if (hp == null || max == null) return false;
@@ -28,9 +28,14 @@ export const LifeSupport = {
   chips: [
     {
       placements: ['card'],
+      /** Game Table posts an action banner; Hope + HP clear apply on GM ack (not `activateV2OwnedCardChip`). */
+      gameTableDeferUntilBannerAck: true,
       hopeCost: 3,
       selectTargets: (table) => alliesInCloseWithMarkedHp(table),
-      isDisabled: (table) => alliesInCloseWithMarkedHp(table).length === 0,
+      isDisabled: (table) =>
+        alliesInCloseWithMarkedHp(table).length === 0
+          ? 'No ally in Close range with marked HP to heal.'
+          : false,
       onUse(table, chip) {
         const ids = chip.get('selectedTargetIds') || [];
         const id = ids[0];
@@ -46,7 +51,9 @@ export const LifeSupport = {
 function spellcastDiceCount(table) {
   const me = table.me;
   if (!me?.traits || !me.spellcastTrait) return 0;
-  const v = me.traits[me.spellcastTrait];
+  const raw = me.spellcastTrait;
+  const k = String(raw).toLowerCase();
+  const v = me.traits[k] ?? me.traits[raw];
   if (typeof v === 'number') return Math.max(0, v);
   return Math.max(0, parseInt(v, 10) || 0);
 }
@@ -114,7 +121,8 @@ export const PrayerDice = {
           "Spend one Prayer Die to add its value to this action roll's total (after the roll is made).",
         placements: ['reviewAction'],
         isSelect: prayerDieSelectOptions,
-        isDisabled: (table) => (table.me?.prayerDice?.pool ?? []).length === 0,
+        isDisabled: (table) =>
+          (table.me?.prayerDice?.pool ?? []).length === 0 ? 'No Prayer Dice left in your pool.' : false,
         onUse(table, chipState) {
           const v = takePrayerDieValue(table, chipState);
           if (v == null) return;
@@ -132,7 +140,8 @@ export const PrayerDice = {
           "Spend one Prayer Die to add its value to this damage roll's total (after the roll is made).",
         placements: ['reviewAction'],
         isSelect: prayerDieSelectOptions,
-        isDisabled: (table) => (table.me?.prayerDice?.pool ?? []).length === 0,
+        isDisabled: (table) =>
+          (table.me?.prayerDice?.pool ?? []).length === 0 ? 'No Prayer Dice left in your pool.' : false,
         onUse(table, chipState) {
           const v = takePrayerDieValue(table, chipState);
           if (v == null) return;
@@ -149,7 +158,8 @@ export const PrayerDice = {
           "Spend one Prayer Die to reduce incoming damage to you or an ally within Far range by the die's value.",
         placements: ['reviewAction'],
         isSelect: prayerDieSelectOptions,
-        isDisabled: (table) => (table.me?.prayerDice?.pool ?? []).length === 0,
+        isDisabled: (table) =>
+          (table.me?.prayerDice?.pool ?? []).length === 0 ? 'No Prayer Dice left in your pool.' : false,
         onUse(table, chipState) {
           const tid = firstPrayerAidDamageTargetId(table);
           if (!tid) return;
@@ -159,15 +169,17 @@ export const PrayerDice = {
         },
       }
     ),
+    // Card snapshot has no `rolls` — do not use `prayerDiceAidRollEligible` here (that requires an
+    // action/damage roll in progress). Hope spend is valid any time you have pool dice (SRD).
     when(
       isPrayerDicePoolNonEmpty,
-      prayerDiceAidRollEligible,
       {
         name: 'Prayer Die — gain Hope',
         description: 'Spend one Prayer Die to gain Hope equal to its value.',
-        placements: ['reviewAction'],
+        placements: ['card'],
         isSelect: prayerDieSelectOptions,
-        isDisabled: (table) => (table.me?.prayerDice?.pool ?? []).length === 0,
+        isDisabled: (table) =>
+          (table.me?.prayerDice?.pool ?? []).length === 0 ? 'No Prayer Dice left in your pool.' : false,
         onUse(table, chipState) {
           const v = takePrayerDieValue(table, chipState);
           if (v == null) return;

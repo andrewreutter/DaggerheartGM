@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronRight, Shield, Swords, Star } from 'lucide-react';
 import { FormRow } from './FormRow.jsx';
 import { CustomSelect } from './CustomSelect.jsx';
+import { GuideFeatureCard } from '../features/GuideFeatureCard.jsx';
 import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 import {
   recomputeCharacter, tierFromLevel, TRAIT_KEYS, TRAIT_POOL,
@@ -9,6 +10,7 @@ import {
 } from '../../lib/character-calc.js';
 import { generateId } from '../../lib/helpers.js';
 import { getAncestryExperienceBonus } from '../../lib/ancestry-experience-bonus.js';
+import { v2ClassSubclassFeatureDescriptorsByName } from '../../lib/v2-class-subclass-feature-descriptors.js';
 
 const TRAIT_LABELS = {
   agility: 'Agility', strength: 'Strength', finesse: 'Finesse',
@@ -172,6 +174,119 @@ function parseSuggestedTraits(str) {
 /** Minimum domain card slots to always show when a class is selected. */
 const MIN_DOMAIN_CARD_SLOTS = 2;
 
+/**
+ * Rich markdown for CustomSelect hover tooltips: mechanical summary first, then full SRD text.
+ * Base evasion and starting HP come from the class row (`computeEvasion` / `computeMaxHp` in character-calc).
+ */
+function composeOptionTooltip(statsMarkdown, description) {
+  const stats = (statsMarkdown || '').trim();
+  const body = (description || '').trim();
+  if (!stats && !body) return undefined;
+  if (!stats) return body;
+  if (!body) return stats;
+  return `${stats}\n\n---\n\n${body}`;
+}
+
+function classStatsMarkdown(c) {
+  if (!c) return '';
+  const lines = [];
+  const hp = c.starting_hp != null ? c.starting_hp : '—';
+  const eva = c.starting_evasion != null ? c.starting_evasion : '—';
+  lines.push(`**Starting HP:** ${hp} · **Base evasion:** ${eva}`);
+  const doms = (c.domains || []).filter(Boolean);
+  if (doms.length) lines.push(`**Domains:** ${doms.join(', ')}`);
+  if (c.hope_feature?.name) {
+    const hf = c.hope_feature;
+    let block = `**Hope feature:** ${hf.name}`;
+    if (hf.description?.trim()) block += `\n\n${hf.description.trim()}`;
+    lines.push(block);
+  }
+  if (c.class_items?.trim()) lines.push(`**Class items:** ${c.class_items.trim()}`);
+  if (c.suggested_traits?.trim()) lines.push(`**Suggested trait spread:** \`${c.suggested_traits.trim()}\``);
+  return lines.join('\n\n');
+}
+
+function subclassStatsMarkdown(sc) {
+  if (!sc) return '';
+  const lines = [];
+  if (sc.spellcast_trait) lines.push(`**Spellcast trait:** ${sc.spellcast_trait}`);
+  const foundation = (sc.foundation_features || []).map((f) => f.name).filter(Boolean);
+  if (foundation.length) lines.push(`**Foundation features:** ${foundation.join(', ')}`);
+  return lines.join('\n\n');
+}
+
+function ancestryStatsMarkdown(a) {
+  if (!a) return '';
+  const lines = [];
+  const bonus = getAncestryExperienceBonus(a.name);
+  if (bonus) {
+    lines.push(
+      `**Creation bonus:** +${bonus.amount} to one experience's score (via **${bonus.featureName}**)`,
+    );
+  }
+  const featNames = (a.features || []).map((f) => f.name).filter(Boolean);
+  if (featNames.length) lines.push(`**Ancestry features:** ${featNames.join(', ')}`);
+  return lines.join('\n\n');
+}
+
+function communityStatsMarkdown(c) {
+  if (!c) return '';
+  const lines = [];
+  if (c.traits?.trim()) lines.push(`**Trait guidance:** ${c.traits.trim()}`);
+  const featNames = (c.features || []).map((f) => f.name).filter(Boolean);
+  if (featNames.length) lines.push(`**Community features:** ${featNames.join(', ')}`);
+  return lines.join('\n\n');
+}
+
+/** Minimal form for `recomputeCharacter` when previewing SRD options in dropdown tooltips. */
+function buildMinimalPreviewForm(overrides = {}) {
+  return {
+    name: '',
+    pronouns: '',
+    description: '',
+    level: 1,
+    classId: null,
+    subclassId: null,
+    ancestryIds: [],
+    communityId: null,
+    baseTraits: {},
+    armorId: null,
+    primaryWeaponId: null,
+    secondaryWeaponId: null,
+    experiences: [{ name: '', score: 2, id: 'preview-exp-stub' }],
+    abilityIds: [null, null],
+    advancements: {},
+    background: '',
+    connectionText: '',
+    companion: null,
+    ...overrides,
+  };
+}
+
+const PREVIEW_EL_STUB = { instanceId: null, elementType: 'character', name: '' };
+
+function SrdPreviewFeatureCards({ rows }) {
+  if (!rows?.length) return null;
+  return (
+    <div className="mt-2 space-y-1.5 border-t border-slate-700/80 pt-2">
+      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Features</div>
+      <div className="space-y-1.5">
+        {rows.map((row, i) => (
+          <GuideFeatureCard
+            key={row.id || `${row.name}-${row.type}-${i}`}
+            featRow={row}
+            featureKey={row.id || `preview-${row.name}-${i}`}
+            el={PREVIEW_EL_STUB}
+            open
+            onToggle={() => {}}
+            interactionMode="preview"
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const ADVANCEMENT_TYPES = [
   { value: 'traits', label: '+1 to two Traits' },
   { value: 'hp', label: '+1 Max HP' },
@@ -202,6 +317,90 @@ export function CharacterForm({ value, onChange }) {
   const [weaponGroupTraitOptimized, setWeaponGroupTraitOptimized] = useState(true);
 
   const formData = isControlled ? value : localData;
+
+  const previewRowsCacheRef = useRef({ srd: null, map: new Map() });
+  if (previewRowsCacheRef.current.srd !== srdData) {
+    previewRowsCacheRef.current = { srd: srdData, map: new Map() };
+  }
+
+  const renderClassTooltipExtra = useCallback(
+    (classId) => {
+      if (!srdData || !classId) return null;
+      const map = previewRowsCacheRef.current.map;
+      const k = `class:${classId}`;
+      if (!map.has(k)) {
+        const merged = recomputeCharacter(buildMinimalPreviewForm({ classId }), srdData);
+        const rows = merged.activeFeatures.filter((f) => f.type === 'class');
+        const c = srdData.classesById[classId];
+        const full = [...rows];
+        if (c?.hope_feature?.name) {
+          const hf = c.hope_feature;
+          const hooks = v2ClassSubclassFeatureDescriptorsByName[hf.name] || {};
+          full.push({
+            name: hf.name,
+            description: hf.description || '',
+            ...hooks,
+            type: 'class',
+            source: c.name,
+            sourceType: 'class',
+          });
+        }
+        map.set(k, full);
+      }
+      const full = map.get(k);
+      return full?.length ? <SrdPreviewFeatureCards rows={full} /> : null;
+    },
+    [srdData],
+  );
+
+  const renderSubclassTooltipExtra = useCallback(
+    (subId) => {
+      if (!srdData || !subId || !formData.classId) return null;
+      const map = previewRowsCacheRef.current.map;
+      const lv = formData.level ?? 1;
+      const k = `sub:${formData.classId}:${subId}:${lv}`;
+      if (!map.has(k)) {
+        const merged = recomputeCharacter(
+          buildMinimalPreviewForm({ classId: formData.classId, subclassId: subId, level: lv }),
+          srdData,
+        );
+        map.set(k, merged.activeFeatures.filter((f) => f.type === 'subclass'));
+      }
+      const rows = map.get(k);
+      return rows?.length ? <SrdPreviewFeatureCards rows={rows} /> : null;
+    },
+    [srdData, formData.classId, formData.level],
+  );
+
+  const renderAncestryTooltipExtra = useCallback(
+    (aId) => {
+      if (!srdData || !aId) return null;
+      const map = previewRowsCacheRef.current.map;
+      const k = `anc:${aId}`;
+      if (!map.has(k)) {
+        const merged = recomputeCharacter(buildMinimalPreviewForm({ ancestryIds: [aId] }), srdData);
+        map.set(k, merged.activeFeatures.filter((f) => f.type === 'ancestry'));
+      }
+      const rows = map.get(k);
+      return rows?.length ? <SrdPreviewFeatureCards rows={rows} /> : null;
+    },
+    [srdData],
+  );
+
+  const renderCommunityTooltipExtra = useCallback(
+    (cId) => {
+      if (!srdData || !cId) return null;
+      const map = previewRowsCacheRef.current.map;
+      const k = `com:${cId}`;
+      if (!map.has(k)) {
+        const merged = recomputeCharacter(buildMinimalPreviewForm({ communityId: cId }), srdData);
+        map.set(k, merged.activeFeatures.filter((f) => f.type === 'community'));
+      }
+      const rows = map.get(k);
+      return rows?.length ? <SrdPreviewFeatureCards rows={rows} /> : null;
+    },
+    [srdData],
+  );
 
   const update = (newData) => {
     const recomputed = srdData ? recomputeCharacter(newData, srdData) : newData;
@@ -494,7 +693,12 @@ export function CharacterForm({ value, onChange }) {
           options={classOptions.map(c => c.id)}
           getOptionKey={id => id}
           getOptionLabel={id => srdData?.classesById?.[id]?.name || id}
-          getOptionDescription={id => srdData?.classesById?.[id]?.description}
+          getOptionDescription={(id) => {
+            const c = srdData?.classesById?.[id];
+            return composeOptionTooltip(classStatsMarkdown(c), c?.description);
+          }}
+          renderTooltipExtra={renderClassTooltipExtra}
+          tooltipWide
           placeholder="Select a class..."
         />
         {selectedClass && (
@@ -628,7 +832,12 @@ export function CharacterForm({ value, onChange }) {
           options={subclassOptions.map(sc => sc.id)}
           getOptionKey={id => id}
           getOptionLabel={id => srdData?.subclassesById?.[id]?.name || id}
-          getOptionDescription={id => srdData?.subclassesById?.[id]?.description}
+          getOptionDescription={(id) => {
+            const sc = srdData?.subclassesById?.[id];
+            return composeOptionTooltip(subclassStatsMarkdown(sc), sc?.description);
+          }}
+          renderTooltipExtra={renderSubclassTooltipExtra}
+          tooltipWide
           placeholder={selectedClass ? 'Select a subclass...' : 'Select a class first'}
           disabled={!selectedClass}
         />
@@ -647,7 +856,12 @@ export function CharacterForm({ value, onChange }) {
           options={ancestryOptions.map(a => a.id)}
           getOptionKey={id => id}
           getOptionLabel={id => srdData?.ancestriesById?.[id]?.name || id}
-          getOptionDescription={id => srdData?.ancestriesById?.[id]?.description}
+          getOptionDescription={(id) => {
+            const a = srdData?.ancestriesById?.[id];
+            return composeOptionTooltip(ancestryStatsMarkdown(a), a?.description);
+          }}
+          renderTooltipExtra={renderAncestryTooltipExtra}
+          tooltipWide
           placeholder="Select an ancestry..."
         />
       </FormRow>
@@ -660,7 +874,12 @@ export function CharacterForm({ value, onChange }) {
           options={communityOptions.map(c => c.id)}
           getOptionKey={id => id}
           getOptionLabel={id => srdData?.communitiesById?.[id]?.name || id}
-          getOptionDescription={id => srdData?.communitiesById?.[id]?.description}
+          getOptionDescription={(id) => {
+            const c = srdData?.communitiesById?.[id];
+            return composeOptionTooltip(communityStatsMarkdown(c), c?.description);
+          }}
+          renderTooltipExtra={renderCommunityTooltipExtra}
+          tooltipWide
           placeholder="Select a community..."
         />
       </FormRow>

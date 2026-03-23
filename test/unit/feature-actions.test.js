@@ -1,132 +1,148 @@
 import { describe, it, expect } from 'vitest';
-import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../../src/client/lib/feature-actions.js';
+import {
+  parseSubFeatures,
+  parsePassiveStats,
+  buildCostBadges,
+  deriveFeatureActionFromV2Row,
+} from '../../src/client/lib/feature-actions.js';
+import {
+  enrichHoverActionMeta,
+  extractEmbeddedResourceCostsFromText,
+  extractAdvantageConditionFromText,
+} from '../../src/features-v2/engine/hover-action-enrich.js';
 
-// ── parseFeatureAction ──────────────────────────────────────────────────────
+// ── deriveFeatureActionFromV2Row + enrichHoverActionMeta ─────────────────────
 
-describe('parseFeatureAction', () => {
-  it('returns isActive:false for empty description', () => {
-    expect(parseFeatureAction('').isActive).toBe(false);
-    expect(parseFeatureAction(null).isActive).toBe(false);
-    expect(parseFeatureAction(undefined).isActive).toBe(false);
+describe('deriveFeatureActionFromV2Row', () => {
+  it('returns isActive:false for empty / missing row', () => {
+    expect(deriveFeatureActionFromV2Row(null).isActive).toBe(false);
+    expect(deriveFeatureActionFromV2Row(undefined).isActive).toBe(false);
+    expect(deriveFeatureActionFromV2Row({}).isActive).toBe(false);
   });
 
-  it('extracts Hope cost', () => {
-    expect(parseFeatureAction('Spend 3 Hope to use this ability.').hopeCost).toBe(3);
-    expect(parseFeatureAction('3 Hope').hopeCost).toBe(3);
-    expect(parseFeatureAction('costs 2 Hope').hopeCost).toBe(2);
-    expect(parseFeatureAction('spend a Hope').hopeCost).toBe(1);
-    expect(parseFeatureAction('you can **spend a Hope** to add a d4 to the roll.').hopeCost).toBe(1);
-  });
-
-  it('parses Heart of a Poet (Bard Wordsmith subclass)', () => {
-    const desc = 'After you make an action roll to impress, persuade, or offend someone, you can **spend a Hope** to add a **d4** to the roll.';
-    const a = parseFeatureAction(desc);
-    expect(a.hopeCost).toBe(1);
-    expect(a.dice).toContain('d4');
+  it('aggregates costs only from card-placement chips', () => {
+    const a = deriveFeatureActionFromV2Row({
+      name: 'Test',
+      description: '',
+      chips: [
+        { placements: ['card'], hopeCost: 3, stressCost: 1 },
+        { placements: ['reviewAction'], hopeCost: 99 },
+      ],
+    });
+    expect(a.hopeCost).toBe(3);
+    expect(a.stressCost).toBe(1);
     expect(a.isActive).toBe(true);
   });
 
-  it('extracts Stress cost', () => {
-    expect(parseFeatureAction('Mark a Stress to activate.').stressCost).toBe(1);
-    expect(parseFeatureAction('mark 1 Stress').stressCost).toBe(1);
-    expect(parseFeatureAction('mark 2 Stress to push').stressCost).toBe(2);
+  it('reviewAction-only costs do not activate legacy strip (e.g. Wordsmith-style)', () => {
+    const a = deriveFeatureActionFromV2Row({
+      name: 'Heart of a Poet',
+      description:
+        'After you make an action roll to impress, persuade, or offend someone, you can spend a Hope to add a d4 to the roll.',
+      chips: [{ placements: ['reviewAction'], hopeCost: 1 }],
+    });
+    expect(a.hopeCost).toBe(0);
+    expect(a.isActive).toBe(false);
   });
 
-  it('extracts Armor slot operations', () => {
-    expect(parseFeatureAction('clear 2 Armor Slots.').armorClear).toBe(2);
-    expect(parseFeatureAction('mark an Armor Slot.').armorMark).toBe(1);
-    expect(parseFeatureAction('mark 2 armor slots').armorMark).toBe(2);
-  });
-
-  it('extracts dice expressions', () => {
-    const a = parseFeatureAction('Roll 2d4 and apply the result.');
-    expect(a.dice).toContain('2d4');
-    const b = parseFeatureAction('Gain d6 rally dice; Hope [d12] Fear [d12]');
-    expect(b.dice).toContain('d6');
-    expect(b.dice).toContain('d12');
-  });
-
-  it('extracts Spellcast DC', () => {
-    expect(parseFeatureAction('Make a Spellcast Roll (10).').spellcastDC).toBe(10);
-    expect(parseFeatureAction('Spellcast Roll (14)').spellcastDC).toBe(14);
-  });
-
-  it('extracts frequency', () => {
-    expect(parseFeatureAction('You may use this once per session.').frequency).toBe('session');
-    expect(parseFeatureAction('Beginning of each session, roll 3d4.').frequency).toBe('session');
-    expect(parseFeatureAction('Once per rest, mark a Stress.').frequency).toBe('rest');
-    expect(parseFeatureAction('Once per long rest.').frequency).toBe('longRest');
-    expect(parseFeatureAction('Mark a Stress.').frequency).toBe(null);
-  });
-
-  it('detects target types', () => {
-    expect(parseFeatureAction('Choose a target adversary to affect.').targetType).toBe('adversary');
-    expect(parseFeatureAction('Choose an ally to heal.').targetType).toBe('character');
-    expect(parseFeatureAction('Target a creature.').targetType).toBe('adversary');
-    expect(parseFeatureAction('Describe your performance.').impliesTarget).toBe(false);
-  });
-
-  it('sets isActive correctly', () => {
-    expect(parseFeatureAction('Spend 3 Hope').isActive).toBe(true);
-    expect(parseFeatureAction('Roll d6').isActive).toBe(true);
-    expect(parseFeatureAction('Once per session').isActive).toBe(true);
-    expect(parseFeatureAction('A narrative description.').isActive).toBe(false);
-  });
-
-  // Real SRD feature text samples
-  it('parses Rally (Bard L1)', () => {
-    const desc = 'Once per session, you can take a few moments to inspire your companions. Roll a Hope die, and add the result to each of your allies\u2019 next roll.';
-    const a = parseFeatureAction(desc);
-    expect(a.frequency).toBe('session');
+  it('merges spellcast metadata from enrichHoverActionMeta on description', () => {
+    const row = enrichHoverActionMeta({
+      name: 'Banish',
+      description:
+        'Make a **Spellcast Roll** against a target within Close range. On a success, roll a number of **d20s** equal to your Spellcast trait.',
+    });
+    const a = deriveFeatureActionFromV2Row(row);
+    expect(a.spellcastDC).toBe(null);
+    expect(a.spellcastVsRoll).toBe(true);
     expect(a.isActive).toBe(true);
   });
 
-  it('parses Make a Scene (Bard Hope)', () => {
-    const desc = 'Spend 3 Hope. Choose an adversary within Far range. Until the end of their next turn, all rolls against them gain +2.';
-    const a = parseFeatureAction(desc);
-    expect(a.hopeCost).toBe(3);
-    expect(a.targetType).toBe('adversary');
-  });
-
-  it('parses Frontline Tank (Guardian Hope)', () => {
-    const desc = 'Spend 3 Hope to clear 2 Armor Slots.';
-    const a = parseFeatureAction(desc);
-    expect(a.hopeCost).toBe(3);
-    expect(a.armorClear).toBe(2);
-  });
-
-  it('parses Minor Illusion (Sorcerer)', () => {
-    const desc = 'Make a Spellcast Roll (10) to conjure a convincing illusion.';
-    const a = parseFeatureAction(desc);
+  it('extracts Spellcast DC from description via enrich', () => {
+    const row = enrichHoverActionMeta({
+      name: 'Minor Illusion',
+      description: 'Make a Spellcast Roll (10) to conjure a convincing illusion.',
+    });
+    const a = deriveFeatureActionFromV2Row(row);
     expect(a.spellcastDC).toBe(10);
     expect(a.isActive).toBe(true);
   });
 
-  it('extracts advantageCondition as full sentence from "You have advantage on rolls to..."', () => {
+  it('uses row.frequency and top-level hope costs', () => {
+    const a = deriveFeatureActionFromV2Row({
+      name: 'Rally',
+      description: 'Inspire companions.',
+      frequency: 'session',
+      hopeCost: 0,
+    });
+    expect(a.frequency).toBe('session');
+    expect(a.isActive).toBe(true);
+  });
+
+  it('uses advantageTriggers for advantageCondition', () => {
+    const a = deriveFeatureActionFromV2Row({
+      name: 'Dread Visage',
+      description: '—',
+      advantageTriggers: ['You have advantage on rolls to intimidate hostile creatures.'],
+    });
+    expect(a.advantageCondition).toBe('You have advantage on rolls to intimidate hostile creatures');
+  });
+
+  it('detects target types via enrichHoverActionMeta', () => {
+    const row = enrichHoverActionMeta({
+      description: 'Choose a target adversary to affect.',
+    });
+    const a = deriveFeatureActionFromV2Row(row);
+    expect(a.targetType).toBe('adversary');
+  });
+
+  it('uses registry hopeCost on beastform Agile (no card chips)', () => {
+    const a = deriveFeatureActionFromV2Row(
+      enrichHoverActionMeta({
+        name: 'Agile',
+        type: 'beastform',
+        description:
+          'Your movement is silent, and you can **spend a Hope** to move up to Far range without rolling.',
+        hopeCost: 1,
+        chips: [],
+      })
+    );
+    expect(a.hopeCost).toBe(1);
+    expect(a.isActive).toBe(true);
+  });
+});
+
+// ── extractEmbeddedResourceCostsFromText (embedded sub-options) ─────────────
+
+describe('extractEmbeddedResourceCostsFromText', () => {
+  it('extracts Hope, Stress, Armor, frequency from prose', () => {
+    expect(extractEmbeddedResourceCostsFromText('Spend 3 Hope to use this ability.').hopeCost).toBe(3);
+    expect(extractEmbeddedResourceCostsFromText('3 Hope').hopeCost).toBe(3);
+    expect(extractEmbeddedResourceCostsFromText('costs 2 Hope').hopeCost).toBe(2);
+    expect(extractEmbeddedResourceCostsFromText('spend a Hope').hopeCost).toBe(1);
+    expect(extractEmbeddedResourceCostsFromText('you can **spend a Hope** to add a d4 to the roll.').hopeCost).toBe(1);
+    expect(extractEmbeddedResourceCostsFromText('Mark a Stress to activate.').stressCost).toBe(1);
+    expect(extractEmbeddedResourceCostsFromText('clear 2 Armor Slots.').armorClear).toBe(2);
+    expect(extractEmbeddedResourceCostsFromText('You may use this once per session.').frequency).toBe('session');
+  });
+});
+
+// ── extractAdvantageConditionFromText ───────────────────────────────────────
+
+describe('extractAdvantageConditionFromText', () => {
+  it('extracts full advantage sentence', () => {
     const dreadVisage = 'You have advantage on rolls to intimidate hostile creatures.';
-    expect(parseFeatureAction(dreadVisage).advantageCondition).toBe('You have advantage on rolls to intimidate hostile creatures');
-    const scoundrel = 'You have advantage on rolls to negotiate with criminals, detect lies, or find a safe place to hide.';
-    expect(parseFeatureAction(scoundrel).advantageCondition).toBe('You have advantage on rolls to negotiate with criminals, detect lies, or find a safe place to hide');
+    expect(extractAdvantageConditionFromText(dreadVisage)).toBe(
+      'You have advantage on rolls to intimidate hostile creatures',
+    );
+    const dueling =
+      'When there are no other creatures within Close range of the target, gain advantage on your attack roll against them.';
+    expect(extractAdvantageConditionFromText(dueling)).toBe(
+      'When there are no other creatures within Close range of the target, gain advantage on your attack roll against them',
+    );
   });
 
-  it('extracts advantageCondition from "gain advantage on your attack roll"', () => {
-    const dueling = 'When there are no other creatures within Close range of the target, gain advantage on your attack roll against them.';
-    expect(parseFeatureAction(dueling).advantageCondition).toBe('When there are no other creatures within Close range of the target, gain advantage on your attack roll against them');
-  });
-
-  it('extracts advantageCondition from "have advantage on Agility Rolls..."', () => {
-    const naturalClimber = 'You have advantage on Agility Rolls that involve balancing and climbing.';
-    expect(parseFeatureAction(naturalClimber).advantageCondition).toBe('You have advantage on Agility Rolls that involve balancing and climbing');
-  });
-
-  it('extracts advantageCondition from Well-Read (Loreborne) "rolls that involve..."', () => {
-    const wellRead = 'You have advantage on rolls that involve the history, culture, or politics of a prominent person or place.';
-    expect(parseFeatureAction(wellRead).advantageCondition).toBe('You have advantage on rolls that involve the history, culture, or politics of a prominent person or place');
-  });
-
-  it('returns advantageCondition null when no advantage phrase present', () => {
-    expect(parseFeatureAction('Spend 3 Hope to clear 2 Armor Slots.').advantageCondition).toBe(null);
-    expect(parseFeatureAction('A narrative description.').advantageCondition).toBe(null);
+  it('returns null when no advantage phrase', () => {
+    expect(extractAdvantageConditionFromText('Spend 3 Hope to clear 2 Armor Slots.')).toBe(null);
   });
 });
 
@@ -170,6 +186,13 @@ describe('parsePassiveStats', () => {
     expect(s[0]).toMatchObject({ stat: 'evasion', value: 1 });
   });
 
+  it('extracts Evasion from +N bonus to your Evasion (Rogue\'s Dodge wording)', () => {
+    const s = parsePassiveStats(
+      'Spend 3 Hope to gain a +2 bonus to your Evasion until the next time an attack succeeds against you.'
+    );
+    expect(s.some((x) => x.stat === 'evasion' && x.value === 2)).toBe(true);
+  });
+
   it('extracts damage threshold', () => {
     const s = parsePassiveStats('Gain +2 to your damage thresholds.');
     expect(s[0]).toMatchObject({ stat: 'threshold', value: 2 });
@@ -185,21 +208,21 @@ describe('parsePassiveStats', () => {
 
 describe('buildCostBadges', () => {
   it('returns empty array for no-cost action', () => {
-    const a = parseFeatureAction('A narrative description.');
+    const a = { hopeCost: 0, stressCost: 0, armorMark: 0, armorClear: 0, frequency: null };
     expect(buildCostBadges(a)).toEqual([]);
   });
 
   it('includes Hope and Stress badges', () => {
-    const a = parseFeatureAction('Spend 3 Hope and mark 1 Stress.');
+    const a = { hopeCost: 3, stressCost: 1, armorMark: 0, armorClear: 0, frequency: null };
     const badges = buildCostBadges(a);
-    expect(badges.some(b => b.style === 'hope')).toBe(true);
-    expect(badges.some(b => b.style === 'stress')).toBe(true);
+    expect(badges.some((b) => b.style === 'hope')).toBe(true);
+    expect(badges.some((b) => b.style === 'stress')).toBe(true);
   });
 
   it('includes frequency badge', () => {
-    const a = parseFeatureAction('Once per session, roll 2d4.');
+    const a = { hopeCost: 0, stressCost: 0, armorMark: 0, armorClear: 0, frequency: 'session' };
     const badges = buildCostBadges(a);
-    expect(badges.some(b => b.style === 'frequency')).toBe(true);
-    expect(badges.find(b => b.style === 'frequency')?.label).toBe('Once/session');
+    expect(badges.some((b) => b.style === 'frequency')).toBe(true);
+    expect(badges.find((b) => b.style === 'frequency')?.label).toBe('Once/session');
   });
 });

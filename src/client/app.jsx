@@ -7,13 +7,10 @@ import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { isOwnItem } from './lib/constants.js';
-import { computeBattlePoints } from './lib/battle-points.js';
 import { RUNTIME_KEYS } from './lib/table-ops.js';
-import { useV2DeclarativeSheetEnabledLive, setV2DeclarativeSheetPreference } from './lib/v2-declarative-sheet.js';
-
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
-import { useRouter } from './lib/router.js';
+import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
@@ -76,8 +73,6 @@ function App() {
   const charactersCacheRef = useRef([]);
   const charLoadResolversRef = useRef([]);
 
-  const v2DeclarativeSheetEnabled = useV2DeclarativeSheetEnabledLive();
-
   const [isAdmin, setIsAdmin] = useState(false);
   const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName }] — tables user is invited to
   const [myTables, setMyTables] = useState([]); // [{ id, name }] — tables user owns
@@ -99,12 +94,12 @@ function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
-  const [tableFlash, setTableFlash] = useState(false);
   const [deleteTablePending, setDeleteTablePending] = useState(null); // { id, name } when confirming delete
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const userMenuRef = useRef(null);
-  const prevTableCountRef = useRef(null);
   const myTablesFetchedRef = useRef(false);
+  /** Firebase uid of the table owner; set from GET table_state (ownerUid). Undefined until first load for this tableId. */
+  const [tableOwnerUid, setTableOwnerUid] = useState(undefined);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -124,17 +119,6 @@ function App() {
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [deleteTablePending]);
-
-  useEffect(() => {
-    const envCount = activeElements.filter(e => e.elementType === 'environment').length;
-    const advTypeCount = new Set(activeElements.filter(e => e.elementType === 'adversary').map(e => e.id)).size;
-    const tableCount = envCount + advTypeCount;
-    if (prevTableCountRef.current !== null && tableCount !== prevTableCountRef.current) {
-      setTableFlash(true);
-      setTimeout(() => setTableFlash(false), 1500);
-    }
-    prevTableCountRef.current = tableCount;
-  }, [activeElements]);
 
   const handleGoogleSignIn = async () => {
     if (!auth) { console.error('Firebase auth not initialized — check .env credentials'); return; }
@@ -242,7 +226,7 @@ function App() {
 
   const userRef = useRef(null);
   const routeRef = useRef(null);
-  const lastLibraryPathRef = useRef('/library/adversaries');
+  const lastLibraryPathRef = useRef(`/library/${DEFAULT_LIBRARY_TAB}`);
 
   // Load scenes on demand; resolve adversary/env IDs for scene chips.
   // Returns the scenes array (from cache if already loaded, or freshly loaded).
@@ -342,7 +326,7 @@ function App() {
       setLoading(false);
       if (currentUser) {
         if (window.location.pathname === '/' || window.location.pathname === '') {
-          navigate('/library/adversaries', { replace: true });
+          navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
         }
         fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
         fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
@@ -389,18 +373,22 @@ function App() {
     return () => { cancelled = true; };
   }, [user?.uid]);
 
-  // Derive whether the current user is viewing someone else's GM table (player mode)
-  const isPlayer = route.view === 'gm-table' && !!route.gmUid && route.gmUid !== user?.uid;
+  const isInvitedPlayerHeuristic = !!(user && route.tableId && myRooms.some(r => r.tableId === route.tableId) && !myTables.some(t => t.id === route.tableId));
+  // Player mode: invited guest on another GM's table (derived from ownerUid and myRooms while loading).
+  const isPlayer = route.view === 'table' && !!user && !!route.tableId && (
+    (tableOwnerUid != null && tableOwnerUid !== user.uid) ||
+    (tableOwnerUid === undefined && isInvitedPlayerHeuristic)
+  );
 
   // Redirect to library when user has no tables and is on game-table view (e.g. after deleting last table)
   useEffect(() => {
-    if (myTablesFetchedRef.current && myTables.length === 0 && route.view === 'gm-table' && user && !isPlayer) {
-      navigate('/library/adversaries', { replace: true });
+    if (myTablesFetchedRef.current && myTables.length === 0 && route.view === 'table' && user && !isPlayer) {
+      navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
     }
   }, [myTables.length, route.view, user, isPlayer, navigate]);
 
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
-  const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'gm-table';
+  const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'table';
   const effectiveIsPlayer = isPlayer || isPreviewMode;
   // Characters are assigned by email, so use email as the player identity for both real and preview mode
   const effectivePlayerEmail = isPlayer ? user?.email : (isPreviewMode ? previewAsPlayerEmail : undefined);
@@ -411,17 +399,24 @@ function App() {
     setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
   }, []);
 
-  // Redirect /gm-table (no UID) to /gm-table/:uid after sign-in
+  // Canonicalize legacy /gm-table/... URLs (needs user uid for bare /gm-table and /gm-table/:collection/:id)
   useEffect(() => {
-    if (user && route.view === 'gm-table' && !route.gmUid) {
-      navigate(`/gm-table/${user.uid}`, { replace: true });
+    if (!user) return;
+    const pathname = window.location.pathname;
+    const canon = legacyGmTableToCanonical(pathname, user.uid);
+    if (canon && canon !== pathname) {
+      navigate(canon, { replace: true });
     }
-  }, [user, route.view, route.gmUid, navigate]);
+  }, [user?.uid, navigate, route.view, route.tableId, route.modalCollection, route.modalItemId]);
 
-  // When tableId changes on gm-table view, clear local state so we don't show stale data before SSE snapshot
+  // When tableId changes on table view, clear local state so we don't show stale data before SSE snapshot
   const prevTableIdRef = useRef(null);
   useEffect(() => {
-    if (route.view !== 'gm-table' || !route.tableId) return;
+    setTableOwnerUid(undefined);
+  }, [route.tableId]);
+
+  useEffect(() => {
+    if (route.view !== 'table' || !route.tableId) return;
     if (prevTableIdRef.current !== null && prevTableIdRef.current !== route.tableId) {
       setActiveElements([]);
       setFearCount(0);
@@ -439,11 +434,12 @@ function App() {
 
   // Load table state when viewing a table (initial paint before SSE)
   useEffect(() => {
-    if (!user || route.view !== 'gm-table' || !route.tableId) return;
+    if (!user || route.view !== 'table' || !route.tableId) return;
     loadTableState(route.tableId).then((items) => {
       if (!userRef.current) return;
       const tableState = items?.[0];
       if (!tableState) {
+        setTableOwnerUid(null);
         setActiveElements([]);
         setFeatureCountdowns({});
         setTableBattleMods(DEFAULT_BATTLE_MODS);
@@ -458,6 +454,7 @@ function App() {
         tableStateReadyRef.current = true;
         return;
       }
+      setTableOwnerUid(tableState.ownerUid ?? null);
       if (Array.isArray(tableState.elements)) setActiveElements(tableState.elements);
       setFeatureCountdowns(tableState.featureCountdowns || {});
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
@@ -479,7 +476,7 @@ function App() {
 
   // GM SSE: receive player presence, table state snapshots, banners, and dice roll events
   useEffect(() => {
-    if (!user || route.view !== 'gm-table' || isPlayer) return;
+    if (!user || route.view !== 'table' || isPlayer) return;
     const tableId = route.tableId || user.uid;
     let es;
     let reconnectTimer;
@@ -569,7 +566,7 @@ function App() {
           if (hasRoom && state.tableName != null)
             return prev.map(r => r.tableId === route.tableId ? { ...r, tableName: state.tableName || '' } : r);
           if (!hasRoom)
-            return [...prev, { tableId: route.tableId, gmUid: route.gmUid, gmName: state.gmDisplayName || '', tableName: state.tableName || '' }];
+            return [...prev, { tableId: route.tableId, gmUid: tableOwnerUid ?? '', gmName: state.gmDisplayName || '', tableName: state.tableName || '' }];
           return prev;
         });
         tableStateReadyRef.current = true;
@@ -589,7 +586,7 @@ function App() {
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, user?.uid, route.tableId, route.gmUid]);
+  }, [isPlayer, user?.uid, route.tableId, tableOwnerUid]);
 
   // Drive Action Log live updates from the pendingBanners subscription channel.
   // roll-history seeds seenLogDbIdsRef on connect; here we append any newly-arriving
@@ -865,7 +862,7 @@ function App() {
   // These call postTableOp (which POSTs to /api/room/my/op). The server applies the op to the
   // DB state and notifies all subscribers. Token positions and conditions text are applied
   // optimistically so the UI stays responsive; the next table_state snapshot confirms.
-  const tableId = route.view === 'gm-table' ? (route.tableId || user?.uid) : user?.uid;
+  const tableId = route.view === 'table' ? route.tableId : user?.uid;
 
   const sendUpdateActiveElement = (instanceId, updates) => {
     if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
@@ -960,7 +957,7 @@ function App() {
     postTableOp({ op: 'life-support-clear', _rollDbId: rollDbId }, tableId);
   };
 
-  const gmUidForRest = route.gmUid || user?.uid;
+  const gmUidForRest = (route.view === 'table' ? tableOwnerUid : null) ?? user?.uid;
   const sendRestMoveSelect = (rollDbId, instanceId, slot, moveId, options = {}) => {
     if (gmUidForRest) postRestMoveSelect(tableId, rollDbId, instanceId, slot, moveId, options);
   };
@@ -1025,33 +1022,24 @@ function App() {
             </h1>
             <div className="flex items-center gap-2">
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
-              <NavBtn
-                icon={<LayoutDashboard />}
-                label={(() => { const n = myTables.find(t => t.id === user?.uid)?.name; return (n && n.trim() && n !== 'New Table' ? n : 'My Game Table'); })()}
-                active={route.view === 'gm-table' && route.tableId === user?.uid}
-                onClick={() => navigate(`/gm-table/${user?.uid || ''}`)}
-                pulse={tableFlash}
-              />
-              {myTables.filter(t => t.id !== user?.uid).map((t) => (
+              {myTables.map((t) => (
                 <NavBtn
                   key={t.id}
                   icon={<LayoutDashboard />}
                   label={(t.name && t.name.trim() && t.name !== 'New Table' ? t.name : 'Game Table')}
-                  active={route.view === 'gm-table' && route.tableId === t.id}
-                  onClick={() => navigate(`/gm-table/${user?.uid}/${t.id}`)}
+                  active={route.view === 'table' && route.tableId === t.id}
+                  onClick={() => navigate(`/table/${t.id}`)}
                 />
               ))}
               {myRooms.map((room) => {
-                const isPrimary = room.tableId === room.gmUid;
-                const href = isPrimary ? `/gm-table/${room.gmUid}` : `/gm-table/${room.gmUid}/${room.tableId}`;
                 const label = (room.tableName && room.tableName.trim() && room.tableName !== 'New Table' ? room.tableName : (room.gmName ? `${room.gmName}'s Game Table` : 'Game Table'));
                 return (
                   <NavBtn
                     key={room.tableId}
                     icon={<LayoutDashboard />}
                     label={label}
-                    active={route.view === 'gm-table' && route.tableId === room.tableId}
-                    onClick={() => navigate(href)}
+                    active={route.view === 'table' && route.tableId === room.tableId}
+                    onClick={() => navigate(`/table/${room.tableId}`)}
                   />
                 );
               })}
@@ -1064,35 +1052,13 @@ function App() {
                     try {
                       const { id, name } = await createTable('New Table');
                       setMyTables(prev => [...prev, { id, name }]);
-                      navigate(`/gm-table/${user?.uid}/${id}`);
+                      navigate(`/table/${id}`);
                     } catch (err) {
                       console.error('Create table failed:', err);
                     }
                   }}
                 />
               )}
-              {!isPlayer && (() => {
-                const advElements = activeElements.filter(e => e.elementType === 'adversary');
-                const envCount = activeElements.filter(e => e.elementType === 'environment').length;
-                if (!advElements.length && !envCount) return null;
-                const countById = {};
-                const roleAndTierById = {};
-                advElements.forEach(e => {
-                  countById[e.id] = (countById[e.id] || 0) + 1;
-                  roleAndTierById[e.id] = { role: e.role || 'standard', tier: e.tier ?? 1 };
-                });
-                const tableAdvSummary = Object.entries(countById).map(([id, count]) => ({ ...roleAndTierById[id], count }));
-                const bp = computeBattlePoints(tableAdvSummary, partySize);
-                const parts = [];
-                if (bp > 0) parts.push(`${bp} BP`);
-                if (envCount) parts.push(`${envCount} env${envCount !== 1 ? 's' : ''}`);
-                if (advElements.length) parts.push(`${advElements.length} adversar${advElements.length !== 1 ? 'ies' : 'y'}`);
-                return (
-                  <span className={`text-xs font-mono transition-colors duration-300 ${tableFlash ? 'text-yellow-400' : 'text-slate-500'}`}>
-                    {parts.join(' · ')}
-                  </span>
-                );
-              })()}
             </div>
           </div>
           <div className="flex items-center gap-4 text-sm text-slate-400">
@@ -1111,36 +1077,6 @@ function App() {
 
               {userMenuOpen && (
                 <div className="absolute right-0 top-full mt-1 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-1">
-                  <div className="px-4 py-2.5 border-b border-slate-700">
-                    <p className="text-[9px] uppercase tracking-wider text-slate-500 mb-2">Character sheet</p>
-                    <div className="flex rounded-md border border-slate-600 overflow-hidden text-xs font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => setV2DeclarativeSheetPreference(false)}
-                        className={`flex-1 py-1.5 transition-colors ${
-                          !v2DeclarativeSheetEnabled
-                            ? 'bg-sky-700 text-white'
-                            : 'text-slate-400 hover:bg-slate-700/60'
-                        }`}
-                      >
-                        V1
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setV2DeclarativeSheetPreference(true)}
-                        className={`flex-1 py-1.5 transition-colors ${
-                          v2DeclarativeSheetEnabled
-                            ? 'bg-sky-700 text-white'
-                            : 'text-slate-400 hover:bg-slate-700/60'
-                        }`}
-                      >
-                        V2
-                      </button>
-                    </div>
-                    <p className="text-[9px] text-slate-500 mt-1.5 leading-snug">
-                      V2 uses the declarative engine for sheet hints (e.g. weapon disable).
-                    </p>
-                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -1215,7 +1151,7 @@ function App() {
                     ? route
                     : {
                         view: 'library',
-                        tab: (lastLibraryPathRef.current.match(/^\/library\/([^/]+)/)?.[1]) || 'adversaries',
+                        tab: (lastLibraryPathRef.current.match(/^\/library\/([^/]+)/)?.[1]) || DEFAULT_LIBRARY_TAB,
                         itemId: null,
                       }
                 }
@@ -1233,8 +1169,8 @@ function App() {
             </div>
             <div
               className="flex-1 overflow-hidden flex flex-col"
-              style={{ display: route.view === 'gm-table' ? 'flex' : 'none' }}
-              aria-hidden={route.view !== 'gm-table'}
+              style={{ display: route.view === 'table' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'table'}
             >
               <GMTableView
                 tableId={tableId}
@@ -1266,7 +1202,7 @@ function App() {
                 tableStateReady={tableStateReady}
                 onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
                 onDeleteTable={tableId && !effectiveIsPlayer ? () => {
-                  const name = (tableName?.trim() || (tableId === user?.uid ? 'My Game Table' : 'Game Table'));
+                  const name = (tableName?.trim() || 'Game Table');
                   setDeleteTablePending({ id: tableId, name });
                   setDeleteConfirmInput('');
                 } : undefined}
@@ -1276,7 +1212,7 @@ function App() {
                 connectedPlayers={connectedPlayers}
                 playerEmails={playerEmails}
                 setPlayerEmails={effectiveIsPlayer ? () => {} : sendSetPlayerEmails}
-                gmUid={route.gmUid || user?.uid}
+                gmUid={tableOwnerUid ?? user?.uid}
                 onPlayerAddCharacter={isPlayer ? handlePlayerAddCharacter : (isPreviewMode ? handleGmImpersonateAddCharacter : undefined)}
                 pendingBanners={pendingBanners}
                 pendingPlayerIntent={pendingPlayerIntent}
@@ -1381,13 +1317,17 @@ function App() {
                 type="button"
                 disabled={deleteConfirmInput !== 'DELETE'}
                 onClick={async () => {
-                  const { id, name } = deleteTablePending;
+                  const { id } = deleteTablePending;
                   setDeleteTablePending(null);
                   setDeleteConfirmInput('');
                   try {
                     await apiDeleteItem('table_state', id);
-                    setMyTables(prev => prev.filter(t => t.id !== id));
-                    if (route.tableId === id) navigate(`/gm-table/${user?.uid}`);
+                    const next = myTables.filter(t => t.id !== id);
+                    setMyTables(next);
+                    if (route.tableId === id) {
+                      if (next.length) navigate(`/table/${next[0].id}`);
+                      else navigate(`/library/${DEFAULT_LIBRARY_TAB}`);
+                    }
                   } catch (err) {
                     console.error('Delete table failed:', err);
                   }

@@ -3,9 +3,32 @@ import {
   when,
   isActing,
   isTargeted,
+  againstYou,
+  anAttackSucceeds,
+  youSucceedOnAnAttack,
+  againstATargetInMeleeRange,
+  againstATargetWithinMeleeRange,
+  againstATargetInVeryCloseRange,
+  againstATargetWithinVeryCloseRange,
+  againstATargetWithinCloseRange,
+  againstATargetInCloseRange,
+  attackerAndTargetAreInRangeBand,
+  attackerAndTargetAreWithinRangeBand,
+  rangeBandIndex,
   armorUseCommitted,
   hasDamage,
   hasPhysicalDamage,
+  youAreTheActor,
+  youDealMinorDamage,
+  youDealMajorDamage,
+  youDealSevereDamage,
+  youTakeMinorDamage,
+  youTakeMajorDamage,
+  youTakeSevereDamage,
+  effectTargetsMe,
+  isMajorPendingHpLossEffect,
+  isSeverePendingHpLossEffect,
+  pendingHpLossToPrimaryTargetEffect,
   isWhen,
   unwrap,
   unwrapAll,
@@ -94,6 +117,167 @@ describe('isTargeted', () => {
   it('returns false when action is undefined', () => {
     const me = { instanceId: 'char-1' };
     expect(isTargeted({ me })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// againstYou
+// ---------------------------------------------------------------------------
+
+describe('againstYou', () => {
+  it('matches isTargeted', () => {
+    const me = { instanceId: 'char-1', isActing: false };
+    const t1 = { me, action: { targets: [me] } };
+    const t2 = { me, action: { targets: [{ instanceId: 'other' }] } };
+    expect(againstYou(t1)).toBe(isTargeted(t1));
+    expect(againstYou(t2)).toBe(isTargeted(t2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// anAttackSucceeds
+// ---------------------------------------------------------------------------
+
+describe('anAttackSucceeds', () => {
+  it('returns true for successful attack action', () => {
+    const table = {
+      action: { type: 'attack' },
+      rolls: { action: { isSuccess: true } },
+    };
+    expect(anAttackSucceeds(table)).toBe(true);
+  });
+
+  it('returns false when action roll missed', () => {
+    const table = {
+      action: { type: 'attack' },
+      rolls: { action: { isSuccess: false } },
+    };
+    expect(anAttackSucceeds(table)).toBe(false);
+  });
+
+  it('returns false when action is not attack', () => {
+    const table = {
+      action: { type: 'spell' },
+      rolls: { action: { isSuccess: true } },
+    };
+    expect(anAttackSucceeds(table)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// youSucceedOnAnAttack / map range vs primary target
+// ---------------------------------------------------------------------------
+
+describe('youSucceedOnAnAttack', () => {
+  it('returns true when me is the actor and the attack succeeded', () => {
+    const me = { instanceId: 'a' };
+    const table = {
+      me,
+      action: { type: 'attack', actor: me, target: { instanceId: 'b' } },
+      rolls: { action: { isSuccess: true } },
+    };
+    expect(youSucceedOnAnAttack(table)).toBe(true);
+  });
+
+  it('returns false when a different actor is attacking', () => {
+    const me = { instanceId: 'a' };
+    const other = { instanceId: 'z' };
+    const table = {
+      me,
+      action: { type: 'attack', actor: other, target: me },
+      rolls: { action: { isSuccess: true } },
+    };
+    expect(youSucceedOnAnAttack(table)).toBe(false);
+  });
+});
+
+describe('rangeBandIndex', () => {
+  it('orders melee closest', () => {
+    expect(rangeBandIndex('melee')).toBe(0);
+    expect(rangeBandIndex('veryFar')).toBe(4);
+    expect(rangeBandIndex('unknown')).toBe(-1);
+  });
+});
+
+describe('attackerAndTargetAreInRangeBand / WithinRangeBand', () => {
+  const attacker = (band) => ({ instanceId: 'a', rangeFrom: () => band });
+  const target = { instanceId: 'b' };
+
+  it('In: exact band only', () => {
+    expect(attackerAndTargetAreInRangeBand(attacker('melee'), target, 'melee')).toBe(true);
+    expect(attackerAndTargetAreInRangeBand(attacker('melee'), target, 'veryClose')).toBe(false);
+  });
+
+  it('Within: includes closer bands', () => {
+    expect(attackerAndTargetAreWithinRangeBand(attacker('melee'), target, 'veryClose')).toBe(true);
+    expect(attackerAndTargetAreWithinRangeBand(attacker('veryClose'), target, 'veryClose')).toBe(true);
+    expect(attackerAndTargetAreWithinRangeBand(attacker('close'), target, 'veryClose')).toBe(false);
+  });
+});
+
+describe('againstATargetWithinMeleeRange', () => {
+  function tableWithBand(band) {
+    const attacker = { instanceId: 'a', rangeFrom: () => band };
+    const target = { instanceId: 'b' };
+    return { action: { actor: attacker, target } };
+  }
+
+  it('is true only for melee map distance', () => {
+    expect(againstATargetWithinMeleeRange(tableWithBand('melee'))).toBe(true);
+    expect(againstATargetWithinMeleeRange(tableWithBand('veryClose'))).toBe(false);
+  });
+
+  it('is false when rangeFrom is null (positions unknown)', () => {
+    const attacker = { instanceId: 'a', rangeFrom: () => null };
+    const target = { instanceId: 'b' };
+    expect(againstATargetWithinMeleeRange({ action: { actor: attacker, target } })).toBe(false);
+  });
+
+  it('matches In for melee (no closer band exists)', () => {
+    expect(againstATargetInMeleeRange(tableWithBand('melee'))).toBe(
+      againstATargetWithinMeleeRange(tableWithBand('melee'))
+    );
+  });
+});
+
+describe('againstATargetWithinVeryCloseRange', () => {
+  function tableWithBand(band) {
+    const attacker = { instanceId: 'a', rangeFrom: () => band };
+    const target = { instanceId: 'b' };
+    return { action: { actor: attacker, target } };
+  }
+
+  it('includes melee and very close, not close', () => {
+    expect(againstATargetWithinVeryCloseRange(tableWithBand('melee'))).toBe(true);
+    expect(againstATargetWithinVeryCloseRange(tableWithBand('veryClose'))).toBe(true);
+    expect(againstATargetWithinVeryCloseRange(tableWithBand('close'))).toBe(false);
+  });
+
+  it('In very close excludes melee', () => {
+    expect(againstATargetInVeryCloseRange(tableWithBand('melee'))).toBe(false);
+    expect(againstATargetInVeryCloseRange(tableWithBand('veryClose'))).toBe(true);
+  });
+});
+
+describe('againstATargetWithinCloseRange', () => {
+  it('includes bands up to close', () => {
+    const attacker = (band) => ({ instanceId: 'a', rangeFrom: () => band });
+    const target = { instanceId: 'b' };
+    expect(
+      againstATargetWithinCloseRange({ action: { actor: attacker('melee'), target } })
+    ).toBe(true);
+    expect(
+      againstATargetWithinCloseRange({ action: { actor: attacker('close'), target } })
+    ).toBe(true);
+    expect(
+      againstATargetWithinCloseRange({ action: { actor: attacker('far'), target } })
+    ).toBe(false);
+  });
+
+  it('In close excludes melee', () => {
+    const attacker = { instanceId: 'a', rangeFrom: () => 'melee' };
+    const target = { instanceId: 'b' };
+    expect(againstATargetInCloseRange({ action: { actor: attacker, target } })).toBe(false);
   });
 });
 
@@ -245,6 +429,184 @@ describe('hasPhysicalDamage', () => {
 
   it('returns false when action is undefined', () => {
     expect(hasPhysicalDamage({ me: { instanceId: 'char-1' } })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// youDealMinorDamage / youDealMajorDamage / youDealSevereDamage
+// ---------------------------------------------------------------------------
+
+function makeDealTable({ actorId, target, effect }) {
+  const me = { instanceId: actorId, isActing: true };
+  const actor = { instanceId: actorId };
+  return {
+    me,
+    action: {
+      actor,
+      target,
+      targets: target ? [target] : [],
+      effects: [effect],
+    },
+  };
+}
+
+describe('youAreTheActor / youDeal* pending HP tiers', () => {
+  const adv = { instanceId: 'adv-1', isAdversary: true };
+
+  it('youAreTheActor is true when me matches action.actor', () => {
+    const t = makeDealTable({
+      actorId: 'char-1',
+      target: adv,
+      effect: { stat: 'currentHP', target: adv, amount: 1 },
+    });
+    expect(youAreTheActor(t)).toBe(true);
+  });
+
+  it('youAreTheActor is false when another actor acts', () => {
+    const me = { instanceId: 'char-1', isActing: false };
+    const table = {
+      me,
+      action: {
+        actor: { instanceId: 'char-2' },
+        target: adv,
+        effects: [{ stat: 'currentHP', target: adv, amount: 1 }],
+      },
+    };
+    expect(youAreTheActor(table)).toBe(false);
+  });
+
+  it('youDealMinorDamage: amount 1, null tiers', () => {
+    const t = makeDealTable({
+      actorId: 'char-1',
+      target: adv,
+      effect: { stat: 'currentHP', target: adv, amount: 1 },
+    });
+    expect(youDealMinorDamage(t)).toBe(true);
+    expect(youDealMajorDamage(t)).toBe(false);
+    expect(youDealSevereDamage(t)).toBe(false);
+  });
+
+  it('youDealMajorDamage: amount 2, null tiers', () => {
+    const t = makeDealTable({
+      actorId: 'char-1',
+      target: adv,
+      effect: { stat: 'currentHP', target: adv, amount: 2 },
+    });
+    expect(youDealMinorDamage(t)).toBe(false);
+    expect(youDealMajorDamage(t)).toBe(true);
+    expect(youDealSevereDamage(t)).toBe(false);
+  });
+
+  it('youDealSevereDamage: amount >= 3, null tiers', () => {
+    const t = makeDealTable({
+      actorId: 'char-1',
+      target: adv,
+      effect: { stat: 'currentHP', target: adv, amount: 3 },
+    });
+    expect(youDealSevereDamage(t)).toBe(true);
+    expect(isSeverePendingHpLossEffect(pendingHpLossToPrimaryTargetEffect(t))).toBe(true);
+  });
+
+  it('youDealSevereDamage: amount 2 with damageTier severe (VTT edge case)', () => {
+    const t = makeDealTable({
+      actorId: 'char-1',
+      target: adv,
+      effect: { stat: 'currentHP', target: adv, amount: 2, damageTier: 'severe' },
+    });
+    expect(youDealSevereDamage(t)).toBe(true);
+    expect(youDealMajorDamage(t)).toBe(false);
+  });
+
+  it('isMajorPendingHpLossEffect is false when tier says severe even if amount is 2', () => {
+    const e = { stat: 'currentHP', target: adv, amount: 2, damageTier: 'severe' };
+    expect(isMajorPendingHpLossEffect(e)).toBe(false);
+    expect(isSeverePendingHpLossEffect(e)).toBe(true);
+  });
+
+  it('youDeal* is false when HP effect targets a different instance than primary target', () => {
+    const other = { instanceId: 'adv-2', isAdversary: true };
+    const t = makeDealTable({
+      actorId: 'char-1',
+      target: adv,
+      effect: { stat: 'currentHP', target: other, amount: 3 },
+    });
+    expect(youDealSevereDamage(t)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// youTakeMinorDamage / youTakeMajorDamage / youTakeSevereDamage (incoming to table.me)
+// ---------------------------------------------------------------------------
+
+function makeTakeTable({ meId, effects }) {
+  const me = { instanceId: meId };
+  return {
+    me,
+    action: {
+      effects,
+    },
+  };
+}
+
+describe('youTake* / effectTargetsMe — pending HP to table.me', () => {
+  it('youTakeSevereDamage: severe to me (amount >= 3)', () => {
+    const t = makeTakeTable({
+      meId: 'char-1',
+      effects: [{ stat: 'currentHP', target: { instanceId: 'char-1' }, amount: 3 }],
+    });
+    expect(youTakeSevereDamage(t)).toBe(true);
+    expect(youTakeMajorDamage(t)).toBe(false);
+    expect(youTakeMinorDamage(t)).toBe(false);
+  });
+
+  it('youTakeSevereDamage: amount 2 with damageTier severe', () => {
+    const t = makeTakeTable({
+      meId: 'char-1',
+      effects: [{ stat: 'currentHP', target: { instanceId: 'char-1' }, amount: 2, damageTier: 'severe' }],
+    });
+    expect(youTakeSevereDamage(t)).toBe(true);
+  });
+
+  it('youTakeMajorDamage: amount 2, null tiers', () => {
+    const t = makeTakeTable({
+      meId: 'char-1',
+      effects: [{ stat: 'currentHP', target: { instanceId: 'char-1' }, amount: 2 }],
+    });
+    expect(youTakeMajorDamage(t)).toBe(true);
+  });
+
+  it('youTakeMinorDamage: amount 1', () => {
+    const t = makeTakeTable({
+      meId: 'char-1',
+      effects: [{ stat: 'currentHP', target: { instanceId: 'char-1' }, amount: 1 }],
+    });
+    expect(youTakeMinorDamage(t)).toBe(true);
+  });
+
+  it('false when HP targets another instance', () => {
+    const t = makeTakeTable({
+      meId: 'char-1',
+      effects: [{ stat: 'currentHP', target: { instanceId: 'adv-1' }, amount: 3 }],
+    });
+    expect(youTakeSevereDamage(t)).toBe(false);
+    expect(effectTargetsMe(t.action.effects[0], t)).toBe(false);
+  });
+
+  it('some(): any matching line to me counts as severe', () => {
+    const t = makeTakeTable({
+      meId: 'char-1',
+      effects: [
+        { stat: 'currentHP', target: { instanceId: 'adv-1' }, amount: 1 },
+        { stat: 'currentHP', target: { instanceId: 'char-1' }, amount: 3 },
+      ],
+    });
+    expect(youTakeSevereDamage(t)).toBe(true);
+  });
+
+  it('effectTargetsMe is true for currentHP on me', () => {
+    const me = { instanceId: 'char-1' };
+    const e = { stat: 'currentHP', target: { instanceId: 'char-1' }, amount: 2 };
+    expect(effectTargetsMe(e, { me })).toBe(true);
   });
 });
 

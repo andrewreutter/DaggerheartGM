@@ -7,7 +7,9 @@ import { when, isActing } from '../engine/when.js';
 function spellcastDiceCount(table) {
   const me = table.me;
   if (!me?.traits || !me.spellcastTrait) return 0;
-  const v = me.traits[me.spellcastTrait];
+  const raw = me.spellcastTrait;
+  const k = String(raw).toLowerCase();
+  const v = me.traits[k] ?? me.traits[raw];
   if (typeof v === 'number') return Math.max(0, v);
   return Math.max(0, parseInt(v, 10) || 0);
 }
@@ -87,7 +89,10 @@ export const SparingTouch = {
         },
       ],
       selectTargets: (table) => alliesAndSelfInTouchRange(table),
-      isDisabled: (table) => alliesAndSelfInTouchRange(table).length === 0,
+      isDisabled: (table) =>
+        alliesAndSelfInTouchRange(table).length === 0
+          ? 'No ally or self in Melee (touch) range.'
+          : false,
       onUse(table, chip) {
         const mode = chip.get('selectedId');
         const ids = chip.get('selectedTargetIds') || [];

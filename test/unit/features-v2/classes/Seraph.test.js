@@ -29,6 +29,24 @@ describe('Seraph — Prayer Dice', () => {
     expect(rolls.length).toBe(2);
   });
 
+  it('onSessionStart resolves Spellcast count when spellcastTrait is title case (traits keys are lowercase)', () => {
+    const seraph = mockCharacter({
+      instanceId: 's1',
+      classId: 'srd-cls-seraph',
+      spellcastTrait: 'Presence',
+      traits: { presence: 2, agility: 0, strength: 0, finesse: 0, instinct: 0, knowledge: 0 },
+    });
+    const loop = createActionLoop(
+      mockGameState({ activeElements: [seraph], featureState: {} }),
+      mockAction({ type: 'sessionStart', actorInstanceId: 's1', targetInstanceIds: [] }),
+      [{ ...PrayerDice, _ownerInstanceId: 's1' }]
+    );
+    const { mutations } = loop.runPhase('intent');
+    const pools = mutations.filter((m) => m.type === 'setPrayerDicePool');
+    expect(pools.length).toBeGreaterThanOrEqual(1);
+    expect(pools[pools.length - 1].payload.pool).toHaveLength(2);
+  });
+
   it('reviewAction chip adds Prayer Die static to action roll and removes die from pool', () => {
     const seraph = mockCharacter({
       instanceId: 's1',
@@ -149,6 +167,36 @@ describe('Seraph — Prayer Dice', () => {
     expect(mut.some((m) => m.type === 'removePrayerDieAt')).toBe(true);
   });
 
+  it('gain Hope card chip unwraps without rolls (sheet snapshot has no table.rolls)', () => {
+    const seraph = mockCharacter({
+      instanceId: 's1',
+      prayerDice: { pool: [2] },
+      spellcastTrait: 'presence',
+      traits: { presence: 1 },
+    });
+    const gs = mockGameState({
+      activeElements: [seraph],
+      rolls: {},
+      action: {
+        type: 'free',
+        actorInstanceId: 's1',
+        targetInstanceIds: [],
+        effects: [],
+        appliedEffects: [],
+      },
+      _ownerInstanceId: 's1',
+      _featureKey: 'Prayer Dice',
+    });
+    const table = buildTableSnapshot({ ...gs, _rng: () => 0.5 });
+    expect(table.rolls).toBeUndefined();
+    const chips = collectChips([{ ...PrayerDice, _ownerInstanceId: 's1' }], 'card', table, {});
+    const gain = chips.find((c) => c.name === 'Prayer Die — gain Hope');
+    expect(gain).toBeDefined();
+    const opts = gain.isSelect(table);
+    expect(opts).toHaveLength(1);
+    expect(opts[0]).toEqual({ id: '0', label: 'd4 (2)' });
+  });
+
   it('gain Hope chip queues gainHope', () => {
     const seraph = mockCharacter({
       instanceId: 's1',
@@ -172,16 +220,10 @@ describe('Seraph — Prayer Dice', () => {
       effects: [],
       appliedEffects: [],
     };
-    const loop = createActionLoop(
-      gs,
-      mockAction({ type: 'attack', actorInstanceId: 's1', targetInstanceIds: ['adv-1'] }),
-      [{ ...PrayerDice, _ownerInstanceId: 's1' }]
-    );
-    loop.setRolls(gs.rolls);
-    const ra = loop.runPhase('reviewAction');
-    const chip = ra.chips.find((c) => c.name === 'Prayer Die — gain Hope');
-    expect(chip).toBeDefined();
     const table = buildTableSnapshot({ ...gs, _rng: () => 0.5 });
+    const chips = collectChips([{ ...PrayerDice, _ownerInstanceId: 's1' }], 'card', table, {});
+    const chip = chips.find((c) => c.name === 'Prayer Die — gain Hope');
+    expect(chip).toBeDefined();
     const mut = activateChip(chip, table, makeChipState(), { selectedId: '0' });
     expect(mut.some((m) => m.type === 'gainHope' && m.payload.amount === 2)).toBe(true);
   });

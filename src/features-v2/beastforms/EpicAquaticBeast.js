@@ -6,7 +6,13 @@ import {
   reduceIncomingHpByOneThreshold,
   revokeArmorCommitment,
 } from '../engine/armor-review-outcome.js';
-import { when, isActing, isTargeted, armorUseCommitted } from '../engine/when.js';
+import {
+  when,
+  isTargeted,
+  armorUseCommitted,
+  youSucceedOnAnAttack,
+  againstATargetInMeleeRange,
+} from '../engine/when.js';
 
 export const OceanMaster = {
   name: 'Ocean Master',
@@ -14,13 +20,9 @@ export const OceanMaster = {
     'You can breathe and move naturally underwater. When you succeed on an attack against a target within Melee range, you can temporarily _Restrain_ them.',
   hooks: {
     onResolve: when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
-      (table) => {
-        const tgt = table.action?.target;
-        return Boolean(tgt?.isAdversary && table.me.rangeFrom(tgt) === 'melee');
-      },
+      youSucceedOnAnAttack,
+      againstATargetInMeleeRange,
+      (table) => Boolean(table.action?.target?.isAdversary),
       (table) => {
         table.action?.target?.addCondition('Restrained');
       }

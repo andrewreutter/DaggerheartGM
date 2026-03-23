@@ -4,16 +4,19 @@
  * SRD source: daggerheart-srd/ancestries/Faun.md
  */
 
-import { when, isActing } from '../engine/when.js';
+import {
+  when,
+  youSucceedOnAnAttack,
+  againstATargetWithinMeleeRange,
+} from '../engine/when.js';
 
-/** Successful melee attack — shared by both Kick chip variants. */
-function kickMeleeAttackSuccess(table) {
-  return (
-    table.action?.type === 'attack' &&
-    table.action?.range === 'melee' &&
-    table.rolls?.action?.isSuccess === true
-  );
+/** Map positions at melee, **or** melee-range weapon from the bridge when positions are unknown. */
+function kickAgainstTargetInMelee(table) {
+  return againstATargetWithinMeleeRange(table) || table.action?.range === 'melee';
 }
+
+/** Passed to `move(..., { freezeReason })` — host locks the non-mover until ack/cancel. */
+const KICK_MAP_MOVE_LOCK = 'Kick: pending map position';
 
 export const CaprineLeap = {
   name: 'Caprine Leap',
@@ -28,8 +31,8 @@ export const Kick = {
     'When you succeed on an attack against a target within Melee range, you can mark a Stress to kick yourself off them, dealing an extra 2d6 damage and knocking back either yourself or the target to Very Close range.',
   chips: [
     when(
-      isActing,
-      kickMeleeAttackSuccess,
+      youSucceedOnAnAttack,
+      kickAgainstTargetInMelee,
       {
         name: 'Kick (push target)',
         description:
@@ -40,14 +43,20 @@ export const Kick = {
           table.rolls?.damage?.addDie({ name: 'Kick', die: '2d6' });
           table.action?.target?.move(
             (t) => t.action.target?.rangeFrom(t.action.attacker) === 'veryClose',
-            'Kick: knock target to Very Close range'
+            'Very Close range from attacker',
+            'Kick: knock target to Very Close range.',
+            {
+              freezeOtherInstanceId: table.me?.instanceId,
+              freezeReason: KICK_MAP_MOVE_LOCK,
+              rehydrateKey: 'faun.kick.push',
+            }
           );
         },
       }
     ),
     when(
-      isActing,
-      kickMeleeAttackSuccess,
+      youSucceedOnAnAttack,
+      kickAgainstTargetInMelee,
       {
         name: 'Kick (leap back)',
         description:
@@ -58,7 +67,13 @@ export const Kick = {
           table.rolls?.damage?.addDie({ name: 'Kick', die: '2d6' });
           table.me.move(
             (t) => t.me.rangeFrom(t.action.target) === 'veryClose',
-            'Kick: leap to Very Close range from the target'
+            'Very Close range from target',
+            'Kick: leap to Very Close range from the target.',
+            {
+              freezeOtherInstanceId: table.action?.target?.instanceId,
+              freezeReason: KICK_MAP_MOVE_LOCK,
+              rehydrateKey: 'faun.kick.leap',
+            }
           );
         },
       }

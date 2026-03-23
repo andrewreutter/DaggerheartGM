@@ -15,11 +15,11 @@ This document enumerates the V2 feature framework, defines a fixed cast of **sev
 | Passive stat mods | `passiveStatMods` merged into sheet math |
 | Virtual weapons | Extra attacks (ancestry, beastform, class) |
 | Advantage triggers | `advantageTriggers` + `when()` → experience-row advantage chips |
-| Movement / damage affinity | `movementModes`, `damageAffinities` |
+| Damage affinity | `damageAffinities` |
 | Conditional wrappers | `when(predicates, …)` on declarative fields, chips, hooks |
 | Shared option scope | `table.source.get` / `set` via registry `sourceScopeKey` |
 | Per-feature bags | `table.feature.get` / `set` |
-| Beastform | `attachBeastformOptions` + tier filtering (Druid) |
+| Beastform | `gameState.registry` + tier filtering in `classes/Druid.js` |
 | Merged feature state | `mergeDeclarativeFeatureState` / `featureState` on character + table |
 
 ### B. Chips
@@ -57,7 +57,7 @@ This document enumerates the V2 feature framework, defines a fixed cast of **sev
 
 | Surface | Exercises |
 |---------|-----------|
-| V2 declarative sheet | Merged V2 declaratives (`?v2Sheet=1` or user menu **V1 / V2**) |
+| V2 declarative sheet | `mergeV2DeclarativeSheetOverlay` (always on) |
 | Character hover sheet | Feature cards, traits, weapons, experiences, defense |
 | Dice `ResultBanner` | **`V2ReviewChipRow`** — review-phase chips from `collectV2ReviewActionChips` |
 | Experiences / modifiers | Cross-sheet chips when parent passes `crossSheetChips` |
@@ -105,8 +105,7 @@ Library IDs are fixed UUIDs (`f2b00000-0000-4000-8000-0000000000n`) so re-runnin
 
 ### Suggested session order
 
-1. Enable V2 sheet (`?v2Sheet=1` or menu).
-2. Run `npm run seed:v2-browser-chars`; open Game Table — confirm seven PCs.
+1. Run `npm run seed:v2-browser-chars`; open Game Table — confirm seven PCs.
 3. Per PC: open hover sheet — stats, features, weapons.
 4. Combat: attack with Echo/Dara — target adversary — use **V2ReviewChipRow** on the banner.
 5. Brix: confirm Rally-related UI on another PC if wired.

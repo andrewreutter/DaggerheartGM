@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 const isPrimaryWeaponAttack = (table) =>
   Boolean(
@@ -15,9 +15,7 @@ export const DoubledUp = {
   tagText: 'Deal secondary damage to another Melee target',
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       isPrimaryWeaponAttack,
       {
         description: 'Deal secondary weapon damage to another target within Melee range.',

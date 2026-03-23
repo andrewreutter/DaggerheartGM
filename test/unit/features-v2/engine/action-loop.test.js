@@ -4,6 +4,7 @@ import {
   dispatchStateChangeHooks,
   dispatchSceneEndHooks,
   dispatchTokenMoveHooks,
+  shouldIncludePhaseChipForViewer,
 } from '../../../../src/features-v2/engine/action-loop.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
 import { Reinforced } from '../../../../src/features-v2/armor_properties/Reinforced.js';
@@ -579,5 +580,54 @@ describe('dispatchSceneEndHooks()', () => {
           m.payload.value === false
       )
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shouldIncludePhaseChipForViewer (pass-1 viewer filter for banner chips)
+// ---------------------------------------------------------------------------
+
+describe('shouldIncludePhaseChipForViewer()', () => {
+  it('returns true when viewer is omitted', () => {
+    expect(
+      shouldIncludePhaseChipForViewer(
+        { _ownerInstanceId: 'a', showOnOtherSheets: false },
+        undefined
+      )
+    ).toBe(true);
+  });
+
+  it('returns true for gm', () => {
+    expect(shouldIncludePhaseChipForViewer({ _ownerInstanceId: 'a' }, { role: 'gm' })).toBe(true);
+  });
+
+  it('returns true for player when instance matches owner', () => {
+    expect(
+      shouldIncludePhaseChipForViewer({ _ownerInstanceId: 's1' }, { role: 'player', viewerCharacterInstanceId: 's1' })
+    ).toBe(true);
+  });
+
+  it('returns false for player when owner mismatch and not showOnOtherSheets', () => {
+    expect(
+      shouldIncludePhaseChipForViewer(
+        { _ownerInstanceId: 's1', showOnOtherSheets: false },
+        { role: 'player', viewerCharacterInstanceId: 'other' }
+      )
+    ).toBe(false);
+  });
+
+  it('returns false for showOnOtherSheets on non-owner (handled in cross-sheet pass)', () => {
+    expect(
+      shouldIncludePhaseChipForViewer(
+        { _ownerInstanceId: 'bard', showOnOtherSheets: true },
+        { role: 'player', viewerCharacterInstanceId: 'fighter' }
+      )
+    ).toBe(false);
+  });
+
+  it('returns false for player without character id', () => {
+    expect(
+      shouldIncludePhaseChipForViewer({ _ownerInstanceId: 's1' }, { role: 'player', viewerCharacterInstanceId: null })
+    ).toBe(false);
   });
 });

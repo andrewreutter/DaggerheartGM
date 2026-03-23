@@ -2,7 +2,7 @@
  * Call of the Slayer subclass (Warrior) — SRD: daggerheart-srd/subclasses/Call of the Slayer.md
  */
 
-import { when, isActing } from '../engine/when.js';
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 import { parseLeadingDamageDice } from '../../client/lib/dice-utils.js';
 
 const SOURCE_SCOPE = 'CallOfTheSlayer';
@@ -166,9 +166,7 @@ export const WeaponSpecialist = {
   },
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => table.rolls?.damage != null,
       primaryWeaponAttack,
       (table) => secondaryDamageDieNotation(table) != null,

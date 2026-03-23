@@ -18,14 +18,27 @@ function alliesWithinFarBand(table) {
   );
 }
 
+/** Allies in the Far band who have at least 1 Stress marked (nothing to clear otherwise). */
+function alliesInFarBandWithStress(table) {
+  return alliesWithinFarBand(table).filter((c) => (c.currentStress ?? 0) > 0);
+}
+
 export const RousingSpeech = {
   name: 'Rousing Speech',
   description:
     'Once per long rest, you can give a heartfelt, inspiring speech. All allies within Far range clear 2 Stress.',
   frequency: 'longRest',
-  isDisabled: (table) => alliesWithinFarBand(table).length === 0,
+  isDisabled: (table) => {
+    if (alliesWithinFarBand(table).length === 0) {
+      return 'No allies other than you within Melee through Far range (not Very Far).';
+    }
+    if (alliesInFarBandWithStress(table).length === 0) {
+      return 'No allies in range have Stress marked to clear.';
+    }
+    return false;
+  },
   onUse(table) {
-    for (const ally of alliesWithinFarBand(table)) {
+    for (const ally of alliesInFarBandWithStress(table)) {
       ally.clearStress(2);
     }
   },

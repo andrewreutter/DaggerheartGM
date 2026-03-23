@@ -8,7 +8,11 @@ import { BookOfSitil } from '../../../../src/features-v2/abilities/Codex/BookOfS
 import { BookOfVagras } from '../../../../src/features-v2/abilities/Codex/BookOfVagras.js';
 import { BookOfKorvax } from '../../../../src/features-v2/abilities/Codex/BookOfKorvax.js';
 import { BookOfNorai } from '../../../../src/features-v2/abilities/Codex/BookOfNorai.js';
-import { mockCharacter, mockGameState } from '../helpers.js';
+import { BookOfRonin } from '../../../../src/features-v2/abilities/Codex/BookOfRonin.js';
+import { BookOfExota } from '../../../../src/features-v2/abilities/Codex/BookOfExota.js';
+import { BookOfHomet } from '../../../../src/features-v2/abilities/Codex/BookOfHomet.js';
+import { BookOfGrynn } from '../../../../src/features-v2/abilities/Codex/BookOfGrynn.js';
+import { mockCharacter, mockGameState, mockAdversary, mockRoll, runReviewAction } from '../helpers.js';
 
 function freeActionTable(charId, featureKey) {
   return buildTableSnapshot(
@@ -187,6 +191,176 @@ describe('Codex Tier 1 — Book of Norai', () => {
   });
 });
 
+describe('Codex Tier 1 — Book of Homet', () => {
+  it('Pass Through is once per rest; Plane Gate is once per long rest; both queue Spellcast actionLoops', () => {
+    const tbl = freeActionTable('h1', 'Book of Homet');
+    const chips = collectChips([{ ...BookOfHomet, _ownerInstanceId: 'h1' }], 'card', tbl);
+    expect(chips.map((c) => c.name)).toEqual(['Pass Through', 'Plane Gate']);
+    expect(chips[0]?.frequency).toBe('rest');
+    expect(chips[1]?.frequency).toBe('longRest');
+    const m0 = activateChip(chips[0], tbl, makeChipState());
+    expect(m0).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Book of Homet — Pass Through', trait: 'Knowledge' }),
+      })
+    );
+    const tbl2 = freeActionTable('h2', 'Book of Homet');
+    const chips2 = collectChips([{ ...BookOfHomet, _ownerInstanceId: 'h2' }], 'card', tbl2);
+    const m1 = activateChip(chips2[1], tbl2, makeChipState());
+    expect(m1).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Book of Homet — Plane Gate', trait: 'Knowledge' }),
+      })
+    );
+  });
+});
+
+describe('Codex Tier 1 — Book of Exota', () => {
+  it('Repudiate is once per rest and queues a reaction-roll actionLoop', () => {
+    const tbl = freeActionTable('e1', 'Book of Exota');
+    const chips = collectChips([{ ...BookOfExota, _ownerInstanceId: 'e1' }], 'card', tbl);
+    expect(chips.map((c) => c.name)).toEqual(['Repudiate', 'Create Construct']);
+    const rep = chips.find((c) => c.name === 'Repudiate');
+    expect(rep?.frequency).toBe('rest');
+    const m = activateChip(rep, tbl, makeChipState());
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Book of Exota — Repudiate', trait: 'Knowledge' }),
+      })
+    );
+  });
+
+  it('Create Construct spends 1 Hope and queues Spellcast actionLoop', () => {
+    const tbl = freeActionTable('e2', 'Book of Exota');
+    const chips = collectChips([{ ...BookOfExota, _ownerInstanceId: 'e2' }], 'card', tbl);
+    const construct = chips.find((c) => c.name === 'Create Construct');
+    expect(construct?.hopeCost).toBe(1);
+    const fromUse = activateChip(construct, tbl, makeChipState());
+    deductChipCosts(construct, tbl);
+    const fromCost = applyMutations(tbl);
+    const mutations = [...fromUse, ...fromCost];
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'spendHope',
+        payload: expect.objectContaining({ instanceId: 'e2', amount: 1 }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Book of Exota — Create Construct', trait: 'Knowledge' }),
+      })
+    );
+  });
+});
+
+describe('Codex Tier 1 — Book of Grynn', () => {
+  it('Time Lock and Wall of Flame queue Spellcast actionLoops', () => {
+    const tbl = freeActionTable('g1', 'Book of Grynn');
+    const chips = collectChips([{ ...BookOfGrynn, _ownerInstanceId: 'g1' }], 'card', tbl);
+    expect(chips.map((c) => c.name)).toEqual(['Time Lock', 'Wall of Flame']);
+    const m0 = activateChip(chips[0], tbl, makeChipState());
+    expect(m0).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Book of Grynn — Time Lock', trait: 'Knowledge' }),
+      })
+    );
+    const tbl2 = freeActionTable('g2', 'Book of Grynn');
+    const chips2 = collectChips([{ ...BookOfGrynn, _ownerInstanceId: 'g2' }], 'card', tbl2);
+    const m1 = activateChip(chips2[1], tbl2, makeChipState());
+    expect(m1).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({ title: 'Book of Grynn — Wall of Flame', trait: 'Knowledge' }),
+      })
+    );
+  });
+
+  it('Arcane Deflection reviewAction chip when you take damage (Very Close context)', () => {
+    const self = mockCharacter({ instanceId: 'g1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 4, tokenY: 0 });
+    const { chips } = runReviewAction(
+      { ...BookOfGrynn, _ownerInstanceId: 'g1' },
+      {
+        activeElements: [self, adv],
+        _ownerInstanceId: 'g1',
+        _featureKey: 'Book of Grynn',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['g1'],
+          effects: [
+            { type: 'damage', target: { instanceId: 'g1' }, amount: 4, damageType: 'physical' },
+          ],
+        },
+      }
+    );
+    const def = chips.find((c) => c.name === 'Arcane Deflection');
+    expect(def?.hopeCost).toBe(1);
+    expect(def?.frequency).toBe('longRest');
+    expect(def).toBeDefined();
+  });
+
+  it('Arcane Deflection reviewAction chip when an ally within Very Close is damaged', () => {
+    const owner = mockCharacter({ instanceId: 'g1', tokenX: 0, tokenY: 0 });
+    const ally = mockCharacter({ instanceId: 'g2', name: 'Ally', tokenX: 8, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 12, tokenY: 0 });
+    const { chips } = runReviewAction(
+      { ...BookOfGrynn, _ownerInstanceId: 'g1' },
+      {
+        activeElements: [owner, ally, adv],
+        _ownerInstanceId: 'g1',
+        _featureKey: 'Book of Grynn',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['g2'],
+          effects: [
+            { type: 'damage', target: { instanceId: 'g2' }, amount: 3, damageType: 'physical' },
+          ],
+        },
+      }
+    );
+    expect(chips.some((c) => c.name === 'Arcane Deflection')).toBe(true);
+  });
+
+  it('Arcane Deflection onUse clears pending damage and queues narration', () => {
+    const char = mockCharacter({ instanceId: 'g1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 4, tokenY: 0 });
+    const effects = [
+      { type: 'damage', target: { instanceId: 'g1' }, amount: 4, damageType: 'physical' },
+    ];
+    const gs = mockGameState({
+      activeElements: [char, adv],
+      _ownerInstanceId: 'g1',
+      _featureKey: 'Book of Grynn',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'adv-1',
+        targetInstanceIds: ['g1'],
+        effects,
+      },
+      rolls: mockRoll(),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...BookOfGrynn, _ownerInstanceId: 'g1' }], 'reviewAction', tbl);
+    const def = chips.find((c) => c.name === 'Arcane Deflection');
+    expect(def).toBeDefined();
+    const m = [...activateChip(def, tbl, makeChipState()), ...applyMutations(tbl)];
+    expect(effects[0].amount).toBe(0);
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'addNarration',
+        payload: expect.objectContaining({ text: expect.stringContaining('Arcane Deflection') }),
+      })
+    );
+  });
+});
+
 describe('Codex Tier 1 — Book of Vagras', () => {
   it('Runic Lock chip declares once per rest', () => {
     const tbl = freeActionTable('v1', 'Book of Vagras');
@@ -200,5 +374,38 @@ describe('Codex Tier 1 — Book of Vagras', () => {
     const chips = collectChips([{ ...BookOfVagras, _ownerInstanceId: 'v2' }], 'card', tbl);
     const door = chips.find((c) => c.name === 'Arcane Door');
     expect(door?.hopeCost).toBeUndefined();
+  });
+});
+
+describe('Codex — Book of Ronin (Level 9 grimoire)', () => {
+  it('Transform queues Spellcast (15); Eternal Enervation is once per long rest', () => {
+    const tbl = freeActionTable('r1', 'Book of Ronin');
+    const chips = collectChips([{ ...BookOfRonin, _ownerInstanceId: 'r1' }], 'card', tbl);
+    expect(chips.map((c) => c.name)).toEqual(['Transform', 'Eternal Enervation']);
+    expect(chips[0]?.frequency).toBeUndefined();
+    expect(chips[1]?.frequency).toBe('longRest');
+    const m0 = activateChip(chips[0], tbl, makeChipState());
+    expect(m0).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Book of Ronin — Transform',
+          trait: 'Knowledge',
+          difficulty: 15,
+        }),
+      })
+    );
+    const tbl2 = freeActionTable('r2', 'Book of Ronin');
+    const chips2 = collectChips([{ ...BookOfRonin, _ownerInstanceId: 'r2' }], 'card', tbl2);
+    const m1 = activateChip(chips2[1], tbl2, makeChipState());
+    expect(m1).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Book of Ronin — Eternal Enervation',
+          trait: 'Knowledge',
+        }),
+      })
+    );
   });
 });

@@ -8,6 +8,7 @@ import { ConjureSwarm } from '../../../../src/features-v2/abilities/Sage/Conjure
 import { NaturalFamiliar } from '../../../../src/features-v2/abilities/Sage/NaturalFamiliar.js';
 import { CorrosiveProjectile } from '../../../../src/features-v2/abilities/Sage/CorrosiveProjectile.js';
 import { ToweringStalk } from '../../../../src/features-v2/abilities/Sage/ToweringStalk.js';
+import { WildFortress } from '../../../../src/features-v2/abilities/Sage/WildFortress.js';
 import {
   mockCharacter,
   mockAdversary,
@@ -582,6 +583,24 @@ describe('Sage Tier 1 — Towering Stalk', () => {
       expect.objectContaining({
         type: 'actionLoop',
         payload: expect.objectContaining({ title: 'Towering Stalk — Erupting attack', trait: 'Presence' }),
+      })
+    );
+  });
+});
+
+describe('Sage Tier 1 — Wild Fortress', () => {
+  it('card queues Spellcast (13) actionLoop with trait', () => {
+    const tbl = freeActionTable('wf1', 'Wild Fortress');
+    const chips = collectChips([{ ...WildFortress, _ownerInstanceId: 'wf1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState());
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Wild Fortress',
+          trait: 'Presence',
+          difficulty: 13,
+        }),
       })
     );
   });

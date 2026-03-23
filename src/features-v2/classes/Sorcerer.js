@@ -96,7 +96,8 @@ export const ChannelRawPower = {
     }
     return out;
   },
-  isDisabled: (table) => (table.me?.domainLoadout?.length ?? 0) === 0,
+  isDisabled: (table) =>
+    (table.me?.domainLoadout?.length ?? 0) === 0 ? 'No domain cards in loadout to channel.' : false,
   onUse(table, chip) {
     const parsed = parseChannelRawPowerSelection(chip.get('selectedId'));
     if (!parsed) return;

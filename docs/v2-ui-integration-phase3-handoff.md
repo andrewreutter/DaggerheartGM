@@ -1,6 +1,6 @@
 # V2 UI integration — Phase 3 handoff
 
-Phase 2 is implemented: **`src/client/lib/v2-action-loop-bridge.js`** builds `gameState`, hydrates `rolls` from banner payloads, runs **`createActionLoop`** → **`reviewAction`**, and **`collectV2ReviewActionChips`** feeds the **V2 review** strip on **`ResultBanner`** (when the V1/V2 declarative sheet toggle is on — same flag as Phase 1). GM clicks run **`activateV2ReviewChip`** + **`applyV2BannerMutations`** (`src/client/lib/table-ops.js`) and batch **`update-elements`** table ops. **`force: true`** on `collectV2ReviewActionChips` is for unit tests only.
+Phase 2 is implemented: **`src/client/lib/v2-action-loop-bridge.js`** builds `gameState`, hydrates `rolls` from banner payloads, runs **`createActionLoop`** → **`reviewAction`**, and **`collectV2ReviewActionChips`** feeds the **V2 review** strip on **`ResultBanner`**. GM clicks run **`activateV2ReviewChip`** + **`applyV2BannerMutations`** (`src/client/lib/table-ops.js`) and batch **`update-elements`** table ops.
 
 **Dedupe:** `V2_REVIEW_ACTION_PHASE1_DEDUPE` hides **Hold Them Off** and **Ranger's Focus** chips here because Phase 1 banner UI already covers them.
 

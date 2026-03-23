@@ -3,16 +3,76 @@ import { useState, useEffect, useCallback } from 'react';
 const VALID_TABS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
 const VALID_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
 
+/** Default tab when URL is `/library` or `/library/` without a segment (and invalid tab names). */
+export const DEFAULT_LIBRARY_TAB = 'characters';
+
+/**
+ * If pathname is a legacy `/gm-table/...` URL, returns the canonical `/table/...` path.
+ * When `userUid` is required (bare `/gm-table` or `/gm-table/:collection/:id` without owner in path),
+ * pass the signed-in user's Firebase uid; otherwise returns null and the caller should retry after auth.
+ */
+export function legacyGmTableToCanonical(pathname, userUid = null) {
+  const parts = pathname.replace(/^\//, '').split('/').filter(Boolean);
+  if (parts[0] !== 'gm-table') return null;
+
+  if (parts.length === 1) {
+    if (!userUid) return null;
+    return `/table/${userUid}`;
+  }
+
+  if (VALID_COLLECTIONS.has(parts[1])) {
+    if (!userUid) return null;
+    const col = parts[1];
+    const id = parts[2] || '';
+    return id ? `/table/${userUid}/${col}/${id}` : null;
+  }
+
+  const gmUid = parts[1] || null;
+  let tableId = gmUid;
+  let collectionOffset = 2;
+  if (parts[2] && !VALID_COLLECTIONS.has(parts[2])) {
+    tableId = parts[2];
+    collectionOffset = 3;
+  }
+  const modalCollection = VALID_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
+  const modalItemId = modalCollection && parts[collectionOffset + 1] ? parts[collectionOffset + 1] : null;
+  let out = `/table/${tableId}`;
+  if (modalCollection && modalItemId) out += `/${modalCollection}/${modalItemId}`;
+  return out;
+}
+
+function parseGmTableParts(parts) {
+  if (VALID_COLLECTIONS.has(parts[1])) {
+    return {
+      tableId: null,
+      modalCollection: parts[1],
+      modalItemId: parts[2] || null,
+    };
+  }
+  const gmUid = parts[1] || null;
+  let tableId = gmUid;
+  let collectionOffset = 2;
+  if (parts[2] && !VALID_COLLECTIONS.has(parts[2])) {
+    tableId = parts[2];
+    collectionOffset = 3;
+  }
+  const modalCollection = VALID_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
+  const modalItemId = modalCollection && parts[collectionOffset + 1] ? parts[collectionOffset + 1] : null;
+  return { tableId, modalCollection, modalItemId };
+}
+
 /**
  * Parses a pathname into a structured route descriptor.
  *
  * Supported patterns:
  *   /                              -> { view: 'home' }
+ *   /library                        -> { view: 'library', tab: DEFAULT_LIBRARY_TAB, itemId: null }
  *   /library/:tab                  -> { view: 'library', tab, itemId: null }
  *   /library/:tab/new              -> { view: 'library', tab, itemId: 'new' }
  *   /library/:tab/:id              -> { view: 'library', tab, itemId }
- *   /gm-table                      -> { view: 'gm-table', modalCollection, modalItemId }
- *   /gm-table/:collection/:id      -> { view: 'gm-table', modalCollection, modalItemId }
+ *   /table/:tableId                -> { view: 'table', tableId }
+ *   /table/:tableId/:collection/:id -> table + modal deep-link
+ *   /gm-table/...                  -> legacy (prefer legacyGmTableToCanonical + redirect)
  *
  * Note: /library/:tab/:id/edit is no longer a route — item editing is now
  * handled entirely within the ItemDetailModal overlay.
@@ -24,33 +84,35 @@ export function parseRoute(pathname) {
     return { view: 'home', tab: null, itemId: null };
   }
 
+  if (parts[0] === 'table') {
+    const tableId = parts[1] || null;
+    const modalCollection = VALID_COLLECTIONS.has(parts[2]) ? parts[2] : null;
+    const modalItemId = modalCollection && parts[3] ? parts[3] : null;
+    return { view: 'table', tableId, tab: null, modalCollection, modalItemId };
+  }
+
   if (parts[0] === 'gm-table') {
-    // Legacy: /gm-table/:collection/:id — collection names never look like Firebase UIDs
-    if (VALID_COLLECTIONS.has(parts[1])) {
-      return { view: 'gm-table', gmUid: null, tableId: null, tab: null, modalCollection: parts[1], modalItemId: parts[2] || null };
-    }
-    // /gm-table/:gmUid → tableId = gmUid (primary table); /gm-table/:gmUid/:tableId → secondary table
-    // If parts[2] is not a collection name, it's a tableId (uuid); modal is then at parts[3]/parts[4]
-    const gmUid = parts[1] || null;
-    let tableId = gmUid;
-    let collectionOffset = 2;
-    if (parts[2] && !VALID_COLLECTIONS.has(parts[2])) {
-      tableId = parts[2];
-      collectionOffset = 3;
-    }
-    const modalCollection = VALID_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
-    const modalItemId = modalCollection && parts[collectionOffset + 1] ? parts[collectionOffset + 1] : null;
-    return { view: 'gm-table', gmUid, tableId, tab: null, modalCollection, modalItemId };
+    const { tableId, modalCollection, modalItemId } = parseGmTableParts(parts);
+    return { view: 'table', tableId, tab: null, modalCollection, modalItemId };
   }
 
   if (parts[0] === 'library') {
-    const tab = VALID_TABS.has(parts[1]) ? parts[1] : 'adversaries';
-    // Accept /library/:tab/:id or /library/:tab/:id/edit (redirect edit → modal)
+    const tab = VALID_TABS.has(parts[1]) ? parts[1] : DEFAULT_LIBRARY_TAB;
     const itemId = parts[2] || null;
     return { view: 'library', tab, itemId };
   }
 
   return { view: 'home', tab: null, itemId: null };
+}
+
+function getInitialPathname() {
+  const p = window.location.pathname;
+  const canon = legacyGmTableToCanonical(p, null);
+  if (canon && canon !== p) {
+    window.history.replaceState(null, '', canon);
+    return canon;
+  }
+  return p;
 }
 
 /**
@@ -60,13 +122,30 @@ export function parseRoute(pathname) {
  *   navigate(to, opts) — pushes or replaces a history entry and updates route
  */
 export function useRouter() {
-  const [path, setPath] = useState(() => window.location.pathname);
+  const [path, setPath] = useState(() => getInitialPathname());
 
   useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname);
+    const onPopState = () => {
+      const next = window.location.pathname;
+      const canon = legacyGmTableToCanonical(next, null);
+      if (canon && canon !== next) {
+        window.history.replaceState(null, '', canon);
+        setPath(canon);
+      } else {
+        setPath(next);
+      }
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  useEffect(() => {
+    const canon = legacyGmTableToCanonical(path, null);
+    if (canon && canon !== path) {
+      window.history.replaceState(null, '', canon);
+      setPath(canon);
+    }
+  }, [path]);
 
   const navigate = useCallback((to, { replace = false } = {}) => {
     if (replace) {

@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, isActing, isSeverePendingHpLossEffect } from '../engine/when.js';
 
 export const Deadly = {
   name: "Deadly",
@@ -7,7 +7,7 @@ export const Deadly = {
     onReviewOutcome: when(isActing, (table) => table.action?.type === 'attack', (table) => {
       const targetId = table.action?.target?.instanceId;
       for (const e of table.action?.effects || []) {
-        if (e.stat === 'currentHP' && e.amount >= 3 && e.target?.instanceId === targetId) {
+        if (e.stat === 'currentHP' && e.target?.instanceId === targetId && isSeverePendingHpLossEffect(e)) {
           e.amount += 1;
         }
       }

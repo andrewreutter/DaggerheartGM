@@ -2,7 +2,7 @@
  * School of War subclass (Wizard) — SRD: daggerheart-srd/subclasses/School of War.md
  */
 
-import { when, isActing } from '../engine/when.js';
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 
 const SOURCE_SCOPE = 'SchoolOfWar';
 
@@ -90,9 +90,7 @@ export const ThriveInChaos = {
     'When you succeed on an attack, you can **mark a Stress** after rolling damage to force the target to mark an additional Hit Point.',
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => (table.rolls?.damage?.dice?.length ?? 0) > 0,
       {
         name: 'Thrive in Chaos',

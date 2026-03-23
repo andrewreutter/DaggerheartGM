@@ -41,7 +41,10 @@ export const MidnightSpirit = {
       name: 'Midnight Spirit — Strike',
       description:
         'Send your spirit to attack: Spellcast vs a target within Very Far; on success, spirit enters Melee and you roll Spellcast d6s in magic damage; spirit dissipates.',
-      isDisabled: (table) => table.feature.get('midnightSpiritActive') !== true,
+      isDisabled: (table) =>
+        table.feature.get('midnightSpiritActive') !== true
+          ? 'Midnight Spirit is not active (use the card action first).'
+          : false,
       onUse(table) {
         const trait = spellcastTraitLabel(table);
         const n = spellcastDiceCount(table);

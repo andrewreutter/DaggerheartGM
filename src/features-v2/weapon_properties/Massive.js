@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 import { findWeaponDamageDieForPool } from '../engine/weapon-damage-die.js';
 
 export const Massive = {
@@ -10,9 +10,7 @@ export const Massive = {
   },
   hooks: {
     onReviewAction: when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => {
         const damageDice = table.rolls?.damage?.dice ?? [];
         const targetId = table.action?.target?.instanceId;

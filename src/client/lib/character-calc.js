@@ -6,21 +6,65 @@
 import { BEASTFORM_ITEMS } from '../../features-v2/beastforms/srd-data.js';
 import { weapon_properties as v2WeaponProperties, armor_properties as v2ArmorProperties } from '../../features-v2/registry.js';
 import v2Abilities from '../../features-v2/abilities/index.js';
-import { unwrap, unwrapAll } from '../../features-v2/engine/when.js';
+import { isWhen, unwrap, unwrapAll } from '../../features-v2/engine/when.js';
 import { buildTableSnapshot } from '../../features-v2/engine/table.js';
 import { v2OriginFeatureDescriptorsByName } from './v2-origin-feature-descriptors.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from './v2-class-subclass-feature-descriptors.js';
 import { EXPERIENCE_BONUS_BY_FEATURE_NAME } from './ancestry-experience-bonus.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
+import { enrichHoverActionMeta } from '../../features-v2/engine/hover-action-enrich.js';
 
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 
 const DRUID_CLASS_ID = 'srd-cls-druid';
+
+/**
+ * Active beastform id for sheet display — legacy `activeBeastform` or V2 `featureState` (scoped / Beastform / Evolution).
+ * Matches engine `table.me.inBeastform` sources so `beastformFeatures` stays in sync when legacy mirror is absent.
+ */
+function getActiveBeastformIdFromCharacterData(data) {
+  const ab = data?.activeBeastform;
+  if (ab && typeof ab === 'object') {
+    const id = ab.id || ab.beastformId;
+    if (id) return { id, legacyAb: ab };
+  }
+  const fs = data?.featureState;
+  if (!fs || typeof fs !== 'object') return { id: null, legacyAb: null };
+  const id =
+    fs[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
+    fs.Beastform?.activeBeastform?.beastformId ||
+    fs.Evolution?.activeBeastform?.beastformId ||
+    null;
+  return { id, legacyAb: null };
+}
 
 function resolveBeastformRowById(id, srdData) {
   if (!id) return null;
   const fromApi = srdData?.beastformsById?.[id];
   if (fromApi) return fromApi;
   return BEASTFORM_ITEMS.find((r) => r.id === id) || null;
+}
+
+/**
+ * SRD `trait_bonus` / `evasion_bonus` strings for the character's active beastform.
+ * Table/runtime `activeBeastform` often stores only `{ id, name }` or lives in `featureState` only —
+ * use this to enrich display (CharacterTraitGrid / DefenseRow) and helpers.
+ *
+ * @returns {{ id: string, name: string, trait_bonus?: string, evasion_bonus?: string, attack?: string, advantages?: string } | null}
+ */
+export function getResolvedActiveBeastformBonuses(data, srdData) {
+  const { id, legacyAb } = getActiveBeastformIdFromCharacterData(data);
+  if (!id) return null;
+  const row = resolveBeastformRowById(id, srdData);
+  if (!row) return null;
+  return {
+    id,
+    name: row.name || legacyAb?.name || 'Beastform',
+    trait_bonus: row.trait_bonus,
+    evasion_bonus: row.evasion_bonus,
+    attack: row.attack,
+    advantages: row.advantages,
+  };
 }
 
 /**
@@ -32,12 +76,13 @@ function assignBeastformDisplayFeatures(result, data, srdData) {
   result.beastformFeatures = [];
   const isDruid = data.classId === DRUID_CLASS_ID || result.class === 'Druid';
   if (!isDruid) return;
-  const ab = data.activeBeastform;
-  if (!ab || typeof ab !== 'object') return;
-  const id = ab.id || ab.beastformId;
+  const { id, legacyAb } = getActiveBeastformIdFromCharacterData(data);
+  if (!id) {
+    return;
+  }
   const row = resolveBeastformRowById(id, srdData);
   if (!row?.features?.length) return;
-  const formName = row.name || ab.name || 'Beastform';
+  const formName = row.name || legacyAb?.name || 'Beastform';
   result.beastformFeatures = row.features.map((f) => ({
     name: f.name,
     description: f.description || '',
@@ -45,6 +90,30 @@ function assignBeastformDisplayFeatures(result, data, srdData) {
     sourceType: 'beastform',
     id: f.id,
   }));
+}
+
+/** Same shape as `parseBeastformBonus` in helpers — kept local to avoid importing helpers (helpers imports this module). */
+function parseBeastformStatLine(str) {
+  if (!str) return null;
+  const m = str.trim().match(/^(\w+)\s*([+-]\d+)$/i);
+  if (!m) return null;
+  return { stat: m[1].toLowerCase(), bonus: parseInt(m[2], 10) };
+}
+
+/**
+ * Add active beastform `evasion_bonus` (SRD row) into `result.evasion` so sheet total matches tooltips / combat.
+ * Sets `evasionIncludesActiveBeastformBonus` so {@link effectiveEvasion} does not double-count.
+ */
+function applyActiveBeastformEvasionBonus(result, data, srdData) {
+  const isDruid = data.classId === DRUID_CLASS_ID || result.class === 'Druid';
+  if (!isDruid) return;
+  const merged = { ...data, ...result, featureState: data.featureState ?? result.featureState };
+  const bf = getResolvedActiveBeastformBonuses(merged, srdData);
+  if (!bf?.evasion_bonus) return;
+  const parsed = parseBeastformStatLine(bf.evasion_bonus);
+  if (parsed?.stat !== 'evasion' || !parsed.bonus) return;
+  result.evasion = (result.evasion ?? 0) + parsed.bonus;
+  result.evasionIncludesActiveBeastformBonus = true;
 }
 
 export function tierFromLevel(level) {
@@ -186,7 +255,8 @@ export function parseArmorThresholds(thresholdStr) {
  * @param {object} raw — library / table element (runtime keys, featureState, …)
  */
 export function buildV2SheetUnwrapGameState(computed = {}, raw = {}) {
-  const instanceId = computed.instanceId || raw.instanceId || '__sheet__';
+  const instanceId =
+    computed.instanceId || raw.instanceId || computed.id || raw.id || '__sheet__';
   const traits = computed.traits || {};
   const el = {
     ...computed,
@@ -450,6 +520,9 @@ export function runCharacterRender(charData, activeFeatures, weaponIdStart = 0) 
     // Declarative virtualWeapon / virtualWeapons
     const toAdd = feature.virtualWeapon ? [feature.virtualWeapon] : (feature.virtualWeapons || []);
     for (const weapon of toAdd) {
+      // V2 `virtualWeapon: when(...)` is resolved in `applyDeclarativeFeatures` and merged in
+      // `mergeV2DeclarativeSheetOverlay` — do not spread the when-wrapper here (yields a broken stub).
+      if (isWhen(weapon)) continue;
       const id = `wep_${nextVirtualWeaponId++}`;
       virtualWeapons.push({
         ...weapon,
@@ -591,7 +664,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
     });
   }
 
-  return active;
+  return active.map((row) => enrichHoverActionMeta(row));
 }
 
 /**
@@ -640,7 +713,10 @@ export function recomputeCharacter(data, srdData) {
   const srdSubclass = srdData.subclassesById?.[data.subclassId] || null;
   if (srdSubclass) {
     result.subclass = srdSubclass.name;
-    result.spellcastTrait = srdSubclass.spellcast_trait || null;
+    // SRD `spellcast_trait` may be title case; `traits` keys are always lowercase (TRAIT_KEYS).
+    const st = srdSubclass.spellcast_trait;
+    result.spellcastTrait =
+      st != null && String(st).trim() !== '' ? String(st).trim().toLowerCase() : null;
     const tier = result.tier;
     const subFeatures = [];
     if (srdSubclass.foundation_features) {
@@ -812,6 +888,7 @@ export function recomputeCharacter(data, srdData) {
     }));
   }
 
+  applyActiveBeastformEvasionBonus(result, data, srdData);
   assignBeastformDisplayFeatures(result, data, srdData);
 
   result.activeFeatures = buildActiveFeatures(result, srdClass, srdSubclass, srdArmor);

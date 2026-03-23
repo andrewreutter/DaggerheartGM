@@ -25,7 +25,21 @@ function boostedAttackDesc(desc, damageBoost) {
   );
 }
 
-export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, fillColor, label, valueOffset = 0, verbs, currentAbsoluteValue, targetToAbsolute, pulseOnDecreaseOnly = false }) {
+export function CheckboxTrack({
+  total,
+  filled,
+  pendingFilled = 0,
+  /** Filled boxes (from the high end of the filled run) shown dashed until GM ack — e.g. manual stress clear, HP heal. */
+  pendingClearFilled = 0,
+  onSetFilled,
+  fillColor,
+  label,
+  valueOffset = 0,
+  verbs,
+  currentAbsoluteValue,
+  targetToAbsolute,
+  pulseOnDecreaseOnly = false,
+}) {
   const [pulsing, setPulsing] = useState(false);
   const prevFilledRef = useRef(null);
   const timerRef = useRef(null);
@@ -49,10 +63,12 @@ export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, f
 
   const pendingStart = filled;
   const pendingEnd = Math.min(filled + pendingFilled, total);
+  const pc = Math.min(Math.max(0, pendingClearFilled), filled);
   const items = [];
   for (let i = 0; i < total; i++) {
     const isChecked = i < filled;
-    const isPending = i >= pendingStart && i < pendingEnd;
+    const isPendingClear = pc > 0 && i >= filled - pc && i < filled;
+    const isPending = !isPendingClear && i >= pendingStart && i < pendingEnd;
     const targetValue = isChecked ? i : i + 1;
     const delta = (currentAbsoluteValue != null && typeof targetToAbsolute === 'function')
       ? Math.abs(targetToAbsolute(targetValue) - currentAbsoluteValue)
@@ -68,19 +84,25 @@ export function CheckboxTrack({ total, filled, pendingFilled = 0, onSetFilled, f
         title = `${label} → ${targetValue + valueOffset}`;
       }
     }
-    if (isPending) title = title ? `${title} (pending GM ack)` : 'Pending GM ack';
-    const El = onSetFilled && !isPending ? 'button' : 'div';
-    const style = isChecked
-      ? `${fillColor} border-transparent`
-      : isPending
-        ? `${fillColor} border-amber-400/60 border-dashed opacity-60`
-        : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700';
+    if (isPendingClear) title = title ? `${title} (pending GM ack)` : 'Pending GM ack';
+    else if (isPending) title = title ? `${title} (pending GM ack)` : 'Pending GM ack';
+    // Keep pending slots interactive: when every empty box is "pending" (e.g. stress cost
+    // equals remaining capacity), the user could not adjust the track at all otherwise.
+    const El = onSetFilled ? 'button' : 'div';
+    const style = isPendingClear && isChecked
+      ? `${fillColor} border-emerald-400/70 border-dashed opacity-75`
+      : isChecked
+        ? `${fillColor} border-transparent`
+        : isPending
+          ? `${fillColor} border-amber-400/60 border-dashed opacity-60`
+          : onSetFilled ? 'border-slate-600 hover:border-slate-400' : 'border-slate-700';
     items.push(
       <El
         key={i}
-        onClick={onSetFilled && !isPending ? () => onSetFilled(targetValue) : undefined}
-        title={onSetFilled || isPending ? title : undefined}
-        className={`checkbox-track-item w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${style}`}
+        type={El === 'button' ? 'button' : undefined}
+        onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
+        title={onSetFilled || isPending || isPendingClear ? title : undefined}
+        className={`checkbox-track-item w-4 h-4 rounded-sm border-2 flex-shrink-0 transition-colors ${onSetFilled ? 'cursor-pointer' : ''} ${style}`}
       />
     );
   }

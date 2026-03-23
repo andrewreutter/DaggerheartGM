@@ -1,89 +1,95 @@
 import { describe, it, expect } from 'vitest';
-import { collectV2CrossSheetChips, runV2TokenMoveHooks } from '../../src/client/lib/v2-cross-sheet-lifecycle.js';
-import { applyV2LifecycleMutations, applyTableOp } from '../../src/client/lib/table-ops.js';
-import { buildV2RegistryWithSrdItems } from '../../src/client/lib/v2-declarative-sheet.js';
+import {
+  ownedCardChipActionLoopDescription,
+  activateV2OwnedCardChip,
+} from '../../src/client/lib/v2-cross-sheet-lifecycle.js';
+import v2registry from '../../src/features-v2/registry.js';
+import { Wings } from '../../src/features-v2/ancestries/Faerie.js';
 import { mockCharacter } from './features-v2/helpers.js';
 
-describe('v2-cross-sheet-lifecycle', () => {
-  const minimalSrd = {
-    classes: [],
-    subclasses: [],
-    ancestries: [],
-    communities: [],
-    weapons: [],
-    armor: [],
-    abilities: [],
-    domains: [],
-    beastforms: [],
-  };
+const registryWithTestFaerie = {
+  ...v2registry,
+  ancestries: {
+    ...v2registry.ancestries,
+    'srd-anc-test-faerie': {
+      name: 'Faerie',
+      features: [Wings],
+    },
+  },
+};
 
-  it('collectV2CrossSheetChips returns Spend Rally Die — Clear Stress when partyDice and modifier are set', () => {
-    const bard = mockCharacter({
-      instanceId: 'b1',
-      classId: 'srd-cls-bard',
-      level: 1,
-    });
-    const ally = mockCharacter({
-      instanceId: 'a1',
-      level: 1,
-      activeModifiers: [{ id: 'rally-die-a1', name: 'Rally Die', dice: 'd6', type: 'rally', refreshOn: 'session' }],
-    });
-    const els = [bard, ally];
-    const registry = buildV2RegistryWithSrdItems(minimalSrd);
-    const merged = {
-      Rally: {
-        partyDice: { a1: { dice: 'd6' } },
-      },
-    };
-    const chipsWithState = collectV2CrossSheetChips('a1', els, registry, 'card', {
-      tableFeatureState: merged,
-      fearCount: 0,
-      mapConfig: null,
-    });
-    expect(chipsWithState.some((c) => c.name === 'Spend Rally Die — Clear Stress')).toBe(true);
+describe('ownedCardChipActionLoopDescription', () => {
+  it('returns full registry description when present (card-chip action banner body)', () => {
+    const full =
+      'Any time you would be Hidden, you are instead Cloaked. In addition to the benefits of the Hidden condition, while Cloaked you remain unseen if you are stationary when an adversary moves to where they would normally see you. After you make an attack or end a move within line of sight of an adversary, you are no longer Cloaked.';
+    expect(
+      ownedCardChipActionLoopDescription({ name: 'Vodalus' }, 'Cloaked', {
+        name: 'Cloaked',
+        description: full,
+      }),
+    ).toBe(full);
   });
 
-  it('runV2TokenMoveHooks returns mutations and narrations arrays', () => {
-    const c = mockCharacter({ instanceId: 'r1', tokenX: 1, tokenY: 0 });
-    const registry = buildV2RegistryWithSrdItems(minimalSrd);
-    const out = runV2TokenMoveHooks(
-      {
-        moverInstanceId: 'r1',
-        previousTokenFt: { tokenX: 0, tokenY: 0 },
-        postMoveActiveElements: [c],
-        tableFeatureState: {},
-        fearCount: 0,
-        mapConfig: null,
-      },
-      registry
+  it('falls back to "Name used Chip" when no description on feature', () => {
+    expect(ownedCardChipActionLoopDescription({ name: 'A' }, 'Thing', { name: 'Thing' })).toBe(
+      'A used Thing.',
     );
-    expect(Array.isArray(out.mutations)).toBe(true);
-    expect(Array.isArray(out.narrations)).toBe(true);
   });
 });
 
-describe('applyV2LifecycleMutations', () => {
-  it('merges removeCondition with banner mutations', () => {
-    const c1 = mockCharacter({ instanceId: 'c1', conditions: ['Cloaked'] });
-    const c2 = mockCharacter({ instanceId: 'c2' });
-    const els = [c1, c2];
-    const mutations = [
-      { type: 'removeCondition', payload: { instanceId: 'c1', condition: 'Cloaked' } },
-      {
-        type: 'setFeatureState',
-        payload: { featureKey: 'Rally', key: 'partyDice', value: { x: 1 } },
-      },
-    ];
-    const { updates } = applyV2LifecycleMutations(els, mutations, 'c2');
-    const u1 = updates.find((u) => u.instanceId === 'c1');
-    expect(u1?.updates?.conditions).toEqual([]);
-  });
-});
+describe('activateV2OwnedCardChip', () => {
+  it('sets actionLoop title to Feature (On) or (Off) for toggle card chips', () => {
+    const charOff = mockCharacter({ instanceId: 'c1', ancestryIds: ['srd-anc-test-faerie'] });
+    const rOff = activateV2OwnedCardChip(
+      charOff,
+      'Wings',
+      { name: 'Wings' },
+      [charOff],
+      registryWithTestFaerie,
+      {},
+    );
+    const synOff = rOff.mutations?.filter((m) => m.type === 'actionLoop').pop();
+    expect(synOff?.payload?.title).toBe('Wings (On)');
 
-describe('applyTableOp set-table-feature-state', () => {
-  it('persists table_state.featureState', () => {
-    const state = { activeElements: [], featureState: { Rally: { a: 1 } } };
-    const ch = applyTableOp({ op: 'set-table-feature-state', featureState: { Rally: { partyDice: {} } } }, state);
-    expect(ch.featureState).toEqual({ Rally: { partyDice: {} } });
+    const charOn = mockCharacter({
+      instanceId: 'c2',
+      ancestryIds: ['srd-anc-test-faerie'],
+      featureState: { Wings: { '_v2t:Wings::Wings::card': true } },
+    });
+    const rOn = activateV2OwnedCardChip(
+      charOn,
+      'Wings',
+      { name: 'Wings' },
+      [charOn],
+      registryWithTestFaerie,
+      {},
+    );
+    const synOn = rOn.mutations?.filter((m) => m.type === 'actionLoop').pop();
+    expect(synOn?.payload?.title).toBe('Wings (Off)');
+  });
+
+  it('Wings of Light — Pick up and carry does not duplicate actionLoop (onUse already narrates)', () => {
+    const char = mockCharacter({
+      instanceId: 'ws-pickup',
+      name: 'SHAMUJ',
+      classId: 'srd-cls-seraph',
+      subclassId: 'srd-sub-winged-sentinel',
+      featureState: { WingedSentinel: { '_v2t:Wings of Light::Flying::card': true } },
+      currentStress: 0,
+      maxStress: 6,
+    });
+    const r = activateV2OwnedCardChip(
+      char,
+      'Wings of Light',
+      { name: 'Pick up and carry' },
+      [char],
+      v2registry,
+      {},
+    );
+    const loops = r.mutations?.filter((m) => m.type === 'actionLoop') ?? [];
+    expect(loops).toHaveLength(1);
+    const desc = loops[0]?.payload?.description ?? '';
+    expect(desc).toContain('Pick up and carry a willing creature');
+    expect(desc).not.toContain('While flying, you can do the following');
   });
 });

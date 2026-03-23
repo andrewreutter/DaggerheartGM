@@ -14,6 +14,11 @@ export {
   when,
   isActing,
   isTargeted,
+  againstYou,
+  anAttackSucceeds,
+  youSucceedOnAnAttack,
+  againstATargetInMeleeRange,
+  againstATargetWithinMeleeRange,
   armorUseCommitted,
   isWhen,
   unwrap,
@@ -23,6 +28,7 @@ export {
   collectChips,
   activateChip,
   resolveChipDisabled,
+  evaluateIsDisabled,
   deductChipCosts,
   trackChipFrequency,
   resetChipFrequency,
@@ -35,6 +41,7 @@ export {
   mergeDeclarativeFeatureState,
   attachBeastformOptions,
   parseBeastformStatBonus,
+  advantageTriggersFromBeastformRow,
   parseBeastformAttackLine,
 } from './engine/index.js';
 

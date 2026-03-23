@@ -2,7 +2,7 @@
  * SRD: Mythic Aerial Hunter — daggerheart-srd/beastforms/Mythic Aerial Hunter.md
  */
 
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const Carrier = {
   name: 'Carrier',
@@ -30,11 +30,9 @@ export const DeadlyRaptor = {
   name: 'Deadly Raptor',
   description:
     'You can fly at will and move up to Far range as part of your action. When you move in a straight line into Melee range of a target from at least Close range and make an attack against that target in the same action, you can reroll all damage dice that rolled a result lower than your Proficiency.',
-  movementModes: ['fly'],
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
+      youSucceedOnAnAttack,
       isChargeFromAtLeastCloseIntoMelee,
       hasDamageDice,
       {

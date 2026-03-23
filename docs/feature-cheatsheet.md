@@ -63,9 +63,11 @@ Declarative options the system reads from the feature descriptor. Only include t
 Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessage, onChipAck, onChipReject, onBannerAck, toggleKey, render, renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive) are documented in Section 4 (banner) and Section 3 (onBanner / onChipAck). All chips use the unified context shape: `{ roll, character, feature, characters, system, banner? }` (properties not applicable to the current placement are undefined).
 
 **V2 chip properties (chip-system.js):**
-- `showOnOtherSheets` *(boolean)*: Opt-in for `collectChipsForOtherCharacterSheets` so a chip defined on **another** PC's feature (e.g. Bard **Rally**) can be shown on the viewer's sheet with `table.me` = viewer. See `chip-system.js` and `docs/feature-authoring-guide.md` B.2.
+- `showOnOtherSheets` *(boolean)*: **Cross-sheet:** Opt-in for `collectChipsForOtherCharacterSheets` so a chip can be shown under **Modifiers** (`crossSheetChips`) with `table.me` = viewer — including when the viewer **owns** the feature (e.g. Bard **Rally** on the Bard's sheet) as well as on other PCs' sheets. See `chip-system.js` and `docs/feature-authoring-guide.md` B.2. **Banner / `collectV2ReviewActionChips`:** With a **viewer** (GM vs assigned player), `collectPhaseChipsOnly` includes owner-only chips (falsy `showOnOtherSheets`) only for the **GM** and the **feature owner’s** player; chips with `showOnOtherSheets: true` are omitted from that pass for non-owners and merged from cross-sheet collection for the current viewer (`v2-action-loop-bridge.js`). Omit `viewer` in tests for legacy unfiltered pass-1 behavior.
 - `selectTargets` *(function)*: `(table) => Actor[]`. Returns valid combat target actors for a target picker UI. Selected instance IDs stored in chip state as `selectedTargetIds` (array). Read via `chip.get('selectedTargetIds')` in `onUse`.
 - `multiSelect` *(boolean)*: When `true` (with `selectTargets`), player can select multiple targets. Default single-select.
+- `persistToggle` *(boolean, optional)*: For **`isToggle`** chips, defaults **`true`** — the framework persists on/off under a deterministic key (`getV2ToggleStateKey` in `chip-system.js`) in `table.source` (subclass features) or `table.feature` (default). **Gated** review toggles (`_gatedHookFn` from the action loop) do **not** use this bag — they flip **`chipState` only** between activations. Set **`false`** for UI-only toggles that must not persist (e.g. one-shot review chips). **Do not** manually `table.source.set` / `table.feature.set` boolean toggle state for normal card toggles; use **`toggleIsOn(table, feature, chip)`** in predicates.
+- `toggleScope` *(optional)*: `'source'` | `'feature'` — overrides automatic bag choice (subclass → source; otherwise feature).
 
 **V2 declarative (armor properties, `applyDeclarativeFeatures`):**
 - **`substituteArmorForHope`**: When `true` on a feature, the loader sets `substituteArmorForHope` on its return value; the client merges that onto the character element so `table.me.substituteArmorForHope` authorizes `spendHope(..., { armorInstead: true })`. The engine must not check SRD feature names (**CONV-029**).
@@ -94,7 +96,7 @@ Each hook: **name**, **when it runs**, **Context: list of subdocument names** wi
 
 ### Pre-roll
 
-- **chips** (declarative, `placement: 'preroll'`) — Pre-roll chips are declared on the feature as **chips** with `placement: 'preroll'`. Each chip may define **isVisible** and **onUse** (see Section 4). Chips are collected by the runner from the descriptor; no **onAct** hook. Legacy `canvasChips` array is still supported.
+- **chips** (declarative, `placement: 'preroll'`) — Pre-roll chips are declared on the feature as **chips** with `placement: 'preroll'`. Each chip may define **isVisible** and **onUse** (see Section 4). Chips are collected by the runner from the descriptor; no **onAct** hook.
 - **chip.isVisible** (preroll) — When building the pre-roll banner; decides whether (and how many) chips to show. **Signature:** `(ctx) => boolean | number`. Return `true` for one chip, number N > 0 for N copies, or false/0 to hide. **Context:** unified chip context (4.15): `{ roll, character, feature, characters, system }`. Legacy signature `(roll, featureState, context?)` is still supported for backward compatibility.
 - **chip.onUse** (preroll) — When the user has selected the chip and clicks Proceed, before the roll is sent. **Signature:** `(ctx) => void`. **Context:** unified chip context (4.15): `{ roll, character, feature, characters, system }`. Use `ctx.roll.addAdvantageDie(name)`, `ctx.roll.setFromText(text)`, `ctx.feature.get`/`set`, `ctx.system.postRoll`, etc.
 - **onRoll** — After Proceed or when no banner; roll text finalized. **Context:** `roll` (4.3), `characters` (4.9), `feature` (4.11); hooks inject `source`.
@@ -184,7 +186,7 @@ Passed to **onRest**. Built in getRestMovesForCharacter.
 
 ### 4.5 canvas (pre-roll chips)
 
-Pre-roll chips are populated from **descriptor.chips** with `placement: 'preroll'` (or legacy `descriptor.canvasChips`). The runner injects `_featureName`, `_featureKey` (when `resetsOn` is set), and a default **isVisible** ("my roll and not yet used") when omitted.
+Pre-roll chips are populated from **descriptor.chips** with `placement: 'preroll'`. The runner injects `_featureName`, `_featureKey` (when `resetsOn` is set), and a default **isVisible** ("my roll and not yet used") when omitted.
 
 **Pre-roll chip hooks (on each chip descriptor with `placement: 'preroll'`):**
 

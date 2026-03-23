@@ -4,7 +4,7 @@
  * SRD source: daggerheart-srd/ancestries/Katari.md
  */
 
-import { when, isActing } from '../engine/when.js';
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const FelineInstincts = {
   name: 'Feline Instincts',
@@ -36,8 +36,8 @@ export const RetractingClaws = {
       description: 'Your natural claws.',
       hooks: {
         onResolve: when(
-          isActing,
-          (table) => table.rolls?.action?.isSuccess === true && table.action?.target,
+          youSucceedOnAnAttack,
+          (table) => Boolean(table.action?.target),
           (table) => {
             table.action.target.addCondition('Vulnerable');
           }

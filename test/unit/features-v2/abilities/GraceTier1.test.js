@@ -8,6 +8,8 @@ import { TellNoLies } from '../../../../src/features-v2/abilities/Grace/TellNoLi
 import { Troublemaker } from '../../../../src/features-v2/abilities/Grace/Troublemaker.js';
 import { HypnoticShimmer } from '../../../../src/features-v2/abilities/Grace/HypnoticShimmer.js';
 import { Invisibility } from '../../../../src/features-v2/abilities/Grace/Invisibility.js';
+import { SoothingSpeech } from '../../../../src/features-v2/abilities/Grace/SoothingSpeech.js';
+import { WordsOfDiscord } from '../../../../src/features-v2/abilities/Grace/WordsOfDiscord.js';
 import {
   mockAdversary,
   mockCharacter,
@@ -187,7 +189,7 @@ describe('Grace Tier 1 — Inspirational Words', () => {
       })
     );
     const chips = collectChips([{ ...InspirationalWords, _ownerInstanceId: 'i3' }], 'card', tbl);
-    expect(chips[0].isDisabled?.(tbl)).toBe(true);
+    expect(chips[0].disabled).toBe(true);
   });
 });
 
@@ -231,6 +233,163 @@ describe('Grace Tier 1 — Hypnotic Shimmer', () => {
     const tbl = freeActionTable('hs2', 'Hypnotic Shimmer');
     const intent = collectChips([{ ...HypnoticShimmer, _ownerInstanceId: 'hs2' }], 'intent', tbl);
     expect(intent).toEqual([]);
+  });
+});
+
+describe('Grace Tier 1 — Soothing Speech', () => {
+  it('card with target queues actionLoop for GM to clear +1 HP on ally and +2 on self', () => {
+    const ally = mockCharacter({ instanceId: 'ally-1', name: 'River' });
+    const me = mockCharacter({ instanceId: 'c1', name: 'Bard' });
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [me, ally],
+        _ownerInstanceId: 'c1',
+        _featureKey: 'Soothing Speech',
+        action: {
+          type: 'free',
+          actorInstanceId: 'c1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+    const chips = collectChips([{ ...SoothingSpeech, _ownerInstanceId: 'c1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState(), { selectedTargetIds: ['ally-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Soothing Speech',
+          description: expect.stringContaining('River'),
+        }),
+      })
+    );
+    expect(
+      m.find((x) => x.type === 'actionLoop')?.payload?.description
+    ).toMatch(/clear 1 additional Hit Point on River|additional Hit Point on River/i);
+    expect(m.find((x) => x.type === 'actionLoop')?.payload?.description).toMatch(/clear 2 Hit Points on you/i);
+  });
+
+  it('does not queue actionLoop when no ally is selected', () => {
+    const ally = mockCharacter({ instanceId: 'ally-1', name: 'River' });
+    const me = mockCharacter({ instanceId: 'c1', name: 'Bard' });
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [me, ally],
+        _ownerInstanceId: 'c1',
+        _featureKey: 'Soothing Speech',
+        action: {
+          type: 'free',
+          actorInstanceId: 'c1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+    const chips = collectChips([{ ...SoothingSpeech, _ownerInstanceId: 'c1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState());
+    expect(m.filter((x) => x.type === 'actionLoop')).toEqual([]);
+  });
+});
+
+describe('Grace Tier 1 — Words of Discord', () => {
+  function wordsOfDiscordTable(featureState = {}) {
+    const me = mockCharacter({
+      instanceId: 'c1',
+      spellcastTrait: 'presence',
+      traits: { presence: 2 },
+      tokenX: 0,
+      tokenY: 0,
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', name: 'Goblin', tokenX: 0, tokenY: 0 });
+    return buildTableSnapshot(
+      mockGameState({
+        activeElements: [me, adv],
+        _ownerInstanceId: 'c1',
+        _featureKey: 'Words of Discord',
+        featureState: { 'Words of Discord': featureState },
+        action: {
+          type: 'free',
+          actorInstanceId: 'c1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+  }
+
+  it('main card queues Spellcast (13) vs a Melee adversary', () => {
+    const tbl = wordsOfDiscordTable();
+    const chips = collectChips([{ ...WordsOfDiscord, _ownerInstanceId: 'c1' }], 'card', tbl);
+    const main = chips.find((c) => c.name === 'Words of Discord');
+    const m = activateChip(main, tbl, makeChipState(), { selectedTargetIds: ['adv-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Words of Discord',
+          trait: 'Presence',
+          difficulty: 13,
+        }),
+      })
+    );
+    expect(m.find((x) => x.type === 'actionLoop')?.payload?.description).toMatch(/Goblin/);
+  });
+
+  it('main card uses threshold 18 and clears owed penalty when flagged for that adversary', () => {
+    const tbl = wordsOfDiscordTable({ wodPenaltyByTarget: { 'adv-1': true } });
+    const chips = collectChips([{ ...WordsOfDiscord, _ownerInstanceId: 'c1' }], 'card', tbl);
+    const main = chips.find((c) => c.name === 'Words of Discord');
+    const m = activateChip(main, tbl, makeChipState(), { selectedTargetIds: ['adv-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          difficulty: 18,
+        }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Words of Discord',
+          key: 'wodPenaltyByTarget',
+          value: {},
+        }),
+      })
+    );
+  });
+
+  it('"Target has realized" chip marks next-cast penalty for the chosen adversary', () => {
+    const tbl = wordsOfDiscordTable();
+    const chips = collectChips([{ ...WordsOfDiscord, _ownerInstanceId: 'c1' }], 'card', tbl);
+    const realize = chips.find((c) => c.name === 'Words of Discord — Target has realized');
+    const m = activateChip(realize, tbl, makeChipState(), { selectedTargetIds: ['adv-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Words of Discord',
+          key: 'wodPenaltyByTarget',
+          value: { 'adv-1': true },
+        }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Words of Discord — Target realized',
+        }),
+      })
+    );
   });
 });
 

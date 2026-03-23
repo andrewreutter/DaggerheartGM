@@ -151,6 +151,38 @@ describe('Wordsmith — Rousing Speech', () => {
 
     const chips = collectChips([{ ...RousingSpeech, _ownerInstanceId: 'b1' }], 'card', table);
     expect(chips[0].disabled).toBe(true);
+    expect(chips[0].disableHint).toContain('Melee through Far');
+  });
+
+  it('is disabled when allies in range have no Stress marked', () => {
+    const bard = mockCharacter({ instanceId: 'b1', tokenX: 0, tokenY: 0 });
+    const ally = mockCharacter({
+      instanceId: 'ally-1',
+      tokenX: 25,
+      tokenY: 0,
+      currentStress: 0,
+      maxStress: 6,
+    });
+
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [bard, ally],
+        _ownerInstanceId: 'b1',
+        _featureKey: 'Rousing Speech',
+        action: {
+          type: 'free',
+          actorInstanceId: 'b1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+
+    const chips = collectChips([{ ...RousingSpeech, _ownerInstanceId: 'b1' }], 'card', table);
+    expect(chips[0].disabled).toBe(true);
+    expect(chips[0].disableHint).toContain('Stress marked');
   });
 });
 

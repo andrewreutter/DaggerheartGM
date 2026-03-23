@@ -24,9 +24,13 @@ import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.j
 import compression from 'compression';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
+import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
+import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
 import subscriptionManager from './src/subscriptions.js';
+import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
@@ -147,6 +151,26 @@ app.get('/api/docs/feature-authoring-guide', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('GET /api/docs/feature-authoring-guide failed:', err);
     res.status(500).json({ error: 'Failed to load guide' });
+  }
+});
+
+/** Read-only V2 feature module source for signed-in users (path validated under `src/features-v2/`). */
+app.get('/api/features-v2/source', requireAuth, async (req, res) => {
+  const rel = typeof req.query.path === 'string' ? req.query.path : '';
+  const abs = safeResolveUnderFeaturesRoot(FEATURES_V2_ROOT, rel);
+  if (!abs) {
+    return res.status(400).json({ error: 'Invalid path' });
+  }
+  try {
+    const source = await readFile(abs, 'utf8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ path: rel.replace(/\\/g, '/'), source });
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    console.error('GET /api/features-v2/source failed:', err);
+    res.status(500).json({ error: 'Failed to read file' });
   }
 });
 
@@ -399,6 +423,13 @@ function rerollDualityOnly(rollText, previousSubItems) {
 
 // Extra dice sub-items (feature dice) that should not count toward the action total.
 const EXTRA_PRE_RE = /^\s*(Reload|Invigorate|Lifesteal)\s*$/i;
+
+/** NdX on standard polyhedra only — V2 action-pool bonus dice (Hope spent client-side). */
+function parseAllowedV2ActionDieExpr(raw) {
+  const s = String(raw ?? '').trim();
+  if (!/^([1-9]\d{0,2})?d(4|6|8|10|12|20)$/i.test(s)) return null;
+  return s;
+}
 
 // Detect Daggerheart Hope/Fear dual-roll from subItems (mirrors client-side parseDaggerheartRoll).
 function parseDaggerheartResult(subItems) {
@@ -815,7 +846,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         }
         const state = row.data || {};
         const elements = await resolveCharacterElementsDb(APP_ID, state.elements || []);
-        const resolved = [{ ...state, elements, _source: 'own', id: tableId }];
+        const resolved = [{ ...state, elements, _source: 'own', id: tableId, ownerUid: row.userId }];
         return res.json({ items: resolved, totalCount: 1, dbCount: 1 });
       }
       const rows = await listTableStates(APP_ID, req.uid);
@@ -1977,146 +2008,57 @@ app.post('/api/room/:tableId/banner-make-a-scene-target', requireAuth, async (re
   }
 });
 
-// POST /api/room/:tableId/banner-prayer-die-select — GM or player: select a Prayer Die for add-to-roll or damage-reduction.
-app.post('/api/room/:tableId/banner-prayer-die-select', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  const { gmUid } = ctx;
-  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  const { addRollDie, dmgReduceDie } = req.body || {};
-  if (bannerId == null || Number.isNaN(bannerId)) {
-    return res.status(400).json({ error: 'bannerId required' });
-  }
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ error: 'Requires database' });
-  }
-  try {
-    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
-    if (!row || row.status !== 'pending') {
-      return res.status(404).json({ error: 'Banner not found or already resolved' });
-    }
-    const patch = {};
-    if ('addRollDie' in req.body) patch._prayerAddRollDie = addRollDie ?? null;
-    if ('dmgReduceDie' in req.body) patch._prayerDmgReduceDie = dmgReduceDie ?? null;
-    await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
-    subscriptionManager.notifyChange('banners', gmUid);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('POST /api/room/:tableId/banner-prayer-die-select error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// POST /api/room/:tableId/banner-rally-toggle — GM or player: toggle Rally Die add-to-roll or add-to-damage on a banner.
-app.post('/api/room/:tableId/banner-rally-toggle', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  const { gmUid } = ctx;
-  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  const field = req.body?.field;
-  const value = req.body?.value === true;
-  if (bannerId == null || Number.isNaN(bannerId)) {
-    return res.status(400).json({ error: 'bannerId required' });
-  }
-  if (field !== '_rallyDieAddToRoll' && field !== '_rallyDieAddToDamage') {
-    return res.status(400).json({ error: 'field must be _rallyDieAddToRoll or _rallyDieAddToDamage' });
-  }
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ error: 'Requires database' });
-  }
-  try {
-    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
-    if (!row || row.status !== 'pending') {
-      return res.status(404).json({ error: 'Banner not found or already resolved' });
-    }
-    // Mutual exclusivity: enabling one toggle clears the other.
-    const oppositeField = field === '_rallyDieAddToRoll' ? '_rallyDieAddToDamage' : '_rallyDieAddToRoll';
-    const patch = value ? { [field]: true, [oppositeField]: false } : { [field]: false };
-    await updateDiceRollData(APP_ID, gmUid, bannerId, patch);
-    subscriptionManager.notifyChange('banners', gmUid);
-    res.json({ ok: true, field, value });
-  } catch (err) {
-    console.error('POST /api/room/:tableId/banner-rally-toggle error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// POST /api/room/my/banner-rally-ack — GM: acknowledge a Rally Die banner toggle.
-app.post('/api/room/my/banner-rally-ack', requireAuth, async (req, res) => {
-  const gmUid = req.uid;
+// POST /api/room/my/banner-action-add-die — GM: V2 action-pool bonus die (e.g. Heart of a Poet). Rolls die, splices sub-item, recomputes total. Does not spend Hope (client already applied).
+app.post('/api/room/my/banner-action-add-die', requireAuth, async (req, res) => {
   const tableId = req.body?.tableId || req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  const addToRoll = req.body?.addToRoll === true;
-  const addToDamage = req.body?.addToDamage === true;
-  if (bannerId == null || Number.isNaN(bannerId)) {
-    return res.status(400).json({ error: 'bannerId required' });
+  const dieExpr = parseAllowedV2ActionDieExpr(req.body?.die);
+  const label = String(req.body?.name ?? 'Bonus').trim().slice(0, 120) || 'Bonus';
+  if (bannerId == null || Number.isNaN(bannerId) || !dieExpr) {
+    return res.status(400).json({ error: 'bannerId and valid die required' });
   }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
-    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
-    if (!row || row.status !== 'pending') {
-      return res.status(404).json({ error: 'Banner not found or already resolved' });
-    }
     const tableRow = await getTableStateById(APP_ID, tableId);
     if (!tableRow || tableRow.userId !== req.uid) {
       return res.status(403).json({ error: 'Not your table' });
     }
+    const row = await getDiceRollById(APP_ID, req.uid, bannerId);
+    if (!row || row.status !== 'pending') {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
+    }
+    const rolled = rollDice(dieExpr);
+    if (!rolled) {
+      return res.status(400).json({ error: 'Could not roll die' });
+    }
     const originalData = row.data || {};
-
-    await setBannerStatus(bannerId, 'cancelled');
-
-    const attackerInstanceId = originalData._attackerInstanceId;
-    let rallyDieSize = 'd6';
-    if (attackerInstanceId) {
-      const elements = (tableRow.data?.elements || tableRow.data?.activeElements) || [];
-      const attacker = elements.find(e => e.instanceId === attackerInstanceId);
-      if (attacker?.activeModifiers?.length > 0) {
-        const rallyMod = attacker.activeModifiers.find(m => m.name === 'Rally Die');
-        if (rallyMod) {
-          rallyDieSize = rallyMod.dice || 'd6';
-          const newMods = attacker.activeModifiers.filter(m => m.id !== rallyMod.id);
-          await applyOpToTableState(tableId, {
-            op: 'update-element',
-            instanceId: attackerInstanceId,
-            updates: { activeModifiers: newMods },
-          });
-        }
-      }
-    }
-
-    // 3. Roll the Rally Die.
-    const sides = parseInt((rallyDieSize || 'd6').replace('d', ''), 10) || 6;
-    const rallyRoll = randomInt(1, sides + 1);
-
-    // 4. Build the copy banner's subItems.
     const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
-    let newSubItems = [...origSubItems];
+    const subItem = {
+      pre: label,
+      input: rolled.input,
+      result: String(rolled.result),
+      details: rolled.details,
+      post: '',
+    };
+    const fearIdx = origSubItems.findIndex(s => /fear/i.test(s.pre || ''));
+    const insertIdx = fearIdx >= 0 ? fearIdx + 1 : origSubItems.findIndex(s => /damage/i.test(s.pre || ''));
+    const newSubItems =
+      insertIdx >= 0
+        ? [...origSubItems.slice(0, insertIdx), subItem, ...origSubItems.slice(insertIdx)]
+        : [...origSubItems, subItem];
 
-    if (addToRoll) {
-      // Insert Rally sub-item after the Fear sub-item (before damage/extras).
-      const fearIdx = newSubItems.findIndex(s => /fear/i.test(s.pre || ''));
-      const insertIdx = fearIdx >= 0 ? fearIdx + 1 : newSubItems.findIndex(s => /damage/i.test(s.pre || ''));
-      const rallySubItem = {
-        pre: 'Rally',
-        input: rallyDieSize,
-        result: String(rallyRoll),
-        details: `(${rallyRoll})`,
-        post: '',
-      };
-      if (insertIdx >= 0) {
-        newSubItems = [...newSubItems.slice(0, insertIdx), rallySubItem, ...newSubItems.slice(insertIdx)];
-      } else {
-        newSubItems = [...newSubItems, rallySubItem];
-      }
-    }
-
-    // 5. Recompute roll totals from the new subItems.
     const dh = parseDaggerheartResult(newSubItems);
-    let copyData;
+    const patch = { subItems: newSubItems, timestamp: Date.now() };
     if (dh) {
-      copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+      Object.assign(patch, {
+        total: dh.total,
+        hopeResult: dh.hopeResult,
+        fearResult: dh.fearResult,
+        dominant: dh.dominant,
+        rollUser: dh.characterName || originalData.rollUser || '',
+      });
     } else {
       let total = 0;
       for (const sub of newSubItems) {
@@ -2125,41 +2067,33 @@ app.post('/api/room/my/banner-rally-ack', requireAuth, async (req, res) => {
         const v = parseInt(sub.result, 10);
         if (!isNaN(v)) total += v;
       }
-      copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+      patch.total = total;
+      if (originalData.rollUser) patch.rollUser = originalData.rollUser;
     }
-
-    // 6. Preserve all original metadata (_-prefixed keys), clear rally toggle fields, mark as applied.
-    for (const k of Object.keys(originalData)) {
-      if (k.startsWith('_') && !(k in copyData)) copyData[k] = originalData[k];
+    const ok = await updateDiceRollData(APP_ID, req.uid, bannerId, patch);
+    if (!ok) {
+      return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
-    copyData._rallyDieApplied = true;
-    delete copyData._rallyDieAddToRoll;
-    delete copyData._rallyDieAddToDamage;
-    if (originalData.rollText) copyData.rollText = originalData.rollText;
-    if (originalData.displayName) copyData.displayName = originalData.displayName;
-    if (originalData.tags) copyData.tags = originalData.tags;
-
-    // 7. For damage: set _rallyDieDamageResult so the banner annotates damage.
-    if (addToDamage) copyData._rallyDieDamageResult = rallyRoll;
-
-    // 8. Append the copy banner and notify.
-    const dbId = await appendDiceRoll(APP_ID, gmUid, copyData);
-    copyData._rollDbId = dbId;
-    subscriptionManager.notifyChange('banners', gmUid);
-
-    res.json({ ok: true });
+    subscriptionManager.notifyChange('banners', req.uid);
+    res.json({ ok: true, result: rolled.result });
   } catch (err) {
-    console.error('POST /api/room/my/banner-rally-ack error:', err);
+    console.error('POST /api/room/my/banner-action-add-die error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/room/my/banner-heart-d4 — GM: Heart of a Poet (Wordsmith) — spend 1 Hope and roll 1d4 on a non-attack action roll banner.
-app.post('/api/room/my/banner-heart-d4', requireAuth, async (req, res) => {
+// POST /api/room/my/banner-action-add-static — GM: V2 action-pool static bonus (e.g. Seraph Prayer Die face value). In-place patch; no re-roll.
+app.post('/api/room/my/banner-action-add-static', requireAuth, async (req, res) => {
   const tableId = req.body?.tableId || req.uid;
   const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  if (bannerId == null || Number.isNaN(bannerId) || !process.env.DATABASE_URL) {
-    return res.status(400).json({ error: 'bannerId required' });
+  const label = String(req.body?.name ?? 'Bonus').trim().slice(0, 120) || 'Bonus';
+  const rawVal = req.body?.value;
+  const value = typeof rawVal === 'number' ? rawVal : parseInt(String(rawVal ?? '').trim(), 10);
+  if (bannerId == null || Number.isNaN(bannerId) || !Number.isFinite(value) || value < -999 || value > 999) {
+    return res.status(400).json({ error: 'bannerId and numeric value required' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Requires database' });
   }
   try {
     const tableRow = await getTableStateById(APP_ID, tableId);
@@ -2167,86 +2101,35 @@ app.post('/api/room/my/banner-heart-d4', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Not your table' });
     }
     const row = await getDiceRollById(APP_ID, req.uid, bannerId);
-    if (!row || row.status !== 'pending' || !row.data?._attackerInstanceId) {
-      return res.status(404).json({ error: 'Banner not found or not a character action roll' });
-    }
-    const elements = (tableRow.data?.elements) || [];
-    const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === row.data._attackerInstanceId);
-    const maxHope = charEl?.maxHope ?? 6;
-    const currentHope = charEl?.hope ?? maxHope;
-    if (currentHope < 1) {
-      return res.status(400).json({ error: 'Character has no Hope to spend' });
-    }
-    const newHope = Math.max(0, currentHope - 1);
-    await applyOpToTableState(tableId, { op: 'update-element', instanceId: row.data._attackerInstanceId, updates: { hope: newHope } });
-    const d4Result = randomInt(1, 5);
-    await updateDiceRollData(APP_ID, req.uid, bannerId, { _heartOfAPoetAddD4: true, _heartOfAPoetD4Result: d4Result });
-    subscriptionManager.notifyChange('banners', req.uid);
-    res.json({ ok: true, d4Result });
-  } catch (err) {
-    console.error('POST /api/room/my/banner-heart-d4 error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// POST /api/room/my/banner-heart-d4-ack — GM: acknowledge a Heart of a Poet banner toggle.
-app.post('/api/room/my/banner-heart-d4-ack', requireAuth, async (req, res) => {
-  const gmUid = req.uid;
-  const tableId = req.body?.tableId || req.uid;
-  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  if (bannerId == null || Number.isNaN(bannerId)) {
-    return res.status(400).json({ error: 'bannerId required' });
-  }
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ error: 'Requires database' });
-  }
-  try {
-    const tableRow = await getTableStateById(APP_ID, tableId);
-    if (!tableRow || tableRow.userId !== req.uid) {
-      return res.status(403).json({ error: 'Not your table' });
-    }
-    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
     const originalData = row.data || {};
-
-    await setBannerStatus(bannerId, 'cancelled');
-
-    const attackerInstanceId = originalData._attackerInstanceId;
-    if (attackerInstanceId) {
-      const elements = (tableRow.data?.elements || tableRow.data?.activeElements) || [];
-      const charEl = elements.find(e => e.elementType === 'character' && e.instanceId === attackerInstanceId);
-      const currentHope = charEl?.hope ?? (charEl?.maxHope ?? 6);
-      if (currentHope >= 1) {
-        await applyOpToTableState(tableId, {
-          op: 'update-element',
-          instanceId: attackerInstanceId,
-          updates: { hope: Math.max(0, currentHope - 1) },
-        });
-      }
-    }
-
-    // 3. Roll 1d4.
-    const d4Result = randomInt(1, 5);
-
-    // 4. Build the copy banner's subItems — insert d4 after Fear sub-item.
     const origSubItems = Array.isArray(originalData.subItems) ? originalData.subItems : [];
-    const d4SubItem = { pre: 'Heart of a Poet', input: '1d4', result: String(d4Result), details: `(${d4Result})`, post: '' };
+    const subItem = {
+      pre: label,
+      input: String(value),
+      result: String(value),
+      details: '',
+      post: '',
+    };
     const fearIdx = origSubItems.findIndex(s => /fear/i.test(s.pre || ''));
     const insertIdx = fearIdx >= 0 ? fearIdx + 1 : origSubItems.findIndex(s => /damage/i.test(s.pre || ''));
-    let newSubItems;
-    if (insertIdx >= 0) {
-      newSubItems = [...origSubItems.slice(0, insertIdx), d4SubItem, ...origSubItems.slice(insertIdx)];
-    } else {
-      newSubItems = [...origSubItems, d4SubItem];
-    }
+    const newSubItems =
+      insertIdx >= 0
+        ? [...origSubItems.slice(0, insertIdx), subItem, ...origSubItems.slice(insertIdx)]
+        : [...origSubItems, subItem];
 
-    // 5. Recompute roll totals from the new subItems.
     const dh = parseDaggerheartResult(newSubItems);
-    let copyData;
+    const patch = { subItems: newSubItems, timestamp: Date.now() };
     if (dh) {
-      copyData = { ...dh, rollUser: dh.characterName || originalData.rollUser || '', subItems: newSubItems, timestamp: Date.now() };
+      Object.assign(patch, {
+        total: dh.total,
+        hopeResult: dh.hopeResult,
+        fearResult: dh.fearResult,
+        dominant: dh.dominant,
+        rollUser: dh.characterName || originalData.rollUser || '',
+      });
     } else {
       let total = 0;
       for (const sub of newSubItems) {
@@ -2255,54 +2138,17 @@ app.post('/api/room/my/banner-heart-d4-ack', requireAuth, async (req, res) => {
         const v = parseInt(sub.result, 10);
         if (!isNaN(v)) total += v;
       }
-      copyData = { rollUser: originalData.rollUser || '', total, subItems: newSubItems, timestamp: Date.now() };
+      patch.total = total;
+      if (originalData.rollUser) patch.rollUser = originalData.rollUser;
     }
-
-    // 6. Preserve original metadata, clear toggle fields, mark as applied.
-    for (const k of Object.keys(originalData)) {
-      if (k.startsWith('_') && !(k in copyData)) copyData[k] = originalData[k];
-    }
-    copyData._heartOfAPoetApplied = true;
-    delete copyData._heartOfAPoetAddD4;
-    copyData._heartOfAPoetD4Result = d4Result;
-    if (originalData.rollText) copyData.rollText = originalData.rollText;
-    if (originalData.displayName) copyData.displayName = originalData.displayName;
-    if (originalData.tags) copyData.tags = originalData.tags;
-
-    // 7. Append the copy banner and notify.
-    await appendDiceRoll(APP_ID, gmUid, copyData);
-    subscriptionManager.notifyChange('banners', gmUid);
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('POST /api/room/my/banner-heart-d4-ack error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// POST /api/room/:tableId/banner-heart-d4-toggle — GM or player: toggle intent to add d4 on a Heart of a Poet banner.
-app.post('/api/room/:tableId/banner-heart-d4-toggle', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  const { gmUid } = ctx;
-  const bannerId = req.body?.bannerId != null ? Number(req.body.bannerId) : null;
-  const value = req.body?.value === true;
-  if (bannerId == null || Number.isNaN(bannerId)) {
-    return res.status(400).json({ error: 'bannerId required' });
-  }
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ error: 'Requires database' });
-  }
-  try {
-    const row = await getDiceRollById(APP_ID, gmUid, bannerId);
-    if (!row || row.status !== 'pending') {
+    const ok = await updateDiceRollData(APP_ID, req.uid, bannerId, patch);
+    if (!ok) {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
     }
-    await updateDiceRollData(APP_ID, gmUid, bannerId, { _heartOfAPoetAddD4: value });
-    subscriptionManager.notifyChange('banners', gmUid);
+    subscriptionManager.notifyChange('banners', req.uid);
     res.json({ ok: true, value });
   } catch (err) {
-    console.error('POST /api/room/:tableId/banner-heart-d4-toggle error:', err);
+    console.error('POST /api/room/my/banner-action-add-static error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -2576,6 +2422,71 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
     res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/room/:tableId/character-update error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/room/:tableId/v2-cross-sheet-chip — Player activates a V2 cross-sheet card chip (e.g. Rally clear stress). Server recomputes engine mutations from chipKey (same as GM postTableOp).
+app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid, tableState } = ctx;
+  if (req.uid === gmUid) {
+    return res.status(400).json({ error: 'GM clients use postTableOp' });
+  }
+  const { viewerInstanceId, chipKey } = req.body || {};
+  try {
+    const rawElements = tableState.elements || [];
+    const activeElements = await resolveCharacterElements(rawElements);
+    const viewerEl = activeElements.find(
+      (e) => e.elementType === 'character' && e.instanceId === viewerInstanceId
+    );
+    if (!viewerEl) return res.status(404).json({ error: 'Character not found' });
+    const assignedByUid = viewerEl.assignedPlayerUid === req.uid;
+    const assignedByEmail =
+      !!req.email &&
+      (viewerEl.assignedPlayerEmail || '').toLowerCase() === req.email.toLowerCase();
+    if (!assignedByUid && !assignedByEmail) {
+      return res.status(403).json({ error: 'Not assigned to this character' });
+    }
+
+    const computed = computePlayerV2CrossSheetChipApply({
+      activeElements,
+      tableState,
+      viewerInstanceId,
+      chipKey,
+    });
+    if (!computed.ok) {
+      return res.status(computed.status).json({ error: computed.error });
+    }
+    const { updates, actionLoopNotifications } = computed;
+    if (updates.length > 0) {
+      await applyOpToTableState(tableId, { op: 'update-elements', updates });
+    }
+    for (const p of actionLoopNotifications) {
+      const baseDesc = p.description || '';
+      const actionText =
+        p.affectedSummary && String(p.affectedSummary).trim()
+          ? `${baseDesc}\n${p.affectedSummary}`
+          : baseDesc;
+      const payload = {
+        _action: true,
+        rollUser: p.rollUser || 'Table',
+        actionName: p.title,
+        actionText,
+        _v2ActionLoop: true,
+        _reactorInstanceId: p.instanceId,
+        ...v2RollDieExtrasFromActionLoopPayload(p),
+        ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+          ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+          : {}),
+        _initiatorUid: req.uid,
+      };
+      await appendRollLog(gmUid, payload);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/room/:tableId/v2-cross-sheet-chip error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

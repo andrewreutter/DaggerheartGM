@@ -8,6 +8,7 @@ import { FinalWords } from '../../../../src/features-v2/abilities/Splendor/Final
 import { HealingHands } from '../../../../src/features-v2/abilities/Splendor/HealingHands.js';
 import { SecondWind } from '../../../../src/features-v2/abilities/Splendor/SecondWind.js';
 import { VoiceOfReason } from '../../../../src/features-v2/abilities/Splendor/VoiceOfReason.js';
+import { HealingStrike } from '../../../../src/features-v2/abilities/Splendor/HealingStrike.js';
 import { mockCharacter, mockAdversary, mockGameState, mockRoll, runReviewAction, runIntent } from '../helpers.js';
 
 function freeActionTable(charId, featureKey) {
@@ -232,5 +233,113 @@ describe('Splendor Tier 1 — Voice of Reason', () => {
     expect(
       mutations.filter((m) => m.type === 'addRollStatic' && m.payload?.name === 'Voice of Reason')
     ).toHaveLength(0);
+  });
+});
+
+describe('Splendor Tier 1 — Healing Strike', () => {
+  const attacker = mockCharacter({ instanceId: 'char-1', hope: 4, tokenX: 0, tokenY: 0 });
+  const allyClose = mockCharacter({ instanceId: 'ally-1', tokenX: 5, tokenY: 0, currentHp: 2, maxHp: 6 });
+  const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 25, tokenY: 0 });
+
+  it('reviewAction chip appears when pending damage targets an adversary and a damage roll exists', () => {
+    const { chips } = runReviewAction(
+      { ...HealingStrike, _ownerInstanceId: 'char-1' },
+      {
+        activeElements: [attacker, allyClose, adv],
+        _ownerInstanceId: 'char-1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'char-1',
+          targetInstanceIds: ['adv-1'],
+          effects: [
+            { type: 'damage', amount: 4, target: { instanceId: 'adv-1', name: 'Goblin' } },
+          ],
+          appliedEffects: [],
+        },
+        rolls: mockRoll(),
+      }
+    );
+    expect(chips.some((c) => c.name === 'Healing Strike')).toBe(true);
+  });
+
+  it('reviewAction chip is hidden when damage does not target an adversary', () => {
+    const { chips } = runReviewAction(
+      { ...HealingStrike, _ownerInstanceId: 'char-1' },
+      {
+        activeElements: [attacker, allyClose, adv],
+        _ownerInstanceId: 'char-1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'char-1',
+          targetInstanceIds: ['ally-1'],
+          effects: [
+            { type: 'damage', amount: 2, target: { instanceId: 'ally-1', name: 'Ally' } },
+          ],
+          appliedEffects: [],
+        },
+        rolls: mockRoll(),
+      }
+    );
+    expect(chips.filter((c) => c.name === 'Healing Strike')).toHaveLength(0);
+  });
+
+  it('reviewAction chip is hidden without a damage roll in progress', () => {
+    const { chips } = runReviewAction(
+      { ...HealingStrike, _ownerInstanceId: 'char-1' },
+      {
+        activeElements: [attacker, allyClose, adv],
+        _ownerInstanceId: 'char-1',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'char-1',
+          targetInstanceIds: ['adv-1'],
+          effects: [
+            { type: 'damage', amount: 4, target: { instanceId: 'adv-1', name: 'Goblin' } },
+          ],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      }
+    );
+    expect(chips.filter((c) => c.name === 'Healing Strike')).toHaveLength(0);
+  });
+
+  it('activating the chip spends 2 Hope and clears 1 HP on a chosen ally within Close range', () => {
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [attacker, allyClose, adv],
+        _ownerInstanceId: 'char-1',
+        _featureKey: 'Healing Strike',
+        action: {
+          type: 'attack',
+          actorInstanceId: 'char-1',
+          targetInstanceIds: ['adv-1'],
+          effects: [
+            { type: 'damage', amount: 4, target: { instanceId: 'adv-1', name: 'Goblin' } },
+          ],
+          appliedEffects: [],
+        },
+        rolls: mockRoll(),
+      })
+    );
+    const chips = collectChips([{ ...HealingStrike, _ownerInstanceId: 'char-1' }], 'reviewAction', tbl);
+    const hs = chips.find((c) => c.name === 'Healing Strike');
+    expect(hs?.hopeCost).toBe(2);
+    const m = activateChip(hs, tbl, makeChipState(), { selectedTargetIds: ['ally-1'] });
+    deductChipCosts(hs, tbl);
+    const fromCost = applyMutations(tbl);
+    const all = [...m, ...fromCost];
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'spendHope',
+        payload: expect.objectContaining({ instanceId: 'char-1', amount: 2 }),
+      })
+    );
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'clearHP',
+        payload: { instanceId: 'ally-1', amount: 1 },
+      })
+    );
   });
 });

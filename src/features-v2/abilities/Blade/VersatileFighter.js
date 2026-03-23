@@ -60,7 +60,9 @@ export const VersatileFighter = {
               name: `${d.name} (${d.die})`,
             })),
         isDisabled: (table) =>
-          !(table.rolls?.damage?.dice ?? []).some((d) => d?.name && d?.die),
+          !(table.rolls?.damage?.dice ?? []).some((d) => d?.name && d?.die)
+            ? 'No damage dice on this roll to maximize.'
+            : false,
         onUse(table, chipState) {
           const selected = chipState?.get?.('selectedId');
           const dice = table.rolls?.damage?.dice ?? [];

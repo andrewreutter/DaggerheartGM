@@ -6,6 +6,10 @@
  */
 
 import { BEASTFORM_ITEMS } from './srd-data.js';
+import {
+  passiveStatModsFromBeastformRow,
+  advantageTriggersFromBeastformRow,
+} from './beastform-row-stat-mods.js';
 import { marryBeastformFeatures } from './marry.js';
 import { features as agileScoutFeatures } from './AgileScout.js';
 import { features as householdFriendFeatures } from './HouseholdFriend.js';
@@ -63,8 +67,12 @@ const BEASTFORM_FEATURE_LISTS = {
 const byId = Object.fromEntries(
   BEASTFORM_ITEMS.map((row) => {
     const list = BEASTFORM_FEATURE_LISTS[row.id];
-    if (!list) return [row.id, row];
-    return [row.id, { ...row, features: marryBeastformFeatures(row, list) }];
+    const passiveStatMods = passiveStatModsFromBeastformRow(row);
+    const advantageTriggers = advantageTriggersFromBeastformRow(row);
+    const base = !list ? { ...row } : { ...row, features: marryBeastformFeatures(row, list) };
+    if (passiveStatMods) base.passiveStatMods = passiveStatMods;
+    if (advantageTriggers) base.advantageTriggers = advantageTriggers;
+    return [row.id, base];
   })
 );
 

@@ -1,9 +1,4 @@
-import { when, isActing } from '../engine/when.js';
-
-/** Successful weapon attack — shared by Restrain vs Pull chips (Kick-style). */
-function grapplingAttackSuccess(table) {
-  return table.action?.type === 'attack' && table.rolls?.action?.isSuccess === true;
-}
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const Grappling = {
   name: 'Grappling',
@@ -11,8 +6,7 @@ export const Grappling = {
     'On a successful attack, you can spend a Hope to Restrain the target or pull them into Melee range with you.',
   chips: [
     when(
-      isActing,
-      grapplingAttackSuccess,
+      youSucceedOnAnAttack,
       {
         name: 'Grappling (Restrain)',
         description: 'Spend 1 Hope to Restrain the target.',
@@ -24,8 +18,7 @@ export const Grappling = {
       }
     ),
     when(
-      isActing,
-      grapplingAttackSuccess,
+      youSucceedOnAnAttack,
       {
         name: 'Grappling (Pull into Melee)',
         description: 'Spend 1 Hope to pull the target into Melee range with you.',
@@ -34,7 +27,8 @@ export const Grappling = {
         onUse(table) {
           table.action?.target?.move(
             (t) => t.action.target?.rangeFrom(t.action.attacker) === 'melee',
-            'Pull into Melee range'
+            'In Melee range from attacker',
+            'Pull into Melee range.'
           );
         },
       }

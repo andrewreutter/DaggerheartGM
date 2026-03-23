@@ -69,7 +69,8 @@ describe('Startling', () => {
     expect(moves).toHaveLength(1);
     expect(moves[0].payload).toMatchObject({
       instanceId: 'adv-1',
-      description: 'Forced back to Close range',
+      desiredCondition: 'Close range between you and this adversary',
+      description: 'Forced back to Close range.',
     });
   });
 

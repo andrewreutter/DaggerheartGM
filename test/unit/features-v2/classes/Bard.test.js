@@ -84,7 +84,16 @@ describe('Bard — Make a Scene', () => {
 });
 
 describe('Bard — Rally', () => {
-  it('default card onUse queues appendActiveModifier for every character (d6 below level 5)', () => {
+  it('card phase exposes Grant Rally Dice (engine chip list; root onUse alone is not collected when chips[] exists)', () => {
+    const bard = mockCharacter({ instanceId: 'b1', level: 1, classId: 'srd-cls-bard' });
+    const t = buildTableSnapshot(
+      mockGameState({ activeElements: [bard], _ownerInstanceId: 'b1', _featureKey: 'Rally' })
+    );
+    const chips = collectChips([{ ...Rally, _ownerInstanceId: 'b1' }], 'card', t);
+    expect(chips.some((c) => c.name === 'Grant Rally Dice')).toBe(true);
+  });
+
+  it('default card onUse sets partyDice for every character (d6 below level 5), no appendActiveModifier', () => {
     const bard = mockCharacter({ instanceId: 'b1', level: 1, classId: 'srd-cls-bard' });
     const ally = mockCharacter({ instanceId: 'c2', level: 1 });
     const t = buildTableSnapshot(
@@ -92,30 +101,7 @@ describe('Bard — Rally', () => {
     );
     Rally.onUse(t);
     const mut = applyMutations(t);
-    const appends = mut.filter((m) => m.type === 'appendActiveModifier');
-    expect(appends).toHaveLength(2);
-    expect(appends).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'appendActiveModifier',
-          payload: expect.objectContaining({
-            instanceId: 'b1',
-            modifier: expect.objectContaining({
-              name: 'Rally Die',
-              dice: 'd6',
-              id: 'rally-die-b1',
-            }),
-          }),
-        }),
-        expect.objectContaining({
-          type: 'appendActiveModifier',
-          payload: expect.objectContaining({
-            instanceId: 'c2',
-            modifier: expect.objectContaining({ name: 'Rally Die', dice: 'd6', id: 'rally-die-c2' }),
-          }),
-        }),
-      ])
-    );
+    expect(mut.filter((m) => m.type === 'appendActiveModifier')).toHaveLength(0);
     expect(mut.some((m) => m.type === 'setFeatureState' && m.payload.key === 'partyDice')).toBe(true);
     const party = mut.find((m) => m.type === 'setFeatureState' && m.payload.key === 'partyDice');
     expect(party.payload.value).toEqual({
@@ -169,14 +155,8 @@ describe('Bard — Rally', () => {
     );
     Rally.onUse(t);
     const mut = applyMutations(t);
-    expect(mut).toContainEqual(
-      expect.objectContaining({
-        type: 'appendActiveModifier',
-        payload: expect.objectContaining({
-          modifier: expect.objectContaining({ dice: 'd8' }),
-        }),
-      })
-    );
+    const party = mut.find((m) => m.type === 'setFeatureState' && m.payload.key === 'partyDice');
+    expect(party.payload.value).toEqual({ b1: { dice: 'd8' } });
   });
 
   it('uses d10 for Wordsmith (Epic Poetry)', () => {
@@ -191,28 +171,13 @@ describe('Bard — Rally', () => {
     );
     Rally.onUse(t);
     const mut = applyMutations(t);
-    expect(mut).toContainEqual(
-      expect.objectContaining({
-        type: 'appendActiveModifier',
-        payload: expect.objectContaining({
-          modifier: expect.objectContaining({ dice: 'd10' }),
-        }),
-      })
-    );
+    const party = mut.find((m) => m.type === 'setFeatureState' && m.payload.key === 'partyDice');
+    expect(party.payload.value).toEqual({ b1: { dice: 'd10' } });
   });
 
   it('Spend Rally Die — Action adds static to action roll and clears partyDice', () => {
     const bard = mockCharacter({
       instanceId: 'b1',
-      activeModifiers: [
-        {
-          id: 'rally-die-b1',
-          name: 'Rally Die',
-          dice: 'd6',
-          type: 'rally',
-          refreshOn: 'session',
-        },
-      ],
     });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const gs = mockGameState({
@@ -251,15 +216,6 @@ describe('Bard — Rally', () => {
   it('Spend Rally Die — Damage adds static to damage roll and clears partyDice', () => {
     const bard = mockCharacter({
       instanceId: 'b1',
-      activeModifiers: [
-        {
-          id: 'rally-die-b1',
-          name: 'Rally Die',
-          dice: 'd6',
-          type: 'rally',
-          refreshOn: 'session',
-        },
-      ],
     });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const gs = mockGameState({
@@ -305,15 +261,6 @@ describe('Bard — Rally', () => {
     const bard = mockCharacter({ instanceId: 'b1', level: 1, classId: 'srd-cls-bard' });
     const ally = mockCharacter({
       instanceId: 'c2',
-      activeModifiers: [
-        {
-          id: 'rally-die-c2',
-          name: 'Rally Die',
-          dice: 'd6',
-          type: 'rally',
-          refreshOn: 'session',
-        },
-      ],
     });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const gs = mockGameState({
@@ -352,15 +299,6 @@ describe('Bard — Rally', () => {
     const ally = mockCharacter({
       instanceId: 'c2',
       currentStress: 4,
-      activeModifiers: [
-        {
-          id: 'rally-die-c2',
-          name: 'Rally Die',
-          dice: 'd6',
-          type: 'rally',
-          refreshOn: 'session',
-        },
-      ],
     });
     const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
     const gs = mockGameState({
@@ -383,15 +321,6 @@ describe('Bard — Rally', () => {
     const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
     const ally = mockCharacter({
       instanceId: 'c2',
-      activeModifiers: [
-        {
-          id: 'rally-die-c2',
-          name: 'Rally Die',
-          dice: 'd6',
-          type: 'rally',
-          refreshOn: 'session',
-        },
-      ],
     });
     const base = mockGameState({
       activeElements: [bard, ally],
@@ -403,5 +332,21 @@ describe('Bard — Rally', () => {
     expect(stress._crossSheetFromOwnerInstanceId).toBe('b1');
     expect(stress._ownerInstanceId).toBe('b1');
     expect(cross.some((c) => c.name === 'Make a Scene')).toBe(false);
+  });
+
+  it('collectChipsForOtherCharacterSheets surfaces Rally stress chip for the Bard when Bard is viewer', () => {
+    const bard = mockCharacter({ instanceId: 'b1', classId: 'srd-cls-bard' });
+    const ally = mockCharacter({
+      instanceId: 'c2',
+    });
+    const base = mockGameState({
+      activeElements: [bard, ally],
+      featureState: { Rally: { partyDice: { b1: { dice: 'd6' } } } },
+    });
+    const cross = collectChipsForOtherCharacterSheets('b1', [bard, ally], registry, 'card', base);
+    const stress = cross.find((c) => c.name === 'Spend Rally Die — Clear Stress');
+    expect(stress).toBeDefined();
+    expect(stress._crossSheetFromOwnerInstanceId).toBe('b1');
+    expect(stress._ownerInstanceId).toBe('b1');
   });
 });

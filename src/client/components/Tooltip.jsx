@@ -14,8 +14,9 @@ import { useTouchDevice } from '../lib/useTouchDevice.js';
  * @param {string} [props.label] - Tooltip text (also use as aria-label on icon-only buttons)
  * @param {React.ReactNode} [props.content] - Rich content (e.g. Markdown); when set, tooltip is wider and wraps
  * @param {'top'|'bottom'|'bottom-right'|'bottom-left'} [props.placement='bottom-right']
+ * @param {string} [props.className] - Wrapper around children (default `relative inline-flex`). Use `relative block w-full min-w-0` for full-width controls so width matches the non-tooltip state.
  */
-export function Tooltip({ children, label, content, placement = 'bottom-right' }) {
+export function Tooltip({ children, label, content, placement = 'bottom-right', className = 'relative inline-flex' }) {
   const [tooltipStyle, setTooltipStyle] = useState(null);
   const isTouch = useTouchDevice();
   const wrapperRef = useRef(null);
@@ -67,7 +68,7 @@ export function Tooltip({ children, label, content, placement = 'bottom-right' }
   return (
     <span
       ref={wrapperRef}
-      className="relative inline-flex"
+      className={className}
       onMouseEnter={() => { if (!isTouch) show(); }}
       onMouseLeave={() => { if (!isTouch) hide(); }}
       onClick={() => { if (isTouch) (tooltipStyle ? hide() : show()); }}

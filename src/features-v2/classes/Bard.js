@@ -25,7 +25,10 @@ export const MakeAScene = {
       // SRD: one adversary ("a target"). Host UI picks one id; engine stores it on activation.
       multiSelect: false,
       selectTargets: (table) => adversariesWithinClose(table),
-      isDisabled: (table) => adversariesWithinClose(table).length === 0,
+      isDisabled: (table) =>
+        adversariesWithinClose(table).length === 0
+          ? 'No adversary within Close range (Melee–Close).'
+          : false,
       onUse(table, chipState) {
         // `selectedTargetIds` is not set here — `activateChip(..., { selectedTargetIds })` (host or tests)
         // runs first and calls `chipState.set('selectedTargetIds', ...)` in chip-system.js (same as Life Support).
@@ -52,12 +55,6 @@ function rallyDieSizeForBard(me) {
   return (me.level ?? 1) >= 5 ? 'd8' : 'd6';
 }
 
-/** First Rally Die token on this actor (matches Phase 1 `activeModifiers` + `name === 'Rally Die'`). */
-function rallyDieModifierFromActor(me) {
-  const mods = me?.activeModifiers ?? [];
-  return mods.find((m) => m && m.name === 'Rally Die') ?? null;
-}
-
 /** Feature-state map: who still has a granted Rally Die this session (`table.feature` key **`partyDice`**). */
 function partyDiceEntryForActor(table) {
   const a = table.action?.actor;
@@ -77,21 +74,20 @@ function partyDiceEntryForMe(table) {
 }
 
 function actionActorHasRallyGrantAndDie(table) {
-  return partyDiceEntryForActor(table) != null && rallyDieModifierFromActor(table.action.actor) != null;
+  return partyDiceEntryForActor(table) != null;
 }
 
 function meHasRallyGrantAndDie(table) {
-  return partyDiceEntryForMe(table) != null && rallyDieModifierFromActor(table.me) != null;
+  return partyDiceEntryForMe(table) != null;
 }
 
 /** Roll the die, add to the chosen pool, and clear this actor from **`partyDice`** (spent for this session). */
 function spendRallyDieIntoPool(table, pool) {
   const actor = table.action?.actor;
   if (!actor?.isCharacter) return;
-  const mod = rallyDieModifierFromActor(actor);
-  if (!mod) return;
-  const fallback = partyDiceEntryForActor(table)?.dice;
-  const notation = mod.dice || fallback || 'd6';
+  const entry = partyDiceEntryForActor(table);
+  if (!entry) return;
+  const notation = entry.dice || 'd6';
   const v = table.rollDie(notation);
   if (pool === 'action') {
     table.rolls?.action?.addStatic({ name: 'Rally Die', value: v });
@@ -107,10 +103,9 @@ function spendRallyDieIntoPool(table, pool) {
 function spendRallyDieClearStress(table) {
   const me = table.me;
   if (!me?.isCharacter) return;
-  const mod = rallyDieModifierFromActor(me);
-  if (!mod) return;
-  const fallback = partyDiceEntryForMe(table)?.dice;
-  const notation = mod.dice || fallback || 'd6';
+  const entry = partyDiceEntryForMe(table);
+  if (!entry) return;
+  const notation = entry.dice || 'd6';
   const v = table.rollDie(notation);
   me.clearStress(v);
   const pd = { ...(table.feature.get('partyDice') || {}) };
@@ -119,49 +114,54 @@ function spendRallyDieClearStress(table) {
 }
 
 /**
- * **Once per session** (card default action): set **`table.feature`** key **`partyDice`** (per-instance die
- * size) and queue **`appendActiveModifier`** for every party character (Phase 1 **`activeModifiers`**).
+ * **Grant (card, once/session):** set **`table.feature`** key **`partyDice`** (per-instance die size).
+ * Exposed as an explicit card chip because `buildChipsForFeature` does not merge root **`onUse`** when **`chips`**
+ * is present — UI must not duplicate this in `CharacterHoverCard`.
  *
  * **Spend Rally Die** (two **reviewAction** chips): **`table.action.actor`** spends on **either** the action
- * roll or the damage roll — player picks the matching chip. Clears **`partyDice`** for that actor (modifier
- * tokens remain for Phase 1 display until the host syncs).
+ * roll or the damage roll — player picks the matching chip. Clears **`partyDice`** for that actor.
  *
  * **Spend — Clear Stress** (card): roll the die and clear Stress equal to the result. **`showOnOtherSheets`** so
  * allies without the Bard class still see the control under Modifiers (see `collectChipsForOtherCharacterSheets`).
  *
  * **Troubadour Maestro:** `featureState.Rally.maestroRallyChoices` (ally instanceId → pending / choice); **Maestro** subclass chips (`Troubadour.js`). **Wordsmith Epic Poetry:** d10 advantage on Tag Team help (`Wordsmith.js`).
  */
+export function rallySessionGrant(table) {
+  const die = rallyDieSizeForBard(table.me);
+  const partyDice = {};
+  for (const c of table.characters) {
+    partyDice[c.instanceId] = { dice: die };
+  }
+  table.feature.set('partyDice', partyDice);
+
+  if (table.me.subclassId === TROUBADOUR_SUBCLASS_ID) {
+    const maestroRallyChoices = {};
+    for (const c of table.characters) {
+      if (c.instanceId !== table.me.instanceId) {
+        maestroRallyChoices[c.instanceId] = null;
+      }
+    }
+    table.feature.set('maestroRallyChoices', maestroRallyChoices);
+  }
+}
+
 export const Rally = {
   name: 'Rally',
   description:
     'Once per session, describe how you rally the party and give yourself and each of your allies a Rally Die. At level 1, your Rally Die is a d6. A PC can spend their Rally Die to roll it, adding the result to their action roll, reaction roll, damage roll, or to clear a number of Stress equal to the result. At the end of each session, clear all unspent Rally Dice. At level 5, your Rally Die increases to a d8.',
   frequency: 'session',
-  onUse(table) {
-    const die = rallyDieSizeForBard(table.me);
-    const partyDice = {};
-    for (const c of table.characters) {
-      partyDice[c.instanceId] = { dice: die };
-      c.addActiveModifier({
-        id: `rally-die-${c.instanceId}`,
-        name: 'Rally Die',
-        dice: die,
-        type: 'rally',
-        refreshOn: 'session',
-      });
-    }
-    table.feature.set('partyDice', partyDice);
-
-    if (table.me.subclassId === TROUBADOUR_SUBCLASS_ID) {
-      const maestroRallyChoices = {};
-      for (const c of table.characters) {
-        if (c.instanceId !== table.me.instanceId) {
-          maestroRallyChoices[c.instanceId] = null;
-        }
-      }
-      table.feature.set('maestroRallyChoices', maestroRallyChoices);
-    }
-  },
+  onUse: rallySessionGrant,
   chips: [
+    {
+      name: 'Grant Rally Dice',
+      description:
+        'Once per session, describe how you rally the party and give yourself and each ally a Rally Die (die size follows your level/subclass).',
+      placements: ['card'],
+      frequency: 'session',
+      onUse(table) {
+        rallySessionGrant(table);
+      },
+    },
     when(
       (table) => table.action?.actor?.isCharacter === true,
       actionActorHasRallyGrantAndDie,

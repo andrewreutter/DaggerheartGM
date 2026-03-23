@@ -13,6 +13,15 @@ describe('getRestMovesForCharacter + V2 passive rest mods', () => {
     expect(out.longSlots).toBe(2);
   });
 
+  it('Bone Recovery: long-rest moves available during short rest (abilityIds)', () => {
+    const out = getRestMovesForCharacter({ abilityIds: ['srd-abl-recovery'] }, 'short');
+    const longIds = new Set(LONG_REST_MOVES.map((m) => m.id));
+    const shortMoveIds = out.moves.map((m) => m.id);
+    for (const id of longIds) {
+      expect(shortMoveIds).toContain(id);
+    }
+  });
+
   it('Elf: Celestial Trance adds one short and one long rest slot', () => {
     const out = getRestMovesForCharacter({ ancestry: ['Elf'] }, 'short');
     expect(out.shortSlots).toBe(3);
@@ -20,4 +29,5 @@ describe('getRestMovesForCharacter + V2 passive rest mods', () => {
     const longOut = getRestMovesForCharacter({ ancestry: ['Elf'] }, 'long');
     expect(longOut.longSlots).toBe(3);
   });
+
 });

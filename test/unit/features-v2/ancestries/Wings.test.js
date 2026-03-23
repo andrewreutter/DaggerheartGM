@@ -6,10 +6,6 @@ import { Wings } from '../../../../src/features-v2/ancestries/Faerie.js';
 const annotatedWings = { ...Wings, _ownerInstanceId: 'char-1' };
 
 describe('Wings', () => {
-  it('declares fly movement mode', () => {
-    expect(Wings.movementModes).toContain('fly');
-  });
-
   describe('card chip (flying toggle)', () => {
     it('has a card chip that is a toggle', () => {
       const table = mockTable();
@@ -20,22 +16,31 @@ describe('Wings', () => {
     });
 
     it('sets feature state flying=true when toggled on', () => {
-      const table = mockTable();
+      const table = mockTable({ _featureKey: 'Wings' });
       const chips = collectChips([annotatedWings], 'card', table);
       const chipState = mockChipState({ _isOn: false });
       const mutations = activateChip(chips[0], table, chipState);
       expect(mutations).toContainEqual(
-        expect.objectContaining({ type: 'setFeatureState', payload: expect.objectContaining({ key: 'flying', value: true }) })
+        expect.objectContaining({
+          type: 'setFeatureState',
+          payload: expect.objectContaining({ key: '_v2t:Wings::Wings::card', value: true }),
+        })
       );
     });
 
     it('sets feature state flying=false when toggled off', () => {
-      const table = mockTable({ featureState: { Wings: { flying: true } } });
+      const table = mockTable({
+        _featureKey: 'Wings',
+        featureState: { Wings: { '_v2t:Wings::Wings::card': true } },
+      });
       const chips = collectChips([annotatedWings], 'card', table);
       const chipState = mockChipState({ _isOn: true });
       const mutations = activateChip(chips[0], table, chipState);
       expect(mutations).toContainEqual(
-        expect.objectContaining({ type: 'setFeatureState', payload: expect.objectContaining({ key: 'flying', value: false }) })
+        expect.objectContaining({
+          type: 'setFeatureState',
+          payload: expect.objectContaining({ key: '_v2t:Wings::Wings::card', value: false }),
+        })
       );
     });
   });
@@ -50,7 +55,7 @@ describe('Wings', () => {
         },
         featureState: {
           Wings: {
-            flying: true,
+            '_v2t:Wings::Wings::card': true,
           },
         },
       });
@@ -69,7 +74,7 @@ describe('Wings', () => {
         },
         featureState: {
           Wings: {
-            flying: false,
+            '_v2t:Wings::Wings::card': false,
           },
         },
       });
@@ -86,7 +91,7 @@ describe('Wings', () => {
         },
         featureState: {
           Wings: {
-            flying: true,
+            '_v2t:Wings::Wings::card': true,
           },
         },
       });
@@ -102,7 +107,7 @@ describe('Wings', () => {
           targetInstanceIds: ['char-1'],
           effects: [],
         },
-        featureState: { Wings: { flying: true } },
+        featureState: { Wings: { '_v2t:Wings::Wings::card': true } },
         _featureKey: 'Wings',
       });
       const chips = collectChips([annotatedWings], 'reviewAction', table);

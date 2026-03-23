@@ -20,6 +20,11 @@ import {
   runResolve,
 } from '../helpers.js';
 
+const vanishingActWithScope = {
+  ...VanishingAct,
+  _sourceScopeKey: 'Nightwalker',
+};
+
 describe('Nightwalker — Fleeting Shadow', () => {
   it('adds +1 Evasion via passiveStatMods', () => {
     const char = mockCharacter({ instanceId: 'n1', evasion: 12 });
@@ -234,6 +239,7 @@ describe('Nightwalker — Vanishing Act', () => {
         activeElements: [char, adv],
         _ownerInstanceId: 'n1',
         _featureKey: 'Vanishing Act',
+        _activeFeature: { ...vanishingActWithScope, _ownerInstanceId: 'n1' },
         featureState: {},
         action: {
           type: 'free',
@@ -245,7 +251,7 @@ describe('Nightwalker — Vanishing Act', () => {
         rolls: undefined,
       })
     );
-    const chips = collectChips([{ ...VanishingAct, _ownerInstanceId: 'n1' }], 'card', tbl);
+    const chips = collectChips([{ ...vanishingActWithScope, _ownerInstanceId: 'n1' }], 'card', tbl);
     const fromUse = activateChip(chips[0], tbl, mockChipState());
     deductChipCosts(chips[0], tbl);
     const mutations = [...fromUse, ...applyMutations(tbl)];
@@ -277,7 +283,7 @@ describe('Nightwalker — Vanishing Act', () => {
     const char = mockCharacter({ instanceId: 'n1', conditions: ['Cloaked'] });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const { mutations } = runResolve(
-      { ...VanishingAct, _ownerInstanceId: 'n1' },
+      { ...vanishingActWithScope, _ownerInstanceId: 'n1' },
       {
         activeElements: [char, adv],
         rolls: {
@@ -314,7 +320,7 @@ describe('Nightwalker — Vanishing Act', () => {
     const char = mockCharacter({ instanceId: 'n1', conditions: ['Cloaked'] });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const { mutations } = runResolve(
-      { ...VanishingAct, _ownerInstanceId: 'n1' },
+      { ...vanishingActWithScope, _ownerInstanceId: 'n1' },
       {
         activeElements: [char, adv],
         rolls: {
@@ -342,6 +348,7 @@ describe('Nightwalker — Vanishing Act', () => {
       activeElements: [char],
       _ownerInstanceId: 'n1',
       _featureKey: 'Vanishing Act',
+      _activeFeature: { ...vanishingActWithScope, _ownerInstanceId: 'n1' },
       featureState: { Nightwalker: { vanishingActCloak: true } },
       action: {
         type: 'longRest',

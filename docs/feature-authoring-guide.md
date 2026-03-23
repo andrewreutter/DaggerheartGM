@@ -61,6 +61,8 @@ Congratulations, you have created a feature! If you attach this to an Ancestry, 
 1. Render it as a Card on the player's character sheet.
 2. Allow the player to click the card to post a narrative Banner to the Game Table, announcing to the group that they are dancing the tango. The banner will remain on the table until the GM resolves it.
 
+**Optional card title:** **`name`** is always the stable SRD identifier (engine keys, usage tracking). For a different **visible** title on the character sheet / hover card, set optional **`displayName`** to a string or **`(table) => string`** (same `table` as V2 card chips). The client resolves it in `build-feature-card-model.js` and defaults to **`name`**. See **CONV-037** in `docs/v2-code-conventions.md` (e.g. Druid **Beastform** includes the active beastform name while transformed).
+
 ### 1.2 The Default Card Action (Active Behavior)
 
 Most features aren't free. They cost Hope, cost Stress, or can only be used once per rest. 
@@ -258,7 +260,11 @@ chip.set('myLocalVar', true) // State scoped only to this specific chip
 chip.get('myLocalVar') // e.g. true
 ```
 
-**Shared option state (`table.source.get` / `table.source.set`).** This is for **authors of V2 feature modules** in `src/features-v2/` (subclasses, classes, ancestries, communities). You do **not** annotate every feature object by hand: set **`sourceScopeKey` once** on the **registry row** in the collection’s `index.js` (e.g. `sourceScopeKey: 'WardenOfTheElements'` on the Warden of the Elements subclass object). At runtime, **`loadCharacterFeatures`** copies that row onto each loaded feature as **`_sourceObject`** and copies the string to **`_sourceScopeKey`**. **`buildTableSnapshot`** resolves the scope from **`activeFeature._sourceScopeKey`** or from **`_sourceObject.sourceScopeKey`**, then exposes **`get`/`set`** on **`table.source`** for that shared `featureState[scope]` bag. You only need a manual **`_sourceScopeKey`** or a minimal **`_sourceObject: { sourceScopeKey: '…' }`** in **unit tests** that build feature objects without going through **`loadCharacterFeatures`**.
+**Shared option state (`table.source.get` / `table.source.set`).** Use this for **cross-feature shared persistence** tied to a **registry option row** (class, subclass, ancestry, community, weapon, armor, ability, item, consumable, beastform). **`table.feature.get` / `table.feature.set`** is keyed by the **current card’s SRD feature name** (per-feature counters, etc.) — do not confuse the two.
+
+**`loadCharacterFeatures`** always sets **`_sourceScopeKey`** on every pushed feature: if the registry row defines a non-empty **`sourceScopeKey`**, that value wins (preserves human-readable bags and existing DB keys); otherwise the default is **`${collection}:${id}`** (e.g. `classes:srd-cls-druid`, `weapons:srd-wpn-…`, `beastforms:srd-bst-…`). It always sets **`_sourceObject`** to the row. **`buildTableSnapshot`** resolves the scope from **`activeFeature._sourceScopeKey`** or **`_sourceObject.sourceScopeKey`**, then exposes **`get`/`set`** on **`table.source`** for that shared `featureState[scope]` bag. Prefer **`table.source`** for shared state; use **`queueInternalMutation(table, 'setFeatureState', …)`** only for engine internals or rare cases — not as the default author API.
+
+For **unit tests** that build feature objects without **`loadCharacterFeatures`**, pass **`_sourceScopeKey`** and **`_sourceObject`** explicitly when you need **`table.source`** behavior.
 
 ### 2.2 Reading vs. Writing
 
@@ -315,7 +321,6 @@ export const FelineInstincts = {
 The `placements` array tells the engine where in the UI (and when in the Action Loop) this chip should appear. We name placements after the phases of the Action Loop to keep things predictable, even if the UI changes.
 
 - `'card'`: The chip appears on the feature's card in the character sheet.
-- `'statblock'`: The chip appears in the character's core statblock (e.g., next to their Armor or Experiences).
 - `'create'`: The chip appears in the character editor during the **Character Creation** phase. This is useful for features that require a choice (like picking a beastform) and can render as a dropdown or selection UI.
 - `'intent'`': The chip appears during the **Intent** phase, *before* dice are rolled. 
 - `'reviewAction'`: The chip appears during the **Review Action** phase, *after* dice are rolled but *before* the engine applies damage thresholds to calculate HP/Stress loss. Use this for: rerolling dice (e.g. spending Hope to reroll the Hope Die), adding extra damage dice, modifying raw damage values (e.g. halving incoming physical damage before thresholds), temporary Evasion reactions, and movement/positioning reactions. In short: if your chip reacts to the roll *result* but changes something *before* HP boxes are marked, it is `reviewAction`.
@@ -829,17 +834,6 @@ damageAffinities: {
 }
 ```
 
-#### `movementModes`
-
-An array of special movement capabilities the character possesses. The engine and map system use these to validate movement, range, and targeting (e.g., melee attacks against flying targets).
-
-```javascript
-movementModes: [
-  'swim',
-  when((table) => table.feature.get('wingsActive'), 'fly')
-]
-```
-
 #### `rangeOverrides`
 
 A plain object that remaps range band names. When this character uses a weapon, ability, spell, or feature, any stated range that matches a key in `rangeOverrides` is treated as the corresponding value instead. The engine and map system use this when computing target eligibility.
@@ -907,7 +901,6 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 - `description` *(string, required)*: A clear explanation of what the chip does. Displayed on the UI.
 - `placements` *(array of strings, required)*: Where and when the chip appears. Valid values:
   - `'card'`: On the feature's card in the character sheet.
-  - `'statblock'`: In the character's core statblock (e.g., near Armor or Experiences).
   - `'create'`: In the character editor during Character Creation.
   - `'intent'`: On the pre-roll banner during the Intent phase.
   - `'reviewAction'`: On the post-roll banner during the Review Action phase (before thresholds).
@@ -916,7 +909,7 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
 
 **Optional Properties:**
 
-- `showOnOtherSheets` *(boolean)*: When `true`, the chip may be included when the host calls `collectChipsForOtherCharacterSheets(viewerId, party, registry, phase, gameState)` — the engine evaluates predicates with **`table.me` = the character whose sheet is open**, while the chip still carries `_ownerInstanceId` / `_crossSheetFromOwnerInstanceId` from the **source** feature (e.g. Bard **Rally** spend controls on an ally who does not have the Rally class feature). Normal `collectChips` ignores this flag. Intended UI placement: the **Modifiers** row under Experiences (`CharacterExperiences` prop `crossSheetChips` in the SPA).
+- `showOnOtherSheets` *(boolean)*: When `true`, the chip may be included when the host calls `collectChipsForOtherCharacterSheets(viewerId, party, registry, phase, gameState)` — the engine evaluates predicates with **`table.me` = the character whose sheet is open** (including when that character **owns** the feature), while the chip still carries `_ownerInstanceId` / `_crossSheetFromOwnerInstanceId` from the **source** feature (e.g. Bard **Rally** spend under Modifiers for allies **and** for the Bard). Normal `collectChips` ignores this flag. Intended UI placement: the **Modifiers** row under Experiences (`CharacterExperiences` prop `crossSheetChips` in the SPA).
 - `name` *(string)*: The title of the chip. If omitted, defaults to the Feature's name.
 - `isToggle` *(boolean)*: If `true`, the chip acts as an on/off switch. The `onUse` function fires immediately on toggle, and you can check `chip.isOn` to apply or remove effects.
 - `isSelect` *(function)*: If provided, the chip renders as a dropdown (`<select>`) instead of a button. Must be a function `(table) => [{ id, name, description? }, ...]` that returns the list of options to display. When the player confirms a selection, the engine stores the chosen id in chip state (accessible via `chip.get('selectedId')`) and then calls `onUse`. Use this for permanent one-time choices made during character creation — e.g. picking an Experience to receive a permanent bonus.
@@ -1073,7 +1066,7 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `consumeTagTeamInitiation()` *(method)*: Queues **`setTagTeamInitiationsUsed`** (increment). Throws when no initiations remain.
 - `resetTagTeamInitiationsForSession()` *(method)*: Queues used count **0** — call when a new **session** begins (alongside other session-scoped resets).
 
-- `beastformOptions` *(array)*: SRD Beastform rows (`{ id, name, tier, attack, evasion_bonus, trait_bonus, features, … }`) when the host merged them with **`attachBeastformOptions(character, registry)`** before building snapshots. Empty array when unset or for non-Druid characters. Used by Druid **Beastform** and **Evolution** default-card **`isSelect`** options (`table.me.beastformOptions.map(...)`).
+- `registry` *(object)*: The V2 registry passed on **`gameState.registry`** when building snapshots (same object as **`loadCharacterFeatures(character, registry)`**). Exposed as **`table.registry`** (read-only reference). Druid **Beastform** / **Evolution** **`isSelect`** callbacks filter **`table.registry.beastforms`** by **`table.me.tier`** (see `classes/Druid.js`).
 - `domainLoadoutDisabled` *(boolean)*: When **`true`** (merged from **`applyDeclarativeFeatures` → `domainLoadoutDisabled`** while a beastform is active), the host should treat domain spell cards as unavailable — Druid **Beastform** / **Evolution** SRD: no casting from domain cards while transformed.
 - `experiences` *(array of `{ id, name }`)*: The character's experience list. Use in `isSelect` callbacks to populate a picker for create-time choices. Also use to detect whether the player used an experience on the current roll: when a player applies an experience during the Intent phase, the engine adds `{ name: experienceName, value: 2 }` to `table.rolls.action.statics`. Cross-referencing `table.me.experiences` names against `table.rolls.action.statics` tells you whether any experience was used:
 
@@ -1135,19 +1128,19 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
   ```
 
 - `restrictMovement(reason?)` *(method)*: Prevents this actor's token from being manually dragged on the battle map. See "Movement and Positioning" below for details and usage pattern.
-- `allowMovement()` *(method)*: Lifts a restriction set by `restrictMovement()`.
+- `allowMovement(reason?)` *(method)*: Lifts a restriction set by `restrictMovement(reason?)` — pass the **same `reason` string** when removing one lock.
 
 - `applyStatMod(stat, delta)` *(method)*: Queues a **`runtimeStatMod`** mutation — additive runtime change to a **named stat** on **this** actor (distinct from declarative `passiveStatMods` on features). The host merges `delta` into the correct element field for `stat`. Supported keys today: **`difficulty`** (adversaries only → `difficultyMod`; e.g. on the chosen adversary actor, `applyStatMod('difficulty', -2)` for **Make a Scene**). Throws for unsupported `stat` or `difficulty` on a character.
 
-**Druid — Beastform list (host hydration):**
+**Druid — Beastform list:**
 
-Before building table snapshots for a character with the Druid class, call **`attachBeastformOptions(character, registry)`** (from `src/features-v2/engine/feature-loader.js`). It copies `registry.beastforms` (default export from `src/features-v2/beastforms/index.js`: generated **`BEASTFORM_ITEMS`** from `srd-data.js` plus per-form V2 feature lists **married** to stable SRD ids via **`marryBeastformFeatures`**) onto **`character._beastformOptions`**, keeping only beastforms whose **`tier` ≤ the character’s tier** (from `character.tier` or derived from `character.level`). **`table.me.beastformOptions`** exposes the same array for **`isSelect`** on **Beastform** / **Evolution**. Regenerate the data file after SRD updates: `node scripts/generate-beastform-srd-data.mjs`. Author new beastform mechanics in `src/features-v2/beastforms/<FormName>.js` as named exports + **`features`** array (**CONV-034** in `docs/v2-code-conventions.md`).
+Pass the V2 **`registry`** on **`gameState.registry`** to **`buildTableSnapshot`** so **`table.registry.beastforms`** is available. The full map lives in **`src/features-v2/beastforms/index.js`** (generated **`BEASTFORM_ITEMS`** from `srd-data.js` plus per-form V2 feature lists **married** to stable SRD ids via **`marryBeastformFeatures`**). **Beastform** / **Evolution** tier filtering (forms with **`tier` ≤** the PC’s tier) is implemented in **`classes/Druid.js`**, not the feature loader. Regenerate the data file after SRD updates: `node scripts/generate-beastform-srd-data.mjs`. Author new beastform mechanics in `src/features-v2/beastforms/<FormName>.js` as named exports + **`features`** array (**CONV-034** in `docs/v2-code-conventions.md`).
 
-**Druid — active form features (`loadCharacterFeatures`):** While transformed, **`loadCharacterFeatures`** resolves the active beastform id from **`featureState.Beastform` / `Evolution`** or legacy **`character.activeBeastform.id`** (or **`beastformId`**), then appends each object in **`registry.beastforms[id].features`** to the flat feature list. Entries use **`_source: 'beastform'`**, **`_beastformId`**, and **`_sourceObject`** pointing at the **full registry row** (so **`table.source`** in declarative snapshots is the row; **`table.activeFeature`** is the sub-feature). They run through the same declarative pass as class/weapon features. **Do not** duplicate **`trait_bonus` / `evasion_bonus`** from the row in **`passiveStatMods`** unless you remove those strings from the overlay — the engine already merges the row’s stat lines in **`applyBeastformDeclarativeOverlay`** after the feature loop.
+**Druid — active form features (`loadCharacterFeatures`):** While transformed, **`loadCharacterFeatures`** resolves the active beastform id from the **`classes:srd-cls-druid`** scoped bag first, then legacy **`featureState.Beastform` / `Evolution`**, or legacy **`character.activeBeastform.id`** (or **`beastformId`**), then appends each object in **`registry.beastforms[id].features`** to the flat feature list. Entries use **`_source: 'beastform'`**, **`_beastformId`**, and **`_sourceObject`** pointing at the **full registry row** (so **`table.source`** in declarative snapshots is the row; **`table.activeFeature`** is the sub-feature). They run through the same declarative pass as class/weapon features. The registry row carries **`passiveStatMods`** derived once at build time from SRD **`trait_bonus`** / **`evasion_bonus`** (see **`passiveStatModsFromBeastformRow`** in **`beastform-row-stat-mods.js`**). **`applyDeclarativeFeatures`** applies **`_sourceObject.passiveStatMods` once per **`_sourceScopeKey`** for **`_source === 'beastform'`** only (before per-feature **`passiveStatMods`**) so row-level bonuses are not duplicated across sub-features; other collections may use a single object as both source and feature row, so source-level mods are not merged there to avoid double-counting.
 
 **Druid — in-beastform combat overlay (`applyDeclarativeFeatures`):** When **`featureState.Beastform.activeBeastform`** or **`featureState.Evolution.activeBeastform`** holds `{ beastformId, viaEvolution }`, or the host still uses a legacy full **`character.activeBeastform`** row from Phase 1, the loader resolves the SRD row and:
 
-- Adds **`trait_bonus`** / **`evasion_bonus`** to the computed stat bag (same string shape as the Game Table: e.g. `"Agility +1"`, `"Evasion +2"` — helpers **`parseBeastformStatBonus`**, **`parseBeastformAttackLine`** in `feature-loader.js`).
+- Merges row **`trait_bonus`** / **`evasion_bonus`** into the computed stat bag via the registry row’s **`passiveStatMods`** (string parsing: **`parseBeastformStatBonus`** in **`beastform-row-stat-mods.js`**, re-exported from **`feature-loader.js`**; attack line: **`parseBeastformAttackLine`**).
 - Appends one **virtual weapon** from the row’s **`attack`** line (e.g. `"Melee Agility d4 phy"` → natural attack for the form).
 - Sets **`weaponRenderHints`** for **`primaryWeaponId`**, **`secondaryWeaponId`**, and **`weaponIds`** entries to **`isDisabled: true`** (`disabledReason: 'Beastform active'`).
 - Sets **`domainLoadoutDisabled: true`** in the declarative result — merge onto the element so **`table.me.domainLoadoutDisabled`** is true (no domain spells while transformed).
@@ -1158,14 +1151,14 @@ Before building table snapshots for a character with the Druid class, call **`at
 
 **Movement and Positioning:**
 
-- `move(conditionFn, description?)`: Requests a movement on the battle map. The `conditionFn` receives the `table` object and must return `true` if the new position is valid (the UI/engine evaluates candidate placements against this). Use `actor.rangeFrom(other)` to test the distance **band** after the move (`'melee'`, `'veryClose'`, `'close'`, etc.); do **not** replace knockback with `addNarration`. There is no `move(to)` — only the condition predicate.  
-*Example:* `table.action.target.move(t => t.action.target.rangeFrom(t.action.attacker) !== 'melee', "Push target out of melee")`  
-*Example (end at Very Close):* `table.me.move(t => t.me.rangeFrom(t.action.target) === 'veryClose', "Leap to Very Close")` — requires tokens on the map; if positions are unknown, `rangeFrom` is `null` and no valid placement.  
+- `move(conditionFn, desiredCondition, description?, opts?)`: Requests a movement on the battle map. The `conditionFn` receives the `table` object and must return `true` if the new position is valid. **`desiredCondition`** is a short human-readable statement of what the map must satisfy (tooltips / blocking copy). **`description`** is optional longer guidance. **`opts`**: `{ freezeOtherInstanceId, freezeReason }` — while the pending move is active, the host **locks that actor’s token** (same persistence as `restrictMovement`) so only the mover should be repositioned; the lock clears with **`v2PendingMove` on banner ack/cancel** (and the host runs the same cleanup when the roll disappears from the pending banner queue, so Cancel and player cancel cannot strand a lock). On the **Game Table**, after a review chip applies this mutation, the client keeps `conditionFn` in memory, stores a lightweight `v2PendingMove` blob on the mover’s element (including `conditionMet`), and **re-runs `conditionFn(table)` on each GM token drop**, updating `conditionMet` to match the current positions. While `conditionMet` is false, the GM’s primary Acknowledge control is disabled and labeled like **Apply Kick to acknowledge**; if the token is moved so the condition fails again, Ack reverts to that state. **`v2PendingMove` clears on banner ack/cancel**, not when the condition is briefly satisfied. Server follow-ups that replace the banner row (e.g. bonus damage) re-key the pending move to the new `rollDbId` automatically. Use `actor.rangeFrom(other)` to test the distance **band** after the move (`'melee'`, `'veryClose'`, `'close'`, etc.); do **not** replace knockback with `addNarration`. There is no `move(to)` — only the condition predicate. You may omit **`description`** and pass **`opts`** as the third argument: `move(fn, desiredCondition, opts)`.  
+*Example:* `table.action.target.move(t => t.action.target.rangeFrom(t.action.attacker) !== 'melee', "Not in melee with attacker", "Push target out of melee.")`  
+*Example (end at Very Close):* `table.me.move(t => t.me.rangeFrom(t.action.target) === 'veryClose', "Very Close range from target", "Leap to Very Close.")` — requires tokens on the map; if positions are unknown, `rangeFrom` is `null` and no valid placement.  
 When the SRD lets the player choose **who** moves (e.g. you or the target), add **two** `when()` chips with distinct `name` strings (e.g. `Kick (push target)` vs `Kick (leap back)`) so each option queues a single `move` on the correct actor. For predicates inside `move`, see §0.4.
 
 - `restrictMovement(reason?)`: Prevents this actor's token from being manually dragged on the battle map. `reason` is an optional string shown to the player when they attempt to move the token (e.g. `"Can't move — retracted into shell."`). The restriction persists until `allowMovement()` is called. This is the correct implementation for SRD text like "you can't move" or "this character cannot move this turn." Queue the restriction inside a toggle chip's `onUse` so it lifts automatically when the toggle is turned off.
 
-- `allowMovement()`: Lifts a movement restriction previously set by `restrictMovement()`. Call this in the `else` branch of a toggle chip's `onUse` (when the toggle is turned off) to restore the actor's ability to move.
+- `allowMovement(reason?)`: Lifts a movement restriction previously set by `restrictMovement()` with the same `reason`. Call this in the `else` branch of a toggle chip's `onUse` (when the toggle is turned off) to restore the actor's ability to move.
 
 ```javascript
 // Example: toggle chip that prevents movement while active
@@ -1179,7 +1172,7 @@ chips: [{
     if (chip.isOn) {
       table.me.restrictMovement("Can't move — retracted into shell.");
     } else {
-      table.me.allowMovement();
+      table.me.allowMovement("Can't move — retracted into shell.");
     }
   },
 }]
@@ -1315,6 +1308,8 @@ const committed =
 - `addNarration(text)` *(method)*: Appends a line of text to the action's banner.
 - `addDamageRoll({ name, dice, damageType, targets })` *(method)*: Queues a separate damage roll that the engine will resolve independently from the main weapon damage. The `dice` string (e.g. `'1d12'`) is rolled once by the engine; the resulting damage is applied as a new `{ type: 'damage' }` effect to each Actor in the `targets` array and enters the normal threshold pipeline. Use this in `reviewAction`-phase chips for AOE features that deal their own damage (e.g. Charge). When `targets` is empty, no effects are created.
 - `reduceIncomingPhysicalSeverityBySteps(steps?)` *(method)*: During **`onReviewAction`**, reduces incoming **physical** damage by `steps` HP (default **1**), i.e. one threshold step per point. Only mutates pending `{ type: 'damage', damageType: 'physical' }` effects whose `target.instanceId` equals **`gameState._ownerInstanceId`** — the feature owner must be the damage recipient (use with **`isTargeted`**). Does not affect magic damage. See **Unstoppable** (`classes/Guardian.js`).
+- `redeemSelfPendingStressWithArmorMarks()` *(method)*: During **`reviewOutcome`**, finds the feature owner’s pending `{ stat: 'currentStress' }` loss, sets its `amount` to **0**, and queues **`markArmor`** for that many slots. No-op if there is no matching effect. **Grace-Touched** (armor instead of Stress). Do not mutate `effects` manually for this swap — use this helper (**CONV-010**).
+- `convertPendingHpLossToStressOnTarget(targetInstanceId)` *(method)*: During **`reviewOutcome`**, moves pending **`currentHP`** loss on that target to **`currentStress`** (same `amount`, clears the HP effect). Appends or merges into an existing Stress effect on the same target. No-op if there is no pending HP loss. **Grace-Touched** (Stress instead of HP when you force a target to mark HP).
 
 #### C.4 Dice and Rolls (`table.rolls`)
 
@@ -1392,6 +1387,8 @@ const fireDie = table.rolls?.damage?.dice.find(d => d.name === 'Fire');
 **Action roll only — swap duality faces:**
 
 - `swapHopeFear()` *(method on `table.rolls.action`)*: After both Hope and Fear d12s have resolved, swaps their **face values** (e.g. Vengeance **Nemesis**). Queues a `swapHopeFearDice` mutation (`payload: { rollKey: 'action' }`) so the VTT/banner can persist the swap; mutates backing roll state so the same snapshot reads updated values from `hopeDie.value` / `fearDie.value`. No-op if either die is missing or either value is still unset.
+- `setActionSuccess(success)` *(method, action roll only)*: Forces hit (`true`) or miss (`false`). Queues `setActionRollSuccess` (e.g. Bone **Bone-Touched**).
+- `setActionCritical(critical)` *(method, action roll only)*: Forces critical (`true`) or not (`false`) for duality rolls. Queues `setActionRollCritical` and updates backing state so `isCritical` matches (e.g. **Homet's Secret Potion**).
 
 **HP-based Hope die (intent):** When the rule depends on how many **HP boxes remain unmarked**, compare against `table.me.currentHP` during **`hooks.onIntent`**. On character elements, `currentHp` / `currentHP` is **remaining HP** (same as the Game Table HP track: unmarked boxes). Example — **Rise to the Challenge** swaps to a d20 while `currentHP <= 2`:
 

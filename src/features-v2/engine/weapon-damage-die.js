@@ -6,6 +6,18 @@
 import { parseLeadingDamageDice } from '../../client/lib/dice-utils.js';
 
 /**
+ * Leading weapon damage die notation from a damage string (e.g. `d8+1` → `d8`).
+ * Defaults to `d8` when the string does not parse.
+ *
+ * @param {string} [damageStr]
+ * @returns {string}
+ */
+export function leadingDamageDieFromString(damageStr) {
+  const p = parseLeadingDamageDice(String(damageStr ?? '').trim());
+  return p?.die ?? 'd8';
+}
+
+/**
  * Find the damage die pool entry that represents this weapon's damage.
  * Prefers matching `table.source.damage` notation to the rolled dice; falls back
  * to the legacy heuristic (name === 'weapon', then first simple dN die).

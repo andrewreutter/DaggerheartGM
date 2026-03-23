@@ -10,14 +10,19 @@ import { Brace } from '../../../../src/features-v2/abilities/Bone/Brace.js';
 import { Tactician } from '../../../../src/features-v2/abilities/Bone/Tactician.js';
 import { DeftManeuvers } from '../../../../src/features-v2/abilities/Bone/DeftManeuvers.js';
 import { ISeeItComing } from '../../../../src/features-v2/abilities/Bone/ISeeItComing.js';
+import { KnowThyEnemy } from '../../../../src/features-v2/abilities/Bone/KnowThyEnemy.js';
+import { SignatureMove } from '../../../../src/features-v2/abilities/Bone/SignatureMove.js';
 import {
   mockCharacter,
   mockAdversary,
   mockGameState,
+  mockAction,
   mockRoll,
   mockAdversaryAttackRoll,
   runReviewOutcome,
+  runReviewAction,
   runIntent,
+  runResolve,
 } from '../helpers.js';
 
 describe('Bone Tier 1 — Untouchable', () => {
@@ -522,6 +527,252 @@ describe('Bone Tier 1 — Tactician', () => {
       expect.objectContaining({
         type: 'addRollStatic',
         payload: expect.objectContaining({ name: 'Tactician (Scout)', value: 2 }),
+      })
+    );
+  });
+});
+
+describe('Bone Tier 1 — Know Thy Enemy', () => {
+  it('card target-select queues Instinct actionLoop vs adversary effective Difficulty', () => {
+    const char = mockCharacter({ instanceId: 'kte-1' });
+    const adv = mockAdversary({ instanceId: 'adv-kte', difficulty: 12, difficultyMod: 1 });
+    const gs = mockGameState({
+      activeElements: [char, adv],
+      _ownerInstanceId: 'kte-1',
+      _featureKey: 'Know Thy Enemy',
+      featureState: {},
+      action: {
+        type: 'trait',
+        actorInstanceId: 'kte-1',
+        targetInstanceIds: [],
+        trait: 'Instinct',
+        effects: [],
+      },
+      rolls: mockRoll(),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...KnowThyEnemy, _ownerInstanceId: 'kte-1' }], 'card', tbl);
+    const card = chips.find((c) => c.name === 'Know Thy Enemy');
+    expect(card).toBeDefined();
+    const m = [
+      ...activateChip(card, tbl, makeChipState(), { selectedTargetIds: ['adv-kte'] }),
+      ...applyMutations(tbl),
+    ];
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Know Thy Enemy',
+          trait: 'Instinct',
+          difficulty: 13,
+        }),
+      })
+    );
+  });
+
+  it('onReviewAction on successful Instinct roll sets ktePostSuccess', () => {
+    const char = mockCharacter({ instanceId: 'kte-2' });
+    const adv = mockAdversary({ instanceId: 'adv-2' });
+    const { mutations } = runReviewAction(
+      { ...KnowThyEnemy, _ownerInstanceId: 'kte-2' },
+      {
+        activeElements: [char, adv],
+        featureState: {
+          'Know Thy Enemy': { kteAwaiting: true, kteTargetId: 'adv-2' },
+        },
+        actionType: 'trait',
+        action: mockAction({
+          type: 'trait',
+          actorInstanceId: 'kte-2',
+          traitKey: 'Instinct',
+          targetInstanceIds: [],
+        }),
+        rolls: mockRoll({ isSuccess: true }),
+      }
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Know Thy Enemy',
+          key: 'ktePostSuccess',
+          value: true,
+        }),
+      })
+    );
+  });
+
+  it('reviewAction lists Hope intel and Stress strip-Fear chips after success', () => {
+    const char = mockCharacter({ instanceId: 'kte-3' });
+    const adv = mockAdversary({ instanceId: 'adv-3' });
+    const gs = mockGameState({
+      activeElements: [char, adv],
+      fear: 2,
+      _ownerInstanceId: 'kte-3',
+      _featureKey: 'Know Thy Enemy',
+      featureState: {
+        'Know Thy Enemy': {
+          ktePostSuccess: true,
+          kteHopeUsed: false,
+          kteStressUsed: false,
+          kteTargetId: 'adv-3',
+        },
+      },
+      action: {
+        type: 'trait',
+        actorInstanceId: 'kte-3',
+        trait: 'Instinct',
+        targetInstanceIds: [],
+        effects: [],
+      },
+      rolls: mockRoll({ isSuccess: true }),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...KnowThyEnemy, _ownerInstanceId: 'kte-3' }], 'reviewAction', tbl);
+    const names = chips.map((c) => c.name);
+    expect(names).toContain('Know Thy Enemy — ask the GM');
+    expect(names).toContain('Know Thy Enemy — remove Fear');
+  });
+
+  it('remove Fear chip queues spendFear and marks kteStressUsed', () => {
+    const char = mockCharacter({ instanceId: 'kte-4' });
+    const adv = mockAdversary({ instanceId: 'adv-4' });
+    const gs = mockGameState({
+      activeElements: [char, adv],
+      fear: 2,
+      _ownerInstanceId: 'kte-4',
+      _featureKey: 'Know Thy Enemy',
+      featureState: {
+        'Know Thy Enemy': {
+          ktePostSuccess: true,
+          kteHopeUsed: false,
+          kteStressUsed: false,
+          kteTargetId: 'adv-4',
+        },
+      },
+      action: {
+        type: 'trait',
+        actorInstanceId: 'kte-4',
+        trait: 'Instinct',
+        targetInstanceIds: [],
+        effects: [],
+      },
+      rolls: mockRoll({ isSuccess: true }),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...KnowThyEnemy, _ownerInstanceId: 'kte-4' }], 'reviewAction', tbl);
+    const stressChip = chips.find((c) => c.name === 'Know Thy Enemy — remove Fear');
+    expect(stressChip).toBeDefined();
+    const fromUse = activateChip(stressChip, tbl, makeChipState());
+    deductChipCosts(stressChip, tbl);
+    const m = [...fromUse, ...applyMutations(tbl)];
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'spendFear',
+        payload: expect.objectContaining({ amount: 1 }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Know Thy Enemy',
+          key: 'kteStressUsed',
+          value: true,
+        }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'markStress',
+        payload: expect.objectContaining({ instanceId: 'kte-4', amount: 1 }),
+      })
+    );
+  });
+});
+
+describe('Bone Tier 1 — Signature Move', () => {
+  it('intent chip is once per rest and sets d20 Hope die + pending flag on use', () => {
+    const char = mockCharacter({ instanceId: 'sig-1' });
+    const gs = mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'sig-1',
+      _featureKey: 'Signature Move',
+      featureState: { 'Signature Move': {} },
+      action: { type: 'attack', actorInstanceId: 'sig-1', targetInstanceIds: [], effects: [] },
+      rolls: mockRoll(),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...SignatureMove, _ownerInstanceId: 'sig-1' }], 'intent', tbl);
+    const sm = chips.find((c) => c.name === 'Signature Move');
+    expect(sm).toBeDefined();
+    expect(sm.frequency).toBe('rest');
+    const fromUse = activateChip(sm, tbl, makeChipState());
+    const m = [...fromUse, ...applyMutations(tbl)];
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setDie',
+        payload: expect.objectContaining({ dieType: 'hopeDie', die: 'd20' }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Signature Move',
+          key: 'signatureMovePending',
+          value: true,
+        }),
+      })
+    );
+  });
+
+  it('onResolve clears 1 Stress when pending and the action roll succeeds', () => {
+    const sig = mockCharacter({ instanceId: 'sig-1' });
+    const { mutations } = runResolve(
+      { ...SignatureMove, _ownerInstanceId: 'sig-1' },
+      {
+        activeElements: [sig, mockAdversary()],
+        featureState: { 'Signature Move': { signatureMovePending: true } },
+        rolls: mockRoll({ isSuccess: true }),
+      }
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'clearStress',
+        payload: expect.objectContaining({ instanceId: 'sig-1', amount: 1 }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Signature Move',
+          key: 'signatureMovePending',
+          value: false,
+        }),
+      })
+    );
+  });
+
+  it('onResolve does not clear Stress when the roll fails but clears pending', () => {
+    const sig = mockCharacter({ instanceId: 'sig-1' });
+    const { mutations } = runResolve(
+      { ...SignatureMove, _ownerInstanceId: 'sig-1' },
+      {
+        activeElements: [sig, mockAdversary()],
+        featureState: { 'Signature Move': { signatureMovePending: true } },
+        rolls: mockRoll({ isSuccess: false }),
+      }
+    );
+    expect(mutations.filter((m) => m.type === 'clearStress')).toHaveLength(0);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          key: 'signatureMovePending',
+          value: false,
+        }),
       })
     );
   });

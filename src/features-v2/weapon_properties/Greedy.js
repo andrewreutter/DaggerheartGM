@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 import { GOLD_COINS_PER_HANDFUL } from '../engine/table.js';
 
 /**
@@ -12,14 +12,15 @@ export const Greedy = {
     'Spend a handful of gold to gain a +1 bonus to your Proficiency on a damage roll.',
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       {
         description: `Spend ${GOLD_COINS_PER_HANDFUL} gold (one handful) for +1 Proficiency on this damage roll.`,
         placements: ['reviewAction'],
         goldCost: GOLD_COINS_PER_HANDFUL,
-        isDisabled: (table) => (table.me?.gold ?? 0) < GOLD_COINS_PER_HANDFUL,
+        isDisabled: (table) =>
+          (table.me?.gold ?? 0) < GOLD_COINS_PER_HANDFUL
+            ? `Need ${GOLD_COINS_PER_HANDFUL} gold (one handful).`
+            : false,
         onUse(table) {
           table.rolls?.damage?.addStatic({ name: 'Greedy', value: 1 });
         },

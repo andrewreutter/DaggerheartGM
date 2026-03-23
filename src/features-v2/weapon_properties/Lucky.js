@@ -19,10 +19,9 @@ export const Lucky = {
         placements: ['reviewAction'],
         stressCost: 1,
         isDisabled(table) {
-          return (
-            !!table.feature.get('luckySpentThisAttack') ||
-            table.rolls?.action?.isSuccess !== false
-          );
+          if (!!table.feature.get('luckySpentThisAttack')) return 'Lucky reroll already used this attack.';
+          if (table.rolls?.action?.isSuccess !== false) return 'Lucky only applies when the attack failed.';
+          return false;
         },
         onUse(table) {
           table.feature.set('luckySpentThisAttack', true);

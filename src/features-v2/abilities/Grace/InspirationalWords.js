@@ -24,7 +24,10 @@ export const InspirationalWords = {
       name: 'Inspirational Words',
       description:
         'While speaking with an ally, spend 1 token to let them clear a Stress, clear a Hit Point, or gain a Hope (choose one).',
-      isDisabled: (table) => (table.feature.get('inspirationalWordsTokens') ?? 0) < 1,
+      isDisabled: (table) =>
+        (table.feature.get('inspirationalWordsTokens') ?? 0) < 1
+          ? 'No Inspirational Words tokens (gain tokens after a long rest).'
+          : false,
       isSelect: () => [
         {
           id: 'clearStress',

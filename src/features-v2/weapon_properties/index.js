@@ -1,4 +1,5 @@
 import { Barrier } from './Barrier.js';
+import { Bonded } from './Bonded.js';
 import { Bouncing } from './Bouncing.js';
 import { Brave } from './Brave.js';
 import { Brutal } from './Brutal.js';
@@ -50,6 +51,7 @@ import { Versatile } from './Versatile.js';
 
 export {
   Barrier,
+  Bonded,
   Bouncing,
   Brave,
   Brutal,
@@ -102,6 +104,7 @@ export {
 
 export default {
   [Barrier.name]: Barrier,
+  [Bonded.name]: Bonded,
   [Bouncing.name]: Bouncing,
   [Brave.name]: Brave,
   [Brutal.name]: Brutal,

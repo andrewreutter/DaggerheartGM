@@ -12,7 +12,7 @@ import {
   CharacterExperiences,
   CharacterDefenseRow,
   CharacterWeaponList,
-  CharacterFeatureList,
+  CharacterFeaturesPanel,
   CharacterAbilityList,
   CharacterInventory,
   CharacterCompanion,
@@ -22,7 +22,7 @@ import {
   parseBeastformBonus,
 } from './CharacterDisplay.jsx';
 import { MarkdownText } from '../lib/markdown.js';
-import { parseFeatureAction, parseSubFeatures } from '../lib/feature-actions.js';
+import { buildActionForFeatureUse } from '../lib/feature-actions.js';
 import {
   runCharacterHook,
   wrapEntity,
@@ -30,18 +30,28 @@ import {
   resolveWeaponTagDescriptor,
   resolveOriginFeatureDescriptor,
   resolveClassFeatureDescriptor,
+  resolveAbilityDescriptor,
 } from '../lib/game-table-mechanics.js';
-import { getAncestryExperienceBonus } from '../lib/ancestry-experience-bonus.js';
 import { getEffectiveWeaponRange, recomputeCharacter } from '../lib/character-calc.js';
-import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
-import { postTableOp } from '../lib/api.js';
+import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
+import { mergeDisplayElIntoTableActiveElements } from '../lib/build-feature-card-model.js';
+import { postTableOp, postV2CrossSheetChip } from '../lib/api.js';
+import { applyV2LifecycleMutations } from '../lib/table-ops.js';
 import {
   collectV2CrossSheetChips,
   activateV2CrossSheetChip,
 } from '../lib/v2-cross-sheet-lifecycle.js';
-import { applyV2LifecycleMutations } from '../lib/table-ops.js';
+import { runV2OwnedCardChipTableAction } from '../lib/v2-owned-card-chip-table.js';
+import { v2RollDieExtrasFromActionLoopPayload } from '../lib/v2-action-notification-dice.js';
+import { getFeatureUsageKeyForGuideFeature } from '../lib/feature-usage-key.js';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
+import {
+  findPendingManualTrackBanner,
+  mergeManualTrackDisplay,
+  getPendingManualTrackAckDeltas,
+  getLifeSupportPendingHealSlots,
+} from '../lib/manual-track-action-loop.js';
 
 // formatGold is re-exported from CharacterDisplay; re-export it for callers that
 // already import it from here (keeps backwards-compatibility during migration).
@@ -286,6 +296,7 @@ export function CharacterHoverCard({
   updateFn,
   expandedKeys,
   onToggleFeature,
+  onSetFeatureExpandedKeys,
   onResync,
   isSyncing,
   onRoll,
@@ -300,6 +311,8 @@ export function CharacterHoverCard({
   mapConfig,
   hideCompanionSection = false,
   pendingResourceCosts = {},
+  /** When set, manual stress increases reduce dashed "pending ack" stress (Game Table). */
+  consumePendingStressForManualMark,
   isPlayer = false,
   getValidTargets,
   targetMenuOpenRef,
@@ -307,22 +320,43 @@ export function CharacterHoverCard({
   characters,
   fearCount = 0,
   tableFeatureState,
-  /** Game Table id — required for V2 cross-sheet chip `postTableOp` (GM only) */
+  /** Game Table id — required for V2 cross-sheet chips (GM: `postTableOp`; player: `postV2CrossSheetChip`) */
   tableId,
+  /** Pending dice/action banners — used to show dashed pending manual track edits */
+  pendingBanners,
+  /** `{ [rollDbId]: instanceId }` — Life Support ally pre-selection for pending heal preview */
+  lifeSupportSelections = {},
+  /** When set, manual resource track clicks queue an action banner (GM ack applies) */
+  queueManualTrackEdit,
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
   const [selectedRollModIndex, setSelectedRollModIndex] = useState(null);
   const [selectedModId, setSelectedModId] = useState(null);
-  const [selectedAdvIds, setSelectedAdvIds] = useState(() => []);
   // For features that requiresInputForFeature (e.g. Sorcerer Channel Raw Power)
   const [featureInputPending, setFeatureInputPending] = useState(null); // { feature, subFeature, action, spec }
 
   const [featureInputValue, setFeatureInputValue] = useState('');
   // Druid beastform selection (shared by Beastform class feature and Evolution hope ability)
-  const [selectedBeastformId, setSelectedBeastformId] = useState(null);
   // In-place target menu before sending roll: { type: 'weapon'|'beastform', rollText, displayName, rollMeta, validTargets, opts?, anchorRect? }
   const [targetMenuPending, setTargetMenuPending] = useState(null);
+
+  const pendingManualRoll = useMemo(
+    () => findPendingManualTrackBanner(pendingBanners ?? [], el.instanceId),
+    [pendingBanners, el.instanceId]
+  );
+  const trackEl = useMemo(
+    () => mergeManualTrackDisplay(el, pendingManualRoll),
+    [el, pendingManualRoll]
+  );
+  const manualAck = useMemo(
+    () => getPendingManualTrackAckDeltas(el, pendingManualRoll),
+    [el, pendingManualRoll]
+  );
+  const lifeSupportHealSlots = useMemo(
+    () => getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, el.instanceId),
+    [pendingBanners, lifeSupportSelections, el.instanceId]
+  );
 
   // targetMenuOpenRef is kept in sync synchronously in every setTargetMenuPending call below.
   // (useEffect would be async/post-render, causing a race condition with onMouseLeave.)
@@ -343,62 +377,10 @@ export function CharacterHoverCard({
   }, [targetMenuPending]);
 
   const { srdData } = useCharacterSrdData();
-  const v2SheetLive = useV2DeclarativeSheetEnabledLive();
 
   const v2Registry = useMemo(
     () => (srdData ? buildV2RegistryWithSrdItems(srdData) : null),
     [srdData]
-  );
-
-  const crossSheetChips = useMemo(() => {
-    if (!v2SheetLive || !v2Registry || !el.instanceId || !Array.isArray(activeElements)) return [];
-    return collectV2CrossSheetChips(el.instanceId, activeElements, v2Registry, 'card', {
-      tableFeatureState,
-      fearCount,
-      mapConfig,
-    });
-  }, [v2SheetLive, v2Registry, el.instanceId, activeElements, tableFeatureState, fearCount, mapConfig]);
-
-  const handleCrossSheetChipClick = useCallback(
-    (chip) => {
-      if (!v2SheetLive || !v2Registry || !el.instanceId || isPlayer || !tableId) return;
-      if (chip.disabled) return;
-      const { mutations } = activateV2CrossSheetChip(chip, el.instanceId, activeElements, v2Registry, {
-        tableFeatureState,
-        fearCount,
-        mapConfig,
-      });
-      const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
-        activeElements,
-        mutations,
-        chip._ownerInstanceId
-      );
-      if (updates.length > 0) {
-        postTableOp({ op: 'update-elements', updates }, tableId);
-      }
-      for (const p of actionLoopNotifications) {
-        onActionNotification?.({
-          _action: true,
-          rollUser: 'Table',
-          actionName: p.title,
-          actionText: p.description,
-          _v2ActionLoop: true,
-          _reactorInstanceId: p.instanceId,
-        });
-      }
-    },
-    [
-      v2SheetLive,
-      v2Registry,
-      el.instanceId,
-      isPlayer,
-      tableId,
-      activeElements,
-      tableFeatureState,
-      fearCount,
-      mapConfig,
-      onActionNotification,
-    ]
   );
 
   // Recompute for display so experiences (and other derived fields) reflect ancestry bonus on game table
@@ -410,9 +392,100 @@ export function CharacterHoverCard({
       mapConfig,
       tableFeatureState,
     });
-  }, [el, srdData, fearCount, mapConfig, tableFeatureState, v2SheetLive]);
+  }, [el, srdData, fearCount, mapConfig, tableFeatureState]);
 
-  const traits = el.traits || {};
+  /** Same merge as Guide V2 snapshots — ensures this PC is in the actor map when SSE activeElements is stale/short. */
+  const activeElementsForV2Snapshots = useMemo(
+    () => mergeDisplayElIntoTableActiveElements(displayEl, { activeElements }),
+    [displayEl, activeElements]
+  );
+
+  const crossSheetChips = useMemo(() => {
+    if (!v2Registry || !el.instanceId || !Array.isArray(activeElementsForV2Snapshots)) return [];
+    return collectV2CrossSheetChips(el.instanceId, activeElementsForV2Snapshots, v2Registry, 'card', {
+      tableFeatureState,
+      fearCount,
+      mapConfig,
+    });
+  }, [v2Registry, el.instanceId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig]);
+
+  const handleCrossSheetChipClick = useCallback(
+    (chip) => {
+      if (!v2Registry || !el.instanceId || !tableId) return;
+      if (chip.disabled || chip.resourceUnaffordable) return;
+      const { mutations } = activateV2CrossSheetChip(chip, el.instanceId, activeElementsForV2Snapshots, v2Registry, {
+        tableFeatureState,
+        fearCount,
+        mapConfig,
+      });
+      const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+        activeElementsForV2Snapshots,
+        mutations,
+        chip._ownerInstanceId
+      );
+      if (updates.length > 0) {
+        postTableOp({ op: 'update-elements', updates }, tableId);
+      }
+      for (const p of actionLoopNotifications) {
+        const baseDesc = p.description || '';
+        const actionText =
+          p.affectedSummary && String(p.affectedSummary).trim()
+            ? `${baseDesc}\n${p.affectedSummary}`
+            : baseDesc;
+        onActionNotification?.({
+          _action: true,
+          rollUser: p.rollUser || 'Table',
+          actionName: p.title,
+          actionText,
+          _v2ActionLoop: true,
+          _reactorInstanceId: p.instanceId,
+          ...v2RollDieExtrasFromActionLoopPayload(p),
+          ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+            ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+            : {}),
+        });
+      }
+    },
+    [v2Registry, el.instanceId, tableId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig, onActionNotification]
+  );
+
+  const handlePlayerCrossSheetChipClick = useCallback(
+    async (chip) => {
+      if (!el.instanceId || !tableId) return;
+      if (chip.disabled || chip.resourceUnaffordable) return;
+      if (chip._chipKey == null || chip._chipKey === '') return;
+      try {
+        await postV2CrossSheetChip(tableId, { viewerInstanceId: el.instanceId, chipKey: chip._chipKey });
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [el.instanceId, tableId]
+  );
+
+  const handleV2DomainChip = useCallback(
+    async ({ featRow, chip, featureKey: passedFeatureKey, selectOpts }) => {
+      if (!v2Registry || !el.instanceId || isPlayer || !tableId || !Array.isArray(activeElementsForV2Snapshots)) return;
+      await runV2OwnedCardChipTableAction({
+        featRow,
+        chip,
+        passedFeatureKey,
+        selectOpts,
+        displayEl,
+        el,
+        activeElementsForV2Snapshots,
+        v2Registry,
+        tableFeatureState,
+        fearCount,
+        mapConfig,
+        tableId,
+        onActionLoopNotification: onActionNotification,
+      });
+    },
+    [v2Registry, el, el.instanceId, displayEl, isPlayer, tableId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig, onActionNotification]
+  );
+
+  const traits = displayEl.traits || {};
   const hasDaggerstack = !!el.daggerstackUrl;
   const rollModifiers = el.armorMods?.rollModifiers || [];
   const activeRollMod = selectedRollModIndex != null ? rollModifiers[selectedRollModIndex] : null;
@@ -437,65 +510,22 @@ export function CharacterHoverCard({
     return result;
   }, [el, displayEl, activeElements, mapConfig]);
 
-  // Advantage chips: declared via addAdvantageTrigger for implemented ancestry features;
-  // parsed from description text for all other features.
-  const advantageChips = useMemo(() => {
-    const chips = [];
-    let idx = 0;
-    const featureArrays = [
-      ...(el.classFeatures || []),
-      ...(el.subclassFeatures || []),
-      ...(el.ancestryFeatures || []),
-      ...(el.communityFeatures || []),
-    ];
-    for (const f of featureArrays) {
-      const ancestryDescriptor =
-        resolveOriginFeatureDescriptor(displayEl, f.name) || resolveClassFeatureDescriptor(displayEl, f.name);
-      // Fully-implemented origin features: use declared advantageTriggers or advantageTrigger (skip text parsing).
-      if (ancestryDescriptor) {
-        const conditions = ancestryDescriptor.advantageTriggers ?? (ancestryDescriptor.advantageTrigger ? [ancestryDescriptor.advantageTrigger] : []);
-        for (const condition of conditions) {
-          chips.push({ id: `adv-${f.name}-${idx++}`, name: f.name, condition, dice: 'd6', mode: 'advantage' });
-        }
-        continue;
-      }
-      // All other features: parse advantage condition from description text.
-      const desc = f.description || f.text || '';
-      const parsed = parseFeatureAction(desc);
-      if (parsed.advantageCondition) {
-        chips.push({ id: `adv-${f.name}-${idx++}`, name: f.name, condition: parsed.advantageCondition, dice: 'd6', mode: 'advantage' });
-      }
-      const subFeatures = parseSubFeatures(desc);
-      for (const sub of subFeatures) {
-        const subParsed = parseFeatureAction(sub.description || '');
-        if (subParsed.advantageCondition) {
-          chips.push({ id: `adv-${sub.name}-${idx++}`, name: sub.name, condition: subParsed.advantageCondition, dice: 'd6', mode: 'advantage' });
-        }
-      }
-    }
-    for (const w of el.weapons || []) {
-      const feat = w.feature;
-      if (!feat) continue;
-      const desc = feat.description || feat.text || '';
-      const parsed = parseFeatureAction(desc);
-      if (parsed.advantageCondition) {
-        chips.push({ id: `adv-${feat.name || w.name}-${idx++}`, name: feat.name || w.name, condition: parsed.advantageCondition, dice: 'd6', mode: 'advantage' });
-      }
-    }
-    return chips;
-  }, [el, displayEl]);
-
   // ── Feature roll text builder ────────────────────────────────────────────────
-  // Builds the roll text string for a feature that has dice or a spellcast roll.
+  // Spellcast and ad-hoc dice come from merged V2 rows (`enrichHoverActionMeta`) + registry `clientHoverUseRoll`.
   const buildFeatureRollText = (feature, subFeature, action) => {
     const charName = el.name;
     const featName = subFeature ? subFeature.name : feature.name;
     const parts = [];
 
-    if (action.spellcastDC != null) {
-      // Spellcast roll: Hope [d12] Fear [d12] + spellcast trait (include beastform bonus)
-      const traitKey = (el.spellcastTrait || 'presence').toLowerCase();
-      const bfForSpellcast = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+    const frd =
+      resolveClassFeatureDescriptor(displayEl, feature.name) ??
+      resolveAbilityDescriptor(displayEl, feature.name) ??
+      resolveOriginFeatureDescriptor(displayEl, feature.name);
+    const hoverRoll = frd?.clientHoverUseRoll ?? null;
+
+    if (action.spellcastDC != null || action.spellcastVsRoll) {
+      const traitKey = (displayEl.spellcastTrait || el.spellcastTrait || 'presence').toLowerCase();
+      const bfForSpellcast = parseBeastformBonus(displayEl.activeBeastform?.trait_bonus);
       const beastformBonus = bfForSpellcast?.stat === traitKey ? bfForSpellcast.bonus : 0;
       const baseScore = traits[traitKey] ?? 0;
       const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, 'spellcast');
@@ -505,18 +535,15 @@ export function CharacterHoverCard({
       if (effectiveScore !== 0) {
         parts.push(`${TRAIT_FULL[traitKey] || traitKey} [${effectiveScore}]`);
       }
-      parts.push(`{${featName}: Spellcast Roll DC ${action.spellcastDC}}`);
-    } else if (action.dice.length > 0) {
-      // Generic dice roll (e.g. Rally d6, Prayer d4, Ranger's Focus d12+d12)
-      const diceExpr = action.dice.join('+');
-      // Check if it's a Daggerheart action roll (has d12s that should be Hope/Fear)
-      const hasDualD12 = action.dice.filter(d => d === 'd12').length >= 2 || (action.dice.includes('d12') && action.dice.length === 1);
-      if (hasDualD12 && action.dice.length <= 2) {
-        const traitKey = Object.keys(traits)[0] || 'agility';
-        parts.push(`${charName} ${featName} Hope [d12] Fear [d12]`);
-      } else {
-        parts.push(`${charName} ${featName} [${diceExpr}]`);
-      }
+      parts.push(
+        action.spellcastDC != null
+          ? `{${featName}: Spellcast Roll DC ${action.spellcastDC}}`
+          : `{${featName}: Spellcast Roll}`,
+      );
+    } else if (hoverRoll === 'duality') {
+      parts.push(`${charName} ${featName} Hope [d12] Fear [d12]`);
+    } else if (typeof hoverRoll === 'string' && hoverRoll && hoverRoll !== 'duality') {
+      parts.push(`${charName} ${featName} [${hoverRoll}]`);
     }
 
     // Append cost tags so the ResultBanner can display them
@@ -551,36 +578,24 @@ export function CharacterHoverCard({
     }
     // Sorcerer Channel Raw Power (and any future class feature) requires an input value
     // before dispatch. Show an inline prompt and defer actual dispatch until submitted. (Dispatch by feature name.)
-    const classFeatForInput = resolveClassFeatureDescriptor(displayEl, feature.name);
+    const classFeatForInput =
+      resolveClassFeatureDescriptor(displayEl, feature.name) ?? resolveAbilityDescriptor(displayEl, feature.name);
     const requiredInputSpec = classFeatForInput?.requiresInput;
     if (requiredInputSpec && !featureInputPending) {
-      const action = subFeature
-        ? parseFeatureAction(subFeature.description || '')
-        : parseFeatureAction(feature.description || '');
+      const action = buildActionForFeatureUse(displayEl, feature, subFeature);
       setFeatureInputPending({ feature, subFeature, action, spec: requiredInputSpec });
       setFeatureInputValue(String(requiredInputSpec.default ?? 1));
       return;
     }
 
     const activeDesc = subFeature ? (subFeature.description || '') : (feature.description || '');
-    const parentAction = subFeature ? parseFeatureAction(feature.description || '') : null;
-    const action = subFeature ? parseFeatureAction(subFeature.description || '') : parseFeatureAction(feature.description || '');
-    if (parentAction) {
-      if (action.stressCost === 0) action.stressCost = parentAction.stressCost;
-      if (action.hopeCost === 0) action.hopeCost = parentAction.hopeCost;
-    }
-    // Sub-feature cost may come from name, e.g. "Hold Them Off (3 Hope)" — prefer that over re-parsed description
+    const action = buildActionForFeatureUse(displayEl, feature, subFeature);
+    // Sub-feature cost may come from name, e.g. "Hold Them Off (3 Hope)" — prefer explicit number
     if (subFeature && typeof subFeature.hopeCost === 'number') action.hopeCost = subFeature.hopeCost;
     const featName = subFeature ? subFeature.name : feature.name;
 
-    // Feature-level key for usage tracking (uses parent feature name)
-    const featureKeyIdx = [
-      ...(el.classFeatures || []),
-      ...(el.subclassFeatures || []),
-      ...(el.ancestryFeatures || []),
-      ...(el.communityFeatures || []),
-    ].findIndex(f => f.name === feature.name);
-    const featureKey = `${feature.name}-${featureKeyIdx >= 0 ? featureKeyIdx : 0}`;
+    // Feature-level key for usage tracking — must match Guide `entry.key` (see feature-usage-key.js)
+    const featureKey = getFeatureUsageKeyForGuideFeature(el, feature.name) ?? feature.name;
 
     // ── Prayer Dice: roll Nd4, chips are created from results on banner dismiss ──
     // Bypass the target-picker path entirely — the description mentions "ally" but
@@ -604,29 +619,30 @@ export function CharacterHoverCard({
       return;
     }
 
-    // ── Feature-specific modifier additions ──────────────────────────────────
-    // Rally: give all party members a Rally Die
-    const isRally = feature.name === 'Rally' || feature.name?.toLowerCase().includes('rally');
-    const rallyDieSize = el.level >= 5 ? 'd8' : 'd6';
-    const _addModifiers = isRally ? [{
-      id: `rally-die-${el.instanceId}-${Date.now()}`,
-      name: 'Rally Die',
-      dice: rallyDieSize,
-      mode: 'clearStress',
-      consumeOnUse: true,
-      refreshOn: 'session',
-    }] : [];
-    const _distributeModifiersToAll = isRally;
-
     // _inputValue carries card level / numeric inputs (e.g. Sorcerer Channel Raw Power)
     const inputVal = featureInputPending?.feature?.name === feature.name
       ? (parseFloat(featureInputValue) || (featureInputPending.spec?.default ?? 1))
       : null;
     if (featureInputPending) setFeatureInputPending(null);
 
-    const forceAction = resolveClassFeatureDescriptor(displayEl, feature.name)?.forceActionNotification === true;
-    const hasDice = !forceAction && (action.dice.length > 0 || action.spellcastDC != null);
-    // Only add experience Hope cost when this feature use involves a roll (experience is used in the roll)
+    const forceAction =
+      resolveClassFeatureDescriptor(displayEl, feature.name)?.forceActionNotification === true ||
+      resolveAbilityDescriptor(displayEl, feature.name)?.forceActionNotification === true;
+    const featDesc =
+      resolveClassFeatureDescriptor(displayEl, feature.name) ??
+      resolveAbilityDescriptor(displayEl, feature.name) ??
+      resolveOriginFeatureDescriptor(displayEl, feature.name);
+    const hoverRoll = featDesc?.clientHoverUseRoll ?? null;
+    const hasDice =
+      !forceAction &&
+      (action.spellcastDC != null ||
+        action.spellcastVsRoll ||
+        (typeof hoverRoll === 'string' && hoverRoll.length > 0));
+    const looksLikeActionRoll =
+      action.spellcastDC != null ||
+      action.spellcastVsRoll ||
+      hoverRoll === 'duality' ||
+      (typeof hoverRoll === 'string' && /^d12\b/i.test(hoverRoll));
     const rollMeta = {
       _featureUse: true,
       _attackerInstanceId: el.instanceId,
@@ -640,31 +656,34 @@ export function CharacterHoverCard({
       _featureKey: featureKey,
       _targetType: action.targetType,
       ...(inputVal !== null ? { _inputValue: inputVal } : {}),
-      ...(_addModifiers.length > 0 ? { _addModifiers, _distributeModifiersToAll } : {}),
-      ...(el.selectedExperienceIndex != null && hasDice ? { _experienceHopeCost: 1 } : {}),
-      // Druid Evolution: inject the selected beastform so onFeatureActivated can set activeBeastform
-      ...(el.class === 'Druid' && feature.name === 'Evolution' && selectedBeastform
-        ? { _beastform: selectedBeastform }
+      // Legacy action-notification path (no V2 activateV2OwnedCardChip): GM ack applies via applyFeatureResources.
+      ...(feature.name === "Rogue's Dodge"
+        ? {
+            _roguesDodgeFeatureStateActivate: true,
+          }
         : {}),
     };
+    if (hasDice && looksLikeActionRoll) {
+      rollMeta._intentPanelForActionRoll = true;
+      rollMeta._deferExperienceToPreRoll = true;
+      if (action.spellcastDC != null || action.spellcastVsRoll) {
+        rollMeta._traitKey = (el.spellcastTrait || 'presence').toLowerCase();
+      } else {
+        rollMeta._traitKey = Object.keys(traits)[0] || 'agility';
+      }
+    }
 
     if (hasDice) {
       // Dice roll path — experience Hope cost applied on GM ack, not here
       let rollText = buildFeatureRollText(feature, subFeature, action);
       if (!rollText) return;
-      const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
-      if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
       const displayName = subFeature ? `${el.name} ${feature.name}: ${subFeature.name}` : `${el.name} ${feature.name}`;
       onRoll?.(rollText, displayName, rollMeta, { characterEl: el });
       if (selectedMod) setSelectedModId(null);
-      if (selectedAdvs.length) setSelectedAdvIds([]);
     } else {
       // Action notification path (costs but no dice, or comms-only)
       const truncDesc = activeDesc.length > 150 ? activeDesc.slice(0, 150) + '…' : activeDesc;
-      // Rally (Bard): banner message for whole party
-      const actionText = isRally
-        ? 'Everyone gets a Rally Die. It can be added to any action, reaction, or damage roll, or used to clear Stress equal to its result.'
-        : truncDesc;
+      const actionText = truncDesc;
       const notification = {
         _action: true,
         rollUser: el.name,
@@ -699,88 +718,62 @@ export function CharacterHoverCard({
     }
   } : undefined;
 
-  // Beastform trait bonus for rolls (must match display in CharacterTraitGrid)
-  const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+  // Beastform trait bonus for rolls (must match display in CharacterTraitGrid — uses merged overlay)
+  const beastformTraitBonus = parseBeastformBonus(displayEl.activeBeastform?.trait_bonus);
   const getBeastformTraitBonus = (traitKey) =>
     (beastformTraitBonus?.stat === traitKey ? beastformTraitBonus.bonus : 0);
-
-  // Ancestry experience bonus (e.g. Clank Purposeful Design): +1 when selected experience matches choice
-  const getExperienceModifier = (activeExpId) => {
-    const ancestryName = Array.isArray(el.ancestry) && el.ancestry.length > 0 ? el.ancestry[0] : null;
-    const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
-    if (!expBonus || !activeExpId) return 2;
-    const choice = el.experienceBonusChoices?.[expBonus.featureName];
-    return choice === activeExpId ? 2 + expBonus.amount : 2;
-  };
 
   // ── Trait click handler (used by both trait chips and Reaction row) ───────────
   // Same roll text (trait in roll), same meta (_traitKey, _attackerInstanceId, experience/mod/advantage).
   // Only difference for Reaction: displayName and _isReaction flag.
   const handleTraitClick = onRoll ? (traitKey, opts) => {
     const isReaction = opts?.isReaction === true;
-    const activeExp = el.selectedExperienceIndex != null
-      ? (el.experiences || [])[el.selectedExperienceIndex]
-      : null;
     const baseScore = traits[traitKey] ?? 0;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
     const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
-    const expMod = getExperienceModifier(activeExp?.id);
-    let rollText = buildTraitRollText(el.name, traitKey, effectiveScore, activeExp?.name, expMod);
+    let rollText = buildTraitRollText(el.name, traitKey, effectiveScore, null, 2);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    if (traitKey === 'agility' && el.activeChanneledElement === 'air') {
-      rollText += ' Air [d6]';
-    }
-    const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
-    if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
     const displayName = isReaction ? `${el.name} — Reaction (${TRAIT_FULL[traitKey]})` : `${el.name} ${TRAIT_FULL[traitKey]}`;
     const traitRollMeta = {
       _attackerInstanceId: el.instanceId,
       _traitKey: traitKey,
       ...(isReaction && { _isReaction: true }),
       ...(selectedMod?.consumeOnUse && { _usedModifierId: selectedMod.id }),
-      ...(el.selectedExperienceIndex != null && { _experienceHopeCost: 1 }),
+      _intentPanelForActionRoll: true,
+      _deferExperienceToPreRoll: true,
     };
     onRoll(rollText, displayName, traitRollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
-    if (selectedAdvs.length) setSelectedAdvIds([]);
   } : undefined;
 
-  const selectedExpHint = el.selectedExperienceIndex != null
-    ? `+${getExperienceModifier((el.experiences || [])[el.selectedExperienceIndex]?.id)} from "${(el.experiences || [])[el.selectedExperienceIndex]?.name}" included`
-    : undefined;
-
   // ── Spellcast roll handler ─────────────────────────────────────────────────
-  const handleSpellcastRoll = onRoll && el.spellcastTrait ? () => {
-    const traitKey = el.spellcastTrait.toLowerCase();
+  const handleSpellcastRoll = onRoll && (displayEl.spellcastTrait || el.spellcastTrait) ? () => {
+    const traitKey = (displayEl.spellcastTrait || el.spellcastTrait).toLowerCase();
     const baseScore = traits[traitKey] ?? 0;
-    const activeExp = el.selectedExperienceIndex != null
-      ? (el.experiences || [])[el.selectedExperienceIndex]
-      : null;
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, 'spellcast');
     const effectiveScore = baseScore + getBeastformTraitBonus(traitKey) + rollModBonus;
-    const expMod = getExperienceModifier(activeExp?.id);
-    let rollText = buildTraitRollText(el.name + ' Spellcast', traitKey, effectiveScore, activeExp?.name, expMod);
+    let rollText = buildTraitRollText(el.name + ' Spellcast', traitKey, effectiveScore, null, 2);
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
-    if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
     const displayName = `${el.name} Spellcast`;
-    const spellcastRollMeta = { _attackerInstanceId: el.instanceId, _traitKey: traitKey };
+    const spellcastRollMeta = {
+      _attackerInstanceId: el.instanceId,
+      _traitKey: traitKey,
+      _intentPanelForActionRoll: true,
+      _deferExperienceToPreRoll: true,
+    };
     if (selectedMod?.consumeOnUse) spellcastRollMeta._usedModifierId = selectedMod.id;
-    if (el.selectedExperienceIndex != null) spellcastRollMeta._experienceHopeCost = 1;
     onRoll(rollText, displayName, spellcastRollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
-    if (selectedAdvs.length) setSelectedAdvIds([]);
   } : undefined;
 
   // Send roll (used after target selection or when no target menu needed)
   const sendWeaponRoll = (rollText, displayName, rollMeta, opts) => {
     onRoll(rollText, displayName, rollMeta, { characterEl: el });
     if (selectedMod) setSelectedModId(null);
-    if ((selectedAdvIds || []).length) setSelectedAdvIds([]);
     if (opts?.devastating) {
       const maxStress = el.maxStress ?? 6;
       const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
@@ -793,13 +786,9 @@ export function CharacterHoverCard({
   const handleWeaponClick = onRoll ? (weapon, rollMeta = {}, event = null) => {
     const traitKey = (weapon.trait || '').toLowerCase();
     const baseTrait = traits[traitKey] ?? 0;
-    const activeExp = el.selectedExperienceIndex != null
-      ? (el.experiences || [])[el.selectedExperienceIndex]
-      : null;
     const opts = {};
     if (rollMeta.devastating) opts.devastating = true;
     if (rollMeta.secondaryDamage) opts.secondaryDamage = rollMeta.secondaryDamage;
-    opts.experienceModifier = getExperienceModifier(activeExp?.id);
     const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, traitKey);
     const effectiveTrait = baseTrait + getBeastformTraitBonus(traitKey) + rollModBonus;
     // Virtual weapons (e.g. Elemental Breath) can add Proficiency to damage and a damage type for the roll.
@@ -812,15 +801,13 @@ export function CharacterHoverCard({
     }
     let rollText = buildWeaponRollText(
       el.name, weapon.name, traitKey, effectiveTrait,
-      activeExp?.name, damageStr, weapon.feature, traits, el.level, opts, rollMeta, el,
+      null, damageStr, weapon.feature, traits, el.level, opts, rollMeta, el,
     );
-    const rangeStr = (weapon.effectiveRange ?? getEffectiveWeaponRange(weapon, el.ancestryFeatures)) || weapon.range;
+    const rangeStr = getEffectiveWeaponRange(weapon, el.ancestryFeatures) || weapon.effectiveRange || weapon.range;
     if (rangeStr) rollText += ` ${rangeStr}`;
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    const selectedAdvs = (selectedAdvIds || []).map(id => advantageChips.find(c => c.id === id)).filter(Boolean);
-    if (selectedAdvs.length > 0) rollText += selectedAdvs.length === 1 ? ` ${selectedAdvs[0].name} [d6]` : ` ${selectedAdvs.map(a => a.name).join(' and ')} [${selectedAdvs.length}d6kh]`;
     let displayName = `${el.name} ${weapon.name}`;
     rollMeta._attackerInstanceId = el.instanceId;
     if (weapon.id != null) rollMeta._weaponId = weapon.id;
@@ -830,7 +817,8 @@ export function CharacterHoverCard({
       if (ft != null) rollMeta._weaponRangeFt = ft;
     }
     if (selectedMod?.consumeOnUse) rollMeta._usedModifierId = selectedMod.id;
-    if (el.selectedExperienceIndex != null) rollMeta._experienceHopeCost = 1;
+    rollMeta._intentPanelForActionRoll = true;
+    rollMeta._deferExperienceToPreRoll = true;
     if (weapon._featureName) rollMeta._featureName = weapon._featureName;
     if (weapon._featureName && (weapon.onAcknowledge || weapon.stressCost != null || weapon.hopeCost != null)) rollMeta._featureNeedsTarget = true;
     if (weapon.multiTarget) {
@@ -849,12 +837,7 @@ export function CharacterHoverCard({
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: rollMeta._weaponRangeFt,
       }) ?? [];
-      // When no targets in range: still send the roll so the user sees dice/banner (they can ack without applying damage).
-      if (validTargets.length === 0) {
-        sendWeaponRoll(rollText, displayName, rollMeta, opts);
-        if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
-        return;
-      }
+      if (validTargets.length === 0) return;
       // Multi-target weapons: send roll immediately; target selection happens on the banner.
       if (weapon.multiTarget) {
         sendWeaponRoll(rollText, displayName, rollMeta, opts);
@@ -891,7 +874,6 @@ export function CharacterHoverCard({
     if (type === 'weapon') {
       if (rollMeta._rangerFocusAttempt && updateFn) updateFn(el.instanceId, { rangerFocusOnNextAttack: false });
       if (selectedMod) setSelectedModId(null);
-      if ((selectedAdvIds || []).length) setSelectedAdvIds([]);
       if (opts?.devastating) {
         const maxStress = el.maxStress ?? 6;
         const newStress = Math.min((el.currentStress ?? 0) + 1, maxStress);
@@ -923,61 +905,18 @@ export function CharacterHoverCard({
     };
   };
 
-  // Resolved beastforms filtered to character's tier
-  const availableBeastforms = useMemo(() => {
-    const allBf = srdData?.beastforms || [];
-    const tier = el.tier || 1;
-    return allBf.filter(b => b.tier <= tier);
-  }, [srdData, el.tier]);
-
-  // Currently selected beastform object (for Beastform card and Evolution)
-  const selectedBeastform = useMemo(() => {
-    if (!srdData) return null;
-    if (selectedBeastformId) return srdData.beastformsById?.[selectedBeastformId] || null;
-    return availableBeastforms[0] || null;
-  }, [srdData, selectedBeastformId, availableBeastforms]);
-
-  // Use Beastform (1 Stress, once per rest)
-  const handleUseBeastform = onActionNotification ? (beastform) => {
-    const featureKeyIdx = (el.classFeatures || []).findIndex(f => f.name === 'Beastform');
-    const featureKey = `Beastform-${featureKeyIdx >= 0 ? featureKeyIdx : 0}`;
-    onActionNotification({
-      _action: true,
-      rollUser: el.name,
-      actionName: 'Beastform',
-      actionText: `${el.name} transforms into ${beastform.name}!`,
-      tags: [{ name: 'StressCost', text: 'Mark 1 Stress' }],
-      _featureUse: true,
-      _attackerInstanceId: el.instanceId,
-      _featureName: 'Beastform',
-      _stressCost: 1,
-      _frequency: 'rest',
-      _featureKey: featureKey,
-      _beastform: beastform,
-    });
-  } : undefined;
-
-  // Drop Out of Beastform (no cost; GM ack applies state via Druid.onFeatureActivated)
-  const handleDropOutBeastform = onActionNotification ? () => {
-    onActionNotification({
-      _action: true,
-      rollUser: el.name,
-      actionName: 'Drop out of Beastform',
-      actionText: `${el.name} drops out of Beastform.`,
-      _featureUse: true,
-      _attackerInstanceId: el.instanceId,
-      _featureName: 'Drop out of Beastform',
-    });
-  } : undefined;
-
   // Click to set/clear the selected beastform advantage (mutually exclusive)
   const handleBeastformAdvantageSelect = updateFn ? (adv) => {
     updateFn(el.instanceId, { selectedBeastformAdvantage: adv });
   } : undefined;
 
-  // Build and fire a beastform attack roll
-  const handleBeastformAttack = onRoll && el.activeBeastform ? (event = null) => {
-    const bf = el.activeBeastform;
+  // Build and fire a beastform attack roll (merge display overlay so SRD attack/trait_bonus resolve when table state is minimal)
+  const mergedActiveBeastform =
+    displayEl.activeBeastform || el.activeBeastform
+      ? { ...(el.activeBeastform || {}), ...(displayEl.activeBeastform || {}) }
+      : null;
+  const handleBeastformAttack = onRoll && mergedActiveBeastform ? (event = null) => {
+    const bf = mergedActiveBeastform;
     const parsed = parseBeastformAttack(bf.attack);
     if (!parsed) return;
     const { range, traitKey, damage, dmgType } = parsed;
@@ -1003,23 +942,13 @@ export function CharacterHoverCard({
       const validTargets = getValidTargets(el.instanceId, {
         weaponRangeFt: beastformRollMeta._weaponRangeFt,
       }) ?? [];
+      if (validTargets.length === 0) return;
       const anchorRect = event?.currentTarget?.getBoundingClientRect() ?? null;
       openTargetMenu({ type: 'beastform', rollText, displayName, rollMeta: beastformRollMeta, validTargets, anchorRect });
-      if (validTargets.length === 0) return; // don't send roll; popup will show "No targets in range"
       return;
     }
     onRoll(rollText, displayName, beastformRollMeta, { characterEl: el });
   } : undefined;
-
-  // beastformProps — passed into CharacterFeatureList and CharacterWeaponList
-  const beastformProps = el.class === 'Druid' ? {
-    beastforms: availableBeastforms,
-    selectedBeastformId: selectedBeastformId || availableBeastforms[0]?.id || null,
-    onBeastformSelect: setSelectedBeastformId,
-    activeBeastform: el.activeBeastform || null,
-    onUseBeastform: handleUseBeastform,
-    onDropOutBeastform: handleDropOutBeastform,
-  } : null;
 
   // ── Header action buttons ────────────────────────────────────────────────────
   const headerActions = (
@@ -1066,8 +995,8 @@ export function CharacterHoverCard({
     </>
   );
 
-  const stressMaxed = (el.currentStress ?? 0) >= (el.maxStress ?? 6);
-  const currentHope = el.hope ?? (el.maxHope ?? 6);
+  const stressMaxed = (trackEl.currentStress ?? 0) >= (el.maxStress ?? 6);
+  const currentHope = trackEl.hope ?? (el.maxHope ?? 6);
 
   return (
     <div className="relative flex flex-col flex-1 min-h-0">
@@ -1139,19 +1068,19 @@ export function CharacterHoverCard({
 
       <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-0">
 
+        <CharacterDefenseRow el={displayEl} />
+
         {/* ── Traits ── */}
         <CharacterTraitGrid
-          el={el}
+          el={displayEl}
           onTraitClick={handleTraitClick}
           onSpellcastRoll={handleSpellcastRoll}
-          selectedExperienceHint={selectedExpHint}
         />
 
         {/* ── Experiences + Modifier Bin ── */}
         <CharacterExperiences
           el={displayEl}
-          selectedIndex={el.selectedExperienceIndex}
-          onSelect={updateFn ? (i) => updateFn(el.instanceId, { selectedExperienceIndex: i }) : undefined}
+          experiencesAsBadges
           hope={currentHope}
           maxHope={el.maxHope ?? 6}
           rollModifiers={rollModifiers}
@@ -1159,31 +1088,19 @@ export function CharacterHoverCard({
           onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
           selectedModId={selectedModId}
           onSelectMod={onRoll ? setSelectedModId : undefined}
-          advantageChips={advantageChips}
-          selectedAdvIds={selectedAdvIds}
-          onSelectAdv={onRoll ? (id) => setSelectedAdvIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]) : undefined}
           modifierEligibility={modifierEligibility}
-          beastformAdvantages={el.activeBeastform?.advantages
-            ? el.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
+          beastformAdvantages={displayEl.activeBeastform?.advantages
+            ? displayEl.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
             : undefined}
           selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
           onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
           crossSheetChips={crossSheetChips}
-          onCrossSheetChipClick={!isPlayer && tableId ? handleCrossSheetChipClick : undefined}
+          onCrossSheetChipClick={
+            tableId ? (isPlayer ? handlePlayerCrossSheetChipClick : handleCrossSheetChipClick) : undefined
+          }
           onUseMod={updateFn ? (mod) => {
-            // clearStress mode chips (Rally Die, Rogue's Dodge, etc.)
-            if (mod.mode === 'clearStress' && mod.dice) {
-              // Rally Die: roll the die and clear stress equal to the result on GM ack
-              if (mod.name === 'Rally Die' && onRoll) {
-                const rollText = `${el.name} Rally clear stress [${mod.dice}]`;
-                onRoll(rollText, `${el.name} Rally clear stress`, {
-                  _attackerInstanceId: el.instanceId,
-                  _rallyClearStress: true,
-                  _rallyDieModId: mod.id,
-                }, { characterEl: el });
-                return;
-              }
-              // Other clearStress chips (e.g. Rogue's Dodge): immediately clear 1 stress
+            // clearStress mode chips (e.g. Rogue's Dodge): clear 1 Stress and consume the modifier
+            if (mod.mode === 'clearStress') {
               const stress = Math.max(0, (el.currentStress ?? 0) - 1);
               updateFn(el.instanceId, { currentStress: stress });
               const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
@@ -1218,9 +1135,6 @@ export function CharacterHoverCard({
           } : undefined}
         />
 
-        {/* ── Defense ── */}
-        <CharacterDefenseRow el={el} />
-
         {/* ── Resource tracks ── */}
         {showResources && (
           <Section label="Resources">
@@ -1228,16 +1142,19 @@ export function CharacterHoverCard({
               {(() => {
                 const maxHope = el.maxHope ?? 6;
                 const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
-                const currentHope = el.hope ?? maxHope;
+                const remainingServer = el.hope ?? maxHope;
                 return maxHope > 0 && (
                   <div className="flex items-center gap-1.5">
                     <Sparkles size={11} className="text-amber-400 shrink-0" />
                     <span className="text-[11px] text-slate-400 w-10 shrink-0">Hope</span>
                     <CheckboxTrack
                       total={maxHope}
-                      filled={Math.max(0, currentHope - hopePending)}
-                      pendingFilled={hopePending}
-                      onSetFilled={(h) => updateFn(el.instanceId, { hope: h })}
+                      filled={Math.max(0, remainingServer - hopePending)}
+                      pendingFilled={hopePending + manualAck.hopeGain}
+                      pendingClearFilled={manualAck.hopeSpend}
+                      onSetFilled={queueManualTrackEdit
+                        ? (h) => queueManualTrackEdit(el, { hope: h })
+                        : (h) => updateFn(el.instanceId, { hope: h })}
                       fillColor="bg-amber-400"
                       label="Hope"
                       verbs={['Gain', 'Spend']}
@@ -1254,17 +1171,24 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxArmor}
                     filled={el.currentArmor || 0}
-                    pendingFilled={pendingResourceCosts[el.instanceId]?.armorMark ?? 0}
-                    onSetFilled={(v) => {
-                      const upd = { currentArmor: v };
-                      if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                      updateFn(el.instanceId, upd);
-                    }}
+                    pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
+                    pendingClearFilled={manualAck.armorClear}
+                    onSetFilled={queueManualTrackEdit
+                      ? (v) => {
+                          const upd = { currentArmor: v };
+                          if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                          queueManualTrackEdit(el, upd);
+                        }
+                      : (v) => {
+                          const upd = { currentArmor: v };
+                          if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                          updateFn(el.instanceId, upd);
+                        }}
                     fillColor="bg-cyan-500"
                     label="Armor"
                     verbs={['Mark', 'Clear']}
                   />
-                  <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.currentArmor || 0}/{el.maxArmor}</span>
+                    <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.currentArmor || 0}/{el.maxArmor}</span>
                 </div>
               )}
               {(el.maxHp || 0) > 0 && (
@@ -1274,7 +1198,11 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxHp}
                     filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
-                    onSetFilled={(dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
+                    pendingFilled={manualAck.hpDamageAdd}
+                    pendingClearFilled={manualAck.hpHealSlots + lifeSupportHealSlots}
+                    onSetFilled={queueManualTrackEdit
+                      ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
+                      : (dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
                     fillColor="bg-red-500"
                     label="HP"
                     verbs={['Mark', 'Clear']}
@@ -1289,8 +1217,15 @@ export function CharacterHoverCard({
                   <CheckboxTrack
                     total={el.maxStress}
                     filled={el.currentStress || 0}
-                    pendingFilled={pendingResourceCosts[el.instanceId]?.stress ?? 0}
-                    onSetFilled={(s) => updateFn(el.instanceId, { currentStress: s })}
+                    pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
+                    pendingClearFilled={manualAck.stressClear}
+                    onSetFilled={queueManualTrackEdit
+                      ? (s) => queueManualTrackEdit(el, { currentStress: s })
+                      : (s) => {
+                          const prev = el.currentStress ?? 0;
+                          if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
+                          updateFn(el.instanceId, { currentStress: s });
+                        }}
                     fillColor="bg-orange-500"
                     label="Stress"
                     verbs={['Mark', 'Clear']}
@@ -1310,25 +1245,24 @@ export function CharacterHoverCard({
           onDevastatingToggle={() => setDevastatingActive(d => !d)}
           stressMaxed={stressMaxed}
           onActionNotification={onActionNotification}
-          selectedExperienceHint={selectedExpHint}
           onBeastformAttack={handleBeastformAttack}
+          getValidTargets={getValidTargets}
         />
 
         {/* ── Inventory ── */}
         <CharacterInventory el={el} />
 
-        {/* ── Features ── */}
-        <CharacterFeatureList
-          el={el}
+        <CharacterFeaturesPanel
+          el={displayEl}
           expandedKeys={expandedKeys}
           onToggleFeature={onToggleFeature}
+          onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
           onUseHopeAbility={onUseHopeAbility}
           onFeatureUse={handleFeatureUse}
           featureUsage={el.featureUsage}
           currentHope={currentHope}
-          beastformProps={beastformProps}
           updateFn={updateFn}
-          activeChanneledElement={el.activeChanneledElement ?? null}
+          activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
           prayerDice={(el.activeModifiers || []).filter(m => m.name === 'Prayer Die')}
           onPrayerDieGainHope={onActionNotification ? (mod) => onActionNotification({
             _action: true,
@@ -1338,104 +1272,50 @@ export function CharacterHoverCard({
             _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
             _attackerInstanceId: el.instanceId,
           }) : undefined}
-          onWingsPickUpCarry={onActionNotification ? (characterEl) => onActionNotification({
-            _action: true,
-            _featureName: 'Wings of Light',
-            _wingsOfLightPickUpCarry: true,
-            _attackerInstanceId: characterEl.instanceId,
-            rollUser: characterEl.name,
-            actionName: 'Wings of Light: Pick up and carry',
-            tags: [{ name: 'Wings of Light', text: 'Mark 1 Stress' }],
-          }) : undefined}
           onShareFeature={onActionNotification ? (feature) => onActionNotification({
             _action: true,
             rollUser: el.name,
             actionName: feature.name,
             actionText: feature.description ?? '',
           }) : undefined}
-          getCardChipContext={onActionNotification && onRoll && updateFn ? (feature, chip, featureKey) => {
-            const featureName = feature?.name;
-            const get = (key, defaultVal) => {
-              const bag = el._originFeatureState?.[featureName];
-              return bag != null && key in bag ? bag[key] : defaultVal;
-            };
-            const set = (key, value) => {
-              const current = el._originFeatureState ?? {};
-              const featureBag = current[featureName] ?? {};
-              const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
-              updateFn(el.instanceId, { _originFeatureState: next });
-            };
-            const featureWithState = feature ? { ...feature, get, set } : { get, set };
-            const character = wrapEntity(el, updateFn, {
-              postTraitRoll: (traitKey, options) => {
-                const key = String(traitKey).toLowerCase();
-                const traitName = TRAIT_FULL[key] || traitKey;
-                const score = el.traits?.[key] ?? 0;
-                const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
-                const displayName = [el.name, feature.source, feature.name].filter(Boolean).join(' - ');
-                const meta = { _attackerInstanceId: el.instanceId, _traitKey: key };
-                if (options?.difficulty != null) meta._difficulty = options.difficulty;
-                onRoll(rollText, displayName, meta);
-              },
-              postAction: (customLabel) => onActionNotification({
-                _action: true,
-                rollUser: el.name,
-                actionName: feature.name,
-                actionText: customLabel ?? chip.label ?? feature.name,
-                _featureUse: true,
-                _attackerInstanceId: el.instanceId,
-                _stressCost: chip.stressCost ?? 0,
-                _hopeCost: chip.hopeCost ?? 0,
-                _featureKey: featureKey ?? `${feature.name}-0`,
-                _frequency: chip.resetsOn ?? undefined,
-                tags: [
-                  ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
-                  ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
-                ],
-              }),
-            });
-            return {
-              roll: null,
-              character,
-              feature: featureWithState,
-              ...(characters != null && { characters }),
-              ...(system != null && { system }),
-              derivedToggleKey: typeof chip.onToggle === 'function' ? `_toggle.${feature.source ?? ''}.${feature.name ?? ''}` : undefined,
-              postToggleIntent: typeof chip.onToggle === 'function'
-                ? (nextActive) => {
-                    const title = [...[el.name, feature.source, feature.name].filter(Boolean), nextActive ? 'ACTIVATE' : 'DEACTIVATE'].join(' - ');
-                    onActionNotification({
-                      _action: true,
-                      rollUser: el.name,
-                      actionName: title,
-                      actionText: feature.description ?? '',
-                      _featureUse: true,
-                      _attackerInstanceId: el.instanceId,
-                      _stressCost: chip.stressCost ?? 0,
-                      _hopeCost: chip.hopeCost ?? 0,
-                      _cardToggle: {
-                        instanceId: el.instanceId,
-                        derivedToggleKey: `_toggle.${feature.source ?? ''}.${feature.name ?? ''}`,
-                        nextActive,
-                        featureName: feature.name,
-                        featureSource: feature.source,
-                      },
-                      tags: [
-                        ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
-                        ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
-                      ],
-                    });
-                  }
-                : undefined,
-            };
-          } : undefined}
+          onV2CardChip={!isPlayer && tableId ? handleV2DomainChip : undefined}
+          v2TableContext={
+            !isPlayer && tableId
+              ? {
+                  fearCount,
+                  mapConfig,
+                  tableFeatureState,
+                  activeElements,
+                  registry: v2Registry ?? undefined,
+                }
+              : undefined
+          }
+          pendingBanners={pendingBanners}
         />
 
         {/* ── Domain Cards ── */}
-        <CharacterAbilityList el={displayEl} updateActiveElement={updateFn} />
+        <CharacterAbilityList
+          el={displayEl}
+          expandedKeys={expandedKeys}
+          onToggleFeature={onToggleFeature}
+          onFeatureUse={handleFeatureUse}
+          featureUsage={el.featureUsage}
+          onV2DomainChip={!isPlayer && tableId ? handleV2DomainChip : undefined}
+          v2TableContext={
+            !isPlayer && tableId
+              ? {
+                  fearCount,
+                  mapConfig,
+                  tableFeatureState,
+                  activeElements,
+                  registry: v2Registry ?? undefined,
+                }
+              : undefined
+          }
+        />
 
         {/* ── Companion (hidden when shown as second card in overlay) ── */}
-        {!hideCompanionSection && <CharacterCompanion el={el} />}
+        {!hideCompanionSection && <CharacterCompanion el={trackEl} />}
 
         {/* ── Description ── */}
         {el.description && (

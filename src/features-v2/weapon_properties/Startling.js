@@ -15,14 +15,18 @@ export const Startling = {
         'Crack the whip: each adversary in Melee range with you is forced back to Close range.',
       isDisabled(table) {
         const advs = table.adversaries ?? [];
-        return !advs.some((a) => table.me.rangeFrom(a) === 'melee');
+        if (!advs.some((a) => table.me.rangeFrom(a) === 'melee')) {
+          return 'No adversary in Melee range.';
+        }
+        return false;
       },
       onUse(table) {
         for (const adv of table.adversaries ?? []) {
           if (table.me.rangeFrom(adv) !== 'melee') continue;
           adv.move(
             (t) => t.me.rangeFrom(adv) === 'close',
-            'Forced back to Close range'
+            'Close range between you and this adversary',
+            'Forced back to Close range.'
           );
         }
       },

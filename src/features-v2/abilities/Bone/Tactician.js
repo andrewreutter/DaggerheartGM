@@ -51,7 +51,10 @@ export const Tactician = {
         isDisabled: (table) => {
           const pid = table.action?.tagTeamPartnerInstanceId;
           const helper = table.characters.find((c) => c.instanceId === pid);
-          return (helper?.experiences || []).length === 0;
+          if ((helper?.experiences || []).length === 0) {
+            return 'Helper has no Experiences to add.';
+          }
+          return false;
         },
         onUse(table, chipState) {
           const sid = chipState.get?.('selectedId');

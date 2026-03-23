@@ -1,14 +1,22 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { getAuthToken } from '../lib/api.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
+import {
+  findPendingManualTrackBanner,
+  mergeManualTrackDisplay,
+  getPendingManualTrackAckDeltas,
+  getLifeSupportPendingHealSlots,
+} from '../lib/manual-track-action-loop.js';
 import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
+/** Padding around map token wrappers for easier drag grabs; visual token size unchanged. */
+const MAP_TOKEN_HIT_PADDING_PX = 12;
 
 /** Width in px of the character tokens shelf (left tray). Used by DiceRoller to offset the banner strip. */
 export const CHARACTER_TRAY_WIDTH_PX = 36 + 16;
@@ -322,7 +330,7 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
   const isAdv = element.elementType === 'adversary';
 
   const label = tokenAbbrev(element.name);
-  const instLabel = isAdv && instanceNum != null ? String(instanceNum) : null;
+  const instLabel = isAdv && instanceNum != null ? `#${instanceNum}` : null;
 
   // Build dot groups for border ring indicator
   const dotGroups = [];
@@ -386,28 +394,53 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
       title={element.name}
     >
       <TokenDotRing size={size} groups={dotGroups} />
-      <span className="text-white font-bold leading-none" style={{ fontSize: Math.max(10, Math.round(size * 0.35)) }}>
-        {label}
-      </span>
-      {instLabel && (
+      <div className="relative z-10 flex flex-col items-center justify-center leading-none pointer-events-none">
         <span
-          className="absolute bottom-0 right-0 bg-slate-900 text-white rounded-full font-bold leading-none flex items-center justify-center"
-          style={{ fontSize: Math.max(8, Math.round(size * 0.26)), width: Math.max(14, Math.round(size * 0.4)), height: Math.max(14, Math.round(size * 0.4)), transform: 'translate(25%, 25%)' }}
+          className="text-white font-bold leading-none"
+          style={{ fontSize: Math.max(10, Math.round(size * (instLabel ? 0.3 : 0.35))) }}
         >
-          {instLabel}
+          {label}
         </span>
-      )}
+        {instLabel && (
+          <span
+            className="text-white/90 font-bold tabular-nums mt-0.5"
+            style={{ fontSize: Math.max(7, Math.round(size * 0.2)) }}
+          >
+            {instLabel}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
 // ─── TokenDetailPanel ────────────────────────────────────────────────────────
 
-function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElement, onRemoveFromMap, onClose, anchorX, anchorY }) {
+function TokenDetailPanel({
+  element,
+  isPlayer,
+  isMyCharacter,
+  updateActiveElement,
+  queueManualTrackEdit,
+  pendingBanners,
+  pendingResourceCosts = {},
+  lifeSupportSelections = {},
+  onRemoveFromMap,
+  onClose,
+  anchorX,
+  anchorY,
+}) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
   const canEdit = !isPlayer || isMyCharacter;
   const canEditAdv = !isPlayer; // only GM edits adversaries
+  const pendingManual = findPendingManualTrackBanner(pendingBanners ?? [], element.instanceId);
+  const displayEl = mergeManualTrackDisplay(element, pendingManual);
+  const manualAck = getPendingManualTrackAckDeltas(element, pendingManual);
+  const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, element.instanceId);
+  const applyResource = queueManualTrackEdit
+    ? (upd) => queueManualTrackEdit(element, upd)
+    : (upd) => updateActiveElement(element.instanceId, upd);
 
   // Clamp position to viewport
   const panelRef = useRef(null);
@@ -480,9 +513,11 @@ function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElemen
           <CheckboxTrack
             total={hpMax}
             filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
+            pendingFilled={manualAck.hpDamageAdd}
+            pendingClearFilled={manualAck.hpHealSlots + lsHeal}
             fillColor="bg-red-500"
             onSetFilled={canEdit || canEditAdv
-              ? (dmg) => updateActiveElement(element.instanceId, { currentHp: hpMax - dmg })
+              ? (dmg) => applyResource({ currentHp: hpMax - dmg })
               : undefined}
           />
         </div>
@@ -495,39 +530,51 @@ function TokenDetailPanel({ element, isPlayer, isMyCharacter, updateActiveElemen
           <CheckboxTrack
             total={stressMax}
             filled={element.currentStress ?? 0}
+            pendingFilled={(pendingResourceCosts[element.instanceId]?.stress ?? 0) + manualAck.stressAdd}
+            pendingClearFilled={manualAck.stressClear}
             fillColor="bg-yellow-600"
             onSetFilled={canEdit || canEditAdv
-              ? (v) => updateActiveElement(element.instanceId, { currentStress: v })
+              ? (v) => applyResource({ currentStress: v })
               : undefined}
           />
         </div>
       )}
 
-      {/* Hope (characters only) */}
-      {isChar && (element.maxHope ?? 6) > 0 && (
-        <div className="mb-1.5">
-          <div className="text-xs text-slate-500 mb-0.5">Hope {element.hope ?? (element.maxHope ?? 6)}/{element.maxHope ?? 6}</div>
-          <CheckboxTrack
-            total={element.maxHope ?? 6}
-            filled={element.hope ?? (element.maxHope ?? 6)}
-            fillColor="bg-amber-400"
-            onSetFilled={canEdit ? (v) => updateActiveElement(element.instanceId, { hope: v }) : undefined}
-          />
-        </div>
-      )}
+      {/* Hope (characters only) — server baseline + dashed pending (rolls + manual GM-ack queue) */}
+      {isChar && (element.maxHope ?? 6) > 0 && (() => {
+        const maxH = element.maxHope ?? 6;
+        const hopePending = pendingResourceCosts[element.instanceId]?.hope ?? 0;
+        const remaining = element.hope ?? maxH;
+        return (
+          <div className="mb-1.5">
+            <div className="text-xs text-slate-500 mb-0.5">Hope {remaining}/{maxH}</div>
+            <CheckboxTrack
+              total={maxH}
+              filled={Math.max(0, remaining - hopePending)}
+              pendingFilled={hopePending + manualAck.hopeGain}
+              pendingClearFilled={manualAck.hopeSpend}
+              fillColor="bg-amber-400"
+              label="Hope"
+              verbs={['Gain', 'Spend']}
+              pulseOnDecreaseOnly
+              onSetFilled={canEdit ? (v) => applyResource({ hope: v }) : undefined}
+            />
+          </div>
+        );
+      })()}
 
       {/* Armor (Daggerstack characters) */}
       {isChar && (element.maxArmor ?? 0) > 0 && (
         <div className="mb-1.5">
-          <div className="text-xs text-slate-500 mb-0.5">Armor {element.currentArmor ?? element.maxArmor ?? 0}/{element.maxArmor ?? 0}</div>
+          <div className="text-xs text-slate-500 mb-0.5">Armor {displayEl.currentArmor ?? element.maxArmor ?? 0}/{element.maxArmor ?? 0}</div>
           <CheckboxTrack
             total={element.maxArmor ?? 0}
-            filled={element.currentArmor ?? element.maxArmor ?? 0}
+            filled={displayEl.currentArmor ?? element.maxArmor ?? 0}
             fillColor="bg-cyan-600"
             onSetFilled={canEdit ? (v) => {
               const upd = { currentArmor: v };
               if (element.reinforcedActive && v < (element.currentArmor ?? element.maxArmor ?? 0)) upd.reinforcedActive = false;
-              updateActiveElement(element.instanceId, upd);
+              applyResource(upd);
             } : undefined}
           />
         </div>
@@ -612,9 +659,17 @@ export function BattleMap({
   onClearDice,
   diceCanvasHidden = false,
   onToggleDiceVisibility,
+  /** GM: pending dice/action banners count; used for Cancel all + to keep tray controls visible when only banners remain */
+  pendingBannerCount = 0,
+  onCancelAllBanners,
   className = '',
   /** V2 Phase 4: called after a token drag commits (map or tray), with pre/post positions for `dispatchTokenMoveHooks` */
   onTokenDragEnd,
+  /** Game Table: queue manual HP/stress/hope/armor edits for GM ack */
+  queueManualTrackEdit,
+  pendingBanners,
+  pendingResourceCosts = {},
+  lifeSupportSelections = {},
 }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -715,7 +770,9 @@ export function BattleMap({
   }, [user?.uid, user?.email]);
 
   const canDrag = useCallback((el) => {
-    if (el.elementType === 'character' && (el.moveDisabledSources?.length > 0 || el.retractedActive)) return false;
+    const moveLocked =
+      (el.moveDisabledSources?.length > 0) || (el.elementType === 'character' && el.retractedActive);
+    if (moveLocked) return false;
     if (!isPlayer) return true; // GM can drag anything else
     if (el.elementType === 'adversary') return false; // players can't drag adversaries
     return isMyCharacter(el);
@@ -1031,8 +1088,13 @@ export function BattleMap({
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
-  const showLeftTray = characters.length > 0;
+  const showLeftTray =
+    characters.length > 0 || (!isPlayer && pendingBannerCount > 0);
   const showRightTray = !isPlayer && adversaries.length > 0;
+  const showDiceTrayControls =
+    onClearDice ||
+    onToggleDiceVisibility ||
+    (typeof onCancelAllBanners === 'function' && pendingBannerCount > 0);
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -1073,32 +1135,46 @@ export function BattleMap({
                 pinnedInstanceId={pinnedToken?.element.instanceId}
               />
             </div>
-            {(onClearDice || onToggleDiceVisibility) && (
-              <div className="p-1.5 border-t border-slate-800 shrink-0 flex flex-col gap-1">
-                {onToggleDiceVisibility && (
-                  <Tooltip label={diceCanvasHidden ? 'Show 3D dice' : 'Hide 3D dice'}>
+            {showDiceTrayControls && (
+              <div className="p-1.5 border-t border-slate-800 shrink-0 flex flex-col">
+                {typeof onCancelAllBanners === 'function' && pendingBannerCount > 0 && (
+                  <Tooltip label={`Cancel all ${pendingBannerCount} pending roll banner${pendingBannerCount === 1 ? '' : 's'} (no effects)`}>
                     <button
                       type="button"
-                      onClick={onToggleDiceVisibility}
-                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
-                      aria-label={diceCanvasHidden ? 'Show dice' : 'Hide dice'}
+                      onClick={onCancelAllBanners}
+                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-amber-300/90 hover:text-amber-200 border border-amber-800/60 transition-colors mb-7"
+                      aria-label="Cancel all pending banners"
                     >
-                      {diceCanvasHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                      <CircleX size={14} className="shrink-0" />
                     </button>
                   </Tooltip>
                 )}
-                {onClearDice && (
-                  <Tooltip label="Clear 3D dice">
-                    <button
-                      type="button"
-                      onClick={onClearDice}
-                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
-                      aria-label="Clear dice"
-                    >
-                      <Eraser size={14} />
-                    </button>
-                  </Tooltip>
-                )}
+                <div className="flex flex-col gap-1">
+                  {onToggleDiceVisibility && (
+                    <Tooltip label={diceCanvasHidden ? 'Show 3D dice' : 'Hide 3D dice'}>
+                      <button
+                        type="button"
+                        onClick={onToggleDiceVisibility}
+                        className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                        aria-label={diceCanvasHidden ? 'Show dice' : 'Hide dice'}
+                      >
+                        {diceCanvasHidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                      </button>
+                    </Tooltip>
+                  )}
+                  {onClearDice && (
+                    <Tooltip label="Clear 3D dice">
+                      <button
+                        type="button"
+                        onClick={onClearDice}
+                        className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                        aria-label="Clear dice"
+                      >
+                        <Eraser size={14} />
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1261,21 +1337,24 @@ export function BattleMap({
                 </svg>
               )}
 
-              {/* Placed character tokens */}
-              {charMapTokens.map(({ element, isMyCharacter: myChar }) => {
+              {/* Placed character tokens — rising z-index so overlaps pick the topmost; padded hit target for edges */}
+              {charMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
+                const p = MAP_TOKEN_HIT_PADDING_PX;
                 return (
                 <div
                   key={element.instanceId}
                   className="absolute"
                   style={{
-                    left: element.tokenX * pxPerFt,
-                    top: element.tokenY * pxPerFt,
-                    width: tokenSizePx,
-                    height: tokenSizePx,
+                    left: element.tokenX * pxPerFt - p,
+                    top: element.tokenY * pxPerFt - p,
+                    padding: p,
+                    width: tokenSizePx + 2 * p,
+                    height: tokenSizePx + 2 * p,
+                    boxSizing: 'border-box',
                     touchAction: 'none',
-                    zIndex: 10,
+                    zIndex: 10 + stackIdx,
                   }}
                   onPointerDown={e => handlePointerDown(e, element, false)}
                   onPointerMove={handlePointerMove}
@@ -1295,21 +1374,24 @@ export function BattleMap({
                 );
               })}
 
-              {/* Placed adversary tokens */}
-              {advMapTokens.map(({ element, instanceNum }) => {
+              {/* Placed adversary tokens — after characters so adversaries stay above; later instances stack higher */}
+              {advMapTokens.map(({ element, instanceNum }, advIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
+                const p = MAP_TOKEN_HIT_PADDING_PX;
                 return (
                 <div
                   key={element.instanceId}
                   className="absolute"
                   style={{
-                    left: element.tokenX * pxPerFt,
-                    top: element.tokenY * pxPerFt,
-                    width: tokenSizePx,
-                    height: tokenSizePx,
+                    left: element.tokenX * pxPerFt - p,
+                    top: element.tokenY * pxPerFt - p,
+                    padding: p,
+                    width: tokenSizePx + 2 * p,
+                    height: tokenSizePx + 2 * p,
+                    boxSizing: 'border-box',
                     touchAction: 'none',
-                    zIndex: 10,
+                    zIndex: 10 + charMapTokens.length + advIdx,
                   }}
                   onPointerDown={e => handlePointerDown(e, element, false)}
                   onPointerMove={handlePointerMove}
@@ -1388,6 +1470,10 @@ export function BattleMap({
             isPlayer={isPlayer}
             isMyCharacter={myChar}
             updateActiveElement={updateActiveElement}
+            queueManualTrackEdit={queueManualTrackEdit}
+            pendingBanners={pendingBanners}
+            pendingResourceCosts={pendingResourceCosts}
+            lifeSupportSelections={lifeSupportSelections}
             onRemoveFromMap={canRemove ? () => {
               updateActiveElement(el.instanceId, { tokenX: null, tokenY: null });
               setPinnedToken(null);

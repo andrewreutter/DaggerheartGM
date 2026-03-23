@@ -98,6 +98,16 @@ export function resolveClassFeatureDescriptor(characterEl, featureName) {
   );
 }
 
+/** Domain card row from merged `activeFeatures` (V2 ability registry + `type: 'ability'`). */
+export function resolveAbilityDescriptor(characterEl, featureName) {
+  if (!featureName) return null;
+  return (
+    characterEl?.activeFeatures?.find(
+      (f) => f.name === featureName && f.type === 'ability'
+    ) ?? null
+  );
+}
+
 export function resolveVirtualWeaponBehavior(featureName, attackerEl) {
   if (!featureName) return null;
   const row = attackerEl?.activeFeatures?.find((f) => f.name === featureName);

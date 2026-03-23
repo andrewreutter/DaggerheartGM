@@ -4,7 +4,7 @@
  * SRD source: daggerheart-srd/ancestries/Orc.md
  */
 
-import { when, isActing, isTargeted } from '../engine/when.js';
+import { when, isTargeted, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const Sturdy = {
   name: 'Sturdy',
@@ -27,16 +27,8 @@ export const Tusks = {
     'When you succeed on an attack against a target within Melee range, you can spend a Hope to gore the target with your tusks, dealing an extra 1d6 damage.',
   chips: [
     when(
-      isActing,
-      (table) => {
-        // Only available on successful melee attacks
-        return (
-          table.action?.type === 'attack' &&
-          table.action?.range === 'melee' &&
-          table.rolls?.action?.isSuccess === true &&
-          table.action?.targets?.length > 0
-        );
-      },
+      youSucceedOnAnAttack,
+      (table) => table.action?.range === 'melee' && (table.action?.targets?.length ?? 0) > 0,
       {
         description: 'Spend 1 Hope to deal an extra 1d6 damage.',
         placements: ['reviewAction'],

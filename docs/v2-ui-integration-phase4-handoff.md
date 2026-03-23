@@ -55,7 +55,7 @@ Per the V2 Game Table integration plan (**Phase 4 — Cross-table and lifecycle*
 
 ### A. Phase 3 regression (ship confidence — do any time)
 
-Enable the V2 declarative sheet: **user menu → V1 / V2** (persists **`localStorage.dh_v2DeclarativeSheet`**), or **`?v2Sheet=1`**, or dev: **`globalThis.__DH_V2_DECLARATIVE_SHEET__ = true`** (`v2-declarative-sheet.js`).
+The declarative sheet overlay (`mergeV2DeclarativeSheetOverlay` in `v2-declarative-sheet.js`) is always applied when recomputing characters.
 
 | Check | What to do | Pass criteria |
 |--------|------------|----------------|

@@ -52,6 +52,7 @@ export function mergeGameStateWithActionConfig(gameState, actionConfig) {
       trait: actionConfig.traitKey,
       range: actionConfig.range,
       weaponId: actionConfig.weaponId ?? null,
+      abilityId: actionConfig.abilityId ?? prev.abilityId ?? null,
       useArmorByTargetId: prev.useArmorByTargetId,
       reactionContext: actionConfig.reactionContext ?? prev.reactionContext,
       tagTeamPartnerInstanceId:
@@ -60,6 +61,22 @@ export function mergeGameStateWithActionConfig(gameState, actionConfig) {
       appliedEffects: Array.isArray(prev.appliedEffects) ? [...prev.appliedEffects] : [],
     },
   };
+}
+
+/**
+ * @param {object} chip — from {@link collectChips} (has `_ownerInstanceId`)
+ * @param {{ role: 'gm' | 'player', viewerCharacterInstanceId?: string | null } | undefined} viewer
+ * @returns {boolean}
+ */
+export function shouldIncludePhaseChipForViewer(chip, viewer) {
+  if (viewer == null) return true;
+  if (viewer.role === 'gm') return true;
+  const vid = viewer.viewerCharacterInstanceId;
+  if (viewer.role === 'player' && (vid == null || vid === '')) return false;
+  const ownerId = chip._ownerInstanceId;
+  if (ownerId != null && String(ownerId) === String(vid)) return true;
+  if (chip.showOnOtherSheets === true) return false;
+  return false;
 }
 
 /**
@@ -72,9 +89,10 @@ export function mergeGameStateWithActionConfig(gameState, actionConfig) {
  * @param {object[]} features
  * @param {'intent'|'reviewAction'|'reviewOutcome'|'resolveAction'|'resolve'} phase
  * @param {object} [usageStore]
+ * @param {{ role: 'gm' | 'player', viewerCharacterInstanceId?: string | null } | undefined} [viewer] — when set, owner-only chips (no `showOnOtherSheets`) are omitted for non-owners; `showOnOtherSheets` chips are omitted from this pass for non-owners (see cross-sheet collection).
  * @returns {object[]} chips with `_v2Phase` set to `phase`
  */
-export function collectPhaseChipsOnly(gameState, actionConfig, features, phase, usageStore = {}) {
+export function collectPhaseChipsOnly(gameState, actionConfig, features, phase, usageStore = {}, viewer) {
   const placement = PHASE_CHIP_PLACEMENT[phase];
   if (!placement) return [];
 
@@ -93,7 +111,9 @@ export function collectPhaseChipsOnly(gameState, actionConfig, features, phase, 
     const table = buildTableSnapshot(featureState);
     const chips = collectChips([feature], placement, table, usageStore);
     for (const c of chips) {
-      activeChips.push({ ...c, _v2Phase: phase });
+      const withPhase = { ...c, _v2Phase: phase };
+      if (!shouldIncludePhaseChipForViewer(withPhase, viewer)) continue;
+      activeChips.push(withPhase);
     }
   }
 

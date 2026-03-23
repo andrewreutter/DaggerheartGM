@@ -71,7 +71,10 @@ export const Defender = {
         placements: ['reviewAction'],
         stressCost: 1,
         selectTargets: (table) => defenderEligibleAllies(table),
-        isDisabled: (table) => defenderEligibleAllies(table).length === 0,
+        isDisabled: (table) =>
+          defenderEligibleAllies(table).length === 0
+            ? 'No eligible ally in Close range (need Beastform and ally marking ≥2 HP).'
+            : false,
         onUse(table, chipState) {
           const ids = chipState.get?.('selectedTargetIds') ?? [];
           const allyId = ids[0];
@@ -95,7 +98,10 @@ export const WardensProtection = {
       multiSelect: true,
       maxSelections: 4,
       selectTargets: (table) => alliesWithinCloseExcludingSelf(table),
-      isDisabled: (table) => alliesWithinCloseExcludingSelf(table).length === 0,
+      isDisabled: (table) =>
+        alliesWithinCloseExcludingSelf(table).length === 0
+          ? 'No other ally within Close range.'
+          : false,
       onUse(table, chipState) {
         const n = table.rollDie('d4');
         const ids = (chipState.get('selectedTargetIds') || []).slice(0, n);
@@ -132,7 +138,9 @@ export const Regeneration = {
       hopeCost: 3,
       selectTargets: (table) => table.characters.filter((c) => isRegenerationTouchRange(table, c)),
       isDisabled: (table) =>
-        table.characters.filter((c) => isRegenerationTouchRange(table, c)).length === 0,
+        table.characters.filter((c) => isRegenerationTouchRange(table, c)).length === 0
+          ? 'No creature in touch range (Melee, or Very Close at tier 3+).'
+          : false,
       onUse(table, chip) {
         const ids = chip.get('selectedTargetIds') || [];
         const id = ids[0];

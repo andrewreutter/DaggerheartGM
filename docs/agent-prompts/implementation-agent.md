@@ -27,6 +27,8 @@ needs the engine internals.
 
 You do NOT need to re-read these on subsequent "Continue" rounds.
 
+**Framework boundaries (non-optional):** `.cursor/rules/v2-framework-boundaries.mdc` and **CONV-029** in `docs/v2-code-conventions.md`. Never add feature-specific branches to `src/features-v2/engine/` or shared V2 bridge / `table-ops` integration — put behavior in the **per-feature module** or a **generic** engine/API extension.
+
 ────────────────────────────────────────────────────────
 ON EVERY BATCH (including the first) — READ THESE FILES FRESH:
 ────────────────────────────────────────────────────────
@@ -36,6 +38,8 @@ ON EVERY BATCH (including the first) — READ THESE FILES FRESH:
 Read both before you claim or implement anything. The user may update the
 instructions or conventions at any time; re-reading ensures you always
 follow the latest version.
+
+**Shared persistence:** `loadCharacterFeatures` always supplies `_sourceScopeKey`; use **`table.source.get` / `table.source.set`** for shared option-level state — do not default to raw **`queueInternalMutation(..., 'setFeatureState', ...)`** unless the engine requires it.
 
 ────────────────────────────────────────────────────────
 CROSS-COLLECTION PRIORITY (mandatory)
@@ -82,7 +86,7 @@ entire file. Instead:
      and `<!-- v2-queue:end -->`); refresh that block after tracker edits with `npm run v2:queue -- --write`.
   1. Read lines 8–22 (the **Status Summary** table) to understand global progress.
   2. Apply **Cross-collection priority** above, then find Unclaimed features in
-     the **current** collection: use Grep to search the tracker for
+     the **current** collection: use Grep to search `docs/v2-migration-to-review.md` (and the tracker for any rows still inline there) for
      `| Unclaimed |` and scan the results to pick your batch (fallback if you cannot run the script).
      **Domain abilities (`abilities/`):** Rows are grouped under **Tier 1**,
      **Tier 2**, and **Tier 3** (spell card tier). You may only consider
@@ -100,7 +104,9 @@ entire file. Instead:
 
 **Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 8–22 when those status counts change.
 
-**Domain abilities — tier order (mandatory):** The tracker lists all domain spell
+**Abilities, Beastforms, Items, Consumables (gated collections):** Full per-feature tables (all tiers for abilities) live in `docs/v2-migration-to-review.md`. The main tracker has a pointer stub only; `npm run v2:queue` merges both files for queue logic. Grep `v2-migration-to-review.md` for `| Unclaimed |` (or run `npm run v2:queue`) when claiming; edit rows in `v2-migration-to-review.md`; update **Status Summary** counts in `docs/v2-migration-tracker.md` lines 9–24 when those status counts change.
+
+**Domain abilities — tier order (mandatory):** `v2-migration-to-review.md` lists all domain spell
 cards in three blocks: **Tier 1** (63 abilities), **Tier 2** (63), **Tier 3** (63).
 Implementation order is **all Tier 1 across every domain**, then **all Tier 2**,
 then **all Tier 3** — do **not** finish one domain’s full 21 cards before touching

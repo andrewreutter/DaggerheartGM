@@ -2,7 +2,7 @@
  * Wayfinder Ranger subclass — SRD: daggerheart-srd/subclasses/Wayfinder.md
  */
 
-import { when, isActing, isTargeted } from '../engine/when.js';
+import { when, isActing, isTargeted, youDealSevereDamage } from '../engine/when.js';
 import { queueInternalMutation } from '../engine/table.js';
 
 /** True when the acting attacker is the Ranger's current Focus adversary. */
@@ -41,21 +41,7 @@ export const RuthlessPredator = {
     onReviewOutcome: when(
       isActing,
       (table) => table.action?.type === 'attack',
-      (table) => {
-        const target = table.action?.target;
-        if (!target?.isAdversary) return false;
-        const targetId = target.instanceId;
-        for (const e of table.action?.effects || []) {
-          if (e.stat !== 'currentHP' || e.target?.instanceId !== targetId) continue;
-          const amt = e.amount ?? 0;
-          const severe =
-            e.damageTier === 'severe' ||
-            e.thresholdTier === 'severe' ||
-            (e.damageTier == null && e.thresholdTier == null && amt >= 3);
-          if (severe && amt > 0) return true;
-        }
-        return false;
-      },
+      (table) => table.action?.target?.isAdversary === true && youDealSevereDamage(table),
       (table) => {
         table.action?.target?.markStress(1);
       }

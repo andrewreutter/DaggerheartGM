@@ -33,8 +33,8 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
 // ---------------------------------------------------------------------------
 test('authenticated user sees the library nav and DAGGEROP heading', async ({ page }) => {
   await authenticate(page);
-  // Navigate directly to the library route to avoid the root→library redirect.
-  await page.goto('/library/adversaries');
+  // Navigate directly to the library (default tab is characters).
+  await page.goto('/library');
 
   // The DAGGEROP heading and Library nav button both live inside {user && nav}.
   // They become visible once onAuthStateChanged fires and sets the user.
@@ -45,7 +45,7 @@ test('authenticated user sees the library nav and DAGGEROP heading', async ({ pa
 
 test('authenticated user can navigate to the GM Table', async ({ page }) => {
   await authenticate(page);
-  await page.goto('/gm-table/test-user-uid');
+  await page.goto('/table/test-user-uid');
 
   // The GM Table has an "Add Character" button in the characters panel.
   await expect(page.locator('text=Add Character')).toBeVisible({ timeout: 10000 });

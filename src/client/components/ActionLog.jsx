@@ -105,8 +105,8 @@ function LogEntry({ roll }) {
             <span className="text-slate-500">: </span>
             <span className="text-amber-200 font-medium">{roll.actionName || 'Action'}</span>
             {roll.actionText && (
-              <span className="block text-[10px] text-slate-500 mt-0.5 truncate max-w-full">
-                {roll.actionText.length > 80 ? roll.actionText.slice(0, 80) + '…' : roll.actionText}
+              <span className="block text-[10px] text-slate-500 mt-0.5 max-w-full whitespace-pre-line break-words">
+                {roll.actionText.length > 120 ? roll.actionText.slice(0, 120) + '…' : roll.actionText}
               </span>
             )}
           </span>

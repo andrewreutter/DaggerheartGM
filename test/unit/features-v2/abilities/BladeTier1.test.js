@@ -6,6 +6,7 @@ import { NotGoodEnough } from '../../../../src/features-v2/abilities/Blade/NotGo
 import { Whirlwind } from '../../../../src/features-v2/abilities/Blade/Whirlwind.js';
 import { ASoldiersBond } from '../../../../src/features-v2/abilities/Blade/ASoldiersBond.js';
 import { Reckless } from '../../../../src/features-v2/abilities/Blade/Reckless.js';
+import { RageUp } from '../../../../src/features-v2/abilities/Blade/RageUp.js';
 import { Scramble } from '../../../../src/features-v2/abilities/Blade/Scramble.js';
 import { VersatileFighter } from '../../../../src/features-v2/abilities/Blade/VersatileFighter.js';
 import {
@@ -326,6 +327,126 @@ describe('Blade Tier 1 — Reckless', () => {
       }
     );
     expect(chips.filter((c) => c.placements?.includes('intent') && c.stressCost === 1)).toHaveLength(0);
+  });
+});
+
+describe('Blade Tier 1 — Rage Up', () => {
+  const traits = { agility: 1, strength: 2, finesse: 0, instinct: 0, presence: 0, knowledge: 0 };
+
+  it('onIntent resets rageUpUses at the start of an attack', () => {
+    const self = mockCharacter({ instanceId: 'b1', traits });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const { mutations } = runIntent(
+      { ...RageUp, _ownerInstanceId: 'b1' },
+      {
+        activeElements: [self, adv],
+        currentActorInstanceId: 'b1',
+        _ownerInstanceId: 'b1',
+        _featureKey: 'Rage Up',
+        featureState: { 'Rage Up': { rageUpUses: 2 } },
+        action: { type: 'attack', actorInstanceId: 'b1', targetInstanceIds: ['adv-1'] },
+        rolls: mockRoll(),
+      }
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Rage Up',
+          key: 'rageUpUses',
+          value: 0,
+        }),
+      })
+    );
+  });
+
+  it('intent chip adds twice Strength to damage and marks stress via cost deduction', () => {
+    const self = mockCharacter({ instanceId: 'b1', traits });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const gs = mockGameState({
+      activeElements: [self, adv],
+      currentActorInstanceId: 'b1',
+      _ownerInstanceId: 'b1',
+      _featureKey: 'Rage Up',
+      featureState: {},
+      action: { type: 'attack', actorInstanceId: 'b1', targetInstanceIds: ['adv-1'] },
+      rolls: mockRoll(),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...RageUp, _ownerInstanceId: 'b1' }], 'intent', tbl);
+    expect(chips).toHaveLength(1);
+    const c = chips[0];
+    const fromUse = activateChip(c, tbl, makeChipState());
+    deductChipCosts(c, tbl);
+    const m = [...fromUse, ...applyMutations(tbl)];
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'addRollStatic',
+        payload: expect.objectContaining({
+          rollKey: 'damage',
+          name: 'Rage Up',
+          value: 4,
+        }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'markStress',
+        payload: expect.objectContaining({ instanceId: 'b1', amount: 1 }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Rage Up',
+          key: 'rageUpUses',
+          value: 1,
+        }),
+      })
+    );
+  });
+
+  it('allows a second Rage Up in the same attack then disables the chip', () => {
+    const self = mockCharacter({ instanceId: 'b1', traits });
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const gs = mockGameState({
+      activeElements: [self, adv],
+      currentActorInstanceId: 'b1',
+      _ownerInstanceId: 'b1',
+      _featureKey: 'Rage Up',
+      featureState: { 'Rage Up': { rageUpUses: 1 } },
+      action: { type: 'attack', actorInstanceId: 'b1', targetInstanceIds: ['adv-1'] },
+      rolls: mockRoll(),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...RageUp, _ownerInstanceId: 'b1' }], 'intent', tbl);
+    expect(chips[0].isDisabled?.(tbl)).toBe(false);
+    const c = chips[0];
+    const fromUse = activateChip(c, tbl, makeChipState());
+    deductChipCosts(c, tbl);
+    const m = [...fromUse, ...applyMutations(tbl)];
+    expect(m.filter((x) => x.type === 'addRollStatic' && x.payload?.name === 'Rage Up')).toHaveLength(1);
+
+    gs.featureState['Rage Up'] = { rageUpUses: 2 };
+    const tbl2 = buildTableSnapshot(gs);
+    const chips2 = collectChips([{ ...RageUp, _ownerInstanceId: 'b1' }], 'intent', tbl2);
+    expect(chips2[0].disabled).toBe(true);
+  });
+
+  it('does not offer chip when not attacking', () => {
+    const self = mockCharacter({ instanceId: 'b1', traits });
+    const { chips } = runIntent(
+      { ...RageUp, _ownerInstanceId: 'b1' },
+      {
+        activeElements: [self, mockAdversary()],
+        currentActorInstanceId: 'b1',
+        _ownerInstanceId: 'b1',
+        action: { type: 'trait', actorInstanceId: 'b1', targetInstanceIds: [] },
+        rolls: mockRoll(),
+      }
+    );
+    expect(chips.filter((c) => c.label === 'Rage Up')).toHaveLength(0);
   });
 });
 

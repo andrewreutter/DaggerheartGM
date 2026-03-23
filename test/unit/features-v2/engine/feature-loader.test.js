@@ -4,9 +4,11 @@ import {
   mergeDeclarativeFeatureState,
   attachBeastformOptions,
   loadCharacterFeatures,
+  resolveSourceScopeKey,
 } from '../../../../src/features-v2/engine/feature-loader.js';
 import registry from '../../../../src/features-v2/registry.js';
 import { buildTableSnapshot } from '../../../../src/features-v2/engine/table.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../../../src/features-v2/engine/feature-scope-keys.js';
 import { Efficient } from '../../../../src/features-v2/ancestries/Clank.js';
 import { CelestialTrance } from '../../../../src/features-v2/ancestries/Elf.js';
 import { mockCharacter, mockGameState } from '../helpers.js';
@@ -238,7 +240,35 @@ describe('applyDeclarativeFeatures', () => {
   });
 });
 
-describe('loadCharacterFeatures — beastforms (married SRD + V2)', () => {
+describe('loadCharacterFeatures — source scope keys', () => {
+  it('assigns default classes:srd-cls-druid when class row has no sourceScopeKey', () => {
+    const char = mockCharacter({ instanceId: 'd1', classId: 'srd-cls-druid', level: 1 });
+    const feats = loadCharacterFeatures(char, registry);
+    const wildtouch = feats.find((f) => f.name === 'Wildtouch');
+    expect(wildtouch?._sourceScopeKey).toBe(SRD_CLASS_DRUID_SCOPE_KEY);
+    expect(resolveSourceScopeKey('classes', 'srd-cls-druid', registry.classes['srd-cls-druid'])).toBe(
+      SRD_CLASS_DRUID_SCOPE_KEY
+    );
+  });
+
+  it('assigns beastforms:<id> for beastform sub-features (applyDeclarativeFeatures virtualSources)', () => {
+    const char = mockCharacter({
+      instanceId: 'd1',
+      classId: 'srd-cls-druid',
+      featureState: {
+        Beastform: {
+          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+        },
+      },
+    });
+    const base = loadCharacterFeatures(char, registry);
+    const decl = applyDeclarativeFeatures(base, char, {}, registry);
+    const fragile = decl.mergedFeatures.find((f) => f.name === 'Fragile');
+    expect(fragile?._sourceScopeKey).toBe('beastforms:srd-bst-agile-scout');
+  });
+});
+
+describe('applyDeclarativeFeatures — beastform virtualSources (married SRD + V2)', () => {
   it('injects married Agile Scout sub-features when featureState has active beastform', () => {
     const char = mockCharacter({
       instanceId: 'd1',
@@ -249,13 +279,18 @@ describe('loadCharacterFeatures — beastforms (married SRD + V2)', () => {
         },
       },
     });
-    const feats = loadCharacterFeatures(char, registry);
-    const bf = feats.filter((f) => f._source === 'beastform');
+    const base = loadCharacterFeatures(char, registry);
+    const decl = applyDeclarativeFeatures(base, char, {}, registry);
+    const bf = decl.mergedFeatures.filter((f) => f._source === 'beastform');
     expect(bf.map((f) => f.name)).toEqual(['Agile', 'Fragile']);
     const fragile = bf.find((f) => f.name === 'Fragile');
     expect(fragile?.id).toBe('srd-bst-agile-scout-feat-fragile');
     expect(fragile?._beastformId).toBe('srd-bst-agile-scout');
     expect(fragile?._sourceObject?.id).toBe('srd-bst-agile-scout');
+    expect(decl.virtualFeaturesExpanded.filter((f) => f._source === 'beastform').map((f) => f.name)).toEqual([
+      'Agile',
+      'Fragile',
+    ]);
   });
 
   it('resolves active beastform from legacy character.activeBeastform.id', () => {
@@ -265,11 +300,53 @@ describe('loadCharacterFeatures — beastforms (married SRD + V2)', () => {
       classId: 'srd-cls-druid',
       activeBeastform: { ...row },
     });
-    const feats = loadCharacterFeatures(char, registry);
-    expect(feats.filter((f) => f._source === 'beastform').map((f) => f.name)).toEqual([
+    const base = loadCharacterFeatures(char, registry);
+    const decl = applyDeclarativeFeatures(base, char, {}, registry);
+    expect(decl.mergedFeatures.filter((f) => f._source === 'beastform').map((f) => f.name)).toEqual([
       'Agile',
       'Fragile',
     ]);
+  });
+});
+
+describe('loadCharacterFeatures — items (inventory)', () => {
+  it('appends V2 item features when inventory line id matches registry.items', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      inventory: [{ id: 'srd-itm-piper-whistle', name: 'Piper Whistle', quantity: 1 }],
+    });
+    const feats = loadCharacterFeatures(char, registry);
+    expect(feats).toContainEqual(
+      expect.objectContaining({
+        name: 'Piper Whistle',
+        _source: 'item',
+        _ownerInstanceId: 'c1',
+        _sourceObject: expect.objectContaining({
+          name: 'Piper Whistle',
+          description: expect.stringMatching(/1-mile|whistle/i),
+        }),
+      })
+    );
+  });
+
+  it('ignores inventory lines without id or unknown item id', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      inventory: [{ name: 'Rope', quantity: 1 }, { id: 'srd-itm-not-in-registry', name: 'X' }],
+    });
+    const feats = loadCharacterFeatures(char, registry);
+    expect(feats.filter((f) => f._source === 'item')).toEqual([]);
+  });
+});
+
+describe('loadCharacterFeatures — ancestries (registry leaf rows)', () => {
+  it('loads a V2 compound key row (e.g. Infernis.Fearless) as a feature row', () => {
+    const char = mockCharacter({
+      instanceId: 'c1',
+      ancestryIds: ['Infernis.Fearless'],
+    });
+    const feats = loadCharacterFeatures(char, registry);
+    expect(feats.some((f) => f.name === 'Fearless')).toBe(true);
   });
 });
 

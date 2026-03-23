@@ -14,6 +14,7 @@ describe('marryBeastformFeatures', () => {
         id: 'srd-bst-agile-scout-feat-agile',
         type: 'passive',
         description: Agile.description,
+        hopeCost: 1,
       })
     );
     expect(out[1].name).toBe('Fragile');

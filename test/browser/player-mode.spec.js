@@ -99,7 +99,7 @@ async function enterPreviewMode(page, email) {
 test('player sees the Add Character button on a GM table', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
-  await page.goto(`/gm-table/${OTHER_GM_UID}`);
+  await page.goto(`/table/${OTHER_GM_UID}`);
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
 });
@@ -107,7 +107,7 @@ test('player sees the Add Character button on a GM table', async ({ page }) => {
 test('player clicking Add Character opens the character dialog', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
-  await page.goto(`/gm-table/${OTHER_GM_UID}`);
+  await page.goto(`/table/${OTHER_GM_UID}`);
 
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 10000 });
@@ -137,7 +137,7 @@ test('player Add Character submits and the new character appears (regression)', 
     });
   });
 
-  await page.goto(`/gm-table/${OTHER_GM_UID}`);
+  await page.goto(`/table/${OTHER_GM_UID}`);
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 10000 });
   await addBtn.click();
@@ -154,7 +154,7 @@ test('player Add Character submits and the new character appears (regression)', 
 test('player mode: Manage Invited Players button is hidden', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
-  await page.goto(`/gm-table/${OTHER_GM_UID}`);
+  await page.goto(`/table/${OTHER_GM_UID}`);
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
 
@@ -165,7 +165,7 @@ test('player mode: Manage Invited Players button is hidden', async ({ page }) =>
 test('player mode: GM Encounter panel Add button is hidden', async ({ page }) => {
   await authenticate(page);
   await mockPlayerStream(page, OTHER_GM_UID);
-  await page.goto(`/gm-table/${OTHER_GM_UID}`);
+  await page.goto(`/table/${OTHER_GM_UID}`);
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
 
@@ -182,7 +182,7 @@ test('GM preview mode: Add Character dialog opens (regression bug fix)', async (
   const PLAYER_EMAIL = 'player@example.com';
   await authenticate(page);
   await mockTableStateWithPlayer(page, PLAYER_EMAIL);
-  await page.goto('/gm-table/test-user-uid');
+  await page.goto('/table/test-user-uid');
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
   await enterPreviewMode(page, PLAYER_EMAIL);
@@ -198,7 +198,7 @@ test('GM preview mode: Add Character submits and character appears on the table'
   const PLAYER_EMAIL = 'player@example.com';
   await authenticate(page);
   await mockTableStateWithPlayer(page, PLAYER_EMAIL);
-  await page.goto('/gm-table/test-user-uid');
+  await page.goto('/table/test-user-uid');
 
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
   await enterPreviewMode(page, PLAYER_EMAIL);

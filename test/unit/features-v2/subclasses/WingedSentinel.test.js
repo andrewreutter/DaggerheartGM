@@ -25,7 +25,11 @@ import {
   runReviewOutcome,
 } from '../helpers.js';
 
-const WS_ROW = { sourceScopeKey: 'WingedSentinel' };
+/** Mirrors registry option shape: shared `features` list enables toggle scope inference across subclass rows. */
+const WS_ROW = {
+  sourceScopeKey: 'WingedSentinel',
+  features: [WingsOfLight, EtherealVisage, Ascendant, PowerOfTheGods],
+};
 
 describe('Winged Sentinel — Ascendant', () => {
   it('adds +4 Severe threshold', () => {
@@ -40,23 +44,6 @@ describe('Winged Sentinel — Ascendant', () => {
 });
 
 describe('Winged Sentinel — Wings of Light', () => {
-  it('exposes fly movement mode only while flying', () => {
-    const c = mockCharacter({ instanceId: 'ws-1' });
-    const off = applyDeclarativeFeatures(
-      [{ ...WingsOfLight, _ownerInstanceId: 'ws-1' }],
-      c,
-      { featureState: {} }
-    );
-    expect(off.movementModes).not.toContain('fly');
-
-    const on = applyDeclarativeFeatures(
-      [{ ...WingsOfLight, _ownerInstanceId: 'ws-1' }],
-      c,
-      { featureState: { WingedSentinel: { flying: true } } }
-    );
-    expect(on.movementModes).toContain('fly');
-  });
-
   it('reviewAction chip adds d8 extra damage when flying, successful attack, and Hope is paid', () => {
     const c = mockCharacter({ instanceId: 'ws-1', hope: 3 });
     const adv = mockAdversary({ instanceId: 'adv-1' });
@@ -64,7 +51,7 @@ describe('Winged Sentinel — Wings of Light', () => {
       activeElements: [c, adv],
       _ownerInstanceId: 'ws-1',
       _featureKey: 'Wings of Light',
-      featureState: { WingedSentinel: { flying: true } },
+      featureState: { WingedSentinel: { '_v2t:Wings of Light::Flying::card': true } },
       fear: 0,
       rolls: mockRoll({ isSuccess: true }),
       action: {
@@ -81,7 +68,12 @@ describe('Winged Sentinel — Wings of Light', () => {
 
     const tbl = buildTableSnapshot({
       ...gs,
-      _activeFeature: { ...WingsOfLight, _sourceScopeKey: 'WingedSentinel', _sourceObject: WS_ROW },
+      _activeFeature: {
+        ...WingsOfLight,
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+        _sourceObject: WS_ROW,
+      },
     });
     const chips = collectChips(
       [{ ...WingsOfLight, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
@@ -134,6 +126,76 @@ describe('Winged Sentinel — Wings of Light', () => {
     );
     expect(chips.filter((ch) => ch.description?.includes('extra'))).toHaveLength(0);
   });
+
+  it('Flying card toggle seeds from persisted flying (can turn off after on)', () => {
+    const c = mockCharacter({ instanceId: 'ws-1' });
+    const gsOn = mockGameState({
+      activeElements: [c],
+      _ownerInstanceId: 'ws-1',
+      _featureKey: 'Wings of Light',
+      featureState: { WingedSentinel: { '_v2t:Wings of Light::Flying::card': true } },
+    });
+    const tblOn = buildTableSnapshot({
+      ...gsOn,
+      _activeFeature: {
+        ...WingsOfLight,
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+        _sourceObject: WS_ROW,
+      },
+    });
+    const chipsOn = collectChips(
+      [{ ...WingsOfLight, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
+      'card',
+      tblOn
+    );
+    const flightOff = chipsOn.find((ch) => ch.name === 'Flying');
+    expect(flightOff).toBeDefined();
+    const mutOff = activateChip(flightOff, tblOn, makeChipState());
+    expect(mutOff).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: {
+          featureKey: 'WingedSentinel',
+          key: '_v2t:Wings of Light::Flying::card',
+          value: false,
+        },
+      })
+    );
+
+    const gsOff = mockGameState({
+      activeElements: [c],
+      _ownerInstanceId: 'ws-1',
+      _featureKey: 'Wings of Light',
+      featureState: {},
+    });
+    const tblOff = buildTableSnapshot({
+      ...gsOff,
+      _activeFeature: {
+        ...WingsOfLight,
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+        _sourceObject: WS_ROW,
+      },
+    });
+    const chipsOff = collectChips(
+      [{ ...WingsOfLight, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
+      'card',
+      tblOff
+    );
+    const flightOn = chipsOff.find((ch) => ch.name === 'Flying');
+    const mutOn = activateChip(flightOn, tblOff, makeChipState());
+    expect(mutOn).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: {
+          featureKey: 'WingedSentinel',
+          key: '_v2t:Wings of Light::Flying::card',
+          value: true,
+        },
+      })
+    );
+  });
 });
 
 describe('Winged Sentinel — Power of the Gods', () => {
@@ -168,7 +230,9 @@ describe('Winged Sentinel — Wings of Light + Power of the Gods', () => {
       _ownerInstanceId: 'ws-1',
       _featureKey: 'Wings of Light',
       _sourceObject: WS_ROW,
-      featureState: { WingedSentinel: { flying: true, powerOfTheGodsMastery: true } },
+      featureState: {
+        WingedSentinel: { '_v2t:Wings of Light::Flying::card': true, powerOfTheGodsMastery: true },
+      },
       rolls: mockRoll({ isSuccess: true }),
       action: {
         type: 'attack',
@@ -182,7 +246,15 @@ describe('Winged Sentinel — Wings of Light + Power of the Gods', () => {
     });
     gs.rolls.damage = { dice: [], statics: [] };
 
-    const tbl = buildTableSnapshot(gs);
+    const tbl = buildTableSnapshot({
+      ...gs,
+      _activeFeature: {
+        ...WingsOfLight,
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+        _sourceObject: WS_ROW,
+      },
+    });
     const chips = collectChips(
       [{ ...WingsOfLight, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
       'reviewAction',
@@ -206,10 +278,10 @@ describe('Winged Sentinel — Ethereal Visage', () => {
     const c = mockCharacter({ instanceId: 'ws-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const { mutations } = runIntent(
-      { ...EtherealVisage, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW },
+      { ...EtherealVisage, _source: 'subclass', _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW },
       {
         activeElements: [c, adv],
-        featureState: { WingedSentinel: { flying: true } },
+        featureState: { WingedSentinel: { '_v2t:Wings of Light::Flying::card': true } },
         action: mockAction({ type: 'trait', traitKey: 'Presence', actorInstanceId: 'ws-1' }),
         rolls: mockRoll(),
       }
@@ -226,7 +298,7 @@ describe('Winged Sentinel — Ethereal Visage', () => {
     const c = mockCharacter({ instanceId: 'ws-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
     const { mutations } = runIntent(
-      { ...EtherealVisage, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW },
+      { ...EtherealVisage, _source: 'subclass', _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW },
       {
         activeElements: [c, adv],
         featureState: {},
@@ -242,7 +314,7 @@ describe('Winged Sentinel — Ethereal Visage', () => {
     const gs = mockGameState({
       activeElements: [c, mockAdversary()],
       _ownerInstanceId: 'ws-1',
-      featureState: { WingedSentinel: { flying: true } },
+      featureState: { WingedSentinel: { '_v2t:Wings of Light::Flying::card': true } },
       fear: 2,
       rolls: mockRoll({ hopeValue: 10, fearValue: 4, isSuccess: true }),
       action: {
@@ -256,9 +328,17 @@ describe('Winged Sentinel — Ethereal Visage', () => {
       },
     });
 
-    const tbl = buildTableSnapshot(gs);
+    const tbl = buildTableSnapshot({
+      ...gs,
+      _activeFeature: {
+        ...WingsOfLight,
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+        _sourceObject: WS_ROW,
+      },
+    });
     const chips = collectChips(
-      [{ ...EtherealVisage, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
+      [{ ...EtherealVisage, _source: 'subclass', _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
       'reviewOutcome',
       tbl
     );
@@ -279,7 +359,7 @@ describe('Winged Sentinel — Ethereal Visage', () => {
     const gs = mockGameState({
       activeElements: [c, mockAdversary()],
       _ownerInstanceId: 'ws-1',
-      featureState: { WingedSentinel: { flying: true } },
+      featureState: { WingedSentinel: { '_v2t:Wings of Light::Flying::card': true } },
       fear: 0,
       rolls: mockRoll({ hopeValue: 10, fearValue: 4, isSuccess: true }),
       action: {
@@ -292,13 +372,21 @@ describe('Winged Sentinel — Ethereal Visage', () => {
         appliedEffects: [],
       },
     });
-    const tbl = buildTableSnapshot(gs);
+    const tbl = buildTableSnapshot({
+      ...gs,
+      _activeFeature: {
+        ...WingsOfLight,
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+        _sourceObject: WS_ROW,
+      },
+    });
     const chips = collectChips(
-      [{ ...EtherealVisage, _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
+      [{ ...EtherealVisage, _source: 'subclass', _ownerInstanceId: 'ws-1', _sourceObject: WS_ROW }],
       'reviewOutcome',
       tbl
     );
     const fearChip = chips.find((ch) => ch.name?.includes('Fear'));
-    expect(fearChip.isDisabled(tbl)).toBe(true);
+    expect(fearChip.disabled).toBe(true);
   });
 });

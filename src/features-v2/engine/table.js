@@ -43,8 +43,13 @@
  *   _tokenMove: { moverInstanceId: string },  // set only during dispatchTokenMoveHooks — which token
  *                                               // just moved (post-move positions on elements;
  *                                               // _previousPositions[moverId] = prior coords for lastPosition)
+ *   registry: object,          // optional V2 registry (read-only); e.g. `registry.beastforms` for Druid picks
+ *   _rollDbId: number|string|null, // optional; pending dice_rolls id so `move()` mutations bind to a banner
  * }
  */
+
+import { SRD_CLASS_DRUID_SCOPE_KEY } from './feature-scope-keys.js';
+import { normalizeConditionsToList } from '../../client/lib/conditions-utils.js';
 
 const MUTATIONS_KEY = Symbol('mutations');
 
@@ -86,15 +91,21 @@ function calcRangeBand(dist) {
   return 'veryFar';
 }
 
+/** Half-width of a standard 5×5' map token in feet (matches `map-range.js` / BattleMap). */
+const TOKEN_HALF_FT = 2.5;
+
 /**
- * Compute range band between two (x, y) coordinate pairs.
- * Returns null if either pair contains a null coordinate.
+ * Compute range band between two token **top-left** positions (feet).
+ * Uses the same nearest-edge distance as `tokenDistanceFt` (`map-range.js`) so engine
+ * `actor.rangeFrom(other)` matches BattleMap range highlights and VTT pending-move checks (e.g. Faun Kick).
  */
 function rangeBetween(x1, y1, x2, y2) {
   if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
-  const dx = x1 - x2;
-  const dy = y1 - y2;
-  return calcRangeBand(Math.sqrt(dx * dx + dy * dy));
+  const dx = x1 + TOKEN_HALF_FT - (x2 + TOKEN_HALF_FT);
+  const dy = y1 + TOKEN_HALF_FT - (y2 + TOKEN_HALF_FT);
+  const centerDist = Math.sqrt(dx * dx + dy * dy);
+  const dist = Math.max(0, centerDist - TOKEN_HALF_FT);
+  return calcRangeBand(dist);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +134,7 @@ export function queueInternalMutation(table, type, payload) {
  *
  * @param {object} w              — raw weapon object (SRD or virtual)
  * @param {object} [rangeOverrides] — { [sourceRange]: targetRange } map
- * @param {object} [weaponRenderHints] — { [weaponId]: { isDisabled?, disabledReason? } } from `applyDeclarativeFeatures`
+ * @param {object} [weaponRenderHints] — { [weaponId]: { isDisabled?, disabledReason?, range? } } from `applyDeclarativeFeatures` (`range` overrides merged `rangeOverrides` for that weapon)
  */
 function buildWeaponView(w, rangeOverrides, weaponRenderHints) {
   if (!w) return null;
@@ -132,13 +143,20 @@ function buildWeaponView(w, rangeOverrides, weaponRenderHints) {
     .map((f) => (typeof f === 'string' ? f : f.name)).filter(Boolean);
   const id = w.id ?? null;
   const hint = id != null && weaponRenderHints ? weaponRenderHints[id] : undefined;
+  let effectiveRange = baseRange;
+  if (rangeOverrides && baseRange && rangeOverrides[baseRange]) {
+    effectiveRange = rangeOverrides[baseRange];
+  }
+  if (hint?.range) {
+    effectiveRange = hint.range;
+  }
   const out = {
     id,
     name: w.name ?? 'Unknown Weapon',
     tier: parseInt(w.tier) || 1,
     /** Band from the weapon item before `rangeOverrides` (Reach, Spirit Weapon, etc.). */
     baseRange: baseRange,
-    range: (rangeOverrides && baseRange && rangeOverrides[baseRange]) ?? baseRange,
+    range: effectiveRange,
     trait: w.trait ?? null,
     damage: w.damage ?? null,
     features: featureNames,
@@ -215,32 +233,58 @@ function buildActor(element, gameState, mutations) {
     gold: element.gold ?? 0,
 
     /**
-     * SRD Beastform rows for this character (tier-filtered), if the host merged them via
-     * `attachBeastformOptions` — used by Druid **Beastform** / **Evolution** `isSelect` cards.
+     * Read-only copy of **`element.featureUsage`** (exhausted once/rest or once/session features).
+     * Used by e.g. Splendor **Invigoration** to list refreshable features on you or an ally.
      */
-    get beastformOptions() {
-      if (!isChar) return [];
-      const o = element._beastformOptions;
-      return Array.isArray(o) ? o : [];
+    get featureUsage() {
+      if (!isChar) return {};
+      const fu = element.featureUsage;
+      return fu && typeof fu === 'object' ? { ...fu } : {};
     },
 
     /**
-     * True while this character has an active beastform (Phase 1 **`element.activeBeastform`**
-     * with `id` / `beastformId`, per-element **`featureState`**, or top-level **`gameState.featureState`**
-     * Beastform / Evolution). Used to disable **Beastform** / **Evolution** transform cards until they drop out.
+     * True while this character has an active beastform (`element.activeBeastform`, Druid scoped
+     * bag, or legacy `Beastform` / `Evolution` featureState keys).
      */
     get inBeastform() {
       if (!isChar) return false;
       const ab = element.activeBeastform;
       if (ab && typeof ab === 'object' && (ab.id || ab.beastformId)) return true;
       const efs = element.featureState;
+      if (efs?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId) return true;
       if (efs?.Beastform?.activeBeastform?.beastformId || efs?.Evolution?.activeBeastform?.beastformId) {
         return true;
       }
       const fs = gameState.featureState;
       return !!(
-        fs?.Beastform?.activeBeastform?.beastformId || fs?.Evolution?.activeBeastform?.beastformId
+        fs?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
+        fs?.Beastform?.activeBeastform?.beastformId ||
+        fs?.Evolution?.activeBeastform?.beastformId
       );
+    },
+
+    /**
+     * Display name of the beastform currently active (Druid), for UI labels.
+     */
+    get activeBeastformDisplayName() {
+      if (!isChar) return null;
+      const legacy = element.activeBeastform;
+      if (legacy && typeof legacy === 'object' && legacy.name) return String(legacy.name);
+      const id =
+        element.featureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
+        element.featureState?.Beastform?.activeBeastform?.beastformId ||
+        element.featureState?.Evolution?.activeBeastform?.beastformId ||
+        gameState.featureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
+        gameState.featureState?.Beastform?.activeBeastform?.beastformId ||
+        gameState.featureState?.Evolution?.activeBeastform?.beastformId ||
+        (legacy && typeof legacy === 'object' ? legacy.beastformId || legacy.id : null);
+      if (!id) return null;
+      const beasts = gameState.registry?.beastforms;
+      if (beasts && typeof beasts === 'object') {
+        const row = beasts[id] ?? Object.values(beasts).find((o) => o && o.id === id);
+        if (row?.name) return String(row.name);
+      }
+      return null;
     },
 
     // Character level (1–10 in SRD; distinct from proficiency)
@@ -308,7 +352,7 @@ function buildActor(element, gameState, mutations) {
 
     /**
      * Append one modifier token for this character (queues `appendActiveModifier`).
-     * @param {object} mod — must include **`id`** and **`name`** (e.g. Bard **Rally**: `{ id, name: 'Rally Die', dice: 'd6', type: 'rally', refreshOn: 'session' }`).
+     * @param {object} mod — must include **`id`** and **`name`** (e.g. `{ id, name: 'Prayer Die', dice: 'd4', ... }`).
      */
     addActiveModifier(mod) {
       if (!isChar) return;
@@ -442,10 +486,12 @@ function buildActor(element, gameState, mutations) {
     tokenX: element.tokenX ?? null,
     tokenY: element.tokenY ?? null,
 
-    // Conditions
-    conditions: element.conditions || [],
+    // Conditions (persisted as comma-separated text or legacy string[]; normalize for reads)
+    get conditions() {
+      return normalizeConditionsToList(element.conditions);
+    },
     hasCondition(name) {
-      return (element.conditions || []).includes(name);
+      return normalizeConditionsToList(element.conditions).includes(name);
     },
 
     /**
@@ -598,6 +644,19 @@ function buildActor(element, gameState, mutations) {
     },
 
     /**
+     * Clear a Phase-1 **`featureUsage`** entry so a once/session or once/rest feature can be used again.
+     * Queues **`clearFeatureUsageKey`** — host removes that key from `element.featureUsage` on this character.
+     *
+     * @param {string} featureKey — same key as `featureUsage` on the element (typically the SRD feature `name`)
+     */
+    refreshExhaustedFeature(featureKey) {
+      if (!isChar) return;
+      const k = featureKey != null ? String(featureKey).trim() : '';
+      if (!k) return;
+      addMutation(mutations, 'clearFeatureUsageKey', { instanceId, featureKey: k });
+    },
+
+    /**
      * Queue a **runtime** additive change to a named stat on **this** actor (session / encounter modifiers).
      * Queues `runtimeStatMod` — the host merges `delta` into the right element field for `stat`.
      *
@@ -657,19 +716,54 @@ function buildActor(element, gameState, mutations) {
 
     // Movement: request a conditional repositioning on the battle map.
     // conditionFn(table) => boolean: must return true for the new position to be valid.
+    // desiredCondition — short human-readable statement of what the map must satisfy (tooltips / blocking copy).
+    // description — optional longer guidance; omit by passing '' or using move(fn, desiredCondition, opts).
     // The engine defers the actual token move to the UI; this queues the request.
-    move(conditionFn, description) {
-      addMutation(mutations, 'move', { instanceId, conditionFn, description });
+    // Optional `opts`: `freezeOtherInstanceId` + `freezeReason` — host locks that actor's token
+    // (same as `restrictMovement`) until the pending map move banner is acked/cancelled.
+    move(conditionFn, desiredCondition, descriptionOrOpts = '', maybeOpts) {
+      let description = '';
+      let opts = {};
+      if (descriptionOrOpts != null && typeof descriptionOrOpts === 'object' && !Array.isArray(descriptionOrOpts)) {
+        opts = descriptionOrOpts;
+      } else {
+        description = descriptionOrOpts != null ? String(descriptionOrOpts) : '';
+        opts = maybeOpts && typeof maybeOpts === 'object' ? maybeOpts : {};
+      }
+      const dc = (desiredCondition != null ? String(desiredCondition) : '').trim();
+      const desc = String(description).trim();
+      const o = opts && typeof opts === 'object' ? opts : {};
+      const fid = o.freezeOtherInstanceId;
+      const rk = o.rehydrateKey;
+      addMutation(mutations, 'move', {
+        instanceId,
+        conditionFn,
+        desiredCondition: dc,
+        description: desc,
+        rollDbId: gameState._rollDbId ?? null,
+        freezeOtherInstanceId:
+          fid != null && fid !== '' ? String(fid) : null,
+        freezeReason:
+          o.freezeReason != null && String(o.freezeReason).trim() !== ''
+            ? String(o.freezeReason).trim()
+            : null,
+        /** Persisted on `v2PendingMove` so the client can restore `conditionFn` after full reload. */
+        rehydrateKey:
+          rk != null && String(rk).trim() !== '' ? String(rk).trim() : null,
+      });
     },
 
     // Movement restriction: prevent this actor's token from being manually moved.
     // reason (optional string) is shown to the player when they try to drag the token.
-    // Call allowMovement() to lift the restriction (e.g. when a toggle turns off).
+    // Call allowMovement(reason?) with the same string to lift one restriction.
     restrictMovement(reason) {
       addMutation(mutations, 'restrictMovement', { instanceId, reason: reason ?? null });
     },
-    allowMovement() {
-      addMutation(mutations, 'allowMovement', { instanceId });
+    allowMovement(reason) {
+      addMutation(mutations, 'allowMovement', {
+        instanceId,
+        reason: reason != null && reason !== '' ? String(reason) : null,
+      });
     },
 
     // Inventory and loadout mutations
@@ -772,10 +866,26 @@ function buildRollObject(rollData, mutations, rollKey) {
             },
           }
         : null,
-      isSuccess: rollData.isSuccess ?? null,
-      isCritical: rollData.isCritical ?? null,
+      get isSuccess() {
+        return rollData.isSuccess ?? null;
+      },
+      get isCritical() {
+        return rollData.isCritical ?? null;
+      },
       setOutcome(outcome) {
         addMutation(mutations, 'setRollOutcome', { rollKey, outcome });
+      },
+      /** Force hit/miss for the action roll (e.g. Bone **Bone-Touched**). Queues `setActionRollSuccess`. */
+      setActionSuccess(success) {
+        const b = success === true;
+        addMutation(mutations, 'setActionRollSuccess', { rollKey, isSuccess: b });
+        rollData.isSuccess = b;
+      },
+      /** Force critical / non-critical for the action roll (e.g. **Homet's Secret Potion**). Queues `setActionRollCritical`. */
+      setActionCritical(critical) {
+        const b = critical === true;
+        addMutation(mutations, 'setActionRollCritical', { rollKey, isCritical: b });
+        rollData.isCritical = b;
       },
     }),
 
@@ -886,9 +996,12 @@ function buildActionContext(gameState, actorMap, mutations) {
   const actionData = gameState.action;
   if (!actionData) return undefined;
 
-  const actor = actorMap.get(actionData.actorInstanceId) || null;
+  const actor =
+    actionData.actorInstanceId != null && actionData.actorInstanceId !== ''
+      ? actorMap.get(String(actionData.actorInstanceId)) || null
+      : null;
   const targets = (actionData.targetInstanceIds || [])
-    .map((id) => actorMap.get(id))
+    .map((id) => actorMap.get(String(id)))
     .filter(Boolean);
 
   const type = actionData.type;
@@ -904,6 +1017,8 @@ function buildActionContext(gameState, actorMap, mutations) {
     type,
     actor,
     targets,
+    /** Declared target instance IDs from `gameState.action` (length may exceed {@link #targets} if some IDs do not resolve). */
+    targetInstanceIds: actionData.targetInstanceIds ? [...actionData.targetInstanceIds] : [],
     get target() {
       return targets[0] || null;
     },
@@ -912,6 +1027,8 @@ function buildActionContext(gameState, actorMap, mutations) {
     range: actionData.range,
     /** Which weapon the actor is using for this attack (primary vs secondary). */
     weaponId: actionData.weaponId ?? null,
+    /** Domain spell / ability card id when casting (e.g. `srd-abl-healing-field`). Host sets on Spellcast rolls. */
+    abilityId: actionData.abilityId ?? null,
     restType: actionData.restType,
     effects: actionData.effects || [],
     pendingEffects: actionData.effects || [],   // alias used during onReviewOutcome
@@ -1009,7 +1126,10 @@ function buildActionContext(gameState, actorMap, mutations) {
     reducePendingDamageForTarget(targetInstanceId, amount) {
       const n = Math.max(0, Math.floor(Number(amount)) || 0);
       if (n <= 0) return;
-      const owner = actorMap.get(gameState._ownerInstanceId);
+      const owner =
+        gameState._ownerInstanceId != null && gameState._ownerInstanceId !== ''
+          ? actorMap.get(String(gameState._ownerInstanceId))
+          : null;
       if (!owner) return;
       const tid = targetInstanceId != null ? String(targetInstanceId) : '';
       if (!tid) return;
@@ -1030,6 +1150,56 @@ function buildActionContext(gameState, actorMap, mutations) {
           e.amount = Math.max(0, e.amount - n);
           break;
         }
+      }
+    },
+
+    /**
+     * **Grace-Touched:** Clears the feature owner’s pending `currentStress` loss for
+     * this resolution and queues `markArmor` for the same number of slots. No-op if
+     * there is no matching effect. Use from `reviewOutcome` only.
+     */
+    redeemSelfPendingStressWithArmorMarks() {
+      const id = gameState._ownerInstanceId;
+      if (!id) return;
+      const list = actionData.effects || [];
+      const stressEffect = list.find(
+        (e) =>
+          e.stat === 'currentStress' &&
+          e.target?.instanceId === id &&
+          e.amount > 0
+      );
+      if (!stressEffect) return;
+      const n = stressEffect.amount;
+      stressEffect.amount = 0;
+      addMutation(mutations, 'markArmor', { instanceId: id, amount: n });
+    },
+
+    /**
+     * **Grace-Touched:** Replaces pending `currentHP` loss on `targetInstanceId`
+     * with the same amount of `currentStress` loss (reviewOutcome). No-op if no
+     * pending HP loss on that target.
+     */
+    convertPendingHpLossToStressOnTarget(targetInstanceId) {
+      const tid = targetInstanceId != null ? String(targetInstanceId) : '';
+      if (!tid) return;
+      const list = actionData.effects || [];
+      const hpEffect = list.find(
+        (e) => e.stat === 'currentHP' && e.target?.instanceId === tid && e.amount > 0
+      );
+      if (!hpEffect) return;
+      const n = hpEffect.amount;
+      hpEffect.amount = 0;
+      const existing = list.find(
+        (e) => e.stat === 'currentStress' && e.target?.instanceId === tid
+      );
+      if (existing) {
+        existing.amount = (existing.amount ?? 0) + n;
+      } else {
+        list.push({
+          stat: 'currentStress',
+          target: hpEffect.target,
+          amount: n,
+        });
       }
     },
   };
@@ -1073,6 +1243,25 @@ function buildSourceFacade(sourceObject, sourceScopeKey, gameState, store) {
 // ---------------------------------------------------------------------------
 
 /**
+ * `actorMap` registers each element under both `instanceId` and library `id` when both are set.
+ * Map.prototype.values() yields one entry per key, so the same actor can appear twice.
+ */
+function dedupeActorsByInstanceId(actorList) {
+  const seen = new Set();
+  const out = [];
+  for (const a of actorList) {
+    const id = a?.instanceId;
+    if (id != null && id !== '') {
+      const k = String(id);
+      if (seen.has(k)) continue;
+      seen.add(k);
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/**
  * Build the frozen Game Table Snapshot from raw game state.
  *
  * @param {object} gameState
@@ -1082,16 +1271,27 @@ export function buildTableSnapshot(gameState = {}) {
   const store = { [MUTATIONS_KEY]: [] };
   const rng = gameState._rng ?? Math.random.bind(Math);
 
-  // Build actor map keyed by instanceId
+  // Build actor map keyed by instanceId / id. Callers may set `_ownerInstanceId` to the
+  // table runtime id or the library character id; register both keys when present so
+  // `table.me` resolves (avoids null `table.me` and `table.me.rangeFrom` crashes).
   const elements = gameState.activeElements || [];
   const actorMap = new Map();
   for (const el of elements) {
-    const id = el.instanceId || el.id;
-    if (id) actorMap.set(id, buildActor(el, gameState, store));
+    const actor = buildActor(el, gameState, store);
+    const inst = el.instanceId;
+    const libId = el.id;
+    const keys = new Set();
+    if (inst != null && inst !== '') keys.add(String(inst));
+    if (libId != null && libId !== '') keys.add(String(libId));
+    for (const k of keys) actorMap.set(k, actor);
   }
 
   // Determine "me" — the feature owner (set by engine during iteration)
-  const ownerActor = actorMap.get(gameState._ownerInstanceId) || null;
+  const ownerKey =
+    gameState._ownerInstanceId != null && gameState._ownerInstanceId !== ''
+      ? String(gameState._ownerInstanceId)
+      : null;
+  const ownerActor = ownerKey ? actorMap.get(ownerKey) || null : null;
 
   // Build roll objects
   const rollsRaw = gameState.rolls || {};
@@ -1117,7 +1317,20 @@ export function buildTableSnapshot(gameState = {}) {
     (sourceObject && sourceObject.sourceScopeKey) ??
     null;
 
+  /** One facade per snapshot so `onRender` can assign `table.source.isDisabled` and a later read sees it. */
+  const sourceFacade = buildSourceFacade(sourceObject, sourceScopeKey, gameState, store);
+
+  const registryRaw = gameState.registry;
+  const registryFacade =
+    registryRaw && typeof registryRaw === 'object' ? registryRaw : { beastforms: {} };
+
   const table = {
+    /**
+     * V2 registry (read-only reference). Host passes the same object used for `loadCharacterFeatures`
+     * so features can read e.g. **`registry.beastforms`** without Druid-specific fields on elements.
+     */
+    registry: registryFacade,
+
     /** Feature object for the current hook/chip (set by action loop / tests). */
     get activeFeature() {
       return activeFeature;
@@ -1131,7 +1344,7 @@ export function buildTableSnapshot(gameState = {}) {
      * `queueInternalMutation(..., 'setFeatureState', { featureKey: ... })` boilerplate.
      */
     get source() {
-      return buildSourceFacade(sourceObject, sourceScopeKey, gameState, store);
+      return sourceFacade;
     },
 
     // Global state
@@ -1162,13 +1375,13 @@ export function buildTableSnapshot(gameState = {}) {
     // Dice & rolls (undefined when no roll is in progress)
     rolls: (rollsRaw.action || rollsRaw.damage) ? rolls : undefined,
 
-    // Board queries
-    actors: [...actorMap.values()],
+    // Board queries (dedupe: see dedupeActorsByInstanceId)
+    actors: dedupeActorsByInstanceId([...actorMap.values()]),
     get characters() {
-      return [...actorMap.values()].filter((a) => a.isCharacter);
+      return dedupeActorsByInstanceId([...actorMap.values()].filter((a) => a.isCharacter));
     },
     get adversaries() {
-      return [...actorMap.values()].filter((a) => a.isAdversary);
+      return dedupeActorsByInstanceId([...actorMap.values()].filter((a) => a.isAdversary));
     },
 
     // Per-feature persistent state
@@ -1203,7 +1416,7 @@ export function buildTableSnapshot(gameState = {}) {
       return {
         moverInstanceId: mid,
         get mover() {
-          return actorMap.get(mid) || null;
+          return actorMap.get(String(mid)) || null;
         },
       };
     },

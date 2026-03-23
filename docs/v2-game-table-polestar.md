@@ -50,7 +50,7 @@ Record the choice in [`v2-migration-tracker.md`](v2-migration-tracker.md) (summa
 ## 3. Current state (snapshot)
 
 - **Facade:** [`game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) re-exports **`wrapEntity` / `wrapRoll` / `wrapBanner`** from **`table-entity-roll.js`** and **`runCharacterHook`** from **`feature-hook-dispatch.js`**, and implements resolvers that read **only** merged **`activeFeatures`** (weapon/armor tags, Parry, etc.). Table components import the facade, not feature registry maps.
-- **Declarative sheet toggle:** `src/client/lib/v2-declarative-sheet.js` (`isV2DeclarativeSheetEnabled`, `?v2Sheet=1`, user menu preference).
+- **Declarative sheet overlay:** `src/client/lib/v2-declarative-sheet.js` (`mergeV2DeclarativeSheetOverlay` — always on).
 - **Cutover matrix:** [`v2-v1-cutover.md`](v2-v1-cutover.md) lists parallel stacks and remaining UX gaps.
 - **Phase B (bridge):** Partition + server follow-ups largely landed; some items deferred (Rally on non-owner banners, session vs scene end) — see tracker § V2 UI integration backlog.
 

@@ -4,6 +4,28 @@
  * `when(condition1, condition2, ..., value)` wraps any feature property in one
  * or more predicate functions. The engine unwraps the value only when ALL
  * predicates return truthy for the current table snapshot.
+ *
+ * **Predicate implications (avoid redundant `when()` guards):**
+ *
+ * - **`youDealMinorDamage` / `youDealMajorDamage` / `youDealSevereDamage`** each include
+ *   **`youAreTheActor`** (the feature owner is `table.action.actor`). In the normal Game Table
+ *   flow, pending `{ stat: 'currentHP' }` on the primary target at **`reviewOutcome`** (or similar)
+ *   is only hydrated after a hit is resolved, so these predicates **subsume**
+ *   **`youSucceedOnAnAttack`** for on-hit, damage-tier reactions — do not stack both unless you have
+ *   an unusual case (e.g. synthetic effects without a successful attack roll).
+ * - **`youDeal*`** does **not** check `table.action.type === 'attack'`. Add an explicit
+ *   `(table) => table.action?.type === 'attack'` predicate if the SRD must exclude non-attack
+ *   damage sources that could still produce `currentHP` effects.
+ * - **`youSucceedOnAnAttack`** implies **`youAreTheActor`** for attacks (`type === 'attack'`,
+ *   `rolls.action.isSuccess`, attacker is `table.me`). It does **not** imply **`isActing`** by
+ *   name, but for the feature owner, **`isActing`** and **`youAreTheActor`** coincide when you are
+ *   the current actor.
+ * - **`anAttackSucceeds`** is from the defender’s perspective (any successful attack); pair with
+ *   **`againstYou`** / **`isTargeted`**, not with **`youDeal*`**.
+ * - **`youTakeMinorDamage` / `youTakeMajorDamage` / `youTakeSevereDamage`** are for **incoming** HP
+ *   loss: any pending `{ stat: 'currentHP' }` whose target is **`table.me`**. They do **not** assert
+ *   **`isTargeted`** — compose **`when(isTargeted, youTakeSevereDamage, …)`** when the SRD means a hit
+ *   against you. They do **not** imply **`youAreTheActor`** (you are usually the defender).
  */
 
 const WHEN_BRAND = Symbol('when');
@@ -44,6 +66,115 @@ export function isActing(table) {
 export function isTargeted(table) {
   return table.action?.targets?.some((t) => t === table.me) === true;
 }
+
+/**
+ * Built-in predicate: same as {@link isTargeted} — the feature's owner is a target of the
+ * current action. Use in `when(...)` to mirror SRD phrasing ("an attack succeeds against you").
+ */
+export function againstYou(table) {
+  return isTargeted(table);
+}
+
+/**
+ * True when the current action is an attack and its action roll has succeeded (resolve phase).
+ * Pairs with {@link againstYou} for "when an attack succeeds against you" style hooks.
+ */
+export function anAttackSucceeds(table) {
+  return table.action?.type === 'attack' && table.rolls?.action?.isSuccess === true;
+}
+
+/**
+ * True when **you** (the feature owner) are the attacker and your attack roll succeeded.
+ * Mirrors SRD phrasing: "when you succeed on an attack…".
+ *
+ * Redundant with **`youDealMinorDamage` / `youDealMajorDamage` / `youDealSevereDamage`** when the
+ * VTT has already applied pending `{ stat: 'currentHP' }` on the primary target for that hit — see
+ * module docblock **Predicate implications**.
+ */
+export function youSucceedOnAnAttack(table) {
+  if (table.action?.type !== 'attack') return false;
+  if (table.rolls?.action?.isSuccess !== true) return false;
+  const actor = table.action.actor;
+  const me = table.me;
+  if (!actor?.instanceId || !me?.instanceId) return false;
+  return actor.instanceId === me.instanceId;
+}
+
+// ---------------------------------------------------------------------------
+// Map range: attacker ↔ target (via `actor.rangeFrom(target)`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Daggerheart range bands from closest to farthest — matches {@link calcRangeBand} in `table.js`.
+ */
+export const RANGE_BAND_ORDER = ['melee', 'veryClose', 'close', 'far', 'veryFar'];
+
+/**
+ * @param {string | null | undefined} band
+ * @returns {number} Index in {@link RANGE_BAND_ORDER}, or `-1` if unknown.
+ */
+export function rangeBandIndex(band) {
+  if (band == null || typeof band !== 'string') return -1;
+  return RANGE_BAND_ORDER.indexOf(band);
+}
+
+/**
+ * True when `attacker.rangeFrom(target)` resolves to exactly `band` (e.g. **In Very Close**).
+ */
+export function attackerAndTargetAreInRangeBand(attacker, target, band) {
+  if (!attacker || !target) return false;
+  const b = attacker.rangeFrom(target);
+  if (!b) return false;
+  return b === band;
+}
+
+/**
+ * True when `attacker.rangeFrom(target)` is **at most** `band` — that band or any closer band
+ * (**Within Close** includes Melee, Very Close, and Close).
+ */
+export function attackerAndTargetAreWithinRangeBand(attacker, target, band) {
+  if (!attacker || !target) return false;
+  const b = attacker.rangeFrom(target);
+  if (!b) return false;
+  const i = rangeBandIndex(b);
+  const max = rangeBandIndex(band);
+  if (i < 0 || max < 0) return false;
+  return i <= max;
+}
+
+/**
+ * Primary target vs attacker by **map positions** only (`attacker.rangeFrom(target)`).
+ * When positions are unknown, returns false — features that need an off-map fallback (e.g. weapon
+ * range from the bridge) should OR in a separate predicate locally.
+ */
+function makeAgainstTargetRangePredicate(band, within) {
+  return function againstTargetRange(table) {
+    const attacker = table.action?.actor;
+    const target = table.action?.target;
+    if (!attacker || !target) return false;
+    return within
+      ? attackerAndTargetAreWithinRangeBand(attacker, target, band)
+      : attackerAndTargetAreInRangeBand(attacker, target, band);
+  };
+}
+
+/** Primary target is exactly **Melee** map distance from the attacker. */
+export const againstATargetInMeleeRange = makeAgainstTargetRangePredicate('melee', false);
+/** Primary target is **within Melee** map distance (same as {@link againstATargetInMeleeRange} — nothing is closer than Melee). */
+export const againstATargetWithinMeleeRange = makeAgainstTargetRangePredicate('melee', true);
+
+export const againstATargetInVeryCloseRange = makeAgainstTargetRangePredicate('veryClose', false);
+export const againstATargetWithinVeryCloseRange = makeAgainstTargetRangePredicate('veryClose', true);
+
+export const againstATargetInCloseRange = makeAgainstTargetRangePredicate('close', false);
+export const againstATargetWithinCloseRange = makeAgainstTargetRangePredicate('close', true);
+
+export const againstATargetInFarRange = makeAgainstTargetRangePredicate('far', false);
+export const againstATargetWithinFarRange = makeAgainstTargetRangePredicate('far', true);
+
+export const againstATargetInVeryFarRange = makeAgainstTargetRangePredicate('veryFar', false);
+/** Primary target is at any resolved map band (distance within the **Very Far** maximum). */
+export const againstATargetWithinVeryFarRange = makeAgainstTargetRangePredicate('veryFar', true);
 
 /**
  * Built-in predicate: true when the feature's owner has committed to mark an
@@ -103,6 +234,150 @@ export function hasMagicDamage(table) {
       e.damageType === 'magic' &&
       e.amount > 0
   ) === true;
+}
+
+// ---------------------------------------------------------------------------
+// Outgoing HP loss: "you deal Minor / Major / Severe damage" (primary target)
+// ---------------------------------------------------------------------------
+
+function effectTargetInstanceId(e) {
+  const t = e?.target;
+  if (t == null) return null;
+  if (typeof t === 'string') return t;
+  return t.instanceId ?? t.id ?? null;
+}
+
+/**
+ * First pending `{ stat: 'currentHP' }` effect on the action’s **primary** target (positive amount).
+ * Matches VTT-hydrated `action.effects` (resolved threshold HP marks on the primary target).
+ *
+ * @param {object} table
+ * @returns {object|null}
+ */
+export function pendingHpLossToPrimaryTargetEffect(table) {
+  const tgt = table.action?.target;
+  if (!tgt?.instanceId) return null;
+  const tid = tgt.instanceId;
+  for (const e of table.action?.effects ?? []) {
+    if (e.stat !== 'currentHP') continue;
+    if (effectTargetInstanceId(e) !== tid) continue;
+    if (typeof e.amount === 'number' && e.amount > 0) return e;
+  }
+  return null;
+}
+
+/**
+ * Severe pending HP marks: VTT may set `damageTier` / `thresholdTier`, or tests use `amount >= 3`
+ * when tiers are absent (see {@link computeHpLoss} in client helpers).
+ */
+export function isSeverePendingHpLossEffect(e) {
+  if (!e || e.stat !== 'currentHP' || !(e.amount > 0)) return false;
+  const amt = e.amount;
+  return (
+    e.damageTier === 'severe' ||
+    e.thresholdTier === 'severe' ||
+    (e.damageTier == null && e.thresholdTier == null && amt >= 3)
+  );
+}
+
+/** Major (2 HP) when tiers are absent; `damageTier`/`thresholdTier` **major** when set. */
+export function isMajorPendingHpLossEffect(e) {
+  if (!e || e.stat !== 'currentHP' || !(e.amount > 0)) return false;
+  if (e.damageTier === 'severe' || e.thresholdTier === 'severe') return false;
+  if (e.damageTier === 'major' || e.thresholdTier === 'major') return true;
+  if (e.damageTier != null || e.thresholdTier != null) return false;
+  return e.amount === 2;
+}
+
+/** Minor (1 HP) when tiers are absent; `damageTier`/`thresholdTier` **minor** when set. */
+export function isMinorPendingHpLossEffect(e) {
+  if (!e || e.stat !== 'currentHP' || !(e.amount > 0)) return false;
+  if (e.damageTier === 'severe' || e.thresholdTier === 'severe') return false;
+  if (e.damageTier === 'major' || e.thresholdTier === 'major') return false;
+  if (e.damageTier === 'minor' || e.thresholdTier === 'minor') return true;
+  if (e.damageTier != null || e.thresholdTier != null) return false;
+  return e.amount === 1;
+}
+
+/**
+ * True when the feature owner is the current action’s **actor** (the one taking the action).
+ * Use with attack predicates when you need “you” without requiring `type === 'attack'`.
+ */
+export function youAreTheActor(table) {
+  const actor = table.action?.actor;
+  const me = table.me;
+  if (!actor?.instanceId || !me?.instanceId) return false;
+  return actor.instanceId === me.instanceId;
+}
+
+/**
+ * You are the actor and the primary target has pending Severe-tier HP loss (≥3 marks, or tier tags).
+ * Subsumes **`youSucceedOnAnAttack`** in the usual post-hit / `reviewOutcome` flow — see module
+ * docblock **Predicate implications**.
+ */
+export function youDealSevereDamage(table) {
+  if (!youAreTheActor(table)) return false;
+  const e = pendingHpLossToPrimaryTargetEffect(table);
+  return e != null && isSeverePendingHpLossEffect(e);
+}
+
+/**
+ * You are the actor and the primary target has pending Major-tier HP loss (2 marks, or tier tags).
+ * See **`youDealSevereDamage`** / module docblock **Predicate implications** (same redundancy rules).
+ */
+export function youDealMajorDamage(table) {
+  if (!youAreTheActor(table)) return false;
+  const e = pendingHpLossToPrimaryTargetEffect(table);
+  return e != null && isMajorPendingHpLossEffect(e);
+}
+
+/**
+ * You are the actor and the primary target has pending Minor-tier HP loss (1 mark, or tier tags).
+ * See **`youDealSevereDamage`** / module docblock **Predicate implications** (same redundancy rules).
+ */
+export function youDealMinorDamage(table) {
+  if (!youAreTheActor(table)) return false;
+  const e = pendingHpLossToPrimaryTargetEffect(table);
+  return e != null && isMinorPendingHpLossEffect(e);
+}
+
+// ---------------------------------------------------------------------------
+// Incoming HP loss: "you take Minor / Major / Severe damage" (effects targeting table.me)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when `e` is a positive `{ stat: 'currentHP' }` effect on the feature owner.
+ *
+ * @param {object} e
+ * @param {object} table
+ */
+export function effectTargetsMe(e, table) {
+  const mid = table.me?.instanceId;
+  if (!mid || !e || e.stat !== 'currentHP' || !(e.amount > 0)) return false;
+  return effectTargetInstanceId(e) === mid;
+}
+
+function somePendingHpLossToMe(table, classify) {
+  const mid = table.me?.instanceId;
+  if (!mid) return false;
+  return (table.action?.effects ?? []).some(
+    (e) => effectTargetsMe(e, table) && classify(e)
+  );
+}
+
+/** Pending incoming Severe-tier HP loss to you (any matching effect line). */
+export function youTakeSevereDamage(table) {
+  return somePendingHpLossToMe(table, isSeverePendingHpLossEffect);
+}
+
+/** Pending incoming Major-tier HP loss to you (any matching effect line). */
+export function youTakeMajorDamage(table) {
+  return somePendingHpLossToMe(table, isMajorPendingHpLossEffect);
+}
+
+/** Pending incoming Minor-tier HP loss to you (any matching effect line). */
+export function youTakeMinorDamage(table) {
+  return somePendingHpLossToMe(table, isMinorPendingHpLossEffect);
 }
 
 /**

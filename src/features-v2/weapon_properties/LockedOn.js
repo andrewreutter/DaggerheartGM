@@ -1,14 +1,11 @@
-import { when, isActing } from '../engine/when.js';
-
-const attackSuccess = (table) =>
-  table.action?.type === 'attack' && table.rolls?.action?.isSuccess === true;
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const LockedOn = {
   name: 'Locked On',
   description:
     'On a successful attack, your next attack against the same target with your primary weapon automatically succeeds.',
   hooks: {
-    onResolve: when(isActing, attackSuccess, (table) => {
+    onResolve: when(youSucceedOnAnAttack, (table) => {
       const tid = table.action?.target?.instanceId;
       if (!tid) return;
       table.feature.set('lockedOnTargetId', tid);

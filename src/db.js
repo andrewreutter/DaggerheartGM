@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -773,10 +774,8 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'tokenX', 'tokenY',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive', 'selectedExperienceIndex',
-  'featureUsage', 'activeModifiers', 'focusTargetId', 'rangerFocusOnNextAttack', 'companion',
+  'featureUsage', 'activeModifiers', 'focusTargetId', 'focusTargetInstanceId', 'rangerFocusOnNextAttack', 'companion',
   'activeBeastform', 'selectedBeastformAdvantage',
-  'activeChanneledElement',
-  'wingsOfLightFlying',
   'faerieWingsFlying',
   'retractedActive',
   'resistance',
@@ -784,6 +783,10 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'moveDisabledSources',
   'lockedOnTargetInstanceId',
   'featureState', // V2 per-character feature bags (see mergeDeclarativeFeatureState)
+  'prayerDice', // Seraph: { pool: number[] } — keep in sync with CHARACTER_RUNTIME_KEYS in table-ops.js
+  'v2PendingMove',
+  'v2MoveLockRollDbId',
+  'v2MoveLockSource',
 ]);
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 
@@ -808,7 +811,8 @@ export async function resolveCharacterElements(appId, elements) {
     CHARACTER_RUNTIME_KEYS_DB.forEach(k => { if (k in el) runtime[k] = el[k]; });
     // Auto-preserve any _ prefixed keys (ancestry/class feature toggle state).
     Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
-    return { ...lib, ...runtime, elementType: 'character' };
+    const merged = { ...lib, ...runtime, elementType: 'character' };
+    return normalizePersistedCharacterElement(merged);
   });
 }
 

@@ -2,17 +2,10 @@
  * SRD: Terrible Lizard — daggerheart-srd/beastforms/Terrible Lizard.md
  */
 
-import { when, isActing } from '../engine/when.js';
+import { when, againstATargetInMeleeRange, youDealSevereDamage } from '../engine/when.js';
 
-function severeHpToAdversaryInMelee(table) {
-  const tgt = table.action?.target;
-  if (!tgt?.isAdversary) return false;
-  if (table.me.rangeFrom(tgt) !== 'melee') return false;
-  for (const e of table.action?.effects ?? []) {
-    if (e.stat !== 'currentHP' || e.target?.instanceId !== tgt.instanceId) continue;
-    if (e.damageTier === 'severe' || e.thresholdTier === 'severe') return true;
-  }
-  return false;
+function severeHpToAdversary(table) {
+  return table.action?.target?.isAdversary === true && youDealSevereDamage(table);
 }
 
 export const DevastatingStrikes = {
@@ -20,7 +13,7 @@ export const DevastatingStrikes = {
   description:
     'When you deal Severe damage to a target within Melee range, you can **mark a Stress** to force them to mark an additional Hit Point.',
   chips: [
-    when(isActing, (table) => table.action?.type === 'attack', severeHpToAdversaryInMelee, {
+    when(againstATargetInMeleeRange, severeHpToAdversary, {
       name: 'Devastating Strikes',
       placements: ['reviewOutcome'],
       stressCost: 1,

@@ -1,18 +1,39 @@
 import {
-  User, Shield, Heart, AlertCircle, AlertTriangle, Sparkles, Swords, Package,
-  ChevronDown, ChevronRight, Dices, Zap, Megaphone, X, Flame, Mountain, Droplets, Wind,
-  Share2, CheckSquare, Square,
+  User, Shield, Heart, AlertCircle, AlertTriangle, Swords, Package,
+  ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind,
 } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
-import { Tooltip } from './Tooltip.jsx';
-import { effectiveThresholds } from '../lib/helpers.js';
+import { effectiveThresholds, parseBeastformBonus, getEvasionModifierTotal, formatEvasionModifierTooltip } from '../lib/helpers.js';
+
+export { parseBeastformBonus, getEvasionModifierTotal, formatEvasionModifierTooltip } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { isCharacterComplete, recomputeCharacter, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runCharacterRender } from '../lib/character-calc.js';
-import { mergeV2DeclarativeSheetOverlay, useV2DeclarativeSheetEnabledLive } from '../lib/v2-declarative-sheet.js';
-import { v2OriginFeatureDescriptorsByName } from '../lib/v2-origin-feature-descriptors.js';
-import { parseFeatureAction, parseSubFeatures, parsePassiveStats, buildCostBadges } from '../lib/feature-actions.js';
-import { CustomSelect } from './forms/CustomSelect.jsx';
+import { mergeV2DeclarativeSheetOverlay } from '../lib/v2-declarative-sheet.js';
+import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
+import { GuideFeatureCard, GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
+import { buildFeatureCardModelForCharacter } from '../lib/build-feature-card-model.js';
+import { rangeBandNameToFt } from '../lib/map-range.js';
+import { Tooltip } from './Tooltip.jsx';
+
+const FEATURES_PANEL_TAB_STORAGE = 'dh_featuresPanelTab';
+
+function readFeaturesPanelTab(storageKey) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FEATURES_PANEL_TAB_STORAGE) ?? 'null') ?? {};
+    const v = raw[storageKey];
+    if (v === 'actions' || v === 'details') return v;
+  } catch {}
+  return 'actions';
+}
+
+function persistFeaturesPanelTab(storageKey, tab) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FEATURES_PANEL_TAB_STORAGE) ?? 'null') ?? {};
+    raw[storageKey] = tab;
+    localStorage.setItem(FEATURES_PANEL_TAB_STORAGE, JSON.stringify(raw));
+  } catch {}
+}
 
 // ─── Gold helpers ─────────────────────────────────────────────────────────────
 
@@ -28,6 +49,10 @@ export function formatGold(gold) {
   if (handfuls || !parts.length) parts.push(`${handfuls} handful${handfuls !== 1 ? 's' : ''}`);
   return parts.join(', ');
 }
+
+import { resolveHopeFeatureName, getOrderedGuideFeatureEntries } from '../lib/guide-feature-entries.js';
+
+export { resolveHopeFeatureName, getOrderedGuideFeatureEntries };
 
 // ─── Trait display ─────────────────────────────────────────────────────────────
 
@@ -109,183 +134,6 @@ export const WEAPON_TAG_DESCRIPTIONS = {
 };
 
 // ─── Beastform helpers ─────────────────────────────────────────────────────────
-
-/**
- * Parse a beastform stat bonus string like "Agility +1" or "Evasion +2".
- * Returns { stat, bonus } or null if parsing fails.
- */
-export function parseBeastformBonus(str) {
-  if (!str) return null;
-  const m = str.trim().match(/^(\w+)\s*([+-]\d+)$/i);
-  if (!m) return null;
-  return { stat: m[1].toLowerCase(), bonus: parseInt(m[2], 10) };
-}
-
-// ─── Beastform feature card ────────────────────────────────────────────────────
-
-/** Build a markdown description string for a beastform's tooltip in the selector. */
-function buildBeastformDescription(b) {
-  const lines = [];
-  if (b.examples) lines.push(`_${b.examples}_`);
-  if (b.trait_bonus) lines.push(`**Trait:** ${b.trait_bonus}`);
-  if (b.evasion_bonus) lines.push(`**Evasion:** ${b.evasion_bonus}`);
-  if (b.attack) lines.push(`**Attack:** ${b.attack}`);
-  if (b.advantages) lines.push(`**Advantages:** ${b.advantages}`);
-  if (b.features?.length) {
-    lines.push('');
-    for (const f of b.features) {
-      lines.push(`**${f.name}:** ${f.description || ''}`);
-    }
-  }
-  return lines.join('\n\n');
-}
-
-/**
- * Collapsible card for the Druid's Beastform class feature.
- * Replaces the generic FeatureChip — same look but with beastform selector
- * and Use / Drop Out controls inside the expanded body.
- *
- * Receives `open` + `onToggle` from CharacterFeatureList (controlled mode)
- * plus beastformProps spread from the parent.
- */
-function BeastformFeatureCard({
-  el,
-  feature,
-  open: openProp,
-  onToggle,
-  beastforms = [],
-  selectedBeastformId,
-  onBeastformSelect,
-  activeBeastform,
-  onUseBeastform,
-  onDropOutBeastform,
-}) {
-  const [openLocal, setOpenLocal] = useState(false);
-  const open = openProp !== undefined ? openProp : openLocal;
-  const toggle = onToggle ?? (() => setOpenLocal(o => !o));
-
-  const characterTier = el.tier || 1;
-  const available = beastforms.filter(b => b.tier <= characterTier);
-  const selected = available.find(b => b.id === selectedBeastformId) || available[0] || null;
-  // Can only transform if there is at least one Stress slot remaining to mark
-  const stressMaxed = (el.currentStress ?? 0) >= (el.maxStress ?? 6);
-
-  // Synthetic action object for CostBadgeStrip (1 Stress cost, no frequency limit)
-  const syntheticAction = { stressCost: 1, hopeCost: 0, armorMark: 0, armorClear: 0 };
-
-  return (
-    <div className="rounded border border-emerald-700/50 bg-slate-800/60 overflow-hidden">
-      {/* ── Collapsible header ── */}
-      <button
-        onClick={toggle}
-        className="w-full px-2 py-1 flex items-center gap-1 text-left hover:bg-emerald-900/20 transition-colors"
-      >
-        {open
-          ? <ChevronDown size={9} className="text-emerald-600 shrink-0" />
-          : <ChevronRight size={9} className="text-emerald-600 shrink-0" />}
-        <span className="text-[11px] font-semibold text-emerald-200 leading-tight truncate">{feature.name}</span>
-        {!open && activeBeastform && (
-          <span className="ml-1 text-[9px] rounded px-1 border bg-emerald-950/50 border-emerald-700/50 text-emerald-400 shrink-0">
-            {activeBeastform.name}
-          </span>
-        )}
-        {!open && !activeBeastform && (
-          <span className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
-            stressMaxed
-              ? 'bg-slate-800 border-slate-600 text-slate-500'
-              : 'bg-emerald-950/50 border-emerald-700/50 text-emerald-400'
-          }`}>
-            {stressMaxed ? 'Stress full' : 'active'}
-          </span>
-        )}
-        {feature.sourceType && (
-          <span className={`ml-auto text-[9px] rounded px-1 shrink-0 ${
-            feature.sourceType === 'class'    ? 'bg-violet-900/60 text-violet-300' :
-            feature.sourceType === 'subclass' ? 'bg-sky-900/60 text-sky-300' :
-            feature.sourceType === 'ancestry' ? 'bg-amber-900/60 text-amber-300' :
-            feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' :
-            feature.sourceType === 'beastform' ? 'bg-teal-900/60 text-teal-300' :
-            'bg-emerald-900/60 text-emerald-300'
-          }`}>{feature.source}</span>
-        )}
-      </button>
-
-      {/* ── Widgetry: always visible ── */}
-      <div className="px-2 pb-2 pt-1 border-t border-emerald-700/30 space-y-1.5">
-        {!activeBeastform && (
-          <>
-            <CostBadgeStrip action={syntheticAction} />
-            {available.length > 0 ? (
-              <CustomSelect
-                value={selected}
-                onChange={(b) => onBeastformSelect?.(b?.id ?? null)}
-                options={available}
-                getOptionLabel={(b) => `${b.name} (Tier ${b.tier})`}
-                getOptionKey={(b) => b.id}
-                getOptionDescription={(b) => buildBeastformDescription(b)}
-                renderOption={(b, { isSelected }) => (
-                  <div>
-                    <span className={`font-medium ${isSelected ? 'text-white' : 'text-slate-200'}`}>{b.name}</span>
-                    <span className="text-[10px] text-slate-500 ml-1">T{b.tier}</span>
-                    {b.attack && <div className="text-[10px] text-slate-400 mt-0.5">{b.attack}</div>}
-                  </div>
-                )}
-                renderValue={(b) => (
-                  <span className="text-sm text-slate-200">{b.name} <span className="text-slate-500">(T{b.tier})</span></span>
-                )}
-                placeholder="Select a beastform…"
-                className="text-xs"
-                fixedDropdown
-              />
-            ) : (
-              <div className="text-[10px] text-slate-500 italic">No beastforms available at your tier</div>
-            )}
-            {onUseBeastform && selected && !stressMaxed && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onUseBeastform(selected); }}
-                className="w-full rounded border border-emerald-700/60 bg-emerald-900/40 hover:bg-emerald-800/50 text-[10px] font-semibold text-emerald-200 py-1 transition-colors"
-              >
-                Transform ({selected.name})
-              </button>
-            )}
-            {stressMaxed && (
-              <p className="text-[10px] text-orange-500/70 italic">Cannot transform — Stress is full</p>
-            )}
-          </>
-        )}
-
-        {activeBeastform && (
-          <>
-            <div className="rounded border border-emerald-700/40 bg-emerald-950/30 px-2 py-1.5 text-[11px]">
-              <div className="font-semibold text-emerald-200 mb-0.5">{activeBeastform.name}</div>
-              {activeBeastform.attack && (
-                <div className="text-emerald-400/70 text-[10px]">Attack: {activeBeastform.attack}</div>
-              )}
-              {activeBeastform.advantages && (
-                <div className="text-slate-400 text-[10px]">Advantages: {activeBeastform.advantages}</div>
-              )}
-            </div>
-            {onDropOutBeastform && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onDropOutBeastform(); }}
-                className="w-full rounded border border-slate-600 bg-slate-800/60 hover:bg-slate-700/60 text-[10px] font-semibold text-slate-300 py-1 transition-colors"
-              >
-                Drop out of Beastform
-              </button>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* ── Expanded: description only ── */}
-      {open && feature.description && (
-        <div className="px-2 pb-2 text-[11px] text-slate-300 leading-relaxed border-t border-emerald-700/30 pt-1">
-          <MarkdownText text={feature.description} className="dh-md" />
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Section header ───────────────────────────────────────────────────────────
 
@@ -389,9 +237,20 @@ function SpellcastChip({ onClick }) {
 
 // ─── Weapon card ──────────────────────────────────────────────────────────────
 
-function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastating, onDevastatingToggle, pompousWarning, v2DisableReason }) {
+/** Game Table only: disable when no adversaries are in this weapon's range on the map. */
+function outOfRangeDisableReason(weapon, getValidTargets, instanceId, ancestryFeatures) {
+  if (!getValidTargets || !instanceId) return null;
+  const rangeStr = getEffectiveWeaponRange(weapon, ancestryFeatures) || weapon.effectiveRange || weapon.range;
+  if (!rangeStr || typeof rangeStr !== 'string') return null;
+  const ft = rangeBandNameToFt(rangeStr);
+  if (ft == null) return null;
+  const targets = getValidTargets(instanceId, { weaponRangeFt: ft }) ?? [];
+  return targets.length === 0 ? 'No targets in range' : null;
+}
+
+function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastating, onDevastatingToggle, pompousWarning, v2DisableReason, outOfRangeReason }) {
   const [justRolled, setJustRolled] = useState(false);
-  const disableMsg = v2DisableReason || (pompousWarning ? 'Requires Presence ≤ 0' : null);
+  const disableMsg = v2DisableReason || (pompousWarning ? 'Requires Presence ≤ 0' : null) || outOfRangeReason || null;
   const clickable = !!onClick && !disableMsg;
   const traitKey = (weapon.trait || '').toLowerCase();
   const traitLabel = TRAIT_LABELS[traitKey];
@@ -429,14 +288,14 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
   const featDescColor = purple ? 'text-purple-400/80' : isVirtual ? 'text-amber-400/80' : 'text-amber-400/70';
   const damageTypeColor = purple ? 'text-purple-400/70' : 'text-slate-500';
 
-  return (
+  const card = (
     <div
       role={clickable ? 'button' : undefined}
       tabIndex={clickable ? 0 : undefined}
       onClick={handleClick}
       onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e); } : undefined}
-      title={disableMsg ? disableMsg : clickable && traitLabel ? `Roll ${weapon.name} (${TRAIT_FULL[traitKey]})` : undefined}
-      className={`rounded border px-2 py-1.5 select-none text-[11px] transition-all
+      title={!disableMsg && clickable && traitLabel ? `Roll ${weapon.name} (${TRAIT_FULL[traitKey]})` : undefined}
+      className={`w-full min-w-0 rounded border px-2 py-1.5 select-none text-[11px] transition-all
         ${baseBorder}
         ${clickable ? 'cursor-pointer hover:brightness-125 hover:border-sky-500/50 group' : ''}`}
     >
@@ -490,522 +349,15 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
       )}
     </div>
   );
-}
 
-// ─── Cost badge strip ─────────────────────────────────────────────────────────
-
-function CostBadgeStrip({ action }) {
-  const badges = buildCostBadges(action);
-  if (!badges.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1 mb-1.5">
-      {badges.map((b, i) => (
-        <span
-          key={i}
-          className={`text-[9px] rounded px-1.5 py-0.5 border font-semibold ${
-            b.style === 'hope'      ? 'bg-amber-950/50 border-amber-700/50 text-amber-300' :
-            b.style === 'stress'    ? 'bg-orange-950/50 border-orange-700/50 text-orange-300' :
-            b.style === 'armor'     ? 'bg-cyan-950/50 border-cyan-700/50 text-cyan-300' :
-            'bg-slate-800/80 border-slate-700 text-slate-400'
-          }`}
-        >
-          {b.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-// Elemental Incarnation: element name -> Lucide icon
-const ELEMENT_ICONS = { Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
-
-// ─── Sub-feature card ─────────────────────────────────────────────────────────
-
-function SubFeatureCard({ sub, onUse, disabled, isActive }) {
-  const badges = buildCostBadges(sub);
-  const hasDice = sub.dice?.length > 0 || sub.spellcastDC != null;
-  return (
-    <div
-      role={onUse && !disabled ? 'button' : undefined}
-      tabIndex={onUse && !disabled ? 0 : undefined}
-      onClick={onUse && !disabled ? onUse : undefined}
-      onKeyDown={onUse && !disabled ? (e) => { if (e.key === 'Enter' || e.key === ' ') onUse(); } : undefined}
-      className={`rounded border px-2 py-1.5 text-[11px] select-none transition-all ${
-        isActive
-          ? 'border-emerald-600/70 bg-emerald-950/30 ring-1 ring-emerald-700/40'
-          : disabled
-            ? 'border-slate-700/40 bg-slate-800/20 opacity-40 cursor-not-allowed'
-            : onUse
-              ? 'border-amber-700/50 bg-amber-950/20 cursor-pointer hover:brightness-125 hover:border-amber-500/70'
-              : 'border-slate-700/50 bg-slate-800/40'
-      }`}
-    >
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {hasDice && <Dices size={9} className="text-amber-500/70 shrink-0" />}
-        <span className={`font-semibold flex-1 ${isActive ? 'text-emerald-200' : 'text-slate-200'}`}>{sub.name}</span>
-        {isActive && (
-          <span className="text-[9px] rounded px-1 py-0.5 border font-semibold shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300">
-            Channeling
-          </span>
-        )}
-        {badges.map((b, i) => (
-          <span
-            key={i}
-            className={`text-[9px] rounded px-1 py-0.5 border font-semibold shrink-0 ${
-              b.style === 'hope'   ? 'bg-amber-950/50 border-amber-700/50 text-amber-300' :
-              b.style === 'stress' ? 'bg-orange-950/50 border-orange-700/50 text-orange-300' :
-              b.style === 'armor'  ? 'bg-cyan-950/50 border-cyan-700/50 text-cyan-300' :
-              'bg-slate-800 border-slate-700 text-slate-400'
-            }`}
-          >
-            {b.label}
-          </span>
-        ))}
-      </div>
-      {sub.description && (
-        <div className={`mt-0.5 text-[10px] leading-snug line-clamp-2 ${isActive ? 'text-emerald-300/80' : 'text-slate-400'}`}>{sub.description}</div>
-      )}
-    </div>
-  );
-}
-
-// ─── Display resetsOn from chips (single source of truth) ───────────────────────
-
-/**
- * Derive the reset cycle for the feature card from chips (unified chips array with placement, or legacy cardChips/canvasChips/onBanner).
- * Ensures Faerie, Goblin, Orderborne etc. show "Once per session/rest" from chip data.
- */
-function getDisplayResetsOn(descriptor) {
-  if (!descriptor) return undefined;
-  // Unified chips array (new API)
-  if (descriptor.chips) {
-    const chip = descriptor.chips.find(c => c.resetsOn);
-    if (chip) return chip.resetsOn;
+  if (disableMsg) {
+    return (
+      <Tooltip label={disableMsg} className="relative block w-full min-w-0">
+        {card}
+      </Tooltip>
+    );
   }
-  // Legacy: cardChips
-  const fromCardChips = descriptor.cardChips?.find(c => c.resetsOn)?.resetsOn;
-  if (fromCardChips) return fromCardChips;
-  // Legacy: canvasChips
-  const fromCanvasChips = descriptor.canvasChips?.find(c => c.resetsOn)?.resetsOn;
-  if (fromCanvasChips) return fromCanvasChips;
-  // Legacy: onBanner
-  if (typeof descriptor.onBanner === 'function') {
-    const chips = [];
-    const banner = { addChip(d) { chips.push(d); } };
-    descriptor.onBanner({ banner });
-    return chips[0]?.resetsOn;
-  }
-  return undefined;
-}
-
-// ─── IoC ancestry feature card (minimal, expandable) ──────────────────────────
-
-/**
- * Dedicated card for ancestry features from the IoC registry (char.addFeature()).
- * Expandable: title bar shows feature name + right-floated source badge (ancestry)
- * and optional share icon (posts banner with feature name + description).
- * Optional cardChips (from onCard hook): shown when getCardChipContext is provided;
- * one-shot chips: click runs chip.onUse(context); toggle chips: chip.onToggle(context) with context.character, context.chip (chip.isActive), toggleKey for state.
- * Expanded body shows description with Markdown. No Use/cost/action parsing.
- */
-function AncestryFeatureCard({ feature, featureKey, open: openProp, onToggle, onShareFeature, cardChips, getCardChipContext, el, resetsOn: descriptorResetsOn }) {
-  const [openLocal, setOpenLocal] = useState(false);
-  const open = openProp !== undefined ? openProp : openLocal;
-  const toggle = onToggle ?? (() => setOpenLocal(o => !o));
-
-  const cardResetsOn = cardChips?.find(c => c.resetsOn)?.resetsOn ?? descriptorResetsOn;
-  const used = !!((featureKey || feature?.name) && (el?.featureUsage?.[featureKey]?.used || el?.featureUsage?.[feature?.name]?.used));
-  const resetsOnLabel = cardResetsOn === 'session' ? 'session' : cardResetsOn === 'longRest' ? 'long rest' : cardResetsOn === 'rest' ? 'rest' : null;
-  const oncePerLabel = resetsOnLabel ? `Once per ${resetsOnLabel}` : null;
-  const usedUntilLabel = resetsOnLabel
-    ? (cardResetsOn === 'session' ? 'Used until next session' : cardResetsOn === 'longRest' ? 'Used until long rest' : 'Used until any rest')
-    : null;
-
-  return (
-    <div className="rounded border border-slate-700 bg-slate-800/60 overflow-hidden">
-      <div className="px-2 py-1 flex items-center gap-1 min-w-0">
-        <button
-          type="button"
-          onClick={toggle}
-          className="flex-1 min-w-0 flex items-center gap-1 text-left hover:bg-slate-700/40 transition-colors rounded -m-1 p-1"
-        >
-          {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
-          <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{feature.name}</span>
-          {cardResetsOn && (
-            <span className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
-              used ? 'bg-slate-800 border-slate-600 text-slate-500' : 'bg-slate-700/60 border-slate-600 text-slate-400'
-            }`}>
-              {used ? usedUntilLabel : oncePerLabel}
-            </span>
-          )}
-          {!cardChips?.length && !cardResetsOn && (
-            <span className="ml-auto text-[9px] rounded px-1 shrink-0 bg-slate-700/40 text-slate-500">Passive</span>
-          )}
-          {feature.source && (
-            <span className={`${!cardChips?.length && !cardResetsOn ? '' : 'ml-auto '}text-[9px] rounded px-1 shrink-0 ${
-              feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' : 'bg-amber-900/60 text-amber-300'
-            }`}>{feature.source}</span>
-          )}
-        </button>
-        {onShareFeature && (
-          <Tooltip content="Share Feature Text" placement="top">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onShareFeature(feature);
-              }}
-              className="shrink-0 p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
-              aria-label="Share Feature Text"
-            >
-              <Share2 size={12} />
-            </button>
-          </Tooltip>
-        )}
-      </div>
-      {cardChips?.length > 0 && getCardChipContext && (
-        <div className="px-2 pb-1 flex flex-wrap gap-1.5 items-center">
-          {cardChips.map((chip, idx) => {
-            const isToggle = typeof chip.onToggle === 'function';
-            const derivedToggleKey = isToggle && feature?.source != null && feature?.name != null ? `_toggle.${feature.source}.${feature.name}` : null;
-            const active = isToggle && el && derivedToggleKey ? !!el[derivedToggleKey] : false;
-            const displayName = isToggle ? (feature?.name ?? 'Toggle') : (chip.label ?? 'Use');
-            const tooltipContent = isToggle ? (chip.label ?? feature?.name ?? '') : (chip.label ?? 'Use');
-            if (isToggle) {
-              return (
-                <Tooltip key={idx} content={tooltipContent} placement="top">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const context = getCardChipContext(feature, chip, featureKey);
-                      if (!context.postToggleIntent) return;
-                      const nextActive = !active;
-                      context.postToggleIntent(nextActive);
-                    }}
-                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold border transition-colors ${
-                      active
-                        ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
-                        : 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
-                    }`}
-                    aria-pressed={active}
-                  >
-                    {active ? <CheckSquare size={12} className="shrink-0" /> : <Square size={12} className="shrink-0" />}
-                    <span className="truncate max-w-[140px]">{displayName}</span>
-                  </button>
-                </Tooltip>
-              );
-            }
-            const chipUsed = !!(chip.resetsOn && featureKey && el?.featureUsage?.[featureKey]?.used);
-            return (
-              <Tooltip key={idx} content={tooltipContent} placement="top">
-                <button
-                  type="button"
-                  disabled={chipUsed}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (chipUsed) return;
-                    const context = getCardChipContext(feature, chip, featureKey);
-                    if (typeof chip.onUse === 'function') chip.onUse(context);
-                    else context.character?.postAction?.();
-                  }}
-                  className={`text-[10px] rounded px-1.5 py-0.5 border transition-colors ${chipUsed ? 'border-slate-600 bg-slate-800/50 text-slate-500 cursor-not-allowed' : 'border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'}`}
-                >
-                  {displayName}
-                </button>
-              </Tooltip>
-            );
-          })}
-        </div>
-      )}
-      {open && (feature.description != null && feature.description !== '') && (
-        <div className="px-2 pb-2 pt-1 border-t border-slate-700">
-          <MarkdownText text={feature.description} className="text-[11px] text-slate-300 leading-relaxed dh-md" />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Feature chip (collapsible) ───────────────────────────────────────────────
-
-/**
- * Props:
- *   feature        — feature object (name, description, sourceType, source, charge)
- *   open / onToggle — controlled or uncontrolled open state
- *   onFeatureUse(feature, subFeature?)  — when provided, renders interactive controls
- *   featureUsage   — { [key]: { used, cycle } } map from element state
- *   featureKey     — unique key for usage tracking (default: feature.name)
- *   activeChanneledElement — 'fire'|'earth'|'water'|'air'|null for Elemental Incarnation
- */
-function FeatureChip({ feature, open: openProp, onToggle, onFeatureUse, featureUsage, featureKey, rangerFocusToggle, wingsOfLightProps, faerieWingsProps, activeChanneledElement, stressMaxed, prayerDiceProps }) {
-  const [openLocal, setOpenLocal] = useState(false);
-  const open = openProp !== undefined ? openProp : openLocal;
-  const toggle = onToggle ?? (() => setOpenLocal(o => !o));
-
-  const action = parseFeatureAction(feature.description || '');
-  const subFeatures = parseSubFeatures(feature.description || '');
-  const passiveStats = (!action.isActive && subFeatures.length === 0)
-    ? parsePassiveStats(feature.description || '')
-    : [];
-
-  const effectiveKey = featureKey || feature.name;
-  const isUsed = !!(featureUsage?.[effectiveKey]?.used);
-  const hasDice = action.dice.length > 0 || action.spellcastDC != null;
-
-  return (
-    <div className="rounded border border-slate-700 bg-slate-800/60 overflow-hidden">
-      <button
-        onClick={toggle}
-        className="w-full px-2 py-1 flex items-center gap-1 text-left hover:bg-slate-700/40 transition-colors"
-      >
-        {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
-        <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{feature.name}</span>
-        {feature.resetsOn && (
-          <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-slate-700/60 border-slate-600 text-slate-400">
-            {feature.resetsOn === 'session' ? 'Once per session' : feature.resetsOn === 'longRest' ? 'Once per long rest' : 'Once per rest'}
-          </span>
-        )}
-        {/* Elemental Incarnation: channeling indicator in header */}
-        {activeChanneledElement && (
-          <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300 font-semibold">
-            {activeChanneledElement === 'fire' ? '🔥' : activeChanneledElement === 'earth' ? '🪨' : activeChanneledElement === 'water' ? '💧' : '💨'} {activeChanneledElement.charAt(0).toUpperCase() + activeChanneledElement.slice(1)}
-          </span>
-        )}
-        {/* Active feature indicator in header */}
-        {action.isActive && !open && !activeChanneledElement && (
-          <span className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
-            action.frequency
-              ? isUsed
-                ? 'bg-slate-800 border-slate-600 text-slate-500'
-                : 'bg-emerald-950/50 border-emerald-700/50 text-emerald-400'
-              : isUsed
-                ? 'bg-slate-800 border-slate-700 text-slate-500'
-                : hasDice ? 'bg-amber-950/50 border-amber-700/50 text-amber-400'
-                : action.hopeCost > 0 ? 'bg-amber-950/50 border-amber-700/50 text-amber-400'
-                : 'bg-amber-950/30 border-amber-700/30 text-amber-500/70'
-          }`}>
-            {action.frequency
-              ? isUsed
-                ? `Used until ${action.frequency === 'session' ? 'next session' : action.frequency === 'longRest' ? 'long rest' : 'any rest'}`
-                : 'Unused'
-              : isUsed
-                ? `✓ used/${action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}`
-                : hasDice ? '⚄ active' : 'active'}
-          </span>
-        )}
-        {feature.sourceType && (
-          <span className={`ml-auto text-[9px] rounded px-1 shrink-0 ${
-            feature.sourceType === 'class'     ? 'bg-violet-900/60 text-violet-300' :
-            feature.sourceType === 'subclass'  ? 'bg-sky-900/60 text-sky-300' :
-            feature.sourceType === 'ancestry'  ? 'bg-amber-900/60 text-amber-300' :
-            feature.sourceType === 'community' ? 'bg-emerald-900/60 text-emerald-300' :
-            feature.sourceType === 'beastform' ? 'bg-teal-900/60 text-teal-300' :
-            'bg-emerald-900/60 text-emerald-300'
-          }`}>{feature.source}</span>
-        )}
-      </button>
-
-      {/* ── Widgetry: always visible ── */}
-      {(subFeatures.length >= 2 || (action.isActive && subFeatures.length < 2) || passiveStats.length > 0 || (!action.isActive && passiveStats.length === 0 && onFeatureUse) || !!rangerFocusToggle || !!wingsOfLightProps || prayerDiceProps?.dice?.length > 0) && (
-        <div className="px-2 pb-2 pt-1 border-t border-slate-700 space-y-1.5">
-          {subFeatures.length >= 2 && feature.name === 'Elemental Incarnation' && subFeatures.length === 4 && (
-            <div className="flex flex-wrap gap-1.5">
-              {subFeatures.map((sub, i) => {
-                const Icon = ELEMENT_ICONS[sub.name] || Zap;
-                const isActive = !!activeChanneledElement && sub.name.toLowerCase() === activeChanneledElement;
-                const cantUse = isUsed || (stressMaxed && !isActive);
-                const chip = (
-                  <button
-                    key={i}
-                    type="button"
-                    disabled={cantUse}
-                    onClick={(e) => { e.stopPropagation(); if (onFeatureUse && !cantUse) onFeatureUse(feature, sub, e); }}
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
-                      isActive
-                        ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
-                        : cantUse
-                          ? 'border-slate-600/50 bg-slate-800/30 text-slate-500 opacity-60 cursor-not-allowed'
-                          : 'border-amber-700/50 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600/70 cursor-pointer'
-                    }`}
-                    aria-label={`Channel ${sub.name}`}
-                  >
-                    <Icon size={12} className="shrink-0" />
-                    <span>{sub.name}</span>
-                  </button>
-                );
-                return (
-                  <Tooltip key={i} content={<MarkdownText text={sub.description || ''} className="text-[11px] leading-relaxed dh-md" />} placement="bottom">
-                    {chip}
-                  </Tooltip>
-                );
-              })}
-              {stressMaxed && !activeChanneledElement && (
-                <p className="text-[10px] text-orange-500/70 italic">Cannot channel — Stress is full</p>
-              )}
-            </div>
-          )}
-          {subFeatures.length >= 2 && !(feature.name === 'Elemental Incarnation' && subFeatures.length === 4) && (
-            <div className="space-y-1">
-              {subFeatures.map((sub, i) => (
-                <SubFeatureCard
-                  key={i}
-                  sub={sub}
-                  onUse={onFeatureUse && !isUsed ? (e) => onFeatureUse(feature, sub, e) : undefined}
-                  disabled={isUsed}
-                  isActive={!!activeChanneledElement && sub.name.toLowerCase() === activeChanneledElement}
-                />
-              ))}
-              {action.frequency && isUsed && (
-                <p className="text-[10px] text-slate-500 italic mt-0.5">
-                  Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
-                </p>
-              )}
-            </div>
-          )}
-
-          {action.isActive && subFeatures.length < 2 && (
-            <div className="pt-1 border-t border-slate-700/60 space-y-1">
-              <CostBadgeStrip action={action} />
-              {onFeatureUse && (!v2OriginFeatureDescriptorsByName[feature.name] || !!v2OriginFeatureDescriptorsByName[feature.name]?.onUse) && !wingsOfLightProps ? (
-                isUsed ? (
-                  <p className="text-[10px] text-slate-500 italic">
-                    Used this {action.frequency === 'session' ? 'session' : action.frequency === 'longRest' ? 'long rest' : 'rest'}
-                  </p>
-                ) : (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onFeatureUse(feature, null, e); }}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold border bg-amber-900/40 border-amber-700/60 text-amber-200 hover:bg-amber-800/60 hover:border-amber-600 transition-colors"
-                  >
-                    {hasDice ? <Dices size={10} /> : <Zap size={10} />}
-                    Use
-                  </button>
-                )
-              ) : null}
-            </div>
-          )}
-
-          {rangerFocusToggle && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); rangerFocusToggle.onChange(!rangerFocusToggle.value); }}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                rangerFocusToggle.value
-                  ? 'bg-amber-950/50 border-amber-600/70 text-amber-200 hover:bg-amber-900/50'
-                  : 'border-slate-600/60 text-slate-400 hover:border-slate-500 hover:text-slate-300'
-              }`}
-              title={rangerFocusToggle.value ? 'Next weapon attack will spend 1 Hope and attempt Ranger\'s Focus' : 'Enable to use Ranger\'s Focus on next attack'}
-            >
-              Use on next attack
-            </button>
-          )}
-
-          {wingsOfLightProps && (
-            <div className="pt-1 border-t border-slate-700/60 space-y-1.5">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!!wingsOfLightProps.flying}
-                  onChange={(e) => wingsOfLightProps.onFlyingChange(e.target.checked)}
-                  className="rounded border-slate-600"
-                />
-                <span className="text-[10px] font-medium text-slate-300">Flying</span>
-              </label>
-              {wingsOfLightProps.flying && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); wingsOfLightProps.onPickUpCarry?.(); }}
-                  disabled={!wingsOfLightProps.canPickUpCarry}
-                  title={wingsOfLightProps.canPickUpCarry ? 'Mark 1 Stress when GM acknowledges' : 'No empty stress boxes'}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                    wingsOfLightProps.canPickUpCarry
-                      ? 'border-amber-600/60 text-amber-200 hover:bg-amber-900/40 bg-amber-950/30'
-                      : 'border-slate-600/50 text-slate-500 opacity-60 cursor-not-allowed'
-                  }`}
-                >
-                  Pick up and carry
-                </button>
-              )}
-            </div>
-          )}
-
-          {faerieWingsProps && (
-            <div className="pt-1 border-t border-slate-700/60">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!!faerieWingsProps.flying}
-                  onChange={(e) => faerieWingsProps.onFlyingChange(e.target.checked)}
-                  className="rounded border-slate-600"
-                />
-                <span className="text-[10px] font-medium text-slate-300">Flying</span>
-              </label>
-            </div>
-          )}
-
-          {passiveStats.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {passiveStats.map((ps, i) => (
-                <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-slate-800/80 border border-slate-700 text-slate-400">
-                  {ps.label}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {!action.isActive && passiveStats.length === 0 && onFeatureUse && (
-            <div className="pt-1 border-t border-slate-700/40">
-              <button
-                onClick={(e) => { e.stopPropagation(); onFeatureUse(feature, null, e); }}
-                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] border border-slate-600/60 text-slate-400 hover:border-slate-500 hover:text-slate-300 transition-colors"
-              >
-                <Megaphone size={9} />
-                Announce
-              </button>
-            </div>
-          )}
-
-          {prayerDiceProps?.dice?.length > 0 && (
-            <div className="pt-1.5 border-t border-slate-700/40 space-y-1">
-              <p className="text-[10px] text-teal-400/70">Active Prayer Dice</p>
-              <div className="flex flex-wrap gap-1">
-                {prayerDiceProps.dice.map(mod => (
-                  <div key={mod.id} className="flex items-center rounded border border-teal-700/60 bg-teal-950/40 text-teal-200 text-[10px] overflow-hidden">
-                    <span className="px-1.5 py-0.5 font-semibold">{mod.value}</span>
-                    {prayerDiceProps.onGainHope && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); prayerDiceProps.onGainHope(mod); }}
-                        className="px-1.5 py-0.5 border-l border-teal-700/40 text-[9px] font-semibold hover:bg-teal-900/40 transition-colors"
-                        title={`Post banner to gain ${mod.value} Hope (requires GM acknowledge)`}
-                      >
-                        +Hope
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <p className="text-[9px] text-slate-500">Use +Roll / −Dmg in roll/damage banners</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Expanded: description + charge only ── */}
-      {open && (
-        <div className="px-2 pb-2 text-[11px] text-slate-300 leading-relaxed border-t border-slate-700 pt-1">
-          {feature.description && (
-            <MarkdownText text={feature.description} className="dh-md" />
-          )}
-          {feature.charge && (
-            <span className="block mt-0.5 text-[10px] text-slate-500 italic">
-              {feature.charge.max} charge{feature.charge.max !== 1 ? 's' : ''} · recharges on {feature.charge.recharge?.on || 'rest'}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return card;
 }
 
 // ─── Feature state display ────────────────────────────────────────────────────
@@ -1090,9 +442,8 @@ export function CharacterIdentityHeader({ el, showIncomplete = false, actions })
  *
  * Props:
  *   onTraitClick(traitKey, opts?) — when provided, chips become clickable. opts may include { isReaction: true }.
- *   selectedExperienceHint    — hint string shown below grid (e.g. '+2 from "Explorer" included')
  */
-export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selectedExperienceHint }) {
+export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll }) {
   const traits = el.traits || {};
   if (!TRAIT_ORDER.some(t => traits[t] != null)) return null;
   const weaponMods = el.weaponMods || {};
@@ -1168,11 +519,6 @@ export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, selected
           </div>
         );
       })()}
-      {onTraitClick && (
-        <p className="text-[9px] text-slate-600 mt-0.5">
-          {selectedExperienceHint || 'Select an experience above to add +2'}
-        </p>
-      )}
     </Section>
   );
 }
@@ -1182,29 +528,12 @@ export function CharacterDefenseRow({ el }) {
   const thresholds = effectiveThresholds(el);
   const wm = el.weaponMods || {};
   const am = el.armorMods || {};
-  const ancestryEvasion = el.ancestryMods?.evasion ?? 0;
-  const bfEvasion = parseBeastformBonus(el.activeBeastform?.evasion_bonus);
-  const bfEvasionMod = bfEvasion?.stat === 'evasion' ? bfEvasion.bonus : 0;
-  const activeModEvasion = (el.activeModifiers || []).filter(m => m.type === 'evasion').reduce((sum, m) => sum + (m.value ?? 0), 0);
-  const totalEvasionMod = (wm.evasion || 0) + (am.evasion || 0) + ancestryEvasion + bfEvasionMod + activeModEvasion;
-  const earthBonus = el.activeChanneledElement === 'earth' ? (el.proficiency ?? 0) : 0;
+  const totalEvasionMod = getEvasionModifierTotal(el);
+  const evasionTooltipContent = formatEvasionModifierTooltip(el);
+  const earthBonus = el._v2MajorThresholdBonus ?? 0;
   const ancestryMajorBonus = el.ancestryThresholdMajorBonus ?? el.ancestryThresholdBonus ?? 0;
   const ancestrySevereBonus = el.ancestryThresholdSevereBonus ?? el.ancestryThresholdBonus ?? 0;
   const ancestryBonusSource = el.ancestryThresholdBonusSource || null;
-  const evasionSources = [];
-  if (wm.evasion) evasionSources.push(...(wm.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
-  if (am.evasion) evasionSources.push(...(am.sources || []).filter(s => s.stat === 'evasion').map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to Evasion`));
-  if (ancestryEvasion) {
-    const ancestrySourceNames = (el.ancestryMods?.statMods || []).filter(m => m.stat === 'evasion').map(m => m.source).filter(Boolean);
-    if (ancestrySourceNames.length) evasionSources.push(...ancestrySourceNames.map(name => `${name}: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`));
-    else evasionSources.push(`Ancestry: ${ancestryEvasion > 0 ? '+' : ''}${ancestryEvasion} to Evasion`);
-  }
-  if (bfEvasionMod) evasionSources.push(`Beastform (${el.activeBeastform.name}): ${bfEvasionMod > 0 ? '+' : ''}${bfEvasionMod} to Evasion`);
-  (el.activeModifiers || []).filter(m => m.type === 'evasion').forEach(m => {
-    const v = m.value ?? 0;
-    if (v) evasionSources.push(`${m.name || 'Modifier'}: +${v} to Evasion`);
-  });
-  const evasionModTooltip = evasionSources.length ? evasionSources.join('; ') : null;
   const armorModTooltip = wm.armorScore
     ? (wm.sources || []).filter(s => s.stat === 'armor score').map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Armor Score`).join('; ')
     : null;
@@ -1220,20 +549,24 @@ export function CharacterDefenseRow({ el }) {
       if (ancestrySevereBonus > 0) thresholdTooltipParts.push(`${ancestryBonusSource}: +${ancestrySevereBonus} to Severe`);
     }
   }
-  if (earthBonus > 0) thresholdTooltipParts.push(`Warden of the Elements (Earth): +${earthBonus} to Major and Severe`);
+  if (earthBonus > 0) thresholdTooltipParts.push(`Elemental channel (Earth): +${earthBonus} to Major and Severe`);
   const thresholdModTooltip = thresholdTooltipParts.length ? thresholdTooltipParts.join('; ') : null;
   const armorFeature = am.feature;
   const isStatModFeature = armorFeature && /^(Flexible|Heavy|Very Heavy|Gilded|Difficult)$/.test(armorFeature.name);
   return (
-    <Section label="Defense">
+    <div className="space-y-1">
       <div className="flex items-center gap-3 text-xs flex-wrap">
         {el.evasion != null && (
-          <div className="flex items-center gap-1" title={evasionModTooltip || undefined}>
-            <Shield size={11} className="text-cyan-500" />
+          <Tooltip
+            content={evasionTooltipContent || undefined}
+            className="inline-flex items-center gap-1"
+            placement="bottom-right"
+          >
+            <Shield size={11} className="text-cyan-500 shrink-0" />
             <span className="text-slate-400">Evasion</span>
             <span className={`font-bold tabular-nums ${totalEvasionMod ? 'text-amber-200' : 'text-cyan-200'}`}>{el.evasion}</span>
             {totalEvasionMod ? <span className={`text-[10px] font-semibold tabular-nums ${totalEvasionMod > 0 ? 'text-amber-400' : 'text-amber-500'}`}>({totalEvasionMod > 0 ? '+' : ''}{totalEvasionMod})</span> : null}
-          </div>
+          </Tooltip>
         )}
         {el.armorScore > 0 && (
           <div className="flex items-center gap-1" title={armorModTooltip || undefined}>
@@ -1280,8 +613,45 @@ export function CharacterDefenseRow({ el }) {
           </div>
         )}
       </div>
-    </Section>
+    </div>
   );
+}
+
+/** Cross-sheet V2 chip: instant tooltip when blocked by resources or `isDisabled`. */
+function CrossSheetChipButton({ c, onCrossSheetChipClick }) {
+  const title = c.description || c.name;
+  const blocked = !!(c.disabled || c.resourceUnaffordable);
+  const hint = c.disableHint;
+  if (!onCrossSheetChipClick) {
+    return (
+      <span title={title} className="text-[11px] rounded px-1.5 py-0.5 border bg-violet-950/40 border-violet-700/50 text-violet-200">
+        {c.name}
+      </span>
+    );
+  }
+  const btn = (
+    <button
+      type="button"
+      title={title}
+      disabled={blocked}
+      onClick={() => onCrossSheetChipClick(c)}
+      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
+        blocked
+          ? 'opacity-40 cursor-not-allowed bg-violet-950/20 border-violet-800/40 text-violet-400/80'
+          : 'bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
+      }`}
+    >
+      {c.name}
+    </button>
+  );
+  if (blocked && hint) {
+    return (
+      <Tooltip label={hint} placement="top">
+        <span className="inline-flex">{btn}</span>
+      </Tooltip>
+    );
+  }
+  return <span className="inline-flex">{btn}</span>;
 }
 
 /**
@@ -1290,21 +660,25 @@ export function CharacterDefenseRow({ el }) {
  * Props:
  *   selectedIndex             — currently selected experience index (interactive mode)
  *   onSelect(i)               — selection callback; when absent, renders static chips
+ *   experiencesAsBadges     — when true, experiences are non-clickable badges (selection moves to intent panel); modifiers can still be interactive
  *   hope / maxHope            — current Hope values for gating
- *   crossSheetChips           — optional V2 engine chips from other PCs' features (`showOnOtherSheets`), rendered in Modifiers (host builds via `collectChipsForOtherCharacterSheets`)
+ *   crossSheetChips           — optional V2 engine chips from `showOnOtherSheets` features (own or other PCs), rendered in Modifiers (host builds via `collectChipsForOtherCharacterSheets`)
  *   onCrossSheetChipClick     — when set, cross-sheet chips render as buttons (GM / V2 integration)
  */
-export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility, advantageChips, selectedAdvIds, onSelectAdv, beastformAdvantages, selectedBeastformAdvantage, onSelectBeastformAdvantage, crossSheetChips, onCrossSheetChipClick }) {
+export function CharacterExperiences({ el, selectedIndex, onSelect, experiencesAsBadges = false, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility, beastformAdvantages, selectedBeastformAdvantage, onSelectBeastformAdvantage, crossSheetChips, onCrossSheetChipClick }) {
   const experiences = el.experiences || [];
   const hasRollMods = rollModifiers?.length > 0;
   const activeModifiers = el.activeModifiers || [];
-  const hasAdvantageChips = advantageChips?.length > 0;
   const hasBeastformAdvantages = beastformAdvantages?.length > 0;
   const hasCrossSheet = (crossSheetChips?.length ?? 0) > 0;
-  const hasModifiers = hasRollMods || activeModifiers.length > 0 || hasAdvantageChips || hasBeastformAdvantages || hasCrossSheet;
+  const hasModifiers = hasRollMods || activeModifiers.length > 0 || hasBeastformAdvantages || hasCrossSheet;
   if (!experiences.length && !hasModifiers) return null;
 
-  if (!onSelect) {
+  const experienceButtons = onSelect && !experiencesAsBadges;
+  const hasInteractiveModifiers = !!(onSelectRollMod || onSelectMod || onSelectBeastformAdvantage || onCrossSheetChipClick
+    || (hasRollMods && rollModifiers.some(rm => !rm.autoApply)));
+
+  if (!experienceButtons && !hasInteractiveModifiers) {
     return (
       <>
         {experiences.length > 0 && (
@@ -1342,15 +716,6 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
               {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
                 <ModifierChip key={mod.id || i} mod={mod} />
               ))}
-              {hasAdvantageChips && advantageChips.map((adv) => (
-                <span
-                  key={adv.id}
-                  title={adv.condition}
-                  className="text-[11px] rounded px-1.5 py-0.5 border bg-green-950/40 border-green-700/60 text-green-300"
-                >
-                  {adv.name} (d6)
-                </span>
-              ))}
               {hasBeastformAdvantages && beastformAdvantages.map((adv) => (
                 <span
                   key={adv}
@@ -1366,37 +731,110 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
                 </span>
               ))}
               {hasCrossSheet &&
-                crossSheetChips.map((c) => {
-                  const key = c._chipKey || `${c._featureName}::${c.name}`;
-                  const title = c.description || c.name;
-                  if (onCrossSheetChipClick) {
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        title={title}
-                        disabled={!!c.disabled}
-                        onClick={() => onCrossSheetChipClick(c)}
-                        className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
-                          c.disabled
-                            ? 'opacity-40 cursor-not-allowed bg-violet-950/20 border-violet-800/40 text-violet-400/80'
-                            : 'bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
-                        }`}
-                      >
-                        {c.name}
-                      </button>
-                    );
-                  }
+                crossSheetChips.map((c) => (
+                  <CrossSheetChipButton
+                    key={c._chipKey || `${c._featureName}::${c.name}`}
+                    c={c}
+                    onCrossSheetChipClick={onCrossSheetChipClick}
+                  />
+                ))}
+            </div>
+          </Section>
+        )}
+      </>
+    );
+  }
+
+  if (!experienceButtons && hasInteractiveModifiers) {
+    return (
+      <>
+        {experiences.length > 0 && (
+          <Section label="Experiences">
+            <div className="flex flex-wrap gap-1">
+              {experiences.map((exp, i) => (
+                <span
+                  key={i}
+                  className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
+                >
+                  {exp.name}
+                  {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
+                </span>
+              ))}
+            </div>
+          </Section>
+        )}
+        {hasModifiers && (
+          <Section label="Modifiers">
+            <div className="flex flex-wrap gap-1">
+              {hasRollMods && rollModifiers.map((rm, i) => {
+                if (rm.autoApply) {
                   return (
                     <span
-                      key={key}
-                      title={title}
-                      className="text-[11px] rounded px-1.5 py-0.5 border bg-violet-950/40 border-violet-700/50 text-violet-200"
+                      key={`rm-${i}`}
+                      title={`Always applied to ${rm.rollType} rolls`}
+                      className="text-[11px] rounded px-1.5 py-0.5 border bg-teal-950/40 border-teal-700/50 text-teal-300"
                     >
-                      {c.name}
+                      {rm.name}
+                      <span className="font-bold ml-1 text-teal-400">+{rm.score}</span>
                     </span>
                   );
-                })}
+                }
+                if (!onSelectRollMod) return null;
+                const selected = selectedRollModIndex === i;
+                return (
+                  <button
+                    key={`rm-${i}`}
+                    type="button"
+                    title={rm.description}
+                    onClick={() => onSelectRollMod(selected ? null : i)}
+                    className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
+                      ${selected
+                        ? 'bg-amber-900/60 border-amber-600 text-amber-200 ring-1 ring-amber-500/50'
+                        : 'bg-amber-950/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/40 hover:border-amber-600'}`}
+                  >
+                    <span>{rm.name}</span>
+                    <span className="font-bold ml-1 text-amber-400">+{rm.score}</span>
+                  </button>
+                );
+              })}
+              {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
+                <ModifierChip
+                  key={mod.id || i}
+                  mod={mod}
+                  selected={selectedModId === mod.id}
+                  onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
+                  onUse={onUseMod && mod.mode === 'clearStress' ? () => onUseMod(mod) : undefined}
+                  onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
+                  onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
+                  eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
+                />
+              ))}
+              {hasBeastformAdvantages && beastformAdvantages.map((adv) => {
+                const isSelected = selectedBeastformAdvantage === adv;
+                return (
+                  <button
+                    key={adv}
+                    type="button"
+                    title={isSelected ? 'Advantage active — +d6 to next beastform attack' : 'Click to activate this beastform advantage'}
+                    onClick={onSelectBeastformAdvantage ? () => onSelectBeastformAdvantage(isSelected ? null : adv) : undefined}
+                    className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-emerald-800/70 border-emerald-500 text-emerald-100 ring-1 ring-emerald-500/50'
+                        : 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-600'
+                    }`}
+                  >
+                    {adv}{isSelected && <span className="ml-1 text-emerald-300">+d6</span>}
+                  </button>
+                );
+              })}
+              {hasCrossSheet &&
+                crossSheetChips.map((c) => (
+                  <CrossSheetChipButton
+                    key={c._chipKey || `${c._featureName}::${c.name}`}
+                    c={c}
+                    onCrossSheetChipClick={onCrossSheetChipClick}
+                  />
+                ))}
             </div>
           </Section>
         )}
@@ -1486,23 +924,6 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
                 eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
               />
             ))}
-            {hasAdvantageChips && advantageChips.map((adv) => {
-              const selected = (selectedAdvIds || []).includes(adv.id);
-              return (
-                <button
-                  key={adv.id}
-                  type="button"
-                  title={adv.condition}
-                  onClick={onSelectAdv ? () => onSelectAdv(adv.id) : undefined}
-                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
-                    ${selected
-                      ? 'bg-green-800/70 border-green-500 text-green-100 ring-1 ring-green-500/50'
-                      : 'bg-green-950/40 border-green-700/60 text-green-300 hover:bg-green-900/40 hover:border-green-600'}`}
-                >
-                  {adv.name} (d6)
-                </button>
-              );
-            })}
             {hasBeastformAdvantages && beastformAdvantages.map((adv) => {
               const isSelected = selectedBeastformAdvantage === adv;
               return (
@@ -1522,37 +943,13 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, hope, maxHop
               );
             })}
             {hasCrossSheet &&
-              crossSheetChips.map((c) => {
-                const key = c._chipKey || `${c._featureName}::${c.name}`;
-                const title = c.description || c.name;
-                if (onCrossSheetChipClick) {
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      title={title}
-                      disabled={!!c.disabled}
-                      onClick={() => onCrossSheetChipClick(c)}
-                      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
-                        c.disabled
-                          ? 'opacity-40 cursor-not-allowed bg-violet-950/20 border-violet-800/40 text-violet-400/80'
-                          : 'bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
-                      }`}
-                    >
-                      {c.name}
-                    </button>
-                  );
-                }
-                return (
-                  <span
-                    key={key}
-                    title={title}
-                    className="text-[11px] rounded px-1.5 py-0.5 border bg-violet-950/40 border-violet-700/50 text-violet-200"
-                  >
-                    {c.name}
-                  </span>
-                );
-              })}
+              crossSheetChips.map((c) => (
+                <CrossSheetChipButton
+                  key={c._chipKey || `${c._featureName}::${c.name}`}
+                  c={c}
+                  onCrossSheetChipClick={onCrossSheetChipClick}
+                />
+              ))}
           </div>
         </Section>
       )}
@@ -1584,8 +981,7 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
   const baseLabel = mod.name + (mod.dice ? ` (${mod.dice})` : mod.value != null ? ` (${mod.value})` : mod.bonus != null ? ` +${mod.bonus}` : '');
 
   let colorCls;
-  if (mod.name === 'Rally Die') colorCls = selected ? 'bg-green-800/70 border-green-500 text-green-100 ring-1 ring-green-500/50' : 'bg-green-950/40 border-green-700/60 text-green-300 hover:bg-green-900/40';
-  else if (mod.name === 'Prayer Die') colorCls = selected ? 'bg-teal-800/70 border-teal-500 text-teal-100 ring-1 ring-teal-500/50' : 'bg-teal-950/40 border-teal-700/60 text-teal-300 hover:bg-teal-900/40';
+  if (mod.name === 'Prayer Die') colorCls = selected ? 'bg-teal-800/70 border-teal-500 text-teal-100 ring-1 ring-teal-500/50' : 'bg-teal-950/40 border-teal-700/60 text-teal-300 hover:bg-teal-900/40';
   else if (mod.name === 'Sneak Attack') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
   else if (mod.name === 'No Mercy') colorCls = selected ? 'bg-amber-800/70 border-amber-500 text-amber-100 ring-1 ring-amber-500/50' : 'bg-amber-950/40 border-amber-700/60 text-amber-300 hover:bg-amber-900/40';
   else if (mod.name === "Rogue's Dodge") colorCls = selected ? 'bg-cyan-800/70 border-cyan-500 text-cyan-100 ring-1 ring-cyan-500/50' : 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/40';
@@ -1650,7 +1046,6 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
  *   onDevastatingToggle              — () => void controlled by HoverCard
  *   stressMaxed                      — boolean; defaults to derived from el
  *   onActionNotification(data)       — for Startling action card
- *   selectedExperienceHint           — string shown below weapons when interactive
  */
 export function CharacterWeaponList({
   el,
@@ -1659,16 +1054,19 @@ export function CharacterWeaponList({
   onDevastatingToggle,
   stressMaxed: stressMaxedProp,
   onActionNotification,
-  selectedExperienceHint,
   onBeastformAttack,
+  /** When set (Game Table), weapons with a map range are disabled if no adversaries are in range. */
+  getValidTargets,
 }) {
   const ancestryFeatures = el.ancestryFeatures || [];
-  // Enrich weapons with effectiveRange at render time so the correct range is
-  // shown even for characters loaded from the DB (where effectiveRange may not
-  // be stored yet). Giant Reach: Melee → Very Close.
-  const weapons = (el.weapons || []).map(w =>
-    w.effectiveRange != null ? w : { ...w, effectiveRange: getEffectiveWeaponRange(w, ancestryFeatures) }
-  );
+  // Enrich weapons with effectiveRange at render time (Giant Reach: Melee → Very Close).
+  // `recomputeCharacter` seeds `effectiveRange` from `range`, so we must not treat that
+  // as final — always derive from ancestry via getEffectiveWeaponRange first.
+  const weapons = (el.weapons || []).map(w => ({
+    ...w,
+    effectiveRange:
+      getEffectiveWeaponRange(w, ancestryFeatures) || w.effectiveRange || w.range || '',
+  }));
   const activeBeastform = el.activeBeastform;
 
   // Always run detection so disabled weapons can be shown in beastform mode
@@ -1715,6 +1113,14 @@ export function CharacterWeaponList({
       : undefined;
   };
 
+  const outOfRangeReasonForWeapon = (weapon) => {
+    const v2Hint = v2HintForWeapon(weapon);
+    if (v2Hint?.isDisabled === true) return null;
+    if (!v2Hint && weapon.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return null;
+    if (weapon._charged && isStressMaxed) return null;
+    return outOfRangeDisableReason(weapon, getValidTargets, el.instanceId, ancestryFeatures);
+  };
+
   // For Doubled Up: find the secondary weapon's damage string
   const primaryWeapon_ = weapons.find(w => w.isPrimary !== false && !w.feature?.name?.includes('Paired'));
   const secondaryWeapon_ = weapons.find(w => w !== primaryWeapon_);
@@ -1728,6 +1134,8 @@ export function CharacterWeaponList({
     if (v2Hint?.isDisabled === true) return undefined;
     if (!v2Hint && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return undefined;
     if (w._charged && isStressMaxed) return undefined;
+    const merged = { ...w, ...extraMeta };
+    if (outOfRangeReasonForWeapon(merged)) return undefined;
     const rollMeta = { ...extraMeta };
     if (w.feature?.name === 'Devastating' && devastatingActive) rollMeta.devastating = true;
     if (w.feature?.name === 'Doubled Up' && secondaryDamageStr) rollMeta.secondaryDamage = secondaryDamageStr;
@@ -1736,27 +1144,53 @@ export function CharacterWeaponList({
 
   // ── Beastform mode: show beastform attack then disabled weapons ──────────────
   if (activeBeastform) {
+    const beastformRangeWord = (activeBeastform.attack || '').trim().split(/\s+/)[0];
+    const beastformFt = beastformRangeWord ? rangeBandNameToFt(beastformRangeWord) : null;
+    const beastformNoTargets =
+      getValidTargets &&
+      beastformFt != null &&
+      el.instanceId &&
+      (getValidTargets(el.instanceId, { weaponRangeFt: beastformFt }) ?? []).length === 0;
+    const beastformDisabledReason = beastformNoTargets ? 'No targets in range' : null;
+    const beastformClickable = onBeastformAttack && !beastformDisabledReason;
+
+    const beastformCard = (
+      <div
+        role={beastformClickable ? 'button' : undefined}
+        tabIndex={beastformClickable ? 0 : undefined}
+        onClick={beastformClickable ? onBeastformAttack : undefined}
+        onKeyDown={beastformClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onBeastformAttack(); } : undefined}
+        className={`w-full min-w-0 rounded border px-2 py-1.5 text-[11px] transition-all ${
+          beastformClickable
+            ? 'border-emerald-700/60 bg-emerald-950/30 cursor-pointer hover:brightness-125 hover:border-emerald-500/70'
+            : 'border-emerald-700/40 bg-emerald-950/20 opacity-60'
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <Swords size={10} className="text-emerald-500/70 shrink-0" />
+          <span className="font-semibold text-emerald-200 flex-1">{activeBeastform.name}</span>
+          <span className="text-[9px] text-emerald-400/70">{activeBeastform.attack}</span>
+        </div>
+        {beastformDisabledReason && (
+          <div className="text-[9px] mt-1 text-amber-400 flex items-center gap-1">
+            <AlertCircle size={9} className="shrink-0" />
+            {beastformDisabledReason}
+          </div>
+        )}
+      </div>
+    );
+
     return (
       <Section label={onBeastformAttack ? 'Attacks — click to roll' : 'Attacks'}>
         <div className="space-y-1.5">
           {/* Beastform attack card */}
-          <div
-            role={onBeastformAttack ? 'button' : undefined}
-            tabIndex={onBeastformAttack ? 0 : undefined}
-            onClick={onBeastformAttack || undefined}
-            onKeyDown={onBeastformAttack ? (e) => { if (e.key === 'Enter' || e.key === ' ') onBeastformAttack(); } : undefined}
-            className={`rounded border px-2 py-1.5 text-[11px] transition-all ${
-              onBeastformAttack
-                ? 'border-emerald-700/60 bg-emerald-950/30 cursor-pointer hover:brightness-125 hover:border-emerald-500/70'
-                : 'border-emerald-700/40 bg-emerald-950/20'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Swords size={10} className="text-emerald-500/70 shrink-0" />
-              <span className="font-semibold text-emerald-200 flex-1">{activeBeastform.name}</span>
-              <span className="text-[9px] text-emerald-400/70">{activeBeastform.attack}</span>
-            </div>
-          </div>
+          {beastformDisabledReason ? (
+            <Tooltip label={beastformDisabledReason} className="relative block w-full min-w-0">
+              {beastformCard}
+            </Tooltip>
+          ) : (
+            beastformCard
+          )}
 
           {/* Disabled normal weapons */}
           {weapons.length > 0 && (
@@ -1788,63 +1222,82 @@ export function CharacterWeaponList({
             traitScore={traits[(virtualWeapon.trait || '').toLowerCase()] ?? 0}
             onClick={makeClick(virtualWeapon)}
             isVirtual
+            outOfRangeReason={outOfRangeReasonForWeapon(virtualWeapon)}
           />
         )}
 
         {/* Ancestry virtual weapons (Retracting Claws, Kick, etc.) */}
-        {ancestryVirtualWeapons.map((vw, i) => (
-          <WeaponCard
-            key={`ancestry-vw-${i}`}
-            weapon={{ ...vw, effectiveRange: vw.effectiveRange || vw.range || '' }}
-            traitScore={traits[(vw.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(vw)}
-            isVirtual
-          />
-        ))}
+        {ancestryVirtualWeapons.map((vw, i) => {
+          const vwWeapon = { ...vw, effectiveRange: vw.effectiveRange || vw.range || '' };
+          return (
+            <WeaponCard
+              key={`ancestry-vw-${i}`}
+              weapon={vwWeapon}
+              traitScore={traits[(vw.trait || '').toLowerCase()] ?? 0}
+              onClick={makeClick(vw)}
+              isVirtual
+              outOfRangeReason={outOfRangeReasonForWeapon(vwWeapon)}
+            />
+          );
+        })}
 
         {/* Versatile alternate cards */}
-        {versatilePairs.map(({ alternate }, i) => (
-          <WeaponCard
-            key={`versatile-${i}`}
-            weapon={{ ...alternate, effectiveRange: getEffectiveWeaponRange(alternate, el.ancestryFeatures) }}
-            traitScore={traits[(alternate.trait || '').toLowerCase()] ?? 0}
-            onClick={makeClick(alternate)}
-            isVirtual
-          />
-        ))}
+        {versatilePairs.map(({ alternate }, i) => {
+          const altW = { ...alternate, effectiveRange: getEffectiveWeaponRange(alternate, el.ancestryFeatures) };
+          return (
+            <WeaponCard
+              key={`versatile-${i}`}
+              weapon={altW}
+              traitScore={traits[(alternate.trait || '').toLowerCase()] ?? 0}
+              onClick={makeClick(alternate)}
+              isVirtual
+              outOfRangeReason={outOfRangeReasonForWeapon(altW)}
+            />
+          );
+        })}
 
         {/* Otherworldly Physical + Magical variant pairs */}
-        {otherworldlyPairs.map(({ physicalVariant, magicalVariant }, i) => (
-          <div key={`otherworldly-${i}`} className="space-y-1">
-            <WeaponCard
-              weapon={{ ...physicalVariant, effectiveRange: getEffectiveWeaponRange(physicalVariant, el.ancestryFeatures) }}
-              traitScore={traits[(physicalVariant.trait || '').toLowerCase()] ?? 0}
-              onClick={makeClick(physicalVariant)}
-              isVirtual
-            />
-            <WeaponCard
-              weapon={{ ...magicalVariant, effectiveRange: getEffectiveWeaponRange(magicalVariant, el.ancestryFeatures) }}
-              traitScore={traits[(magicalVariant.trait || '').toLowerCase()] ?? 0}
-              onClick={makeClick(magicalVariant)}
-              purple
-            />
-          </div>
-        ))}
+        {otherworldlyPairs.map(({ physicalVariant, magicalVariant }, i) => {
+          const phyW = { ...physicalVariant, effectiveRange: getEffectiveWeaponRange(physicalVariant, el.ancestryFeatures) };
+          const magW = { ...magicalVariant, effectiveRange: getEffectiveWeaponRange(magicalVariant, el.ancestryFeatures) };
+          return (
+            <div key={`otherworldly-${i}`} className="space-y-1">
+              <WeaponCard
+                weapon={phyW}
+                traitScore={traits[(physicalVariant.trait || '').toLowerCase()] ?? 0}
+                onClick={makeClick(physicalVariant)}
+                isVirtual
+                outOfRangeReason={outOfRangeReasonForWeapon(phyW)}
+              />
+              <WeaponCard
+                weapon={magW}
+                traitScore={traits[(magicalVariant.trait || '').toLowerCase()] ?? 0}
+                onClick={makeClick(magicalVariant)}
+                purple
+                outOfRangeReason={outOfRangeReasonForWeapon(magW)}
+              />
+            </div>
+          );
+        })}
 
         {/* Charged variant cards */}
-        {chargedPairs.map(({ chargedVariant }, i) => (
+        {chargedPairs.map(({ chargedVariant }, i) => {
+          const chW = { ...chargedVariant, effectiveRange: getEffectiveWeaponRange(chargedVariant, el.ancestryFeatures) };
+          return (
           <div key={`charged-${i}`}>
             <WeaponCard
-              weapon={{ ...chargedVariant, effectiveRange: getEffectiveWeaponRange(chargedVariant, el.ancestryFeatures) }}
+              weapon={chW}
               traitScore={traits[(chargedVariant.trait || '').toLowerCase()] ?? 0}
               onClick={makeClick(chargedVariant, { _attackerInstanceId: el.instanceId })}
               isVirtual
+              outOfRangeReason={outOfRangeReasonForWeapon(chW)}
             />
             {isStressMaxed && (
               <div className="text-[9px] text-slate-500 pl-5 mt-0.5">Stress maxed — cannot use Charged</div>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {/* Normal weapon cards (skip Otherworldly originals) */}
         {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => {
@@ -1863,6 +1316,7 @@ export function CharacterWeaponList({
               onDevastatingToggle={w.feature?.name === 'Devastating' && onWeaponClick ? onDevastatingToggle : undefined}
               pompousWarning={legacyPompous}
               v2DisableReason={v2DisableReason}
+              outOfRangeReason={outOfRangeReasonForWeapon(w)}
             />
           );
         })}
@@ -1904,8 +1358,8 @@ export function CharacterWeaponList({
             >
               <div className="flex items-center gap-2">
                 <Swords size={10} className="text-amber-500/60 shrink-0" />
-                <span className="font-semibold text-amber-200/80 flex-1">Startling: Force Back</span>
-                <span className="text-[9px] text-amber-400/70 shrink-0">1 Stress</span>
+                <span className="font-semibold text-amber-200/80">Startling: Force Back</span>
+                <FeatureResourceCostIcons action={{ stressCost: 1 }} iconSize={9} className="ml-0.5" />
               </div>
               <div className="text-[10px] mt-0.5 pl-5 text-amber-400/60">
                 Mark a Stress to force all adversaries in Melee back to Close range
@@ -1914,77 +1368,356 @@ export function CharacterWeaponList({
           );
         })}
       </div>
-      {onWeaponClick && selectedExperienceHint && (
-        <p className="text-[9px] text-slate-600 mt-0.5">{selectedExperienceHint}</p>
-      )}
     </Section>
   );
 }
 
 /**
- * Feature list — static display or interactive.
+ * Feature list — guide-driven cards shared with Game Table hover + Library preview.
  *
- * Props:
- *   expandedKeys              — string[] controlled from outside (persisted)
- *   onToggleFeature(key)      — when absent, falls back to local useState
- *   onUseHopeAbility(id)      — makes the Hope ability into an interactive button
- *   onFeatureUse(feature, subFeature?) — makes all features interactive (Use/Announce)
- *   featureUsage              — { [key]: { used, cycle } } usage state map
- *   currentHope               — for gating the Hope ability button
+ * @param {'interactive'|'preview'} [interactionMode] — defaults from presence of handlers
  */
-export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseHopeAbility, onFeatureUse, featureUsage, currentHope, beastformProps, updateFn, onWingsPickUpCarry, activeChanneledElement, prayerDice, onPrayerDieGainHope, onShareFeature, getCardChipContext }) {
+function CharacterFeatureActionsRow({
+  entry,
+  el,
+  v2TableContext,
+  interactionMode,
+  onV2CardChip,
+  onShareFeature,
+  activeChanneledElement,
+  pendingBanners,
+}) {
+  const { model, table: tableForChips } = useMemo(
+    () => buildFeatureCardModelForCharacter(entry.row, el, v2TableContext),
+    [entry.row, el, v2TableContext],
+  );
+  if (!model.cardChips?.length) return null;
+  const stressMaxed =
+    entry.row.name === 'Elemental Incarnation'
+      ? (el.currentStress ?? 0) >= (el.maxStress ?? 6)
+      : undefined;
+  const channel = entry.row.name === 'Elemental Incarnation' ? activeChanneledElement : undefined;
+
+  return (
+    <GuideFeatureCardChips
+      model={model}
+      tableForChips={tableForChips}
+      featRow={entry.row}
+      el={el}
+      featureKey={entry.key}
+      v2TableContext={v2TableContext}
+      interactionMode={interactionMode}
+      onV2CardChip={onV2CardChip}
+      onShareFeature={onShareFeature}
+      activeChanneledElement={channel}
+      stressMaxed={stressMaxed}
+      actionsStripLayout
+      pendingBanners={pendingBanners}
+    />
+  );
+}
+
+/** @returns {boolean} whether any guide feature exposes V2 card chips (Actions tab). */
+export function characterHasFeatureCardActions(el, onV2CardChip, v2TableContext) {
+  const orderedEntries = getOrderedGuideFeatureEntries(el, onV2CardChip);
+  for (const e of orderedEntries) {
+    if (e.kind !== 'guide') continue;
+    const { model } = buildFeatureCardModelForCharacter(e.row, el, v2TableContext);
+    if (model.cardChips?.length) return true;
+  }
+  return false;
+}
+
+function CharacterFeatureActionsBody({
+  el,
+  onV2CardChip,
+  onShareFeature,
+  v2TableContext,
+  interactionMode,
+  activeChanneledElement,
+  pendingBanners,
+}) {
+  const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
+  const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
+
+  return (
+    <div className="flex flex-wrap gap-x-1.5 gap-y-1 items-center content-start">
+      {orderedEntries
+        .filter((e) => e.kind === 'guide')
+        .map((entry) => (
+          <CharacterFeatureActionsRow
+            key={entry.key}
+            entry={entry}
+            el={el}
+            v2TableContext={v2TableContext}
+            interactionMode={mode}
+            onV2CardChip={onV2CardChip}
+            onShareFeature={onShareFeature}
+            activeChanneledElement={activeChanneledElement}
+            pendingBanners={pendingBanners}
+          />
+        ))}
+    </div>
+  );
+}
+
+/**
+ * Sheet-level strip of V2 card chips only (standalone “Actions” section — prefer `CharacterFeaturesPanel`).
+ */
+export function CharacterFeatureActions({
+  el,
+  onV2CardChip,
+  onShareFeature,
+  v2TableContext,
+  interactionMode,
+  activeChanneledElement,
+  pendingBanners,
+}) {
+  const hasAny = useMemo(
+    () => characterHasFeatureCardActions(el, onV2CardChip, v2TableContext),
+    [el, onV2CardChip, v2TableContext],
+  );
+  if (!hasAny) return null;
+  const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
+  return (
+    <Section label="Actions">
+      <CharacterFeatureActionsBody
+        el={el}
+        onV2CardChip={onV2CardChip}
+        onShareFeature={onShareFeature}
+        v2TableContext={v2TableContext}
+        interactionMode={mode}
+        activeChanneledElement={activeChanneledElement}
+        pendingBanners={pendingBanners}
+      />
+    </Section>
+  );
+}
+
+/**
+ * Features region with optional Actions / Details tabs (when any feature has V2 card chips).
+ */
+export function CharacterFeaturesPanel({
+  el,
+  expandedKeys,
+  onToggleFeature,
+  onSetFeatureExpandedKeys,
+  onUseHopeAbility,
+  onFeatureUse,
+  featureUsage,
+  currentHope,
+  updateFn,
+  activeChanneledElement,
+  prayerDice,
+  onPrayerDieGainHope,
+  onShareFeature,
+  onV2CardChip,
+  interactionMode,
+  v2TableContext,
+  pendingBanners,
+}) {
+  const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
+  const hopeFeature = el.hopeFeature || el.hopeAbility;
+  /** Must run every render — do not place after an early return (React #310). */
+  const hasActions = useMemo(
+    () => characterHasFeatureCardActions(el, onV2CardChip, v2TableContext),
+    [el, onV2CardChip, v2TableContext],
+  );
+  const featuresTabStorageKey = el.instanceId ?? el.id ?? '__sheet';
+  const [featuresTab, setFeaturesTab] = useState(() => readFeaturesPanelTab(featuresTabStorageKey));
+  useEffect(() => {
+    setFeaturesTab(readFeaturesPanelTab(featuresTabStorageKey));
+  }, [featuresTabStorageKey]);
+  const setFeaturesTabPersist = useCallback(
+    (tab) => {
+      setFeaturesTab(tab);
+      persistFeaturesPanelTab(featuresTabStorageKey, tab);
+    },
+    [featuresTabStorageKey],
+  );
+  const willEarlyReturn = !orderedEntries.length && !hopeFeature;
+  if (willEarlyReturn) return null;
+  const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
+
+  const tabClass = (id) =>
+    `text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded transition-colors ${
+      featuresTab === id
+        ? 'text-sky-200 bg-sky-950/40 border border-sky-700/50'
+        : 'text-slate-500 hover:text-slate-300 border border-transparent'
+    }`;
+
+  if (!hasActions) {
+    return (
+      <Section label="Features">
+        <CharacterFeatureListContent
+          el={el}
+          expandedKeys={expandedKeys}
+          onToggleFeature={onToggleFeature}
+          onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
+          onUseHopeAbility={onUseHopeAbility}
+          onFeatureUse={onFeatureUse}
+          featureUsage={featureUsage}
+          currentHope={currentHope}
+          updateFn={updateFn}
+          activeChanneledElement={activeChanneledElement}
+          prayerDice={prayerDice}
+          onPrayerDieGainHope={onPrayerDieGainHope}
+          onShareFeature={onShareFeature}
+          onV2CardChip={onV2CardChip}
+          interactionMode={interactionMode}
+          v2TableContext={v2TableContext}
+          pendingBanners={pendingBanners}
+        />
+      </Section>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2 min-w-0">
+        <p className="text-[9px] tracking-widest text-slate-500 font-semibold uppercase shrink-0">Features</p>
+        <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+          <button type="button" className={tabClass('actions')} onClick={() => setFeaturesTabPersist('actions')}>
+            Actions
+          </button>
+          <button type="button" className={tabClass('details')} onClick={() => setFeaturesTabPersist('details')}>
+            Details
+          </button>
+        </div>
+      </div>
+      {featuresTab === 'actions' ? (
+        <CharacterFeatureActionsBody
+          el={el}
+          onV2CardChip={onV2CardChip}
+          onShareFeature={onShareFeature}
+          v2TableContext={v2TableContext}
+          interactionMode={mode}
+          activeChanneledElement={activeChanneledElement}
+          pendingBanners={pendingBanners}
+        />
+      ) : (
+        <CharacterFeatureListContent
+          el={el}
+          expandedKeys={expandedKeys}
+          onToggleFeature={onToggleFeature}
+          onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
+          onUseHopeAbility={onUseHopeAbility}
+          onFeatureUse={onFeatureUse}
+          featureUsage={featureUsage}
+          currentHope={currentHope}
+          updateFn={updateFn}
+          activeChanneledElement={activeChanneledElement}
+          prayerDice={prayerDice}
+          onPrayerDieGainHope={onPrayerDieGainHope}
+          onShareFeature={onShareFeature}
+          onV2CardChip={onV2CardChip}
+          interactionMode={interactionMode}
+          v2TableContext={v2TableContext}
+          pendingBanners={pendingBanners}
+        />
+      )}
+    </div>
+  );
+}
+
+function CharacterFeatureListContent({
+  el,
+  expandedKeys,
+  onToggleFeature,
+  onSetFeatureExpandedKeys,
+  onUseHopeAbility,
+  onFeatureUse,
+  featureUsage,
+  currentHope,
+  updateFn,
+  activeChanneledElement,
+  prayerDice,
+  onPrayerDieGainHope,
+  onShareFeature,
+  onV2CardChip,
+  interactionMode,
+  v2TableContext,
+  pendingBanners,
+}) {
   const [localExpanded, setLocalExpanded] = useState({});
 
-  const allFeatures = [
-    ...(el.classFeatures || []),
-    ...(el.beastformFeatures || []),
-    ...(el.subclassFeatures || []),
-    ...(el.ancestryFeatures || []),
-    ...(el.communityFeatures || []),
-  ];
+  const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
+  const allCardKeys = useMemo(() => orderedEntries.map((e) => e.key), [orderedEntries]);
 
-  // Prefer hopeFeature (CharacterDisplay path) with fallback to hopeAbility (Daggerstack path)
   const hopeFeature = el.hopeFeature || el.hopeAbility;
-  if (!allFeatures.length && !hopeFeature) return null;
+
+  const hopeAbilityRenderedByV2Guide = (() => {
+    if (!onV2CardChip) return false;
+    const hn = resolveHopeFeatureName(el);
+    if (!hn) return false;
+    const row = (el.activeFeatures || []).find((a) => a.name === hn);
+    return !!(row && Array.isArray(row.chips) && row.chips.length > 0);
+  })();
+
+  const mode =
+    interactionMode ??
+    (onFeatureUse || onV2CardChip || onUseHopeAbility || onShareFeature ? 'interactive' : 'preview');
+  const preview = mode === 'preview';
+  const v2Handler = typeof onV2CardChip === 'function' ? onV2CardChip : undefined;
 
   const isOpen = (key) => {
     if (expandedKeys !== undefined) return expandedKeys.includes(key);
     return localExpanded[key] ?? false;
   };
   const toggle = (key) => {
-    if (onToggleFeature) {
-      onToggleFeature(key);
-    } else {
-      setLocalExpanded(prev => ({ ...prev, [key]: !prev[key] }));
-    }
+    if (onToggleFeature) onToggleFeature(key);
+    else setLocalExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const expandAllFeatures = useCallback(() => {
+    if (onSetFeatureExpandedKeys) onSetFeatureExpandedKeys(allCardKeys);
+    else
+      setLocalExpanded((prev) => {
+        const next = { ...prev };
+        for (const k of allCardKeys) next[k] = true;
+        return next;
+      });
+  }, [allCardKeys, onSetFeatureExpandedKeys]);
+
+  const collapseAllFeatures = useCallback(() => {
+    if (onSetFeatureExpandedKeys) onSetFeatureExpandedKeys([]);
+    else
+      setLocalExpanded((prev) => {
+        const next = { ...prev };
+        for (const k of allCardKeys) next[k] = false;
+        return next;
+      });
+  }, [allCardKeys, onSetFeatureExpandedKeys]);
+
   const resolveHopeFeature = () => {
-    let name, desc;
+    let name;
+    let desc;
     if (typeof hopeFeature === 'object') {
       name = hopeFeature.name || el.hopeAbilityName;
       desc = hopeFeature.description || hopeFeature.text || '';
     } else {
       const str = String(hopeFeature);
       const colonIdx = str.indexOf(': ');
-      if (colonIdx > 0) { name = str.slice(0, colonIdx); desc = str.slice(colonIdx + 2); }
-      else { name = el.hopeAbilityName || null; desc = str; }
+      if (colonIdx > 0) {
+        name = str.slice(0, colonIdx);
+        desc = str.slice(colonIdx + 2);
+      } else {
+        name = el.hopeAbilityName || null;
+        desc = str;
+      }
     }
     return { name, desc };
   };
 
   return (
-    <Section label="Features">
-      <div className="space-y-1">
-        {hopeFeature && (() => {
+    <div className="space-y-2">
+        {hopeFeature && !hopeAbilityRenderedByV2Guide && (() => {
           const { name, desc } = resolveHopeFeature();
           const hope = currentHope ?? (el.hope ?? (el.maxHope ?? 6));
           const canUse = hope >= 3;
-          const interactive = !!onUseHopeAbility;
+          const hopeInteractive = !preview && !!onUseHopeAbility;
 
-          if (interactive) {
-            // Route through onFeatureUse if available (applies cost on GM ack, broadcasts notification).
-            // Fall back to direct onUseHopeAbility for legacy callers that don't provide onFeatureUse.
+          if (hopeInteractive) {
             const hopeFeat = { name: name || 'Hope Ability', description: desc || '' };
             const handleClick = onFeatureUse
               ? (e) => canUse && onFeatureUse(hopeFeat, null, e)
@@ -2001,10 +1734,9 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
                     : 'border-slate-700/40 bg-slate-800/30 opacity-40 cursor-not-allowed'
                 }`}
               >
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <Sparkles size={10} className={canUse ? 'text-amber-400' : 'text-slate-500'} />
+                <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                   {name && <span className="text-[11px] font-semibold text-amber-200 leading-tight">{name}</span>}
-                  <span className="ml-auto text-[9px] font-semibold text-amber-400/80 shrink-0">3 Hope</span>
+                  <FeatureResourceCostIcons action={{ hopeCost: 3 }} iconSize={10} className="ml-0.5" />
                 </div>
                 {desc && <MarkdownText text={desc} className="text-[11px] text-slate-300 leading-relaxed dh-md" />}
               </button>
@@ -2013,108 +1745,167 @@ export function CharacterFeatureList({ el, expandedKeys, onToggleFeature, onUseH
 
           return (
             <div className="rounded border border-amber-700/60 bg-amber-950/40 px-2 py-1.5">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <Sparkles size={10} className="text-amber-400" />
+              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                 {name && <span className="text-[11px] font-semibold text-amber-200">{name}</span>}
-                <span className="ml-auto text-[9px] font-semibold text-amber-400/80 shrink-0">3 Hope</span>
+                <FeatureResourceCostIcons action={{ hopeCost: 3 }} iconSize={10} className="ml-0.5" />
               </div>
               {desc && <MarkdownText text={desc} className="text-[11px] text-slate-300 leading-relaxed dh-md" />}
             </div>
           );
         })()}
-        {allFeatures.map((f, i) => {
-          const key = f.sourceType === 'beastform' && f.id ? `bf-${f.id}` : `${f.name}-${i}`;
-          if (f.name === 'Beastform' && (el.class === 'Druid' || el.classId === 'srd-cls-druid') && beastformProps) {
-            return (
-              <BeastformFeatureCard
-                key={key}
-                el={el}
-                feature={f}
-                open={isOpen(key)}
-                onToggle={() => toggle(key)}
-                {...beastformProps}
-              />
-            );
-          }
-          if (v2OriginFeatureDescriptorsByName[f.name]) {
-            const descriptor = v2OriginFeatureDescriptorsByName[f.name];
-            return (
-              <AncestryFeatureCard
-                key={key}
-                feature={f}
-                featureKey={key}
-                open={isOpen(key)}
-                onToggle={() => toggle(key)}
-                onShareFeature={onShareFeature}
-                cardChips={descriptor.chips?.filter(c => c.placement === 'card') || descriptor.cardChips}
-                getCardChipContext={getCardChipContext}
-                el={el}
-                resetsOn={getDisplayResetsOn(descriptor)}
-              />
-            );
-          }
-          const rangerFocusToggle = (f.name === "Ranger's Focus" && el.class === 'Ranger' && updateFn)
-            ? { value: !!el.rangerFocusOnNextAttack, onChange: (v) => updateFn(el.instanceId, { rangerFocusOnNextAttack: v }) }
-            : undefined;
-          const wingsOfLightProps = (f.name === 'Wings of Light' && (el.subclass === 'Winged Sentinel' || f.source === 'Winged Sentinel') && updateFn && onWingsPickUpCarry)
-            ? {
-                flying: !!el.wingsOfLightFlying,
-                onFlyingChange: (v) => updateFn(el.instanceId, { wingsOfLightFlying: v }),
-                onPickUpCarry: () => onWingsPickUpCarry(el),
-                canPickUpCarry: (el.currentStress ?? 0) < (el.maxStress ?? 0),
-              }
-            : undefined;
-          const faerieWingsProps = (f.name === 'Wings' && (f.source === 'Faerie' || f.ancestry === 'Faerie') && updateFn)
-            ? {
-                flying: !!el.faerieWingsFlying,
-                onFlyingChange: (v) => updateFn(el.instanceId, { faerieWingsFlying: v }),
-              }
-            : undefined;
-          const prayerDiceProps = (f.name === 'Prayer Dice' && prayerDice?.length > 0)
-            ? { dice: prayerDice, onGainHope: onPrayerDieGainHope }
-            : undefined;
+        {allCardKeys.length > 0 && (
+          <div className="flex items-center justify-end gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={expandAllFeatures}
+              className="text-[10px] font-medium text-sky-400/90 hover:text-sky-300 hover:underline"
+            >
+              Expand all
+            </button>
+            <span className="text-[10px] text-slate-600 select-none" aria-hidden>
+              |
+            </span>
+            <button
+              type="button"
+              onClick={collapseAllFeatures}
+              className="text-[10px] font-medium text-sky-400/90 hover:text-sky-300 hover:underline"
+            >
+              Collapse all
+            </button>
+          </div>
+        )}
+        {orderedEntries.map((entry) => {
+          const { row } = entry;
+
+          const v2Active = !!v2Handler;
+          const rangerFocusToggle =
+            !v2Active && row.name === "Ranger's Focus" && el.class === 'Ranger' && updateFn
+              ? {
+                  value: !!el.rangerFocusOnNextAttack,
+                  onChange: (v) => updateFn(el.instanceId, { rangerFocusOnNextAttack: v }),
+                }
+              : undefined;
+          const faerieWingsProps =
+            !v2Active &&
+            row.name === 'Wings' &&
+            (row.source === 'Faerie' || el.ancestry === 'Faerie' || (el.ancestry || []).includes('Faerie')) &&
+            updateFn
+              ? {
+                  flying: !!el.faerieWingsFlying,
+                  onFlyingChange: (v) => updateFn(el.instanceId, { faerieWingsFlying: v }),
+                }
+              : undefined;
+          const prayerDiceProps =
+            row.name === 'Prayer Dice' && prayerDice?.length > 0
+              ? { dice: prayerDice, onGainHope: preview ? undefined : onPrayerDieGainHope }
+              : undefined;
+
           return (
-            <FeatureChip
-              key={key}
-              feature={f}
-              open={isOpen(key)}
-              onToggle={() => toggle(key)}
-              onFeatureUse={onFeatureUse}
-              featureUsage={featureUsage}
-              featureKey={key}
-              rangerFocusToggle={rangerFocusToggle}
-              wingsOfLightProps={wingsOfLightProps}
-              faerieWingsProps={faerieWingsProps}
-              activeChanneledElement={f.name === 'Elemental Incarnation' ? (activeChanneledElement ?? null) : undefined}
-              stressMaxed={f.name === 'Elemental Incarnation' ? (el.currentStress ?? 0) >= (el.maxStress ?? 6) : undefined}
+            <GuideFeatureCard
+              key={entry.key}
+              featRow={row}
+              featureKey={entry.key}
+              el={el}
+              open={isOpen(entry.key)}
+              onToggle={() => toggle(entry.key)}
+              interactionMode={mode}
+              onFeatureUse={preview ? undefined : onFeatureUse}
+              onV2CardChip={v2Handler}
+              onShareFeature={preview ? undefined : onShareFeature}
+              activeChanneledElement={
+                row.name === 'Elemental Incarnation' ? (activeChanneledElement ?? null) : undefined
+              }
+              stressMaxed={
+                row.name === 'Elemental Incarnation'
+                  ? (el.currentStress ?? 0) >= (el.maxStress ?? 6)
+                  : undefined
+              }
               prayerDiceProps={prayerDiceProps}
+              rangerFocusToggle={rangerFocusToggle}
+              faerieWingsProps={faerieWingsProps}
+              v2TableContext={v2TableContext}
+              pendingBanners={pendingBanners}
             />
           );
         })}
-      </div>
+    </div>
+  );
+}
+
+export function CharacterFeatureList({
+  el,
+  expandedKeys,
+  onToggleFeature,
+  onSetFeatureExpandedKeys,
+  onUseHopeAbility,
+  onFeatureUse,
+  featureUsage,
+  currentHope,
+  updateFn,
+  activeChanneledElement,
+  prayerDice,
+  onPrayerDieGainHope,
+  onShareFeature,
+  onV2CardChip,
+  interactionMode,
+  v2TableContext,
+  pendingBanners,
+}) {
+  const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
+  const hopeFeature = el.hopeFeature || el.hopeAbility;
+  if (!orderedEntries.length && !hopeFeature) return null;
+  return (
+    <Section label="Features">
+      <CharacterFeatureListContent
+        el={el}
+        expandedKeys={expandedKeys}
+        onToggleFeature={onToggleFeature}
+        onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
+        onUseHopeAbility={onUseHopeAbility}
+        onFeatureUse={onFeatureUse}
+        featureUsage={featureUsage}
+        currentHope={currentHope}
+        updateFn={updateFn}
+        activeChanneledElement={activeChanneledElement}
+        prayerDice={prayerDice}
+        onPrayerDieGainHope={onPrayerDieGainHope}
+        onShareFeature={onShareFeature}
+        onV2CardChip={onV2CardChip}
+        interactionMode={interactionMode}
+        v2TableContext={v2TableContext}
+        pendingBanners={pendingBanners}
+      />
     </Section>
   );
 }
 
-export function CharacterAbilityList({ el, updateActiveElement }) {
+/**
+ * Domain cards — guide-driven (same card component as Features).
+ */
+export function CharacterAbilityList({
+  el,
+  expandedKeys,
+  onToggleFeature,
+  onFeatureUse,
+  featureUsage,
+  onV2DomainChip,
+  v2TableContext,
+}) {
+  const [localExpanded, setLocalExpanded] = useState({});
   const abilities = el.abilities || [];
   if (!abilities.length) return null;
   const inBeastform = !!el.activeBeastform;
-  const interactive = typeof updateActiveElement === 'function' && !!el.instanceId;
 
-  const getFeatureState = (featureName) => {
-    const get = (key, defaultVal) => {
-      const bag = el._originFeatureState?.[featureName];
-      return bag != null && key in bag ? bag[key] : defaultVal;
-    };
-    const set = (key, value) => {
-      const current = el._originFeatureState ?? {};
-      const featureBag = current[featureName] ?? {};
-      const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
-      updateActiveElement(el.instanceId, { _originFeatureState: next });
-    };
-    return { get, set };
+  const isOpen = (key) => {
+    if (expandedKeys !== undefined) return expandedKeys.includes(key);
+    return localExpanded[key] ?? false;
   };
+  const toggle = (key) => {
+    if (onToggleFeature) onToggleFeature(key);
+    else setLocalExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const mode = onV2DomainChip || onFeatureUse ? 'interactive' : 'preview';
 
   return (
     <Section label="Domain Cards">
@@ -2124,81 +1915,36 @@ export function CharacterAbilityList({ el, updateActiveElement }) {
           <span>Domain cards disabled while in Beastform</span>
         </div>
       )}
-      <div className={`space-y-1 ${inBeastform ? 'opacity-30 pointer-events-none select-none' : ''}`}>
+      <div className={`space-y-2 ${inBeastform ? 'opacity-30 pointer-events-none select-none' : ''}`}>
         {abilities.map((a, i) => {
-          const featRow = el.activeFeatures?.find((f) => f.type === 'ability' && f.name === a.name);
-          const cardChips =
-            interactive && featRow?.chips?.length
-              ? featRow.chips.filter((c) => c.placement === 'card')
-              : [];
+          const key = `ability-${a.id ?? i}`;
+          const featRow =
+            el.activeFeatures?.find((f) => f.type === 'ability' && f.name === a.name) || {
+              name: a.name,
+              description: a.description || '',
+              type: 'ability',
+              sourceType: 'domain',
+              source: [a.domain, a.type, `Lvl ${a.level}`].filter(Boolean).join(' · '),
+            };
           return (
-          <div key={a.id || i} className="rounded border border-violet-700/50 bg-violet-950/30 px-2 py-1.5">
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="font-semibold text-violet-200">{a.name}</span>
-              <span className="text-[9px] text-violet-400/70">{a.domain} · Lvl {a.level}</span>
-              {a.type && <span className="text-[9px] text-slate-500 ml-auto">{a.type}</span>}
+            <div
+              key={a.id || key}
+              className="rounded-lg overflow-hidden bg-violet-950/25 border-t border-violet-400/35"
+            >
+              <GuideFeatureCard
+                featRow={featRow}
+                featureKey={key}
+                el={el}
+                open={isOpen(key)}
+                onToggle={() => toggle(key)}
+                interactionMode={mode}
+                onFeatureUse={onFeatureUse}
+                featureUsage={featureUsage}
+                onV2CardChip={onV2DomainChip}
+                v2TableContext={v2TableContext}
+                tone="domain"
+              />
             </div>
-            {a.description && (
-              <div className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
-                <MarkdownText text={a.description} className="dh-md" />
-              </div>
-            )}
-            {cardChips.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {cardChips.map((chip, ci) => {
-                  const fk = chip._featureKey ?? `${featRow.name}-${ci}`;
-                  const used =
-                    chip.resetsOn &&
-                    el.featureUsage?.[fk]?.used &&
-                    el.featureUsage?.[fk]?.cycle === chip.resetsOn;
-                  const maxS = el.maxStress ?? 6;
-                  const curS = el.currentStress ?? 0;
-                  const canStress = !chip.stressCost || maxS - curS >= chip.stressCost;
-                  const disabled = used || !canStress;
-                  return (
-                    <button
-                      key={chip.label || ci}
-                      type="button"
-                      disabled={disabled}
-                      title={chip.description}
-                      onClick={() => {
-                        if (disabled) return;
-                        const patch = {};
-                        if (chip.stressCost) {
-                          patch.currentStress = Math.min(curS + chip.stressCost, maxS);
-                        }
-                        if (chip.hopeCost) {
-                          const maxH = el.maxHope ?? 6;
-                          const curH = el.hope ?? maxH;
-                          patch.hope = Math.max(0, curH - chip.hopeCost);
-                        }
-                        if (chip.resetsOn && fk) {
-                          patch.featureUsage = { ...(el.featureUsage || {}), [fk]: { used: true, cycle: chip.resetsOn } };
-                        }
-                        if (Object.keys(patch).length) updateActiveElement(el.instanceId, patch);
-                        const fs = getFeatureState(featRow.name);
-                        const feature = { ...featRow, ...fs };
-                        if (typeof chip.onUse === 'function') {
-                          chip.onUse({
-                            character: el,
-                            feature,
-                            roll: null,
-                            characters: null,
-                            system: null,
-                          });
-                        }
-                      }}
-                      className="text-[10px] rounded px-1.5 py-0.5 border border-violet-600/60 bg-violet-900/40 text-violet-100 hover:bg-violet-800/50 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {chip.label}
-                      {chip.stressCost ? ` · ${chip.stressCost} Stress` : ''}
-                      {chip.resetsOn === 'rest' ? ' · 1/rest' : ''}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
           );
         })}
       </div>
@@ -2253,9 +1999,8 @@ export function CharacterCompanion({ el }) {
 /**
  * Card-style companion sheet for hover second card and stacked Library display.
  * Props: companion (object), onStressChange (optional), onAttackRoll (optional), onActRoll (optional — Spellcast roll, no damage),
- *   selectedExperienceIndex (optional), onSelectExperience (optional), characterHope (optional — chips disabled when 0).
  */
-export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActRoll, selectedExperienceIndex, onSelectExperience, characterHope }) {
+export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActRoll }) {
   if (!companion) return null;
   const maxStress = companion.maxStress ?? 3;
   const currentStress = companion.currentStress ?? 0;
@@ -2306,39 +2051,17 @@ export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActR
           )}
         </Section>
         {experiences.length > 0 && (
-          <Section label={onSelectExperience ? 'Experiences (click to add to attack)' : 'Experiences'} labelUppercase={!onSelectExperience}>
+          <Section label="Experiences">
             <div className="flex flex-wrap gap-1">
-              {experiences.map((exp, i) => {
-                const selected = selectedExperienceIndex === i;
-                const noHope = (characterHope ?? 1) === 0;
-                const disabled = onSelectExperience && noHope && !selected;
-                if (onSelectExperience) {
-                  return (
-                    <button
-                      key={exp.id || i}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => onSelectExperience(selected ? null : i)}
-                      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors
-                        ${disabled ? 'opacity-35 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500' : 'cursor-pointer'}
-                        ${!disabled && selected ? 'bg-sky-900/60 border-sky-600 text-sky-200 ring-1 ring-sky-500/50' : ''}
-                        ${!disabled && !selected ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-slate-600' : ''}`}
-                    >
-                      {exp.name}
-                      {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
-                    </button>
-                  );
-                }
-                return (
-                  <span
-                    key={exp.id || i}
-                    className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
-                  >
-                    {exp.name}
-                    {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
-                  </span>
-                );
-              })}
+              {experiences.map((exp, i) => (
+                <span
+                  key={exp.id || i}
+                  className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
+                >
+                  {exp.name}
+                  {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
+                </span>
+              ))}
             </div>
           </Section>
         )}
@@ -2368,13 +2091,12 @@ export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActR
  * Full character detail pane for use in ItemDetailModal display side.
  */
 export function CharacterDetailPane({ item, srdData }) {
-  const v2SheetLive = useV2DeclarativeSheetEnabledLive();
   const el = useMemo(() => {
     const raw = item || {};
     if (!srdData) return raw;
     const base = recomputeCharacter(raw, srdData);
     return mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
-  }, [item, srdData, v2SheetLive]);
+  }, [item, srdData]);
   const { complete, missing } = isCharacterComplete(el, srdData ? { srdData } : undefined);
   return (
     <div className="flex flex-col gap-3">
@@ -2387,11 +2109,11 @@ export function CharacterDetailPane({ item, srdData }) {
           </div>
         )}
         <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+          <CharacterDefenseRow el={el} />
           <CharacterTraitGrid el={el} />
           <CharacterExperiences el={el} />
-          <CharacterDefenseRow el={el} />
           <CharacterWeaponList el={el} />
-          <CharacterFeatureList el={el} />
+          <CharacterFeaturesPanel el={el} />
           <CharacterAbilityList el={el} />
           <CharacterInventory el={el} />
           {el.background && (

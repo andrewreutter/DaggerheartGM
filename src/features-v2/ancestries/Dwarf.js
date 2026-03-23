@@ -4,7 +4,7 @@
  * SRD source: daggerheart-srd/ancestries/Dwarf.md
  */
 
-import { when, isTargeted, hasPhysicalDamage } from '../engine/when.js';
+import { when, isTargeted, hasPhysicalDamage, youTakeMinorDamage } from '../engine/when.js';
 
 export const ThickSkin = {
   name: 'Thick Skin',
@@ -13,15 +13,7 @@ export const ThickSkin = {
   chips: [
     when(
       isTargeted,
-      (table) => {
-        const dmg = table.action?.effects?.find(
-          (e) =>
-            e.stat === 'currentHP' &&
-            e.target?.instanceId === table.me?.instanceId &&
-            e.amount === 1
-        );
-        return !!dmg;
-      },
+      youTakeMinorDamage,
       {
         description: 'Mark 2 Stress instead of marking 1 Hit Point.',
         placements: ['reviewOutcome'],

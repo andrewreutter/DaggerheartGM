@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 /** Token top-left to center offset (5×5' token). */
 const TOKEN_HALF_FT = 2.5;
@@ -50,12 +50,9 @@ export const Long = {
     "This weapon's attack targets all adversaries in a line within range.",
   hooks: {
     onResolve: when(
-      isActing,
       usingLongWeapon,
-      (table) =>
-        table.action?.type === 'attack' &&
-        table.rolls?.action?.isSuccess === true &&
-        table.action?.target?.isAdversary === true,
+      youSucceedOnAnAttack,
+      (table) => table.action?.target?.isAdversary === true,
       (table) => {
         const me = table.me;
         const primary = table.action?.target;

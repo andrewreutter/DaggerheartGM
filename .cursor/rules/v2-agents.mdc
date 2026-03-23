@@ -15,9 +15,12 @@ When the user's message matches one of these phrases, read the referenced prompt
 | **Validate features** | `docs/agent-prompts/validation-agent.md` | Follow its ON STARTUP + ON EVERY BATCH protocol, then claim and validate a batch. |
 | **Fix features** | `docs/agent-prompts/fixit-agent.md` | Follow its ON STARTUP + ON EVERY FIX protocol, then claim and fix one issue. |
 | **Unblock features** | `docs/agent-prompts/unblocking-agent.md` | Follow its ON STARTUP + ON EVERY RESOLUTION protocol, then claim and resolve one blocked item. |
+| **Human approval queue** | `docs/agent-prompts/human-approval-queue-agent.md` | Present **Blocked/API** active rows (**design approval**) and **`Awaiting Human`** feature rows (**fix approval**) **one at a time** in Cursor (`npm run v2:human-queue`); after **approve** or **reject** / **reject-design**, update the tracker per row kind (`reject` → **`Needs Fix`** + notes for fix rows). Not a CLI — user interacts in chat. |
 
 After the initial dispatch, **Continue** means "re-read the prompt and do the next unit of work" per each agent's ON CONTINUE section.
 
 V2 agents must **not** tell the user “what’s next” in the migration pipeline or list upcoming claimable rows — `docs/v2-migration-tracker.md` (**Agent output**) is explicit; summaries cover completed work only (Work Agent still announces **mode + counts**).
+
+**Human approval queue** is separate from **Fix features** — it handles **Blocked/API** table rows (design sign-off) and **Awaiting Human** feature rows (fix merge/sign-off → usually **Validated**).
 
 These are the ONLY magic phrases. Do not infer agent behavior from other phrasing unless the user explicitly asks you to read one of the prompt files.

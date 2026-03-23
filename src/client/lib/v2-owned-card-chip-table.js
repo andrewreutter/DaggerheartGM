@@ -1,0 +1,243 @@
+/**
+ * Shared Game Table path for V2 card chips (hover sheet + character panel).
+ */
+
+import { postActionNotification, postLifeSupportSelect, postTableOp } from './api.js';
+import { buildActionForFeatureUse } from './feature-actions.js';
+import { activateV2OwnedCardChip } from './v2-cross-sheet-lifecycle.js';
+import { applyV2LifecycleMutations } from './table-ops.js';
+import { getFeatureUsageCycleForV2Chip } from '../../features-v2/engine/chip-system.js';
+import { getFeatureUsageKeyForGuideFeature } from './feature-usage-key.js';
+import { v2RollDieExtrasFromActionLoopPayload } from './v2-action-notification-dice.js';
+
+/**
+ * Apply engine mutations from a successful {@link activateV2OwnedCardChip} result (post `postTableOp` + optional action-loop banners).
+ * @returns {boolean} — false if the result was an error path
+ */
+export function applyV2OwnedCardChipEngineResultToTable({
+  result,
+  featRow,
+  passedFeatureKey,
+  el,
+  activeElementsForV2Snapshots,
+  tableId,
+  onActionLoopNotification,
+}) {
+  const { mutations, error, engineChip } = result;
+  if (
+    error === 'disabled' ||
+    error === 'unaffordable' ||
+    error === 'no-matching-chip' ||
+    error === 'no-feature' ||
+    error === 'needs-selection'
+  ) {
+    return false;
+  }
+  const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+    activeElementsForV2Snapshots,
+    mutations,
+    el.instanceId
+  );
+  const usageCycle = engineChip ? getFeatureUsageCycleForV2Chip(engineChip) : null;
+  const usageKey = passedFeatureKey || featRow.name;
+  if (usageCycle && usageKey) {
+    const ownerEl = activeElementsForV2Snapshots.find((e) => e.instanceId === el.instanceId);
+    const baseline = { ...(ownerEl?.featureUsage || el.featureUsage || {}) };
+    const hit = updates.find((u) => u.instanceId === el.instanceId);
+    const mergedFu = { ...baseline, ...(hit?.updates?.featureUsage || {}), [usageKey]: { used: true, cycle: usageCycle } };
+    if (hit) {
+      hit.updates = { ...hit.updates, featureUsage: mergedFu };
+    } else {
+      updates.push({ instanceId: el.instanceId, updates: { featureUsage: mergedFu } });
+    }
+  }
+  if (updates.length > 0) {
+    postTableOp({ op: 'update-elements', updates }, tableId);
+  }
+  for (const p of actionLoopNotifications) {
+    const baseDesc = p.description || '';
+    const actionText =
+      p.affectedSummary && String(p.affectedSummary).trim()
+        ? `${baseDesc}\n${p.affectedSummary}`
+        : baseDesc;
+    onActionLoopNotification?.({
+      _action: true,
+      rollUser: p.rollUser || 'Table',
+      actionName: p.title,
+      actionText,
+      _v2ActionLoop: true,
+      _reactorInstanceId: p.instanceId,
+      ...v2RollDieExtrasFromActionLoopPayload(p),
+      ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+        ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+        : {}),
+    });
+  }
+  return true;
+}
+
+/**
+ * GM ack: apply deferred **toggle** chip state (`gameTableDeferUntilBannerAck` + `isToggle`) using the
+ * frozen `_v2DeferToggleNext` value from the action banner.
+ */
+export async function applyDeferredV2ToggleOnAckFromRoll({
+  roll,
+  displayEl,
+  el,
+  activeElementsForV2Snapshots,
+  v2Registry,
+  tableFeatureState,
+  fearCount,
+  mapConfig,
+  tableId,
+  onActionLoopNotification,
+}) {
+  const normalized =
+    roll._v2DeferUntilBannerAck === true && typeof roll._v2DeferToggleNext === 'boolean'
+      ? roll
+      : roll._wingsOfLightFlightDefer === true
+        ? {
+            ...roll,
+            _v2DeferUntilBannerAck: true,
+            _v2DeferFeatureName: 'Wings of Light',
+            _v2DeferChipName: 'Flying',
+            _v2DeferToggleNext: roll._wingsOfLightFlightNext === true,
+          }
+        : null;
+  if (!normalized) return false;
+  roll = normalized;
+  const featName = roll._v2DeferFeatureName || roll._featureName || roll.actionName;
+  const chipName = roll._v2DeferChipName;
+  if (!featName || chipName == null || String(chipName) === '') return false;
+
+  const result = activateV2OwnedCardChip(
+    displayEl,
+    featName,
+    { name: chipName },
+    activeElementsForV2Snapshots,
+    v2Registry,
+    {
+      tableFeatureState,
+      fearCount,
+      mapConfig,
+      selectOpts: {},
+      forceApply: true,
+      committedToggleIsOn: roll._v2DeferToggleNext,
+    }
+  );
+
+  const featRow = { name: featName };
+  const passedFeatureKey = roll._featureKey;
+  return applyV2OwnedCardChipEngineResultToTable({
+    result,
+    featRow,
+    passedFeatureKey,
+    el,
+    activeElementsForV2Snapshots,
+    tableId,
+    onActionLoopNotification,
+  });
+}
+
+/**
+ * @param {object} args
+ * @param {object} args.featRow
+ * @param {object} args.chip
+ * @param {string} [args.passedFeatureKey]
+ * @param {object} [args.selectOpts]
+ * @param {object} args.displayEl — merged display character (recompute + V2 overlay)
+ * @param {object} args.el — table character element
+ * @param {object[]} args.activeElementsForV2Snapshots
+ * @param {object} args.v2Registry
+ * @param {object} [args.tableFeatureState]
+ * @param {number} [args.fearCount]
+ * @param {object|null} [args.mapConfig]
+ * @param {string} [args.tableId]
+ * @param {(n: object) => void} [args.onActionLoopNotification] — e.g. GMTableView handleActionNotification
+ */
+export async function runV2OwnedCardChipTableAction({
+  featRow,
+  chip,
+  passedFeatureKey,
+  selectOpts,
+  displayEl,
+  el,
+  activeElementsForV2Snapshots,
+  v2Registry,
+  tableFeatureState,
+  fearCount,
+  mapConfig,
+  tableId,
+  onActionLoopNotification,
+}) {
+  if (!v2Registry || !el?.instanceId || !Array.isArray(activeElementsForV2Snapshots)) return;
+  if (!featRow?.name || !chip) return;
+  const result = activateV2OwnedCardChip(displayEl, featRow.name, chip, activeElementsForV2Snapshots, v2Registry, {
+    tableFeatureState,
+    fearCount,
+    mapConfig,
+    selectOpts,
+  });
+  if (result.deferToBannerAck) {
+    const action = buildActionForFeatureUse(displayEl, featRow, null);
+    const featName = featRow.name;
+    const activeDesc = featRow.description || '';
+    const truncDesc = activeDesc.length > 150 ? activeDesc.slice(0, 150) + '…' : activeDesc;
+    const fk = passedFeatureKey || getFeatureUsageKeyForGuideFeature(el, featName) || featName;
+    const engineChip = result.engineChip;
+    const chipLabel =
+      typeof engineChip?.name === 'string' && engineChip.name
+        ? engineChip.name
+        : typeof chip?.name === 'string'
+          ? chip.name
+          : featName;
+    const isToggleDefer = result.deferredToggleNextIsOn !== undefined;
+    const notification = {
+      _action: true,
+      rollUser: el.name,
+      actionName: featName,
+      actionText: isToggleDefer
+        ? `${chipLabel}: ${result.deferredToggleNextIsOn ? 'turn on' : 'turn off'} (awaiting GM).`
+        : truncDesc,
+      tags: [
+        ...(action.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${action.hopeCost} Hope` }] : []),
+        ...(action.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${action.stressCost} Stress` }] : []),
+        ...(action.armorClear > 0 ? [{ name: 'ArmorClear', text: `Clear ${action.armorClear} Armor slot` }] : []),
+        ...(action.armorMark > 0 ? [{ name: 'ArmorMark', text: `Mark ${action.armorMark} Armor slot` }] : []),
+      ],
+      _featureUse: !isToggleDefer,
+      _attackerInstanceId: el.instanceId,
+      _featureName: featName,
+      _subFeatureName: null,
+      _hopeCost: action.hopeCost,
+      _stressCost: action.stressCost,
+      _armorMark: action.armorMark,
+      _armorClear: action.armorClear,
+      _frequency: action.frequency,
+      _featureKey: fk,
+      _targetType: action.targetType,
+      _v2DeferUntilBannerAck: true,
+      _v2DeferFeatureName: featName,
+      _v2DeferChipName: chipLabel,
+      ...(isToggleDefer ? { _v2DeferToggleNext: result.deferredToggleNextIsOn } : {}),
+    };
+    try {
+      const resp = await postActionNotification(notification, tableId);
+      const rid = resp?._rollDbId;
+      const tid = selectOpts?.selectedTargetIds?.[0];
+      if (rid != null && tid && tableId) postLifeSupportSelect(tableId, rid, tid).catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+    return;
+  }
+  applyV2OwnedCardChipEngineResultToTable({
+    result,
+    featRow,
+    passedFeatureKey,
+    el,
+    activeElementsForV2Snapshots,
+    tableId,
+    onActionLoopNotification,
+  });
+}

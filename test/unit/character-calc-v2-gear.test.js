@@ -1,7 +1,7 @@
 /**
  * character-calc gear: passiveStatMods resolve only from `src/features-v2` weapon_properties / armor_properties.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -19,34 +19,16 @@ describe('computeWeaponModifiers (V2 gear registry)', () => {
     feature: { name: 'Cumbersome', description: '-1 to Finesse' },
   };
 
-  beforeEach(() => {
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
-  });
-
-  afterEach(() => {
-    delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
-  });
-
   it('applies V2 flat passiveStatMods (Cumbersome: -1 finesse)', () => {
     const out = computeWeaponModifiers([cumbersomeWeapon]);
     expect(out.traits.finesse).toBe(-1);
     expect(out.sources.some((s) => s.stat === 'finesse' && s.value === -1)).toBe(true);
   });
 
-  it('does not depend on the V2 declarative sheet localStorage flag', () => {
-    delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
-    const out = computeWeaponModifiers([cumbersomeWeapon]);
-    expect(out.traits.finesse).toBe(-1);
-  });
 });
 
 describe('computeArmorModifiers (V2 armor_properties only)', () => {
-  afterEach(() => {
-    delete globalThis.__DH_V2_DECLARATIVE_SHEET__;
-  });
-
   it('Quiet: stealth roll modifier from V2 passiveStatMods', () => {
-    globalThis.__DH_V2_DECLARATIVE_SHEET__ = true;
     const armor = {
       name: 'Tyris Soft Armor',
       features: [{ name: 'Quiet', description: 'You gain a +2 bonus to rolls you make to move silently.' }],

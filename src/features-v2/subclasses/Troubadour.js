@@ -46,13 +46,18 @@ export const GiftedPerformer = {
       isDisabled: (table) => {
         const cap = giftedPerformerUseCap(table);
         const uses = table.feature.get('relaxingUses') ?? 0;
-        if (uses >= cap) return true;
-        return selfAndAlliesInClose(table).every((c) => {
-          const hp = c.currentHP;
-          const max = c.maxHP;
-          if (hp == null || max == null) return true;
-          return hp >= max;
-        });
+        if (uses >= cap) return `Relaxing Song already used (${cap} per long rest).`;
+        if (
+          selfAndAlliesInClose(table).every((c) => {
+            const hp = c.currentHP;
+            const max = c.maxHP;
+            if (hp == null || max == null) return true;
+            return hp >= max;
+          })
+        ) {
+          return 'You and allies in Close range have no marked HP to clear.';
+        }
+        return false;
       },
       onUse(table) {
         for (const c of selfAndAlliesInClose(table)) {
@@ -72,8 +77,9 @@ export const GiftedPerformer = {
       isDisabled: (table) => {
         const cap = giftedPerformerUseCap(table);
         const uses = table.feature.get('epicUses') ?? 0;
-        if (uses >= cap) return true;
-        return adversariesInClose(table).length === 0;
+        if (uses >= cap) return `Epic Song already used (${cap} per long rest).`;
+        if (adversariesInClose(table).length === 0) return 'No adversary in Close range.';
+        return false;
       },
       onUse(table, chip) {
         const ids = chip.get('selectedTargetIds') || [];
@@ -92,13 +98,18 @@ export const GiftedPerformer = {
       isDisabled: (table) => {
         const cap = giftedPerformerUseCap(table);
         const uses = table.feature.get('heartbreakingUses') ?? 0;
-        if (uses >= cap) return true;
-        return selfAndAlliesInClose(table).every((c) => {
-          const h = c.hope;
-          const max = c.maxHope;
-          if (h == null || max == null) return true;
-          return h >= max;
-        });
+        if (uses >= cap) return `Heartbreaking Song already used (${cap} per long rest).`;
+        if (
+          selfAndAlliesInClose(table).every((c) => {
+            const h = c.hope;
+            const max = c.maxHope;
+            if (h == null || max == null) return true;
+            return h >= max;
+          })
+        ) {
+          return 'You and allies in Close range are at max Hope.';
+        }
+        return false;
       },
       onUse(table) {
         for (const c of selfAndAlliesInClose(table)) {
@@ -122,6 +133,7 @@ export const Maestro = {
     'Your rallying songs steel the courage of those who listen. When you give a Rally Die to an ally, they can gain a Hope or clear a Stress.',
   hooks: {
     onSessionStart(table) {
+      // Cross-feature: state lives on the Bard **Rally** bag, not the Troubadour subclass scope — use setFeatureState.
       queueInternalMutation(table, 'setFeatureState', {
         featureKey: 'Rally',
         key: 'maestroRallyChoices',
@@ -142,11 +154,12 @@ export const Maestro = {
       ],
       isDisabled: (table) => {
         const id = table.me?.instanceId;
-        if (!id) return true;
+        if (!id) return 'No character.';
         const row = table.featureState?.Rally?.maestroRallyChoices;
-        if (!row || typeof row !== 'object') return true;
-        if (!Object.prototype.hasOwnProperty.call(row, id)) return true;
-        return row[id] !== null;
+        if (!row || typeof row !== 'object') return 'Maestro choices are not available yet (after Bard Rally).';
+        if (!Object.prototype.hasOwnProperty.call(row, id)) return 'You were not part of this Rally.';
+        if (row[id] !== null) return 'You already chose Hope or Stress for this Rally.';
+        return false;
       },
       onUse(table, chip) {
         const meId = table.me?.instanceId;

@@ -39,6 +39,21 @@ export const getAuthToken = async () => {
   return currentUser.getIdToken();
 };
 
+/** V2 feature module source (read-only). `relativePath` e.g. `classes/Bard.js` under `src/features-v2/`. */
+export const fetchFeatureSource = async (relativePath) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams({ path: relativePath });
+  const res = await fetch(`/api/features-v2/source?${params}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /**
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
@@ -547,6 +562,25 @@ export const postCharacterUpdate = async (tableId, instanceId, updates) => {
   return res.json();
 };
 
+/**
+ * Player: activate a V2 cross-sheet card chip (e.g. Bard Rally clear stress on this character’s sheet).
+ * Server recomputes mutations from chipKey — same effect as GM `postTableOp` + action banners.
+ */
+export const postV2CrossSheetChip = async (tableId, body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${tableId}/v2-cross-sheet-chip`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /** Player: add a new character to the table (auto-assigned to self). */
 export const postAddCharacter = async (tableId, charData) => {
   const token = await getAuthToken();
@@ -682,7 +716,7 @@ export const postHopeDieUpgrade = async (_rollMeta) => Promise.resolve();
  * Player: toggle ancestry feature reroll request on a banner (set or clear _felineRerollRequestedBy).
  * tableId identifies the table. Returns { ok: true, requested: boolean } on success, or undefined on failure.
  */
-export const postBannerFelineRerollRequest = async (tableId, bannerId) => {
+export const postBannerGenericRerollRequest = async (tableId, bannerId) => {
   const token = await getAuthToken();
   if (!token) return;
   try {
@@ -695,8 +729,11 @@ export const postBannerFelineRerollRequest = async (tableId, bannerId) => {
   } catch { return undefined; }
 };
 
-/** Generic alias for postBannerFelineRerollRequest (ancestry feature IoC system). */
-export const postBannerFeatureRequest = postBannerFelineRerollRequest;
+/** @deprecated Use postBannerGenericRerollRequest (same implementation). */
+export const postBannerFelineRerollRequest = postBannerGenericRerollRequest;
+
+/** Generic alias (ancestry feature IoC system). */
+export const postBannerFeatureRequest = postBannerGenericRerollRequest;
 
 /**
  * GM: reroll Hope and Fear dice only (Ranger's Focus). Focus is cleared by the client before calling.
@@ -766,6 +803,45 @@ export const postBannerAddDamage = async (bannerId, { extraDamage, extraDamageLa
   }
   const data = await res.json();
   return data.roll;
+};
+
+/**
+ * GM: V2 action-pool bonus die (e.g. Wordsmith Heart of a Poet). Patches pending banner sub-items and total in place.
+ * Hope/Stress costs are applied client-side before this call.
+ */
+export const postBannerActionAddDie = async (bannerId, { die, name, tableId = null }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const body = { bannerId, die, name: name ?? 'Bonus', tableId: tableId || undefined };
+  const res = await fetch('/api/room/my/banner-action-add-die', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * GM: V2 action-pool static bonus (e.g. Seraph Prayer Die face). Patches pending banner sub-items and total in place; no die roll.
+ */
+export const postBannerActionAddStatic = async (bannerId, { value, name, tableId = null }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const body = { bannerId, value, name: name ?? 'Bonus', tableId: tableId || undefined };
+  const res = await fetch('/api/room/my/banner-action-add-static', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
 };
 
 /**
@@ -847,112 +923,6 @@ export const postBannerWingsD8Toggle = async (tableId, bannerId, value) => {
  * Syncs _holdThemOffActive to the roll; all clients receive updated banner via subscription.
  * Returns { ok: true, active: boolean } on success.
  */
-/**
- * GM or player: select a Prayer Die for add-to-roll or damage-reduction on a banner.
- * Pass addRollDie and/or dmgReduceDie (die object or null to clear).
- * All clients receive updated banner via subscription.
- */
-// opts: { addRollDie?: die|null, dmgReduceDie?: die|null } — only specified keys are patched on the roll.
-export const postBannerPrayerDieSelect = async (tableId, bannerId, opts = {}) => {
-  const token = await getAuthToken();
-  if (!token) return;
-  try {
-    const res = await fetch(`/api/room/${tableId}/banner-prayer-die-select`, {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, ...opts }),
-    });
-    return res.ok ? res.json() : undefined;
-  } catch { return undefined; }
-};
-
-/**
- * GM or player: toggle Rally Die "add to roll" or "add to damage" on a pending banner.
- * field: '_rallyDieAddToRoll' | '_rallyDieAddToDamage'; value: boolean.
- * All clients receive updated banner via subscription.
- */
-export const postBannerRallyToggle = async (tableId, bannerId, field, value) => {
-  const token = await getAuthToken();
-  if (!token) return;
-  try {
-    const res = await fetch(`/api/room/${tableId}/banner-rally-toggle`, {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, field, value }),
-    });
-    return res.ok ? res.json() : undefined;
-  } catch { return undefined; }
-};
-
-/**
- * GM: acknowledge a Rally Die banner toggle — cancel the current banner, remove the Rally Die,
- * create a copy banner with the die added to roll/damage.
- * Returns { ok: true } on success.
- */
-export const postBannerRallyAck = async (bannerId, opts = {}) => {
-  const token = await getAuthToken();
-  if (!token) return;
-  try {
-    const res = await fetch('/api/room/my/banner-rally-ack', {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, tableId: opts.tableId, ...opts }),
-    });
-    return res.ok ? res.json() : undefined;
-  } catch { return undefined; }
-};
-
-/**
- * GM: Heart of a Poet (Wordsmith) — acknowledge a Heart of a Poet banner toggle.
- * Cancels original banner, decrements 1 Hope, rolls 1d4, creates copy banner with d4 added.
- */
-export const postBannerHeartD4Ack = async (bannerId, tableId = null) => {
-  const token = await getAuthToken();
-  if (!token) return;
-  try {
-    const res = await fetch('/api/room/my/banner-heart-d4-ack', {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, tableId }),
-    });
-    return res.ok ? res.json() : undefined;
-  } catch { return undefined; }
-};
-
-/**
- * GM: Heart of a Poet (Wordsmith) — spend 1 Hope and roll 1d4 for a non-attack action roll banner.
- * Patches _heartOfAPoetAddD4 and _heartOfAPoetD4Result on the roll; notifies banners + table_state.
- * @deprecated Use postBannerHeartD4Ack for the Ack-intercept pattern.
- */
-export const postBannerHeartD4 = async (bannerId, tableId = null) => {
-  const token = await getAuthToken();
-  if (!token) return;
-  try {
-    const res = await fetch('/api/room/my/banner-heart-d4', {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, tableId }),
-    });
-    return res.ok ? res.json() : undefined;
-  } catch { return undefined; }
-};
-
-/**
- * Player: Heart of a Poet — toggle intent to add d4 on a non-attack action roll banner (shared state).
- */
-export const postBannerHeartD4Toggle = async (tableId, bannerId, value) => {
-  const token = await getAuthToken();
-  if (!token) return;
-  try {
-    const res = await fetch(`/api/room/${tableId}/banner-heart-d4-toggle`, {
-      method: 'POST',
-      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ bannerId, value }),
-    });
-    return res.ok ? res.json() : undefined;
-  } catch { return undefined; }
-};
-
 export const postBannerHoldThemOff = async (tableId, bannerId, active) => {
   const token = await getAuthToken();
   if (!token) return;

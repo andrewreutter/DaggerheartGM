@@ -2,12 +2,26 @@ import { describe, it, expect } from 'vitest';
 import {
   collectChips,
   activateChip,
+  commitToggleChipToState,
+  computeToggleNextIsOn,
+  readPersistedToggleIsOn,
+  inferToggleScope,
+  getV2ToggleStateKey,
   deductChipCosts,
   trackChipFrequency,
   resetChipFrequency,
   makeChipState,
   resolveChipDisabled,
+  evaluateIsDisabled,
+  getChipDisableHint,
+  canPayChipCosts,
+  buildChipsForFeature,
+  hasDeclarativeSheetRepresentation,
+  mapV2ChipFrequencyToFeatureUsageCycle,
+  getFeatureUsageCycleForV2Chip,
 } from '../../../../src/features-v2/engine/chip-system.js';
+import { Privilege } from '../../../../src/features-v2/communities/Highborne.js';
+import { RetractingClaws } from '../../../../src/features-v2/ancestries/Katari.js';
 import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
 import { mockTable, mockGameState, mockCharacter } from '../helpers.js';
@@ -168,6 +182,7 @@ describe('collectChips()', () => {
     const table = mockTable();
     const chips = collectChips([feature], 'card', table);
     expect(chips[0]._featureName).toBe('Cool Feature');
+    expect(chips[0]._featureSource).toBeUndefined();
     expect(chips[0]._ownerInstanceId).toBe('char-99');
   });
 
@@ -198,11 +213,121 @@ describe('collectChips()', () => {
     const chips = collectChips([feature], 'card', mockTable());
     expect(chips[0].disabled).toBe(true);
   });
+
+  it('sets disabled when Hope cost exceeds current Hope', () => {
+    const char = mockCharacter({ instanceId: 'char-1', hope: 0 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const feature = {
+      name: 'Costly',
+      _ownerInstanceId: 'char-1',
+      hopeCost: 1,
+      onUse: () => {},
+    };
+    const chips = collectChips([feature], 'card', table);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].disabled).toBe(false);
+    expect(chips[0].resourceUnaffordable).toBe(true);
+  });
+
+  it('sets disabled when Stress cost exceeds empty Stress boxes', () => {
+    const char = mockCharacter({ instanceId: 'char-1', currentStress: 5, maxStress: 6 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const feature = {
+      name: 'Stressy',
+      _ownerInstanceId: 'char-1',
+      stressCost: 2,
+      onUse: () => {},
+    };
+    const chips = collectChips([feature], 'card', table);
+    expect(chips[0].resourceUnaffordable).toBe(true);
+  });
+
+  it('sets disabled when armorMark exceeds free armor slots', () => {
+    const char = mockCharacter({
+      instanceId: 'char-1',
+      currentArmor: 3,
+      maxArmor: 3,
+    });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const feature = {
+      name: 'ArmorSpend',
+      _ownerInstanceId: 'char-1',
+      armorMark: 1,
+      onUse: () => {},
+    };
+    const chips = collectChips([feature], 'card', table);
+    expect(chips[0].resourceUnaffordable).toBe(true);
+  });
+
+  it('sets disabled when armorClear exceeds marked armor slots', () => {
+    const char = mockCharacter({
+      instanceId: 'char-1',
+      currentArmor: 0,
+      maxArmor: 3,
+    });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const feature = {
+      name: 'ClearArmor',
+      _ownerInstanceId: 'char-1',
+      armorClear: 1,
+      onUse: () => {},
+    };
+    const chips = collectChips([feature], 'card', table);
+    expect(chips[0].resourceUnaffordable).toBe(true);
+  });
+
+  it('sets disabled when gold cost exceeds carried gold', () => {
+    const char = mockCharacter({ instanceId: 'char-1', gold: 0 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    const feature = {
+      name: 'Greedy',
+      _ownerInstanceId: 'char-1',
+      goldCost: 1,
+      onUse: () => {},
+    };
+    const chips = collectChips([feature], 'card', table);
+    expect(chips[0].resourceUnaffordable).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // resolveChipDisabled
 // ---------------------------------------------------------------------------
+
+describe('canPayChipCosts()', () => {
+  it('is true when table.me is missing', () => {
+    const table = buildTableSnapshot({});
+    expect(canPayChipCosts({ hopeCost: 99 }, table)).toBe(true);
+  });
+
+  it('evaluates function-valued costs', () => {
+    const char = mockCharacter({ instanceId: 'char-1', hope: 2 });
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    expect(
+      canPayChipCosts(
+        {
+          hopeCost: (t) => (t.feature.get('x') ?? 1),
+        },
+        table
+      )
+    ).toBe(true);
+    table.feature.set('x', 3);
+    expect(
+      canPayChipCosts(
+        {
+          hopeCost: (t) => (t.feature.get('x') ?? 1),
+        },
+        table
+      )
+    ).toBe(false);
+  });
+});
 
 describe('resolveChipDisabled()', () => {
   it('is false when isDisabled is omitted', () => {
@@ -212,6 +337,32 @@ describe('resolveChipDisabled()', () => {
   it('evaluates isDisabled as a function', () => {
     const chip = { isDisabled: () => true };
     expect(resolveChipDisabled(chip, mockTable())).toBe(true);
+  });
+
+  it('honors pre-resolved disabled boolean (e.g. from collectChips) before isDisabled', () => {
+    expect(resolveChipDisabled({ disabled: true, isDisabled: () => false }, mockTable())).toBe(true);
+    expect(resolveChipDisabled({ disabled: false, isDisabled: () => true }, mockTable())).toBe(false);
+  });
+
+  it('treats isDisabled string as disabled with message', () => {
+    expect(resolveChipDisabled({ isDisabled: 'Reason A' }, mockTable())).toBe(true);
+    expect(evaluateIsDisabled({ isDisabled: 'Reason A' }, mockTable())).toEqual({
+      disabled: true,
+      message: 'Reason A',
+    });
+  });
+
+  it('treats isDisabled function returning string as disabled with message', () => {
+    const chip = { isDisabled: () => 'No targets.' };
+    expect(resolveChipDisabled(chip, mockTable())).toBe(true);
+    expect(evaluateIsDisabled(chip, mockTable())).toEqual({ disabled: true, message: 'No targets.' });
+    expect(getChipDisableHint(chip, mockTable())).toBe('No targets.');
+  });
+
+  it('treats isDisabled function returning empty string as not disabled', () => {
+    const chip = { isDisabled: () => '' };
+    expect(resolveChipDisabled(chip, mockTable())).toBe(false);
+    expect(getChipDisableHint(chip, mockTable())).toBe(null);
   });
 });
 
@@ -639,5 +790,135 @@ describe('makeChipState()', () => {
     const cs2 = makeChipState();
     cs1.set('x', 1);
     expect(cs2.get('x')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapV2ChipFrequencyToFeatureUsageCycle / getFeatureUsageCycleForV2Chip
+// ---------------------------------------------------------------------------
+
+describe('mapV2ChipFrequencyToFeatureUsageCycle()', () => {
+  it('maps session, shortRest, rest, longRest for table featureUsage clears', () => {
+    expect(mapV2ChipFrequencyToFeatureUsageCycle('session')).toBe('session');
+    expect(mapV2ChipFrequencyToFeatureUsageCycle('shortRest')).toBe('rest');
+    expect(mapV2ChipFrequencyToFeatureUsageCycle('rest')).toBe('rest');
+    expect(mapV2ChipFrequencyToFeatureUsageCycle('longRest')).toBe('longRest');
+    expect(mapV2ChipFrequencyToFeatureUsageCycle(undefined)).toBeNull();
+    expect(mapV2ChipFrequencyToFeatureUsageCycle('unknown')).toBeNull();
+  });
+});
+
+describe('getFeatureUsageCycleForV2Chip()', () => {
+  it('prefers frequency over resetsOn', () => {
+    expect(getFeatureUsageCycleForV2Chip({ frequency: 'session', resetsOn: 'rest' })).toBe('session');
+  });
+
+  it('uses resetsOn when frequency is absent', () => {
+    expect(getFeatureUsageCycleForV2Chip({ resetsOn: 'rest' })).toBe('rest');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildChipsForFeature
+// ---------------------------------------------------------------------------
+
+describe('buildChipsForFeature()', () => {
+  it('returns no synthetic card chips for declarative advantage-only features', () => {
+    expect(buildChipsForFeature(Privilege)).toEqual([]);
+  });
+
+  it('still synthesizes a narrative card chip when there is no declarative sheet representation', () => {
+    const row = { name: 'Narrative', description: 'Flavor only.' };
+    const chips = buildChipsForFeature(row);
+    expect(chips).toHaveLength(1);
+    expect(chips[0].name).toBe('Narrative');
+    expect(chips[0].placements).toEqual(['card']);
+    expect(chips[0].narrativeBannerOnly).toBe(true);
+  });
+
+  it('returns no synthetic card chips for virtualWeapons-only features', () => {
+    expect(buildChipsForFeature(RetractingClaws)).toEqual([]);
+    expect(hasDeclarativeSheetRepresentation(RetractingClaws)).toBe(true);
+  });
+
+  it('returns no synthetic card chips when static passiveStatMods are present', () => {
+    const row = {
+      name: 'StatStick',
+      description: '+1 Evasion',
+      passiveStatMods: { evasion: 1 },
+    };
+    expect(buildChipsForFeature(row)).toEqual([]);
+    expect(hasDeclarativeSheetRepresentation(row)).toBe(true);
+  });
+});
+
+describe('computeToggleNextIsOn / commitToggleChipToState', () => {
+  it('computeToggleNextIsOn matches one logical flip from framework toggle key (feature bag)', () => {
+    const chip = {
+      isToggle: true,
+      name: 'TestChip',
+      placements: ['card'],
+      _featureName: 'TestFeature',
+      onUse: () => {},
+    };
+    const key = getV2ToggleStateKey({ name: 'TestFeature' }, chip);
+    const tableOff = mockTable({
+      featureState: { TestFeature: { [key]: false } },
+      _featureKey: 'TestFeature',
+    });
+    expect(computeToggleNextIsOn(chip, tableOff)).toBe(true);
+    const tableOn = mockTable({
+      featureState: { TestFeature: { [key]: true } },
+      _featureKey: 'TestFeature',
+    });
+    expect(computeToggleNextIsOn(chip, tableOn)).toBe(false);
+  });
+
+  it('inferToggleScope maps raw feature + sibling activeFeature to source bag (subclass)', () => {
+    const wsRow = {
+      sourceScopeKey: 'WingedSentinel',
+      features: [{ name: 'Wings of Light' }, { name: 'Ethereal Visage' }],
+    };
+    const flightChip = { name: 'Flight', placements: ['card'] };
+    const rawWings = { name: 'Wings of Light' };
+    const ethereal = { name: 'Ethereal Visage', _source: 'subclass', _sourceObject: wsRow };
+    expect(inferToggleScope(flightChip, rawWings, { activeFeature: ethereal })).toBe('source');
+  });
+
+  it('readPersistedToggleIsOn reads subclass scope (source bag) when _featureSource is subclass', () => {
+    const chip = {
+      name: 'Flight',
+      placements: ['card'],
+      _featureName: 'Wings of Light',
+      _featureSource: 'subclass',
+    };
+    const key = getV2ToggleStateKey({ name: 'Wings of Light', _source: 'subclass' }, chip);
+    const table = mockTable({
+      featureState: { WingedSentinel: { [key]: true } },
+      _featureKey: 'Wings of Light',
+      _activeFeature: {
+        name: 'Wings of Light',
+        _source: 'subclass',
+        _sourceScopeKey: 'WingedSentinel',
+      },
+      _sourceObject: {},
+    });
+    expect(readPersistedToggleIsOn(chip, table)).toBe(true);
+  });
+
+  it('commitToggleChipToState invokes onUse with the committed isOn', () => {
+    const writes = [];
+    const chip = {
+      isToggle: true,
+      onUse: (table, cs) => {
+        writes.push(cs.isOn);
+      },
+    };
+    const table = mockTable();
+    commitToggleChipToState(chip, table, true, {});
+    expect(writes).toEqual([true]);
+    writes.length = 0;
+    commitToggleChipToState(chip, table, false, {});
+    expect(writes).toEqual([false]);
   });
 });

@@ -53,9 +53,9 @@ table.me.markStress(1);
 
 ## CONV-003 — Passive properties must use the declarative API
 
-Features whose only effect is a stat modifier, a virtual weapon, a movement
-mode, or a damage affinity must use the corresponding declarative key
-(`passiveStatMods`, `virtualWeapons`, `movementModes`, `damageAffinities`).
+Features whose only effect is a stat modifier, a virtual weapon, or a damage
+affinity must use the corresponding declarative key
+(`passiveStatMods`, `virtualWeapons`, `damageAffinities`).
 Using a hook to replicate what a declarative property already does is wrong.
 
 ```js
@@ -67,6 +67,10 @@ onIntent(table) {
 // ✓ Good
 passiveStatMods: { evasion: 1 }
 ```
+
+**`virtualSource` / `virtualSources`:** Optional registry refs `{ collection, id }` expanded in **`applyDeclarativeFeatures`** (phase 1) via the same pipeline as **`loadCharacterFeatures`** for supported collections (e.g. **`beastforms`** → annotated sub-feature rows). Supports `when()` and resolver functions `(table, feature, character, ctx)` — same `ctx` as **`virtualWeapon`**. Example: Druid **Beastform** uses **`virtualSources`** to inject the active beastform’s sub-features.
+
+**Virtual sub-features:** Use **`virtualSource` / `virtualSources`** registry refs in **`applyDeclarativeFeatures`** (see **`expandVirtualSourceRef`** in [`feature-loader.js`](../src/features-v2/engine/feature-loader.js)).
 
 ---
 
@@ -262,6 +266,16 @@ The mutation queued is `{ type: 'addDisadvantageDie', payload: { rollKey, name }
 
 ---
 
+## CONV-027 — `youDeal*` HP-tier predicates vs `youSucceedOnAnAttack`
+
+**`youDealMinorDamage`**, **`youDealMajorDamage`**, and **`youDealSevereDamage`** (`when.js`) each include **`youAreTheActor`** and inspect pending **`{ stat: 'currentHP' }`** on **`table.action.target`**. In the normal Game Table flow, that pending HP loss is only present after a hit is resolved, so **do not** also add **`youSucceedOnAnAttack`** to the same `when()` chain — it is redundant.
+
+**Exception:** **`youDeal*`** does not assert **`table.action.type === 'attack'`**. If the SRD must fire only on weapon attacks and not on other flows that could synthesize `currentHP` effects, add **`(table) => table.action?.type === 'attack'`** explicitly.
+
+This complements **CONV-025**: that rule applies when a feature keys off **`rolls.action.isSuccess`** without already having threshold-resolved pending HP on the target. Features that only run at **`reviewOutcome`** (or equivalent) with hydrated **`currentHP`** effects should prefer **`youDeal*`** over duplicating success checks.
+
+---
+
 ## CONV-026 — When iterating effects, always scope to the correct target
 
 When iterating `table.action?.effects` to modify or react to effects, always check `e.target?.instanceId` against the intended target(s). Never mutate all effects that match a `stat` + `amount` condition alone — the effects array can contain entries for the attacker, allies, or other bystanders.
@@ -424,13 +438,15 @@ target.move(
     t.action.target != null &&
     t.action.attacker != null &&
     t.action.target.rangeFrom(t.action.attacker) === 'veryClose',
-  'Kick'
+  'Very Close range from attacker',
+  'Kick — knockback.'
 );
 
 // ✓ Good — rangeFrom returns null when positions unknown; === 'veryClose' is then false
 table.action?.target?.move(
   (t) => t.action.target?.rangeFrom(t.action.attacker) === 'veryClose',
-  'Kick'
+  'Very Close range from attacker',
+  'Kick — knockback.'
 );
 ```
 
@@ -616,16 +632,24 @@ When the SRD says **adversaries** must succeed on a **reaction roll** against a 
 
 ---
 
-## CONV-029 — Engine core must not encode SRD feature names
+## CONV-029 — Engine core and V2 bridge code must not encode specific SRD features
 
-**Applies to:** `src/features-v2/engine/table.js`, `chip-system.js`, `action-loop.js`, `when.js`, and other **framework** modules that build snapshots and run hooks — not to individual feature files under `src/features-v2/**/`.
+**Applies to:**
 
-The engine must **never** branch on **SRD display names** or string literals like `'Hopeful'`, `'Reinforced'`, `'Sturdy'`, etc. Features are identified by **declarative keys** and **merged state** on elements, not by the framework looking up “does this character have Hopeful?”
+- **Engine / framework:** `src/features-v2/engine/**` (`table.js`, `chip-system.js`, `action-loop.js`, `when.js`, `feature-loader.js`, merge helpers, etc.) — anything that builds snapshots, runs hooks, or loads rows for **all** characters.
+- **Shared client integration:** `src/client/lib/v2-*.js`, `applyV2BannerMutations` / `applyV2LifecycleMutations` / related paths in `table-ops.js`, `game-table-mechanics.js`, and **generic** normalization in `normalize-persisted-character-element.js` (migrating **legacy** keys is OK; adding **new** one-off branches for a single current feature is not).
+
+**Does not apply to:** Individual feature modules under `src/features-v2/classes/`, `subclasses/`, `abilities/`, etc. — those files **should** name their own `name` and SRD-specific logic.
+
+**Does not apply to:** `registry.js` / barrel `index.js` **import-and-re-export** wiring only — but those files must not add **runtime branches** keyed to specific feature names or IDs.
+
+The shared layer must **never** branch on **SRD display names**, **feature name** string literals (`'Hopeful'`, `'Rally'`, `'Sturdy'`, …), or **`srd-*` IDs** to special-case one card or class. Features are driven by **declarative keys**, **documented mutation shapes**, **`featureState`**, and **hooks** defined on the feature row — not by the framework asking “is this Rally?”
 
 ```js
 // ✗ Bad — framework knows a specific feature by name
 if (element.armorMods?.Hopeful) { ... }
 if (names.includes('Hopeful')) { ... }
+if (classId === 'srd-cls-bard') { ... } // in engine/ or v2-action-loop-bridge.js
 
 // ✓ Good — feature file sets a generic mechanism flag; loader merges it
 // Hopeful.js: { name: 'Hopeful', substituteArmorForHope: true, ... }
@@ -635,7 +659,9 @@ if (names.includes('Hopeful')) { ... }
 // used during rendering, not in table.js string checks for marketing names
 ```
 
-**Why:** The framework stays reusable and testable; new armor properties or renames do not require editing core engine files.
+**Why:** The framework stays reusable and testable; new features or renames do not require editing core engine or bridge files.
+
+**Cursor rule:** `.cursor/rules/v2-framework-boundaries.mdc` (always applied).
 
 **Related:** Authoring guide documents merged fields (e.g. `substituteArmorForHope` on the element from `applyDeclarativeFeatures`).
 
@@ -740,7 +766,7 @@ export const features = [Agile, Fragile];
 
 ## CONV-035 — Shared option state: `table.source.get` / `table.source.set`
 
-For **class**, **subclass**, **ancestry**, and **community** options, the registry row may define **`sourceScopeKey`** (one string bag name under `character.featureState`). **`loadCharacterFeatures`** copies that onto each feature as **`_sourceScopeKey`** and sets **`_sourceObject`** to the row; **`buildTableSnapshot`** can also take the scope from **`_sourceObject.sourceScopeKey`** alone. While evaluating a feature from that option, **`table.source`** is the registry row **plus** `get(key)` and `set(key, value)` that read/write that shared bag and queue **`setFeatureState`** — same mechanism as manual `queueInternalMutation(table, 'setFeatureState', { featureKey, key, value })`, but author-facing. Do **not** repeat **`_sourceScopeKey`** on every feature export unless you have a test harness without the loader; use **`_sourceScopeKey`** or **`_sourceObject: { sourceScopeKey }`** only in those tests. Do not put runtime state on the raw registry object; only use `table.source.set`.
+For **class**, **subclass**, **ancestry**, **community**, **weapon**, **armor**, **ability**, **item**, **consumable**, and **beastform** registry rows, **`loadCharacterFeatures`** always assigns **`_sourceScopeKey`**: explicit non-empty **`sourceScopeKey`** on the row wins; otherwise **`${collection}:${id}`** (stable, collision-free). It sets **`_sourceObject`** to the row. **`buildTableSnapshot`** resolves the scope from **`activeFeature._sourceScopeKey`** or **`_sourceObject.sourceScopeKey`**. While evaluating a feature from that row, **`table.source`** is the registry row **plus** `get(key)` and `set(key, value)` that read/write **`featureState[scope]`** and queue **`setFeatureState`** — same mechanism as manual `queueInternalMutation(table, 'setFeatureState', { featureKey, key, value })`, but author-facing. Prefer **`table.source`** for shared state; reserve raw **`setFeatureState`** queues for engine internals. In **tests** without the loader, pass **`_sourceScopeKey`** / **`_sourceObject`** manually. Do not put runtime state on the raw registry object; only use `table.source.set`.
 
 ```js
 // ✓ Good — shared Warden subclass state
@@ -751,3 +777,70 @@ queueInternalMutation(table, 'setFeatureState', { featureKey: 'WardenOfTheElemen
 ```
 
 **Related:** Feature Authoring Guide §2.1 (`table.source`).
+
+---
+
+## CONV-036 — Character sheet hover rolls: `clientHoverUseRoll`
+
+The client does **not** infer dice from free-form feature prose for rolls. For a **Use** click that should post a **single-bracket** server roll from the hover card, set optional **`clientHoverUseRoll`** on the registry feature object merged into `activeFeatures`: **`'duality'`** (Hope `[d12]` Fear `[d12]` only) or a **single** expression string the server accepts (e.g. **`'d6'`**, **`'2d4'`**). Spellcast DC / opposed spellcast for banner rolls come from **`enrichHoverActionMeta`** on the merged row (description patterns) or explicit fields on the registry row, not from ad-hoc prose dice regex.
+
+---
+
+## CONV-037 — Optional `displayName` for sheet card titles only
+
+**`name`** remains the stable SRD identifier (engine keys, usage, chip parent keys). For **guide cards** (`GuideFeatureCard` / Actions strip), set optional **`displayName`**: a **string** or **`(table) => string`** receiving the same `table` snapshot as V2 card chips. The client **`resolveFeatureDisplayName`** in `src/client/lib/build-feature-card-model.js` defaults to **`name`** when omitted. Do not use `displayName` to change mechanical identity — only human-visible titles.
+
+```js
+// ✓ Good — Druid Beastform shows the active form in the card title
+{
+  name: 'Beastform',
+  displayName(table) {
+    if (!table.me?.inBeastform) return 'Beastform';
+    const n = table.me.activeBeastformDisplayName;
+    return n ? `Beastform — ${n}` : 'Beastform';
+  },
+  // ...
+}
+
+// ✗ Bad — never replace `name` with a function; keys must stay stable strings
+```
+
+---
+
+## CONV-038 — Game Table: defer card-chip `onUse` until GM banner ack
+
+For features where **Hope/resource spend and `onUse` mutations must apply only after the GM acknowledges** the use notification (same pipeline as manual track edits), set **`gameTableDeferUntilBannerAck: true`** on the **card-phase** chip object. **`activateV2OwnedCardChip`** returns **`{ deferToBannerAck: true, mutations: [] }`** after target/cost validation — it does **not** call **`deductChipCosts`** or **`activateChip`**. The client posts an **action banner** (e.g. via `postActionNotification`) and applies server state on ack; use **`postLifeSupportSelect`** when the flow needs a stable **`rollDbId` → target** link for pending UI (Seraph **Life Support**).
+
+**Action banner fields** (set by `runV2OwnedCardChipTableAction`): `_v2DeferUntilBannerAck: true`, `_v2DeferFeatureName`, `_v2DeferChipName`. For **`isToggle`** chips, also **`_v2DeferToggleNext`** (boolean — tentative on/off after ack) and **`deferredToggleNextIsOn`** on the defer result from the engine. **`GuideFeatureCard`** uses **`getPendingV2DeferToggleNext(pendingBanners, instanceId, featureName, chipName)`** so every deferred toggle shows tentative checked/unchecked until ack. GM ack applies via **`applyDeferredV2ToggleOnAckFromRoll`** → **`commitToggleChipToState`** (frozen banner intent). Legacy **`_wingsOfLightFlightDefer`** / **`_wingsOfLightFlightNext`** are still read for old pending rows.
+
+```js
+// ✓ Good — Seraph Life Support: Hope + heal apply on GM ack, not on chip click
+{
+  placements: ['card'],
+  gameTableDeferUntilBannerAck: true,
+  hopeCost: 3,
+  selectTargets: (table) => /* ... */,
+  onUse(table, chip) { /* runs in engine tests; Game Table defers */ },
+}
+```
+
+---
+
+## CONV-039 — `youTake*` incoming HP-tier predicates vs `isTargeted`
+
+**`youTakeMinorDamage`**, **`youTakeMajorDamage`**, and **`youTakeSevereDamage`** ([`when.js`](../src/features-v2/engine/when.js)) detect pending **`{ stat: 'currentHP' }`** effects whose **target is `table.me`**. They do **not** assert **`isTargeted`** / **`againstYou`** (the defender might be represented differently in edge cases).
+
+When the SRD means “when an attack succeeds **against you**” or “when you take X damage” from a resolved hit, compose **`when(isTargeted, youTakeSevereDamage, …)`** (or the appropriate tier) so the reaction only runs when the feature owner is in **`action.targets`**.
+
+This complements **CONV-027** — **`youDeal*`** is for **outgoing** threshold HP to the **primary target**; **`youTake*`** is for **incoming** HP to **you**.
+
+---
+
+## CONV-040 — `featureUsage` keys must match Guide `entry.key`
+
+On the Game Table, **`character.featureUsage[stableKey]`** drives session/rest “used” state for **GuideFeatureCard** chips. The **`stableKey`** must be **identical** to **`entry.key`** from **`getOrderedGuideFeatureEntries`** ([`guide-feature-entries.js`](../src/client/lib/guide-feature-entries.js)) — e.g. `class-Rally-0` or an explicit SRD **`id`**, not a parallel scheme like `Rally-0`.
+
+- Use **`getFeatureUsageKeyForGuideFeature(el, featureName)`** from [`feature-usage-key.js`](../src/client/lib/feature-usage-key.js) when building roll meta, defer-banner **`_featureKey`**, or **`handleFeatureUse`** paths. It returns Guide **`entry.key`**, **`ability-…`**, or a stable **`Name-idx`** fallback for features not listed in the guide.
+- Persisted table rows may still carry old **`Rally-0`**-style keys until **`normalizePersistedCharacterElement`** (see [`normalize-persisted-character-element.js`](../src/client/lib/normalize-persisted-character-element.js), applied in **`resolveCharacterElements`**) rewrites them on load.
+- Do **not** duplicate index math (`findIndex` across flattened class/subclass lists) in multiple files; it drifts from the Guide and breaks “used” vs engine state (e.g. Rally dice granted but Grant still clickable).
+

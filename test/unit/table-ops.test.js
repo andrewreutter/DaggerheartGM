@@ -13,10 +13,13 @@ import {
   TABLE_STATE_V2_ROOT_KEYS,
   applyV2ActiveModifierMutations,
   applyV2BannerMutations,
+  applyV2LifecycleMutations,
+  formatV2RollDieMutationLine,
   partitionV2BannerChipMutations,
   normalizeV2BannerChipMutations,
 } from '../../src/client/lib/table-ops.js';
 import { computeArmorModifiers, getEffectiveWeaponRange } from '../../src/client/lib/character-calc.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../src/features-v2/engine/feature-scope-keys.js';
 
 // ---------------------------------------------------------------------------
 // applyTableOp — GM-side state transformations
@@ -291,6 +294,7 @@ describe('CHARACTER_RUNTIME_KEYS', () => {
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerEmail');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerUid');
     expect(CHARACTER_RUNTIME_KEYS).toContain('playerName');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('prayerDice');
   });
 
   it('does NOT contain base-data keys that should come from the library', () => {
@@ -352,6 +356,18 @@ describe('character resolution logic', () => {
     expect(resolved.tokenY).toBe(20);
     expect(resolved.instanceId).toBe('inst-1');
     expect(resolved.elementType).toBe('character');
+  });
+
+  it('preserves prayerDice pool when merging library (Seraph)', () => {
+    const stored = {
+      id: 'char-1',
+      instanceId: 'inst-1',
+      elementType: 'character',
+      prayerDice: { pool: [2, 3, 4] },
+    };
+    const library = [{ id: 'char-1', name: 'Seraph', class: 'Seraph' }];
+    const [resolved] = resolveElements([stored], library);
+    expect(resolved.prayerDice).toEqual({ pool: [2, 3, 4] });
   });
 
   it('falls back to stored data when library character is not found', () => {
@@ -515,23 +531,23 @@ describe('applyV2ActiveModifierMutations', () => {
   it('appends a modifier with id+name', () => {
     const els = [char('c1')];
     const next = applyV2ActiveModifierMutations(els, [
-      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'rally-die-c1', name: 'Rally Die', dice: 'd6', type: 'rally' } } },
+      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'mod-a', name: 'Bonus Die', dice: 'd6', type: 'test' } } },
     ]);
-    expect(next[0].activeModifiers).toEqual([{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd6', type: 'rally' }]);
+    expect(next[0].activeModifiers).toEqual([{ id: 'mod-a', name: 'Bonus Die', dice: 'd6', type: 'test' }]);
   });
 
   it('replaces modifier with same id (upsert)', () => {
-    const els = [char('c1', [{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd6' }])];
+    const els = [char('c1', [{ id: 'mod-a', name: 'Bonus Die', dice: 'd6' }])];
     const next = applyV2ActiveModifierMutations(els, [
-      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'rally-die-c1', name: 'Rally Die', dice: 'd8' } } },
+      { type: 'appendActiveModifier', payload: { instanceId: 'c1', modifier: { id: 'mod-a', name: 'Bonus Die', dice: 'd8' } } },
     ]);
-    expect(next[0].activeModifiers).toEqual([{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd8' }]);
+    expect(next[0].activeModifiers).toEqual([{ id: 'mod-a', name: 'Bonus Die', dice: 'd8' }]);
   });
 
   it('removeActiveModifier drops by id', () => {
-    const els = [char('c1', [{ id: 'rally-die-c1', name: 'Rally Die', dice: 'd6' }])];
+    const els = [char('c1', [{ id: 'mod-a', name: 'Bonus Die', dice: 'd6' }])];
     const next = applyV2ActiveModifierMutations(els, [
-      { type: 'removeActiveModifier', payload: { instanceId: 'c1', id: 'rally-die-c1' } },
+      { type: 'removeActiveModifier', payload: { instanceId: 'c1', id: 'mod-a' } },
     ]);
     expect(next[0].activeModifiers).toEqual([]);
   });
@@ -589,6 +605,31 @@ describe('applyV2BannerMutations', () => {
     expect(updates[0].updates.featureState.Rally).toEqual({ granted: true });
   });
 
+  it('clears legacy element activeBeastform when Druid scoped activeBeastform is set to null', () => {
+    const activeElements = [
+      {
+        instanceId: 'c1',
+        elementType: 'character',
+        featureState: { [SRD_CLASS_DRUID_SCOPE_KEY]: { activeBeastform: { beastformId: 'x' } } },
+        activeBeastform: { name: 'Wolf' },
+        selectedBeastformAdvantage: 'Keen',
+      },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [
+        {
+          type: 'setFeatureState',
+          payload: { featureKey: SRD_CLASS_DRUID_SCOPE_KEY, key: 'activeBeastform', value: null },
+        },
+      ],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.activeBeastform).toBeNull();
+    expect(updates[0].updates.selectedBeastformAdvantage).toBeNull();
+  });
+
   it('applies gainHope', () => {
     const activeElements = [{ instanceId: 'c1', elementType: 'character', hope: 2, maxHope: 6 }];
     const { updates, skipped } = applyV2BannerMutations(
@@ -598,6 +639,248 @@ describe('applyV2BannerMutations', () => {
     );
     expect(skipped).toHaveLength(0);
     expect(updates).toEqual([{ instanceId: 'c1', updates: { hope: 4 } }]);
+  });
+
+  it('applies markStress to an adversary (Warden Water splash, etc.)', () => {
+    const activeElements = [
+      { instanceId: 'adv-splash', elementType: 'adversary', currentStress: 0, maxStress: 6 },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'markStress', payload: { instanceId: 'adv-splash', amount: 1 } }],
+      undefined
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates).toEqual([{ instanceId: 'adv-splash', updates: { currentStress: 1 } }]);
+  });
+
+  it('applies clearStress to an adversary', () => {
+    const activeElements = [
+      { instanceId: 'adv-1', elementType: 'adversary', currentStress: 3, maxStress: 6 },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'clearStress', payload: { instanceId: 'adv-1', amount: 2 } }],
+      undefined
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates).toEqual([{ instanceId: 'adv-1', updates: { currentStress: 1 } }]);
+  });
+
+  it('clearStress applies when mutation instanceId matches library id (canonical table instanceId)', () => {
+    const activeElements = [
+      {
+        instanceId: 'table-ally',
+        id: 'lib-ally',
+        elementType: 'character',
+        currentStress: 3,
+        maxStress: 6,
+      },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'clearStress', payload: { instanceId: 'lib-ally', amount: 2 } }],
+      'table-bard'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates).toEqual([{ instanceId: 'table-ally', updates: { currentStress: 1 } }]);
+  });
+
+  it('applies move mutation as v2PendingMove on the mover element', () => {
+    const activeElements = [{ instanceId: 'adv-1', elementType: 'adversary', name: 'Goblin' }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [
+        {
+          type: 'move',
+          payload: {
+            instanceId: 'adv-1',
+            desiredCondition: 'In Melee range from attacker',
+            description: 'Pull into Melee.',
+            rollDbId: 1001,
+            conditionFn: () => true,
+          },
+        },
+      ],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.v2PendingMove).toMatchObject({
+      rollDbId: 1001,
+      moverInstanceId: 'adv-1',
+      desiredCondition: 'In Melee range from attacker',
+      description: 'Pull into Melee.',
+      conditionMet: false,
+    });
+  });
+
+  it('move mutation with freezeOtherInstanceId locks the other actor moveDisabledSources', () => {
+    const activeElements = [
+      { instanceId: 'c-att', elementType: 'character', name: 'Faun' },
+      { instanceId: 'c-tgt', elementType: 'character', name: 'Goblin' },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [
+        {
+          type: 'move',
+          payload: {
+            instanceId: 'c-att',
+            desiredCondition: 'Very Close range',
+            description: '',
+            rollDbId: 42,
+            conditionFn: () => true,
+            freezeOtherInstanceId: 'c-tgt',
+            freezeReason: 'Kick: pending map position',
+          },
+        },
+      ],
+      'c-att'
+    );
+    expect(skipped).toHaveLength(0);
+    const byId = Object.fromEntries(updates.map((u) => [u.instanceId, u.updates]));
+    expect(byId['c-att'].v2PendingMove).toMatchObject({
+      rollDbId: 42,
+      frozenInstanceId: 'c-tgt',
+      frozenLockSource: 'Kick: pending map position',
+    });
+    expect(byId['c-tgt'].moveDisabledSources).toEqual(['Kick: pending map position']);
+    expect(byId['c-tgt'].v2MoveLockRollDbId).toBe(42);
+    expect(byId['c-tgt'].v2MoveLockSource).toBe('Kick: pending map position');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyV2LifecycleMutations — rollDie shown on actionLoop (e.g. Rally clear stress)
+// ---------------------------------------------------------------------------
+
+describe('applyV2LifecycleMutations (rollDie + actionLoop)', () => {
+  it('prepends formatted roll lines to actionLoop description', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', currentStress: 4 }];
+    const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+      activeElements,
+      [
+        { type: 'rollDie', payload: { notation: 'd6', results: [4], total: 4 } },
+        { type: 'clearStress', payload: { instanceId: 'c1', amount: 4 } },
+        {
+          type: 'actionLoop',
+          payload: {
+            instanceId: 'c1',
+            title: 'Rally',
+            description: 'Long feature text.',
+            rollUser: 'Finn',
+          },
+        },
+      ],
+      undefined
+    );
+    expect(updates).toEqual([{ instanceId: 'c1', updates: { currentStress: 0 } }]);
+    expect(actionLoopNotifications).toHaveLength(1);
+    expect(actionLoopNotifications[0].description).toBe('Rolled d6: **4**\n\nLong feature text.');
+    expect(actionLoopNotifications[0]._v2RollDiePayloads).toEqual([
+      { notation: 'd6', results: [4], total: 4 },
+    ]);
+  });
+
+  it('does not pass rollDie to banner merge (no spurious skipped mutations)', () => {
+    const { skipped } = applyV2LifecycleMutations(
+      [{ instanceId: 'c1', elementType: 'character', currentStress: 0 }],
+      [
+        { type: 'rollDie', payload: { notation: 'd8', results: [3], total: 3 } },
+        {
+          type: 'actionLoop',
+          payload: { instanceId: 'c1', title: 'X', description: 'Y', rollUser: 'Z' },
+        },
+      ],
+      undefined
+    );
+    expect(skipped.map((m) => m.type)).not.toContain('rollDie');
+  });
+
+  it('emits a minimal actionLoop when rollDie + clearStress but no actionLoop (e.g. cross-sheet chip)', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', name: 'River', currentStress: 3 }];
+    const { actionLoopNotifications } = applyV2LifecycleMutations(
+      activeElements,
+      [
+        { type: 'rollDie', payload: { notation: 'd6', results: [5], total: 5 } },
+        { type: 'clearStress', payload: { instanceId: 'c1', amount: 5 } },
+      ],
+      undefined
+    );
+    expect(actionLoopNotifications).toEqual([
+      {
+        instanceId: 'c1',
+        title: 'Dice roll',
+        description: 'Rolled d6: **5**',
+        rollUser: 'River',
+        _v2RollDiePayloads: [{ notation: 'd6', results: [5], total: 5 }],
+      },
+    ]);
+  });
+});
+
+describe('formatV2RollDieMutationLine', () => {
+  it('formats multi-die notation', () => {
+    expect(
+      formatV2RollDieMutationLine({
+        type: 'rollDie',
+        payload: { notation: '2d6', results: [4, 5], total: 9 },
+      })
+    ).toBe('Rolled 2d6: 4 + 5 = **9**');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyV2LifecycleMutations — string conditions must not spread into characters
+// ---------------------------------------------------------------------------
+
+describe('applyV2LifecycleMutations (conditions)', () => {
+  it('addCondition appends to comma-separated string without splitting prior text into letters', () => {
+    const activeElements = [
+      { instanceId: 'c1', elementType: 'character', conditions: 'Happy' },
+    ];
+    const { updates } = applyV2LifecycleMutations(
+      activeElements,
+      [{ type: 'addCondition', payload: { instanceId: 'c1', condition: 'Cloaked' } }],
+      undefined
+    );
+    expect(updates).toEqual([{ instanceId: 'c1', updates: { conditions: 'Happy, Cloaked' } }]);
+  });
+
+  it('removeCondition removes one token from a string list', () => {
+    const activeElements = [
+      { instanceId: 'c1', elementType: 'character', conditions: 'Happy, Cloaked' },
+    ];
+    const { updates } = applyV2LifecycleMutations(
+      activeElements,
+      [{ type: 'removeCondition', payload: { instanceId: 'c1', condition: 'Cloaked' } }],
+      undefined
+    );
+    expect(updates).toEqual([{ instanceId: 'c1', updates: { conditions: 'Happy' } }]);
+  });
+
+  it('addCondition resolves adversary when payload id matches element library id', () => {
+    const activeElements = [
+      { instanceId: 'inst-gob-1', id: 'srd-adv-goblin', elementType: 'adversary', conditions: '' },
+    ];
+    const { updates } = applyV2LifecycleMutations(
+      activeElements,
+      [{ type: 'addCondition', payload: { instanceId: 'srd-adv-goblin', condition: 'Vulnerable' } }],
+      undefined
+    );
+    expect(updates).toEqual([{ instanceId: 'inst-gob-1', updates: { conditions: 'Vulnerable' } }]);
+  });
+
+  it('still supports legacy array conditions', () => {
+    const activeElements = [
+      { instanceId: 'c1', elementType: 'character', conditions: ['Happy'] },
+    ];
+    const { updates } = applyV2LifecycleMutations(
+      activeElements,
+      [{ type: 'addCondition', payload: { instanceId: 'c1', condition: 'Cloaked' } }],
+      undefined
+    );
+    expect(updates).toEqual([{ instanceId: 'c1', updates: { conditions: 'Happy, Cloaked' } }]);
   });
 });
 
@@ -618,8 +901,9 @@ describe('partitionV2BannerChipMutations', () => {
     const { localMutations, serverFollowups, engineRollDisplayOnly, unsupported } =
       partitionV2BannerChipMutations(mutations);
     expect(localMutations.map((m) => m.type)).toEqual(['spendHope']);
-    expect(engineRollDisplayOnly.map((m) => m.type)).toEqual(['addRollStatic']);
-    expect(serverFollowups.map((f) => f.kind)).toEqual(['rerollDie', 'addDamage']);
+    expect(engineRollDisplayOnly.map((m) => m.type)).toEqual([]);
+    expect(serverFollowups.map((f) => f.kind)).toEqual(['rerollDie', 'addDamage', 'patchActionRollAddStatic']);
+    expect(serverFollowups[2].payload).toEqual({ value: 2, name: 'X' });
     expect(serverFollowups[0].dieType).toBe('Duality');
     expect(unsupported.map((m) => m.type)).toEqual(['rerollDie']);
     expect(unsupported[0].payload.dieType).toBe('damageDie');
@@ -663,10 +947,83 @@ describe('partitionV2BannerChipMutations', () => {
       unsupported: [],
     });
   });
+
+  it('routes setRollOutcome to engineRollDisplayOnly (Fearless / Infernis — GMTableView applies via chipHopeConvertedIds)', () => {
+    const { engineRollDisplayOnly, localMutations } = partitionV2BannerChipMutations([
+      { type: 'setRollOutcome', payload: { rollKey: 'action', outcome: 'hope' } },
+    ]);
+    expect(engineRollDisplayOnly).toEqual([
+      { type: 'setRollOutcome', payload: { rollKey: 'action', outcome: 'hope' } },
+    ]);
+    expect(localMutations).toEqual([]);
+  });
+
+  it('routes damage addRollDie to addDamage; action addRollDie to patchActionRollAddDie', () => {
+    const { serverFollowups, engineRollDisplayOnly } = partitionV2BannerChipMutations([
+      { type: 'addRollDie', payload: { rollKey: 'damage', name: 'Sneak Attack', die: '2d6' } },
+      { type: 'addRollDie', payload: { rollKey: 'action', name: 'Aim', die: 'd6' } },
+    ]);
+    expect(serverFollowups).toHaveLength(2);
+    expect(serverFollowups[0].kind).toBe('addDamage');
+    expect(serverFollowups[0].payload).toEqual({ dice: '2d6', name: 'Sneak Attack' });
+    expect(serverFollowups[1].kind).toBe('patchActionRollAddDie');
+    expect(serverFollowups[1].payload).toEqual({ die: 'd6', name: 'Aim' });
+    expect(engineRollDisplayOnly).toEqual([]);
+  });
+
+  it('routes addRollStatic action to patchActionRollAddStatic; damage to addDamage', () => {
+    const { serverFollowups, engineRollDisplayOnly } = partitionV2BannerChipMutations([
+      { type: 'addRollStatic', payload: { rollKey: 'action', name: 'Prayer', value: 3 } },
+      { type: 'addRollStatic', payload: { rollKey: 'damage', name: 'PD', value: 2 } },
+    ]);
+    expect(serverFollowups).toHaveLength(2);
+    expect(serverFollowups[0]).toEqual(
+      expect.objectContaining({
+        kind: 'patchActionRollAddStatic',
+        payload: { value: 3, name: 'Prayer' },
+      })
+    );
+    expect(serverFollowups[1]).toEqual(
+      expect.objectContaining({
+        kind: 'addDamage',
+        payload: { dice: '2', name: 'PD' },
+      })
+    );
+    expect(engineRollDisplayOnly).toEqual([]);
+  });
+
+  it('routes unknown rollKey addRollDie to engineRollDisplayOnly', () => {
+    const { serverFollowups, engineRollDisplayOnly } = partitionV2BannerChipMutations([
+      { type: 'addRollDie', payload: { rollKey: 'other', name: 'X', die: 'd6' } },
+    ]);
+    expect(serverFollowups).toEqual([]);
+    expect(engineRollDisplayOnly).toHaveLength(1);
+    expect(engineRollDisplayOnly[0].payload.rollKey).toBe('other');
+  });
 });
 
 // ---------------------------------------------------------------------------
 // getEffectiveWeaponRange — Giant Reach: Melee → Very Close
+// ---------------------------------------------------------------------------
+// Rest cycle (GMTableView runRestCycleClear): activeModifiers with refreshOn
+// ---------------------------------------------------------------------------
+
+describe('rest cycle activeModifiers clearing', () => {
+  it('drops modifiers tagged refreshOn rest when cyclesToClear includes rest', () => {
+    const cyclesToClear = ['rest'];
+    const mod = { id: 'example', type: 'evasion', value: 1, refreshOn: 'rest' };
+    const kept = [mod].filter((m) => !cyclesToClear.includes(m.refreshOn));
+    expect(kept).toHaveLength(0);
+  });
+
+  it('keeps modifiers without refreshOn (GM must use another mechanism to clear them)', () => {
+    const cyclesToClear = ['rest'];
+    const modMissingRefresh = { id: 'legacy', type: 'evasion', value: 2 };
+    const kept = [modMissingRefresh].filter((m) => !cyclesToClear.includes(m.refreshOn));
+    expect(kept).toHaveLength(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 describe('getEffectiveWeaponRange', () => {
@@ -674,6 +1031,10 @@ describe('getEffectiveWeaponRange', () => {
 
   it('returns Very Close for Melee weapon when character has Reach (Giant)', () => {
     expect(getEffectiveWeaponRange({ range: 'Melee' }, reachFeatures)).toBe('Very Close');
+  });
+
+  it('applies Reach even when effectiveRange was prefetched to match range (sheet must still upgrade)', () => {
+    expect(getEffectiveWeaponRange({ range: 'Melee', effectiveRange: 'Melee' }, reachFeatures)).toBe('Very Close');
   });
 
   it('returns weapon range unchanged when no Reach', () => {

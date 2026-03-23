@@ -3,6 +3,11 @@
  */
 
 import { when, isTargeted } from '../engine/when.js';
+import { toggleIsOn } from '../engine/chip-system.js';
+
+function wingsFlying(table) {
+  return toggleIsOn(table, Wings, Wings.chips[0]);
+}
 
 /**
  * Luckbender: Once per session, after you or a willing ally within Close range makes an action roll,
@@ -49,15 +54,13 @@ export const Luckbender = {
  * Wings: You can fly. While flying, you can mark a Stress after an adversary makes an attack
  * against you to gain a +2 bonus to your Evasion against that attack.
  * 
- * This feature grants flight movement mode, a card toggle for flying state,
- * and a reviewAction-phase chip for the evasion reaction.
+ * Card toggle for flying state and a reviewAction-phase chip for the evasion reaction.
  */
 export const Wings = {
   name: 'Wings',
+  _source: 'ancestry',
   description: 'You can fly. While flying, you can mark a Stress after an adversary makes an attack against you to gain a +2 bonus to your Evasion against that attack.',
-  
-  movementModes: ['fly'],
-  
+
   chips: [
     // Card toggle to track flying state
     {
@@ -65,14 +68,11 @@ export const Wings = {
       description: 'Toggle flying. While flying, you can mark a Stress gain a +2 bonus to your Evasion against an attack.',
       placements: ['card'],
       isToggle: true,
-      onUse: (table, chip) => {
-        table.feature.set('flying', chip.isOn);
-      },
     },
     // ReviewAction-phase evasion reaction (only available while flying)
     when(
       isTargeted,
-      (table) => table.feature.get('flying') === true,
+      wingsFlying,
       {
         name: 'Wings',
         description: 'Mark a Stress to gain +2 Evasion against this attack.',

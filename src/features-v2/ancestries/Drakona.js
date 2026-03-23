@@ -4,7 +4,7 @@
  * SRD source: daggerheart-srd/ancestries/Drakona.md
  */
 
-import { when, isTargeted } from '../engine/when.js';
+import { when, isTargeted, youTakeSevereDamage, effectTargetsMe, isSeverePendingHpLossEffect } from '../engine/when.js';
 
 export const Scales = {
   name: 'Scales',
@@ -13,15 +13,7 @@ export const Scales = {
   chips: [
     when(
       isTargeted,
-      (table) => {
-        const dmg = table.action?.effects?.find(
-          (e) =>
-            e.stat === 'currentHP' &&
-            e.target?.instanceId === table.me?.instanceId &&
-            e.amount >= 3
-        );
-        return !!dmg;
-      },
+      youTakeSevereDamage,
       {
         description: 'Mark a Stress to mark 1 fewer Hit Point.',
         placements: ['reviewOutcome'],
@@ -34,9 +26,7 @@ export const Scales = {
   hooks: {
     onReviewOutcome: (table) => {
       const dmg = table.action?.effects?.find(
-        (e) =>
-          e.stat === 'currentHP' &&
-          e.target?.instanceId === table.me?.instanceId
+        (e) => effectTargetsMe(e, table) && isSeverePendingHpLossEffect(e)
       );
       if (dmg && dmg.amount > 0) {
         dmg.amount -= 1;

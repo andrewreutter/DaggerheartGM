@@ -10,10 +10,13 @@ When the user asks you to **plan**, **analyze**, or **develop** a **class**, **a
 
 ## Rules while in Author Mode
 
-1. **Cheat sheet only for code**  
+1. **Framework stays clean**  
+   Implement the feature in its module under `src/features-v2/` (class/subclass/ability/etc.). Do **not** add feature-specific branches to `src/features-v2/engine/` or shared V2 client bridges — see **`.cursor/rules/v2-framework-boundaries.mdc`** and **CONV-029** in `docs/v2-code-conventions.md`.
+
+2. **Cheat sheet only for code**  
    When writing code, use **only** the information in `docs/feature-cheatsheet.md`. Do not rely on this rule file, project.mdc, or other code for hook signatures, context shapes, file shapes, or descriptor fields — the cheat sheet is the sole source of truth for implementation.
 
-2. **Missing capability**  
+3. **Missing capability**  
    If you lack a capability needed to implement the feature fully against its description (e.g. a hook or pipeline step not described in the cheat sheet), **suggest** the capability clearly and **do not implement** it without discussion with the user.
 
 ## After implementing

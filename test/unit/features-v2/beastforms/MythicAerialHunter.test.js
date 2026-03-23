@@ -21,7 +21,9 @@ describe('Mythic Aerial Hunter — Deadly Raptor', () => {
 
   const chargeState = {
     activeElements: [charMelee, adv],
-    _previousPositions: { 'char-1': { tokenX: 15, tokenY: 0 } },
+    // Prior position must be at least Close vs target under nearest-edge distance (see table.rangeBetween).
+    // (15,0)→(3,0): edge 9.5' = Very Close; (16,0)→(3,0): edge 10.5' = Close.
+    _previousPositions: { 'char-1': { tokenX: 16, tokenY: 0 } },
     rolls: mockRoll({
       damageDice: [
         { name: 'weapon', die: 'd8', value: 2 },

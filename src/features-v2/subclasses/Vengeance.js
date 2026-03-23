@@ -2,7 +2,7 @@
  * Vengeance subclass features — SRD: daggerheart-srd/subclasses/Vengeance.md
  */
 
-import { when, isActing, isTargeted } from '../engine/when.js';
+import { when, isActing, anAttackSucceeds, againstYou, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const AtEase = {
   name: 'At Ease',
@@ -18,9 +18,8 @@ export const Revenge = {
     'When an adversary within Melee range succeeds on an attack against you, you can mark 2 Stress to force the attacker to mark a Hit Point.',
   chips: [
     when(
-      isTargeted,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      anAttackSucceeds,
+      againstYou,
       (table) => {
         const a = table.action?.actor;
         return a && !a.isCharacter && table.me.rangeFrom(a) === 'melee';
@@ -80,9 +79,7 @@ export const ActOfReprisal = {
       }
     ),
     onResolve: when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => {
         const id = table.feature.get('reprisalAdversaryId');
         if (id && table.action?.target?.instanceId === id) {
@@ -110,7 +107,8 @@ export const Nemesis = {
       hopeCost: 2,
       multiSelect: false,
       selectTargets: (table) => table.adversaries ?? [],
-      isDisabled: (table) => (table.adversaries?.length ?? 0) === 0,
+      isDisabled: (table) =>
+        (table.adversaries?.length ?? 0) === 0 ? 'No adversaries on the table.' : false,
       onUse(table, chipState) {
         const targetInstanceId = (chipState.get('selectedTargetIds') || [])[0];
         if (!targetInstanceId) return;

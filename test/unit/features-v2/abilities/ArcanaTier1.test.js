@@ -432,7 +432,7 @@ describe('Arcana Tier 1 — Wall Walk / Floating Eye / Cinder Grasp', () => {
 });
 
 describe('Arcana Tier 1 — Counterspell', () => {
-  it('reviewOutcome chip moves Counterspell to vault on a successful reaction roll', () => {
+  it('reviewAction chip moves Counterspell to vault on a successful reaction roll', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const tbl = buildTableSnapshot(
       mockGameState({
@@ -477,6 +477,29 @@ describe('Arcana Tier 1 — Counterspell', () => {
           appliedEffects: [],
         },
         rolls: mockRoll({ isSuccess: false }),
+      })
+    );
+    const chips = collectChips([{ ...Counterspell, _ownerInstanceId: 'char-1' }], 'reviewAction', tbl);
+    expect(chips).toHaveLength(0);
+  });
+
+  it('does not expose the vault chip when another actor had a successful reaction roll', () => {
+    const char1 = mockCharacter({ instanceId: 'char-1' });
+    const char2 = mockCharacter({ instanceId: 'char-2', name: 'Other PC' });
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [char1, char2],
+        _ownerInstanceId: 'char-1',
+        _featureKey: 'Counterspell',
+        action: {
+          type: 'reaction',
+          actorInstanceId: 'char-2',
+          targetInstanceIds: [],
+          trait: 'Spellcast',
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: mockRoll({ isSuccess: true }),
       })
     );
     const chips = collectChips([{ ...Counterspell, _ownerInstanceId: 'char-1' }], 'reviewAction', tbl);

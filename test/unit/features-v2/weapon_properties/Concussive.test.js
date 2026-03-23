@@ -24,7 +24,8 @@ describe('Concussive', () => {
       expect.objectContaining({
         type: 'move',
         payload: expect.objectContaining({
-          description: 'Knock target back to Far range'
+          desiredCondition: 'Target at Far range from attacker',
+          description: 'Knock target back to Far range.',
         })
       })
     );

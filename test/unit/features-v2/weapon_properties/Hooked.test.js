@@ -21,7 +21,10 @@ describe('Hooked', () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'move',
-        payload: expect.objectContaining({ description: 'Pull into Melee range' }),
+        payload: expect.objectContaining({
+          desiredCondition: 'In Melee range from attacker',
+          description: 'Pull into Melee range.',
+        }),
       })
     );
   });

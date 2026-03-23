@@ -1,4 +1,4 @@
-import { when, isActing } from '../engine/when.js';
+import { when, youSucceedOnAnAttack } from '../engine/when.js';
 
 export const Bouncing = {
   name: 'Bouncing',
@@ -8,9 +8,7 @@ export const Bouncing = {
   tagText: 'Mark Stress to hit additional targets in range',
   chips: [
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       {
         description: 'Mark Stress to bounce to additional targets in range.',
         placements: ['reviewAction'],

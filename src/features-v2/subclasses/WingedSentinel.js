@@ -2,16 +2,11 @@
  * Winged Sentinel subclass — SRD: Winged Sentinel (community SRD mirror; submodule path may differ)
  */
 
-import { when, isActing } from '../engine/when.js';
-
-const SCOPE = 'WingedSentinel';
-
-function ws(table) {
-  return table.featureState?.[SCOPE] ?? {};
-}
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
+import { toggleIsOn } from '../engine/chip-system.js';
 
 function isFlying(table) {
-  return ws(table).flying === true;
+  return toggleIsOn(table, WingsOfLight, WingsOfLight.chips[0]);
 }
 
 function hopeDominates(table) {
@@ -25,36 +20,34 @@ export const WingsOfLight = {
   name: 'Wings of Light',
   description:
     'You can fly. While flying, you can do the following:\n\n- Mark a Stress to pick up and carry another willing creature approximately your size or smaller.\n- Spend a Hope to deal an extra 1d8 damage on a successful attack.',
-  movementModes: [when(isFlying, 'fly')],
   chips: [
     {
-      name: 'Flight',
+      name: 'Flying',
       placements: ['card'],
       description: 'While toggled on, you are flying (Wings of Light).',
       isToggle: true,
-      onUse(table, chip) {
-        table.source.set('flying', chip.isOn === true);
-      },
-    },
-    {
-      name: 'Pick up and carry',
-      placements: ['card'],
-      stressCost: 1,
-      description:
-        'Pick up and carry another willing creature approximately your size or smaller. Mark 1 Stress.',
-      isDisabled: (table) => !isFlying(table),
-      onUse(table) {
-        table.me.markStress(1);
-        table.me.actionLoop(
-          'Wings of Light',
-          'Pick up and carry a willing creature of your size or smaller (mark 1 Stress).'
-        );
-      },
+      /** Game Table: post action banner; toggle state applies on GM ack (not immediate). */
+      // gameTableDeferUntilBannerAck: true,
     },
     when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      isFlying,
+      {
+        name: 'Pick up and carry',
+        placements: ['card'],
+        stressCost: 1,
+        description:
+          'Pick up and carry another willing creature approximately your size or smaller. Mark 1 Stress.',
+        onUse(table) {
+          table.me.markStress(1);
+          table.me.actionLoop(
+            'Wings of Light',
+            'Pick up and carry a willing creature of your size or smaller (mark 1 Stress).'
+          );
+        },
+      },
+    ),
+    when(
+      youSucceedOnAnAttack,
       isFlying,
       {
         name: 'Wings of Light — extra damage',
@@ -101,7 +94,10 @@ export const EtherealVisage = {
         description:
           "Remove 1 Fear from the GM's Fear pool instead of gaining Hope from this roll. (Host should not apply the usual Hope gain when this is used.)",
         isToggle: true,
-        isDisabled: (table) => (table.top.fear ?? 0) < 1,
+        /** UI toggle only — do not persist boolean state between sessions. */
+        persistToggle: false,
+        isDisabled: (table) =>
+          (table.top.fear ?? 0) < 1 ? 'GM Fear pool is empty (need at least 1 Fear to remove).' : false,
         onUse(table) {
           table.top.spendFear(1);
         },

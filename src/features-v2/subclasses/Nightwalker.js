@@ -2,8 +2,7 @@
  * Nightwalker subclass features — SRD: daggerheart-srd/subclasses/Nightwalker.md
  */
 
-import { when, isActing } from '../engine/when.js';
-import { queueInternalMutation } from '../engine/table.js';
+import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 
 const FS = 'Nightwalker';
 
@@ -57,9 +56,7 @@ export const Adrenaline = {
   description: "While you're Vulnerable, add your level to your damage rolls.",
   hooks: {
     onReviewAction: when(
-      isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === true,
+      youSucceedOnAnAttack,
       (table) => table.me.hasCondition('Vulnerable'),
       (table) => {
         const lvl = table.me.level ?? 1;
@@ -93,11 +90,7 @@ export const VanishingAct = {
           table.me.removeCondition('Restrained');
         }
         table.me.addCondition('Cloaked');
-        queueInternalMutation(table, 'setFeatureState', {
-          featureKey: FS,
-          key: 'vanishingActCloak',
-          value: true,
-        });
+        table.source.set('vanishingActCloak', true);
       },
     },
   ],
@@ -105,20 +98,18 @@ export const VanishingAct = {
     onResolve: when(
       isActing,
       (table) => table.action?.generatesHopeFear === true,
-      (table) => table.featureState?.[FS]?.vanishingActCloak === true,
+      (table) =>
+        (table.source?.get?.('vanishingActCloak') ?? table.featureState?.[FS]?.vanishingActCloak) === true,
       fearDominates,
       (table) => {
-        queueInternalMutation(table, 'setFeatureState', {
-          featureKey: FS,
-          key: 'vanishingActCloak',
-          value: false,
-        });
+        table.source.set('vanishingActCloak', false);
         table.me.removeCondition('Cloaked');
       }
     ),
     onRest(table) {
-      if (table.featureState?.[FS]?.vanishingActCloak !== true) return;
-      queueInternalMutation(table, 'setFeatureState', { featureKey: FS, key: 'vanishingActCloak', value: false });
+      if ((table.source?.get?.('vanishingActCloak') ?? table.featureState?.[FS]?.vanishingActCloak) !== true)
+        return;
+      table.source.set('vanishingActCloak', false);
       table.me.removeCondition('Cloaked');
     },
   },

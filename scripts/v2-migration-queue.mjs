@@ -14,6 +14,7 @@ import {
   injectQueueSection,
   QUEUE_MARKERS,
 } from './lib/v2-migration-queue-parse.mjs';
+import { loadToReviewText } from './lib/v2-tracker-pipeline.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -49,7 +50,8 @@ function parseArgs(argv) {
 function main() {
   const { json, write, limit, trackerPath } = parseArgs(process.argv);
   const text = readFileSync(trackerPath, 'utf8');
-  const parsed = parseTrackerMarkdown(text);
+  const toReview = loadToReviewText(trackerPath);
+  const parsed = parseTrackerMarkdown(toReview ? `${text}\n${toReview}` : text);
   const report = buildQueueReport(parsed, { limit });
 
   if (json) {

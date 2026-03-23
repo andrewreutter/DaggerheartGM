@@ -58,19 +58,19 @@ Statuses: **V2 engine** = logic exists in `features-v2` + unit tests; **VTT** = 
 | 28 | **`getBannerNarration`** | `weaponFeatures[name].onBanner` | Weapon V2 automated narration | |
 | 29 | **Display overrides** | `chip.render` / `renderWhenOff` | Same pattern on V2 chip descriptors | |
 | 30 | **Adversary target disadvantage** | `activeFeatures[].onTargeted` | V2 defensive hooks or snapshot | Orc Sturdy, etc. |
-| 31 | **`characterDisplayByInstanceId`** | `recomputeCharacter` (separate file, still P1 registry) + `mergeV2DeclarativeSheetOverlay` | Phase C in parent plan — single recompute path when flag on | Not all in GMTableView but feeds props |
+| 31 | **`characterDisplayByInstanceId`** | `recomputeCharacter` + `mergeV2DeclarativeSheetOverlay` | Single recompute path | Not all in GMTableView but feeds props |
 
 ---
 
 ## V2 wiring already present in `GMTableView` (additive)
 
-- `mergeV2DeclarativeSheetOverlay` / `v2SheetLive` / `buildV2RegistryWithSrdItems`
+- `mergeV2DeclarativeSheetOverlay` / `buildV2RegistryWithSrdItems`
 - `collectV2ReviewActionChips` → `v2ReviewChipsByRollDbId` → `handleV2ReviewChip` → `applyV2BannerMutations`
 - `runV2TokenMoveHooks` + `applyV2LifecycleMutations` on token drag end
-- `V2_REVIEW_ACTION_PHASE1_DEDUPE` (in bridge) — **empty after Phase E**; optional filter for tests / future use. Ranger duplicate UI avoided by gating Phase 1 Hold Them Off / Focus reroll in `DiceRoller` when the V2 sheet flag is on.
-- **Phase 2 (registry surfaces):** `game-table-mechanics.js` exports `resolveOriginFeatureDescriptor`, `resolveClassFeatureDescriptor`, and `resolveVirtualWeaponBehavior`. With the V2 declarative sheet flag on, `GMTableView` / `CharacterHoverCard` use these (plus merged `activeFeatures` rows) instead of direct `ancestryFeatures` / `classFeatures` / `virtualWeaponBehaviors` map lookups where a per-character row exists. **Start Session** runs `onSessionStart` from each party member’s merged `activeFeatures` (ancestry, community, class, subclass) instead of scanning the Phase 1 ancestry registry only.
+- `V2_REVIEW_ACTION_PHASE1_DEDUPE` (in bridge) — **empty after Phase E**; optional filter for tests / future use. Ranger duplicate UI avoided by gating Phase 1 Hold Them Off / Focus reroll in `DiceRoller` (`usePhase1RangerBannerTools` is false).
+- **Phase 2 (registry surfaces):** `game-table-mechanics.js` exports `resolveOriginFeatureDescriptor`, `resolveClassFeatureDescriptor`, and `resolveVirtualWeaponBehavior`. `GMTableView` / `CharacterHoverCard` use these (plus merged `activeFeatures` rows) instead of direct `ancestryFeatures` / `classFeatures` / `virtualWeaponBehaviors` map lookups where a per-character row exists. **Start Session** runs `onSessionStart` from each party member’s merged `activeFeatures` (ancestry, community, class, subclass) instead of scanning the Phase 1 ancestry registry only.
 
-These do **not** remove Phase 1 imports; they run in parallel when the declarative sheet flag is on.
+These do **not** remove Phase 1 imports; they run in parallel with legacy paths where both still exist.
 
 ---
 

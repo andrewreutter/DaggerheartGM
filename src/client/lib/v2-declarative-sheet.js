@@ -1,90 +1,15 @@
 /**
- * V2 declarative sheet bridge — merges `loadCharacterFeatures` + `applyDeclarativeFeatures`
- * output onto Phase 1 `recomputeCharacter` results when the feature flag is on.
- *
- * Flag: user menu **V1 / V2** toggle (persists `localStorage.dh_v2DeclarativeSheet`), or `?v2Sheet=1`,
- * or tests: `globalThis.__DH_V2_DECLARATIVE_SHEET__ = true`.
+ * Declarative sheet bridge — merges `loadCharacterFeatures` + `applyDeclarativeFeatures`
+ * output onto `recomputeCharacter` results (weapon hints, trait overrides, etc.).
  */
 
-import { useSyncExternalStore } from 'react';
 import v2registry from '../../features-v2/registry.js';
 import {
   attachBeastformOptions,
   loadCharacterFeatures,
   applyDeclarativeFeatures,
 } from '../../features-v2/index.js';
-
-export const V2_DECLARATIVE_SHEET_LS_KEY = 'dh_v2DeclarativeSheet';
-
-const LS_KEY = V2_DECLARATIVE_SHEET_LS_KEY;
-
-/**
- * @returns {boolean}
- */
-export function isV2DeclarativeSheetEnabled() {
-  if (typeof globalThis.__DH_V2_DECLARATIVE_SHEET__ === 'boolean') {
-    return globalThis.__DH_V2_DECLARATIVE_SHEET__;
-  }
-  if (typeof window === 'undefined') return false;
-  try {
-    if (new URLSearchParams(window.location.search).get('v2Sheet') === '1') return true;
-    if (window.localStorage?.getItem(LS_KEY) === '1') return true;
-  } catch {
-    /* ignore */
-  }
-  return false;
-}
-
-/**
- * Subscribe to changes (user toggle, other tabs’ localStorage, or `?v2Sheet` URL strip).
- * For React, prefer {@link useV2DeclarativeSheetEnabledLive}.
- */
-export function subscribeV2DeclarativeSheet(onStoreChange) {
-  if (typeof window === 'undefined') return () => {};
-  const fire = () => onStoreChange();
-  const onStorage = (e) => {
-    if (e.key === LS_KEY || e.key === null) fire();
-  };
-  window.addEventListener('dh-v2-declarative-sheet', fire);
-  window.addEventListener('storage', onStorage);
-  return () => {
-    window.removeEventListener('dh-v2-declarative-sheet', fire);
-    window.removeEventListener('storage', onStorage);
-  };
-}
-
-/**
- * Persist V1/V2 preference and notify subscribers (same tab + `storage` for other tabs).
- * Choosing V1 removes `v2Sheet=1` from the URL so the query param does not override.
- */
-export function setV2DeclarativeSheetPreference(enabled) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(LS_KEY, enabled ? '1' : '0');
-  } catch {
-    /* ignore */
-  }
-  if (!enabled) {
-    try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has('v2Sheet')) {
-        url.searchParams.delete('v2Sheet');
-        window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  window.dispatchEvent(new CustomEvent('dh-v2-declarative-sheet'));
-}
-
-/**
- * Re-render when {@link setV2DeclarativeSheetPreference} runs or storage changes elsewhere.
- * @returns {boolean}
- */
-export function useV2DeclarativeSheetEnabledLive() {
-  return useSyncExternalStore(subscribeV2DeclarativeSheet, isV2DeclarativeSheetEnabled, () => false);
-}
+import { getResolvedActiveBeastformBonuses } from './character-calc.js';
 
 /**
  * Merge SRD weapon/armor rows into the V2 registry so `loadCharacterFeatures` can resolve
@@ -99,6 +24,99 @@ export function buildV2RegistryWithSrdItems(srdData) {
     weapons: srdData?.weaponsById || {},
     armor: srdData?.armorById || {},
   };
+}
+
+/**
+ * Resolve SRD weapon id for a sheet weapon row (`wep_0` / `wep_1` → primary/secondary SRD ids).
+ * @param {object} weaponRow — `buildActiveFeatures` weapon row (`source` = resolved weapon object)
+ * @param {{ primaryWeaponId?: string, secondaryWeaponId?: string }} char
+ */
+function weaponRowSrdId(weaponRow, char) {
+  const src = weaponRow?.source;
+  if (!src || typeof src !== 'object') return null;
+  const id = src.id;
+  if (id === 'wep_0') return char.primaryWeaponId ?? null;
+  if (id === 'wep_1') return char.secondaryWeaponId ?? null;
+  if (typeof id === 'string' && id.startsWith('srd-wpn-')) return id;
+  return null;
+}
+
+/**
+ * Match one `loadCharacterFeatures` row to a `buildActiveFeatures` row so we can copy
+ * `_sourceScopeKey` and other V2 annotations (View implementation source on feature cards).
+ *
+ * @param {object} row — entry from `recomputeCharacter` `activeFeatures`
+ * @param {object[]} engine — `mergedEngineFeatures` from the declarative loader
+ * @param {object} char — `charForLoader` (weapon ids, armorId, etc.)
+ */
+export function findMatchingEngineFeature(row, engine, char) {
+  if (!row || !Array.isArray(engine)) return null;
+  const candidates = engine.filter((e) => e && e.name === row.name);
+  if (candidates.length === 0) return null;
+  const t = row.type;
+
+  if (t === 'class') return candidates.find((e) => e._source === 'class') ?? null;
+  if (t === 'subclass') return candidates.find((e) => e._source === 'subclass') ?? null;
+  if (t === 'ancestry') return candidates.find((e) => e._source === 'ancestry') ?? null;
+  if (t === 'community') return candidates.find((e) => e._source === 'community') ?? null;
+
+  if (t === 'ability') {
+    const aid = row.id;
+    return (
+      candidates.find(
+        (e) =>
+          e._source === 'ability' &&
+          (e._sourceScopeKey === `abilities:${aid}` || e._sourceObject?.id === aid),
+      ) ?? null
+    );
+  }
+
+  if (t === 'weapon') {
+    const srid = weaponRowSrdId(row, char);
+    if (srid) {
+      const hit = candidates.find((e) => e._source === 'weapon_property' && e._weaponId === srid);
+      if (hit) return hit;
+    }
+    return candidates.find((e) => e._source === 'weapon_property') ?? null;
+  }
+
+  if (t === 'armor') {
+    const matches = candidates.filter((e) => e._source === 'armor_property');
+    if (matches.length === 1) return matches[0];
+    const aid = char.armorId;
+    return (
+      matches.find((e) => e._sourceScopeKey === `armor:${aid}` || e._sourceObject?.id === aid) ?? matches[0] ?? null
+    );
+  }
+
+  if (t === 'beastform') {
+    return candidates.find((e) => e._source === 'beastform') ?? null;
+  }
+
+  return null;
+}
+
+/**
+ * Copy V2 registry linkage from engine rows onto sheet `activeFeatures` (which omit `_sourceScopeKey`).
+ */
+function enrichActiveFeaturesWithEngineRows(activeFeatures, engine, char) {
+  if (!Array.isArray(activeFeatures) || activeFeatures.length === 0) return activeFeatures;
+  return activeFeatures.map((row) => {
+    const e = findMatchingEngineFeature(row, engine, char);
+    if (!e) return row;
+    return {
+      ...row,
+      _sourceScopeKey: e._sourceScopeKey ?? row._sourceScopeKey,
+      _source: e._source ?? row._source,
+      _sourceObject: e._sourceObject ?? row._sourceObject,
+      _ownerInstanceId: e._ownerInstanceId ?? row._ownerInstanceId,
+      _weaponId: e._weaponId ?? row._weaponId,
+      _itemId: e._itemId ?? row._itemId,
+      _consumableId: e._consumableId ?? row._consumableId,
+      _beastformId: e._beastformId ?? row._beastformId,
+      _weaponFeatureText: e._weaponFeatureText ?? row._weaponFeatureText,
+    };
+  });
 }
 
 /**
@@ -176,7 +194,6 @@ function ancestryNameMatchesV2Prefix(srdAncestryName, v2Prefix) {
  * @returns {object}
  */
 export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData, ctx = {}) {
-  if (!isV2DeclarativeSheetEnabled()) return recomputed;
   if (!recomputed || !srdData) return recomputed;
 
   const registry = buildV2RegistryWithSrdItems(srdData);
@@ -201,13 +218,19 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     featureState: rawCharacter.featureState ?? recomputed.featureState,
     activeBeastform: rawCharacter.activeBeastform ?? recomputed.activeBeastform,
     gold: rawCharacter.gold ?? recomputed.gold ?? 0,
+    inventory: rawCharacter.inventory ?? recomputed.inventory ?? [],
     spellcastTrait: rawCharacter.spellcastTrait ?? recomputed.spellcastTrait,
     evolutionTraitKey: rawCharacter.evolutionTraitKey ?? recomputed.evolutionTraitKey,
     domainLoadout: rawCharacter.domainLoadout ?? recomputed.domainLoadout,
     substituteArmorForHope:
       rawCharacter.substituteArmorForHope ?? recomputed.substituteArmorForHope,
     ancestryIds: v2AncestryKeys.length ? v2AncestryKeys : rawCharacter.ancestryIds || [],
-    instanceId: recomputed.instanceId || rawCharacter.instanceId,
+    // Library rows use `id`; table elements use `instanceId`. Both must feed V2 snapshots so `table.me` resolves.
+    instanceId:
+      recomputed.instanceId ||
+      rawCharacter.instanceId ||
+      recomputed.id ||
+      rawCharacter.id,
   };
 
   charForLoader = attachBeastformOptions(charForLoader, registry);
@@ -222,9 +245,115 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
 
   const features = loadCharacterFeatures(charForLoader, registry);
   const decl = applyDeclarativeFeatures(features, charForLoader, tableBase, registry);
+  const mergedEngineFeatures = decl.mergedFeatures || features;
+
+  const baseMajor = recomputed.armorThresholds?.major ?? 0;
+  const baseSev = recomputed.armorThresholds?.severe ?? 0;
+  const v2MajorDelta = Math.max(0, (decl.stats?.majorThreshold ?? baseMajor) - baseMajor);
+  const v2SevereDelta = Math.max(0, (decl.stats?.severeThreshold ?? baseSev) - baseSev);
+
+  /** Hope ability (e.g. Druid Evolution) lives in V2 `classes` registry but not in SRD `class_features` — append so GuideFeatureCard + card chips work on the Game Table. */
+  let activeFeatures = enrichActiveFeaturesWithEngineRows(recomputed.activeFeatures || [], mergedEngineFeatures, charForLoader);
+  const hopeName = recomputed.hopeFeature?.name;
+  if (hopeName && !activeFeatures.some((a) => a.name === hopeName)) {
+    const hopeRow = mergedEngineFeatures.find((f) => f.name === hopeName);
+    if (hopeRow && (hopeRow.chips || hopeRow.hooks)) {
+      const srdClassObj = srdData.classesById?.[charForLoader.classId];
+      activeFeatures = [
+        ...activeFeatures,
+        {
+          ...hopeRow,
+          type: 'class',
+          source: srdClassObj ?? recomputed.class,
+        },
+      ];
+    }
+  }
+
+  const beastformVirtualRows = (decl.virtualFeaturesExpanded || []).filter((f) => f._source === 'beastform');
+  if (beastformVirtualRows.length) {
+    activeFeatures = [
+      ...activeFeatures,
+      ...beastformVirtualRows.map((f) => ({
+        ...f,
+        type: 'beastform',
+        sourceType: 'beastform',
+        source: f._sourceObject?.name ?? 'Beastform',
+      })),
+    ];
+    const bfSrc = beastformVirtualRows[0]._sourceObject;
+    const adv = bfSrc?.advantageTriggers;
+    if (Array.isArray(adv) && adv.length) {
+      activeFeatures.push({
+        name: bfSrc.name || 'Beastform',
+        type: 'beastform',
+        sourceType: 'beastform',
+        source: bfSrc.name,
+        advantageTriggers: adv,
+        id: `${bfSrc.id || 'beastform'}-advantages`,
+      });
+    }
+  }
+
+  const traitOv = decl.weaponTraitOverrides || {};
+  let weapons = recomputed.weapons ? [...recomputed.weapons] : [];
+  // Replace stub rows from `runCharacterRender` with V2-resolved virtual weapons (e.g. Druid Beastform `when(virtualWeapon)`).
+  weapons = weapons.filter((w) => {
+    if (!w) return false;
+    if (w.id === '__beastform_natural__') return false;
+    if (w._featureName === 'Beastform' && !w.damage) return false;
+    if (Array.isArray(w._predicates)) return false;
+    return true;
+  });
+  if (Array.isArray(decl.virtualWeapons) && decl.virtualWeapons.length) {
+    weapons = [...weapons, ...decl.virtualWeapons.map((vw) => ({ ...vw }))];
+  }
+  if (weapons.length && Object.keys(traitOv).length) {
+    weapons = weapons.map((w) => {
+      const srdId =
+        w.id === 'wep_0'
+          ? charForLoader.primaryWeaponId
+          : w.id === 'wep_1'
+            ? charForLoader.secondaryWeaponId
+            : null;
+      const t = srdId && traitOv[srdId];
+      return t ? { ...w, trait: t } : w;
+    });
+  }
+
+  const bfBonuses = getResolvedActiveBeastformBonuses(
+    {
+      ...rawCharacter,
+      ...recomputed,
+      featureState: rawCharacter.featureState ?? recomputed.featureState,
+      activeBeastform: rawCharacter.activeBeastform ?? recomputed.activeBeastform,
+    },
+    srdData
+  );
+  let activeBeastformOut = rawCharacter.activeBeastform ?? recomputed.activeBeastform ?? null;
+  if (bfBonuses) {
+    activeBeastformOut = {
+      ...(activeBeastformOut || {}),
+      id: activeBeastformOut?.id || activeBeastformOut?.beastformId || bfBonuses.id,
+      beastformId: activeBeastformOut?.beastformId || activeBeastformOut?.id || bfBonuses.id,
+      name: activeBeastformOut?.name || bfBonuses.name,
+      trait_bonus: bfBonuses.trait_bonus,
+      evasion_bonus: bfBonuses.evasion_bonus,
+      attack: activeBeastformOut?.attack || bfBonuses.attack,
+      advantages: activeBeastformOut?.advantages ?? bfBonuses.advantages,
+    };
+  }
 
   return {
     ...recomputed,
+    // Table/runtime fields must win over recomputed so Game Table patches (e.g. activeModifiers) are visible on the sheet.
+    activeModifiers: rawCharacter.activeModifiers ?? recomputed.activeModifiers ?? [],
+    featureState: rawCharacter.featureState ?? recomputed.featureState,
+    /** Declarative V2 threshold deltas (e.g. Earth channel) for `effectiveThresholds` / defense row breakdown. */
+    _v2MajorThresholdBonus: v2MajorDelta || undefined,
+    _v2SevereThresholdBonus: v2SevereDelta || undefined,
+    activeFeatures,
+    weapons,
     weaponRenderHints: decl.weaponRenderHints,
     domainLoadoutDisabled: decl.domainLoadoutDisabled,
     substituteArmorForHope: decl.substituteArmorForHope,
@@ -233,5 +362,6 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     _v2TagTeamPartnerHopeDiscount: decl.tagTeamPartnerHopeDiscount,
     contactsEverywhereSessionUses: decl.contactsEverywhereSessionUses ?? 1,
     shadowStepperVeryFarUnlocked: decl.shadowStepperVeryFarUnlocked === true,
+    activeBeastform: activeBeastformOut,
   };
 }

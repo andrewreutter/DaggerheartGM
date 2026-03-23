@@ -8,6 +8,18 @@ describe('beastforms registry', () => {
     expect(beastforms['srd-bst-agile-scout']?.name).toBe('Agile Scout');
   });
 
+  it('attaches row-level passiveStatMods from trait_bonus / evasion_bonus', () => {
+    expect(beastforms['srd-bst-agile-scout'].passiveStatMods).toEqual({ agility: 1, evasion: 2 });
+  });
+
+  it('attaches row-level advantageTriggers from SRD advantages keywords', () => {
+    expect(beastforms['srd-bst-agile-scout'].advantageTriggers).toEqual([
+      'rolls to deceive',
+      'rolls to locate',
+      'rolls to sneak',
+    ]);
+  });
+
   it('beastformsAtOrBelowTier(1) only includes tier-1 forms', () => {
     const list = beastformsAtOrBelowTier(1);
     expect(list.length).toBeGreaterThan(0);

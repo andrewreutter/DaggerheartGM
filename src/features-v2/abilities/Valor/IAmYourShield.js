@@ -37,7 +37,8 @@ export const IAmYourShield = {
         placements: ['reviewAction'],
         stressCost: 1,
         selectTargets: (table) => shieldEligibleAllies(table),
-        isDisabled: (table) => shieldEligibleAllies(table).length === 0,
+        isDisabled: (table) =>
+          shieldEligibleAllies(table).length === 0 ? 'No ally in range to protect.' : false,
         onUse(table, chipState) {
           const ids = chipState.get?.('selectedTargetIds') ?? [];
           const allyId = ids[0];

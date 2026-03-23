@@ -66,7 +66,7 @@ test('matchMedia pointer:coarse override takes effect in page', async ({ page })
   await emulateTouch(page);
   await authenticate(page);
   await mockGmStream(page);
-  await page.goto('/gm-table/test-user-uid');
+  await page.goto('/table/test-user-uid');
 
   await expect(page.locator('text=Add Character')).toBeVisible({ timeout: 10000 });
 
@@ -81,7 +81,7 @@ test('GM Moves overlay opens on click (touch tap)', async ({ page }) => {
   await emulateTouch(page);
   await authenticate(page);
   await mockGmStream(page);
-  await page.goto('/gm-table/test-user-uid');
+  await page.goto('/table/test-user-uid');
 
   // Wait for the page to fully settle
   await expect(page.locator('text=Add Character')).toBeVisible({ timeout: 10000 });
@@ -106,7 +106,7 @@ test('GM Moves overlay closes on second tap (toggle)', async ({ page }) => {
   await emulateTouch(page);
   await authenticate(page);
   await mockGmStream(page);
-  await page.goto('/gm-table/test-user-uid');
+  await page.goto('/table/test-user-uid');
 
   await expect(page.locator('text=Add Character')).toBeVisible({ timeout: 10000 });
 

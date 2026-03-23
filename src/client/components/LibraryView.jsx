@@ -10,6 +10,7 @@ import { useCollectionSearch } from '../lib/useCollectionSearch.js';
 import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { enrichItems, enrichSingleItem } from '../lib/api.js';
 import { generateId } from '../lib/helpers.js';
+import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
 
 const CARD_WIDTH = 360;
 const CARD_HEIGHT = 176;
@@ -30,14 +31,28 @@ const SINGULAR_NAMES = {
 };
 
 const TABS = [
+  { id: 'characters', label: 'Characters', Icon: User },
   { id: 'adversaries', label: 'Adversaries', Icon: ShieldAlert },
   { id: 'environments', label: 'Environments', Icon: Map },
   { id: 'scenes', label: 'Scenes', Icon: Play },
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
-  { id: 'characters', label: 'Characters', Icon: User },
 ];
 
 const SRD_FILTER_TABS = new Set(['adversaries', 'environments']);
+
+/** Same footprint as `ItemCard` — triggers the same flow as the header "New …" button. */
+function LibraryNewItemCard({ singularLabel, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="bg-slate-900/80 border-2 border-dashed border-slate-700 rounded-lg hover:border-red-500/60 hover:bg-slate-800/50 cursor-pointer transition-colors flex flex-row h-44 w-[360px] shrink-0 items-center justify-center gap-2 text-slate-400 hover:text-red-300"
+    >
+      <Plus size={22} className="text-red-500/90 shrink-0" />
+      <span className="text-sm font-medium">New {singularLabel}</span>
+    </button>
+  );
+}
 
 export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, addToTable, route, navigate, onItemsChange, onMergeAdversary, isAdmin, partySize = 1, partyTier = 1, characters = [], ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded }) {
   const [showImageImport, setShowImageImport] = useState(false);
@@ -45,7 +60,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
   const [modalState, setModalState] = useState(null);
   const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
 
-  const activeTab = route.tab || 'adversaries';
+  const activeTab = route.tab || DEFAULT_LIBRARY_TAB;
   const isPaginatedTab = SRD_FILTER_TABS.has(activeTab);
 
   // Load scenes/adventures on demand when user navigates to those tabs.
@@ -304,9 +319,9 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
     return () => ro.disconnect();
   }, [isPaginatedTab, search.totalCount, search.loading]);
 
-  const totalCount = search.totalCount ?? 0;
   const gridItems = isPaginatedTab ? filteredItems : filteredItems;
-  const rowCount = columnCount > 0 ? Math.ceil(gridItems.length / columnCount) : 0;
+  const paginatedCellCount = gridItems.length > 0 ? gridItems.length + 1 : 0;
+  const rowCount = columnCount > 0 && paginatedCellCount > 0 ? Math.ceil(paginatedCellCount / columnCount) : 0;
 
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
@@ -473,7 +488,16 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
                   >
                     {Array.from({ length: columnCount }, (_, columnIndex) => {
                       const idx = virtualRow.index * columnCount + columnIndex;
-                      if (idx >= gridItems.length) return null;
+                      if (idx >= paginatedCellCount) return null;
+                      if (idx === gridItems.length) {
+                        return (
+                          <LibraryNewItemCard
+                            key="library-new-item"
+                            singularLabel={SINGULAR_NAMES[activeTab]}
+                            onClick={openNew}
+                          />
+                        );
+                      }
                       const item = gridItems[idx];
                       return (
                         <ItemCard
@@ -499,20 +523,29 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
                 <div ref={sentinelRef} style={{ height: 1, minHeight: 1 }} aria-hidden="true" />
               )}
             </div>
-          ) : isPaginatedTab && search.totalCount === 0 && !search.loading ? (
-            <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-              No items match the selected filters.
+          ) : isPaginatedTab && gridItems.length === 0 && !search.loading ? (
+            <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+              <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
+                No items match the selected filters.
+              </div>
+              <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
             </div>
           ) : isPaginatedTab && search.loading ? (
-            <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
-              Loading {activeTab}…
+            <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+              <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
+                Loading {activeTab}…
+              </div>
+              <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
             </div>
           ) : !isPaginatedTab && nonPaginatedLoading ? (
-            <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
-              Loading {activeTab}…
+            <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
+              <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
+                Loading {activeTab}…
+              </div>
+              <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
             </div>
           ) : !isPaginatedTab ? (
-            <div className="flex flex-wrap gap-2 overflow-y-auto">
+            <div className="flex flex-wrap gap-2 overflow-y-auto content-start">
               {filteredItems.map(item => (
                 <ItemCard
                   key={`${item._source || 'own'}-${item.id}`}
@@ -534,6 +567,7 @@ export function LibraryView({ data, saveItem, saveImage, deleteItem, cloneItem, 
                   {items.length === 0 ? `No ${activeTab} found. Click "New" to create one.` : 'No items match the selected filters.'}
                 </div>
               )}
+              <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
             </div>
           ) : null}
         </div>

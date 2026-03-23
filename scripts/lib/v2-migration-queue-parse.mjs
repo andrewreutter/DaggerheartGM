@@ -263,7 +263,7 @@ export function buildQueueReport(parsed, options = {}) {
 
 export function formatQueueText(report, options = {}) {
   const lines = [];
-  lines.push('V2 implementation queue (derived from docs/v2-migration-tracker.md)');
+  lines.push('V2 implementation queue (derived from docs/v2-migration-tracker.md merged with docs/v2-migration-to-review.md)');
   lines.push('Rules: docs/agent-prompts/implementation-agent.md (Cross-collection priority, Domain tier order).');
   lines.push('');
 
@@ -295,7 +295,9 @@ export function formatQueueText(report, options = {}) {
   }
 
   lines.push('');
-  lines.push('Claim: set Status to In Progress and Agent id in docs/v2-migration-tracker.md (tracker protocol).');
+  lines.push(
+    'Claim: set Status to In Progress and Agent id on the row (docs/v2-migration-tracker.md or docs/v2-migration-to-review.md per implementation-agent).',
+  );
   return lines.join('\n');
 }
 

@@ -3,7 +3,7 @@
  * SRD: daggerheart-srd/abilities/Counterspell.md
  */
 
-import { when } from '../../engine/when.js';
+import { when, isActing } from '../../engine/when.js';
 
 const COUNTERSPELL_CARD_ID = 'srd-abl-counterspell';
 
@@ -12,7 +12,10 @@ export const Counterspell = {
   description:
     'You can interrupt a magical effect taking place by making a reaction roll using your Spellcast trait. On a success, the effect stops and any consequences are avoided, and this card is placed in your vault.',
   chips: [
+    // Only the Counterspell holder's own successful Spellcast *reaction* roll may vault the card
+    // (`isActing` — not another PC's or adversary's reaction on the same snapshot).
     when(
+      isActing,
       (table) => table.action?.type === 'reaction',
       (table) => table.rolls?.action?.isSuccess === true,
       {

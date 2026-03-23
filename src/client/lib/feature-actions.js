@@ -1,114 +1,53 @@
 /**
- * Feature action parser utilities.
- *
- * Extracts structured action metadata from Daggerheart feature description text
- * so the UI can render appropriate interactive controls (Use buttons, cost badges,
- * dice rolls, announce buttons, passive stat badges, sub-feature cards).
+ * Feature utilities for sub-feature detection, passive stat parsing, and cost badges.
+ * Action metadata for class/ancestry/ability features comes from merged V2 rows
+ * (`deriveFeatureActionFromV2Row` / `buildActionForFeatureUse`).
  */
+
+import {
+  enrichHoverActionMeta,
+  extractEmbeddedResourceCostsFromText,
+  extractAdvantageConditionFromText,
+} from '../../features-v2/engine/hover-action-enrich.js';
+
+export {
+  deriveFeatureActionFromV2Row,
+  buildActionForFeatureUse,
+} from './v2-derive-feature-action.js';
+
+export { enrichHoverActionMeta, extractEmbeddedResourceCostsFromText, extractAdvantageConditionFromText };
 
 /**
- * parseFeatureAction(description) — primary extraction.
- *
- * Returns:
- *   hopeCost      — Hope to spend
- *   stressCost    — Stress to mark
- *   armorMark     — Armor Slots to mark
- *   armorClear    — Armor Slots to clear
- *   dice          — array of unique dice expressions found (e.g. ['d6', '2d4'])
- *   spellcastDC   — numeric DC for "Spellcast Roll (N)" patterns, or null
- *   frequency     — 'session' | 'rest' | 'longRest' | null
- *   cycle         — alias for frequency (for rest-cycle tracking)
- *   isActive      — true when any cost, dice, or frequency is present
- *   impliesTarget — true when description mentions a target
- *   targetType         — 'adversary' | 'character' | null
- *   advantageCondition — full sentence containing "have/gain advantage on..." (e.g. "You have advantage on rolls to intimidate hostile creatures."), for tooltip; null when no match
+ * Merge embedded sub-option text into action-shaped metadata (bold/italic/bullet splits).
  */
-export function parseFeatureAction(description) {
-  if (!description) return { isActive: false };
-  const lower = description.toLowerCase();
-
-  // ── Hope cost ───────────────────────────────────────────────────────────────
-  let hopeCost = 0;
-  const hopeMatch =
-    lower.match(/(?:spend|costs?)\s+(\d+)\s+hope/) ||
-    lower.match(/(\d+)\s+hope/);
-  if (hopeMatch) {
-    hopeCost = parseInt(hopeMatch[1], 10);
-  } else if (/spend a hope/.test(lower)) {
-    hopeCost = 1;
-  }
-
-  // ── Stress cost ─────────────────────────────────────────────────────────────
-  let stressCost = 0;
-  const stressExplicit = lower.match(/mark\s+(\d+)\s+stress|spend\s+(\d+)\s+stress/);
-  if (stressExplicit) {
-    stressCost = parseInt(stressExplicit[1] || stressExplicit[2], 10);
-  } else if (/mark a stress|mark 1 stress/.test(lower)) {
-    stressCost = 1;
-  }
-
-  // ── Armor operations ────────────────────────────────────────────────────────
-  let armorMark = 0;
-  const armorMarkMatch = lower.match(/mark\s+(\d+)\s+armor(?:\s+slot)?/);
-  if (armorMarkMatch) {
-    armorMark = parseInt(armorMarkMatch[1], 10);
-  } else if (/mark an armor slot/.test(lower)) {
-    armorMark = 1;
-  }
-
-  let armorClear = 0;
-  const armorClearMatch = lower.match(/clear\s+(\d+)\s+armor(?:\s+slot)?/);
-  if (armorClearMatch) {
-    armorClear = parseInt(armorClearMatch[1], 10);
-  } else if (/clear an armor slot/.test(lower)) {
-    armorClear = 1;
-  }
-
-  // ── Dice expressions ────────────────────────────────────────────────────────
-  const diceMatches = description.match(/\b\d*d\d+\b/gi);
-  const dice = diceMatches ? [...new Set(diceMatches.map(d => d.toLowerCase()))] : [];
-
-  // ── Spellcast DC ────────────────────────────────────────────────────────────
-  let spellcastDC = null;
-  const spellcastMatch = description.match(/spellcast roll\s*\((\d+)\)/i);
-  if (spellcastMatch) spellcastDC = parseInt(spellcastMatch[1], 10);
-
-  // ── Frequency / usage cycle ─────────────────────────────────────────────────
-  let frequency = null;
-  if (/once per session|once a session|beginning of (?:each|every) session|at the start of (?:each|every) session/i.test(lower)) {
-    frequency = 'session';
-  } else if (/once per long rest|after (?:a|your) long rest/i.test(lower)) {
-    frequency = 'longRest';
-  } else if (/once per rest|once per short rest|after (?:a|your) rest\b|per rest/i.test(lower)) {
-    frequency = 'rest';
-  }
-
-  // ── Target detection ────────────────────────────────────────────────────────
-  const impliesTarget = /\btarget\b|\badversary\b|\bally\b|\benemy\b/i.test(lower);
-  let targetType = null;
-  if (/adversary|enemy/i.test(lower)) {
-    targetType = 'adversary';
-  } else if (/\bally\b|another player character|another character/i.test(lower)) {
-    targetType = 'character';
-  } else if (impliesTarget) {
-    targetType = 'adversary';
-  }
-
-  // ── Advantage on rolls ───────────────────────────────────────────────────────
-  // Capture the entire sentence (for tooltip); matches "have/gain advantage on rolls to/that involve/..." etc.
-  const advMatch = description.match(/([^.]*(?:have|gain) advantage on[^.]+)(?:\.|$)/i);
-  const advantageCondition = advMatch ? advMatch[1].trim().replace(/\.$/, '') : null;
-
+function mergeEmbeddedSubAction(desc) {
+  const e = extractEmbeddedResourceCostsFromText(desc);
+  const enriched = enrichHoverActionMeta({ description: desc });
+  const spellcastDC = enriched.spellcastDC ?? null;
+  const spellcastVsRoll = enriched.spellcastVsRoll === true;
+  const adv = extractAdvantageConditionFromText(desc);
   const isActive =
-    hopeCost > 0 || stressCost > 0 || armorMark > 0 || armorClear > 0 ||
-    dice.length > 0 || spellcastDC != null || frequency != null;
-
+    e.hopeCost > 0 ||
+    e.stressCost > 0 ||
+    e.armorMark > 0 ||
+    e.armorClear > 0 ||
+    e.frequency != null ||
+    spellcastDC != null ||
+    spellcastVsRoll;
   return {
-    hopeCost, stressCost, armorMark, armorClear,
-    dice, spellcastDC,
-    frequency, cycle: frequency,
-    isActive, impliesTarget, targetType,
-    advantageCondition,
+    hopeCost: e.hopeCost,
+    stressCost: e.stressCost,
+    armorMark: e.armorMark,
+    armorClear: e.armorClear,
+    dice: [],
+    spellcastDC,
+    spellcastVsRoll,
+    frequency: e.frequency,
+    cycle: e.frequency,
+    isActive,
+    impliesTarget: !!enriched.impliesTarget,
+    targetType: enriched.targetType ?? null,
+    advantageCondition: adv,
   };
 }
 
@@ -126,9 +65,7 @@ export function parseSubFeatures(description) {
   if (!description) return [];
 
   // Bold: split only on **Name:** tokens where a colon appears inside OR right after the closing **.
-  // This prevents inline emphasis like **spend a Hope** (no colon) from being treated as a section header.
   const boldTokens = description.split(/(\*\*[^*\n]*?:\*\*\s*|\*\*[^*\n]+?\*\*:\s*)/);
-  // boldTokens: [preamble, '**Name1**: ', content1, '**Name2**: ', content2, ...]
   if (boldTokens.length >= 5) {
     const boldItems = [];
     for (let i = 1; i < boldTokens.length - 1; i += 2) {
@@ -136,16 +73,12 @@ export function parseSubFeatures(description) {
       if (!nameMatch) continue;
       const name = nameMatch[1].replace(/:$/, '').trim();
       const rawSegment = boldTokens[i + 1].trim();
-      // Trim at the next bold header so we don't pull the next option's cost into this one
-      // (e.g. "Attack 2 targets. **Ranger's Focus (4 Hope):** ..." → "Attack 2 targets.")
       const desc = rawSegment.replace(/\s*\*\*[^*\n]+\*\*.*$/s, '').trim();
-      const parsed = parseFeatureAction(desc);
-      // Sub-feature name may include cost, e.g. "Hold Them Off (3 Hope)" — prefer that over parsed
+      const merged = mergeEmbeddedSubAction(desc);
       const hopeInName = name.match(/\((\d+)\s*[Hh]ope\)/);
-      if (hopeInName) parsed.hopeCost = parseInt(hopeInName[1], 10);
-      // Require at least 20 chars of raw segment so inline emphasis doesn't count
+      if (hopeInName) merged.hopeCost = parseInt(hopeInName[1], 10);
       if (name && rawSegment.length >= 20) {
-        boldItems.push({ name, description: desc, ...parsed });
+        boldItems.push({ name, description: desc, ...merged });
       }
     }
     if (boldItems.length >= 2) return boldItems;
@@ -156,13 +89,12 @@ export function parseSubFeatures(description) {
   if (italicTokens.length >= 5) {
     const italicItems = [];
     for (let i = 1; i < italicTokens.length - 1; i += 2) {
-      // Only sub-option headers like _Fire:_ (colon inside) — skip decorative italics like _Channel_
       if (!italicTokens[i].includes(':')) continue;
       const nameMatch = italicTokens[i].match(/_([^_]+?)_/);
       if (!nameMatch) continue;
       const name = nameMatch[1].replace(/:$/, '').trim();
       const desc = italicTokens[i + 1].trim();
-      if (name && desc.length > 3) italicItems.push({ name, description: desc, ...parseFeatureAction(desc) });
+      if (name && desc.length > 3) italicItems.push({ name, description: desc, ...mergeEmbeddedSubAction(desc) });
     }
     if (italicItems.length >= 2) return italicItems;
   }
@@ -178,11 +110,11 @@ export function parseSubFeatures(description) {
       while ((m = numRe.exec(description)) !== null) bullets.push(m[1].trim());
     }
     if (bullets.length >= 2) {
-      return bullets.map(b => {
+      return bullets.map((b) => {
         const colonIdx = b.indexOf(':');
         const name = colonIdx > 0 && colonIdx < 40 ? b.slice(0, colonIdx).trim() : b.slice(0, 30).trim();
         const desc = colonIdx > 0 && colonIdx < 40 ? b.slice(colonIdx + 1).trim() : b;
-        return { name, description: desc, ...parseFeatureAction(desc) };
+        return { name, description: desc, ...mergeEmbeddedSubAction(desc) };
       });
     }
   }
@@ -200,7 +132,9 @@ export function parsePassiveStats(description) {
   if (!description) return [];
   const stats = [];
 
-  const evasionMatch = description.match(/([+-]?\d+)\s+(?:to\s+)?evasion\b/i);
+  const evasionMatch = description.match(
+    /([+-]?\d+)\s+(?:bonus\s+)?(?:to\s+)?(?:your\s+)?evasion\b/i
+  );
   if (evasionMatch) stats.push({ stat: 'evasion', value: parseInt(evasionMatch[1], 10), label: `${evasionMatch[1]} Evasion` });
 
   const threshMatch = description.match(/([+-]?\d+)\s+(?:to\s+(?:your\s+)?(?:damage\s+)?)?thresholds?\b/i);

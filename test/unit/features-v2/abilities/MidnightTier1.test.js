@@ -10,7 +10,9 @@ import { MidnightSpirit } from '../../../../src/features-v2/abilities/Midnight/M
 import { Shadowbind } from '../../../../src/features-v2/abilities/Midnight/Shadowbind.js';
 import { Chokehold } from '../../../../src/features-v2/abilities/Midnight/Chokehold.js';
 import { VeilOfNight } from '../../../../src/features-v2/abilities/Midnight/VeilOfNight.js';
-import { mockCharacter, mockGameState, runResolve, mockTable } from '../helpers.js';
+import { GlyphOfNightfall } from '../../../../src/features-v2/abilities/Midnight/GlyphOfNightfall.js';
+import { Hush } from '../../../../src/features-v2/abilities/Midnight/Hush.js';
+import { mockCharacter, mockAdversary, mockGameState, mockRoll, runResolve, runReviewAction, mockTable } from '../helpers.js';
 
 function freeActionTable(charId, featureKey) {
   return buildTableSnapshot(
@@ -335,5 +337,333 @@ describe('Midnight Tier 1 — Veil of Night', () => {
     const tbl = freeActionTable('vn2', 'Veil of Night');
     const intent = collectChips([{ ...VeilOfNight, _ownerInstanceId: 'vn2' }], 'intent', tbl);
     expect(intent).toEqual([]);
+  });
+});
+
+describe('Midnight — Glyph of Nightfall', () => {
+  it('card with target queues Spellcast vs Difficulty and awaiting state', () => {
+    const caster = mockCharacter({
+      instanceId: 'g1',
+      tokenX: 0,
+      tokenY: 0,
+      spellcastTrait: 'presence',
+      traits: { presence: 2, knowledge: 2 },
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 5, tokenY: 0, difficulty: 14 });
+    const gs = mockGameState({
+      activeElements: [caster, adv],
+      _ownerInstanceId: 'g1',
+      _featureKey: 'Glyph of Nightfall',
+      featureState: {},
+      action: {
+        type: 'free',
+        actorInstanceId: 'g1',
+        targetInstanceIds: [],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: undefined,
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...GlyphOfNightfall, _ownerInstanceId: 'g1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState(), { selectedTargetIds: ['adv-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Glyph of Nightfall',
+          key: 'glyphOfNightfallAwaiting',
+          value: true,
+        }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Glyph of Nightfall',
+          trait: 'Presence',
+          difficulty: 14,
+        }),
+      })
+    );
+    expect(
+      m.find((x) => x.type === 'actionLoop')?.payload?.description
+    ).toMatch(/reduce their Difficulty by 2/);
+  });
+
+  it('onReviewAction after successful Spellcast sets pending Hope for glyph rider', () => {
+    const { mutations } = runReviewAction(GlyphOfNightfall, {
+      actionType: 'spellcast',
+      featureState: {
+        'Glyph of Nightfall': { glyphOfNightfallAwaiting: true },
+      },
+      rolls: mockRoll({ isSuccess: true }),
+      activeElements: [
+        mockCharacter({
+          instanceId: 'char-1',
+          spellcastTrait: 'presence',
+          traits: { presence: 2 },
+        }),
+        mockAdversary(),
+      ],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Glyph of Nightfall',
+          key: 'glyphOfNightfallPendingHope',
+          value: true,
+        }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Glyph of Nightfall',
+          key: 'glyphOfNightfallAwaiting',
+          value: false,
+        }),
+      })
+    );
+  });
+
+  it('onReviewAction clears pending state when Spellcast fails', () => {
+    const { mutations } = runReviewAction(GlyphOfNightfall, {
+      actionType: 'spellcast',
+      featureState: {
+        'Glyph of Nightfall': {
+          glyphOfNightfallAwaiting: true,
+          glyphOfNightfallTargetId: 'adv-1',
+        },
+      },
+      rolls: mockRoll({ isSuccess: false }),
+      activeElements: [mockCharacter({ instanceId: 'char-1' }), mockAdversary({ instanceId: 'adv-1' })],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Glyph of Nightfall',
+          key: 'glyphOfNightfallTargetId',
+          value: null,
+        }),
+      })
+    );
+  });
+
+  it('reviewAction chip spends 1 Hope and applies Difficulty penalty to target adversary', () => {
+    const caster = mockCharacter({
+      instanceId: 'g1',
+      tokenX: 0,
+      tokenY: 0,
+      spellcastTrait: 'presence',
+      traits: { presence: 2, knowledge: 3 },
+      hope: 5,
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 5, tokenY: 0, difficulty: 14 });
+    const gs = mockGameState({
+      activeElements: [caster, adv],
+      _ownerInstanceId: 'g1',
+      _featureKey: 'Glyph of Nightfall',
+      featureState: {
+        'Glyph of Nightfall': {
+          glyphOfNightfallPendingHope: true,
+          glyphOfNightfallTargetId: 'adv-1',
+        },
+      },
+      action: {
+        type: 'spellcast',
+        actorInstanceId: 'g1',
+        targetInstanceIds: ['adv-1'],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: mockRoll({ isSuccess: true }),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...GlyphOfNightfall, _ownerInstanceId: 'g1' }], 'reviewAction', tbl);
+    const applyChip = chips.find((c) => c.name === 'Glyph of Nightfall — expose weak points');
+    expect(applyChip?.hopeCost).toBe(1);
+    const m = activateChip(applyChip, tbl, makeChipState());
+    deductChipCosts(applyChip, tbl);
+    const mutations = [...m, ...applyMutations(tbl)];
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'runtimeStatMod',
+        payload: { instanceId: 'adv-1', stat: 'difficulty', delta: -3 },
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'spendHope',
+        payload: expect.objectContaining({ instanceId: 'g1', amount: 1 }),
+      })
+    );
+  });
+});
+
+describe('Midnight — Hush', () => {
+  it('card with target queues Spellcast vs Difficulty and awaiting state', () => {
+    const caster = mockCharacter({
+      instanceId: 'h1',
+      tokenX: 0,
+      tokenY: 0,
+      spellcastTrait: 'presence',
+      traits: { presence: 2 },
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 20, tokenY: 0, difficulty: 12 });
+    const gs = mockGameState({
+      activeElements: [caster, adv],
+      _ownerInstanceId: 'h1',
+      _featureKey: 'Hush',
+      featureState: {},
+      action: {
+        type: 'free',
+        actorInstanceId: 'h1',
+        targetInstanceIds: [],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: undefined,
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...Hush, _ownerInstanceId: 'h1' }], 'card', tbl);
+    const m = activateChip(chips[0], tbl, makeChipState(), { selectedTargetIds: ['adv-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Hush',
+          key: 'hushAwaiting',
+          value: true,
+        }),
+      })
+    );
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Hush',
+          trait: 'Presence',
+          difficulty: 12,
+        }),
+      })
+    );
+    expect(m.find((x) => x.type === 'actionLoop')?.payload?.description).toMatch(/Very Close-radius aura/);
+  });
+
+  it('onReviewAction after successful Spellcast sets pending Hope', () => {
+    const { mutations } = runReviewAction(Hush, {
+      actionType: 'spellcast',
+      featureState: {
+        Hush: { hushAwaiting: true },
+      },
+      rolls: mockRoll({ isSuccess: true }),
+      activeElements: [
+        mockCharacter({
+          instanceId: 'char-1',
+          spellcastTrait: 'presence',
+          traits: { presence: 2 },
+        }),
+        mockAdversary(),
+      ],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Hush',
+          key: 'hushPendingHope',
+          value: true,
+        }),
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Hush',
+          key: 'hushAwaiting',
+          value: false,
+        }),
+      })
+    );
+  });
+
+  it('onReviewAction clears pending state when Spellcast fails', () => {
+    const { mutations } = runReviewAction(Hush, {
+      actionType: 'spellcast',
+      featureState: {
+        Hush: {
+          hushAwaiting: true,
+          hushTargetId: 'adv-1',
+        },
+      },
+      rolls: mockRoll({ isSuccess: false }),
+      activeElements: [mockCharacter({ instanceId: 'char-1' }), mockAdversary({ instanceId: 'adv-1' })],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'Hush',
+          key: 'hushTargetId',
+          value: null,
+        }),
+      })
+    );
+  });
+
+  it('reviewAction chip spends 1 Hope and adds Silenced to anchor', () => {
+    const caster = mockCharacter({
+      instanceId: 'h1',
+      tokenX: 0,
+      tokenY: 0,
+      spellcastTrait: 'presence',
+      traits: { presence: 2 },
+      hope: 4,
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 20, tokenY: 0, difficulty: 12 });
+    const gs = mockGameState({
+      activeElements: [caster, adv],
+      _ownerInstanceId: 'h1',
+      _featureKey: 'Hush',
+      featureState: {
+        Hush: {
+          hushPendingHope: true,
+          hushTargetId: 'adv-1',
+        },
+      },
+      action: {
+        type: 'spellcast',
+        actorInstanceId: 'h1',
+        targetInstanceIds: ['adv-1'],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: mockRoll({ isSuccess: true }),
+    });
+    const tbl = buildTableSnapshot(gs);
+    const chips = collectChips([{ ...Hush, _ownerInstanceId: 'h1' }], 'reviewAction', tbl);
+    const applyChip = chips.find((c) => c.name === 'Hush — conjure silence');
+    expect(applyChip?.hopeCost).toBe(1);
+    const m = activateChip(applyChip, tbl, makeChipState());
+    deductChipCosts(applyChip, tbl);
+    const mutations = [...m, ...applyMutations(tbl)];
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'addCondition',
+        payload: { instanceId: 'adv-1', condition: 'Silenced' },
+      })
+    );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'spendHope',
+        payload: expect.objectContaining({ instanceId: 'h1', amount: 1 }),
+      })
+    );
   });
 });

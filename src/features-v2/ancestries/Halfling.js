@@ -8,6 +8,8 @@ import { when, isActing } from '../engine/when.js';
 
 export const Luckbringer = {
   name: 'Luckbringer',
+  /** Run once per session for the party (GMTableView session-start), not once per Halfling. */
+  sessionStartOnce: true,
   description: 'At the start of each session, everyone in your party gains a Hope.',
   hooks: {
     onSessionStart(table) {

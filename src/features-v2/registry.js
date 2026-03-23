@@ -20,6 +20,7 @@ import abilities from './abilities/index.js';
 import beastforms from './beastforms/index.js';
 import items from './items/index.js';
 import consumables from './consumables/index.js';
+import { LEGACY_CHARACTER_RUNTIME_MIGRATIONS } from './legacy-character-runtime-migrations.js';
 
 const registry = {
   ancestries,
@@ -32,6 +33,8 @@ const registry = {
   beastforms,
   items,
   consumables,
+  /** @type {typeof LEGACY_CHARACTER_RUNTIME_MIGRATIONS} */
+  legacyCharacterRuntimeMigrations: LEGACY_CHARACTER_RUNTIME_MIGRATIONS,
 };
 
 export default registry;

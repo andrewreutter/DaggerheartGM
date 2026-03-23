@@ -119,7 +119,10 @@ export const PartnersInArms = {
         placements: ['reviewAction'],
         armorMark: 1,
         selectTargets: (table) => partnersInArmsAllyTargets(table),
-        isDisabled: (table) => partnersInArmsAllyTargets(table).length === 0,
+        isDisabled: (table) =>
+          partnersInArmsAllyTargets(table).length === 0
+            ? 'No ally in range for Partners in Arms.'
+            : false,
         onUse(table, chipState) {
           const ids = chipState.get?.('selectedTargetIds') ?? [];
           const allyId = ids[0];
@@ -143,7 +146,10 @@ export const LoyalProtector = {
         placements: ['reviewAction'],
         stressCost: 1,
         selectTargets: (table) => loyalProtectorEligibleAllies(table),
-        isDisabled: (table) => loyalProtectorEligibleAllies(table).length === 0,
+        isDisabled: (table) =>
+          loyalProtectorEligibleAllies(table).length === 0
+            ? 'No eligible ally in range for Loyal Protector.'
+            : false,
         onUse(table, chipState) {
           const ids = chipState.get?.('selectedTargetIds') ?? [];
           const allyId = ids[0];

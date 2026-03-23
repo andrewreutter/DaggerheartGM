@@ -6,18 +6,49 @@
  * **reviewAction**, and **reviewOutcome** chips for weapon/armor tags without running phase hooks.
  */
 
-import { loadCharacterFeatures } from '../../features-v2/engine/feature-loader.js';
-import { collectPhaseChipsOnly } from '../../features-v2/engine/action-loop.js';
+import { applyDeclarativeFeatures, loadCharacterFeatures } from '../../features-v2/engine/feature-loader.js';
+import { collectPhaseChipsOnly, createActionLoop } from '../../features-v2/engine/action-loop.js';
 import { buildTableSnapshot } from '../../features-v2/engine/table.js';
 import {
   activateChip,
   collectChipsForOtherCharacterSheets,
   deductChipCosts,
   makeChipState,
+  canPayChipCosts,
+  getChipDisableHint,
 } from '../../features-v2/engine/chip-system.js';
-import { tokenDistanceFt } from './map-range.js';
-import { buildV2RegistryWithSrdItems, isV2DeclarativeSheetEnabled } from './v2-declarative-sheet.js';
-import { computeHpLoss, effectiveThresholds } from './helpers.js';
+import {
+  RANGE_BANDS_FT,
+  getAdversariesWithinRangeFt,
+  tokenDistanceFt,
+} from './map-range.js';
+import { buildV2RegistryWithSrdItems, expandSrdAncestryIdsToV2Keys } from './v2-declarative-sheet.js';
+import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.js';
+import { applyV2LifecycleMutations } from './table-ops.js';
+
+/**
+ * Map SRD `ancestryIds` on table character elements to V2 registry keys (`Infernis.Fearless`, …)
+ * so {@link loadAllV2FeaturesForTable} matches {@link mergeV2DeclarativeSheetOverlay}.
+ *
+ * @param {object[]|null|undefined} activeElements
+ * @param {object} srdData
+ * @returns {object[]}
+ */
+export function expandTableCharactersAncestryForV2Loader(activeElements, srdData) {
+  if (!Array.isArray(activeElements) || !srdData?.ancestriesById) return activeElements || [];
+  return activeElements.map((el) => {
+    if (el.elementType !== 'character') return el;
+    const raw = Array.isArray(el.ancestryIds)
+      ? el.ancestryIds
+      : el.ancestryId
+        ? [el.ancestryId]
+        : [];
+    if (!raw.length) return el;
+    const v2Keys = expandSrdAncestryIdsToV2Keys(raw, srdData);
+    if (!v2Keys.length) return el;
+    return { ...el, ancestryIds: v2Keys };
+  });
+}
 
 /**
  * Match GMTableView `enrichRollWithIsSuccess` so `reviewAction` predicates see `roll.isSuccess`
@@ -25,17 +56,23 @@ import { computeHpLoss, effectiveThresholds } from './helpers.js';
  *
  * @param {object} roll — mutated in place
  * @param {object[]} activeElements
+ * @param {object} [srdData] — pass so PC defense uses resolved beastform evasion (same as banners).
  */
-export function enrichV2RollIsSuccessFromTarget(roll, activeElements) {
+export function enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData) {
   if (!roll?._selectedTargetInstanceId) return;
   const target = activeElements?.find((e) => e.instanceId === roll._selectedTargetInstanceId);
   if (!target) return;
   const isAdversary = target.elementType === 'adversary' || target.type === 'adversary';
-  const defense = isAdversary ? target.difficulty : target.evasion;
+  let defense = isAdversary
+    ? target.difficulty
+    : (effectiveEvasion(target, srdData) ?? target.evasion ?? null);
+  if (!isAdversary && roll._rollDbId != null && target._iSeeItComingRollBonus?.[roll._rollDbId] != null) {
+    defense = (defense ?? 0) + target._iSeeItComingRollBonus[roll._rollDbId];
+  }
   if (defense == null) return;
   let effectiveTotal = roll.total ?? 0;
   if (roll.dominant != null) {
-    effectiveTotal += (roll._prayerAddRollDie?.value ?? 0) + (roll._heartOfAPoetD4Result ?? 0);
+    effectiveTotal += (roll._prayerAddRollDie?.value ?? 0);
   }
   roll.isSuccess = effectiveTotal >= defense;
 }
@@ -46,6 +83,26 @@ export function enrichV2RollIsSuccessFromTarget(roll, activeElements) {
  * so `collectV2ReviewActionChips` no longer needs to hide those features by name.
  */
 export const V2_REVIEW_ACTION_PHASE1_DEDUPE = new Set();
+
+/**
+ * Collapse duplicate chips from pass-1 + cross-sheet merge (same feature chip key).
+ * @param {object[]} chips
+ * @returns {object[]}
+ */
+function dedupeV2ChipsByChipKey(chips) {
+  const seen = new Set();
+  const out = [];
+  for (const c of chips) {
+    const k =
+      c._chipKey != null && c._chipKey !== ''
+        ? c._chipKey
+        : `${c._featureName ?? ''}::${typeof c.name === 'string' ? c.name : ''}::${c._v2Phase ?? ''}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(c);
+  }
+  return out;
+}
 
 /**
  * @param {number} distFt
@@ -270,21 +327,33 @@ export function buildActionConfigFromRoll(roll, activeElements) {
  * @param {object} srdData
  * @param {object} registry — {@link buildV2RegistryWithSrdItems}
  */
-export function loadV2FeaturesForCharacterElement(el, registry) {
+/**
+ * @param {object} el — character element
+ * @param {object} registry
+ * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object }} [opts] — passed to `applyDeclarativeFeatures` for `virtualSources` / legacy virtual / `virtualWeapon` expansion
+ */
+export function loadV2FeaturesForCharacterElement(el, registry, opts = {}) {
   if (!el || el.elementType !== 'character' || !registry) return [];
-  return loadCharacterFeatures(el, registry);
+  const base = loadCharacterFeatures(el, registry);
+  const tableBase = {
+    top: { fear: opts.fearCount ?? 0, map: opts.mapConfig ?? null },
+    featureState: opts.tableFeatureState,
+  };
+  const decl = applyDeclarativeFeatures(base, el, tableBase, registry);
+  return decl.mergedFeatures;
 }
 
 /**
  * @param {object[]} activeElements
  * @param {object} registry
+ * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object }} [opts]
  * @returns {object[]}
  */
-export function loadAllV2FeaturesForTable(activeElements, registry) {
+export function loadAllV2FeaturesForTable(activeElements, registry, opts = {}) {
   const out = [];
   for (const el of activeElements || []) {
     if (el.elementType !== 'character') continue;
-    out.push(...loadV2FeaturesForCharacterElement(el, registry));
+    out.push(...loadV2FeaturesForCharacterElement(el, registry, opts));
   }
   return out;
 }
@@ -313,6 +382,8 @@ export function buildV2BannerGameState(opts) {
     activeElements,
     featureState,
     rolls,
+    /** Binds `actor.move()` mutations to the pending banner (client + table). */
+    _rollDbId: roll?._rollDbId ?? null,
     action: {
       type: 'attack',
       actorInstanceId: actionConfig?.actorInstanceId,
@@ -335,7 +406,11 @@ export function buildV2BannerGameState(opts) {
  *   mapConfig?: object|null,
  *   tableFeatureState?: object,
  *   dedupeFeatureNames?: Set<string>,
+ *   viewer?: { role: 'gm' | 'player', viewerCharacterInstanceId?: string | null },
  * }} opts
+ * When `viewer` is omitted, pass-1 chips are unfiltered (legacy tests) and cross-sheet runs for PC targets plus PC actor.
+ * When `viewer.role === 'gm'`, cross-sheet is skipped (pass-1 lists all unwrapped chips for the GM).
+ * When `viewer.role === 'player'`, pass-1 is owner-scoped; cross-sheet runs once for `viewerCharacterInstanceId`.
  * @returns {object[]} chips from **intent**, **reviewAction**, and **reviewOutcome** (tagged with `_v2Phase`)
  */
 export function collectV2ReviewActionChips(opts) {
@@ -347,25 +422,40 @@ export function collectV2ReviewActionChips(opts) {
     mapConfig = null,
     tableFeatureState,
     dedupeFeatureNames = V2_REVIEW_ACTION_PHASE1_DEDUPE,
-    force = false,
+    viewer,
   } = opts || {};
-  if (!force && !isV2DeclarativeSheetEnabled()) return [];
 
-  if (!roll || !Array.isArray(activeElements) || !srdData) return [];
+  if (!roll || !Array.isArray(activeElements) || !srdData) {
+    return [];
+  }
 
   const actor = roll._attackerInstanceId;
-  if (!actor) return [];
+  if (!actor) {
+    return [];
+  }
   const hasDamage = (roll.subItems || []).some((s) => /damage/i.test(s.pre || '') && s.input);
-  if (!hasDamage) return [];
+  const hydratedForGate = hydrateV2RollsFromClientRoll(roll);
+  const hasHopeFearPool =
+    hydratedForGate.action?.hopeDie != null || hydratedForGate.action?.fearDie != null;
+  if (!hasDamage && !hasHopeFearPool) {
+    return [];
+  }
 
-  enrichV2RollIsSuccessFromTarget(roll, activeElements);
+  enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData);
 
   const actionConfig = buildActionConfigFromRoll(roll, activeElements);
-  if (!actionConfig) return [];
+  if (!actionConfig) {
+    return [];
+  }
+
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
 
   const registry = buildV2RegistryWithSrdItems(srdData);
-  const features = loadAllV2FeaturesForTable(activeElements, registry);
-  if (!features.length) return [];
+  const featureOpts = { fearCount, mapConfig, tableFeatureState };
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
+  if (!features.length) {
+    return [];
+  }
 
   const gameState = buildV2BannerGameState({
     roll,
@@ -378,26 +468,43 @@ export function collectV2ReviewActionChips(opts) {
   const phases = ['intent', 'reviewAction', 'reviewOutcome'];
   const list = [];
   for (const phase of phases) {
-    list.push(...collectPhaseChipsOnly(gameState, actionConfig, features, phase, {}));
+    list.push(...collectPhaseChipsOnly(gameState, actionConfig, features, phase, {}, viewer));
   }
 
-  const party = (activeElements || []).filter((e) => e.elementType === 'character');
+  const party = (activeForLoader || []).filter((e) => e.elementType === 'character');
   const targetIds = new Set();
   const sel = roll._selectedTargetInstanceId;
   if (sel && party.some((p) => p.instanceId === sel)) targetIds.add(sel);
   for (const tid of actionConfig.targetInstanceIds || []) {
     if (party.some((p) => p.instanceId === tid)) targetIds.add(tid);
   }
+
+  /** @type {string[]} */
+  let crossSheetViewerIds = [];
+  if (viewer?.role === 'gm') {
+    crossSheetViewerIds = [];
+  } else if (viewer?.role === 'player' && viewer.viewerCharacterInstanceId) {
+    crossSheetViewerIds = [viewer.viewerCharacterInstanceId];
+  } else {
+    const legacy = new Set(targetIds);
+    const aid = actionConfig.actorInstanceId;
+    if (aid && party.some((p) => p.instanceId === aid)) legacy.add(aid);
+    crossSheetViewerIds = [...legacy];
+  }
+
   const usageStore = {};
-  for (const tid of targetIds) {
-    const cross = collectChipsForOtherCharacterSheets(tid, party, registry, 'reviewAction', gameState, usageStore);
+  const crossChips = [];
+  for (const vid of crossSheetViewerIds) {
+    const cross = collectChipsForOtherCharacterSheets(vid, party, registry, 'reviewAction', gameState, usageStore);
     for (const c of cross) {
-      list.push({ ...c, _v2Phase: 'reviewAction' });
+      crossChips.push({ ...c, _v2Phase: 'reviewAction' });
     }
   }
 
-  if (!dedupeFeatureNames || dedupeFeatureNames.size === 0) return list;
-  return list.filter((c) => !dedupeFeatureNames.has(c._featureName));
+  const merged = dedupeV2ChipsByChipKey([...list, ...crossChips]);
+
+  if (!dedupeFeatureNames || dedupeFeatureNames.size === 0) return merged;
+  return merged.filter((c) => !dedupeFeatureNames.has(c._featureName));
 }
 
 /**
@@ -416,8 +523,15 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
     return { mutations: [], chipState: makeChipState(), feature: null, error: 'bad-args' };
   }
 
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+
   const registry = buildV2RegistryWithSrdItems(srdData);
-  const features = loadAllV2FeaturesForTable(activeElements, registry);
+  const featureOpts = {
+    fearCount: opts.fearCount,
+    mapConfig: opts.mapConfig,
+    tableFeatureState: opts.tableFeatureState,
+  };
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
   const feature = features.find(
     (f) => f.name === chip._featureName && f._ownerInstanceId === chip._ownerInstanceId
   );
@@ -425,7 +539,7 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
     return { mutations: [], chipState: makeChipState(), feature: null, error: 'feature-not-found' };
   }
 
-  enrichV2RollIsSuccessFromTarget(roll, activeElements);
+  enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData);
   const actionConfig = buildActionConfigFromRoll(roll, activeElements);
   if (!actionConfig) {
     return { mutations: [], chipState: makeChipState(), feature, error: 'no-action-config' };
@@ -443,9 +557,13 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
     _ownerInstanceId: snapshotOwnerId,
     _featureKey: feature.name,
     _activeFeature: feature,
+    registry,
   };
 
   const table = buildTableSnapshot(gameState);
+  if (!canPayChipCosts(chip, table)) {
+    return { mutations: [], chipState: makeChipState(), feature, error: 'unaffordable' };
+  }
   deductChipCosts(chip, table);
   const chipState = makeChipState();
   const selectOpts = opts.selectOpts || {};
@@ -459,17 +577,33 @@ export function activateV2ReviewChip(chip, roll, activeElements, srdData, opts =
  *
  * @returns {object|null} `buildTableSnapshot(gameState)` or null when the chip cannot be resolved
  */
+/**
+ * Tooltip text when a V2 review chip cannot be used (resources or feature `isDisabled`).
+ */
+export function getV2ReviewChipDisableHint(chip, roll, activeElements, srdData, opts = {}) {
+  const table = buildV2ReviewChipTableSnapshot(chip, roll, activeElements, srdData, opts);
+  if (!table) return null;
+  return getChipDisableHint(chip, table);
+}
+
 export function buildV2ReviewChipTableSnapshot(chip, roll, activeElements, srdData, opts = {}) {
   if (!chip || !roll || !Array.isArray(activeElements) || !srdData) return null;
 
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+
   const registry = buildV2RegistryWithSrdItems(srdData);
-  const features = loadAllV2FeaturesForTable(activeElements, registry);
+  const featureOpts = {
+    fearCount: opts.fearCount,
+    mapConfig: opts.mapConfig,
+    tableFeatureState: opts.tableFeatureState,
+  };
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
   const feature = features.find(
     (f) => f.name === chip._featureName && f._ownerInstanceId === chip._ownerInstanceId
   );
   if (!feature) return null;
 
-  enrichV2RollIsSuccessFromTarget(roll, activeElements);
+  enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData);
   const actionConfig = buildActionConfigFromRoll(roll, activeElements);
   if (!actionConfig) return null;
 
@@ -485,6 +619,7 @@ export function buildV2ReviewChipTableSnapshot(chip, roll, activeElements, srdDa
     _ownerInstanceId: snapshotOwnerId,
     _featureKey: feature.name,
     _activeFeature: feature,
+    registry,
   };
 
   return buildTableSnapshot(gameState);
@@ -530,4 +665,405 @@ export function resolveV2ReviewChipPicker(chip, roll, activeElements, srdData, o
   }
 
   return { isSelectOptions, selectTargets, maxSelections };
+}
+
+// ---------------------------------------------------------------------------
+// One-shot `onUse` review chips (same pending banner / replacement roll id chain)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable id for tracking whether a V2 review chip was already activated on this banner.
+ * Scoped by feature owner (and cross-sheet viewer when present); `_chipKey` is per-feature
+ * chip name + placement (see {@link collectChips} in chip-system).
+ *
+ * @param {object} chip
+ * @returns {string}
+ */
+export function v2BannerChipActivationKey(chip) {
+  if (!chip || typeof chip !== 'object') return '';
+  const base =
+    chip._chipKey ||
+    `${chip._featureName ?? ''}::${chip.name ?? ''}::reviewAction`;
+  return [chip._ownerInstanceId, chip._crossSheetViewerInstanceId, base]
+    .filter((x) => x != null && x !== '')
+    .join('::');
+}
+
+/** True when activating the chip should consume it for the lifetime of this banner chain. */
+export function shouldV2ReviewChipConsumeOneShot(chip) {
+  return typeof chip?.onUse === 'function' && chip?.isToggle !== true;
+}
+
+/**
+ * Mark one-shot `onUse` chips that were already applied for this roll id (or migrated id) with
+ * `_v2BannerOnUseConsumed: true` so the UI can show them disabled with a checkmark.
+ *
+ * @param {object[]} chips
+ * @param {Set<string>|undefined} consumedKeys — from {@link v2BannerChipActivationKey}
+ * @returns {object[]}
+ */
+export function annotateV2ReviewChipsBannerConsumed(chips, consumedKeys) {
+  if (!Array.isArray(chips) || !chips.length) return chips || [];
+  if (!consumedKeys?.size) return chips;
+  return chips.map((c) => {
+    if (!shouldV2ReviewChipConsumeOneShot(c)) return c;
+    if (!consumedKeys.has(v2BannerChipActivationKey(c))) return c;
+    return { ...c, _v2BannerOnUseConsumed: true };
+  });
+}
+
+/**
+ * When a pending banner is replaced (e.g. `postBannerAddDamage`), merge one-shot consumption
+ * keys so the new `_rollDbId` still marks already-used chips as consumed.
+ *
+ * @param {number|string} prevRollDbId
+ * @param {number|string} newRollDbId
+ * @param {Map<number|string, Set<string>>} map
+ * @returns {Map<number|string, Set<string>>}
+ */
+export function migrateV2BannerConsumedOnUseKeys(prevRollDbId, newRollDbId, map) {
+  if (prevRollDbId == null || newRollDbId == null || prevRollDbId === newRollDbId) return map;
+  const next = new Map(map);
+  const from = next.get(prevRollDbId);
+  if (!from?.size) {
+    next.delete(prevRollDbId);
+    return next;
+  }
+  const to = new Set(next.get(newRollDbId) || []);
+  for (const k of from) to.add(k);
+  next.set(newRollDbId, to);
+  next.delete(prevRollDbId);
+  return next;
+}
+
+/**
+ * @param {number|string} rollDbId
+ * @param {object} chip
+ * @param {Map<number|string, Set<string>>} map
+ * @returns {Map<number|string, Set<string>>}
+ */
+export function recordV2BannerConsumedOnUse(rollDbId, chip, map) {
+  if (rollDbId == null || !shouldV2ReviewChipConsumeOneShot(chip)) return map;
+  const key = v2BannerChipActivationKey(chip);
+  if (!key) return map;
+  const next = new Map(map);
+  const set = new Set(next.get(rollDbId) || []);
+  set.add(key);
+  next.set(rollDbId, set);
+  return next;
+}
+
+/**
+ * Drop map entries for roll ids that are no longer pending (avoid unbounded growth).
+ *
+ * @param {Map<number|string, Set<string>>} map
+ * @param {Iterable<number|string>} activeRollDbIds
+ * @returns {Map<number|string, Set<string>>}
+ */
+export function pruneV2BannerConsumedOnUseKeys(map, activeRollDbIds) {
+  const keep = new Set(activeRollDbIds);
+  let changed = false;
+  const next = new Map();
+  for (const [id, set] of map) {
+    if (keep.has(id)) next.set(id, set);
+    else changed = true;
+  }
+  return changed ? next : map;
+}
+
+// ---------------------------------------------------------------------------
+// Damage acknowledge — opt-in `onReviewAction` (post-HP side effects only)
+// ---------------------------------------------------------------------------
+
+function capitalizeTraitKey(traitKey) {
+  const t = String(traitKey || 'agility').trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : 'Agility';
+}
+
+/**
+ * Run V2 `onIntent` for a pending trait roll (e.g. Air advantage die) — returns engine mutations
+ * (`addAdvantageDie`, …) for the client roll wrapper.
+ *
+ * @param {{
+ *   traitKey: string,
+ *   actorInstanceId: string,
+ *   activeElements: object[],
+ *   srdData: object,
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ * }} opts
+ * @returns {object[]}
+ */
+export function runV2IntentPhaseForTraitRoll(opts) {
+  const {
+    traitKey,
+    actorInstanceId,
+    activeElements,
+    srdData,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+  } = opts || {};
+  if (!traitKey || !actorInstanceId || !Array.isArray(activeElements) || !srdData) return [];
+  const registry = buildV2RegistryWithSrdItems(srdData);
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, {
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  const tk = capitalizeTraitKey(traitKey);
+  const gameState = {
+    fear: fearCount,
+    mapConfig,
+    activeElements: activeForLoader,
+    featureState: mergeV2TableFeatureState(tableFeatureState, activeForLoader),
+    rolls: {
+      action: { dice: [], statics: [], hopeDie: null, fearDie: null, gmDie: null, isSuccess: null, isCritical: null },
+      damage: { dice: [], statics: [] },
+      other: {},
+    },
+    action: {
+      type: 'trait',
+      actorInstanceId,
+      targetInstanceIds: [],
+      trait: tk,
+      range: 'melee',
+      effects: [],
+      appliedEffects: [],
+    },
+  };
+  const actionConfig = {
+    type: 'trait',
+    actorInstanceId,
+    targetInstanceIds: [],
+    traitKey: tk,
+    range: 'melee',
+  };
+  const loop = createActionLoop(gameState, actionConfig, features, {});
+  const { mutations } = loop.runPhase('intent');
+  return mutations || [];
+}
+
+/**
+ * Run `onRest` on short-rest for all characters (table-level `featureState` merge).
+ *
+ * @param {{
+ *   activeElements: object[],
+ *   srdData: object,
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ * }} opts
+ * @returns {{ updates: { instanceId: string, updates: object }[], skipped: object[] }}
+ */
+export function runV2RestHooksForTable(opts) {
+  const { activeElements, srdData, fearCount = 0, mapConfig = null, tableFeatureState } = opts || {};
+  if (!Array.isArray(activeElements) || !srdData) {
+    return { updates: [], skipped: [] };
+  }
+  const registry = buildV2RegistryWithSrdItems(srdData);
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, {
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  const firstPc = activeForLoader.find((e) => e.elementType === 'character');
+  const actorId = firstPc?.instanceId ?? '';
+  const gameState = {
+    fear: fearCount,
+    mapConfig,
+    activeElements: activeForLoader,
+    featureState: mergeV2TableFeatureState(tableFeatureState, activeForLoader),
+    rolls: {
+      action: { dice: [], statics: [], hopeDie: null, fearDie: null, gmDie: null, isSuccess: null, isCritical: null },
+      damage: { dice: [], statics: [] },
+      other: {},
+    },
+    action: {
+      type: 'shortRest',
+      actorInstanceId: actorId,
+      targetInstanceIds: [],
+      trait: 'Agility',
+      range: 'melee',
+      effects: [],
+      appliedEffects: [],
+    },
+  };
+  const actionConfig = {
+    type: 'shortRest',
+    actorInstanceId: actorId,
+    targetInstanceIds: [],
+    traitKey: 'Agility',
+    range: 'melee',
+  };
+  const loop = createActionLoop(gameState, actionConfig, features, {});
+  const { mutations } = loop.runPhase('intent');
+  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, mutations || [], undefined);
+  return { updates, skipped };
+}
+
+function buildFireRetaliationPostRoll(roll, activeElements) {
+  const targetId = roll?._selectedTargetInstanceId;
+  const charEl = activeElements.find((e) => e.instanceId === targetId && e.elementType === 'character');
+  const attackerIds = roll?._attackerInstanceIds ?? (roll?._attackerInstanceId ? [roll._attackerInstanceId] : []);
+  if (!charEl || !attackerIds.length) return null;
+  return {
+    rollText: `${charEl.name} Fire Retaliation damage [1d10]`,
+    displayName: charEl.name,
+    rollMeta: {
+      attackerId: charEl.instanceId,
+      targetId: attackerIds[0],
+    },
+  };
+}
+
+function tryWaterSplashActionNotification(roll, mutations, activeElements) {
+  const targetId = roll?._selectedTargetInstanceId;
+  const attackerId = roll?._attackerInstanceId;
+  if (!targetId || !attackerId) return null;
+  const atk = activeElements.find((e) => e.instanceId === attackerId && e.elementType === 'character');
+  const ch = atk?.featureState?.WardenOfTheElements?.channeledElement;
+  if (ch !== 'water') return null;
+  const marked = (mutations || []).filter(
+    (m) =>
+      m?.type === 'markStress' &&
+      m.payload?.instanceId &&
+      m.payload.instanceId !== targetId,
+  );
+  if (!marked.length) return null;
+  const names = marked
+    .map((m) => activeElements.find((e) => e.instanceId === m.payload.instanceId)?.name)
+    .filter(Boolean);
+  if (!names.length) return null;
+  return {
+    _action: true,
+    rollUser: atk?.name || 'Character',
+    actionName: 'Water Retaliation',
+    actionText: `Water: ${names.length} nearby adversary/adversaries marked Stress.`,
+  };
+}
+
+/**
+ * After HP damage is applied on the Game Table, run opt-in `onReviewAction` hooks (e.g. Warden
+ * elemental splash / retaliation) and return table ops + follow-up rolls.
+ *
+ * @param {{
+ *   roll: object,
+ *   activeElements: object[],
+ *   srdData: object,
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ *   hpApplied: number,
+ * }} ctx
+ * @returns {{
+ *   elementUpdates: { instanceId: string, updates: object }[],
+ *   postRolls: { rollText: string, displayName: string, rollMeta?: object }[],
+ *   actionNotifications: object[],
+ *   skipped: object[],
+ * }}
+ */
+export function runV2DamageAckReviewActionHooks(ctx) {
+  const empty = { elementUpdates: [], postRolls: [], actionNotifications: [], skipped: [] };
+  const { roll, activeElements, srdData, fearCount = 0, mapConfig = null, tableFeatureState, hpApplied } = ctx || {};
+  if (hpApplied < 1 || !roll || !Array.isArray(activeElements) || !srdData) return empty;
+
+  enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData);
+  const registry = buildV2RegistryWithSrdItems(srdData);
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const featureOpts = { fearCount, mapConfig, tableFeatureState };
+  const allFeatures = loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
+  const hooksFeatures = allFeatures.filter((f) => f.runOnReviewActionAfterHpApplied === true);
+  if (!hooksFeatures.length) return empty;
+
+  const actionConfig = buildActionConfigFromRoll(roll, activeForLoader);
+  if (!actionConfig) return empty;
+
+  const gameState = buildV2BannerGameState({
+    roll,
+    activeElements: activeForLoader,
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  const loop = createActionLoop(gameState, actionConfig, hooksFeatures, {});
+  const { mutations } = loop.runPhase('reviewAction');
+  const raw = mutations || [];
+  const rollDies = raw.filter((m) => m?.type === 'rollDie');
+  const nonRoll = raw.filter((m) => m?.type !== 'rollDie');
+
+  const postRolls = [];
+  if (rollDies.some((m) => String(m?.payload?.notation || '').toLowerCase() === 'd10')) {
+    const pr = buildFireRetaliationPostRoll(roll, activeForLoader);
+    if (pr) postRolls.push(pr);
+  }
+
+  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, nonRoll, undefined);
+  const actionNotifications = [];
+  const splash = tryWaterSplashActionNotification(roll, mutations, activeForLoader);
+  if (splash) actionNotifications.push(splash);
+
+  return { elementUpdates: updates || [], postRolls, actionNotifications, skipped: skipped || [] };
+}
+
+/**
+ * Generic preview lines for the damage banner (from `featureState` + map geometry).
+ *
+ * @param {{
+ *   roll: object,
+ *   activeElements: object[],
+ *   selectedDamageTargetId?: string|null,
+ * }} opts
+ * @returns {string[]}
+ */
+export function computeV2DamageBannerAckNotices(opts) {
+  const { roll, activeElements, selectedDamageTargetId } = opts || {};
+  const notes = [];
+  if (!roll || !Array.isArray(activeElements)) return notes;
+
+  if (
+    roll._attackerType === 'adversary' &&
+    roll._attackRangeFt != null &&
+    roll._attackRangeFt <= RANGE_BANDS_FT.MELEE &&
+    selectedDamageTargetId
+  ) {
+    const t = activeElements.find((e) => e.instanceId === selectedDamageTargetId && e.elementType === 'character');
+    const ch = t?.featureState?.WardenOfTheElements?.channeledElement;
+    if (ch === 'fire') {
+      notes.push(`🔥 Fire: ${t?.name || 'Target'} retaliates 1d10 magic damage.`);
+    }
+  }
+
+  const hasDamage = (roll.subItems || []).some((s) => /damage/i.test(s.pre || '') && s.input);
+  const attackerId = roll._attackerInstanceId;
+  if (hasDamage && attackerId && selectedDamageTargetId) {
+    const atk = activeElements.find((e) => e.instanceId === attackerId && e.elementType === 'character');
+    if (atk?.featureState?.WardenOfTheElements?.channeledElement === 'water') {
+      const advTarget = activeElements.find((e) => e.instanceId === selectedDamageTargetId);
+      const isMeleeHit = (() => {
+        if (atk.tokenX != null && advTarget?.tokenX != null) {
+          return tokenDistanceFt(atk.tokenX, atk.tokenY, advTarget.tokenX, advTarget.tokenY) <= RANGE_BANDS_FT.MELEE;
+        }
+        return true;
+      })();
+      if (isMeleeHit) {
+        // Match Elemental Incarnation hook: other adversaries within Very Close of the **struck** target (not the attacker).
+        const veryCloseAdvs = getAdversariesWithinRangeFt(
+          activeElements,
+          selectedDamageTargetId,
+          RANGE_BANDS_FT.VERY_CLOSE,
+        ).filter((a) => a.instanceId !== selectedDamageTargetId);
+        if (veryCloseAdvs.length > 0) {
+          const names = veryCloseAdvs
+            .map((a) => activeElements.find((e) => e.instanceId === a.instanceId)?.name || 'Unknown');
+          notes.push(`💧 Water: ${names.join(', ')} will mark Stress.`);
+        }
+      }
+    }
+  }
+
+  return notes;
 }
