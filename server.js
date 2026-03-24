@@ -14,6 +14,7 @@ import { searchFCG } from './src/fcg-search.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
+import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
 import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
@@ -36,7 +37,7 @@ const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
-const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'characters', 'table_state'];
+const COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures', 'characters', 'table_state'];
 
 /** Parse query param as array: tier=1&tier=2 → ['1','2'], tier=1,2 → ['1','2'] */
 function parseQueryArray(val) {
@@ -797,8 +798,30 @@ app.get('/api/fcg-search', requireAuth, async (req, res) => {
 
 // --- Per-collection paginated route ---
 
-const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'characters'];
-const UNIFIED_COLLECTIONS = ['adversaries', 'environments'];
+/** SRD-backed unified list + app-only collections */
+const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures', 'characters'];
+const UNIFIED_COLLECTIONS = SRD_COLLECTION_NAMES;
+
+/** Maps collection → getUnifiedItems JSON field / tier SQL (see docs/srd-implementation.md) */
+function unifiedListConfig(collection) {
+  const d = { typeField: null, extraTypeField: null, tierExprSql: `COALESCE((data->>'tier')::int, 1)` };
+  const map = {
+    adversaries: { typeField: 'role', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    environments: { typeField: 'type', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    abilities: { typeField: 'domain', tierExprSql: `COALESCE((data->>'level')::int, 1)` },
+    weapons: { typeField: 'primary_or_secondary', extraTypeField: 'physical_or_magical', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    armor: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    beastforms: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    ancestries: { tierExprSql: `1` },
+    classes: { tierExprSql: `1` },
+    communities: { tierExprSql: `1` },
+    consumables: { tierExprSql: `1` },
+    domains: { tierExprSql: `1` },
+    items: { tierExprSql: `1` },
+    subclasses: { tierExprSql: `1` },
+  };
+  return { ...d, ...map[collection] };
+}
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
   const opts = tierMax != null
@@ -871,19 +894,20 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
   const includeScaledUp = req.query.includeScaledUp === '1';
-  const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const sort = req.query.sort || 'popularity';
 
   const tiersRaw = parseQueryArray(req.query.tier);
+  const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
   const typeValuesRaw = parseQueryArray(req.query.type);
-  const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 4);
   const typeValues = typeValuesRaw.filter(Boolean);
-  const tierMax = (includeScaledUp && tiers.length === 1) ? tiers[0] : null;
+  const extraTypeValues = parseQueryArray(req.query.type2).filter(Boolean);
+  const tierMax = collection === 'adversaries' && includeScaledUp && tiers.length === 1 ? tiers[0] : null;
 
   try {
     if (UNIFIED_COLLECTIONS.includes(collection)) {
+      const cfg = unifiedListConfig(collection);
       const result = await getUnifiedItems(APP_ID, req.uid, collection, {
         includeMine,
         includePublic,
@@ -893,8 +917,11 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         search,
         tierMax,
         tiers: tierMax != null ? [] : tiers,
-        typeField,
+        typeField: cfg.typeField,
         typeValues,
+        extraTypeField: cfg.extraTypeField,
+        extraTypeValues,
+        tierExprSql: cfg.tierExprSql,
         sort,
         offset,
         limit,
@@ -914,6 +941,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
     }
 
     const includeMirrors = false;
+    const typeField = null;
     const dbOpts = { includeMine, includePublic, includeMirrors, search, tier: tiers[0] || null, tierMax, tiers: tierMax != null ? [] : tiers, typeField, typeValue: typeValues[0] || null, typeValues, offset, limit };
     const { ownCount, communityCount, dbCount } = await fetchDbCounts(APP_ID, req.uid, collection, dbOpts);
     const { items } = await fetchDbItems(APP_ID, req.uid, collection, dbOpts, { ownCount, communityCount, dbCount });
@@ -1023,7 +1051,7 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
 
 // --- Clone endpoint (explicit clone + auto-clone-on-play) ---
 
-const CLONE_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures'];
+const CLONE_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures'];
 
 app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const { collection } = req.params;
@@ -1107,7 +1135,7 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
 
 app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
   const { collection } = req.params;
-  if (!CLONE_COLLECTIONS.includes(collection)) {
+  if (collection !== 'adversaries' && collection !== 'environments') {
     return res.status(400).json({ error: 'Unknown collection for enrich' });
   }
   const { items } = req.body;

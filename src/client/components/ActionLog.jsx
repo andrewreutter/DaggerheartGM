@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dices, ChevronUp, ChevronDown } from 'lucide-react';
+import { MANUAL_DICE_SIZES, buildManualRollText } from '../lib/manual-dice-roll-text.js';
 
 // Per-sub-item accent colors: Hope → amber, Fear → purple, damage → red, else sky/green
 function subItemColor(pre) {
@@ -119,18 +120,6 @@ function LogEntry({ roll }) {
   );
 }
 
-const DIE_SIZES = [6, 8, 10, 12, 20];
-
-function buildRollText(dualityOn, counts) {
-  const parts = [];
-  if (dualityOn) parts.push('Hope [d12] Fear [d12]');
-  for (const size of DIE_SIZES) {
-    const n = Number(counts[size]) || 0;
-    if (n > 0) parts.push(` [${n}d${size}]`);
-  }
-  return parts.join('').trim();
-}
-
 /**
  * Collapsed footer bar that opens action/roll history as an overlay above itself.
  * rolls — array of roll and action notification objects (maintained by GMTableView)
@@ -141,7 +130,9 @@ export function ActionLog({ rolls = [], rollBuilder }) {
   const scrollRef = useRef(null);
   const overlayRef = useRef(null);
   const [dualityOn, setDualityOn] = useState(true);
-  const [counts, setCounts] = useState(() => ({ 6: 0, 8: 0, 10: 0, 12: 0, 20: 0 }));
+  const [counts, setCounts] = useState(() =>
+    Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, 0]))
+  );
 
   // Auto-scroll to bottom when overlay opens or new entries arrive while open
   useEffect(() => {
@@ -202,7 +193,7 @@ export function ActionLog({ rolls = [], rollBuilder }) {
                   />
                   <span className="text-[11px] text-slate-300">Duality Dice (d12)</span>
                 </label>
-                {DIE_SIZES.map((size) => (
+                {MANUAL_DICE_SIZES.map((size) => (
                   <label key={size} className="flex items-center gap-0.5 mr-1">
                     <span className="text-[10px] text-slate-500 shrink-0">d{size}</span>
                     <input
@@ -220,9 +211,9 @@ export function ActionLog({ rolls = [], rollBuilder }) {
                 ))}
                 <button
                   type="button"
-                  disabled={!dualityOn && DIE_SIZES.every((s) => !(counts[s] || 0))}
+                  disabled={!dualityOn && MANUAL_DICE_SIZES.every((s) => !(counts[s] || 0))}
                   onClick={() => {
-                    const rollText = buildRollText(dualityOn, counts);
+                    const rollText = buildManualRollText(dualityOn, counts);
                     if (!rollText) return;
                     rollBuilder.onRoll(rollText, rollBuilder.displayName);
                     setOpen(false);

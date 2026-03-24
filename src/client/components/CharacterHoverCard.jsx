@@ -28,6 +28,7 @@ import {
   wrapEntity,
   wrapRoll,
   resolveWeaponTagDescriptor,
+  getWeaponTagAutomatedForBanner,
   resolveOriginFeatureDescriptor,
   resolveClassFeatureDescriptor,
   resolveAbilityDescriptor,
@@ -170,8 +171,8 @@ function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName
     if (Array.isArray(app) && app.length) parts.push(...app);
   }
 
-  // Feature tag when feature opts in with showTag: true, or has onBanner (so tag is in roll.tags for narration).
-  if (feature && (isShowTagFeature(feature.name, characterEl) || resolveWeaponTagDescriptor(feature.name, characterEl)?.onBanner)) {
+  // Feature tag when feature opts in with showTag: true, or automated (banner narration / applied style).
+  if (feature && (isShowTagFeature(feature.name, characterEl) || getWeaponTagAutomatedForBanner(feature.name, characterEl))) {
     let tagText;
     if (opts.devastating) {
       tagText = 'd20 damage die, mark 1 Stress (active)';
@@ -341,6 +342,9 @@ export function CharacterHoverCard({
   // In-place target menu before sending roll: { type: 'weapon'|'beastform', rollText, displayName, rollMeta, validTargets, opts?, anchorRect? }
   const [targetMenuPending, setTargetMenuPending] = useState(null);
 
+  /** GM or assigned player with `updateFn` — full V2 card chips (Beastform, Evolution, Elemental Incarnation, domain cards). */
+  const v2TableScoped = !!(updateFn && tableId);
+
   const pendingManualRoll = useMemo(
     () => findPendingManualTrackBanner(pendingBanners ?? [], el.instanceId),
     [pendingBanners, el.instanceId]
@@ -465,7 +469,7 @@ export function CharacterHoverCard({
 
   const handleV2DomainChip = useCallback(
     async ({ featRow, chip, featureKey: passedFeatureKey, selectOpts }) => {
-      if (!v2Registry || !el.instanceId || isPlayer || !tableId || !Array.isArray(activeElementsForV2Snapshots)) return;
+      if (!v2Registry || !el.instanceId || !tableId || !Array.isArray(activeElementsForV2Snapshots)) return;
       await runV2OwnedCardChipTableAction({
         featRow,
         chip,
@@ -480,6 +484,7 @@ export function CharacterHoverCard({
         mapConfig,
         tableId,
         onActionLoopNotification: onActionNotification,
+        isPlayer: !!isPlayer,
       });
     },
     [v2Registry, el, el.instanceId, displayEl, isPlayer, tableId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig, onActionNotification]
@@ -1278,9 +1283,9 @@ export function CharacterHoverCard({
             actionName: feature.name,
             actionText: feature.description ?? '',
           }) : undefined}
-          onV2CardChip={!isPlayer && tableId ? handleV2DomainChip : undefined}
+          onV2CardChip={v2TableScoped ? handleV2DomainChip : undefined}
           v2TableContext={
-            !isPlayer && tableId
+            v2TableScoped
               ? {
                   fearCount,
                   mapConfig,
@@ -1300,9 +1305,9 @@ export function CharacterHoverCard({
           onToggleFeature={onToggleFeature}
           onFeatureUse={handleFeatureUse}
           featureUsage={el.featureUsage}
-          onV2DomainChip={!isPlayer && tableId ? handleV2DomainChip : undefined}
+          onV2DomainChip={v2TableScoped ? handleV2DomainChip : undefined}
           v2TableContext={
-            !isPlayer && tableId
+            v2TableScoped
               ? {
                   fearCount,
                   mapConfig,

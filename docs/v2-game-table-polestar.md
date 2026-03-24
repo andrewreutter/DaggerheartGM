@@ -5,7 +5,7 @@
 | Doc | Role |
 |-----|------|
 | This file | **Goals, phases, exit criteria, and order of operations** |
-| [`v2-v1-cutover.md`](v2-v1-cutover.md) | **Parity matrix** — behavior → historical Phase 1 vs V2 direction (update rows as call sites disappear) |
+| [`v2-v1-cutover.md`](v2-v1-cutover.md) | **Analysis + parity matrix** — VTT bridge vs V2 engine; [completion plan](../.cursor/plans/v2-game-table-cutover-completion.plan.md) |
 | [`v2-migration-tracker.md`](v2-migration-tracker.md) | **SRD feature coverage** in `src/features-v2/` (separate from table wiring) |
 | [`v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md) | Bridge hardening history + deferred items |
 | [`v2-ui-integration-phase3-handoff.md`](v2-ui-integration-phase3-handoff.md) | Review-action / banner UX |

@@ -33,14 +33,15 @@ const DROPDOWN_GAP = 2;
  * @param {string} [props.placeholder] - Shown when value is null/undefined (also used for the clear option in the dropdown and string fallback when renderPlaceholder is absent)
  * @param {boolean} [props.truncateClosedLabel] — when there is no selection, apply single-line ellipsis to the closed label
  * @param {boolean} [props.disabled]
- * @param {string} [props.disabledReason] — Shown in an instant tooltip when `disabled` (e.g. insufficient resources).
+ * @param {string} [props.disabledReason] — Plain text when `disabled` (e.g. insufficient resources).
+ * @param {import('react').ReactNode} [props.disabledTooltipContent] — Rich tooltip when `disabled` (e.g. preview mode + markdown); takes precedence over `disabledReason`.
  * @param {string} [props.className]
  * @param {string} [props.dropdownClassName] - Extra classes for the dropdown panel
  * @param {boolean} [props.fixedDropdown] - Deprecated; dropdown is always viewport-positioned
  * @param {boolean} [props.tooltipWide] - Use a wider hover tooltip (long markdown)
  * @param {function} [props.renderTooltipExtra] - (value) => ReactNode — rendered below markdown; enables pointer-events on tooltip and delayed hide so content can be scrolled
  */
-export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, renderPlaceholder, placeholder, truncateClosedLabel, disabled, disabledReason, className = '', dropdownClassName = '', fixedDropdown = false, tooltipWide = false, renderTooltipExtra }) {
+export function CustomSelect({ value, onChange, options, getOptionLabel, getOptionDescription, getOptionKey, renderOption, renderValue, renderPlaceholder, placeholder, truncateClosedLabel, disabled, disabledReason, disabledTooltipContent, className = '', dropdownClassName = '', fixedDropdown = false, tooltipWide = false, renderTooltipExtra }) {
   const [open, setOpen] = useState(false);
   const [tooltip, setTooltip] = useState(null); // { label, description, x, y, extra }
   const [dropdownPos, setDropdownPos] = useState(null); // { top?, bottom?, left, width, maxHeight } for portaled dropdown
@@ -165,7 +166,7 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
       <button
         type="button"
         disabled={disabled}
-        title={disabled && disabledReason ? disabledReason : undefined}
+        title={disabled && disabledReason && !disabledTooltipContent ? disabledReason : undefined}
         onClick={() => !disabled && setOpen(!open)}
         className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-left flex items-center justify-between focus:outline-none focus:border-blue-500 ${
           disabled ? 'opacity-40 cursor-not-allowed' : 'text-white hover:border-slate-600'
@@ -264,9 +265,14 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
     </div>
   );
 
-  if (disabled && disabledReason) {
+  if (disabled && (disabledReason || disabledTooltipContent)) {
     return (
-      <Tooltip label={disabledReason} placement="bottom" className="relative flex w-full min-w-0">
+      <Tooltip
+        content={disabledTooltipContent}
+        label={disabledTooltipContent ? undefined : disabledReason}
+        placement="bottom"
+        className="relative flex w-full min-w-0"
+      >
         {inner}
       </Tooltip>
     );

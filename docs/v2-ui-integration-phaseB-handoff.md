@@ -1,6 +1,6 @@
 # V2 UI integration — Phase B handoff (bridge hardening + banner parity)
 
-**Prerequisite:** Phase A inventory is in [`docs/v2-v1-cutover.md`](v2-v1-cutover.md) (GMTableView.jsx ↔ Phase 1 ↔ V2 mapping).
+**Prerequisite:** VTT vs engine analysis is in [`docs/v2-v1-cutover.md`](v2-v1-cutover.md); completion phases in [`.cursor/plans/v2-game-table-cutover-completion.plan.md`](../.cursor/plans/v2-game-table-cutover-completion.plan.md).
 
 **Phase B scope** matches the parent plan **“Finish open bridge debt (integration hardening)”** and the **Phase 3 / 4 handoff** items that are not yet closed.
 

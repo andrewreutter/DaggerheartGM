@@ -27,14 +27,26 @@ const UNDO_GROUP_MS = 600;
  *   canRedo: boolean,
  *   isSaving: boolean,
  *   savedOnce: boolean,
+ *   debouncePending: boolean,
+ *   showUnsavedDirtyHint: boolean,
+ *   savedFlash: boolean,
  * }}
+ * `savedFlash` is set true after each successful save and stays true until the next edit (new `setFormData`).
+ * `showUnsavedDirtyHint` is true when a save is debounced only after at least one successful save this session
+ * (avoids "Unsaved" on open when forms auto-sync, e.g. CharacterForm + SRD recompute). The UI should still
+ * combine this with user-interaction gating — programmatic `onChange` can still run after that.
+ * @param {string|number|null} [options.sessionKey] — when it changes, the session restarts (e.g. item id).
  */
-export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = false }) {
+export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = false, sessionKey = null }) {
   const [formData, setFormDataRaw] = useState(() => initial || {});
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(!isNew);
+  const [debouncePending, setDebouncePending] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  /** After first successful onSave this session — gates "Unsaved" so opening sync doesn't look like dirty edits */
+  const [pastFirstSuccessfulSave, setPastFirstSuccessfulSave] = useState(false);
 
   const saveTimerRef = useRef(null);
   const undoTimerRef = useRef(null);
@@ -56,6 +68,8 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
     try {
       await onSaveRef.current(data);
       setSavedOnce(true);
+      setPastFirstSuccessfulSave(true);
+      setSavedFlash(true);
     } finally {
       saveInProgressRef.current = false;
       setIsSaving(false);
@@ -66,8 +80,11 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
   }, [isNew]);
 
   const scheduleSave = useCallback((data) => {
+    setDebouncePending(true);
+    setSavedFlash(false);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
+      setDebouncePending(false);
       executeSave(data);
     }, debounceMs);
   }, [debounceMs, executeSave]);
@@ -156,6 +173,15 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
     };
   }, []);
 
+  const prevSessionKeyRef = useRef(sessionKey);
+  useEffect(() => {
+    if (prevSessionKeyRef.current === sessionKey) return;
+    prevSessionKeyRef.current = sessionKey;
+    setPastFirstSuccessfulSave(false);
+  }, [sessionKey]);
+
+  const showUnsavedDirtyHint = debouncePending && pastFirstSuccessfulSave;
+
   return {
     formData,
     setFormData,
@@ -165,5 +191,8 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
     canRedo: redoStack.length > 0,
     isSaving,
     savedOnce,
+    debouncePending,
+    showUnsavedDirtyHint,
+    savedFlash,
   };
 }

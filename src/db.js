@@ -562,8 +562,11 @@ const SORT_OPTIONS = {
  * @param {string} opts.search
  * @param {number|null} opts.tierMax
  * @param {number[]} opts.tiers
- * @param {string} opts.typeField - 'role' | 'type'
+ * @param {string} opts.typeField - JSON key for primary type/role filter (e.g. 'role', 'domain')
+ * @param {string} opts.tierExprSql - SQL fragment for numeric tier/level column (default: tier from JSON)
+ * @param {string} opts.extraTypeField - optional second JSON key (e.g. physical_or_magical on weapons)
  * @param {string[]} opts.typeValues
+ * @param {string[]} opts.extraTypeValues - filter on extraTypeField
  * @param {string} opts.sort - 'popularity' | 'name' | 'type' | 'source' | 'tier'
  * @param {string} opts.sortDir - 'asc' | 'desc'
  */
@@ -578,6 +581,9 @@ export async function getUnifiedItems(appId, userId, collection, {
   tiers = [],
   typeField = null,
   typeValues = [],
+  extraTypeField = null,
+  extraTypeValues = [],
+  tierExprSql = null,
   sort = 'popularity',
   sortDir = 'asc',
   offset = 0,
@@ -589,8 +595,9 @@ export async function getUnifiedItems(appId, userId, collection, {
   let p = 1;
 
   const sortOpt = SORT_OPTIONS[sort] || SORT_OPTIONS.popularity;
-  const typeExpr = typeField ? `data->>'${typeField}'` : `''`;
-  const tierExpr = `COALESCE((data->>'tier')::int, 1)`;
+  const typeExpr = typeField ? `data->>'${typeField.replace(/[^a-z0-9_]/gi, '')}'` : `''`;
+  const tierExpr = tierExprSql || `COALESCE((data->>'tier')::int, 1)`;
+  const extraTypeExpr = extraTypeField ? `data->>'${extraTypeField.replace(/[^a-z0-9_]/gi, '')}'` : `''`;
 
   if (includeMine || includePublic) {
     const srcClauses = [];
@@ -612,7 +619,8 @@ export async function getUnifiedItems(appId, userId, collection, {
         COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS pc,
         CASE WHEN i.user_id = $${uidParam} THEN 'own' ELSE 'public' END AS _source,
         ${typeExpr} AS type_val,
-        ${tierExpr} AS tier_val
+        (${tierExpr})::int AS tier_val,
+        ${extraTypeExpr} AS extra_type_val
       FROM items i
       WHERE i.app_id = $${p} AND i.collection = $${p + 1} AND (${srcSQL})
     )`);
@@ -632,7 +640,8 @@ export async function getUnifiedItems(appId, userId, collection, {
         COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = e.app_id AND ip.collection = e.collection AND ip.item_id = e.external_id AND ip.action = 'play'), 0) AS pc,
         e.source AS _source,
         ${typeExpr} AS type_val,
-        ${tierExpr} AS tier_val
+        (${tierExpr})::int AS tier_val,
+        ${extraTypeExpr} AS extra_type_val
       FROM external_item_cache e
       WHERE e.app_id = $${p} AND e.collection = $${p + 1} AND e.source = ANY($${p + 2}::text[])
     )`);
@@ -663,6 +672,11 @@ export async function getUnifiedItems(appId, userId, collection, {
   if (typeField && typeValues.length > 0) {
     filterClauses.push(`LOWER(u.type_val) = ANY($${p}::text[])`);
     params.push(typeValues.map(v => String(v).toLowerCase()));
+    p++;
+  }
+  if (extraTypeField && extraTypeValues.length > 0) {
+    filterClauses.push(`LOWER(u.extra_type_val) = ANY($${p}::text[])`);
+    params.push(extraTypeValues.map(v => String(v).toLowerCase()));
     p++;
   }
   const filterSQL = filterClauses.length > 0 ? 'AND ' + filterClauses.join(' AND ') : '';

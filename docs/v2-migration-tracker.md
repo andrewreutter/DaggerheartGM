@@ -118,9 +118,9 @@ Work to do **when the Game Table consumes `src/features-v2`** (action loop, `col
 | **Druid Beastform / Evolution (VTT)** | Engine + unit tests cover transform, declarative overlay, registry sub-features, and sheet `**beastformFeatures`** via `**recomputeCharacter`**. **Game Table** still short of full parity: apply `**applyDeclarativeFeatures`** result + `**featureState`** to live elements, **Fragile** (Major+ damage), voluntary drop, `**selectedBeastformAdvantage`**, banner/chip flows.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 
-### Phase A — V1 cutover inventory (done)
+### Phase A — V1 cutover inventory (done; analysis lives on)
 
-**Delivered:** `[docs/v2-v1-cutover.md](v2-v1-cutover.md)` — parity matrix mapping historical Game Table behaviors (`wrapEntity`, `wrapRoll`, hooks, registries) to V2 direction (`collectChips`, `activateChip`, `applyV2BannerMutations`, engine hooks). Phase D–E removed the legacy `**src/features/`** package; the matrix stays useful for remaining UI gaps.
+**Delivered:** `[docs/v2-v1-cutover.md](v2-v1-cutover.md)` — living analysis: merged `activeFeatures` vs VTT bridge wrappers, parity matrix with **status**, explicit gaps. **Completion plan:** `[.cursor/plans/v2-game-table-cutover-completion.plan.md](../.cursor/plans/v2-game-table-cutover-completion.plan.md)`. Phase D–E removed the legacy `**src/features/`** package.
 
 ### Phase B — Bridge hardening (done)
 

@@ -1,4 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import {
+  clampMapZoom,
+  clampPanScroll,
+  computeMapZoomBounds,
+  scrollAfterZoomTowardPoint,
+} from '../lib/battle-map-zoom.js';
 import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
@@ -678,7 +684,9 @@ export function BattleMap({
   const dragRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const [containerWidth, setContainerWidth] = useState(600);
+  /** Start at 0 so zoom bounds + renderedWidth match the flex layout before hydrating from localStorage (avoids stale 600×400 vs real wrapper size). */
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
   const [dragGhost, setDragGhost] = useState(null); // { element, clientX, clientY, instanceNum, isMyCharacter }
   const [highlightLeftTray, setHighlightLeftTray] = useState(false);
   const [highlightRightTray, setHighlightRightTray] = useState(false);
@@ -690,14 +698,20 @@ export function BattleMap({
   // Second bullseye that follows the dragged token during drag (only when frozen bullseye is set)
   const [followBullseyeFt, setFollowBullseyeFt] = useState(null);
 
-  // Track scroll container width for pxPerFt calculation
+  // Track scroll area size for pxPerFt and display zoom bounds
   useLayoutEffect(() => {
     const el = scrollWrapperRef.current;
     if (!el) return;
-    setContainerWidth(el.clientWidth);
+    const apply = () => {
+      setContainerWidth(el.clientWidth);
+      setContainerHeight(el.clientHeight);
+    };
+    apply();
     const ro = new ResizeObserver(entries => {
-      const w = entries[0]?.contentRect.width;
-      if (w > 0) setContainerWidth(w);
+      const cr = entries[0]?.contentRect;
+      if (!cr) return;
+      if (cr.width > 0) setContainerWidth(cr.width);
+      if (cr.height > 0) setContainerHeight(cr.height);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -742,6 +756,90 @@ export function BattleMap({
   const renderedHeightPx = Math.round(mapHeightFt * pxPerFt);
   const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
   const trayTokenSizePx = CHARACTER_TRAY_WIDTH_PX - 16; // 36; fixed size for tray tokens
+
+  const { minZoom, maxZoom } = useMemo(
+    () =>
+      computeMapZoomBounds({
+        containerW: containerWidth,
+        containerH: containerHeight,
+        renderedWidthPx,
+        renderedHeightPx,
+        tokenSizePx,
+      }),
+    [containerWidth, containerHeight, renderedWidthPx, renderedHeightPx, tokenSizePx],
+  );
+
+  const [mapZoom, setMapZoom] = useState(1);
+  const mapZoomRef = useRef(1);
+  mapZoomRef.current = mapZoom;
+  const wheelZoomScrollRef = useRef(null);
+
+  useLayoutEffect(() => {
+    setMapZoom((z) => clampMapZoom(z, minZoom, maxZoom));
+  }, [minZoom, maxZoom]);
+
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const vw = el.clientWidth;
+    const vh = el.clientHeight;
+    const panParams = {
+      mapZoom,
+      renderedWidthPx,
+      renderedHeightPx,
+      viewportW: vw,
+      viewportH: vh,
+    };
+
+    const wheel = wheelZoomScrollRef.current;
+    if (wheel) {
+      wheelZoomScrollRef.current = null;
+      const c = clampPanScroll(wheel.scrollLeft, wheel.scrollTop, panParams);
+      el.scrollLeft = c.scrollLeft;
+      el.scrollTop = c.scrollTop;
+      return;
+    }
+
+    const clamped = clampPanScroll(el.scrollLeft, el.scrollTop, panParams);
+    if (clamped.scrollLeft !== el.scrollLeft || clamped.scrollTop !== el.scrollTop) {
+      el.scrollLeft = clamped.scrollLeft;
+      el.scrollTop = clamped.scrollTop;
+    }
+  }, [mapZoom, containerWidth, containerHeight, renderedWidthPx, renderedHeightPx]);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const wheel = (e) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const oldZ = mapZoomRef.current;
+      const factor = Math.exp(-e.deltaY * 0.002);
+      const newZ = clampMapZoom(oldZ * factor, minZoom, maxZoom);
+      if (newZ === oldZ) return;
+      const rect = el.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const { scrollLeft, scrollTop } = scrollAfterZoomTowardPoint({
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+        viewportX,
+        viewportY,
+        oldZoom: oldZ,
+        newZoom: newZ,
+        innerWidthPx: renderedWidthPx,
+        innerHeightPx: renderedHeightPx,
+        viewportW: rect.width,
+        viewportH: rect.height,
+      });
+      wheelZoomScrollRef.current = { scrollLeft, scrollTop };
+      mapZoomRef.current = newZ;
+      setMapZoom(newZ);
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => el.removeEventListener('wheel', wheel);
+  }, [minZoom, maxZoom, renderedWidthPx, renderedHeightPx]);
 
   // Categorize elements
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
@@ -812,23 +910,23 @@ export function BattleMap({
     ...advMapTokens,
   ], [charMapTokens, advMapTokens]);
 
-  // Convert client coordinates to map feet, accounting for scroll
+  // Convert client coordinates to map feet, accounting for scroll and display zoom
   const clientToFt = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
     const rect = container.getBoundingClientRect();
-    const mapX = clientX - rect.left + container.scrollLeft;
-    const mapY = clientY - rect.top + container.scrollTop;
+    const mapX = (clientX - rect.left + container.scrollLeft) / mapZoom;
+    const mapY = (clientY - rect.top + container.scrollTop) / mapZoom;
     return { x: mapX / pxPerFt, y: mapY / pxPerFt };
-  }, [pxPerFt]);
+  }, [pxPerFt, mapZoom]);
 
   // Find a placed token whose bounding box contains the given client point
   const findTokenAtClient = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
     const rect = container.getBoundingClientRect();
-    const mapX = clientX - rect.left + container.scrollLeft;
-    const mapY = clientY - rect.top + container.scrollTop;
+    const mapX = (clientX - rect.left + container.scrollLeft) / mapZoom;
+    const mapY = (clientY - rect.top + container.scrollTop) / mapZoom;
     const halfToken = tokenSizePx / 2;
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
@@ -839,7 +937,7 @@ export function BattleMap({
       }
     }
     return null;
-  }, [allMapTokens, pxPerFt, tokenSizePx]);
+  }, [allMapTokens, pxPerFt, tokenSizePx, mapZoom]);
 
   // Handle pointer move over the map canvas area (not trays)
   const handleMapPointerMove = useCallback((e) => {
@@ -913,8 +1011,8 @@ export function BattleMap({
       const container = scrollContainerRef.current;
       if (container) {
         const rect = container.getBoundingClientRect();
-        const tokenClientX = element.tokenX * pxPerFt - container.scrollLeft + rect.left;
-        const tokenClientY = element.tokenY * pxPerFt - container.scrollTop + rect.top;
+        const tokenClientX = element.tokenX * pxPerFt * mapZoom - container.scrollLeft + rect.left;
+        const tokenClientY = element.tokenY * pxPerFt * mapZoom - container.scrollTop + rect.top;
         grabOffsetX = Math.max(0, Math.min(tokenSize, e.clientX - tokenClientX));
         grabOffsetY = Math.max(0, Math.min(tokenSize, e.clientY - tokenClientY));
       }
@@ -938,7 +1036,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt]);
+  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, mapZoom]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -955,7 +1053,17 @@ export function BattleMap({
       }
     }
     if (ds.isDragging) {
-      setDragGhost({ element: ds.element, clientX: e.clientX, clientY: e.clientY, instanceNum: ds.instanceNum, isMyChar: ds.myChar, tokenSize: ds.tokenSize, grabOffsetX: ds.grabOffsetX, grabOffsetY: ds.grabOffsetY });
+      setDragGhost({
+        element: ds.element,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        instanceNum: ds.instanceNum,
+        isMyChar: ds.myChar,
+        tokenSize: ds.tokenSize,
+        grabOffsetX: ds.grabOffsetX,
+        grabOffsetY: ds.grabOffsetY,
+        fromTray: ds.fromTray,
+      });
       setHighlightLeftTray(pointInRect(e.clientX, e.clientY, leftTrayRef.current));
       setHighlightRightTray(!isPlayer && pointInRect(e.clientX, e.clientY, rightTrayRef.current));
       // Update follow bullseye at ghost center when we have a frozen origin (drag from map)
@@ -1024,8 +1132,10 @@ export function BattleMap({
       const rect = container.getBoundingClientRect();
       // Subtract grab offset so the token's top-left lands where the ghost was,
       // not where the raw cursor was.
-      const mapX = e.clientX - rect.left + container.scrollLeft - (ds.grabOffsetX ?? ds.tokenSize / 2);
-      const mapY = e.clientY - rect.top + container.scrollTop - (ds.grabOffsetY ?? ds.tokenSize / 2);
+      const mapX =
+        (e.clientX - rect.left + container.scrollLeft) / mapZoom - (ds.grabOffsetX ?? ds.tokenSize / 2);
+      const mapY =
+        (e.clientY - rect.top + container.scrollTop) / mapZoom - (ds.grabOffsetY ?? ds.tokenSize / 2);
       const ftX = mapX / pxPerFt;
       const ftY = mapY / pxPerFt;
 
@@ -1055,7 +1165,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, mapZoom, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd]);
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {
@@ -1193,13 +1303,24 @@ export function BattleMap({
             className="w-full h-full overflow-auto"
             onClick={handleMapClick}
           >
-            {/* Map content at computed pixel size */}
+            {/* Outer establishes scroll size; inner is game px with CSS scale (display-only zoom). */}
             <div
               className="relative shrink-0"
-              style={{ width: renderedWidthPx, height: renderedHeightPx }}
-              onPointerMove={handleMapPointerMove}
-              onPointerLeave={handleMapPointerLeave}
+              style={{
+                width: renderedWidthPx * mapZoom,
+                height: renderedHeightPx * mapZoom,
+              }}
             >
+              <div
+                className="absolute left-0 top-0 origin-top-left"
+                style={{
+                  width: renderedWidthPx,
+                  height: renderedHeightPx,
+                  transform: `scale(${mapZoom})`,
+                }}
+                onPointerMove={handleMapPointerMove}
+                onPointerLeave={handleMapPointerLeave}
+              >
               {/* Map image or blank white canvas (tokens and drag/drop work either way) */}
               {mapConfig?.mapImageUrl ? (
                 <img
@@ -1410,6 +1531,7 @@ export function BattleMap({
                 </div>
                 );
               })}
+              </div>
             </div>
           </div>
         </div>
@@ -1446,7 +1568,11 @@ export function BattleMap({
           >
             <TokenCircle
               element={dragGhost.element}
-              size={dragGhost.tokenSize ?? trayTokenSizePx}
+              size={
+                dragGhost.fromTray
+                  ? (dragGhost.tokenSize ?? trayTokenSizePx)
+                  : Math.round((dragGhost.tokenSize ?? tokenSizePx) * mapZoom)
+              }
               instanceNum={dragGhost.instanceNum}
               isMyCharacter={dragGhost.isMyChar}
               isPlayer={isPlayer}

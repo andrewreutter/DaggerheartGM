@@ -58,7 +58,7 @@ export const fetchFeatureSource = async (relativePath) => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, search = '', tier = null, tiers = [], type = null, types = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, search = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20 } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -77,6 +77,9 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
     types.forEach(t => params.append('type', t));
   } else if (type) {
     params.set('type', type);
+  }
+  if (Array.isArray(extraTypes) && extraTypes.length > 0) {
+    extraTypes.forEach(t => params.append('type2', t));
   }
   if (includeScaledUp) params.set('includeScaledUp', '1');
   if (sort) params.set('sort', sort);

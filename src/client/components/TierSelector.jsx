@@ -19,6 +19,7 @@ export function TierSelector({
   onChange,
   multi = false,
   showAll = false,
+  numbers = TIERS,
   activeClass = 'bg-amber-700 border-amber-500 text-amber-100',
   inactiveClass = 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300',
   btnClass = 'px-2 py-0.5 rounded font-medium border transition-colors',
@@ -28,7 +29,7 @@ export function TierSelector({
   const isActive = (t) => multi ? tiers.includes(t) : value === t;
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5 flex-wrap">
       {showAll && (
         <button
           type="button"
@@ -38,7 +39,7 @@ export function TierSelector({
           All
         </button>
       )}
-      {TIERS.map(t => (
+      {numbers.map(t => (
         <button
           key={t}
           type="button"

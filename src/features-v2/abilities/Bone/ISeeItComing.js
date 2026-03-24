@@ -14,12 +14,6 @@ function attackFromBeyondMelee(table) {
   return band !== 'melee';
 }
 
-function rollD4Uint() {
-  const a = new Uint32Array(1);
-  crypto.getRandomValues(a);
-  return (a[0] % 4) + 1;
-}
-
 export const ISeeItComing = {
   name: 'I See It Coming',
   description:
@@ -43,40 +37,6 @@ export const ISeeItComing = {
         },
       }
     ),
-    {
-      placement: 'banner',
-      label: 'I See It Coming',
-      stressCost: 1,
-      description:
-        'Mark 1 Stress: roll a d4 and add the result to your Evasion against this ranged attack (Game Table).',
-      isVisible(ctx) {
-        const roll = ctx.roll;
-        const character = ctx.character;
-        const raw = ctx.characterRaw ?? character;
-        if (roll._attackerType !== 'adversary') return false;
-        const tid = raw?.instanceId ?? character?.instanceId ?? character?.id;
-        const sel =
-          roll._selectedTargetInstanceId ??
-          (Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds[0]);
-        if (sel !== tid) return false;
-        const r = roll._attackRangeFt;
-        if (r == null || r <= 5) return false;
-        const hasDmg = (roll.subItems || []).some((s) => /damage/i.test(s.pre || '') && s.input);
-        if (!hasDmg) return false;
-        if (roll._rollDbId != null && raw?._iSeeItComingRollBonus?.[roll._rollDbId] != null) return false;
-        return true;
-      },
-      activate(roll, character, ctx) {
-        const { characterRaw, updateActiveElement } = ctx || {};
-        if (!characterRaw || roll._rollDbId == null || typeof updateActiveElement !== 'function') return;
-        character.markStress(1);
-        const n = rollD4Uint();
-        const prev = characterRaw._iSeeItComingRollBonus || {};
-        updateActiveElement(characterRaw.instanceId, {
-          _iSeeItComingRollBonus: { ...prev, [roll._rollDbId]: n },
-        });
-      },
-    },
   ],
   hooks: {
     onReviewOutcome: when(

@@ -58,6 +58,51 @@ export function expandTableCharactersAncestryForV2Loader(activeElements, srdData
  * @param {object[]} activeElements
  * @param {object} [srdData] — pass so PC defense uses resolved beastform evasion (same as banners).
  */
+/** Feature-state key for Bone I See It Coming (matches registry + `applyV2BannerMutations` setFeatureState). */
+export const I_SEE_IT_COMING_FEATURE_KEY = 'I See It Coming';
+
+/**
+ * Pending evasion bonus vs an attack: legacy per-roll map on the element and/or V2 `featureState` bag.
+ * @param {object|null|undefined} targetEl
+ * @param {string|number|null|undefined} rollDbId
+ * @returns {number}
+ */
+export function getISeeItComingDefenseBonus(targetEl, rollDbId) {
+  if (!targetEl) return 0;
+  if (rollDbId != null && targetEl._iSeeItComingRollBonus?.[rollDbId] != null) {
+    return targetEl._iSeeItComingRollBonus[rollDbId];
+  }
+  const v = targetEl.featureState?.[I_SEE_IT_COMING_FEATURE_KEY]?.iSeeItComingEvasionBonus;
+  return typeof v === 'number' && v > 0 ? v : 0;
+}
+
+/**
+ * Table patches when a pending banner is acknowledged: clear per-roll legacy map and/or V2 feature bag.
+ * @param {object} el — character element
+ * @param {string|number} rollDbId
+ * @param {string|null|undefined} selectedTargetInstanceId — attack’s selected target (`roll._selectedTargetInstanceId`)
+ * @returns {object|null} partial updates for `updateActiveElement` / `update-elements`
+ */
+export function buildISeeItComingAckCleanupUpdates(el, rollDbId, selectedTargetInstanceId) {
+  if (!el || el.elementType !== 'character' || rollDbId == null) return null;
+  const updates = {};
+  const m = el._iSeeItComingRollBonus;
+  if (m && rollDbId in m) {
+    const next = { ...m };
+    delete next[rollDbId];
+    updates._iSeeItComingRollBonus = next;
+  }
+  const bag = el.featureState?.[I_SEE_IT_COMING_FEATURE_KEY];
+  const fsBonus = bag?.iSeeItComingEvasionBonus ?? 0;
+  if (fsBonus > 0 && selectedTargetInstanceId === el.instanceId) {
+    updates.featureState = {
+      ...(el.featureState || {}),
+      [I_SEE_IT_COMING_FEATURE_KEY]: { ...(bag || {}), iSeeItComingEvasionBonus: 0 },
+    };
+  }
+  return Object.keys(updates).length ? updates : null;
+}
+
 export function enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData) {
   if (!roll?._selectedTargetInstanceId) return;
   const target = activeElements?.find((e) => e.instanceId === roll._selectedTargetInstanceId);
@@ -66,8 +111,9 @@ export function enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData) {
   let defense = isAdversary
     ? target.difficulty
     : (effectiveEvasion(target, srdData) ?? target.evasion ?? null);
-  if (!isAdversary && roll._rollDbId != null && target._iSeeItComingRollBonus?.[roll._rollDbId] != null) {
-    defense = (defense ?? 0) + target._iSeeItComingRollBonus[roll._rollDbId];
+  if (!isAdversary && roll._rollDbId != null) {
+    const isee = getISeeItComingDefenseBonus(target, roll._rollDbId);
+    if (isee > 0) defense = (defense ?? 0) + isee;
   }
   if (defense == null) return;
   let effectiveTotal = roll.total ?? 0;

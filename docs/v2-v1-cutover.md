@@ -1,88 +1,88 @@
-# V1 → V2 Game Table cutover matrix (Phase A inventory)
+# V1 → V2 Game Table cutover — analysis
 
-**Scope:** Behaviors in [`src/client/components/GMTableView.jsx`](../src/client/components/GMTableView.jsx) that historically depended on Phase 1 IoC (`wrapEntity`, `wrapRoll`, `runHook` / `runCharacterHook`, registry maps). The legacy `src/features/` tree was **removed** in Phase D elimination; runtime uses `table-entity-roll.js`, `game-table-mechanics.js`, and merged V2 `activeFeatures` only.  
-**Goal for V2-only mode:** Full parity via [`src/features-v2/`](../src/features-v2/) + bridges (`v2-action-loop-bridge.js`, `v2-cross-sheet-lifecycle.js`, `table-ops.js` apply helpers) per the V2-only Game Table plan (Phase A–F in repo planning docs).  
-**Related:** Phase B bridge hardening — [`docs/v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md). Phase D table dispatch facade — [`docs/v2-ui-integration-phaseD-handoff.md`](v2-ui-integration-phaseD-handoff.md).
+**Purpose:** Single place to understand what “V2” means in this repo, what is **not** coming back, what the **VTT still does imperatively**, and where to look next. Update this file when `GMTableView.jsx` / bridge code gains or loses major call patterns.
 
----
+**Related:** [`docs/v2-migration-tracker.md`](v2-migration-tracker.md) § **V2 UI integration backlog** & **Tech Debt**; [`docs/v2-game-table-polestar.md`](v2-game-table-polestar.md); bridge hardening [`docs/v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md).
 
-## Import surface (historical Phase 1 — tree removed)
-
-| Symbol | Source | In `GMTableView` |
-|--------|--------|------------------|
-| `wrapEntity` | `features/entity.js` → `client/lib/table-entity-roll.js` | Widespread — resource mutations, hook contexts |
-| `wrapRoll` | `features/roll.js` → `client/lib/table-entity-roll.js` | Banner/chip/ancestry reaction paths |
-| `runHook`, `runCharacterHook` | `features/hooks.js` | `onRoll`, `onRollComplete`, `onDamageReceived`, `onHpDealt` |
-| `runPipelineHook`, `runCharacterPipelineHook` | `features/hooks.js` | **Imported but unused** (dead code — safe to delete when touching imports) |
-| `weaponFeatures`, `armorFeatures`, `classFeatures` | `features/registry.js` | Tag pipelines, armor, class activation, weapon banner narration |
-| `ancestryFeatures` | `registry.js` (alias of `originFeatures`) | Ancestry/community descriptors, session hooks, pre-roll chips |
-| `virtualWeaponBehaviors` | `features/ancestries/index.js` re-export | Virtual weapon ack (`_featureNeedsTarget`) |
-
-Current table code imports `wrapEntity` / `wrapRoll` / `runCharacterHook` and tag resolvers from [`src/client/lib/game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) (**V2-only** facade over merged `activeFeatures`). [`src/client/lib/character-calc.js`](../src/client/lib/character-calc.js) uses [`src/features-v2/registry.js`](../src/features-v2/registry.js) (and companion descriptor modules) for gear and character features — no Phase 1 registry.
+**Implementation plan (remaining work):** [`.cursor/plans/v2-game-table-cutover-completion.plan.md`](../.cursor/plans/v2-game-table-cutover-completion.plan.md)
 
 ---
 
-## Parity matrix: behavior → V2 direction
+## 1. Terminology (read this first)
 
-Statuses: **V2 engine** = logic exists in `features-v2` + unit tests; **VTT** = Game Table wiring still Phase 1 or bridge-only; **Blocked** = needs content, API, or product call.
+| Term | Meaning |
+|------|---------|
+| **V2 engine / registry** | `src/features-v2/`, `loadCharacterFeatures`, `buildTableSnapshot` / `table`, declarative chips, `hooks.onIntent` / `onReviewAction` / … — **authoritative rules** in unit tests + engine. |
+| **Merged `activeFeatures`** | Per-character flat list from `character-calc` + V2 merge — **the only** feature source on the table at runtime (no separate Phase 1 registry import). |
+| **VTT bridge (legacy *shape*)** | `wrapEntity` / `wrapRoll` (`src/client/lib/table-entity-roll.js`), `runCharacterHook` (`src/client/lib/feature-hook-dispatch.js`), and **descriptor fields** still named like old IoC: `onRoll`, `onBannerAck`, `modifyPreThresholdDamage`, … — **not** a second registry; these are **thin dispatch** over merged rows for React/GMTableView until the cutover finishes. |
+| **“Phase 1” in tables below** | **Behavior category** (how the GM table used to invoke features), **not** the deleted `src/features/` package. |
 
-| # | Behavior / call site | Phase 1 mechanism | V2 target (directional) | Notes |
-|---|----------------------|-------------------|---------------------------|-------|
-| 1 | **`wrappedPartyCharacters`** | `wrapEntity` per character | `table.me` / snapshot `buildTableSnapshot` | Used everywhere hooks need mutable entity API |
-| 2 | **Damage pipeline `applyDamageToTarget`** | `wrapEntity` + `wrapRoll` + `ctx` | `reviewOutcome` / pending damage in action loop + `table.action.*` | Core V2 cutover surface |
-| 3 | **Pre-threshold damage** | `activeFeatures[].modifyPreThresholdDamage` + `armorFeatures[name].modifyPreThresholdDamage` | Class/armor/weapon V2 features with same pipeline stage | Guardian Unstoppable, Warded, etc. |
-| 4 | **HP loss after thresholds** | `modifyHpLoss` on weapon `activeFeatures` + `weaponFeatures[name]` | Weapon property V2 modules | Deadly-on-Severe, etc. |
-| 5 | **Armor slot reduction** | `armorFeatures[feature].armorReduction` | Armor property V2 | |
-| 6 | **Impenetrable** | Local + `wrapEntity` | Armor V2 + table ops | Mixed declarative / local |
-| 7 | **`onDamageReceived`** | `runCharacterHook(..., 'onDamageReceived')` | Feature hooks on damage outcome | Warden Severe channel, etc. |
-| 8 | **`handleApplyDamage`** — Parry | `weaponFeatures['Parry'].onBeforeDamageApplied` | Weapon V2 + async roll | Silent server roll stays in `api.js` |
-| 9 | **Resilient last slot** | `armorFeatures['Resilient'].onLastArmorSlot` | Armor V2 `reviewAction` / outcome | |
-| 10 | **Damage modifiers** (`damageModifiers`) | Ad hoc apply loop | Chip / `reviewAction` mutations | |
-| 11 | **Elemental Fire/Water** (channeled) | Ad hoc in `handleApplyDamage` | Subclass V2 + snapshot | Partially duplicated vs engine |
-| 12 | **Burning / Sharp armor** | Ad hoc | Armor property V2 | |
-| 13 | **Ranger Focus / stress** | Ad hoc + `wrapEntity(target).markStress` | Ranger V2 + registry | V2 sheet on: V2 review chips + Phase 1 Ranger banner toggles off (`DiceRoller` + empty `V2_REVIEW_ACTION_PHASE1_DEDUPE`) |
-| 14 | **Locked On** | Ad hoc state | Weapon V2 | |
-| 15 | **`onHpDealt`** | `runCharacterHook(..., 'onHpDealt')` | Attacker hooks in action loop / resolve | Guardian, Ranger, etc. |
-| 16 | **`handleBannerAcknowledge`** — Rest | `wrapEntity` + `getRestMoveDefinition().onApply` | Rest stays hybrid; V2 optional | |
-| 17 | **Start Session** | `runSessionStartClear` → `ancestryFeatures[name].onSessionStart` | `hooks.onSessionStart` in V2 registry + table clear | Rally `featureState` clear already partially wired |
-| 18 | **Rally / Heart d4 ack** | Server banner endpoints | Same + V2 `featureState` | |
-| 19 | **Virtual weapon ack** | `virtualWeaponBehaviors[name].onAcknowledge` | Weapon/ancestry V2 virtual behaviors | Uses `wrapRoll` + `wrapEntity` |
-| 20 | **Weapon `onBannerAck`** (tags × targets) | `weaponFeatures[name].onBannerAck` | Weapon property V2 + banner hydration | Overlaps weapon tag automation |
-| 21 | **Ancestry card toggle `_cardToggle`** | `ancestryFeatures` + `toggleChip.onToggle` | Origin V2 + `featureState` | Galapa Retract, etc. |
-| 22 | **Wings of Light stress** | Ad hoc | Subclass V2 | |
-| 23 | **`classFeatures[]._featureName.onFeatureActivated`** | `wrapEntity` + batch update | `classes/*.js` V2 | Beastform, Make a Scene, etc. |
-| 24 | **Weapon `onRollComplete`** (action + dice ack paths) | `runCharacterHook` / `runHook` on weapon features | Weapon V2 post-resolve | Two call sites (~1687, ~1831) |
-| 25 | **Ancestry banner reactions** | `ancestryBannerReactions` useMemo: `onBanner`, `isVisible`, `onBannerAck`/`acknowledge`, `wrapRoll` | **VTT:** Full parity needs `collectChips` + banner merge; engine has chip descriptors | Largest Phase 1 surface |
-| 26 | **Pre-roll `onRoll`** | `runCharacterHook` / `runHook` ancestry | `onAct` / intent chips in V2 | `postPlayerIntent` sync |
-| 27 | **Pre-roll canvas chips** | `ancestryFeatures` preroll chips + `wrapEntity` | V2 intent / card chips | |
-| 28 | **`getBannerNarration`** | `weaponFeatures[name].onBanner` | Weapon V2 automated narration | |
-| 29 | **Display overrides** | `chip.render` / `renderWhenOff` | Same pattern on V2 chip descriptors | |
-| 30 | **Adversary target disadvantage** | `activeFeatures[].onTargeted` | V2 defensive hooks or snapshot | Orc Sturdy, etc. |
-| 31 | **`characterDisplayByInstanceId`** | `recomputeCharacter` + `mergeV2DeclarativeSheetOverlay` | Single recompute path | Not all in GMTableView but feeds props |
+**Deleted and not returning:** The **`src/features/`** tree (Phase D). There is **no** `weaponFeatures` / `armorFeatures` **import map** in client code anymore. Resolvers in [`src/client/lib/game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) scan **`activeFeatures`** only.
+
+**Not present in repo:** `runHook`, `runPipelineHook`, `runCharacterPipelineHook` — **no matches** in `.js`/`.jsx`; the old cutover doc’s “imported but unused” row was obsolete.
 
 ---
 
-## V2 wiring already present in `GMTableView` (additive)
+## 2. Current architecture snapshot (2026-03)
 
-- `mergeV2DeclarativeSheetOverlay` / `buildV2RegistryWithSrdItems`
-- `collectV2ReviewActionChips` → `v2ReviewChipsByRollDbId` → `handleV2ReviewChip` → `applyV2BannerMutations`
-- `runV2TokenMoveHooks` + `applyV2LifecycleMutations` on token drag end
-- `V2_REVIEW_ACTION_PHASE1_DEDUPE` (in bridge) — **empty after Phase E**; optional filter for tests / future use. Ranger duplicate UI avoided by gating Phase 1 Hold Them Off / Focus reroll in `DiceRoller` (`usePhase1RangerBannerTools` is false).
-- **Phase 2 (registry surfaces):** `game-table-mechanics.js` exports `resolveOriginFeatureDescriptor`, `resolveClassFeatureDescriptor`, and `resolveVirtualWeaponBehavior`. `GMTableView` / `CharacterHoverCard` use these (plus merged `activeFeatures` rows) instead of direct `ancestryFeatures` / `classFeatures` / `virtualWeaponBehaviors` map lookups where a per-character row exists. **Start Session** runs `onSessionStart` from each party member’s merged `activeFeatures` (ancestry, community, class, subclass) instead of scanning the Phase 1 ancestry registry only.
+| Layer | Role | Key files |
+|-------|------|-----------|
+| **Engine** | Phases, chips, mutations, tests | `src/features-v2/engine/`, `table.js`, `chip-system.js` |
+| **Bridge** | Banner → `gameState`, review chips, partition mutations | `src/client/lib/v2-action-loop-bridge.js`, `v2-cross-sheet-lifecycle.js` |
+| **Table ops** | Apply V2 mutations to elements | `src/client/lib/table-ops.js` (`applyV2BannerMutations`, `partitionV2BannerChipMutations`, …) |
+| **GM shell** | Imperative damage, rolls, V2 review chip wiring, session start | [`src/client/components/GMTableView.jsx`](../src/client/components/GMTableView.jsx) (~6.5k lines) — still the **largest** hybrid surface |
+| **Wrappers** | Mutable entity/roll helpers for hooks that expect objects with `.markStress()`, `.reroll()`, … | `table-entity-roll.js` |
 
-These do **not** remove Phase 1 imports; they run in parallel with legacy paths where both still exist.
+**Phase A+ (2026-03):** The separate **`ancestryBannerReactions`** / declarative **`placement: 'banner'`** GMTableView→`DiceRoller` surface is **removed**; interactive pending-roll UI is the V2 **`collectV2ReviewActionChips`** strip only. **`displayOverridesByRollId`** remains for display tweaks (e.g. Fearless hope color). Pending-roll narration lines for weapon tags come from **`automated: true`** + **`description`** via **`buildRollBaseBannerNarrationParts`** in [`game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js). Infernis **Fearless** is a V2 **`reviewAction`** chip.
+
+**`DiceRoller.jsx`:** Phase 1 Ranger banner tools are **off** (`usePhase1RangerBannerTools = false`); V2 review chips own Hold Them Off / Focus-style flows. `V2_REVIEW_ACTION_PHASE1_DEDUPE` is an **empty** set (Phase E); kept for tests / future dedupe.
+
+**Phase B (done per tracker):** `handleV2ReviewChip` chains server banner follow-ups (`postBannerAddDamage`, `postBannerRerollDie`, action-roll patches). **`resolveV2ReviewChipPicker`** + **`V2ReviewChipRow`** implement **`isSelect` / `multiSelect` / `selectTargets`** with Apply — the old cutover note “early-return blocked” is **obsolete**.
+
+**Start Session:** Clears session trackers, Rally `featureState`, then runs **`hooks.onSessionStart`** from merged **`activeFeatures`** via **`buildTableSnapshot`** + **`applyMutations`** + **`applyV2LifecycleMutations`** (see `runSessionStartClear` in `GMTableView.jsx`).
 
 ---
 
-## Explicit gaps (from inventory)
+## 3. Parity matrix — behavior → status → direction
 
-1. **Dual stacks:** Ancestry banner reactions + V2 review chips both consume banner surface; Ranger Hold Them Off / Focus reroll dedupe is addressed (Phase E); ancestry overlap remains.
-2. **`applyV2BannerMutations` `skipped`:** Unknown mutation types fall through `default` → skipped (see `table-ops.js`). Phase B maps engine mutations that need `postBannerRerollDie` / `postBannerAddDamage` / patches.
-3. **Selection chips:** `handleV2ReviewChip` early-returns for `multiSelect` / `isSelect` — parity blocked until UX or engine simplification (Phase 3 handoff).
-4. **Abilities coverage:** Many SRD abilities still absent from `features-v2` ([tracker](v2-migration-tracker.md)); V2-only table may need **block** or **logged hybrid** until coverage improves (product decision in parent plan).
+Statuses: **Hybrid** = VTT still uses wrappers / `runCharacterHook` / local `GMTableView` logic; **Engine** = rules live in `features-v2` + tests; **Cutover target** = drive behavior from hydrated `table` + chips only.
+
+| # | Behavior / area | Current mechanism | Status | Cutover target |
+|---|-----------------|-------------------|--------|----------------|
+| 1 | **`wrappedPartyCharacters`** | `wrapEntity` per character for hooks | Hybrid | Eventually optional if hooks consume `table.actors` only |
+| 2 | **Damage pipeline `applyDamageToTarget`** | `wrapEntity`/`wrapRoll`, `modifyPreThresholdDamage`, `modifyHpLoss`, ad hoc elemental/ranger/focus | Hybrid | Single hydrated action loop per damage application + `reviewAction`/`reviewOutcome` |
+| 3 | **Pre-threshold damage** | `activeFeatures` + armor name descriptor on element | Hybrid | Same stage, engine-driven effects |
+| 4 | **HP loss after thresholds** | `modifyHpLoss` on weapon rows | Hybrid | Engine `reviewOutcome` mutations |
+| 5 | **Armor slot reduction** | Declarative + armor feature hooks | Hybrid | Fully via `useArmor` / `table.action` + chips |
+| 6 | **Parry** | `resolveParryWeaponFeature` + async `postRollSilent` | Hybrid | Keep async server roll; narrow wrapper use |
+| 7 | **`onDamageReceived` / `onHpDealt`** | `runCharacterHook` | Hybrid | `onReviewOutcome` / resolve hooks only |
+| 8 | **Weapon `onRollComplete`** | `runCharacterHook` on tag-filtered weapon rows | Hybrid | Post-resolve engine hook or banner follow-up |
+| 9 | **Weapon tags** | `rewriteDamage`, `buildRollBaseBannerNarrationParts` / `buildWeaponTagBannerNarrationParts`, roll tags | Hybrid | Intent/review chips where missing (see tracker backlog) |
+| 10 | **Pre-roll `onRoll`** | `runCharacterHook` + origin name filter | Hybrid | `postPlayerIntent` + `runV2IntentPhaseForTraitRoll` alignment |
+| 11 | **Roll-meta banner UI (review / display)** | V2 **`collectV2ReviewActionChips`** strip + `displayOverridesByRollId`; Bone **I See It Coming** defense uses `getISeeItComingDefenseBonus` | Hybrid | Fewer wrapper-only display paths |
+| 12 | **Virtual weapon ack** | `resolveVirtualWeaponBehavior` + `wrapEntity`/`wrapRoll` | Hybrid | Same resolver; reduce wrapper surface |
+| 13 | **Class feature activation** | `onFeatureActivated` + batch updates | Hybrid | Engine `activateChip` / table mutations |
+| 14 | **Rest moves** | `getRestMovesForCharacter` + `wrapEntity` in ack | Hybrid | Optional V2 `hooks.onRest` parity |
+| 15 | **Cross-sheet Rally / Beastform** | V2 chips + table state; some flows incomplete | Hybrid | Tracker rows: Rally merge, Beastform VTT |
+
+### 3.1 Hook dispatch inventory
+
+_To be completed in **Phase E** of the [completion plan](../.cursor/plans/v2-game-table-cutover-completion.plan.md): table of `runCharacterHook` and related dispatcher sites with columns **Hook**, **Location**, **Disposition** (`removed` / `engine` / `exception: …`)._
 
 ---
 
-## Maintenance
+## 4. Explicit gaps (unchanged themes)
 
-Update this matrix when `GMTableView.jsx` gains or loses Phase 1 call sites. Link from [`docs/v2-migration-tracker.md`](v2-migration-tracker.md) § V2 UI integration backlog.
+1. **Banner surface:** V2 **`collectV2ReviewActionChips`** strip is the **only** interactive banner chip row (legacy **`ancestryBannerReactions`** removed).
+2. **`applyV2BannerMutations` `default`:** Unknown mutation types are **skipped** and logged from `handleV2ReviewChip` when combined with `unsupported` from `partitionV2BannerChipMutations` — new engine mutation types need explicit handling in `table-ops.js` + tests.
+3. **Content coverage:** Many abilities/items/consumables still **Unclaimed** in the tracker; the table can expose **hybrid** behavior until those modules exist.
+4. **Tech debt (tracker):** Rally session clear, rest banner extensibility, domain loadout on table, Beastform parity, etc. — **product/engine** follow-ups, not a single PR.
+
+---
+
+## 5. Maintenance
+
+- **Phase A complete:** banner pipeline cleanup per [phase-6-banner-pipeline-cleanup.plan.md](../.cursor/plans/phase-6-banner-pipeline-cleanup.plan.md) (merged into completion plan Phase A).
+- Each phase of the [completion plan](../.cursor/plans/v2-game-table-cutover-completion.plan.md) lists required edits to this file (**§2–§4**, and **§3.1** after Phase E).
+- When deleting or migrating a **`runCharacterHook`** / **`wrapEntity`** call site, update the matrix row (and **§3.1** when present) and the completion plan if scope shifts.
+- Keep **§1 Terminology** aligned with [`docs/feature-authoring-guide.md`](feature-authoring-guide.md) (authoring uses **`table`**, not wrappers).

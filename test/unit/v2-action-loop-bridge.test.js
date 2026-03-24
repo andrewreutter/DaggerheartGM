@@ -16,9 +16,44 @@ import {
   migrateV2BannerConsumedOnUseKeys,
   recordV2BannerConsumedOnUse,
   pruneV2BannerConsumedOnUseKeys,
+  getISeeItComingDefenseBonus,
+  buildISeeItComingAckCleanupUpdates,
+  I_SEE_IT_COMING_FEATURE_KEY,
 } from '../../src/client/lib/v2-action-loop-bridge.js';
 
 describe('v2-action-loop-bridge', () => {
+  it('getISeeItComingDefenseBonus prefers legacy per-roll map then featureState', () => {
+    const rid = 42;
+    expect(
+      getISeeItComingDefenseBonus(
+        { _iSeeItComingRollBonus: { [rid]: 3 }, featureState: { [I_SEE_IT_COMING_FEATURE_KEY]: { iSeeItComingEvasionBonus: 2 } } },
+        rid
+      )
+    ).toBe(3);
+    expect(
+      getISeeItComingDefenseBonus(
+        { featureState: { [I_SEE_IT_COMING_FEATURE_KEY]: { iSeeItComingEvasionBonus: 4 } } },
+        rid
+      )
+    ).toBe(4);
+    expect(getISeeItComingDefenseBonus({ featureState: {} }, rid)).toBe(0);
+  });
+
+  it('buildISeeItComingAckCleanupUpdates clears legacy map and zeros V2 bonus for selected target', () => {
+    const rid = 7;
+    const el = {
+      elementType: 'character',
+      instanceId: 'pc1',
+      _iSeeItComingRollBonus: { [rid]: 2, 99: 1 },
+      featureState: { [I_SEE_IT_COMING_FEATURE_KEY]: { iSeeItComingEvasionBonus: 3 } },
+    };
+    const u = buildISeeItComingAckCleanupUpdates(el, rid, 'pc1');
+    expect(u._iSeeItComingRollBonus[rid]).toBeUndefined();
+    expect(u._iSeeItComingRollBonus[99]).toBe(1);
+    expect(u.featureState[I_SEE_IT_COMING_FEATURE_KEY].iSeeItComingEvasionBonus).toBe(0);
+    expect(buildISeeItComingAckCleanupUpdates(el, rid, 'other')).not.toHaveProperty('featureState');
+  });
+
   it('hydrateV2RollsFromClientRoll maps Hope/Fear and damage sub-items', () => {
     const roll = {
       subItems: [
@@ -158,6 +193,7 @@ describe('v2-action-loop-bridge', () => {
     expect(chips.some((c) => c._featureName === 'Sneak Attack' && c.name === 'Sneak Attack')).toBe(true);
   });
 
+  describe('viewer: player primary', () => {
   it('collectV2ReviewActionChips viewer: gm and owner player see Sneak Attack; other player does not', async () => {
     const { mockCharacter, mockAdversary } = await import('./features-v2/helpers.js');
     const rogue = mockCharacter({
@@ -213,43 +249,6 @@ describe('v2-action-loop-bridge', () => {
     ).toBe(false);
   });
 
-  it('collectV2ReviewActionChips includes Fearless on duality trait roll without damage (Infernis)', async () => {
-    const { mockCharacter } = await import('./features-v2/helpers.js');
-    const char = mockCharacter({
-      instanceId: 'char-1',
-      ancestryIds: ['Infernis.Fearless', 'Infernis.DreadVisage'],
-    });
-    const roll = {
-      _attackerInstanceId: 'char-1',
-      _traitKey: 'agility',
-      subItems: [
-        { pre: 'Hope ', input: 'd12', result: '8', post: '' },
-        { pre: 'Fear ', input: 'd12', result: '3', post: '' },
-      ],
-      dominant: 'hope',
-      total: 11,
-    };
-
-    const srdData = {
-      weaponsById: {},
-      armorById: {},
-      ancestriesById: {},
-      communitiesById: {},
-      classesById: {},
-      subclassesById: {},
-    };
-
-    const chips = collectV2ReviewActionChips({
-      roll,
-      activeElements: [char],
-      srdData,
-      fearCount: 0,
-      mapConfig: null,
-      dedupeFeatureNames: new Set(),
-    });
-    expect(chips.some((c) => c._featureName === 'Fearless')).toBe(true);
-  });
-
   it('collectV2ReviewActionChips viewer: Fearless only for GM, owner player, or legacy (no viewer); not for other player', async () => {
     const { mockCharacter } = await import('./features-v2/helpers.js');
     const char = mockCharacter({
@@ -298,6 +297,44 @@ describe('v2-action-loop-bridge', () => {
         collectV2ReviewActionChips({ ...base, viewer: { role: 'player', viewerCharacterInstanceId: 'other-pc' } })
       )
     ).toBe(false);
+  });
+  });
+
+  it('collectV2ReviewActionChips includes Fearless on duality trait roll without damage (Infernis)', async () => {
+    const { mockCharacter } = await import('./features-v2/helpers.js');
+    const char = mockCharacter({
+      instanceId: 'char-1',
+      ancestryIds: ['Infernis.Fearless', 'Infernis.DreadVisage'],
+    });
+    const roll = {
+      _attackerInstanceId: 'char-1',
+      _traitKey: 'agility',
+      subItems: [
+        { pre: 'Hope ', input: 'd12', result: '8', post: '' },
+        { pre: 'Fear ', input: 'd12', result: '3', post: '' },
+      ],
+      dominant: 'hope',
+      total: 11,
+    };
+
+    const srdData = {
+      weaponsById: {},
+      armorById: {},
+      ancestriesById: {},
+      communitiesById: {},
+      classesById: {},
+      subclassesById: {},
+    };
+
+    const chips = collectV2ReviewActionChips({
+      roll,
+      activeElements: [char],
+      srdData,
+      fearCount: 0,
+      mapConfig: null,
+      dedupeFeatureNames: new Set(),
+    });
+    expect(chips.some((c) => c._featureName === 'Fearless')).toBe(true);
   });
 
   it('collectV2ReviewActionChips includes Hold Them Off by default; explicit dedupe set can still filter', async () => {

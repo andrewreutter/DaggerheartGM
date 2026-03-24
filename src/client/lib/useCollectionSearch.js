@@ -1,25 +1,45 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { loadCollection } from './api.js';
 import { computeScaledStats, ROLE_STAT_SCALING } from './adversary-defaults.js';
+import { readSharedSearchQuery } from './library-filter-config.js';
+import { LIBRARY_DEFAULT_INCLUDES } from './library-default-filters.js';
 
-const DEFAULT_FILTERS = { includes: ['own'], tiers: [], types: [], search: '', includeScaledUp: false, sort: 'popularity' };
+const DEFAULT_FILTERS = {
+  includes: [...LIBRARY_DEFAULT_INCLUDES],
+  tiers: [],
+  types: [],
+  extraTypes: [],
+  search: '',
+  includeScaledUp: false,
+  sort: 'popularity',
+};
 
-function loadPersistedFilters(persistKey, collection, baseFilters = DEFAULT_FILTERS) {
+function loadPersistedFilters(persistKey, collection, baseFilters = DEFAULT_FILTERS, sharedSearchKey = null) {
   const defaults = { ...DEFAULT_FILTERS, ...baseFilters };
-  if (!persistKey) return { ...defaults };
-  try {
-    const stored = localStorage.getItem(`${persistKey}_${collection}`);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed.tier != null && !Array.isArray(parsed.tiers)) parsed.tiers = [parsed.tier];
-      if (parsed.type && !Array.isArray(parsed.types)) parsed.types = [parsed.type];
-      if (parsed.include != null && !Array.isArray(parsed.includes)) {
-        parsed.includes = parsed.include === null ? [] : [parsed.include];
+  let merged = { ...defaults };
+
+  if (persistKey) {
+    try {
+      const stored = localStorage.getItem(`${persistKey}_${collection}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.tier != null && !Array.isArray(parsed.tiers)) parsed.tiers = [parsed.tier];
+        if (parsed.type && !Array.isArray(parsed.types)) parsed.types = [parsed.type];
+        if (parsed.extraType && !Array.isArray(parsed.extraTypes)) parsed.extraTypes = [parsed.extraType];
+        if (parsed.include != null && !Array.isArray(parsed.includes)) {
+          parsed.includes = parsed.include === null ? [] : [parsed.include];
+        }
+        if (sharedSearchKey) delete parsed.search;
+        merged = { ...defaults, ...parsed };
       }
-      return { ...defaults, ...parsed };
-    }
-  } catch {}
-  return { ...defaults };
+    } catch {}
+  }
+
+  if (sharedSearchKey) {
+    merged = { ...merged, search: readSharedSearchQuery(sharedSearchKey) };
+  }
+
+  return merged;
 }
 
 /**
@@ -30,13 +50,17 @@ export function useCollectionSearch(collection, {
   limit = 20,
   debounceMs = 300,
   persistKey = null,
+  /** When set, `filters.search` is read/written only under this key (library-wide), not per-collection persist. */
+  sharedSearchKey = null,
   defaultFilters = {},
   enabled = true,
   infinite = false,
   maxItems = null,
 } = {}) {
-  const baseFilters = { ...DEFAULT_FILTERS, ...defaultFilters };
-  const [filters, setFiltersState] = useState(() => loadPersistedFilters(persistKey, collection, baseFilters));
+  const baseFilters = useMemo(() => ({ ...DEFAULT_FILTERS, ...defaultFilters }), [defaultFilters]);
+  const [filters, setFiltersState] = useState(() =>
+    loadPersistedFilters(persistKey, collection, { ...DEFAULT_FILTERS, ...defaultFilters }, sharedSearchKey)
+  );
   const [offset, setOffsetState] = useState(0);
   const [items, setItems] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -54,7 +78,7 @@ export function useCollectionSearch(collection, {
   useEffect(() => {
     if (prevCollectionRef.current !== collection) {
       prevCollectionRef.current = collection;
-      setFiltersState(loadPersistedFilters(persistKey, collection, baseFilters));
+      setFiltersState(loadPersistedFilters(persistKey, collection, baseFilters, sharedSearchKey));
       setOffsetState(0);
       setItems([]);
       setTotalCount(0);
@@ -63,10 +87,10 @@ export function useCollectionSearch(collection, {
       isLoadingMoreRef.current = false;
       setTrimmedCount(0);
     }
-  }, [collection, persistKey]);
+  }, [collection, persistKey, baseFilters, sharedSearchKey]);
 
   const getLoadOpts = useCallback(() => {
-    const { includes = [], tiers = [], types = [], search, includeScaledUp, sort = 'popularity' } = filters;
+    const { includes = [], tiers = [], types = [], extraTypes = [], search, includeScaledUp, sort = 'popularity' } = filters;
     const singleTier = tiers.length === 1 ? tiers[0] : null;
     const useScaledUp = includeScaledUp && singleTier != null;
     const isAll = includes.length === 0;
@@ -81,6 +105,7 @@ export function useCollectionSearch(collection, {
       tiers,
       type: types.length === 1 ? types[0] : null,
       types,
+      extraTypes,
       includeScaledUp: useScaledUp,
       sort,
     };
@@ -96,7 +121,7 @@ export function useCollectionSearch(collection, {
       const role = item.role || 'standard';
       if (!ROLE_STAT_SCALING[role]) return item;
       const scaled = computeScaledStats(item, role, itemTier, singleTier);
-      return { ...item, ...scaled, tier: singleTier, name: `[Scaled] ${item.name}`, _scaledFromTier: itemTier };
+      return { ...item, ...scaled, tier: singleTier, _scaledFromTier: itemTier };
     });
   }, [collection]);
 
@@ -170,6 +195,13 @@ export function useCollectionSearch(collection, {
           const has = types.includes(value);
           next.types = has ? types.filter(t => t !== value) : [...types, value];
         }
+      } else if (key === 'extraType') {
+        if (value == null) next = { ...next, extraTypes: [] };
+        else {
+          const extraTypes = next.extraTypes || [];
+          const has = extraTypes.includes(value);
+          next.extraTypes = has ? extraTypes.filter(t => t !== value) : [...extraTypes, value];
+        }
       } else if (key === 'include') {
         if (value == null) next = { ...next, includes: [] };
         else {
@@ -180,8 +212,13 @@ export function useCollectionSearch(collection, {
       } else {
         next[key] = value;
       }
+      if (key === 'search' && sharedSearchKey) {
+        try { localStorage.setItem(sharedSearchKey, typeof value === 'string' ? value : ''); } catch {}
+      }
       if (persistKey) {
-        try { localStorage.setItem(`${persistKey}_${collection}`, JSON.stringify(next)); } catch {}
+        const toSave = { ...next };
+        if (sharedSearchKey) delete toSave.search;
+        try { localStorage.setItem(`${persistKey}_${collection}`, JSON.stringify(toSave)); } catch {}
       }
       return next;
     });

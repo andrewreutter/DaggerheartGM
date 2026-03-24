@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, Square, CheckSquare, Loader2 } from 'lucide-react';
+import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, CheckSquare, Loader2 } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { Tooltip } from './Tooltip.jsx';
 import { CustomSelect } from './forms/CustomSelect.jsx';
@@ -21,6 +21,8 @@ import { MarkdownText } from '../lib/markdown.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
+import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
+import { getISeeItComingDefenseBonus } from '../lib/v2-action-loop-bridge.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -928,11 +930,14 @@ function V2ReviewChipRow({
   return panel;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
   const visible = useBannerVisible();
+  const effectiveSessionRole = sessionRole ?? (isPlayer ? 'player' : 'gm');
   const attackerEl = roll._attackerInstanceId
     ? tableCharacters.find((c) => c.instanceId === roll._attackerInstanceId)
     : null;
+  const gmHelperSuffix = getGmHelperBannerSuffix({ sessionRole: effectiveSessionRole, roll, attackerElement: attackerEl });
+  const gmHelperTooltip = getGmHelperBannerTooltip({ sessionRole: effectiveSessionRole, roll, attackerElement: attackerEl });
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
   const v2MoveBlocksAck = !isPlayer && v2PendingMoveInfo?.blocked === true;
@@ -1007,7 +1012,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     }
   }, [holdThemOffActive, selectedDamageTargetIds.length, selectedDamageTargetId, roll._selectedTargetInstanceId]);
 
-  // Sync single-target selection to server so ancestry chips (e.g. Danger Sense) see the selected target.
+  // Sync single-target selection to server so all clients share the same target chips / ack state.
   useEffect(() => {
     if (holdThemOffActive || roll._multiTarget || !onBannerTargetsChange || roll._rollDbId == null) return;
     if (targetsSyncDebounceRef.current) clearTimeout(targetsSyncDebounceRef.current);
@@ -1047,7 +1052,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const extraItems   = (roll.subItems || []).filter(s => EXTRA_PRE_RE.test(s.pre || ''));
   const damageSubs  = (roll.subItems || []).filter(s => /damage/i.test(s.pre || '') && s.input);
   const damageTotal = damageSubs.reduce((sum, s) => sum + (parseInt(s.result, 10) || 0), 0);
-  /** Base damage used for thresholds and application; ancestry chips can override via setDamageTotal(). */
+  /** Base damage used for thresholds and application. */
   const baseDamage  = (roll._damageTotalOverride != null ? roll._damageTotalOverride : damageTotal);
   const damageSub   = damageSubs[0];
   const dmg         = parseDiceSub(damageSub);
@@ -1155,8 +1160,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     ? `${displayName} → ${selectedTargetsForTitle.map(t => t.name).join(', ')}`
     : selectedTargetForTitle ? `${displayName} → ${selectedTargetForTitle.name}` : displayName;
 
-  // Generic ancestry banner reactions — pre-matched by GMTableView for this roll.
-  const applicableReactions = bannerReactions.filter(r => r.matchesRoll(roll));
+  const canReplayBannerTitle = resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input));
+  const bannerTitleTooltip = [canReplayBannerTitle ? 'Replay dice animation' : '', gmHelperTooltip].filter(Boolean).join(' — ') || undefined;
 
   // Ranger's Focus: Fear result, attack vs Focus target — can end Focus to reroll Duality dice.
   // Use roll._selectedTargetInstanceId as fallback for players who pre-select before rolling
@@ -1181,11 +1186,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     !!(attackerEl?.lockedOnTargetInstanceId && selectedTargetForLockedOn && attackerEl.lockedOnTargetInstanceId === selectedTargetForLockedOn);
   const hasISeeItComingCleanup =
     roll._rollDbId != null &&
-    tableCharacters.some((el) => el._iSeeItComingRollBonus && roll._rollDbId in el._iSeeItComingRollBonus);
+    tableCharacters.some((el) => getISeeItComingDefenseBonus(el, roll._rollDbId) > 0);
   const ackWouldApplyMechanicalEffectsWhenResolved =
     needsInteraction ||
     v2MoveBlocksAck ||
-    applicableReactions.length > 0 ||
     ((roll.tags || []).length > 0 && roll._attackerInstanceId) ||
     (Number(roll._stressCost) > 0 ||
       Number(roll._hopeCost) > 0 ||
@@ -1228,12 +1232,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     if (!target) continue;
     let defense = target.type === 'adversary' ? target.difficulty : target.evasion;
     if (defense == null) continue;
-    if (
-      target.type === 'character' &&
-      roll._rollDbId != null &&
-      target._iSeeItComingRollBonus?.[roll._rollDbId] != null
-    ) {
-      defense += target._iSeeItComingRollBonus[roll._rollDbId];
+    if (target.type === 'character' && roll._rollDbId != null) {
+      const isee = getISeeItComingDefenseBonus(target, roll._rollDbId);
+      if (isee > 0) defense += isee;
     }
     if (effectiveAttackTotal >= defense) hitCount++;
     else missCount++;
@@ -1284,13 +1285,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       >
         {bannerTitle && (
           <div
-            className={`text-[11px] uppercase tracking-widest opacity-70 mb-1.5 ${resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? 'cursor-pointer hover:opacity-90' : ''}`}
-            style={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? { pointerEvents: 'auto' } : undefined}
-            onClick={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? (e) => { e.stopPropagation(); onReplayDice(); } : undefined}
-            title={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? 'Replay dice animation' : undefined}
-            role={resolved && onReplayDice ? 'button' : undefined}
+            className={`text-[11px] uppercase tracking-widest opacity-70 mb-1.5 ${canReplayBannerTitle ? 'cursor-pointer hover:opacity-90' : ''}`}
+            style={canReplayBannerTitle ? { pointerEvents: 'auto' } : undefined}
+            onClick={canReplayBannerTitle ? (e) => { e.stopPropagation(); onReplayDice(); } : undefined}
+            title={bannerTitleTooltip}
+            role={canReplayBannerTitle ? 'button' : undefined}
           >
             {bannerTitle}
+            {gmHelperSuffix}
           </div>
         )}
 
@@ -1509,7 +1511,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           );
         })}
 
-        {/* ── Feature tags (only show tag pill when feature has showTag: true; onBanner-only features use narration) ── */}
+        {/* ── Feature tags (showTag: true); automated tags use green styling; banner narrations also merge automated descriptions via buildRollBaseBannerNarrationParts ── */}
         {(roll.tags || []).filter((t) => resolveWeaponTagDescriptor(t.name, attackerEl)?.showTag === true).length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
             {(roll.tags || []).filter((t) => resolveWeaponTagDescriptor(t.name, attackerEl)?.showTag === true).map((tag, i) => {
@@ -1625,150 +1627,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         {focusedByStressNote && (
           <div className="text-[10px] text-emerald-300/90 mt-1.5">
             Target will mark 1 Stress (Focused).
-          </div>
-        )}
-
-        {/* Ancestry banner reaction chips (Fearless, Feline Instincts, Kick, etc.) — above Acknowledge/Cancel */}
-        {applicableReactions.length > 0 && (
-          <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap gap-1.5 items-center">
-            {applicableReactions.map((reaction) => {
-              const { featureName, character, getDisabledState, isActive: reactionIsActive, button, stateKey, chip } = reaction;
-              const active = reactionIsActive(roll);
-              const disabledState = typeof getDisabledState === 'function' ? getDisabledState(roll) : { disabled: false, message: '' };
-              const isEnabled = !disabledState.disabled;
-              const disabledMessage = disabledState.message || '';
-              const requested = !!reaction.isRequested;
-              const hasChipAckReject = chip?.onChipAck != null || chip?.onChipReject != null;
-              const chipResolved = stateKey && roll._chipResolved?.[stateKey];
-              const showChipAckRejectRow = hasChipAckReject && onChipResolve && !isPlayer && active && !chipResolved;
-              const checked = active || requested || chipResolved;
-
-              if (hasChipAckReject && chipResolved) {
-                return (
-                  <Tooltip key={`${featureName}-${character.instanceId}`} label={button?.label || ''} placement="bottom-left">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-500">
-                      <CheckSquare size={12} className="shrink-0" />
-                      {featureName}
-                    </div>
-                  </Tooltip>
-                );
-              }
-
-              if (showChipAckRejectRow) {
-                return (
-                  <Tooltip key={`${featureName}-${character.instanceId}`} label={button?.label ? `${button.label} — click to turn off` : 'Click to turn off'} placement="bottom-left">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-200">
-                      <button
-                        type="button"
-                        onClick={() => onBannerReactionActivate?.(reaction, roll)}
-                        className="flex items-center gap-1.5 shrink-0 rounded -m-1 p-1 hover:bg-amber-800/50 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      >
-                        <CheckSquare size={12} className="shrink-0" />
-                        <span className="truncate max-w-[120px]">{featureName}</span>
-                      </button>
-                      <span className="flex items-center gap-1 shrink-0 flex-wrap items-center">
-                        {chip?.hopeCost > 0 && (() => {
-                          const instId = character?.instanceId;
-                          const hasHopeful = character?.armorFeatureName === 'Hopeful' || character?.armorMods?.feature?.name === 'Hopeful';
-                          const armorSlotsFree = (character?.maxArmor ?? 0) - (character?.currentArmor ?? 0);
-                          const showHopeful = hasHopeful && armorSlotsFree > 0 && instId;
-                          if (!showHopeful) return null;
-                          const useHopeful = !!useHopefulArmorByInstanceId[instId];
-                          return (
-                            <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={useHopeful}
-                                onChange={(e) => {
-                                  const next = e.target.checked;
-                                  setUseHopefulArmorByInstanceId(prev => ({ ...prev, [instId]: next }));
-                                  if (onBannerTargetsChange && roll._rollDbId != null) {
-                                    const nextMap = { ...(roll._hopefulArmorInsteadByInstanceId || {}), [instId]: next };
-                                    targetsSyncDebounceRef.current = setTimeout(() => {
-                                      targetsSyncDebounceRef.current = null;
-                                      onBannerTargetsChange(roll._rollDbId, { hopefulArmorInsteadByInstanceId: nextMap });
-                                    }, 200);
-                                  }
-                                }}
-                                className="rounded border-amber-600"
-                              />
-                              <span>Mark Armor instead</span>
-                            </label>
-                          );
-                        })()}
-                        {chip?.onChipAck != null && (
-                          <button
-                            type="button"
-                            disabled={!isEnabled}
-                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack', { hopefulArmorInsteadByInstanceId: useHopefulArmorByInstanceId }); }}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-600 bg-emerald-800/60 text-emerald-100 hover:bg-emerald-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            OK
-                          </button>
-                        )}
-                        {chip?.onChipReject != null && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'reject'); }}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700/70"
-                          >
-                            Reject
-                          </button>
-                        )}
-                      </span>
-                    </div>
-                  </Tooltip>
-                );
-              }
-
-              const reactionTooltip =
-                active
-                  ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
-                  : isEnabled
-                    ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
-                    : disabledMessage || `${character.name}: cannot use ${featureName}`;
-
-              // Non-toggleable chips (no onChipAck/onChipReject): no checkbox, badge-only style.
-              if (!hasChipAckReject) {
-                const El = chip?.activate ? 'button' : 'div';
-                return (
-                  <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
-                    <El
-                      {...(El === 'button' ? {
-                        type: 'button',
-                        onClick: (active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined,
-                        disabled: !active && !isEnabled && !requested,
-                      } : {})}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-400 shrink-0 ${
-                        El === 'button' && (active || isEnabled || requested) ? 'hover:bg-slate-700/50 cursor-pointer' : ''
-                      }`}
-                    >
-                      {featureName}
-                    </El>
-                  </Tooltip>
-                );
-              }
-
-              return (
-                <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
-                  <button
-                    type="button"
-                    onClick={(active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined}
-                    disabled={!active && !isEnabled && !requested}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors shrink-0 ${
-                      active || requested
-                        ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70 cursor-pointer'
-                        : isEnabled
-                          ? 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 cursor-pointer'
-                          : 'border-slate-600 bg-slate-800/40 text-slate-500 cursor-not-allowed'
-                    }`}
-                  >
-                    {checked ? <CheckSquare size={12} className="shrink-0" /> : <Square size={12} className="shrink-0" />}
-                    {featureName}
-                  </button>
-                </Tooltip>
-              );
-            })}
           </div>
         )}
 
@@ -2329,10 +2187,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       for (const id of selectedDamageTargetIds) {
                                         const target = filteredTargets.find(t => t.instanceId === id);
                                         if (target) {
-                                          const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === id);
-                                          const damageModifiers = targetReactions
-                                            .filter(r => r.isActive(roll) && r.chip?.damageModifierWhenActive)
-                                            .map(r => ({ ...r.chip.damageModifierWhenActive }));
+                                          const damageModifiers = [];
                                           await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], damageModifiers, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
                                         }
                                       }
@@ -2389,10 +2244,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       if (selectedTarget) {
                                         const dmgType = dmg?.type || '';
                                         const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
-                                        const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === effectiveTargetId);
-                                        const damageModifiers = targetReactions
-                                          .filter(r => r.isActive(roll) && r.chip?.damageModifierWhenActive)
-                                          .map(r => ({ ...r.chip.damageModifierWhenActive }));
+                                        const damageModifiers = [];
                                         await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                       }
                                     }
@@ -2598,10 +2450,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onBouncingTarget,
   wizardsWithHope = [],
   onNotThisTime,
-  bannerReactions = [],
   displayOverridesByRollId = {},
-  onBannerReactionActivate,
-  onChipResolve,
   tableCharacters = [],
   rangerFocusRerollChars = [],
   onRangerFocusReroll,
@@ -2631,6 +2480,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   bannerStripLeftOffset = 0,
   diceCanvasHidden = false,
   getV2PendingMoveBlockInfo,
+  sessionRole,
 }, ref) {
   const diceCanvasHiddenRef = useRef(diceCanvasHidden);
   useEffect(() => {
@@ -2651,12 +2501,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
   // All mutations update the ref synchronously first, then trigger re-render via setActiveBanners.
   const activeBannersRef = useRef([]); // [{ _bannerId, roll, resolved }]
   const [activeBanners, setActiveBanners] = useState([]);
-  // Fallback when bannerReactions prop is empty due to render race (e.g. Fearless chip on Fear roll).
-  const bannerReactionsFallbackRef = useRef([]);
-  function setBannerReactionsFallback(reactions) {
-    bannerReactionsFallbackRef.current = Array.isArray(reactions) ? reactions : [];
-  }
-
   // dbIds for which a dismiss was triggered before updateRoll stamped _rollDbId (race condition).
   // updateRoll checks this set and auto-dismisses if the newly-stamped id is pending.
   const pendingDismissalsRef = useRef(new Set());
@@ -3069,7 +2913,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
     diceBoxRef.current?.clearDice();
   }
 
-  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, setBannerReactionsFallback, clearDice }), [isPlayer]);
+  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, clearDice }), [isPlayer]);
 
   // ── DiceBox initialization ─────────────────────────────────────────────────
 
@@ -3228,10 +3072,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onBouncingTarget={onBouncingTarget}
                 wizardsWithHope={wizardsWithHope}
                 onNotThisTime={onNotThisTime}
-                bannerReactions={bannerReactions?.length ? bannerReactions : bannerReactionsFallbackRef.current}
                 displayOverridesByRollId={displayOverridesByRollId}
-                onBannerReactionActivate={onBannerReactionActivate}
-                onChipResolve={onChipResolve}
                 tableCharacters={tableCharacters}
                 rangerFocusRerollChars={rangerFocusRerollChars}
                 onRangerFocusReroll={onRangerFocusReroll}
@@ -3246,6 +3087,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onWingsD8ToggleRequest={onWingsD8ToggleRequest}
                 onGetWingsD8Extra={onGetWingsD8Extra}
                 getV2DamageBannerAckNotices={getV2DamageBannerAckNotices}
+                sessionRole={sessionRole}
                 isPlayer={isPlayer}
                 currentUserUid={currentUserUid}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}

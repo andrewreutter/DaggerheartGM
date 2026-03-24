@@ -4,6 +4,10 @@ Phase 2 is implemented: **`src/client/lib/v2-action-loop-bridge.js`** builds `ga
 
 **Dedupe:** `V2_REVIEW_ACTION_PHASE1_DEDUPE` hides **Hold Them Off** and **Ranger's Focus** chips here because Phase 1 banner UI already covers them.
 
+**Player-first testing:** Prefer unit coverage where `viewer.role === 'player'` and `viewerCharacterInstanceId` match the assigned PC before GM-only cases (see `describe('viewer: player primary', …)` in `test/unit/v2-action-loop-bridge.test.js`). **`buildV2ChipViewer`** (`src/client/lib/v2-chip-session-view.js`) is the single place for session role + assigned character + `viewer` passed to `collectV2ReviewActionChips`.
+
+**Session vs chip:** `isPlayer` is GM vs player **session**, not “whose sheet” or “who owns the chip.” Example: **Rally** from Bard X on player Y’s sheet — Y remains a player session; chips key off `viewerCharacterInstanceId` / cross-sheet ids, not `!isPlayer`. The dice **ResultBanner** title can append a muted **`· GM`** when the GM client rolls for a **character that has an assigned player** (helper mode).
+
 ---
 
 ## Phase 3 goals (weapon / armor tag phases)
@@ -16,7 +20,7 @@ Per the V2 Game Table integration plan (Phase 3 — Weapon and armor property ph
 
 3. **Mutations that still skip the router** — `rerollDie`, `addRollStatic`, `addDamageRoll`, etc. (see `applyV2BannerMutations` **`skipped`**) need explicit mapping to **`postBannerRerollDie`**, **`postBannerAddDamage`**, or banner data patches — or a dedicated mutation router test matrix.
 
-4. **Selection chips** — UI for **`multiSelect`**, **`isSelect`**, and **`selectTargets`** (V2 review buttons show “Requires selection (Phase 3)” while disabled).
+4. **Selection chips** — **`multiSelect`**, **`isSelect`**, and **`selectTargets`** are implemented (`resolveV2ReviewChipPicker` + `V2ReviewChipRow` Apply flow; see tracker § Phase B). Further UX polish is optional.
 
 ---
 
@@ -27,8 +31,9 @@ Per the V2 Game Table integration plan (Phase 3 — Weapon and armor property ph
 | Phase 2 bridge | `src/client/lib/v2-action-loop-bridge.js` |
 | Banner mutation router | `applyV2BannerMutations` in `src/client/lib/table-ops.js` |
 | Banner UI | `ResultBanner` in `src/client/components/DiceRoller.jsx` |
-| Wiring | `GMTableView.jsx` — `v2ReviewChipsByRollDbId`, `handleV2ReviewChip` |
-| Tests | `test/unit/v2-action-loop-bridge.test.js`, `test/unit/table-ops.test.js` (`applyV2BannerMutations`) |
+| Wiring | `GMTableView.jsx` — `buildV2ChipViewer`, `v2ReviewChipsByRollDbId`, `handleV2ReviewChip` |
+| Session / viewer | `src/client/lib/v2-chip-session-view.js` |
+| Tests | `test/unit/v2-action-loop-bridge.test.js`, `test/unit/v2-chip-session-view.test.js`, `test/unit/table-ops.test.js` (`applyV2BannerMutations`) |
 
 ---
 

@@ -35,10 +35,11 @@ import {
   resolveClassFeatureDescriptor,
   resolveVirtualWeaponBehavior,
   resolveWeaponTagDescriptor,
+  buildRollBaseBannerNarrationParts,
 } from '../lib/game-table-mechanics.js';
 import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-preroll.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
-import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt, distanceFtToRangeBandName } from '../lib/map-range.js';
+import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
@@ -58,7 +59,10 @@ import {
   runV2IntentPhaseForTraitRoll,
   runV2RestHooksForTable,
   computeV2DamageBannerAckNotices,
+  getISeeItComingDefenseBonus,
+  buildISeeItComingAckCleanupUpdates,
 } from '../lib/v2-action-loop-bridge.js';
+import { buildV2ChipViewer } from '../lib/v2-chip-session-view.js';
 import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
 import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
@@ -1217,245 +1221,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }).catch(err => console.error('Not This Time reroll failed:', err));
   };
 
-  // Generic ancestry banner reaction handler.
-  // For features with toggleKey: the system manages the toggle state automatically.
-  // chip.activate (if present) is called as a veto hook — return { cancel: true } to abort.
-  // For features without toggleKey: delegates entirely to chip.activate.
-  const handleBannerReactionActivate = (reaction, roll) => {
-    const chip = reaction.chip;
-    const charEl = activeElements.find(e => e.instanceId === reaction.character.instanceId);
-    if (!charEl) return;
-    const character = wrapEntity(charEl, updateActiveElement);
-
-    const stateKey = reaction.stateKey;
-    const rollWithMine = wrapRoll(roll);
-    rollWithMine.isMine = roll._attackerInstanceId != null ? roll._attackerInstanceId === charEl.instanceId : !!(roll.rollUser && charEl.name && (roll.rollUser.toLowerCase() === charEl.name.toLowerCase() || roll.rollUser.toLowerCase().startsWith(charEl.name.toLowerCase())));
-    if (stateKey && roll._rollDbId != null) {
-      // isCurrentlyActive: true when the toggle is already ON for this roll (click would turn it off).
-      const isCurrentlyActive = charEl[stateKey] === roll._rollDbId;
-      const hopeCost = chip?.hopeCost ?? 0;
-      const stressCost = chip?.stressCost ?? 0;
-      // When toggling on, check declared costs first, then getDisabledMessage.
-      if (!isCurrentlyActive) {
-        if (hopeCost > 0 && character.hope < hopeCost) return;
-        if (stressCost > 0 && !character.hasStress(stressCost)) return;
-        if (chip?.getDisabledMessage && chip.getDisabledMessage(rollWithMine, character)) return;
-      }
-      // Optional veto hook for features that need logic beyond getDisabledMessage.
-      if (chip?.activate) {
-        const result = chip.activate(rollWithMine, character, { characterRaw: charEl, isCurrentlyActive });
-        if (result?.cancel) return;
-      }
-      const newValue = isCurrentlyActive ? null : roll._rollDbId;
-      if (isPlayer && postCharacterUpdate) {
-        postCharacterUpdate(tableId, charEl.instanceId, { [stateKey]: newValue }).catch(() => {});
-      } else {
-        character.setFlag(stateKey, newValue);
-      }
-    } else {
-      // Non-toggle feature (e.g. Feline Instincts): delegate entirely to chip.activate.
-      if (!chip?.activate) return;
-      chip.activate(rollWithMine, character, {
-        characterRaw: charEl,
-        isPlayer,
-        tableId,
-        postCharacterUpdate,
-        postBannerAck,
-        postRerollHopeDie,
-        postBannerFeatureRequest: postBannerGenericRerollRequest,
-        updateActiveElement,
-        activeElements,
-        onFeatureRequestSuccess: onFeatureRequestSuccess ? (bannerId) => onFeatureRequestSuccess(bannerId, reaction.stateKey) : undefined,
-        onFeatureRequestCancel: onFeatureRequestCancel ? (bannerId) => onFeatureRequestCancel(bannerId, reaction.stateKey) : undefined,
-      });
-    }
-  };
-
-  // Chip Ack/Reject (onChipAck/onChipReject): persist resolved state, apply costs, run handler; if addDamage used, replace banner with augmented roll.
-  // System guarantees character.name and roll.target.name for addNarration().
-  const handleChipResolve = useCallback(async (reaction, roll, action, options) => {
-    const chip = reaction.chip;
-    const stateKey = reaction.stateKey;
-    if (!stateKey || roll._rollDbId == null || !tableId) return;
-    if (roll._chipResolved?.[stateKey]) return; // already resolved
-    const charEl = activeElements.find(e => e.instanceId === reaction.character.instanceId);
-    if (!charEl) return;
-    enrichRollWithDamage(roll, activeElements);
-    const featureName = reaction.featureName ?? 'Feature';
-    const featureState = {
-      get(key, defaultVal) {
-        const bag = charEl._originFeatureState?.[featureName];
-        return bag != null && key in bag ? bag[key] : defaultVal;
-      },
-      set(key, value) {
-        const current = charEl._originFeatureState ?? {};
-        const featureBag = current[featureName] ?? {};
-        const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
-        charEl._originFeatureState = next; // so same-tick get() sees the update
-        updateActiveElement(charEl.instanceId, { _originFeatureState: next });
-      },
-    };
-    const wrappedChar = wrapEntity(charEl, updateActiveElement, {
-      postTraitRoll: (traitKey, opts) => {
-        const key = String(traitKey).toLowerCase();
-        const traitName = TRAIT_FULL[key] || traitKey;
-        const displayChar = srdData
-          ? mergeV2DeclarativeSheetOverlay(recomputeCharacter(charEl, srdData), charEl, srdData, {
-              fearCount,
-              mapConfig,
-              tableFeatureState,
-            })
-          : charEl;
-        const base = displayChar.traits?.[key] ?? 0;
-        const bf = parseBeastformBonus(displayChar.activeBeastform?.trait_bonus);
-        const score = base + (bf?.stat === key ? bf.bonus : 0);
-        const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
-        const displayName = [charEl.name, reaction.feature?.source, reaction.feature?.name].filter(Boolean).join(' - ');
-        const meta = { _attackerInstanceId: charEl.instanceId, _traitKey: key };
-        if (opts?.difficulty != null) meta._difficulty = opts.difficulty;
-        postRoll(rollText, displayName, tableId, meta);
-      },
-      postAction: (customLabel) => {
-        postActionNotification({
-          _action: true,
-          rollUser: charEl.name,
-          actionName: reaction.feature?.name ?? 'Feature',
-          actionText: customLabel ?? reaction.feature?.name ?? '',
-          _attackerInstanceId: charEl.instanceId,
-        }, tableId).catch(() => {});
-      },
-    });
-    const characterName = wrappedChar.name ?? roll.rollUser ?? roll.displayName ?? 'Character';
-    const characterForChip = { ...wrappedChar, name: characterName };
-    // Use a display store so setWithHope() is available; check it after onChipAck runs.
-    const chipDisplayStore = {};
-    const rollWithTarget = wrapRoll(roll, chipDisplayStore, reaction.character.instanceId);
-    const featureWithState = reaction.feature ? { ...reaction.feature, ...featureState } : null;
-    // Use the real banner from closure (same object passed to onBanner) when available; otherwise create one with the identical shape.
-    let banner = reaction.banner;
-    if (!banner) {
-      banner = {
-        chips: [],
-        _narrations: [],
-        _rollRef: null,
-        _featureName: null,
-        _extraDamage: null,
-        _narration: null,
-        addChip(descriptor) {},
-        addNarration(text, style) {
-          this._narrations.push(style != null ? { text, style } : { text });
-          if (this._featureName) this._narration = `${this._featureName}: ${text}`;
-        },
-        addAutomatedNarration(text) { this.addNarration(text, 'automated'); },
-        addDamage(expr) { this._extraDamage = String(expr).trim(); },
-        setTreatAsMissForTarget(instanceId) { if (this._rollRef) this._rollRef._treatAsMissForTarget = instanceId; },
-      };
-    }
-    banner._rollRef = roll;
-    banner._featureName = featureName;
-    banner._extraDamage = null;
-    banner._narration = null;
-    const chipContext = { roll: rollWithTarget, character: characterForChip, banner, feature: featureWithState, featureState, characterRaw: charEl, characters: wrappedPartyCharacters, system };
-    // Run costs + onChipAck BEFORE the server call so we can capture override values to persist.
-    if (action === 'ack') {
-      if (chip?.hopeCost > 0) {
-        const hopefulMap = options?.hopefulArmorInsteadByInstanceId ?? roll._hopefulArmorInsteadByInstanceId;
-        const useHopefulArmor = hopefulMap?.[charEl.instanceId];
-        const hasHopeful = charEl.armorMods?.feature?.name === 'Hopeful' || charEl.armorFeatureName === 'Hopeful';
-        const armorSlotsFree = (charEl.maxArmor ?? 0) - (charEl.currentArmor ?? 0);
-        const substitute = useHopefulArmor && hasHopeful && armorSlotsFree > 0
-          ? Math.min(chip.hopeCost, armorSlotsFree)
-          : 0;
-        if (substitute > 0) {
-          for (let i = 0; i < substitute; i++) wrappedChar.markArmor();
-        }
-        if (chip.hopeCost - substitute > 0) wrappedChar.spendHope(chip.hopeCost - substitute);
-      }
-      if (chip?.stressCost > 0) {
-        const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'chip', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
-        if (!stressCancel.cancel) {
-          const effective = chip.stressCost - (stressCancel.reduceBy ?? 0);
-          if (effective > 0) wrappedChar.markStress(effective);
-        }
-      }
-      if (chip?.onChipAck) chip.onChipAck(chipContext);
-      if (chip?.resetsOn && (reaction._featureKey ?? chip._featureKey)) wrappedChar.setFeatureUsed(reaction._featureKey ?? chip._featureKey, chip.resetsOn);
-    } else {
-      if (chip?.onChipReject) chip.onChipReject(chipContext);
-    }
-    // Capture any override values set by onChipAck and persist them to the server so they
-    // survive the SSE snapshot refresh that immediately follows chip resolution.
-    const extraPatch = {};
-    if (roll._damageTotalOverride != null) extraPatch._damageTotalOverride = roll._damageTotalOverride;
-    if (roll._hpLossReduction != null) extraPatch._hpLossReduction = roll._hpLossReduction;
-    if (roll._treatAsMissForTarget != null) extraPatch._treatAsMissForTarget = roll._treatAsMissForTarget;
-    try {
-      await postBannerChipResolve(tableId, {
-        bannerId: roll._rollDbId, stateKey, action,
-        ...(Object.keys(extraPatch).length > 0 ? { extraPatch } : {}),
-      });
-    } catch (err) {
-      console.error('Chip resolve failed:', err);
-      return;
-    }
-    // If onChipAck called roll.setWithHope(), record that for display color and ack behavior.
-    if (action === 'ack' && roll._rollDbId != null && chipDisplayStore[roll._rollDbId]?.dominantForDisplay === 'hope') {
-      setChipHopeConvertedIds(prev => new Set([...prev, roll._rollDbId]));
-    }
-    if (banner._extraDamage) {
-      try {
-        const newRoll = await postBannerAddDamage(roll._rollDbId, {
-          extraDamage: banner._extraDamage,
-          extraDamageLabel: reaction.featureName ?? undefined,
-          narration: banner._narration ?? undefined,
-          suppressAncestryFeature: reaction.featureName,
-        });
-        diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
-        if (newRoll) {
-          diceRollerRef.current?.addRoll?.(newRoll);
-          // Keep sync with subscription: treat old as gone and new as seen so effect doesn't re-add or re-dismiss
-          pendingBannerDbIdsRef.current.delete(roll._rollDbId);
-          if (newRoll._rollDbId) pendingBannerDbIdsRef.current.add(newRoll._rollDbId);
-        }
-      } catch (err) {
-        console.error('Banner add-damage failed:', err);
-      }
-    } else if (roll._rerollDuality) {
-      try {
-        const newRoll = await postBannerRerollDie(roll._rollDbId, {
-          dieType: 'Duality',
-          suppressAncestryFeature: reaction.featureName,
-        });
-        diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
-        if (newRoll) {
-          diceRollerRef.current?.addRoll?.(newRoll);
-          pendingBannerDbIdsRef.current.delete(roll._rollDbId);
-          if (newRoll._rollDbId) pendingBannerDbIdsRef.current.add(newRoll._rollDbId);
-        }
-      } catch (err) {
-        console.error('Banner reroll-duality failed:', err);
-      }
-    } else if (roll._rerollDie) {
-      try {
-        const newRoll = await postBannerRerollDie(roll._rollDbId, {
-          dieType: roll._rerollDie,
-          suppressAncestryFeature: reaction.featureName,
-        });
-        diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
-        if (newRoll) {
-          diceRollerRef.current?.addRoll?.(newRoll);
-          pendingBannerDbIdsRef.current.delete(roll._rollDbId);
-          if (newRoll._rollDbId) pendingBannerDbIdsRef.current.add(newRoll._rollDbId);
-        }
-      } catch (err) {
-        console.error('Banner reroll-die failed:', err);
-      }
-    } else if (roll._fullReroll && roll.rollText) {
-      diceRollerRef.current?.dismissBannerByDbId?.(roll._rollDbId);
-      performFullReroll(roll, {});
-    }
-  }, [tableId, isPlayer, activeElements, updateActiveElement, performFullReroll, wrappedPartyCharacters, srdData, fearCount, mapConfig, tableFeatureState]);
-
   // Origin lifecycle (e.g. Unshakable): post action banner with character name.
   const postActionForStress = (charEl, actionName, actionText) => {
     const notifier = isPlayer ? handlePlayerActionNotification : handleActionNotification;
@@ -1557,8 +1322,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     let defense = isAdversary
       ? target.difficulty
       : (effectiveEvasion(target, srdData) ?? target.evasion ?? null);
-    if (!isAdversary && roll._rollDbId != null && target._iSeeItComingRollBonus?.[roll._rollDbId] != null) {
-      defense = (defense ?? 0) + target._iSeeItComingRollBonus[roll._rollDbId];
+    if (!isAdversary && roll._rollDbId != null) {
+      const isee = getISeeItComingDefenseBonus(target, roll._rollDbId);
+      if (isee > 0) defense = (defense ?? 0) + isee;
     }
     if (defense == null) return;
     let effectiveTotal = roll.total ?? 0;
@@ -1995,113 +1761,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         runCharacterHook(weaponFeaturesForRoll, 'onRollComplete', { attacker, roll, characters: wrappedPartyCharacters, system });
       }
     }
-    // Generic ancestry banner reaction acknowledge: run chip.onBannerAck (or legacy acknowledge) for each active reaction.
-    // Features request "convert to Hope" by calling roll.setWithHope() in acknowledge; system applies skip-fear + grant hope after the loop.
-    // Also check chipHopeConvertedIds: if onChipAck already called setWithHope() for this roll, honor it here.
+    // Fearless-style hope conversion (V2 review chips set chipHopeConvertedIds).
     let hopeConversionRequested = !!(roll._rollDbId != null && chipHopeConvertedIds.has(roll._rollDbId));
     if (hopeConversionRequested && roll._rollDbId != null) {
       setChipHopeConvertedIds(prev => { const next = new Set(prev); next.delete(roll._rollDbId); return next; });
-    }
-    const rollForAck = Object.assign(wrapRoll(roll), {
-      setWithHope() { hopeConversionRequested = true; },
-    });
-    for (const reaction of ancestryBannerReactions) {
-      if (!reaction.matchesRoll(roll)) continue;
-      const charEl = activeElements.find(e => e.instanceId === reaction.character.instanceId);
-      if (!charEl) continue;
-      const chip = reaction.chip;
-      const acknowledge = chip?.onBannerAck ?? chip?.acknowledge;
-      if (!acknowledge) continue;
-      const stateKey = reaction.stateKey;
-      const isToggledOn = !!(stateKey && roll._rollDbId != null && charEl[stateKey] === roll._rollDbId);
-      const featureName = reaction.featureName ?? 'Feature';
-      const featureState = {
-        get(key, defaultVal) {
-          const bag = charEl._originFeatureState?.[featureName];
-          return bag != null && key in bag ? bag[key] : defaultVal;
-        },
-        set(key, value) {
-          const current = charEl._originFeatureState ?? {};
-          const next = { ...current, [featureName]: { ...(current[featureName] ?? {}), [key]: value } };
-          charEl._originFeatureState = next;
-          updateActiveElement(charEl.instanceId, { _originFeatureState: next });
-        },
-      };
-      const wrappedChar = wrapEntity(charEl, updateActiveElement, {
-        postTraitRoll: (traitKey, opts) => {
-          const key = String(traitKey).toLowerCase();
-          const traitName = TRAIT_FULL[key] || traitKey;
-          const displayChar = srdData
-            ? mergeV2DeclarativeSheetOverlay(recomputeCharacter(charEl, srdData), charEl, srdData, {
-                fearCount,
-                mapConfig,
-                tableFeatureState,
-              })
-            : charEl;
-          const base = displayChar.traits?.[key] ?? 0;
-          const bf = parseBeastformBonus(displayChar.activeBeastform?.trait_bonus);
-          const score = base + (bf?.stat === key ? bf.bonus : 0);
-          const rollText = `Hope [d12] Fear [d12] ${traitName} [${score}]`;
-          const displayName = [charEl.name, reaction.feature?.source, reaction.feature?.name].filter(Boolean).join(' - ');
-          const meta = { _attackerInstanceId: charEl.instanceId, _traitKey: key };
-          if (opts?.difficulty != null) meta._difficulty = opts.difficulty;
-          postRoll(rollText, displayName, tableId, meta);
-        },
-        postAction: (customLabel) => {
-          postActionNotification({
-            _action: true,
-            rollUser: charEl.name,
-            actionName: reaction.feature?.name ?? 'Feature',
-            actionText: customLabel ?? reaction.feature?.name ?? '',
-            _attackerInstanceId: charEl.instanceId,
-          }, tableId).catch(() => {});
-        },
-      });
-      const featureWithState = reaction.feature ? { ...reaction.feature, ...featureState } : null;
-      const context = {
-        roll: rollForAck,
-        character: wrappedChar,
-        feature: featureWithState,
-        featureState,
-        characterRaw: charEl,
-        postRoll,
-        system,
-      };
-      if (isToggledOn) {
-        if (chip?.hopeCost > 0) {
-          const useHopefulArmor = roll._hopefulArmorInsteadByInstanceId?.[charEl.instanceId];
-          const hasHopeful = charEl.armorMods?.feature?.name === 'Hopeful' || charEl.armorFeatureName === 'Hopeful';
-          const armorSlotsFree = (charEl.maxArmor ?? 0) - (charEl.currentArmor ?? 0);
-          const substitute = useHopefulArmor && hasHopeful && armorSlotsFree > 0
-            ? Math.min(chip.hopeCost, armorSlotsFree)
-            : 0;
-          if (substitute > 0) {
-            for (let i = 0; i < substitute; i++) wrappedChar.markArmor();
-          }
-          if (chip.hopeCost - substitute > 0) wrappedChar.spendHope(chip.hopeCost - substitute);
-        }
-        if (chip?.stressCost > 0) {
-          const stressCancel = await runBeforeMarkStress(charEl, chip.stressCost, 'banner-ack', updateActiveElement, { postRollSilent, gmUid: isPlayer ? tableId : null, postAction: postActionForStress, characters: wrappedPartyCharacters, system });
-          if (!stressCancel.cancel) {
-            const effective = chip.stressCost - (stressCancel.reduceBy ?? 0);
-            if (effective > 0) wrappedChar.markStress(effective);
-          }
-        }
-        if (acknowledge) acknowledge.call(chip, context);
-        if (chip?.resetsOn && (reaction._featureKey ?? chip._featureKey)) wrappedChar.setFeatureUsed(reaction._featureKey ?? chip._featureKey, chip.resetsOn);
-      } else if (acknowledge) {
-        acknowledge.call(chip, context);
-      }
-    }
-    // Clear any toggle state for this roll (system-owned: features don't clear it).
-    for (const reaction of ancestryBannerReactions) {
-      const stateKey = reaction.stateKey;
-      if (!stateKey) continue;
-      for (const el of activeElements) {
-        if (el[stateKey] === roll._rollDbId) {
-          updateActiveElement(el.instanceId, { [stateKey]: null });
-        }
-      }
     }
     if (hopeConversionRequested) {
       const attackerId = roll._attackerInstanceId;
@@ -2144,13 +1807,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
     if (!options?.alreadyAcked) {
       if (roll._rollDbId) {
+        const sel = roll._selectedTargetInstanceId ?? (Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds[0]);
         for (const el of activeElements) {
           if (el.elementType !== 'character') continue;
-          const m = el._iSeeItComingRollBonus;
-          if (!m || !(roll._rollDbId in m)) continue;
-          const next = { ...m };
-          delete next[roll._rollDbId];
-          updateActiveElement(el.instanceId, { _iSeeItComingRollBonus: next });
+          const u = buildISeeItComingAckCleanupUpdates(el, roll._rollDbId, sel);
+          if (u) updateActiveElement(el.instanceId, u);
         }
       }
       postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
@@ -2169,29 +1830,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (roll._rest && roll._rollDbId != null && onRestMoveClear) onRestMoveClear(roll._rollDbId);
     removePendingCosts(roll);
     pendingDamageRef.current = null;
-    // Generic ancestry banner reaction cancel: run chip.onBannerReject (or legacy cancel)
-    for (const reaction of ancestryBannerReactions) {
-      const chip = reaction.chip;
-      const cancel = chip?.onBannerReject ?? chip?.cancel;
-      if (!cancel) continue;
-      if (!reaction.matchesRoll(roll)) continue;
-      const charEl = activeElements.find(e => e.instanceId === reaction.character.instanceId);
-      if (!charEl) continue;
-      const stateKey = reaction.stateKey;
-      const isToggledOn = !!(stateKey && roll._rollDbId != null && charEl[stateKey] === roll._rollDbId);
-      const wrappedChar = wrapEntity(charEl, updateActiveElement);
-      cancel.call(chip, roll, wrappedChar, { isToggledOn, characterRaw: charEl });
-    }
-    // Clear any toggle state for this roll (system-owned: features don't clear it).
-    for (const reaction of ancestryBannerReactions) {
-      const stateKey = reaction.stateKey;
-      if (!stateKey) continue;
-      for (const el of activeElements) {
-        if (el[stateKey] === roll._rollDbId) {
-          updateActiveElement(el.instanceId, { [stateKey]: null });
-        }
-      }
-    }
     postBannerAck(roll._rollDbId, 'cancel', { tableId }).catch(() => {});
   };
 
@@ -3606,18 +3244,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
   const tableCharacters = activeElements.filter(e => e.elementType === 'character');
-  /** Assigned character for the current player — used for V2 review chips on pending banners. */
-  const playerViewerCharacterInstanceId = useMemo(() => {
-    if (!isPlayer) return null;
-    const email = (previewAsPlayerEmail || playerEmail || '').toLowerCase();
-    const uid = user?.uid;
-    const el = tableCharacters.find(
-      (c) =>
-        (uid && c.assignedPlayerUid === uid) ||
-        (email && (c.assignedPlayerEmail || '').toLowerCase() === email)
-    );
-    return el?.instanceId ?? null;
-  }, [isPlayer, previewAsPlayerEmail, playerEmail, user?.uid, tableCharacters]);
+  /** Session role + assigned PC + `viewer` for {@link collectV2ReviewActionChips} (single source of truth). */
+  const chipViewer = useMemo(
+    () => buildV2ChipViewer({ isPlayer, user, playerEmail, previewAsPlayerEmail, tableCharacters }),
+    [isPlayer, user?.uid, playerEmail, previewAsPlayerEmail, tableCharacters]
+  );
+  const playerViewerCharacterInstanceId = chipViewer.assignedCharacterInstanceId;
 
   const wizardsWithHope = tableCharacters.filter(c => {
     const cls = (c.class || '').toLowerCase();
@@ -3646,19 +3278,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const v2ReviewChipsByRollDbId = useMemo(() => {
     const m = new Map();
     if (!srdData) return m;
-    const tableChars = activeElements.filter(e => e.elementType === 'character');
-    let viewer;
-    if (!isPlayer) {
-      viewer = { role: 'gm' };
-    } else {
-      const email = (previewAsPlayerEmail || playerEmail || '').toLowerCase();
-      const uid = user?.uid;
-      const el = tableChars.find(c =>
-        (uid && c.assignedPlayerUid === uid) ||
-        (email && (c.assignedPlayerEmail || '').toLowerCase() === email)
-      );
-      viewer = { role: 'player', viewerCharacterInstanceId: el?.instanceId ?? null };
-    }
+    const { viewer } = chipViewer;
     for (const roll of pendingBanners || []) {
       const id = roll._rollDbId;
       if (id == null) continue;
@@ -3684,10 +3304,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     mapConfig,
     tableFeatureState,
     v2BannerConsumedOnUseByRollDbId,
-    isPlayer,
-    playerEmail,
-    previewAsPlayerEmail,
-    user?.uid,
+    chipViewer,
   ]);
 
   const getV2ReviewChipPicker = useCallback(
@@ -3935,191 +3552,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     sendOp,
   ]);
 
-  // Banner reactions from all characters' activeFeatures (onBanner / bannerAction chips).
-  const ancestryBannerReactions = useMemo(() => {
-    const enrichRollWithAttackRange = (roll, elements) => {
-      if (!roll._attackerInstanceId || !roll._selectedTargetInstanceId) return;
-      const attacker = elements?.find(e => e.instanceId === roll._attackerInstanceId);
-      const target = elements?.find(e => e.instanceId === roll._selectedTargetInstanceId);
-      if (attacker?.tokenX == null || attacker?.tokenY == null) return;
-      if (target?.tokenX == null || target?.tokenY == null) return;
-      const dist = tokenDistanceFt(attacker.tokenX, attacker.tokenY, target.tokenX, target.tokenY);
-      roll.attackRange = distanceFtToRangeBandName(dist);
-    };
-
-    const wrappedCharacters = tableCharacters.map(c => wrapEntity(c, updateActiveElement));
-    const reactions = [];
-    for (const char of tableCharacters) {
-      if (isPlayer && char.assignedPlayerEmail !== playerEmail) continue;
-      const entity = wrapEntity(char, updateActiveElement);
-      const getIsMyRoll = (roll) => roll._attackerInstanceId != null
-        ? roll._attackerInstanceId === char.instanceId
-        : !!(roll.rollUser && char.name && (roll.rollUser.toLowerCase() === char.name.toLowerCase() || roll.rollUser.toLowerCase().startsWith(char.name.toLowerCase())));
-      const activeFeaturesList = Array.isArray(char.activeFeatures) ? char.activeFeatures : [];
-      for (let idx = 0; idx < activeFeaturesList.length; idx++) {
-        const feature = activeFeaturesList[idx];
-        const hasBannerChips = feature.chips?.some(c => c.placement === 'banner');
-        if (!feature.onBanner && !feature.bannerAction && !hasBannerChips) continue;
-        const chips = [];
-        let bannerNarrations;
-        let banner;
-        if (feature.onBanner || hasBannerChips) {
-          banner = {
-            chips,
-            _narrations: [],
-            _rollRef: null,
-            _featureName: null,
-            _extraDamage: null,
-            _narration: null,
-            addChip(descriptor) { this.chips.push(descriptor); },
-            addNarration(text, style) {
-              this._narrations.push(style != null ? { text, style } : { text });
-              if (this._featureName) this._narration = `${this._featureName}: ${text}`;
-            },
-            addAutomatedNarration(text) { this.addNarration(text, 'automated'); },
-            addDamage(expr) { this._extraDamage = String(expr).trim(); },
-            setTreatAsMissForTarget(instanceId) { if (this._rollRef) this._rollRef._treatAsMissForTarget = instanceId; },
-          };
-          const bannerChips = feature.chips?.filter(c => c.placement === 'banner') || [];
-          for (const chip of bannerChips) {
-            banner.addChip(chip);
-          }
-          if (typeof feature.onBanner === 'function') {
-            feature.onBanner({ banner, character: entity, characters: wrappedCharacters, system });
-          }
-          bannerNarrations = banner._narrations?.length ? [...banner._narrations] : undefined;
-        } else if (feature.bannerAction) {
-          chips.push(feature.bannerAction);
-        }
-        const sourceName = typeof feature.source === 'string' ? feature.source : (feature.source?.name ?? feature.type ?? 'Unknown');
-        chips.forEach((chip, chipIndex) => {
-          // Only toggleable (stateKey) when the chip has Ack/Reject — otherwise it's display-only or activate-only.
-          const hasChipAckReject = chip?.onChipAck != null || chip?.onChipReject != null;
-          const stateKey = hasChipAckReject
-            ? (chip.toggleKey ?? (chip.label != null ? `_toggle.${sourceName}.${feature.name}${chips.length > 1 ? `.${chipIndex}` : ''}` : null))
-            : null;
-          const button = chip.label != null
-            ? { label: chip.label, toggleKey: chip.toggleKey }
-            : null;
-          const hopeCost = chip.hopeCost ?? 0;
-          const stressCost = chip.stressCost ?? 0;
-          const featureKeyForResetsOn = chip.resetsOn ? `${feature.name}-${idx}` : null;
-          reactions.push({
-            featureName: feature.name,
-            feature,
-            character: char,
-            chip,
-            stateKey,
-            bannerNarrations,
-            banner: (feature.onBanner || hasBannerChips) ? banner : undefined,
-            _featureKey: featureKeyForResetsOn,
-            getDisabledState: (roll) => {
-              enrichRollWithAttackRange(roll, activeElements);
-              enrichRollWithIsSuccess(roll, activeElements);
-              const wr = wrapRoll(roll, undefined, char.instanceId);
-              wr.isMine = getIsMyRoll(roll);
-              const name = entity.name ?? 'Character';
-              const costMsg = hopeCost > 0 && entity.hope < hopeCost
-                ? `${name} needs ${hopeCost} Hope`
-                : stressCost > 0 && !entity.hasStress(stressCost)
-                  ? `${name} needs ${stressCost} empty Stress boxes`
-                  : '';
-              const featureStateReader = { get(key, defaultVal) { const bag = char._originFeatureState?.[feature.name]; return bag != null && key in bag ? bag[key] : defaultVal; } };
-              const customMsg = chip.getDisabledMessage ? chip.getDisabledMessage(wr, entity, featureStateReader) : '';
-              const customLabel = customMsg ? (typeof customMsg === 'string' ? customMsg : String(customMsg)) : '';
-              const usedByResetsOn = featureKeyForResetsOn && char.featureUsage?.[featureKeyForResetsOn]?.used && char.featureUsage?.[featureKeyForResetsOn]?.cycle === chip.resetsOn;
-              const resetsOnMsg = usedByResetsOn ? (chip.resetsOn === 'rest' ? 'Already used this rest' : chip.resetsOn === 'session' ? 'Already used this session' : chip.resetsOn === 'longRest' ? 'Already used this long rest' : 'Already used') : '';
-              const disabled = !!costMsg || !!customLabel || !!usedByResetsOn;
-              const message = [costMsg, customLabel, resetsOnMsg].filter(Boolean).join('\n');
-              return { disabled, message };
-            },
-            button,
-            derivedIds: stateKey
-              ? new Set(activeElements.filter(el => el[stateKey]).map(el => el[stateKey]))
-              : (chip.derivedState ? chip.derivedState(activeElements) : null),
-            matchesRoll: (roll) => {
-              if (roll._suppressAncestryFeature === feature.name) return false; // only suppress the chip that triggered add-damage
-              // So enrichers and wrapRoll see the selected target when it was synced via banner-targets (array).
-              const effectiveTargetId = roll._selectedTargetInstanceId ?? (Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds[0]);
-              if (effectiveTargetId && !roll._selectedTargetInstanceId) roll._selectedTargetInstanceId = effectiveTargetId;
-              enrichRollWithDamage(roll, activeElements);
-              enrichRollWithAttackRange(roll, activeElements);
-              enrichRollWithIsSuccess(roll, activeElements);
-              const hasDamage = (roll.subItems || []).some(s => /damage/i.test(s.pre || ''));
-              // Enrich target.rangeFromMe for chips that use it (e.g. Goblin Danger Sense)
-              if (effectiveTargetId && hasDamage) {
-                const targetEl = activeElements.find(e => e.instanceId === effectiveTargetId);
-                if (targetEl?.tokenX != null && targetEl?.tokenY != null && char.tokenX != null && char.tokenY != null) {
-                  roll._targetRangeFromMe = tokenDistanceFt(char.tokenX, char.tokenY, targetEl.tokenX, targetEl.tokenY);
-                }
-              }
-              const wr = wrapRoll(roll, undefined, char.instanceId);
-              wr.isMine = getIsMyRoll(roll);
-              // Unified context for isVisible (backward compatible with legacy (roll, character) signature)
-              const getFeatureState = (featureName) => {
-                const get = (key, defaultVal) => {
-                  const bag = char._originFeatureState?.[featureName];
-                  return bag != null && key in bag ? bag[key] : defaultVal;
-                };
-                const set = (key, value) => {
-                  const current = char._originFeatureState ?? {};
-                  const featureBag = current[featureName] ?? {};
-                  const next = { ...current, [featureName]: { ...featureBag, [key]: value } };
-                  updateActiveElement(char.instanceId, { _originFeatureState: next });
-                };
-                return { get, set };
-              };
-              const featureWithState = { ...feature, ...getFeatureState(feature.name) };
-              const chipContext = { roll: wr, character: entity, characters: wrappedCharacters, system, feature: featureWithState, banner };
-              const visible = chip.isVisible 
-                ? (chip.isVisible.length === 1 ? chip.isVisible(chipContext) : chip.isVisible(wr, entity)) // New unified context or legacy signature
-                : wr.isMine;
-              return visible;
-            },
-            isActive: stateKey
-              ? (roll) => char[stateKey] === roll._rollDbId
-              : (roll) => {
-                const wr = wrapRoll(roll, undefined, char.instanceId);
-                wr.isMine = getIsMyRoll(roll);
-                return chip.isActive?.(wr, entity) ?? false;
-              },
-            isRequested: false,
-          });
-        });
-      }
-    }
-    return reactions;
-  }, [tableCharacters, activeElements, isPlayer, playerEmail, updateActiveElement, system]);
-
-  // Sync DiceRoller with the authoritative pendingBanners subscription snapshot (must run after ancestryBannerReactions is defined).
+  // Sync DiceRoller with the authoritative pendingBanners subscription snapshot.
   useEffect(() => {
     if (!pendingBanners) return;
     const isFirst = isFirstBannersSnapshotRef.current;
     isFirstBannersSnapshotRef.current = false;
 
     function getBannerNarration(roll) {
-      const parts = [];
-      if (roll._narration) parts.push({ text: roll._narration });
-      const tagNames = (roll.tags || []).map(t => (typeof t === 'string' ? t : t?.name)).filter(Boolean);
-      const weaponBanner = {
-        addNarration(text, style) { parts.push(style != null ? { text, style } : { text }); },
-      };
       const attackerEl = roll._attackerInstanceId
         ? activeElements.find((e) => e.instanceId === roll._attackerInstanceId && e.elementType === 'character')
         : null;
-      if (attackerEl?.activeFeatures?.length) {
-        for (const name of tagNames) {
-          const f = attackerEl.activeFeatures.find(
-            (row) => row.type === 'weapon' && row.name === name
-          );
-          if (!f) continue;
-          weaponBanner.addAutomatedNarration = () => weaponBanner.addNarration(f.description, 'automated');
-          if (f.onBanner) f.onBanner({ banner: weaponBanner, roll, characters: wrappedPartyCharacters, system });
-        }
-      }
-      for (const r of ancestryBannerReactions) {
-        if (r.matchesRoll(roll) && r.bannerNarrations?.length) parts.push(...r.bannerNarrations);
-      }
+      const parts = buildRollBaseBannerNarrationParts(roll, attackerEl);
       return parts.filter(p => p?.text);
     }
 
@@ -4194,34 +3637,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         diceRollerRef.current?.dismissBannerByDbId?.(dbId);
       }
     }
-    diceRollerRef.current?.setBannerReactionsFallback?.(ancestryBannerReactions);
-  }, [pendingBanners, ancestryBannerReactions, activeElements, wrappedPartyCharacters]);
+  }, [pendingBanners, activeElements, wrappedPartyCharacters]);
 
-  // Display overrides for banners: run chip.render for each pending roll and matching reaction.
+  // Display overrides for banners (e.g. Fearless setWithHope via V2 review chip).
   const displayOverridesByRollId = useMemo(() => {
     const store = {};
     if (!pendingBanners?.length) return store;
     for (const roll of pendingBanners) {
-      for (const r of ancestryBannerReactions) {
-        if (!r.matchesRoll(roll)) continue;
-        const wrappedRoll = wrapRoll(roll, store, r.character.instanceId);
-        const chip = r.chip;
-        const render = chip?.render;
-        const renderWhenOff = chip?.renderWhenOff;
-        if (!render && !renderWhenOff) continue;
-        const stateKey = r.stateKey;
-        const isToggledOn = !!(stateKey && roll._rollDbId != null && r.character[stateKey] === roll._rollDbId);
-        const wrappedChar = wrapEntity(r.character, updateActiveElement);
-        if (isToggledOn && render) render.call(chip, wrappedRoll, wrappedChar);
-        else if (!isToggledOn && renderWhenOff) renderWhenOff.call(chip, wrappedRoll, wrappedChar);
-      }
-      // If onChipAck called setWithHope() for this roll, override display to hope color.
       if (roll._rollDbId != null && chipHopeConvertedIds.has(roll._rollDbId)) {
         store[roll._rollDbId] = { ...(store[roll._rollDbId] || {}), dominantForDisplay: 'hope' };
       }
     }
     return store;
-  }, [pendingBanners, ancestryBannerReactions, activeElements, updateActiveElement, chipHopeConvertedIds]);
+  }, [pendingBanners, chipHopeConvertedIds]);
 
   // Per-character rest move lists (ancestry onRest hooks, e.g. Clank Efficient).
   const restMovesPerCharacter = useMemo(() => {
@@ -5386,11 +4814,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             onBouncingTarget={isPlayer ? undefined : handleBouncingTarget}
             wizardsWithHope={isPlayer ? [] : wizardsWithHope}
             onNotThisTime={isPlayer ? undefined : handleNotThisTime}
-            bannerReactions={ancestryBannerReactions}
             displayOverridesByRollId={displayOverridesByRollId}
-            onBannerReactionActivate={handleBannerReactionActivate}
-            onChipResolve={tableId ? handleChipResolve : undefined}
-            tableCharacters={isPlayer ? [] : tableCharacters}
+            tableCharacters={tableCharacters}
+            sessionRole={chipViewer.sessionRole}
             rangerFocusRerollChars={rangerFocusRerollChars}
             onRangerFocusReroll={isPlayer ? undefined : handleRangerFocusReroll}
             onRangerFocusRerollRequest={isPlayer ? handleRangerFocusRerollRequest : undefined}

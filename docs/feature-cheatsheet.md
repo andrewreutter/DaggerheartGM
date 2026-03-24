@@ -10,7 +10,7 @@ A feature is an object with:
 
 - `**name`** — string; identifies the feature in registries and UI.
 - `**description`** — optional string; flavor/rule text (often from SRD).
-- **Hooks** — functions the system calls at specific times (see Section 3). Keys like `onBanner`, `onCharacterRender`, `modifyPreThresholdDamage`, etc.
+- **Hooks** — functions the system calls at specific times (see Section 3). Keys like `onCharacterRender`, `modifyPreThresholdDamage`, etc. The shipped Game Table **does not** call a root **`onBanner`** hook; use **`chips`** with **`placement: 'banner'`** (and **`isVisible(chipContext)`**, **`onBannerAck`**, **`onBannerReject`**) instead — **no** legacy **`acknowledge`** / **`cancel`** aliases on those chip descriptors. Weapon banner narration uses **`automated: true`** plus **`description`** on the merged weapon row; pending-roll narrations merge via **`buildRollBaseBannerNarrationParts`** / **`buildWeaponTagBannerNarrationParts`** in **`game-table-mechanics.js`**.
 - **Declarations** — declarative options the system reads without calling you (see Section 2). Keys like `passiveStatMods`, `cardChips`, `automated`, `armorReduction`, etc.
 
 You implement a feature by defining the right hooks and declarations for the behavior you want. The same descriptor shape is used regardless of where the feature lives.
@@ -60,7 +60,7 @@ Declarative options the system reads from the feature descriptor. Only include t
 | **weaponsFilter**           | `(weapons) => weapons`. Called with the current weapons list (after declarative virtualWeapons are merged); return value replaces the list (e.g. Giant Reach: Melee → Very Close).                                                                                                                                              | Origin, class.                                                                                  |
 
 
-Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessage, onChipAck, onChipReject, onBannerAck, toggleKey, render, renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive) are documented in Section 4 (banner) and Section 3 (onBanner / onChipAck). All chips use the unified context shape: `{ roll, character, feature, characters, system, banner? }` (properties not applicable to the current placement are undefined).
+Chip descriptor fields (label, hopeCost, stressCost, isVisible, getDisabledMessage, onChipAck, onChipReject, onBannerAck, onBannerReject, toggleKey, render, renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive) are documented in Section 4 (banner) and Section 3 (onChipAck). **Banner**-placement chips use the unified context shape: `{ roll, character, feature, characters, system, banner }` (Section 4.15).
 
 **V2 chip properties (chip-system.js):**
 - `showOnOtherSheets` *(boolean)*: **Cross-sheet:** Opt-in for `collectChipsForOtherCharacterSheets` so a chip can be shown under **Modifiers** (`crossSheetChips`) with `table.me` = viewer — including when the viewer **owns** the feature (e.g. Bard **Rally** on the Bard's sheet) as well as on other PCs' sheets. See `chip-system.js` and `docs/feature-authoring-guide.md` B.2. **Banner / `collectV2ReviewActionChips`:** With a **viewer** (GM vs assigned player), `collectPhaseChipsOnly` includes owner-only chips (falsy `showOnOtherSheets`) only for the **GM** and the **feature owner’s** player; chips with `showOnOtherSheets: true` are omitted from that pass for non-owners and merged from cross-sheet collection for the current viewer (`v2-action-loop-bridge.js`). Omit `viewer` in tests for legacy unfiltered pass-1 behavior.
@@ -85,10 +85,11 @@ Each hook: **name**, **when it runs**, **Context: list of subdocument names** wi
 
 ### Banner and chips
 
-- **onBanner** — When building banner reactions for a roll (GMTableView); weapon onBanner also when syncing rolls for narration. **Context:** `banner` (4.1), `character` (4.2), `characters` (4.9), `feature` (4.11).
+- **chips (`placement: 'banner'`)** — Declared on the feature descriptor; GMTableView collects one **banner reaction** per chip (visibility via **`chip.isVisible(chipContext)`**, unified context 4.15 + **`banner`**). No root **`onBanner`** callback.
 - **onChipAck** / **onChipReject** — User clicks Ack/Reject on a banner chip. **Context:** `roll` (4.3), `character` (4.2), `banner` (4.1 stub: addNarration, addDamage, setTreatAsMissForTarget), `feature` (4.11), `featureState` (4.6), `characterRaw`, `characters` (4.9).
-- **onBannerAck** (chip) — When GM acknowledges the whole banner (chip ran; legacy acknowledge). **Context:** `roll` (4.3), `character` (4.2), `feature` (4.11), `featureState` (4.6), `characterRaw`, `postRoll`, `system` (4.8).
-- **onBannerAck** (weapon) — When GM acknowledges; per tag per target. **Context:** `roll` (4.3), `target` (4.2).
+- **onBannerAck** (chip) — When GM acknowledges the whole banner after the chip path ran. **Context:** `roll` (4.3), `character` (4.2), `feature` (4.11), `featureState` (4.6), `characterRaw`, `postRoll`, `system` (4.8). (**Do not** use a property named **`acknowledge`** — GMTableView only invokes **`onBannerAck**`.)
+- **onBannerReject** (chip) — When GM cancels the banner (optional). (**Do not** use **`cancel`** — only **`onBannerReject`**.)
+- **onBannerAck** (weapon) — When GM acknowledges; per tag per target. **Context:** `roll` (4.3), `target` (4.2), `system` (4.8).
 
 ### Character computation
 
@@ -144,17 +145,17 @@ Same name = same shape across all hooks. Define each once here.
 
 ### 4.1 banner
 
-Object passed to **onBanner** and (at ack time) into **onChipAck** / **onChipReject**. When the reaction came from onBanner, it is the same object from closure.
+Object built by GMTableView when a feature has **`chips`** with **`placement: 'banner'`**. Passed at ack time into **onChipAck** / **onChipReject**; also **`chipContext.banner`** for **`chip.isVisible(chipContext)`** on banner chips.
 
 **Methods:**  
 
-- `addChip(descriptor)` — register a chip (ancestry/community reactions).  
+- `addChip(descriptor)` — register a chip (used while building the in-memory banner shell).  
 - `addNarration(text, style?)` — add narration line; optional style e.g. `'automated'`.  
 - `addAutomatedNarration(text)` — same as addNarration(text, 'automated').  
 - `addDamage(expr)` — add extra damage; cancels current banner and creates new one with augmented roll.  
 - `setTreatAsMissForTarget(instanceId)` — selected target takes no HP/Stress from this roll (e.g. Faerie Wings).
 
-**Internal / ack-time:** chips, _narrations, _rollRef, _featureName, _extraDamage, _narration. Chip descriptor shape: label, hopeCost, stressCost, isVisible(roll, character), getDisabledMessage(roll, character, featureState?), onChipAck(context), onChipReject(context), onBannerAck(context), toggleKey, render(roll, character), renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive (hopeCost?, stressCost?, dmgType?, apply(total)=>number). Banner object at ack has **feature** (4.11), **featureState** (4.6).
+**Internal / ack-time:** chips, _narrations, _rollRef, _featureName, _extraDamage, _narration. Chip descriptor shape: label, hopeCost, stressCost, **isVisible(chipContext)** (unified context 4.15 + **banner**), getDisabledMessage(roll, character, featureState?), onChipAck(context), onChipReject(context), onBannerAck(context), onBannerReject?, toggleKey, render(roll, character), renderWhenOff, activate, isActive, resetsOn, damageModifierWhenActive (hopeCost?, stressCost?, dmgType?, apply(total)=>number). Banner object at ack has **feature** (4.11), **featureState** (4.6).
 
 ### 4.2 entity (character / target / char)
 
@@ -217,7 +218,7 @@ When present, `context.system` is a subdocument supplied wherever the view can c
 
 ### 4.9 characters
 
-Array of wrapped entities (4.2) — all current party characters on the table. Passed to **onSessionStart** and, where easily available (table/game view), to most other hooks that run in that context: **onBanner**, **onChipAck** / **onChipReject**, **onRoll**, **onTargeted**, **onMarkStress** / **onMarkHP** / **onMarkArmor**, **modifyPreThresholdDamage** / **modifyHpLoss** (via damagePipelineCtx), **onAfterMarkArmor**, **onLastArmorSlot**, **onBeforeDamageApplied**, **onDamageReceived**, **onHpDealt**, **onFeatureActivated**, **onRollComplete**, **cardChips.onToggle**.
+Array of wrapped entities (4.2) — all current party characters on the table. Passed to **onSessionStart** and, where easily available (table/game view), to most other hooks that run in that context: **onChipAck** / **onChipReject**, **onRoll**, **onTargeted**, **onMarkStress** / **onMarkHP** / **onMarkArmor**, **modifyPreThresholdDamage** / **modifyHpLoss** (via damagePipelineCtx), **onAfterMarkArmor**, **onLastArmorSlot**, **onBeforeDamageApplied**, **onDamageReceived**, **onHpDealt**, **onFeatureActivated**, **onRollComplete**, **cardChips.onToggle**.
 
 ### 4.11 feature (descriptor)
 
@@ -271,7 +272,7 @@ Passed in the **context** to **cardChips.onToggle** when the GM acknowledges the
 
 | Hook                     | Context subdocuments (Section 4)                                                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| onBanner                 | banner (4.1), character (4.2), characters (4.9), system (4.8), feature (4.11)                                                                    |
+| chip.isVisible (banner)  | unified chip context (4.15): roll (4.3), character (4.2), feature (4.11), characters (4.9), system (4.8), banner (4.1)                          |
 | chip.isVisible (preroll) | unified chip context (4.15): roll (4.3), character (4.2), feature (4.11), characters (4.9), system (4.8)                                         |
 | chip.onUse (preroll)     | unified chip context (4.15): roll (4.3), character (4.2), feature (4.11), characters (4.9), system (4.8)                                         |
 | onRoll                   | roll (4.3), characters (4.9), system (4.8), feature (4.11), source                                                                               |
@@ -305,7 +306,7 @@ Rows = hooks; columns = context subdocuments (Section 4), ordered by how many ho
 
 | Hook                     | feature (4.11) | character (4.2) | characters (4.9) | roll (4.3) | featureState (4.6) | banner (4.1) | damagePipelineCtx (4.7) | system (4.8) | rest (4.4) | chip (4.14) |
 | ------------------------ | -------------- | --------------- | ---------------- | ---------- | ------------------ | ------------ | ----------------------- | ------------ | ---------- | ----------- |
-| onBanner                 | •              | •               | •                |            |                    | •            |                         | •            |            |             |
+| chip.isVisible (banner)  | •              | •               | •                | •          |                    | •            |                         | •            |            |             |
 | onChipAck / onChipReject | •              | •               | •                | •          | •                  | •            |                         | •            |            |             |
 | onBannerAck (chip)       | •              | •               | •                | •          | •                  | •            |                         | •            |            |             |
 | onBannerAck (weapon)     | •              | •               |                  | •          |                    |              |                         | •            |            |             |
@@ -338,7 +339,7 @@ Rows = hooks; columns = context subdocuments (Section 4), ordered by how many ho
 
 ## 8. Conventions
 
-- **Style:** Prefer arrow functions for one-line hook or chip fields. Use method shorthand for multi-statement bodies. Exception: write onBanner(banner) { ... } in method shorthand for readability.
+- **Style:** Prefer arrow functions for one-line hook or chip fields. Use method shorthand for multi-statement bodies.
 - **Do not duplicate feature names.** The system injects the current feature name. Never pass _featureName, featureKey, or the feature name as a string literal inside chip descriptors, isVisible, or similar; use the injected key or resetsOn usage tracking instead.
 - **Imitate existing features.** Before adding a new one, find a similar feature in the codebase and copy its structure (e.g. Fearless for fear→hope, Thick Skin for target chips, Retracting Claws for virtual weapons, Galapa Retract or Fungril for card chips).
 - **Where to add a feature:** Add or edit a module under **`src/features-v2/`** (e.g. `ancestries/`, `communities/`, `weapon_properties/`, `armor_properties/`, `classes/`, …) and wire it through the appropriate **`index.js`** + **`registry.js`**. Follow **`docs/feature-authoring-guide.md`** and **`docs/v2-code-conventions.md`** — do not reintroduce the removed **`src/features/`** tree as the implementation path.

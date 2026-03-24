@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
+import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { isOwnItem } from './lib/constants.js';
 import { RUNTIME_KEYS } from './lib/table-ops.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
@@ -94,6 +95,7 @@ function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
+  const [onboardingFlash, setOnboardingFlash] = useState('');
   const [deleteTablePending, setDeleteTablePending] = useState(null); // { id, name } when confirming delete
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const userMenuRef = useRef(null);
@@ -195,6 +197,13 @@ function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleEnableOnboarding = () => {
+    resetOnboardingState();
+    setUserMenuOpen(false);
+    setOnboardingFlash('Onboarding tips enabled');
+    setTimeout(() => setOnboardingFlash(''), 2500);
   };
 
   const handleImport = async (e) => {
@@ -760,7 +769,7 @@ function App() {
     return elements;
   }
 
-  const doAddToTable = async (item, collectionName) => {
+  const doAddToTable = async (item, collectionName, explicitTargetTableId) => {
     const newElements = [];
 
     if (collectionName === 'adversaries' || collectionName === 'environments') {
@@ -831,23 +840,21 @@ function App() {
       });
     }
 
-    setActiveElements(prev => [...prev, ...newElements]);
+    const target = resolveTargetTableId(explicitTargetTableId);
+    const r = routeRef.current;
+    if (r?.view === 'table' && r.tableId === target) {
+      setActiveElements(prev => [...prev, ...newElements]);
+    }
     return newElements;
   };
 
-  const addToTable = (item, collectionName) => {
-    // Intercept scene adds: if the scene has active user-controlled budget factors,
-    // ask the user whether to apply them to the table before proceeding.
-    if (collectionName === 'scenes') {
-      const mods = item?.battleMods;
-      const hasActiveMods = mods && (mods.lessDifficult || mods.slightlyMoreDangerous || mods.damageBoostPlusOne || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
-      if (hasActiveMods) {
-        setPendingSceneAdd({ scene: item });
-        return;
-      }
-    }
-    return doAddToTable(item, collectionName);
-  };
+  /** Resolves which `table_state` row receives an add (explicit pick, current table route, or legacy primary uid). */
+  function resolveTargetTableId(explicitTargetTableId) {
+    if (explicitTargetTableId != null && explicitTargetTableId !== '') return explicitTargetTableId;
+    const r = routeRef.current;
+    if (r?.view === 'table' && r.tableId) return r.tableId;
+    return userRef.current?.uid;
+  }
 
   const removeActiveElement = (instanceId) => {
     setActiveElements(prev => prev.filter(el => el.instanceId !== instanceId));
@@ -907,22 +914,23 @@ function App() {
     postTableOp({ op: 'clear-table' }, tableId);
   };
 
-  const sendDoAddToTable = async (item, collectionName) => {
-    const newElements = await doAddToTable(item, collectionName);
-    if (newElements?.length) postTableOp({ op: 'add-elements', elements: newElements }, tableId);
+  const sendDoAddToTable = async (item, collectionName, targetTableId) => {
+    const target = resolveTargetTableId(targetTableId);
+    const newElements = await doAddToTable(item, collectionName, targetTableId);
+    if (newElements?.length) postTableOp({ op: 'add-elements', elements: newElements }, target);
     return newElements;
   };
 
-  const sendAddToTable = (item, collectionName) => {
+  const sendAddToTable = (item, collectionName, targetTableId) => {
     if (collectionName === 'scenes') {
       const mods = item?.battleMods;
       const hasActiveMods = mods && (mods.lessDifficult || mods.slightlyMoreDangerous || mods.damageBoostPlusOne || mods.damageBoostD4 || mods.damageBoostStatic || mods.moreDangerous);
       if (hasActiveMods) {
-        setPendingSceneAdd({ scene: item });
+        setPendingSceneAdd({ scene: item, targetTableId: resolveTargetTableId(targetTableId) });
         return;
       }
     }
-    return sendDoAddToTable(item, collectionName);
+    return sendDoAddToTable(item, collectionName, targetTableId);
   };
 
   const sendUpdateActiveElementsBaseData = (predicate, newBaseData) => {
@@ -1062,7 +1070,9 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-4 text-sm text-slate-400">
-            {importStatus && <span className="text-xs text-green-400 font-medium">{importStatus}</span>}
+            {(importStatus || onboardingFlash) && (
+              <span className="text-xs text-green-400 font-medium">{importStatus || onboardingFlash}</span>
+            )}
             <div className="relative" ref={userMenuRef}>
               <button
                 onClick={() => setUserMenuOpen(o => !o)}
@@ -1086,6 +1096,13 @@ function App() {
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
                   >
                     <ScrollText size={15} /> Feature authoring guide
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleEnableOnboarding}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    <Sparkles size={15} /> Enable onboarding
                   </button>
                   <button
                     onClick={handleExport}
@@ -1140,6 +1157,7 @@ function App() {
             >
               <LibraryView
                 key={libraryKey}
+                userUid={user?.uid}
                 data={data}
                 saveItem={saveItem}
                 saveImage={saveImage}
@@ -1165,6 +1183,7 @@ function App() {
                 ensureScenesLoaded={ensureScenesLoaded}
                 ensureAdventuresLoaded={ensureAdventuresLoaded}
                 ensureCharactersLoaded={ensureCharactersLoaded}
+                myTables={myTables}
               />
             </div>
             <div
@@ -1264,14 +1283,16 @@ function App() {
       {pendingSceneAdd && (
         <SceneAdoptDialog
           scene={pendingSceneAdd.scene}
+          tableHref={pendingSceneAdd.targetTableId ? `/table/${encodeURIComponent(pendingSceneAdd.targetTableId)}` : undefined}
           currentTableMods={tableBattleMods}
           onApply={() => {
-            sendSetTableBattleMods({ ...pendingSceneAdd.scene.battleMods });
-            sendDoAddToTable(pendingSceneAdd.scene, 'scenes');
+            const tid = pendingSceneAdd.targetTableId;
+            postTableOp({ op: 'set-battle-mods', tableBattleMods: { ...pendingSceneAdd.scene.battleMods } }, tid);
+            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', tid);
             setPendingSceneAdd(null);
           }}
           onKeep={() => {
-            sendDoAddToTable(pendingSceneAdd.scene, 'scenes');
+            sendDoAddToTable(pendingSceneAdd.scene, 'scenes', pendingSceneAdd.targetTableId);
             setPendingSceneAdd(null);
           }}
           onCancel={() => setPendingSceneAdd(null)}

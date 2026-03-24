@@ -29,7 +29,7 @@ function ActiveModList({ mods, emptyLabel }) {
   );
 }
 
-export function SceneAdoptDialog({ scene, currentTableMods, onApply, onKeep, onCancel }) {
+export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onApply, onKeep, onCancel }) {
   const tableHasActive = currentTableMods && Object.keys(MOD_LABELS).some(k => currentTableMods[k]);
 
   return (
@@ -76,6 +76,18 @@ export function SceneAdoptDialog({ scene, currentTableMods, onApply, onKeep, onC
           >
             Cancel (don't add scene)
           </button>
+          {tableHref && (
+            <p className="text-center pt-1">
+              <a
+                href={tableHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-sky-400/90 hover:text-sky-300 hover:underline"
+              >
+                Open table in new tab
+              </a>
+            </p>
+          )}
         </div>
       </div>
     </div>

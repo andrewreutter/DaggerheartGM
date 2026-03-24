@@ -1,23 +1,24 @@
 /**
- * Load SRD adversaries and environments into external_item_cache on startup.
+ * Load all SRD collections into external_item_cache on startup.
  * Uses sync_state to detect when the daggerheart-srd submodule has changed.
  */
 
 import { execSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFile } from 'fs/promises';
+import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { getCollection } from './srd/parser.js';
+import { COLLECTION_NAMES, getCollection } from './srd/parser.js';
 import { getSyncState, setSyncState, upsertExternalCache, deleteExternalCacheBySource } from './db.js';
+import { formatSrdCacheStamp } from './srd-sync-state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRD_ROOT = join(__dirname, '..', 'daggerheart-srd');
 const JSON_DIR = join(SRD_ROOT, '.build', '03_json');
 
 /**
- * Get a hash of the SRD content (adversaries + environments JSON).
- * Uses git rev-parse if submodule exists, else hashes the file contents.
+ * Hash all built SRD JSON files so any content change invalidates the cache.
+ * Prefers git rev-parse of the submodule; falls back to hashing every *.json in 03_json.
  */
 export async function getSubmoduleHash() {
   try {
@@ -25,9 +26,13 @@ export async function getSubmoduleHash() {
     return rev;
   } catch {
     try {
-      const adv = await readFile(join(JSON_DIR, 'adversaries.json'), 'utf8');
-      const env = await readFile(join(JSON_DIR, 'environments.json'), 'utf8');
-      return createHash('sha256').update(adv + env).digest('hex');
+      const files = (await readdir(JSON_DIR)).filter(f => f.endsWith('.json')).sort();
+      const h = createHash('sha256');
+      for (const f of files) {
+        h.update(f);
+        h.update(await readFile(join(JSON_DIR, f), 'utf8'));
+      }
+      return h.digest('hex');
     } catch {
       return null;
     }
@@ -35,40 +40,39 @@ export async function getSubmoduleHash() {
 }
 
 /**
- * Load SRD adversaries and environments into external_item_cache.
- * If the current hash matches sync_state, skip. Otherwise truncate SRD rows and reload.
+ * Load all SRD collections into external_item_cache.
+ * If the current hash matches sync_state, skip. Otherwise truncate SRD rows per collection and reload.
  */
 export async function loadSrdIntoDb(appId) {
   const currentHash = await getSubmoduleHash();
-  if (!currentHash) {
+  const cacheStamp = formatSrdCacheStamp(currentHash);
+  if (!cacheStamp) {
     console.warn('[srd-loader] Could not compute SRD hash — skipping DB load');
     return;
   }
 
   const storedHash = await getSyncState(appId, 'srd_hash');
-  if (storedHash === currentHash) {
+  // `storedHash` may be legacy bare git SHA (pre–full-SRD-cache); revision prefix forces one-time reload.
+  if (storedHash === cacheStamp) {
     return;
   }
 
-  await deleteExternalCacheBySource(appId, 'srd', 'adversaries');
-  await deleteExternalCacheBySource(appId, 'srd', 'environments');
-
-  const adversaries = await getCollection('adversaries');
-  const environments = await getCollection('environments');
-
-  if (adversaries) {
-    for (const item of adversaries) {
-      const { id, ...data } = item;
-      await upsertExternalCache(appId, 'srd', 'adversaries', id, { ...data, _source: 'srd' }, '');
+  const counts = {};
+  for (const collection of COLLECTION_NAMES) {
+    await deleteExternalCacheBySource(appId, 'srd', collection);
+    const rows = await getCollection(collection);
+    if (!rows?.length) {
+      counts[collection] = 0;
+      continue;
     }
-  }
-  if (environments) {
-    for (const item of environments) {
+    for (const item of rows) {
       const { id, ...data } = item;
-      await upsertExternalCache(appId, 'srd', 'environments', id, { ...data, _source: 'srd' }, '');
+      await upsertExternalCache(appId, 'srd', collection, id, { ...data, _source: 'srd' }, '');
     }
+    counts[collection] = rows.length;
   }
 
-  await setSyncState(appId, 'srd_hash', currentHash);
-  console.log(`[srd-loader] Loaded ${adversaries?.length ?? 0} adversaries, ${environments?.length ?? 0} environments into cache`);
+  await setSyncState(appId, 'srd_hash', cacheStamp);
+  const summary = COLLECTION_NAMES.map(c => `${c}:${counts[c] ?? 0}`).join(', ');
+  console.log(`[srd-loader] Loaded SRD into external_item_cache — ${summary}`);
 }

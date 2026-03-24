@@ -37,6 +37,18 @@ import { getPendingV2DeferToggleNext } from '../../lib/helpers.js';
 
 const ELEMENT_ICONS = { fire: Flame, earth: Mountain, water: Droplets, air: Wind, Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
 
+/** Banner + markdown body for chip tooltips when `interactionMode === 'preview'` (Library / read-only). */
+function PreviewModeTooltipBody({ children }) {
+  return (
+    <>
+      <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400/95 mb-1.5 border-b border-amber-700/50 pb-1">
+        Preview mode
+      </div>
+      {children}
+    </>
+  );
+}
+
 /** Resource costs for the card title bar (lifted single-chip header or legacy parse). */
 function buildTitleCostAction(model, legacy) {
   const lifted = model.liftedHeader;
@@ -130,7 +142,7 @@ export function GuideFeatureCardChips({
         const chipUsed = !!(chip.frequency && isUsed);
         const usedHint = chipUsed ? `Already used (${formatFrequency(chip.frequency) || chip.frequency}).` : null;
         const cardDisableReason =
-          preview ? 'Preview mode' : !canInteract ? null : usedHint || (chipDisabled ? engineDisableHint : null);
+          preview ? null : !canInteract ? null : usedHint || (chipDisabled ? engineDisableHint : null);
         const label = chipForEngine.name;
         const tipText = chip.description || label;
         const tipContent = (
@@ -156,12 +168,13 @@ export function GuideFeatureCardChips({
                 const isActive = !!activeChanneledElement && String(id).toLowerCase() === String(activeChanneledElement).toLowerCase();
                 const cantUse = isUsed || (stressMaxed && !isActive);
                 let elementalTip = null;
-                if (preview) elementalTip = 'Preview mode';
-                else if (!canInteract) elementalTip = null;
-                else if (chipDisabled) elementalTip = engineDisableHint;
-                else if (cantUse) {
-                  if (isUsed && chip.frequency) elementalTip = usedHint;
-                  else if (stressMaxed && !activeChanneledElement) elementalTip = 'Stress is full; cannot channel a new element.';
+                if (!preview) {
+                  if (!canInteract) elementalTip = null;
+                  else if (chipDisabled) elementalTip = engineDisableHint;
+                  else if (cantUse) {
+                    if (isUsed && chip.frequency) elementalTip = usedHint;
+                    else if (stressMaxed && !activeChanneledElement) elementalTip = 'Stress is full; cannot channel a new element.';
+                  }
                 }
                 const chipBtn = (
                   <button
@@ -185,11 +198,20 @@ export function GuideFeatureCardChips({
                     <span>{opt.name || id}</span>
                   </button>
                 );
+                const optMarkdown = (
+                  <MarkdownText text={String(opt.description || '')} className="text-[11px] leading-relaxed dh-md" />
+                );
                 return (
                   <Tooltip
                     key={String(id)}
                     label={elementalTip || undefined}
-                    content={!elementalTip ? <MarkdownText text={opt.description || ''} className="text-[11px] leading-relaxed dh-md" /> : undefined}
+                    content={
+                      preview ? (
+                        <PreviewModeTooltipBody>{optMarkdown}</PreviewModeTooltipBody>
+                      ) : !elementalTip ? (
+                        optMarkdown
+                      ) : undefined
+                    }
                     placement="bottom"
                   >
                     {chipBtn}
@@ -233,10 +255,17 @@ export function GuideFeatureCardChips({
                 disabled={preview || !canInteract || chipDisabled || chipUsed}
                 disabledReason={
                   preview
-                    ? 'Preview mode'
+                    ? undefined
                     : !canInteract
                       ? undefined
                       : usedHint || (chipDisabled ? engineDisableHint : undefined)
+                }
+                disabledTooltipContent={
+                  preview ? (
+                    <PreviewModeTooltipBody>
+                      <MarkdownText text={String(tipText || '')} className="text-[11px] leading-relaxed dh-md" />
+                    </PreviewModeTooltipBody>
+                  ) : undefined
                 }
                 className={selectCls}
                 onChange={(opt) => {
@@ -285,10 +314,17 @@ export function GuideFeatureCardChips({
                 disabled={preview || !canInteract || chipDisabled || chipUsed}
                 disabledReason={
                   preview
-                    ? 'Preview mode'
+                    ? undefined
                     : !canInteract
                       ? undefined
                       : usedHint || (chipDisabled ? engineDisableHint : undefined)
+                }
+                disabledTooltipContent={
+                  preview ? (
+                    <PreviewModeTooltipBody>
+                      <MarkdownText text={String(tipText || '')} className="text-[11px] leading-relaxed dh-md" />
+                    </PreviewModeTooltipBody>
+                  ) : undefined
                 }
                 className={selectCls}
                 onChange={(opt) => {
@@ -329,9 +365,11 @@ export function GuideFeatureCardChips({
           return (
             <Tooltip
               key={ci}
-              label={cardDisableReason || undefined}
+              label={preview ? undefined : cardDisableReason || undefined}
               content={
-                !cardDisableReason ? (
+                preview ? (
+                  <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+                ) : !cardDisableReason ? (
                   toggleDeferAwait ? (
                     <div>
                       <MarkdownText
@@ -376,14 +414,30 @@ export function GuideFeatureCardChips({
         const canShareNarrative = narrativeOnly && typeof onShareFeature === 'function';
         const narrativeActivatable = canInteract || canShareNarrative;
         const narrativeDisableReason =
-          preview ? 'Preview mode' : !narrativeActivatable ? null : usedHint || (chipDisabled ? engineDisableHint : null);
+          preview ? null : !narrativeActivatable ? null : usedHint || (chipDisabled ? engineDisableHint : null);
         const defaultChipInactive =
           preview || chipUsed || (narrativeOnly ? !narrativeActivatable : !canInteract) || chipDisabled;
         return (
           <Tooltip
             key={ci}
-            label={narrativeOnly ? narrativeDisableReason || undefined : cardDisableReason || undefined}
-            content={narrativeOnly ? (!narrativeDisableReason ? tipContent : undefined) : !cardDisableReason ? tipContent : undefined}
+            label={
+              preview
+                ? undefined
+                : narrativeOnly
+                  ? narrativeDisableReason || undefined
+                  : cardDisableReason || undefined
+            }
+            content={
+              preview ? (
+                <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+              ) : narrativeOnly ? (
+                !narrativeDisableReason ? (
+                  tipContent
+                ) : undefined
+              ) : !cardDisableReason ? (
+                tipContent
+              ) : undefined
+            }
             placement="top"
           >
             <button

@@ -6,6 +6,8 @@ import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { applyDamageBoost } from '../lib/battle-points.js';
+import { libraryTierBodyLine, libraryTierSubtitleText } from '../lib/library-tier-subtitle.js';
+import { TierShieldBadge } from './TierShieldBadge.jsx';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
@@ -110,12 +112,31 @@ export function CheckboxTrack({
   return <div className={`flex items-center gap-0.5 flex-wrap${pulsing ? ' stat-pulse-anim' : ''}`}>{items}</div>;
 }
 
-export function EnvironmentCardContent({ element, hoveredFeature, cardKey, featureCountdowns, updateCountdown, onAddAdversary, onPotentialAdversaryHover, onPotentialAdversaryLeave }) {
+export function EnvironmentCardContent({
+  element,
+  hoveredFeature,
+  cardKey,
+  featureCountdowns,
+  updateCountdown,
+  onAddAdversary,
+  onPotentialAdversaryHover,
+  onPotentialAdversaryLeave,
+  suppressTierBadge = false,
+}) {
+  const subFull = libraryTierSubtitleText(element, 'environments');
+  const subBody = libraryTierBodyLine(element, 'environments');
+  const envFirstLine = suppressTierBadge
+    ? (subBody ? `${subBody} Environment` : null)
+    : (subFull ? `${subFull} Environment` : 'Environment');
+  const showEnvTierRow = envFirstLine != null;
   return (
     <>
-      <div className="text-sm text-slate-400 mb-2 capitalize">
-        Tier {element.tier || 0} {element.type} Environment
+      {showEnvTierRow && (
+      <div className="text-sm text-slate-400 mb-2 capitalize flex items-center gap-2 flex-wrap">
+        {!suppressTierBadge && <TierShieldBadge tier={element.tier} />}
+        <span>{envFirstLine}</span>
       </div>
+      )}
 
       <div className="inline-flex mb-3 bg-slate-900 px-3 py-1.5 rounded border border-slate-800">
         <div className="flex flex-col">
@@ -256,13 +277,20 @@ export function AdversaryCardContent({
   damageBoost,
   scaledMeta,
   onScaledToggle,
+  suppressTierBadge = false,
 }) {
   // damageBoost: 'd4' | 'static' | null — when set, visually appends +1d4 or +2 to all damage.
   const dmgBoost = damageBoost || el._damageBoost || null;
+  const advTierLine = suppressTierBadge
+    ? libraryTierBodyLine(el, 'adversaries')
+    : libraryTierSubtitleText(el, 'adversaries');
+  const showAdvTierRow = !suppressTierBadge || advTierLine || scaledMeta;
   return (
     <>
+      {showAdvTierRow && (
       <div className="text-sm text-slate-400 mb-2 capitalize flex items-center gap-2 flex-wrap">
-        <span>Tier {el.tier || 0} {el.role}</span>
+        {!suppressTierBadge && <TierShieldBadge tier={el.tier} scaledFromTier={el._scaledFromTier} />}
+        <span>{advTierLine}</span>
         {scaledMeta && (
           <button
             type="button"
@@ -278,6 +306,7 @@ export function AdversaryCardContent({
           </button>
         )}
       </div>
+      )}
 
       {el.description && (
         <MarkdownText text={stripHtml(el.description)} className="text-sm italic text-slate-300 mb-4" />
