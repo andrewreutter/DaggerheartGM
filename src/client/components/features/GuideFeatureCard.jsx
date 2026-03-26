@@ -12,7 +12,7 @@ import {
   Share2,
   Search,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { cloneElement, useMemo, useRef, useState } from 'react';
 import { MarkdownText } from '../../lib/markdown.js';
 import { Tooltip } from '../Tooltip.jsx';
 import { CustomSelect } from '../forms/CustomSelect.jsx';
@@ -56,6 +56,7 @@ import {
 } from '../../lib/guide-feature-card-tip-text.js';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../../lib/portal-hover-tooltip.jsx';
 import { getSheetSourceChipPalette, resolveSheetSourcePaletteKey } from '../../lib/sheet-source-chip-styles.js';
+import { shouldMoveV2ActionChipToUnusableSubsection } from '../../lib/v2-action-chip-strip.js';
 
 const ELEMENT_ICONS = { fire: Flame, earth: Mountain, water: Droplets, air: Wind, Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
 
@@ -375,6 +376,10 @@ export function GuideFeatureCardChips({
   pendingBanners,
   /** When set (e.g. below a declarative template), passed through to `onV2CardChip` → `runV2OwnedCardChipTableAction` / `activateV2OwnedCardChip` (`placementShape` for `collectChipsForShapePlacement`). */
   placementShape,
+  /** `full` — inline active + unusable (default). `activeOnly` / `unusableOnly` — sheet Actions splits globally (see `CharacterFeatureActionsBody`). */
+  stripSlot = 'full',
+  /** Prefix for stable keys when `stripSlot="unusableOnly"` merges rows. */
+  stripKeyPrefix,
 }) {
   const [isSelectNonce, setIsSelectNonce] = useState({});
   const bumpIsSelect = (ci) => {
@@ -402,11 +407,17 @@ export function GuideFeatureCardChips({
         const chipDisabled = logicDisabled || resourceUnaffordable;
         const engineDisableHint = chip.disableHint ?? getChipDisableHint(chipForEngine, tableForChips);
         const chipUsed = !!(chip.frequency && isUsed);
+        const moveToUnusable = shouldMoveV2ActionChipToUnusableSubsection({
+          usedThisCycle: chipUsed,
+          resourceUnaffordable,
+        });
         const usedHint = chipUsed
           ? `Already used (${getFrequencyCycleWord(chip.frequency) || chip.frequency}).`
           : null;
         const cardDisableReason =
           preview ? null : !canInteract ? null : usedHint || (chipDisabled ? engineDisableHint : null);
+        const hideDisableTooltipBecauseSubsection = stripSlot === 'unusableOnly' && moveToUnusable;
+        const cardDisableReasonForTooltip = hideDisableTooltipBecauseSubsection ? null : cardDisableReason;
         const label = chipForEngine.name;
         const tipText = buildGuideCardChipTipText(chipForEngine, featRow, label);
         const tipContent = (
@@ -416,48 +427,9 @@ export function GuideFeatureCardChips({
         const selectOpts = getSelectOptions(chip, featRow, el, v2TableContext);
         const isSelect = typeof chip.isSelect === 'function' && selectOpts.length > 0;
 
-        // #region agent log
-        if (model?.name === 'Unleash Chaos' || featRow?.name === 'Unleash Chaos') {
-          let ucTokens = null;
-          try {
-            ucTokens =
-              typeof tableForChips?.feature?.get === 'function'
-                ? tableForChips.feature.get('unleashChaosTokens')
-                : null;
-          } catch {
-            ucTokens = 'err';
-          }
-          const paletteKey = resolveSheetSourcePaletteKey(featRow, model.sourceType);
-          fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'eaa613' },
-            body: JSON.stringify({
-              sessionId: 'eaa613',
-              hypothesisId: 'H1',
-              location: 'GuideFeatureCard.jsx:GuideFeatureCardChips',
-              message: 'Unleash Chaos action chip render context',
-              data: {
-                chipName: chip?.name,
-                ci,
-                selectOptsLen: selectOpts.length,
-                isSelect,
-                chipDisabled,
-                narrativeBannerOnly: !!chip.narrativeBannerOnly,
-                preview,
-                canInteract,
-                modelSourceType: model.sourceType,
-                paletteKey,
-                unleashChaosTokens: ucTokens,
-                actionsStripLayout: !!actionsStripLayout,
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
-
         if (isSelect && selectOpts.length >= 2 && chip.selectPresentation === 'iconGrid') {
-          return (
+          return {
+            element: (
             <div
               key={ci}
               className={
@@ -473,7 +445,8 @@ export function GuideFeatureCardChips({
                 const cantUse = isUsed || (stressMaxed && !isActive);
                 let elementalTip = null;
                 if (!preview) {
-                  if (!canInteract) elementalTip = null;
+                  if (hideDisableTooltipBecauseSubsection) elementalTip = null;
+                  else if (!canInteract) elementalTip = null;
                   else if (chipDisabled) elementalTip = engineDisableHint;
                   else if (cantUse) {
                     if (isUsed && chip.frequency) elementalTip = usedHint;
@@ -534,7 +507,9 @@ export function GuideFeatureCardChips({
                 </span>
               )}
             </div>
-          );
+            ),
+            moveToUnusable,
+          };
         }
 
         if (isSelect && selectOpts.length > 0 && chip.selectPresentation !== 'iconGrid') {
@@ -545,7 +520,8 @@ export function GuideFeatureCardChips({
           const selectDisabled = preview || !canInteract || chipDisabled || chipUsed;
 
           if (selectOpts.length <= V2_REVIEW_CHIP_INLINE_OPTION_MAX && !chip.multiSelect) {
-            return (
+            return {
+              element: (
               <GuideFeatureIsSelectInline
                 key={`${ci}-isseg-${n}`}
                 actionsStripLayout={actionsStripLayout}
@@ -567,10 +543,13 @@ export function GuideFeatureCardChips({
                 segmentOffClass={sourcePalette.segmentOff}
                 tooltipWide={model.name === 'Beastform' || model.name === 'Evolution'}
               />
-            );
+            ),
+            moveToUnusable,
+            };
           }
 
-          return (
+          return {
+            element: (
             <div key={`${ci}-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
               <CustomSelect
                 key={`isselect-${ci}-${n}`}
@@ -596,7 +575,9 @@ export function GuideFeatureCardChips({
                     ? undefined
                     : !canInteract
                       ? undefined
-                      : usedHint || (chipDisabled ? engineDisableHint : undefined)
+                      : hideDisableTooltipBecauseSubsection
+                        ? undefined
+                        : usedHint || (chipDisabled ? engineDisableHint : undefined)
                 }
                 disabledTooltipContent={
                   preview ? (
@@ -622,7 +603,9 @@ export function GuideFeatureCardChips({
                 }}
               />
             </div>
-          );
+            ),
+            moveToUnusable,
+          };
         }
 
         const needsSelectTargets = typeof chip.selectTargets === 'function';
@@ -639,7 +622,8 @@ export function GuideFeatureCardChips({
           const n = isSelectNonce[ci] ?? 0;
           const closedName = label;
           const targetPickDisabled = preview || !canInteract || chipDisabled || chipUsed;
-          return (
+          return {
+            element: (
             <GuideFeatureSegmentedSelectTargetsRow
               key={`${ci}-stseg-${n}`}
               actionsStripLayout={actionsStripLayout}
@@ -659,7 +643,9 @@ export function GuideFeatureCardChips({
               preview={preview}
               sourcePalette={sourcePalette}
             />
-          );
+            ),
+            moveToUnusable,
+          };
         }
 
         if (isToggle) {
@@ -680,14 +666,15 @@ export function GuideFeatureCardChips({
               active = false;
             }
           }
-          return (
+          return {
+            element: (
             <Tooltip
               key={ci}
-              label={preview ? undefined : cardDisableReason || undefined}
+              label={preview ? undefined : cardDisableReasonForTooltip || undefined}
               content={
                 preview ? (
                   <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
-                ) : !cardDisableReason ? (
+                ) : !cardDisableReasonForTooltip ? (
                   toggleDeferAwait ? (
                     <div>
                       <MarkdownText
@@ -727,7 +714,9 @@ export function GuideFeatureCardChips({
                 </span>
               </button>
             </Tooltip>
-          );
+            ),
+            moveToUnusable,
+          };
         }
 
         const narrativeOnly = !!chip.narrativeBannerOnly;
@@ -735,26 +724,28 @@ export function GuideFeatureCardChips({
         const narrativeActivatable = canInteract || canShareNarrative;
         const narrativeDisableReason =
           preview ? null : !narrativeActivatable ? null : usedHint || (chipDisabled ? engineDisableHint : null);
+        const narrativeDisableReasonForTooltip = hideDisableTooltipBecauseSubsection ? null : narrativeDisableReason;
         const defaultChipInactive =
           preview || chipUsed || (narrativeOnly ? !narrativeActivatable : !canInteract) || chipDisabled;
-        return (
+        return {
+          element: (
           <Tooltip
             key={ci}
             label={
               preview
                 ? undefined
                 : narrativeOnly
-                  ? narrativeDisableReason || undefined
-                  : cardDisableReason || undefined
+                  ? narrativeDisableReasonForTooltip || undefined
+                  : cardDisableReasonForTooltip || undefined
             }
             content={
               preview ? (
                 <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
               ) : narrativeOnly ? (
-                !narrativeDisableReason ? (
+                !narrativeDisableReasonForTooltip ? (
                   tipContent
                 ) : undefined
-              ) : !cardDisableReason ? (
+              ) : !cardDisableReasonForTooltip ? (
                 tipContent
               ) : undefined
             }
@@ -799,16 +790,64 @@ export function GuideFeatureCardChips({
               </span>
             </button>
           </Tooltip>
-        );
+          ),
+          moveToUnusable,
+        };
       });
-  if (actionsStripLayout) {
-    return (
-      <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">
-        {chipElements}
-      </WidthSortedFlexWrap>
+  const chipRows = chipElements.filter(Boolean);
+  const activeEls = chipRows.filter((r) => !r.moveToUnusable).map((r) => r.element);
+  const unusableEls = chipRows.filter((r) => r.moveToUnusable).map((r) => r.element);
+
+  if (stripSlot === 'activeOnly') {
+    if (actionsStripLayout) {
+      return activeEls.length > 0 ? (
+        <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">{activeEls}</WidthSortedFlexWrap>
+      ) : null;
+    }
+    return activeEls.length > 0 ? <div className="flex flex-col gap-1.5">{activeEls}</div> : null;
+  }
+
+  if (stripSlot === 'unusableOnly') {
+    if (!unusableEls.length) return null;
+    return unusableEls.map((chipEl, i) =>
+      cloneElement(chipEl, { key: `${stripKeyPrefix ?? 'chip'}-${i}` }),
     );
   }
-  return <div className="flex flex-col gap-1.5">{chipElements}</div>;
+
+  const unusableSubsection =
+    unusableEls.length > 0 ? (
+      <div
+        className={`space-y-1 min-w-0 ${activeEls.length > 0 ? 'pt-1.5 mt-0.5 border-t border-dh-border/50' : ''}`}
+      >
+        <p className="text-[9px] tracking-widest text-dh-muted/90 font-semibold uppercase">Used or too costly</p>
+        {actionsStripLayout ? (
+          <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">
+            {unusableEls}
+          </WidthSortedFlexWrap>
+        ) : (
+          <div className="flex flex-col gap-1.5">{unusableEls}</div>
+        )}
+      </div>
+    ) : null;
+
+  if (actionsStripLayout) {
+    return (
+      <div className="space-y-2 min-w-0 w-full">
+        {activeEls.length > 0 && (
+          <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">
+            {activeEls}
+          </WidthSortedFlexWrap>
+        )}
+        {unusableSubsection}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2 min-w-0">
+      {activeEls.length > 0 && <div className="flex flex-col gap-1.5">{activeEls}</div>}
+      {unusableSubsection}
+    </div>
+  );
 }
 
 /**

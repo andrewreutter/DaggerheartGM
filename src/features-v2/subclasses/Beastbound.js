@@ -146,6 +146,7 @@ export const Companion = {
             _intentPanelForActionRoll: true,
             _deferExperienceToPreRoll: true,
             _companionExperienceForRoll: true,
+            _isSpellcastRoll: true,
           },
         });
       },

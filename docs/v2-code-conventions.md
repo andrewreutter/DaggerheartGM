@@ -855,3 +855,26 @@ On the Game Table, **`character.featureUsage[stableKey]`** drives session/rest �
 - Persisted table rows may still carry old **`Rally-0`**-style keys until **`normalizePersistedCharacterElement`** (see [`normalize-persisted-character-element.js`](../src/client/lib/normalize-persisted-character-element.js), applied in **`resolveCharacterElements`**) rewrites them on load.
 - Do **not** duplicate index math (`findIndex` across flattened class/subclass lists) in multiple files; it drifts from the Guide and breaks “used” vs engine state (e.g. Rally dice granted but Grant still clickable).
 
+---
+
+## CONV-041 — Spellcast rolls: `_isSpellcastRoll` + `makeASpellcastRoll`
+
+**Problem:** A **trait** roll on the spellcast trait (trait grid) is not a **Spellcast Roll** in SRD terms. The VTT must not set `action.type` to `spellcast` based only on `_traitKey === spellcastTrait`.
+
+**Bridge:** Rolls that are Spellcast Rolls set **`rollMeta._isSpellcastRoll: true`** (Spellcast chip, domain abilities with spellcast DC / vs roll, companion spellcast lines). **`buildActionConfigFromRoll`** in [`v2-action-loop-bridge.js`](../src/client/lib/v2-action-loop-bridge.js) sets `action.type` to **`spellcast`** only when **`!isAttackRoll && roll._isSpellcastRoll === true`**. **`collectV2WeaponIntentChips`** copies **`_isSpellcastRoll`** from pending meta onto the synthetic pre-roll skeleton.
+
+**Predicates:** Use **`makeASpellcastRoll`** from [`when.js`](../src/features-v2/engine/when.js) to test **Spellcast Roll** context (`action.type === 'spellcast'` plus a case-insensitive match between **`action.trait`** and **`table.me.spellcastTrait`**). For **`placements: ['intent']`** chips that should only appear when **you** are the one rolling, combine with **`isActing`** via **`actingOnASpellcastRollForMe`** (same module) so the `when()` chain stays short and correct.
+
+```js
+// ✓ Good — Spellcast intent chip (after a feature-local toggle)
+import { when, actingOnASpellcastRollForMe } from '../../engine/when.js';
+
+chips: [
+  when(
+    (t) => t.feature.get('naturalEnvironment') === true,
+    actingOnASpellcastRollForMe,
+    { placements: ['intent'], /* ... */ }
+  ),
+];
+```
+

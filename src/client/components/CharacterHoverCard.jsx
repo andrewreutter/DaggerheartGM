@@ -687,6 +687,7 @@ export function CharacterHoverCard({
       rollMeta._deferExperienceToPreRoll = true;
       if (action.spellcastDC != null || action.spellcastVsRoll) {
         rollMeta._traitKey = (el.spellcastTrait || 'presence').toLowerCase();
+        rollMeta._isSpellcastRoll = true;
       } else {
         rollMeta._traitKey = Object.keys(traits)[0] || 'agility';
       }
@@ -783,6 +784,7 @@ export function CharacterHoverCard({
       _traitKey: traitKey,
       _intentPanelForActionRoll: true,
       _deferExperienceToPreRoll: true,
+      _isSpellcastRoll: true,
     };
     if (selectedMod?.consumeOnUse) spellcastRollMeta._usedModifierId = selectedMod.id;
     onRoll(rollText, displayName, spellcastRollMeta, { characterEl: el });

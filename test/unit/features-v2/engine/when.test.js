@@ -32,6 +32,8 @@ import {
   isWhen,
   unwrap,
   unwrapAll,
+  makeASpellcastRoll,
+  actingOnASpellcastRollForMe,
 } from '../../../../src/features-v2/engine/when.js';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,59 @@ function makeTable(meIsActing = false, targets = []) {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// makeASpellcastRoll
+// ---------------------------------------------------------------------------
+
+describe('makeASpellcastRoll', () => {
+  it('is true when action is spellcast and trait matches spellcastTrait', () => {
+    const me = { instanceId: 'c1', spellcastTrait: 'presence', isActing: true };
+    const table = {
+      me,
+      action: { type: 'spellcast', actor: me, trait: 'Presence', targets: [] },
+    };
+    expect(makeASpellcastRoll(table)).toBe(true);
+  });
+
+  it('is false when action type is trait even if traits match', () => {
+    const me = { instanceId: 'c1', spellcastTrait: 'presence', isActing: true };
+    const table = {
+      me,
+      action: { type: 'trait', actor: me, trait: 'Presence', targets: [] },
+    };
+    expect(makeASpellcastRoll(table)).toBe(false);
+  });
+
+  it('is false when spellcast trait does not match action trait', () => {
+    const me = { instanceId: 'c1', spellcastTrait: 'presence', isActing: true };
+    const table = {
+      me,
+      action: { type: 'spellcast', actor: me, trait: 'Agility', targets: [] },
+    };
+    expect(makeASpellcastRoll(table)).toBe(false);
+  });
+});
+
+describe('actingOnASpellcastRollForMe', () => {
+  it('is true when acting and makeASpellcastRoll would be true', () => {
+    const me = { instanceId: 'c1', spellcastTrait: 'presence', isActing: true };
+    const table = {
+      me,
+      action: { type: 'spellcast', actor: me, trait: 'Presence', targets: [] },
+    };
+    expect(actingOnASpellcastRollForMe(table)).toBe(true);
+  });
+
+  it('is false when not acting', () => {
+    const me = { instanceId: 'c1', spellcastTrait: 'presence', isActing: false };
+    const table = {
+      me,
+      action: { type: 'spellcast', actor: me, trait: 'Presence', targets: [] },
+    };
+    expect(actingOnASpellcastRollForMe(table)).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // when()

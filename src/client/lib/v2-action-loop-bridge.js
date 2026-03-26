@@ -544,9 +544,11 @@ export function buildActionConfigFromRoll(roll, activeElements) {
     Array.isArray(roll.subItems) && roll.subItems.some((s) => /damage/i.test(s.pre || ''));
   /** Weapon meta from VTT, or hydrated banner roll that already includes a damage line. */
   const isAttackRoll = hasWeaponMeta || hasDamageSubItem;
+  /** Set on VTT spellcast rolls only — avoids misclassifying a normal trait roll on the spellcast trait. */
+  const isSpellcastRoll = !isAttackRoll && roll._isSpellcastRoll === true;
 
   return {
-    type: isAttackRoll ? 'attack' : 'trait',
+    type: isAttackRoll ? 'attack' : isSpellcastRoll ? 'spellcast' : 'trait',
     actorInstanceId,
     targetInstanceIds,
     traitKey,
@@ -1307,6 +1309,9 @@ export function collectV2WeaponIntentChips(opts) {
         characterEl,
       });
   if (!roll) return [];
+  if (pendingMeta._isSpellcastRoll === true) {
+    roll._isSpellcastRoll = true;
+  }
 
   const registry = buildV2RegistryWithSrdItems(srdData);
   const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);

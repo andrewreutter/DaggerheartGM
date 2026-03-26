@@ -24,6 +24,7 @@ import {
   buildV2PreRollWeaponAttackRollSkeleton,
   buildV2PreRollTraitRollSkeleton,
   collectV2WeaponIntentChips,
+  buildV2BannerGameState,
   runV2RestHooksForTable,
 } from '../../src/client/lib/v2-action-loop-bridge.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../src/game-constants.js';
@@ -93,6 +94,85 @@ describe('v2-action-loop-bridge', () => {
         els
       ).type
     ).toBe('attack');
+  });
+
+  it('buildActionConfigFromRoll uses spellcast when roll meta sets _isSpellcastRoll', () => {
+    const els = [
+      { elementType: 'character', instanceId: 'a', spellcastTrait: 'presence', traits: { presence: 2 } },
+    ];
+    expect(
+      buildActionConfigFromRoll(
+        {
+          _attackerInstanceId: 'a',
+          _traitKey: 'presence',
+          _isSpellcastRoll: true,
+          subItems: [
+            { pre: 'Hope ', input: 'd12', result: '1', post: '' },
+            { pre: 'Fear ', input: 'd12', result: '1', post: '' },
+            { pre: 'Presence ', input: '2', result: '2', post: '' },
+          ],
+        },
+        els
+      ).type
+    ).toBe('spellcast');
+    expect(
+      buildActionConfigFromRoll(
+        {
+          _attackerInstanceId: 'a',
+          _traitKey: 'presence',
+          _isSpellcastRoll: true,
+          subItems: [
+            { pre: 'Hope ', input: 'd12', result: '1', post: '' },
+            { pre: 'Fear ', input: 'd12', result: '1', post: '' },
+            { pre: 'Presence ', input: '2', result: '2', post: '' },
+          ],
+        },
+        []
+      ).type
+    ).toBe('spellcast');
+  });
+
+  it('buildV2BannerGameState sets action.type spellcast for spellcast intent rolls', () => {
+    const roll = buildV2PreRollTraitRollSkeleton({
+      pendingMeta: { _attackerInstanceId: 'pc1', _traitKey: 'presence', _isSpellcastRoll: true },
+      pendingRollText: 'x',
+      characterEl: { instanceId: 'pc1', spellcastTrait: 'presence', traits: { presence: 3 } },
+    });
+    roll._isSpellcastRoll = true;
+    const gs = buildV2BannerGameState({
+      roll,
+      activeElements: [
+        { elementType: 'character', instanceId: 'pc1', spellcastTrait: 'presence', traits: { presence: 3 } },
+      ],
+    });
+    expect(gs.action.type).toBe('spellcast');
+  });
+
+  it('collectV2WeaponIntentChips includes Sage Nature\'s Tongue intent +2 when natural env is on (spellcast)', () => {
+    const pc = {
+      elementType: 'character',
+      instanceId: 'pc1',
+      spellcastTrait: 'presence',
+      traits: { presence: 3 },
+      abilityIds: ['srd-abl-natures-tongue'],
+      featureState: { "Nature's Tongue": { naturalEnvironment: true } },
+    };
+    const chips = collectV2WeaponIntentChips({
+      pendingMeta: {
+        _intentPanelForActionRoll: true,
+        _attackerInstanceId: 'pc1',
+        _traitKey: 'presence',
+        _isSpellcastRoll: true,
+      },
+      pendingRollText: 'Test Spellcast',
+      characterEl: pc,
+      activeElements: [pc],
+      srdData: { ancestriesById: {} },
+      tableFeatureState: {},
+    });
+    const nt = chips.find((c) => c._featureName === "Nature's Tongue" && c.placements?.includes('intent'));
+    expect(nt?.hopeCost).toBe(1);
+    expect(nt?.label).toBe("Nature's Tongue");
   });
 
   it('buildV2PreRollTraitRollSkeleton includes trait sub-item without damage', () => {

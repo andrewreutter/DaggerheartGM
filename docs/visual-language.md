@@ -25,7 +25,7 @@ Single semantic family so spell buttons, domain picks, and domain UI read as one
 
 | Role | CSS utilities | Notes |
 |------|----------------|--------|
-| **Magic surfaces** | `.dh-tint-magic-strip`, `.dh-tint-magic-feature-card` (optional) | Sheet header strip under identity. **LOADOUT** domain ability cards use the same neutral feature-card shell as **Features**; magic provenance is the **`.dh-magic-source-badge`** pill on the card. Aliases: `.dh-tint-spellcast-strip` → same vars as magic strip. |
+| **Magic surfaces** | `.dh-tint-magic-strip`, `.dh-tint-magic-feature-card` | Sheet header strip under identity; **domain** `GuideFeatureCard` shells (`tone="domain"`). Aliases: `.dh-tint-spellcast-strip` → same vars as magic strip. |
 | **Magic controls / chips** | `.dh-tint-magic-label`, `.dh-magic-chip`, `.dh-magic-source-badge` | **Spellcast** trait button (trait grid): `.dh-tint-spellcast-label` (alias of `.dh-tint-magic-label`). **Domain** name chips in `CharacterIdentitySourceBadges`: `.dh-magic-chip`. Domain source pill on feature cards: `.dh-magic-source-badge`. |
 | **Magic typography / icons** | `.dh-text-magic-header`, `.dh-text-magic-header-sub`, `.dh-text-magic-icon` | Character name + secondary lines on magic-styled headers; **User** icon on identity header. Aliases: `.dh-text-spellcast-header` / `.dh-text-spellcast-header-sub` → same as magic header vars. |
 
@@ -63,10 +63,6 @@ Single-row chrome lives in `CharacterIdentityTitleRow` (used by `CharacterIdenti
 | **Ancestry** | Amber | Chip |
 | **Community** | Emerald | Chip |
 | **Domains** | **Magic** — `.dh-magic-chip` (violet tokens) | Domain spell sources; same family as Spellcast / domain cards |
-
-### Actions strip (V2 card chips)
-
-Interactive chips in `GuideFeatureCardChips` (character sheet Actions column) are tinted by feature provenance via **`getSheetSourceChipPalette(resolveSheetSourcePaletteKey(featRow, model.sourceType))`** in [`src/client/lib/sheet-source-chip-styles.js`](../src/client/lib/sheet-source-chip-styles.js). Merged `activeFeatures` rows often have **`type`** (`class`, `subclass`, …) without **`sourceType`**; **`resolveSheetSourcePaletteKey`** maps `type` so class features (e.g. Seraph **Life Support** and **Prayer Dice**) get the **class** (violet) palette. Buckets match `GuideFeatureCard` source badges: **class** (violet), **subclass** (sky), **ancestry** (amber), **community** (emerald), **beastform** (teal). **`domain`** resolves to the **same palette as class** (violet). Missing or unknown keys use neutral `border-dh-border` / `bg-dh-raised` surfaces. Grouped `isSelect` / `selectTargets` shells and `CustomSelect` triggers use the same palette.
 
 ### Map & table tokens
 

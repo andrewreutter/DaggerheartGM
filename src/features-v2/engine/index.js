@@ -7,6 +7,8 @@
 export {
   when,
   isActing,
+  makeASpellcastRoll,
+  actingOnASpellcastRollForMe,
   isTargeted,
   againstYou,
   anAttackSucceeds,

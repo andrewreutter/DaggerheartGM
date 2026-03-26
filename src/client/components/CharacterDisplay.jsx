@@ -28,6 +28,7 @@ import {
   collectShapePlacementChipsForCharacter,
 } from '../lib/build-feature-card-model.js';
 import { getFeatureUsageKeyForGuideFeature } from '../lib/feature-usage-key.js';
+import { entryHasUnusableActionChipsForSheet, hasAnyUnusableActionChipsForSheet } from '../lib/v2-action-chip-strip.js';
 import { omitShapeId } from '../lib/json-schema-dh.js';
 import { DeclarativeSchemaSheetCard } from './DeclarativeSchemaCard.jsx';
 import { rangeBandNameToFt } from '../lib/map-range.js';
@@ -1580,6 +1581,8 @@ function CharacterFeatureActionsRow({
   activeChanneledElement,
   pendingBanners,
   sheetHighlightAbility = null,
+  stripSlot = 'full',
+  stripKeyPrefix,
 }) {
   const { model, table: tableForChips } = useMemo(
     () => buildFeatureCardModelForCharacter(entry.row, el, v2TableContext),
@@ -1610,8 +1613,11 @@ function CharacterFeatureActionsRow({
       stressMaxed={stressMaxed}
       actionsStripLayout
       pendingBanners={pendingBanners}
+      stripSlot={stripSlot}
+      stripKeyPrefix={stripKeyPrefix ?? entry.key}
     />
   );
+  if (stripSlot === 'unusableOnly') return chips;
   if (!dimmed) return chips;
   return <div className={SHEET_SOURCE_DIM_CLASS}>{chips}</div>;
 }
@@ -1649,36 +1655,78 @@ function CharacterFeatureActionsBody({
     return out;
   }, [loadoutEntries, el, v2TableContext]);
 
+  const allWithChips = useMemo(
+    () => [...guideEntriesWithChips, ...loadoutEntriesWithChips],
+    [guideEntriesWithChips, loadoutEntriesWithChips],
+  );
+
+  const showUnusableSection = useMemo(
+    () => hasAnyUnusableActionChipsForSheet(allWithChips, el, v2TableContext),
+    [allWithChips, el, v2TableContext],
+  );
+
   return (
-    <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
-      {guideEntriesWithChips.map((entry) => (
-        <CharacterFeatureActionsRow
-          key={entry.key}
-          entry={entry}
-          el={el}
-          v2TableContext={v2TableContext}
-          interactionMode={mode}
-          onV2CardChip={onV2CardChip}
-          onShareFeature={onShareFeature}
-          activeChanneledElement={activeChanneledElement}
-          pendingBanners={pendingBanners}
-        />
-      ))}
-      {loadoutEntriesWithChips.map((entry) => (
-        <CharacterFeatureActionsRow
-          key={entry.key}
-          entry={entry}
-          el={el}
-          v2TableContext={v2TableContext}
-          interactionMode={mode}
-          onV2CardChip={onV2CardChip}
-          onShareFeature={onShareFeature}
-          activeChanneledElement={activeChanneledElement}
-          pendingBanners={pendingBanners}
-          sheetHighlightAbility={entry.ability}
-        />
-      ))}
-    </WidthSortedFlexWrap>
+    <div className="space-y-2 min-w-0 w-full">
+      <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
+        {guideEntriesWithChips.map((entry) => (
+          <CharacterFeatureActionsRow
+            key={entry.key}
+            entry={entry}
+            el={el}
+            v2TableContext={v2TableContext}
+            interactionMode={mode}
+            onV2CardChip={onV2CardChip}
+            onShareFeature={onShareFeature}
+            activeChanneledElement={activeChanneledElement}
+            pendingBanners={pendingBanners}
+            stripSlot="activeOnly"
+            stripKeyPrefix={entry.key}
+          />
+        ))}
+        {loadoutEntriesWithChips.map((entry) => (
+          <CharacterFeatureActionsRow
+            key={entry.key}
+            entry={entry}
+            el={el}
+            v2TableContext={v2TableContext}
+            interactionMode={mode}
+            onV2CardChip={onV2CardChip}
+            onShareFeature={onShareFeature}
+            activeChanneledElement={activeChanneledElement}
+            pendingBanners={pendingBanners}
+            sheetHighlightAbility={entry.ability}
+            stripSlot="activeOnly"
+            stripKeyPrefix={entry.key}
+          />
+        ))}
+      </WidthSortedFlexWrap>
+      {showUnusableSection && (
+        <div className="space-y-1 min-w-0 pt-1.5 border-t border-dh-border/50">
+          <p className="text-[9px] tracking-widest text-dh-muted/90 font-semibold uppercase">Used or too costly</p>
+          <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">
+            {allWithChips
+              .filter((entry) => entryHasUnusableActionChipsForSheet(entry, el, v2TableContext))
+              .map((entry) => (
+                <div key={`u-${entry.key}`} className="contents">
+                  <CharacterFeatureActionsRow
+                    entry={entry}
+                    el={el}
+                    v2TableContext={v2TableContext}
+                    interactionMode={mode}
+                    onV2CardChip={onV2CardChip}
+                    onShareFeature={onShareFeature}
+                    activeChanneledElement={activeChanneledElement}
+                    pendingBanners={pendingBanners}
+                    sheetHighlightAbility={entry.ability}
+                    stripSlot="unusableOnly"
+                    stripKeyPrefix={entry.key}
+                  />
+                </div>
+              ))}
+          </WidthSortedFlexWrap>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1821,6 +1869,7 @@ export function CharacterSheetDeclarativeCards({
       _intentPanelForActionRoll: true,
       _deferExperienceToPreRoll: true,
       _companionExperienceForRoll: true,
+      _isSpellcastRoll: true,
     });
     const onStress = queueManualTrackEdit
       ? (filled) => queueManualTrackEdit(el, { companion: { ...companion, currentStress: filled } })

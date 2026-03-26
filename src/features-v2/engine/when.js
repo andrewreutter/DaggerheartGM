@@ -60,6 +60,35 @@ export function isActing(table) {
 }
 
 /**
+ * True when the current action is a **Spellcast Roll** for the feature owner:
+ * `action.type === 'spellcast'` and the action trait matches `table.me.spellcastTrait` (case-insensitive).
+ *
+ * The VTT bridge sets `action.type` to `spellcast` only when roll meta includes `_isSpellcastRoll: true`
+ * (see `buildActionConfigFromRoll` in `v2-action-loop-bridge.js`). Plain trait rolls keep `type === 'trait'`
+ * even when rolling the spellcast trait from the grid.
+ */
+export function makeASpellcastRoll(table) {
+  if (table.action?.type !== 'spellcast') return false;
+  const actorTrait = table.action?.trait;
+  const sk = table.me?.spellcastTrait;
+  if (!actorTrait || !sk) return false;
+  return String(actorTrait).toLowerCase() === String(sk).toLowerCase();
+}
+
+/**
+ * Predicate for use inside {@link when}: the feature owner is the current actor **and** this action
+ * is their Spellcast Roll (`action.type === 'spellcast'`) with the spellcast trait die (matches
+ * {@link makeASpellcastRoll}). Compose after feature-local toggles, e.g.
+ * `when(naturalEnvOn, actingOnASpellcastRollForMe, { placements: ['intent'], ... })`.
+ *
+ * @param {object} table — {@link buildTableSnapshot} result
+ * @returns {boolean}
+ */
+export function actingOnASpellcastRollForMe(table) {
+  return isActing(table) && makeASpellcastRoll(table);
+}
+
+/**
  * Built-in predicate: true when the feature's owner is one of the current
  * action's targets.
  */

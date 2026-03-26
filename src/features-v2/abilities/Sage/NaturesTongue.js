@@ -3,14 +3,7 @@
  * SRD: Instinct (12) to speak with nature; in natural environment, may spend 1 Hope before a Spellcast Roll for +2.
  */
 
-import { when, isActing } from '../../engine/when.js';
-
-function matchesSpellcastTrait(table) {
-  const ak = table.action?.trait;
-  const sk = table.me?.spellcastTrait;
-  if (!ak || !sk) return false;
-  return String(ak).toLowerCase() === String(sk).toLowerCase();
-}
+import { when, actingOnASpellcastRollForMe } from '../../engine/when.js';
 
 export const NaturesTongue = {
   name: "Nature's Tongue",
@@ -42,9 +35,7 @@ export const NaturesTongue = {
     },
     when(
       (table) => table.feature.get('naturalEnvironment') === true,
-      isActing,
-      (table) => table.action?.type === 'spellcast',
-      matchesSpellcastTrait,
+      actingOnASpellcastRollForMe,
       {
         placements: ['intent'],
         label: "Nature's Tongue",
