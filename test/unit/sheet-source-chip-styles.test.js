@@ -14,6 +14,11 @@ describe('resolveSheetSourcePaletteKey', () => {
     expect(resolveSheetSourcePaletteKey({ type: 'class', sourceType: 'subclass' }, undefined)).toBe('subclass');
     expect(resolveSheetSourcePaletteKey({ type: 'class' }, 'ancestry')).toBe('ancestry');
   });
+
+  it("maps mistaken sourceType 'ability' to domain for LOADOUT chips", () => {
+    expect(resolveSheetSourcePaletteKey({ type: 'ability', sourceType: 'ability' }, undefined)).toBe('domain');
+    expect(resolveSheetSourcePaletteKey({ type: 'ability' }, 'ability')).toBe('domain');
+  });
 });
 
 describe('getSheetSourceChipPalette', () => {
@@ -35,5 +40,6 @@ describe('getSheetSourceChipPalette', () => {
     const dom = getSheetSourceChipPalette('domain');
     expect(dom).toBe(getSheetSourceChipPalette('class'));
     expect(dom.actionDefault).toContain('violet');
+    expect(getSheetSourceChipPalette('ability')).toBe(dom);
   });
 });

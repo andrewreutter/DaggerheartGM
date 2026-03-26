@@ -195,7 +195,12 @@ export function resolveGuideSourceLabel(row) {
  */
 export function resolveGuideSourceType(row) {
   if (!row || typeof row !== 'object') return undefined;
-  if (row.sourceType != null && row.sourceType !== '') return row.sourceType;
+  const explicit = row.sourceType;
+  if (explicit != null && explicit !== '') {
+    /** Internal `_source` / mistaken `sourceType: 'ability'` is not a palette key — domain cards use `domain`. */
+    if (explicit === 'ability' && row.type === 'ability') return 'domain';
+    return explicit;
+  }
   if (row.type === 'ability') return 'domain';
   return undefined;
 }

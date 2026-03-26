@@ -41,7 +41,7 @@ describe('v2-feature-catalog', () => {
     const ids = items.map(i => i.id);
     expect(ids.length).toBe(569);
     expect(hashIds(ids)).toBe(
-      'cb2d15e6cb371f6d7c33786c50f2e51e5b083b7fa2e7ec51ddf2460557ba90fa'
+      '6ddffac3aae6aebe61aad6cf561f18a81ca5eb0df31ba975f19b792caaa3e7d1'
     );
   });
 

@@ -2,17 +2,18 @@
   "generated": true,
   "rows": [
     {
-      "id": "v2feat:abilities:srd-abl-a-soldiers-bond:a-soldier-s-bond",
+      "id": "v2feat:abilities:srd-abl-a-soldier-s-bond:a-soldier-s-bond",
       "name": "A Soldier's Bond",
       "description": "Once per long rest, when you compliment someone or ask them about something they're good at, you can both gain 3 Hope.",
       "_scope": "abilities",
-      "_parentId": "srd-abl-a-soldiers-bond",
+      "_parentId": "srd-abl-a-soldier-s-bond",
       "_parentName": "A Soldier's Bond",
       "_source": "v2",
       "clone_count": 0,
       "play_count": 0,
+      "tier": 2,
       "_resolveV2": {
-        "_sourceScopeKey": "abilities:srd-abl-a-soldiers-bond",
+        "_sourceScopeKey": "abilities:srd-abl-a-soldier-s-bond",
         "name": "A Soldier's Bond"
       }
     },
@@ -545,17 +546,18 @@
       }
     },
     {
-      "id": "v2feat:abilities:srd-abl-champions-edge:champion-s-edge",
+      "id": "v2feat:abilities:srd-abl-champion-s-edge:champion-s-edge",
       "name": "Champion's Edge",
       "description": "When you critically succeed on an attack, you can **spend up to 3 Hope** and choose one of the following options for each Hope spent:\n\n- You clear a Hit Point.\n- You clear an Armor Slot.\n- The target must mark an additional Hit Point.\n\nYou can't choose the same option more than once.",
       "_scope": "abilities",
-      "_parentId": "srd-abl-champions-edge",
+      "_parentId": "srd-abl-champion-s-edge",
       "_parentName": "Champion's Edge",
       "_source": "v2",
       "clone_count": 0,
       "play_count": 0,
+      "tier": 3,
       "_resolveV2": {
-        "_sourceScopeKey": "abilities:srd-abl-champions-edge",
+        "_sourceScopeKey": "abilities:srd-abl-champion-s-edge",
         "name": "Champion's Edge"
       }
     },
@@ -1680,17 +1682,18 @@
       }
     },
     {
-      "id": "v2feat:abilities:srd-abl-natures-tongue:nature-s-tongue",
+      "id": "v2feat:abilities:srd-abl-nature-s-tongue:nature-s-tongue",
       "name": "Nature's Tongue",
       "description": "You can speak the language of the natural world. When you want to speak to the plants and animals around you, make an **Instinct Roll (12)**. On a success, they'll give you the information they know. On a roll with Fear, their knowledge might be limited or come at a cost.\n\nAdditionally, before you make a Spellcast Roll while within a natural environment, you can **spend a Hope** to gain a +2 bonus to the roll.",
       "_scope": "abilities",
-      "_parentId": "srd-abl-natures-tongue",
+      "_parentId": "srd-abl-nature-s-tongue",
       "_parentName": "Nature's Tongue",
       "_source": "v2",
       "clone_count": 0,
       "play_count": 0,
+      "tier": 1,
       "_resolveV2": {
-        "_sourceScopeKey": "abilities:srd-abl-natures-tongue",
+        "_sourceScopeKey": "abilities:srd-abl-nature-s-tongue",
         "name": "Nature's Tongue"
       }
     },

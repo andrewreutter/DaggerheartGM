@@ -464,6 +464,8 @@ export default {
   'srd-abl-vanishing-dodge': VanishingDodge,
   'srd-abl-midnight-touched': MidnightTouched,
   'srd-abl-gifted-tracker': GiftedTracker,
+  // Canonical SRD ids from makeSrdListId('abilities', name) — legacy slug aliases below for older saves.
+  'srd-abl-nature-s-tongue': NaturesTongue,
   'srd-abl-natures-tongue': NaturesTongue,
   'srd-abl-vicious-entangle': ViciousEntangle,
   'srd-abl-conjure-swarm': ConjureSwarm,
@@ -530,10 +532,8 @@ export default {
   'srd-abl-glancing-blow': GlancingBlow,
   'srd-abl-not-good-enough': NotGoodEnough,
   'srd-abl-whirlwind': Whirlwind,
-  'srd-abl-a-soldiers-bond': ASoldiersBond,
   'srd-abl-battle-hardened': BattleHardened,
   'srd-abl-battle-cry': BattleCry,
-  'srd-abl-champions-edge': ChampionsEdge,
   'srd-abl-reckless': Reckless,
   'srd-abl-scramble': Scramble,
   'srd-abl-versatile-fighter': VersatileFighter,
@@ -568,4 +568,8 @@ export default {
   'srd-abl-splintering-strike': SplinteringStrike,
   'srd-abl-swift-step': SwiftStep,
   'srd-abl-on-the-brink': OnTheBrink,
+  'srd-abl-a-soldier-s-bond': ASoldiersBond,
+  'srd-abl-a-soldiers-bond': ASoldiersBond,
+  'srd-abl-champion-s-edge': ChampionsEdge,
+  'srd-abl-champions-edge': ChampionsEdge,
 };

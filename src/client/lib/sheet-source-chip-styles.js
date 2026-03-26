@@ -122,7 +122,9 @@ const PALETTES = {
  * @returns {string | undefined}
  */
 export function resolveSheetSourcePaletteKey(featRow, modelSourceType) {
-  const st = modelSourceType ?? featRow?.sourceType;
+  const raw = modelSourceType ?? featRow?.sourceType;
+  /** `sourceType: 'ability'` is not a palette bucket — treat like domain LOADOUT rows. */
+  const st = raw === 'ability' ? 'domain' : raw;
   if (st != null && st !== '') return st;
   const t = featRow?.type;
   if (t === 'class' || t === 'subclass' || t === 'ancestry' || t === 'community' || t === 'beastform') {
@@ -140,7 +142,7 @@ export function resolveSheetSourcePaletteKey(featRow, modelSourceType) {
 export function getSheetSourceChipPalette(sourceType) {
   if (sourceType == null || sourceType === '') return PALETTES.default;
   /** Domain ability chips use the same violet as class features (not magic-token purple). */
-  if (sourceType === 'domain') return PALETTES.class;
+  if (sourceType === 'domain' || sourceType === 'ability') return PALETTES.class;
   const p = PALETTES[sourceType];
   return p || PALETTES.default;
 }

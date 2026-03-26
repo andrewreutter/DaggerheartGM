@@ -416,6 +416,46 @@ export function GuideFeatureCardChips({
         const selectOpts = getSelectOptions(chip, featRow, el, v2TableContext);
         const isSelect = typeof chip.isSelect === 'function' && selectOpts.length > 0;
 
+        // #region agent log
+        if (model?.name === 'Unleash Chaos' || featRow?.name === 'Unleash Chaos') {
+          let ucTokens = null;
+          try {
+            ucTokens =
+              typeof tableForChips?.feature?.get === 'function'
+                ? tableForChips.feature.get('unleashChaosTokens')
+                : null;
+          } catch {
+            ucTokens = 'err';
+          }
+          const paletteKey = resolveSheetSourcePaletteKey(featRow, model.sourceType);
+          fetch('http://127.0.0.1:7456/ingest/b8b9e013-5af1-438e-8ea4-5198e805186a', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'eaa613' },
+            body: JSON.stringify({
+              sessionId: 'eaa613',
+              hypothesisId: 'H1',
+              location: 'GuideFeatureCard.jsx:GuideFeatureCardChips',
+              message: 'Unleash Chaos action chip render context',
+              data: {
+                chipName: chip?.name,
+                ci,
+                selectOptsLen: selectOpts.length,
+                isSelect,
+                chipDisabled,
+                narrativeBannerOnly: !!chip.narrativeBannerOnly,
+                preview,
+                canInteract,
+                modelSourceType: model.sourceType,
+                paletteKey,
+                unleashChaosTokens: ucTokens,
+                actionsStripLayout: !!actionsStripLayout,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+
         if (isSelect && selectOpts.length >= 2 && chip.selectPresentation === 'iconGrid') {
           return (
             <div

@@ -367,6 +367,10 @@ describe('buildFeatureCardModel', () => {
   it('resolveGuideSourceType preserves explicit sourceType on abilities', () => {
     expect(resolveGuideSourceType({ type: 'ability', sourceType: 'class' })).toBe('class');
   });
+
+  it("treats sourceType 'ability' as domain for palette/badge (internal _source leak)", () => {
+    expect(resolveGuideSourceType({ type: 'ability', sourceType: 'ability' })).toBe('domain');
+  });
 });
 
 describe('collectV2IsToggleCardFeatureGroups', () => {

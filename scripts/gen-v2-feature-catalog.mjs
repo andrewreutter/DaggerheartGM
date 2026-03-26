@@ -10,6 +10,7 @@
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { makeSrdListId } from '../src/srd/srd-list-ids.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -200,6 +201,11 @@ async function main() {
 
   for (const [abilityId, row] of Object.entries(registry.abilities || {})) {
     if (!row || typeof row !== 'object') continue;
+    // One catalog row per ability: barrel may register legacy slug aliases alongside makeSrdListId keys.
+    if (typeof row.name === 'string') {
+      const canon = makeSrdListId('abilities', row.name);
+      if (abilityId !== canon) continue;
+    }
     const parentName = typeof row.name === 'string' ? row.name : abilityId;
     const feats = gatherFeatureObjectsFromRow(row);
     const list = feats.length > 0 ? feats : typeof row.name === 'string' ? [row] : [];

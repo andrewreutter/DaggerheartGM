@@ -22,12 +22,12 @@ export const pathByAbilityId = {
   "srd-abl-telekinesis": "abilities/Arcana/Telekinesis.js",
   "srd-abl-unleash-chaos": "abilities/Arcana/UnleashChaos.js",
   "srd-abl-wall-walk": "abilities/Arcana/WallWalk.js",
-  "srd-abl-a-soldiers-bond": "abilities/Blade/ASoldiersBond.js",
+  "srd-abl-a-soldier-s-bond": "abilities/Blade/ASoldiersBond.js",
   "srd-abl-battle-cry": "abilities/Blade/BattleCry.js",
   "srd-abl-battle-hardened": "abilities/Blade/BattleHardened.js",
   "srd-abl-battle-monster": "abilities/Blade/BattleMonster.js",
   "srd-abl-blade-touched": "abilities/Blade/BladeTouched.js",
-  "srd-abl-champions-edge": "abilities/Blade/ChampionsEdge.js",
+  "srd-abl-champion-s-edge": "abilities/Blade/ChampionsEdge.js",
   "srd-abl-deadly-focus": "abilities/Blade/DeadlyFocus.js",
   "srd-abl-fortified-armor": "abilities/Blade/FortifiedArmor.js",
   "srd-abl-frenzy": "abilities/Blade/Frenzy.js",
@@ -138,7 +138,7 @@ export const pathByAbilityId = {
   "srd-abl-gifted-tracker": "abilities/Sage/GiftedTracker.js",
   "srd-abl-healing-field": "abilities/Sage/HealingField.js",
   "srd-abl-natural-familiar": "abilities/Sage/NaturalFamiliar.js",
-  "srd-abl-natures-tongue": "abilities/Sage/NaturesTongue.js",
+  "srd-abl-nature-s-tongue": "abilities/Sage/NaturesTongue.js",
   "srd-abl-plant-dominion": "abilities/Sage/PlantDominion.js",
   "srd-abl-rejuvenation-barrier": "abilities/Sage/RejuvenationBarrier.js",
   "srd-abl-sage-touched": "abilities/Sage/SageTouched.js",
@@ -189,10 +189,7 @@ export const pathByAbilityId = {
   "srd-abl-support-tank": "abilities/Valor/SupportTank.js",
   "srd-abl-unbreakable": "abilities/Valor/Unbreakable.js",
   "srd-abl-unyielding-armor": "abilities/Valor/UnyieldingArmor.js",
-  "srd-abl-valor-touched": "abilities/Valor/ValorTouched.js",
-  "srd-abl-a-soldier-s-bond": "abilities/Blade/ASoldiersBond.js",
-  "srd-abl-champion-s-edge": "abilities/Blade/ChampionsEdge.js",
-  "srd-abl-nature-s-tongue": "abilities/Sage/NaturesTongue.js"
+  "srd-abl-valor-touched": "abilities/Valor/ValorTouched.js"
 };
 
 export const pathByClassId = {
