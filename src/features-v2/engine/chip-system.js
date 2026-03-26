@@ -818,8 +818,9 @@ export function resetChipFrequency(cycle, usageStore) {
  * title-matching card chip would be redundant next to {@link buildChipsForFeature}'s
  * fallback narrative chip.
  *
- * Keep in sync with declarative badge extraction in
- * `collectDeclarativePassiveBadges` (client) where applicable.
+ * Aligns with which declarative fields imply non-chip UI: `collectPassiveBonusTooltipLines`
+ * (client) lists PSM/affinities/range for the header tooltip only; PSM still counts here so
+ * synthetic narrative chips stay deduped when stats are sheet-applied.
  *
  * @param {object} feature
  * @returns {boolean}
@@ -834,6 +835,9 @@ export function hasDeclarativeSheetRepresentation(feature) {
   if (psm && typeof psm === 'object' && !psm._predicates) {
     for (const v of Object.values(psm)) {
       if (typeof v === 'number' && v !== 0) return true;
+      // Dynamic PSM (e.g. Valor Bare Bones — tier/armor-aware) is still declarative sheet automation;
+      // no synthetic narrative card chip or Actions-strip row.
+      if (typeof v === 'function') return true;
     }
   }
 

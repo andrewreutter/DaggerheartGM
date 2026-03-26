@@ -8,6 +8,7 @@ import {
   readSharedIncludes,
   getLibraryFilterConfig,
   LIBRARY_GENERIC_DETAIL_COLLECTIONS,
+  formatFeatScopeLabel,
 } from '../../src/client/lib/library-filter-config.js';
 
 const lsStore = new Map();
@@ -25,6 +26,7 @@ describe('library-filter-config', () => {
     expect(SRD_UNIFIED_COLLECTIONS).toContain('weapons');
     expect(SRD_UNIFIED_COLLECTIONS).toContain('abilities');
     expect(SRD_UNIFIED_COLLECTIONS).toContain('adversaries');
+    expect(SRD_UNIFIED_COLLECTIONS).toContain('features');
   });
 
   it('uses v2 persist key to reset default Mine+SRD after bump', () => {
@@ -37,9 +39,26 @@ describe('library-filter-config', () => {
     expect(c.typeOptions?.length).toBeGreaterThan(0);
   });
 
+  it('uses tier + scope for features filters', () => {
+    const c = getLibraryFilterConfig('features');
+    expect(c.rankMode).toBe('tier');
+    expect(c.typeOptions?.length).toBeGreaterThan(0);
+  });
+
   it('generic detail excludes form-based collections', () => {
     expect(LIBRARY_GENERIC_DETAIL_COLLECTIONS).toContain('weapons');
     expect(LIBRARY_GENERIC_DETAIL_COLLECTIONS).not.toContain('adversaries');
+  });
+
+  describe('formatFeatScopeLabel', () => {
+    it('replaces underscores with spaces and title-cases words', () => {
+      expect(formatFeatScopeLabel('weapon_properties')).toBe('Weapon Properties');
+      expect(formatFeatScopeLabel('armor_properties')).toBe('Armor Properties');
+    });
+
+    it('formats single-token scopes', () => {
+      expect(formatFeatScopeLabel('classes')).toBe('Classes');
+    });
   });
 
   describe('readSharedSearchQuery', () => {

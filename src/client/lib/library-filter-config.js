@@ -19,7 +19,33 @@ export const SRD_UNIFIED_COLLECTIONS = [
   'items',
   'subclasses',
   'weapons',
+  'features',
 ];
+
+/** V2 registry buckets for Library `features` tab scope filter */
+export const FEAT_SCOPE_OPTIONS = [
+  'classes',
+  'subclasses',
+  'ancestries',
+  'communities',
+  'weapon_properties',
+  'armor_properties',
+  'abilities',
+  'beastforms',
+  'items',
+  'consumables',
+];
+
+/** Display label for V2 feature scope filter keys (underscores → spaces, title case). */
+export function formatFeatScopeLabel(val) {
+  if (val == null || String(val) === '') return '';
+  return String(val)
+    .replace(/_/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
 
 /**
  * Library tabs where the user can create a new item and edit/delete own items (Mine).
@@ -113,6 +139,12 @@ export const LIBRARY_FILTER_CONFIG = {
   domains: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   items: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   subclasses: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
+  features: {
+    typeLabel: 'Scope',
+    typeOptions: FEAT_SCOPE_OPTIONS,
+    rankMode: 'tier',
+    defaultSort: 'name',
+  },
 };
 
 export function getLibraryFilterConfig(collection) {

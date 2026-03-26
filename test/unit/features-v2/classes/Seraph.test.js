@@ -190,7 +190,7 @@ describe('Seraph — Prayer Dice', () => {
     const table = buildTableSnapshot({ ...gs, _rng: () => 0.5 });
     expect(table.rolls).toBeUndefined();
     const chips = collectChips([{ ...PrayerDice, _ownerInstanceId: 's1' }], 'card', table, {});
-    const gain = chips.find((c) => c.name === 'Prayer Die — gain Hope');
+    const gain = chips.find((c) => c.name === 'Prayer Dice — gain Hope');
     expect(gain).toBeDefined();
     const opts = gain.isSelect(table);
     expect(opts).toHaveLength(1);
@@ -222,7 +222,7 @@ describe('Seraph — Prayer Dice', () => {
     };
     const table = buildTableSnapshot({ ...gs, _rng: () => 0.5 });
     const chips = collectChips([{ ...PrayerDice, _ownerInstanceId: 's1' }], 'card', table, {});
-    const chip = chips.find((c) => c.name === 'Prayer Die — gain Hope');
+    const chip = chips.find((c) => c.name === 'Prayer Dice — gain Hope');
     expect(chip).toBeDefined();
     const mut = activateChip(chip, table, makeChipState(), { selectedId: '0' });
     expect(mut.some((m) => m.type === 'gainHope' && m.payload.amount === 2)).toBe(true);

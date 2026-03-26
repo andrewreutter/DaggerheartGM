@@ -9,6 +9,7 @@ import {
   extractEmbeddedResourceCostsFromText,
   extractAdvantageConditionFromText,
 } from '../../features-v2/engine/hover-action-enrich.js';
+import { getFrequencyCycleWord } from './frequency-cycle-ui.jsx';
 
 export {
   deriveFeatureActionFromV2Row,
@@ -162,10 +163,8 @@ export function buildCostBadges(action) {
   if (action.armorClear > 0) badges.push({ label: `Clear ${action.armorClear} Armor`, style: 'armor' });
   if (action.armorMark > 0) badges.push({ label: `Mark ${action.armorMark} Armor`, style: 'armor' });
   if (action.frequency) {
-    const freqLabel = action.frequency === 'session' ? 'Once/session'
-      : action.frequency === 'longRest' ? 'Once/long rest'
-      : 'Once/rest';
-    badges.push({ label: freqLabel, style: 'frequency' });
+    const w = getFrequencyCycleWord(action.frequency);
+    if (w) badges.push({ label: w, style: 'frequency' });
   }
   return badges;
 }

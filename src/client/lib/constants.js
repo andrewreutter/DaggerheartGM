@@ -17,9 +17,10 @@ export const SOURCE_BADGE = {
   srd:    { label: 'SRD',    className: 'dh-badge dh-badge-srd' },
   public: { label: 'Public', className: 'dh-badge dh-badge-public' },
   hod:    { label: 'HoD',    className: 'dh-badge dh-badge-hod' },
+  v2:     { label: 'V2',     className: 'dh-badge dh-badge-srd' },
 };
 
-export const SOURCE_ORDER = { own: 0, srd: 1, public: 2, hod: 3 };
+export const SOURCE_ORDER = { own: 0, srd: 1, v2: 1, public: 2, hod: 3 };
 
 export const needsHodEnrich = (item) =>
   item?._source === 'hod' && (

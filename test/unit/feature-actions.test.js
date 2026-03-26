@@ -223,6 +223,6 @@ describe('buildCostBadges', () => {
     const a = { hopeCost: 0, stressCost: 0, armorMark: 0, armorClear: 0, frequency: 'session' };
     const badges = buildCostBadges(a);
     expect(badges.some((b) => b.style === 'frequency')).toBe(true);
-    expect(badges.find((b) => b.style === 'frequency')?.label).toBe('Once/session');
+    expect(badges.find((b) => b.style === 'frequency')?.label).toBe('session');
   });
 });

@@ -100,11 +100,11 @@ export function CheckboxTrack({
     if (previewOn) {
       const previewDiffers = isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled);
       if (previewDiffers) {
-        slotClass = 'bg-dh-muted/35 border-dh-strong/55';
+        slotClass = 'bg-dh-muted/35 border-dh-strong';
       } else if (i < effectiveFilled) {
         slotClass = `${fillColor} border-transparent`;
       } else {
-        slotClass = onSetFilled ? 'bg-transparent border-dh-strong/60' : 'bg-transparent border-dh-strong';
+        slotClass = 'bg-transparent border-dh-strong';
       }
     } else if (isPendingClear && isChecked) {
       slotClass = `${fillColor} border-emerald-400/70 border-dashed opacity-75`;
@@ -113,7 +113,7 @@ export function CheckboxTrack({
     } else if (isPending) {
       slotClass = `${fillColor} border-amber-400/60 border-dashed opacity-60`;
     } else {
-      slotClass = onSetFilled ? 'bg-transparent border-dh-strong/60' : 'bg-transparent border-dh-strong';
+      slotClass = 'bg-transparent border-dh-strong';
     }
 
     const hoverOutline = isHovered

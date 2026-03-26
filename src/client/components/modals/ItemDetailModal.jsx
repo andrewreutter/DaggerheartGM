@@ -24,7 +24,11 @@ import { getLibraryItemImageUrls } from '../../lib/library-item-image-urls.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
 import { LevelBadge } from '../LevelBadge.jsx';
 import { showLibraryTierShield, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
-import { resolveV2LibraryItemSourcePath } from '../../../features-v2/resolve-feature-source-path.js';
+import {
+  resolveV2FeatureSourcePath,
+  resolveV2LibraryItemSourcePath,
+} from '../../../features-v2/resolve-feature-source-path.js';
+import { MarkdownText } from '../../lib/markdown.js';
 import { V2SourceInspectButton } from '../V2SourceInspectButton.jsx';
 import { SRD_UNIFIED_COLLECTIONS, LIBRARY_CUSTOM_DETAIL_COLLECTIONS } from '../../lib/library-filter-config.js';
 import { buildDefaultNewSrdLibraryItem } from '../../lib/library-default-new-item.js';
@@ -49,6 +53,7 @@ const COLLECTION_LABELS = {
   items: 'Item',
   subclasses: 'Subclass',
   weapons: 'Weapon',
+  features: 'Feature',
 };
 
 /**
@@ -301,16 +306,41 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   })();
   const badge = SOURCE_BADGE[item?._source];
   const isOwn = isOwnItem(item);
-  const v2LibrarySourcePath = useMemo(
-    () => (item?._source === 'srd' ? resolveV2LibraryItemSourcePath(collection, item) : null),
-    [collection, item],
-  );
+  const v2LibrarySourcePath = useMemo(() => {
+    if (collection === 'features' && item?._resolveV2) {
+      return resolveV2FeatureSourcePath({ ...item._resolveV2, name: item.name });
+    }
+    return item?._source === 'srd' ? resolveV2LibraryItemSourcePath(collection, item) : null;
+  }, [collection, item]);
   const headerItem = editable ? formData : item;
   const showTierByName = showLibraryTierShield(collection, headerItem);
   const showLevelByName = showLibraryLevelBadge(collection, headerItem);
 
   // --- Display Pane content ---
   const renderDisplayContent = () => {
+    if (collection === 'features') {
+      return (
+        <div className="flex flex-col h-full overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <p className="text-sm text-dh-muted">
+              <span className="font-medium text-dh">{item?._scope}</span>
+              {item?._parentName != null && item?._parentName !== '' ? (
+                <>
+                  {' · '}
+                  <span>{item._parentName}</span>
+                </>
+              ) : null}
+            </p>
+            {item?.description ? (
+              <MarkdownText text={item.description} className="dh-md text-sm text-dh" />
+            ) : (
+              <p className="text-sm text-dh-muted italic">No description in catalog.</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     const allImages = getLibraryItemImageUrls(displayItem);
 
     return (
@@ -753,24 +783,20 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 pt-[4.5rem] overflow-hidden"
       onClick={handleOverlayClick}
     >
-      <div className={`flex gap-3 items-start w-full ${maxWidth}`}>
-        {/* Main modal card */}
+      <div className={`flex gap-3 items-stretch w-full ${maxWidth}`}>
+        {/* Main modal card — height follows content up to viewport; body panes scroll when needed */}
         <div
-          className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden"
-          style={{ height: 'calc(100dvh - 5.5rem)' }}
+          className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden max-h-[calc(100dvh-5.5rem)]"
           {...editorGestureProps}
         >
           {mainCardBody}
         </div>
 
-        {/* Feature Library portal target — narrow column to the right of the card.
-            Must use a concrete height (not maxHeight) so FeatureLibrary's h-full
-            resolves correctly and the inner scroll list gets a bounded height. */}
+        {/* Feature Library portal — stretches to main card height so FeatureLibrary h-full + list scroll work */}
         {showFeatureLibrary && (
           <div
             ref={setLibraryPortal}
-            className="w-72 shrink-0 rounded-xl"
-            style={{ height: 'calc(100dvh - 5.5rem)' }}
+            className="w-72 shrink-0 min-h-0 flex flex-col rounded-xl"
           />
         )}
       </div>

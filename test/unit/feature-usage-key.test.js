@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { getFeatureUsageKeyForGuideFeature } from '../../src/client/lib/feature-usage-key.js';
+import {
+  getFeatureUsageKeyForGuideFeature,
+  getDisplayLabelForFeatureUsageKey,
+} from '../../src/client/lib/feature-usage-key.js';
 
 describe('feature-usage-key', () => {
   it('class feature without id matches Guide class-Rally-0', () => {
@@ -41,5 +44,31 @@ describe('feature-usage-key', () => {
       activeFeatures: [],
     };
     expect(getFeatureUsageKeyForGuideFeature(el, 'Unknown Feature')).toBe(null);
+  });
+
+  describe('getDisplayLabelForFeatureUsageKey', () => {
+    it('resolves class guide keys to feature names', () => {
+      const el = {
+        classFeatures: [{ name: 'Rally', description: 'x' }],
+        activeFeatures: [],
+      };
+      expect(getDisplayLabelForFeatureUsageKey(el, 'class-Rally-0')).toBe('Rally');
+    });
+
+    it('resolves stable class ids to names', () => {
+      const el = {
+        classFeatures: [{ id: 'srd-class-rally', name: 'Rally', description: 'x' }],
+        activeFeatures: [],
+      };
+      expect(getDisplayLabelForFeatureUsageKey(el, 'srd-class-rally')).toBe('Rally');
+    });
+
+    it('resolves ability- keys to spell names', () => {
+      const el = {
+        abilities: [{ id: 'srd-abl-healing-field', name: 'Healing Field' }],
+        activeFeatures: [],
+      };
+      expect(getDisplayLabelForFeatureUsageKey(el, 'ability-srd-abl-healing-field')).toBe('Healing Field');
+    });
   });
 });

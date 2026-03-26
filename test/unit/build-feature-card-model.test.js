@@ -3,8 +3,10 @@ import {
   buildFeatureCardModel,
   collectActionLoopPhaseFlags,
   flattenChipsForDisplay,
-  collectDeclarativePassiveBadges,
+  collectPassiveBonusTooltipLines,
   resolveFeatureDisplayName,
+  resolveGuideSourceLabel,
+  resolveGuideSourceType,
   hasHiddenConditionalPhaseChips,
   V2_TABLE_STUB_NO_INSTANCE_ID,
   collectV2IsToggleCardFeatureGroups,
@@ -36,20 +38,35 @@ describe('flattenChipsForDisplay', () => {
   });
 });
 
-describe('collectDeclarativePassiveBadges', () => {
-  it('formats static passiveStatMods', () => {
-    const badges = collectDeclarativePassiveBadges({
+describe('collectPassiveBonusTooltipLines', () => {
+  it('includes static passiveStatMods for header tooltip', () => {
+    const lines = collectPassiveBonusTooltipLines({
       passiveStatMods: { evasion: 1, majorThreshold: 2 },
     });
-    expect(badges.some((b) => b.includes('Evasion'))).toBe(true);
-    expect(badges.some((b) => b.includes('Major'))).toBe(true);
+    expect(lines.some((b) => b.includes('Evasion'))).toBe(true);
+    expect(lines.some((b) => b.includes('Major'))).toBe(true);
   });
 
-  it('does not add advantageTriggers as duplicate chips (description is enough)', () => {
-    const badges = collectDeclarativePassiveBadges({
+  it('includes damage affinities', () => {
+    const lines = collectPassiveBonusTooltipLines({
+      damageAffinities: {
+        resistances: ['fire'],
+        immunities: ['cold'],
+        vulnerabilities: ['radiant'],
+      },
+    });
+    expect(lines).toEqual([
+      'Resist: fire',
+      'Immune: cold',
+      'Vulnerable: radiant',
+    ]);
+  });
+
+  it('does not add advantageTriggers (description is enough)', () => {
+    const lines = collectPassiveBonusTooltipLines({
       advantageTriggers: ['rolls to intimidate hostile creatures'],
     });
-    expect(badges.some((b) => b.startsWith('Advantage:'))).toBe(false);
+    expect(lines.some((b) => b.startsWith('Advantage:'))).toBe(false);
   });
 });
 
@@ -318,6 +335,37 @@ describe('buildFeatureCardModel', () => {
         { me: { inBeastform: true } },
       ),
     ).toBe('In');
+  });
+
+  it('domain ability source pill uses domain · type · level, not ability name', () => {
+    const srd = {
+      name: 'Bare Bones',
+      domain: 'Valor',
+      type: 'Passive',
+      level: 1,
+    };
+    const m = buildFeatureCardModel({
+      name: 'Bare Bones',
+      type: 'ability',
+      description: '…',
+      source: srd,
+    });
+    expect(m.sourceLabel).toBe('Valor · Passive · Lvl 1');
+    expect(m.sourceType).toBe('domain');
+  });
+
+  it('resolveGuideSourceLabel does not fall back to source.name for abilities', () => {
+    expect(
+      resolveGuideSourceLabel({
+        name: 'X',
+        type: 'ability',
+        source: { name: 'X', domain: '', type: '', level: null },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('resolveGuideSourceType preserves explicit sourceType on abilities', () => {
+    expect(resolveGuideSourceType({ type: 'ability', sourceType: 'class' })).toBe('class');
   });
 });
 

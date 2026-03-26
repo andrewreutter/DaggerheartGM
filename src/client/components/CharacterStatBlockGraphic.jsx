@@ -294,9 +294,6 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
 /** ~1.4× prior 8px chip labels; icons match cap height */
 const STAT_CHIP_LABEL = 'text-[11px] font-semibold uppercase tracking-wide leading-tight';
 const STAT_CHIP_ICON = 'w-[11px] h-[11px] shrink-0';
-/** HP chip: slightly larger label + icon than Stress/Armor */
-const HP_CHIP_LABEL = 'text-[14px] font-semibold uppercase tracking-wide leading-tight';
-const HP_CHIP_ICON = 'w-[14px] h-[14px] shrink-0';
 const EVASION_LABEL = 'text-[13px] font-semibold uppercase tracking-wide';
 /** Evasion shell matches Armor (cyan ring/labels); score uses sky (see evasionInner). */
 const EVASION_ICON = 'w-[13px] h-[13px] shrink-0 text-cyan-400 dh-light:text-dh';
@@ -312,9 +309,16 @@ const DEFENSE_TRACK_SUBTITLE =
   'text-[9px] font-normal normal-case tracking-normal text-dh-muted/90 text-center leading-tight px-0.5';
 
 /** Shared vertical rhythm so Stress / Armor / HP chips match height; fixed width for 3-checkbox track + padding. */
-const CHIP_PRIMARY_BOX = 'min-h-[2.25rem] flex items-center justify-center w-full';
-const CHIP_TRACK_BOX = 'w-full flex justify-center min-h-[1.125rem] pt-0.5 border-t';
+const CHIP_PRIMARY_BOX =
+  'min-h-[1.375rem] flex items-center justify-center w-full py-0 leading-none';
+const CHIP_TRACK_BOX = 'w-full flex justify-center min-h-0 pt-0.5 border-t';
 const CHIP_COL_W = 'w-[4.75rem] max-w-[4.75rem] shrink-0';
+/**
+ * Title + subtitle rows; same structure on Stress / Armor / HP so checkbox tracks stay aligned.
+ */
+const CHIP_HEADER_BLOCK = 'flex flex-col items-center justify-start gap-0.5 w-full';
+/** 5px between header / score / checkbox track (matches requested breathing room). */
+const CHIP_INNER_GAP = 'gap-[5px]';
 
 /**
  * Big cyan chip (Evasion-shaped): header, primary value, armor slot checkboxes.
@@ -353,9 +357,9 @@ function ArmorStatChip({ el, compact, trackInteraction }) {
   const tip = formatArmorChipTooltip(el);
   const inner = (
     <div
-      className={`rounded-xl bg-dh-raised ring-1 ring-cyan-500/25 flex flex-col items-stretch gap-1.5 ${shell} ${CHIP_COL_W} h-full`}
+      className={`rounded-xl bg-dh-raised ring-1 ring-cyan-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
-      <div className="flex flex-col items-center gap-0.5 w-full">
+      <div className={CHIP_HEADER_BLOCK}>
         <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-cyan-300/90 dh-light:text-dh text-center`}>
           <Shield className={`${STAT_CHIP_ICON} text-cyan-400 dh-light:text-dh`} strokeWidth={2.25} />
           Armor
@@ -395,11 +399,16 @@ function StressStatChip({ el, compact, trackInteraction }) {
   if (maxStress <= 0) {
     const inner = (
       <div
-        className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/20 flex flex-col items-stretch gap-1.5 ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
+        className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/20 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
       >
-        <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-orange-300/80 dh-light:text-dh text-center`}>
-          <Zap className={`${STAT_CHIP_ICON} text-orange-400/80 dh-light:text-dh`} strokeWidth={2.25} />
-          Stress
+        <div className={CHIP_HEADER_BLOCK}>
+          <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-orange-300/80 dh-light:text-dh text-center`}>
+            <Zap className={`${STAT_CHIP_ICON} text-orange-400/80 dh-light:text-dh`} strokeWidth={2.25} />
+            Stress
+          </div>
+          <div className={`${DEFENSE_TRACK_SUBTITLE} invisible`} aria-hidden>
+            Mark
+          </div>
         </div>
         <div className={CHIP_PRIMARY_BOX}>
           <span className={compact ? 'text-xs' : 'text-sm'}>—</span>
@@ -414,11 +423,16 @@ function StressStatChip({ el, compact, trackInteraction }) {
 
   const inner = (
     <div
-      className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/25 flex flex-col items-stretch gap-1.5 ${shell} ${CHIP_COL_W} h-full`}
+      className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
-      <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-orange-300/90 dh-light:text-dh text-center`}>
-        <Zap className={`${STAT_CHIP_ICON} text-orange-400 dh-light:text-dh`} strokeWidth={2.25} />
-        Stress
+      <div className={CHIP_HEADER_BLOCK}>
+        <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-orange-300/90 dh-light:text-dh text-center`}>
+          <Zap className={`${STAT_CHIP_ICON} text-orange-400 dh-light:text-dh`} strokeWidth={2.25} />
+          Stress
+        </div>
+        <div className={`${DEFENSE_TRACK_SUBTITLE} invisible`} aria-hidden>
+          Mark
+        </div>
       </div>
       <div className={CHIP_PRIMARY_BOX}>
         <div className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-orange-100 dh-light:text-dh`}>
@@ -452,11 +466,11 @@ function HpStatChip({ el, compact, trackInteraction }) {
   if (maxHp <= 0) {
     const inner = (
       <div
-        className={`rounded-xl bg-dh-raised ring-1 ring-red-500/20 flex flex-col items-stretch gap-1.5 ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
+        className={`rounded-xl bg-dh-raised ring-1 ring-red-500/20 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
       >
-        <div className="flex flex-col items-center gap-0.5 w-full">
-          <div className={`flex items-center justify-center gap-0.5 ${HP_CHIP_LABEL} text-red-300/80 dh-light:text-dh text-center`}>
-            <Heart className={`${HP_CHIP_ICON} text-red-400/70 dh-light:text-dh`} strokeWidth={2.25} />
+        <div className={CHIP_HEADER_BLOCK}>
+          <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-red-300/80 dh-light:text-dh text-center`}>
+            <Heart className={`${STAT_CHIP_ICON} text-red-400/70 dh-light:text-dh`} strokeWidth={2.25} />
             HP
           </div>
           <div className={DEFENSE_TRACK_SUBTITLE}>Mark the rest</div>
@@ -474,11 +488,11 @@ function HpStatChip({ el, compact, trackInteraction }) {
 
   const inner = (
     <div
-      className={`rounded-xl bg-dh-raised ring-1 ring-red-500/25 flex flex-col items-stretch gap-1.5 ${shell} ${CHIP_COL_W} h-full`}
+      className={`rounded-xl bg-dh-raised ring-1 ring-red-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
-      <div className="flex flex-col items-center gap-0.5 w-full">
-        <div className={`flex items-center justify-center gap-0.5 ${HP_CHIP_LABEL} text-red-300/90 dh-light:text-dh text-center`}>
-          <Heart className={`${HP_CHIP_ICON} text-red-400 dh-light:text-dh`} strokeWidth={2.25} />
+      <div className={CHIP_HEADER_BLOCK}>
+        <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-red-300/90 dh-light:text-dh text-center`}>
+          <Heart className={`${STAT_CHIP_ICON} text-red-400 dh-light:text-dh`} strokeWidth={2.25} />
           HP
         </div>
         <div className={DEFENSE_TRACK_SUBTITLE}>Mark the rest</div>

@@ -33,7 +33,7 @@ test('sign-in page renders when not authenticated', async ({ page }) => {
 // ---------------------------------------------------------------------------
 test('authenticated user sees the library nav and DAGGEROP heading', async ({ page }) => {
   await authenticate(page);
-  // Navigate directly to the library (default tab is characters).
+  // Navigate directly to the library (default tab is All).
   await page.goto('/library');
 
   // The DAGGEROP heading and Library nav button both live inside {user && nav}.

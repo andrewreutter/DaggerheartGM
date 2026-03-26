@@ -65,4 +65,10 @@ describe('library-card-dimensions', () => {
     localStorage.setItem(libraryCardDimensionStorageKey('u1', 'weapons', 'Height'), '20');
     expect(readStoredLibraryCardHeight('u1', 'weapons')).toBe(MIN_LIBRARY_CARD_HEIGHT);
   });
+
+  it('min height still fits compact title row: 32px thumb + ItemCard vertical padding (see ItemCard + LibraryItemImageThumb compact)', () => {
+    const compactThumbPx = 32;
+    const itemCardBodyVerticalPaddingPx = 10; // pt-1.5 + pb-1
+    expect(compactThumbPx + itemCardBodyVerticalPaddingPx).toBeLessThanOrEqual(MIN_LIBRARY_CARD_HEIGHT);
+  });
 });

@@ -12,17 +12,17 @@ import {
   Share2,
   Search,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MarkdownText } from '../../lib/markdown.js';
 import { Tooltip } from '../Tooltip.jsx';
 import { CustomSelect } from '../forms/CustomSelect.jsx';
 import {
   buildFeatureCardModelForCharacter,
   buildGuideFeatureTableSnapshot,
-  formatFrequency,
   getSheetOwnerKey,
   V2_TABLE_STUB_NO_INSTANCE_ID,
 } from '../../lib/build-feature-card-model.js';
+import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../../lib/frequency-cycle-ui.jsx';
 import { FeatureResourceCostIcons } from '../FeatureResourceCostIcons.jsx';
 import { v2OriginFeatureDescriptorsByName } from '../../lib/v2-origin-feature-descriptors.js';
 import {
@@ -30,18 +30,32 @@ import {
   resolveChipDisabled,
   getChipDisableHint,
 } from '../../../features-v2/engine/chip-system.js';
-import { ACTION_LOOP_PHASE_UI, FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI } from '../../lib/action-loop-phase-ui-icons.js';
+import {
+  ACTION_LOOP_PHASE_UI,
+  FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI,
+  FEATURE_CARD_PASSIVE_BONUS_UI,
+} from '../../lib/action-loop-phase-ui-icons.js';
 import { resolveV2FeatureSourcePath } from '../../../features-v2/resolve-feature-source-path.js';
 import { FeatureSourceModal } from './FeatureSourceModal.jsx';
 import { getPendingV2DeferToggleNext } from '../../lib/helpers.js';
 import {
   V2_REVIEW_CHIP_INLINE_OPTION_MAX,
+  V2_INLINE_GROUP_OUTER,
+  V2_INLINE_GROUP_TITLE_ROW,
   V2_INLINE_SEG_BTN_BASE,
   V2_INLINE_SEG_TARGET_BTN,
   V2_INLINE_SEG_OFF,
 } from '../../lib/v2-inline-select-ui.js';
+import { V2SegmentedRowWrap } from '../V2SegmentedRowWrap.jsx';
+import { WidthSortedFlexWrap } from '../WidthSortedFlexWrap.jsx';
 import { useCharacterSheetSourceHighlightState } from '../CharacterSheetSourceHighlight.jsx';
 import { shouldDimFeatOrAbilityRow, SHEET_SOURCE_DIM_CLASS } from '../../lib/source-badge-sheet-highlight.js';
+import {
+  buildGuideCardChipTipText,
+  mergeOptionAndFeatureTooltipMarkdown,
+} from '../../lib/guide-feature-card-tip-text.js';
+import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../../lib/portal-hover-tooltip.jsx';
+import { getSheetSourceChipPalette, resolveSheetSourcePaletteKey } from '../../lib/sheet-source-chip-styles.js';
 
 const ELEMENT_ICONS = { fire: Flame, earth: Mountain, water: Droplets, air: Wind, Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
 
@@ -81,12 +95,6 @@ function buildTitleCostAction(model, legacy) {
   return null;
 }
 
-function chipFrequencySuffix(chip) {
-  if (!chip.frequency) return '';
-  const t = formatFrequency(chip.frequency) || chip.frequency;
-  return ` · ${t}`;
-}
-
 function getSelectOptions(chip, featRow, el, v2TableContext) {
   if (typeof chip.isSelect !== 'function') return [];
   try {
@@ -98,6 +106,248 @@ function getSelectOptions(chip, featRow, el, v2TableContext) {
   } catch {
     return [];
   }
+}
+
+/** Segmented `selectTargets` row — portaled option tooltips (same as inline isSelect). */
+function GuideFeatureSegmentedSelectTargetsRow({
+  actionsStripLayout,
+  closedName,
+  chipForEngine,
+  chip,
+  featRow,
+  effectiveKey,
+  chipPayloadExtras,
+  selectTargetOpts,
+  targetPickDisabled,
+  onV2CardChip,
+  bumpIsSelect,
+  ci,
+  n,
+  tipText,
+  preview,
+  sourcePalette,
+}) {
+  const segmentBankAnchorRef = useRef(null);
+  const portalHover = usePortalHoverTooltip();
+  const targetsChipTipMd = tipText || closedName;
+  const targetsChipTipContent = preview ? (
+    <PreviewModeTooltipBody>
+      <MarkdownText text={targetsChipTipMd} className="text-[11px] leading-relaxed dh-md" />
+    </PreviewModeTooltipBody>
+  ) : (
+    <MarkdownText text={targetsChipTipMd} className="text-[11px] leading-relaxed dh-md" />
+  );
+  const targetFeatureDescForMerge =
+    typeof chipForEngine?.description === 'string' && chipForEngine.description.trim()
+      ? chipForEngine.description.trim()
+      : typeof featRow?.description === 'string' && featRow.description.trim()
+        ? featRow.description.trim()
+        : '';
+
+  return (
+    <div
+      className={actionsStripLayout ? 'w-full min-w-0 basis-full' : 'w-full min-w-0'}
+    >
+      <div className={sourcePalette.groupOuter} role="group" aria-label={`${closedName} targets`}>
+        <Tooltip content={targetsChipTipContent} placement="bottom" className="relative block w-full min-w-0">
+          <div className={V2_INLINE_GROUP_TITLE_ROW}>
+            <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{closedName}</span>
+            <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
+            {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
+          </div>
+        </Tooltip>
+        <div ref={segmentBankAnchorRef} className="w-full min-w-0">
+          <V2SegmentedRowWrap key={`${closedName}-${ci}-stseg-${n}`}>
+          {selectTargetOpts.map((o) => {
+            const tid = o.instanceId ?? o.id;
+            if (tid == null || tid === '') return null;
+            const name = o.name ?? String(tid);
+            const rowKey = String(tid);
+            const tDesc = typeof o.description === 'string' ? o.description.trim() : '';
+            return (
+              <button
+                key={rowKey}
+                type="button"
+                tabIndex={targetPickDisabled ? -1 : undefined}
+                aria-disabled={targetPickDisabled}
+                onMouseEnter={(e) => {
+                  if (!tDesc) return;
+                  const tgtTipMd = mergeOptionAndFeatureTooltipMarkdown(tDesc, targetFeatureDescForMerge);
+                  if (!tgtTipMd) return;
+                  if (preview) {
+                    portalHover.showFromPointerEvent(e, {
+                      anchorRef: segmentBankAnchorRef,
+                      renderInner: (
+                        <PreviewModeTooltipBody>
+                          <MarkdownText text={tgtTipMd} className="text-[11px] leading-relaxed dh-md" />
+                        </PreviewModeTooltipBody>
+                      ),
+                      contentKey: `${rowKey}-${tgtTipMd.slice(0, 48)}`,
+                    });
+                  } else {
+                    portalHover.showFromPointerEvent(e, {
+                      anchorRef: segmentBankAnchorRef,
+                      label: name,
+                      description: tgtTipMd,
+                      wide: false,
+                    });
+                  }
+                }}
+                onMouseLeave={portalHover.scheduleClose}
+                onKeyDown={(e) => {
+                  if (targetPickDisabled && (e.key === ' ' || e.key === 'Enter')) e.preventDefault();
+                }}
+                onClick={() => {
+                  if (targetPickDisabled) return;
+                  onV2CardChip({
+                    featRow,
+                    chip: chipForEngine,
+                    featureKey: effectiveKey,
+                    selectOpts: { selectedTargetIds: [tid] },
+                    ...chipPayloadExtras,
+                  });
+                  bumpIsSelect(ci);
+                }}
+                className={`${V2_INLINE_SEG_TARGET_BTN} ${sourcePalette.segmentOff} ${
+                  targetPickDisabled ? 'opacity-50 pointer-events-auto' : ''
+                }`}
+              >
+                <span className="break-words">{name}</span>
+              </button>
+            );
+          })}
+          </V2SegmentedRowWrap>
+        </div>
+      </div>
+      <PortalHoverTooltipLayer
+        tooltip={portalHover.tooltip}
+        tooltipRef={portalHover.tooltipRef}
+        scheduleClose={portalHover.scheduleClose}
+        clearLeaveTimer={portalHover.clearLeaveTimer}
+      />
+    </div>
+  );
+}
+
+/** Single-select isSelect: title + icons + wrapping option buttons inside the chip shell. */
+function GuideFeatureIsSelectInline({
+  actionsStripLayout,
+  closedName,
+  chipForEngine,
+  chip,
+  featRow,
+  effectiveKey,
+  chipPayloadExtras,
+  selectOpts,
+  selectDisabled,
+  onV2CardChip,
+  bumpIsSelect,
+  ci,
+  n,
+  featureTipMarkdown,
+  preview,
+  groupOuterClass = V2_INLINE_GROUP_OUTER,
+  segmentOffClass = V2_INLINE_SEG_OFF,
+  tooltipWide = false,
+}) {
+  const segmentBankAnchorRef = useRef(null);
+  const portalHover = usePortalHoverTooltip();
+  const chipTipMd = featureTipMarkdown || closedName;
+  const chipTipContent = preview ? (
+    <PreviewModeTooltipBody>
+      <MarkdownText text={chipTipMd} className="text-[11px] leading-relaxed dh-md" />
+    </PreviewModeTooltipBody>
+  ) : (
+    <MarkdownText text={chipTipMd} className="text-[11px] leading-relaxed dh-md" />
+  );
+  const featureDescForMerge =
+    typeof chipForEngine?.description === 'string' && chipForEngine.description.trim()
+      ? chipForEngine.description.trim()
+      : typeof featRow?.description === 'string' && featRow.description.trim()
+        ? featRow.description.trim()
+        : '';
+
+  return (
+    <div className={actionsStripLayout ? 'w-full min-w-0 basis-full' : 'w-full min-w-0'}>
+      <div className={groupOuterClass} role="group" aria-label={String(closedName)}>
+        <Tooltip content={chipTipContent} placement="bottom" className="relative block w-full min-w-0">
+          <div className={V2_INLINE_GROUP_TITLE_ROW}>
+            <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{closedName}</span>
+            <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
+            {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
+          </div>
+        </Tooltip>
+        <div ref={segmentBankAnchorRef} className="w-full min-w-0">
+          <V2SegmentedRowWrap key={`${effectiveKey}-${ci}-isseg-${n}`}>
+          {selectOpts.map((o) => {
+            const id = o.id ?? o.name;
+            const idStr = id != null ? String(id) : '';
+            const name = o.name ?? o.label ?? String(id ?? '');
+            const rowKey = idStr || name;
+            const rawDesc = typeof o.description === 'string' ? o.description.trim() : '';
+            return (
+              <button
+                key={rowKey}
+                type="button"
+                tabIndex={selectDisabled ? -1 : undefined}
+                aria-disabled={selectDisabled}
+                onMouseEnter={(e) => {
+                  if (!rawDesc) return;
+                  const optTipMd = mergeOptionAndFeatureTooltipMarkdown(rawDesc, featureDescForMerge);
+                  if (!optTipMd) return;
+                  if (preview) {
+                    portalHover.showFromPointerEvent(e, {
+                      anchorRef: segmentBankAnchorRef,
+                      renderInner: (
+                        <PreviewModeTooltipBody>
+                          <MarkdownText text={optTipMd} className="text-[11px] leading-relaxed dh-md" />
+                        </PreviewModeTooltipBody>
+                      ),
+                      contentKey: `${rowKey}-${optTipMd.slice(0, 48)}`,
+                    });
+                  } else {
+                    portalHover.showFromPointerEvent(e, {
+                      anchorRef: segmentBankAnchorRef,
+                      label: name,
+                      description: optTipMd,
+                      wide: tooltipWide,
+                    });
+                  }
+                }}
+                onMouseLeave={portalHover.scheduleClose}
+                onKeyDown={(e) => {
+                  if (selectDisabled && (e.key === ' ' || e.key === 'Enter')) e.preventDefault();
+                }}
+                onClick={() => {
+                  if (selectDisabled || id == null || id === '') return;
+                  onV2CardChip({
+                    featRow,
+                    chip: chipForEngine,
+                    featureKey: effectiveKey,
+                    selectOpts: { selectedId: idStr },
+                    ...chipPayloadExtras,
+                  });
+                  bumpIsSelect(ci);
+                }}
+                className={`${V2_INLINE_SEG_BTN_BASE} ${segmentOffClass} ${
+                  selectDisabled ? 'opacity-50 pointer-events-auto' : ''
+                }`}
+              >
+                <span className="break-words">{name}</span>
+              </button>
+            );
+          })}
+          </V2SegmentedRowWrap>
+        </div>
+      </div>
+      <PortalHoverTooltipLayer
+        tooltip={portalHover.tooltip}
+        tooltipRef={portalHover.tooltipRef}
+        scheduleClose={portalHover.scheduleClose}
+        clearLeaveTimer={portalHover.clearLeaveTimer}
+      />
+    </div>
+  );
 }
 
 /**
@@ -140,9 +390,9 @@ export function GuideFeatureCardChips({
   if (!model.cardChips?.length) return null;
   if (onlyIsToggle && !(model.cardChips || []).some((c) => c?.isToggle)) return null;
 
-  return (
-    <>
-      {model.cardChips.map((chip, ci) => {
+  const sourcePalette = getSheetSourceChipPalette(resolveSheetSourcePaletteKey(featRow, model.sourceType));
+
+  const chipElements = model.cardChips.map((chip, ci) => {
         if (onlyIsToggle && !chip.isToggle) return null;
         const baseName = chip.name || model.displayName;
         const resolvedName = typeof baseName === 'function' ? baseName(tableForChips) : baseName;
@@ -152,11 +402,13 @@ export function GuideFeatureCardChips({
         const chipDisabled = logicDisabled || resourceUnaffordable;
         const engineDisableHint = chip.disableHint ?? getChipDisableHint(chipForEngine, tableForChips);
         const chipUsed = !!(chip.frequency && isUsed);
-        const usedHint = chipUsed ? `Already used (${formatFrequency(chip.frequency) || chip.frequency}).` : null;
+        const usedHint = chipUsed
+          ? `Already used (${getFrequencyCycleWord(chip.frequency) || chip.frequency}).`
+          : null;
         const cardDisableReason =
           preview ? null : !canInteract ? null : usedHint || (chipDisabled ? engineDisableHint : null);
         const label = chipForEngine.name;
-        const tipText = chip.description || label;
+        const tipText = buildGuideCardChipTipText(chipForEngine, featRow, label);
         const tipContent = (
           <MarkdownText text={String(tipText || '')} className="text-[11px] leading-relaxed dh-md" />
         );
@@ -205,10 +457,10 @@ export function GuideFeatureCardChips({
                     }}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
                       isActive
-                        ? 'dh-sheet-clickable-chip border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
+                        ? sourcePalette.actionActive
                         : cantUse || preview
                           ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-60 cursor-not-allowed'
-                          : 'dh-sheet-clickable-chip border-amber-700/50 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600/70 cursor-pointer'
+                          : `${sourcePalette.actionDefault} cursor-pointer`
                     }`}
                     aria-label={opt.name || id}
                   >
@@ -254,50 +506,27 @@ export function GuideFeatureCardChips({
 
           if (selectOpts.length <= V2_REVIEW_CHIP_INLINE_OPTION_MAX && !chip.multiSelect) {
             return (
-              <div key={`${ci}-isseg-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
-                <div className="flex flex-col gap-1">
-                  <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                    <span className="font-semibold text-dh">{closedName}</span>
-                    <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
-                    {chip.frequency ? (
-                      <span className="text-dh-muted text-[9px] shrink-0">{chipFrequencySuffix(chip)}</span>
-                    ) : null}
-                  </div>
-                  <div
-                    className="flex w-full max-w-full overflow-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
-                    role="group"
-                    aria-label={String(closedName)}
-                  >
-                    {selectOpts.map((o) => {
-                      const id = o.id ?? o.name;
-                      const idStr = id != null ? String(id) : '';
-                      const name = o.name ?? o.label ?? String(id ?? '');
-                      return (
-                        <button
-                          key={idStr || name}
-                          type="button"
-                          disabled={selectDisabled}
-                          title={typeof o.description === 'string' ? o.description : undefined}
-                          onClick={() => {
-                            if (selectDisabled || id == null || id === '') return;
-                            onV2CardChip({
-                              featRow,
-                              chip: chipForEngine,
-                              featureKey: effectiveKey,
-                              selectOpts: { selectedId: idStr },
-                              ...chipPayloadExtras,
-                            });
-                            bumpIsSelect(ci);
-                          }}
-                          className={`${V2_INLINE_SEG_BTN_BASE} ${V2_INLINE_SEG_OFF}`}
-                        >
-                          <span className="block truncate">{name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+              <GuideFeatureIsSelectInline
+                key={`${ci}-isseg-${n}`}
+                actionsStripLayout={actionsStripLayout}
+                closedName={closedName}
+                chipForEngine={chipForEngine}
+                chip={chip}
+                featRow={featRow}
+                effectiveKey={effectiveKey}
+                chipPayloadExtras={chipPayloadExtras}
+                selectOpts={selectOpts}
+                selectDisabled={selectDisabled}
+                onV2CardChip={onV2CardChip}
+                bumpIsSelect={bumpIsSelect}
+                ci={ci}
+                n={n}
+                featureTipMarkdown={tipText}
+                preview={preview}
+                groupOuterClass={sourcePalette.groupOuter}
+                segmentOffClass={sourcePalette.segmentOff}
+                tooltipWide={model.name === 'Beastform' || model.name === 'Evolution'}
+              />
             );
           }
 
@@ -312,9 +541,7 @@ export function GuideFeatureCardChips({
                   <span className="inline-flex items-center gap-1 min-w-0">
                     <span className={`min-w-0 text-inherit ${actionsStripLayout ? 'truncate' : ''}`}>{closedName}</span>
                     <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
-                    {chip.frequency ? (
-                      <span className="text-dh-muted text-[9px] shrink-0">{chipFrequencySuffix(chip)}</span>
-                    ) : null}
+                    {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
                   </span>
                 )}
                 options={selectOpts}
@@ -322,7 +549,8 @@ export function GuideFeatureCardChips({
                 getOptionLabel={(o) => o.name ?? o.label ?? String(o.id ?? '')}
                 getOptionDescription={(o) => o.description}
                 tooltipWide={model.name === 'Beastform' || model.name === 'Evolution'}
-                disabled={preview || !canInteract || chipDisabled || chipUsed}
+                disabled={preview || !canInteract}
+                selectionBlocked={chipDisabled || chipUsed}
                 disabledReason={
                   preview
                     ? undefined
@@ -338,6 +566,7 @@ export function GuideFeatureCardChips({
                   ) : undefined
                 }
                 className={selectCls}
+                triggerClassName={sourcePalette.triggerClosed}
                 onChange={(opt) => {
                   if (opt == null || !canInteract || chipDisabled || chipUsed) return;
                   const id = opt.id ?? opt.name;
@@ -370,48 +599,26 @@ export function GuideFeatureCardChips({
           const n = isSelectNonce[ci] ?? 0;
           const closedName = label;
           const targetPickDisabled = preview || !canInteract || chipDisabled || chipUsed;
-
           return (
-            <div key={`${ci}-stseg-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
-              <div className="flex flex-col gap-1">
-                <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
-                  <span className="font-semibold text-dh">{closedName}</span>
-                  <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
-                </div>
-                <div
-                  className="flex w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
-                  role="group"
-                  aria-label={`${closedName} targets`}
-                >
-                  {selectTargetOpts.map((o) => {
-                    const tid = o.instanceId ?? o.id;
-                    if (tid == null || tid === '') return null;
-                    const name = o.name ?? String(tid);
-                    return (
-                      <button
-                        key={String(tid)}
-                        type="button"
-                        disabled={targetPickDisabled}
-                        onClick={() => {
-                          if (targetPickDisabled) return;
-                          onV2CardChip({
-                            featRow,
-                            chip: chipForEngine,
-                            featureKey: effectiveKey,
-                            selectOpts: { selectedTargetIds: [tid] },
-                            ...chipPayloadExtras,
-                          });
-                          bumpIsSelect(ci);
-                        }}
-                        className={`${V2_INLINE_SEG_TARGET_BTN} ${V2_INLINE_SEG_OFF}`}
-                      >
-                        <span className="block truncate">{name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+            <GuideFeatureSegmentedSelectTargetsRow
+              key={`${ci}-stseg-${n}`}
+              actionsStripLayout={actionsStripLayout}
+              closedName={closedName}
+              chipForEngine={chipForEngine}
+              chip={chip}
+              featRow={featRow}
+              effectiveKey={effectiveKey}
+              chipPayloadExtras={chipPayloadExtras}
+              selectTargetOpts={selectTargetOpts}
+              targetPickDisabled={targetPickDisabled}
+              onV2CardChip={onV2CardChip}
+              bumpIsSelect={bumpIsSelect}
+              ci={ci}
+              n={n}
+              tipText={tipText}
+              preview={preview}
+              sourcePalette={sourcePalette}
+            />
           );
         }
 
@@ -467,9 +674,9 @@ export function GuideFeatureCardChips({
                   preview || !canInteract || chipDisabled || toggleDeferAwait
                     ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-70 cursor-not-allowed'
                     : active
-                      ? 'dh-sheet-clickable-chip border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
-                      : 'dh-sheet-clickable-chip border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
-                } ${toggleDeferAwait ? 'ring-1 ring-amber-300/70 ring-offset-1 ring-offset-dh-canvas animate-pulse' : ''}`}
+                      ? sourcePalette.actionActive
+                      : sourcePalette.actionDefault
+                } ${toggleDeferAwait ? `animate-pulse ${sourcePalette.toggleDeferRing}` : ''}`}
                 aria-pressed={active}
                 aria-busy={toggleDeferAwait || undefined}
               >
@@ -536,7 +743,7 @@ export function GuideFeatureCardChips({
                   ? 'border-dh-border bg-dh-raised/50 text-dh-muted cursor-not-allowed'
                   : narrativeOnly
                     ? 'dh-sheet-clickable-chip border-dh-border/60 bg-dh-raised/50 text-dh-muted hover:bg-dh-hover/40 hover:border-dh-strong/70 hover:text-dh'
-                    : 'dh-sheet-clickable-chip border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'
+                    : sourcePalette.actionDefault
               }`}
             >
               <span className="flex items-start gap-1.5 min-w-0">
@@ -547,17 +754,21 @@ export function GuideFeatureCardChips({
                 </span>
                 <span className="inline-flex flex-wrap items-center gap-1 shrink-0 justify-end">
                   <FeatureResourceCostIcons action={chip} iconSize={9} />
-                  {chip.frequency ? (
-                    <span className="text-[9px] text-dh-muted whitespace-nowrap">{chipFrequencySuffix(chip)}</span>
-                  ) : null}
+                  {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
                 </span>
               </span>
             </button>
           </Tooltip>
         );
-      })}
-    </>
-  );
+      });
+  if (actionsStripLayout) {
+    return (
+      <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">
+        {chipElements}
+      </WidthSortedFlexWrap>
+    );
+  }
+  return <div className="flex flex-col gap-1.5">{chipElements}</div>;
 }
 
 /**
@@ -577,7 +788,6 @@ export function GuideFeatureCardChips({
  * @param {object} [props.rangerFocusToggle] — legacy bridge when V2 card handler absent
  * @param {object} [props.faerieWingsProps]
  * @param {function} [props.onShareFeature]
- * @param {string} [props.tone] — 'default' | 'domain'
  * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, activeElements?: object[] }} [props.v2TableContext] — for `isSelect` chips (Druid Beastform, etc.)
  * @param {boolean} [props.hideV2CardChips] — when true, omit the V2 chip row (e.g. chips live in a separate Actions card).
  * @param {object} [props.sheetHighlightAbility] — when set, row is a domain ability from `el.abilities` (source-badge dimming).
@@ -597,7 +807,6 @@ export function GuideFeatureCard({
   rangerFocusToggle,
   faerieWingsProps,
   onShareFeature,
-  tone = 'default',
   v2TableContext,
   pendingBanners,
   hideV2CardChips = false,
@@ -625,10 +834,7 @@ export function GuideFeatureCard({
   const highlight = highlightCtx?.highlight ?? null;
   const cardDimmed = shouldDimFeatOrAbilityRow(sheetHighlightAbility, featRow, el, highlight);
 
-  const shellClass =
-    tone === 'domain'
-      ? 'rounded-lg overflow-hidden dh-tint-magic-feature-card border border-dh-border/30'
-      : 'rounded-lg overflow-hidden bg-dh-raised/40 border-t border-dh-border/60';
+  const shellClass = 'rounded-lg overflow-hidden bg-dh-raised/40 border-t border-dh-border/60';
 
   const sourceBadge = model.sourceLabel && (
     <span
@@ -653,9 +859,7 @@ export function GuideFeatureCard({
   );
 
   const lifted = model.liftedHeader;
-  const freqLabel =
-    (lifted?.frequency && formatFrequency(lifted.frequency)) ||
-    (!lifted?.frequency && legacy.frequency ? formatFrequency(legacy.frequency) : null);
+  const freqForHeader = lifted?.frequency ?? legacy.frequency ?? null;
   const titleCostAction = buildTitleCostAction(model, legacy);
 
   const actionLoopPhases = model.actionLoopPhases;
@@ -665,21 +869,29 @@ export function GuideFeatureCard({
 
   const showHiddenPhaseChipsIcon = !!model.hasHiddenConditionalPhaseChips;
 
+  const passiveLines = model.passiveBonusTooltipLines ?? [];
+  const showPassiveBonusIcon = passiveLines.length > 0;
+  const passiveBonusTooltipLabel = [
+    FEATURE_CARD_PASSIVE_BONUS_UI.tooltipTitle,
+    ...passiveLines,
+    '',
+    FEATURE_CARD_PASSIVE_BONUS_UI.tooltipSheetNote,
+  ].join('\n');
+
   const hasVisibleCardChips = model.cardChips.length > 0 && !hideV2CardChips;
 
   const showWidgetRow =
     hasVisibleCardChips ||
     model.showLegacyUseStrip ||
-    model.declarativePassive.length > 0 ||
     model.legacyPassive.length > 0 ||
     !!rangerFocusToggle ||
     !!faerieWingsProps ||
     ((prayerDiceProps?.dice?.length ?? 0) > 0);
 
   const badgeRow =
-    (showPhaseIcons || showHiddenPhaseChipsIcon) ||
+    (showPhaseIcons || showHiddenPhaseChipsIcon || showPassiveBonusIcon) ||
     titleCostAction ||
-    freqLabel ||
+    freqForHeader ||
     activeChanneledElement ||
     sourceBadge;
 
@@ -702,10 +914,20 @@ export function GuideFeatureCard({
       >
         {legacy.frequency
           ? isUsed
-            ? `Used until ${legacy.frequency === 'session' ? 'next session' : legacy.frequency === 'longRest' ? 'long rest' : 'any rest'}`
-            : 'Unused'
+            ? (
+                <span className="inline-flex items-center gap-1">
+                  <span>Used</span>
+                  <FrequencyCycleChipSuffix frequency={legacy.frequency} iconSize={9} />
+                </span>
+              )
+            : (
+                <span className="inline-flex items-center gap-1">
+                  <span>Unused</span>
+                  <FrequencyCycleChipSuffix frequency={legacy.frequency} iconSize={9} />
+                </span>
+              )
           : isUsed
-            ? `✓ used/${legacy.frequency === 'session' ? 'session' : legacy.frequency === 'longRest' ? 'long rest' : 'rest'}`
+            ? '✓ used'
             : hasDice
               ? '⚄ active'
               : 'active'}
@@ -719,9 +941,7 @@ export function GuideFeatureCard({
         <button
           type="button"
           onClick={onToggle}
-          className={`w-full min-w-0 flex items-start gap-1 text-left transition-colors rounded -m-1 p-1 ${
-            tone === 'domain' ? 'hover:bg-dh-hover/30' : 'hover:bg-dh-hover/40'
-          }`}
+          className="w-full min-w-0 flex items-start gap-1 text-left transition-colors rounded -m-1 p-1 hover:bg-dh-hover/40"
         >
           {open ? <ChevronDown size={11} className="text-dh-muted shrink-0 mt-0.5" /> : <ChevronRight size={11} className="text-dh-muted shrink-0 mt-0.5" />}
           <div className="flex-1 min-w-0 flex flex-col gap-1">
@@ -729,7 +949,7 @@ export function GuideFeatureCard({
               <span className="text-sm font-semibold text-dh leading-snug min-w-0 shrink-0 max-w-full">{model.displayName}</span>
               {badgeRow ? (
                 <div className="flex flex-wrap items-center gap-1 justify-end min-w-0 flex-1">
-                  {(showPhaseIcons || showHiddenPhaseChipsIcon) && (
+                  {(showPhaseIcons || showHiddenPhaseChipsIcon || showPassiveBonusIcon) && (
                     <span className="inline-flex items-center gap-0.5 shrink-0 text-dh">
                       {showHiddenPhaseChipsIcon && (
                         <Tooltip label={FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.tooltip} placement="bottom">
@@ -759,12 +979,20 @@ export function GuideFeatureCard({
                           </span>
                         </Tooltip>
                       )}
+                      {showPassiveBonusIcon && (
+                        <Tooltip label={passiveBonusTooltipLabel} placement="bottom">
+                          <span
+                            className="inline-flex text-dh-muted"
+                            aria-label={passiveBonusTooltipLabel}
+                          >
+                            <FEATURE_CARD_PASSIVE_BONUS_UI.Icon size={10} className="shrink-0" aria-hidden />
+                          </span>
+                        </Tooltip>
+                      )}
                     </span>
                   )}
                   {titleCostAction && <FeatureResourceCostIcons action={titleCostAction} iconSize={10} className="shrink-0" />}
-                  {freqLabel && (
-                    <span className="text-[9px] rounded px-1 border shrink-0 bg-dh-hover/50 border-dh-border text-dh-muted">{freqLabel}</span>
-                  )}
+                  {freqForHeader && <FrequencyCycleChipSuffix frequency={freqForHeader} iconSize={10} />}
                   {activeChanneledElement && (
                     <span className="text-[9px] rounded px-1 border shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300 font-semibold">
                       {activeChanneledElement === 'fire'
@@ -809,8 +1037,9 @@ export function GuideFeatureCard({
             <div className="pt-1.5 space-y-1">
               {canLegacy && (!v2OriginFeatureDescriptorsByName[model.name] || !!v2OriginFeatureDescriptorsByName[model.name]?.onUse) ? (
                 isUsed ? (
-                  <p className="text-[10px] text-dh-muted italic">
-                    Used this {legacy.frequency === 'session' ? 'session' : legacy.frequency === 'longRest' ? 'long rest' : 'rest'}
+                  <p className="text-[10px] text-dh-muted italic inline-flex items-center gap-1 flex-wrap">
+                    <span>Used</span>
+                    <FrequencyCycleChipSuffix frequency={legacy.frequency} iconSize={9} />
                   </p>
                 ) : (
                   <button
@@ -865,16 +1094,6 @@ export function GuideFeatureCard({
                 />
                 <span className="text-[10px] font-medium text-dh">Flying</span>
               </label>
-            </div>
-          )}
-
-          {model.declarativePassive.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {model.declarativePassive.map((text, i) => (
-                <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-dh-raised/80 border border-dh-border text-dh-muted">
-                  {text}
-                </span>
-              ))}
             </div>
           )}
 
