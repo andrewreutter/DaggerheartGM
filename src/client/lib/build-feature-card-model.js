@@ -53,6 +53,8 @@ export const V2_TABLE_STUB_NO_INSTANCE_ID = Object.freeze({
   top: { fear: 0, map: null, shortRest: null, longRest: null },
 });
 
+export { flattenChipsForDisplay };
+
 const PSM_LABELS = {
   evasion: 'Evasion',
   armorScore: 'Armor Score',
@@ -72,8 +74,6 @@ const PSM_LABELS = {
   numLongRestSlots: 'Long rest slots',
   numLongMovesInShortRest: 'Long moves in short rest',
 };
-
-export { flattenChipsForDisplay };
 
 function formatPassiveStatKey(key, value) {
   const label = PSM_LABELS[key] || key;
@@ -106,31 +106,28 @@ function pushRangeOverrides(row, badges) {
 }
 
 /**
- * Collect declarative passive badges from a merged feature row (guide Appendix A).
- * Skips dynamic `when`-wrapped `passiveStatMods` trees (handled visually via description).
- * Does not duplicate `advantageTriggers` as chips — those stay in the markdown description only.
+ * Lines for the feature card passive-bonus tooltip (header icon): static `passiveStatMods`,
+ * damage affinities, range overrides. Not shown as pills — details appear in the header icon tooltip.
+ * Skips dynamic `when`-wrapped `passiveStatMods`. Does not include `advantageTriggers`.
+ *
+ * @param {object} row — merged activeFeatures row (or registry feature object)
+ * @returns {string[]}
  */
-export function collectDeclarativePassiveBadges(row) {
-  const badges = [];
-  const psm = row.passiveStatMods;
+export function collectPassiveBonusTooltipLines(row) {
+  const lines = [];
+  const psm = row?.passiveStatMods;
   if (psm && typeof psm === 'object' && !psm._predicates) {
     for (const [k, v] of Object.entries(psm)) {
-      if (typeof v === 'number' && v !== 0) badges.push(formatPassiveStatKey(k, v));
+      if (typeof v === 'number' && v !== 0) lines.push(formatPassiveStatKey(k, v));
     }
   }
-  pushDamageAffinities(row, badges);
-  pushRangeOverrides(row, badges);
-  return badges;
+  pushDamageAffinities(row, lines);
+  pushRangeOverrides(row, lines);
+  return lines;
 }
 
-function formatFrequency(freq) {
-  if (!freq) return null;
-  if (freq === 'session') return 'Once per session';
-  if (freq === 'longRest') return 'Once per long rest';
-  if (freq === 'shortRest') return 'Once per short rest';
-  if (freq === 'rest') return 'Once per rest';
-  return String(freq);
-}
+/** @deprecated Use {@link collectPassiveBonusTooltipLines} */
+export const collectDeclarativePassiveBadges = collectPassiveBonusTooltipLines;
 
 /**
  * Human-facing feature title for cards / Actions strip. Falls back to `row.name`.
@@ -159,6 +156,48 @@ export function resolveFeatureDisplayName(row, table) {
   }
   const str = String(dn).trim();
   return str !== '' ? str : fallback;
+}
+
+/**
+ * Header source pill for {@link buildFeatureCardModel}. Domain cards (`type === 'ability'`) use the
+ * SRD row’s domain / spell type / level — not `source.name` (that duplicated the card title).
+ *
+ * @param {object} row
+ * @returns {string|undefined}
+ */
+export function resolveGuideSourceLabel(row) {
+  if (!row || typeof row !== 'object') return undefined;
+  if (row.type === 'ability' && row.source && typeof row.source === 'object') {
+    const src = row.source;
+    const dom = src.domain != null && String(src.domain).trim() !== '' ? String(src.domain).trim() : '';
+    const typ = src.type != null && String(src.type).trim() !== '' ? String(src.type).trim() : '';
+    const lvl =
+      src.level != null && src.level !== ''
+        ? `Lvl ${src.level}`
+        : '';
+    const parts = [dom, typ, lvl].filter(Boolean);
+    if (parts.length) return parts.join(' · ');
+    return undefined;
+  }
+  if (typeof row.source === 'string') return row.source;
+  if (row.source && typeof row.source === 'object' && row.source.name != null) {
+    return String(row.source.name);
+  }
+  return undefined;
+}
+
+/**
+ * Provenance styling for the guide card source pill. LOADOUT domain abilities default to `domain`
+ * (purple `.dh-magic-source-badge`) when the row omits `sourceType`.
+ *
+ * @param {object} row
+ * @returns {string|undefined}
+ */
+export function resolveGuideSourceType(row) {
+  if (!row || typeof row !== 'object') return undefined;
+  if (row.sourceType != null && row.sourceType !== '') return row.sourceType;
+  if (row.type === 'ability') return 'domain';
+  return undefined;
 }
 
 /** @param {object} chip */
@@ -309,12 +348,12 @@ export function buildFeatureCardModel(row, options = {}) {
     cardChips = filterCardPhaseChips(flat);
   }
 
-  const declarativePassive = collectDeclarativePassiveBadges(row);
+  const passiveBonusTooltipLines = collectPassiveBonusTooltipLines(row);
   const legacyAction = useLegacy
     ? deriveFeatureActionFromV2Row(row)
     : { isActive: false, dice: [], spellcastVsRoll: false };
   const legacyPassive =
-    useLegacy && !legacyAction.isActive && declarativePassive.length === 0
+    useLegacy && !legacyAction.isActive && passiveBonusTooltipLines.length === 0
       ? parsePassiveStats(description)
       : [];
 
@@ -352,11 +391,12 @@ export function buildFeatureCardModel(row, options = {}) {
     name: row.name,
     displayName,
     description,
-    sourceType: row.sourceType,
-    sourceLabel: typeof row.source === 'string' ? row.source : row.source?.name,
+    sourceType: resolveGuideSourceType(row),
+    sourceLabel: resolveGuideSourceLabel(row),
     cardChips,
     liftedHeader,
-    declarativePassive,
+    /** Lines for header passive-bonus icon tooltip (PSM, affinities, range overrides). */
+    passiveBonusTooltipLines,
     legacyPassive,
     legacyAction,
     hasDice,
@@ -594,4 +634,4 @@ export function collectV2IsToggleCardFeatureGroups(el, v2TableContext) {
   return out;
 }
 
-export { formatFrequency, filterCardPhaseChips };
+export { filterCardPhaseChips };

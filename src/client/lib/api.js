@@ -1,3 +1,4 @@
+import { buildLibraryAllSearchParams } from './library-all-api-params.js';
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
@@ -105,7 +106,7 @@ export const postDevAgentQueue = async ({ path, kind, message }) => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20, id = null } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -114,6 +115,7 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (includePublic) params.set('includePublic', '1');
   if (includeHod) params.set('includeHod', '1');
   if (search) params.set('search', search);
+  if (collection === 'features' && id) params.set('id', id);
   if (Array.isArray(tiers) && tiers.length > 0) {
     tiers.forEach(t => params.append('tier', String(t)));
   } else if (tier != null) {
@@ -127,9 +129,42 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (Array.isArray(extraTypes) && extraTypes.length > 0) {
     extraTypes.forEach(t => params.append('type2', t));
   }
+  if (collection === 'features' && Array.isArray(types) && types.length > 0) {
+    types.forEach(t => params.append('featScope', t));
+  }
   if (includeScaledUp) params.set('includeScaledUp', '1');
   if (sort) params.set('sort', sort);
   const res = await fetch(`/api/data/${collection}?${params}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+export { buildLibraryAllSearchParams };
+
+/**
+ * Merged Library “All” tab — all SRD unified collections; each item includes `_collection`.
+ */
+export const loadLibraryAll = async (opts = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = buildLibraryAllSearchParams(opts);
+  const res = await fetch(`/api/data/library-all?${params}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Per-collection counts for Library nav (same filters as `loadLibraryAll`; COUNT-only on the server).
+ */
+export const loadLibraryAllCounts = async (opts = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = buildLibraryAllSearchParams({ ...opts, offset: 0, limit: 20 });
+  const res = await fetch(`/api/data/library-all-counts?${params}`, {
     headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

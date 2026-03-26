@@ -89,7 +89,7 @@ export const Evolution = {
         const opts = druidBeastformSelectRows(table);
         return opts.map((o) => ({
           id: o.id,
-          name: `${o.name} (Evolution)`,
+          name: `${o.name}`,
           description: beastformRowToTooltipMarkdown(o),
         }));
       },

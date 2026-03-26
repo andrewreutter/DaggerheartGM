@@ -18,6 +18,8 @@ import {
   resolveWeaponTagDescriptor,
 } from '../lib/game-table-mechanics.js';
 import { MarkdownText } from '../lib/markdown.js';
+import { mergeOptionAndFeatureTooltipMarkdown } from '../lib/guide-feature-card-tip-text.js';
+import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-hover-tooltip.jsx';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
@@ -25,11 +27,15 @@ import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chi
 import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
 import {
   V2_REVIEW_CHIP_INLINE_OPTION_MAX,
+  V2_INLINE_GROUP_OUTER,
+  V2_INLINE_GROUP_OUTER_SCROLL,
+  V2_INLINE_GROUP_TITLE_ROW,
   V2_INLINE_SEG_BTN_BASE,
   V2_INLINE_SEG_TARGET_BTN,
   V2_INLINE_SEG_OFF,
   V2_INLINE_SEG_ON,
 } from '../lib/v2-inline-select-ui.js';
+import { V2SegmentedRowWrap } from './V2SegmentedRowWrap.jsx';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -264,6 +270,7 @@ function RestBanner({
   restMovesForRoll = {},
   movesPerCharacter = {},
   restBannerChipsByInstanceId = {},
+  restRefreshPreviewByInstanceId = {},
   onRestBannerV2Chip,
   onRestMoveSelect,
   canEditColumn,
@@ -379,6 +386,13 @@ function RestBanner({
               return (o._targetInstanceId ?? null) === (sel['move' + slotNum + 'TargetInstanceId'] ?? null);
             }) ?? null;
             const restChips = restBannerChipsByInstanceId[char.instanceId] || [];
+            const refreshPreview = restRefreshPreviewByInstanceId[char.instanceId];
+            const hasRefreshPreview =
+              refreshPreview &&
+              (refreshPreview.resetting.usageLabels.length > 0 ||
+                refreshPreview.resetting.modifierLabels.length > 0 ||
+                refreshPreview.resetting.notes.length > 0 ||
+                refreshPreview.unusedQualifiedLabels.length > 0);
             return (
               <div key={char.instanceId} className="flex flex-col gap-1.5 border border-dh-strong rounded-lg px-2 py-1.5 bg-dh-raised/50">
                 <div className="flex flex-row items-center gap-2 flex-wrap">
@@ -416,6 +430,30 @@ function RestBanner({
                     </div>
                   )}
                 </div>
+                {hasRefreshPreview && (
+                  <div className="text-[10px] text-dh-muted leading-snug space-y-0.5 border-t border-dh-border/50 pt-1.5">
+                    {(refreshPreview.resetting.usageLabels.length > 0 ||
+                      refreshPreview.resetting.modifierLabels.length > 0 ||
+                      refreshPreview.resetting.notes.length > 0) && (
+                      <div>
+                        <span className="text-dh-hope-soft/90 font-semibold">Refreshes on acknowledge: </span>
+                        <span className="text-dh/90">
+                          {[
+                            ...refreshPreview.resetting.usageLabels,
+                            ...refreshPreview.resetting.modifierLabels.map((n) => `${n} (modifier)`),
+                            ...refreshPreview.resetting.notes,
+                          ].join(' · ')}
+                        </span>
+                      </div>
+                    )}
+                    {refreshPreview.unusedQualifiedLabels.length > 0 && (
+                      <div>
+                        <span className="font-semibold text-dh-muted">Qualified but unused (no refresh needed): </span>
+                        <span>{refreshPreview.unusedQualifiedLabels.join(' · ')}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex flex-row items-center gap-2 flex-wrap">
                 {Array.from({ length: slotCount }, (_, i) => i + 1).map(slot => {
                   const options = flattenOptions(moves);
@@ -669,7 +707,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
               <div className="text-[10px] text-dh-muted italic">No other characters within Close range with marked HP</div>
             ) : (
               <div
-                className="flex w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+                className={V2_INLINE_GROUP_OUTER_SCROLL}
                 role="group"
                 aria-label="Life Support ally"
               >
@@ -682,7 +720,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                       onClick={() => onLifeSupportSelect?.(t.instanceId)}
                       className={`${V2_INLINE_SEG_TARGET_BTN} ${selected ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF} ${!disableDismiss ? '' : 'cursor-default'}`}
                     >
-                      <span className="block truncate font-semibold">{t.name}</span>
+                      <span className="break-words font-semibold">{t.name}</span>
                     </button>
                   );
                 })}
@@ -736,8 +774,21 @@ function V2ReviewChipRow({
   const needsTargets = typeof chip.selectTargets === 'function';
   const picker = resolveV2ReviewChipPicker?.(chip, roll);
   const label = chip.description || chip.name || chip._featureName || 'Feature';
+  const featureDescRaw = typeof chip.description === 'string' ? chip.description.trim() : '';
+  /** Feature tooltip for whole isSelect / selectTargets chip shells (not per-button). */
+  const chipFeatureTooltipMd = featureDescRaw || label;
   const stableKey = chip._chipKey || `${phaseKey}-${chip._featureName}-${rowIndex}`;
   const consumed = chip._v2BannerOnUseConsumed === true;
+
+  const segHover = usePortalHoverTooltip();
+  const inlineMultiBankRef = useRef(null);
+  const inlineSingleBankRef = useRef(null);
+  const selectTargetsBankRef = useRef(null);
+  const reviewPickerRowTipMd = (row) => {
+    const d = typeof row?.description === 'string' ? row.description.trim() : '';
+    if (!d) return '';
+    return mergeOptionAndFeatureTooltipMarkdown(d, featureDescRaw);
+  };
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedTargetIds, setSelectedTargetIds] = useState([]);
@@ -821,6 +872,10 @@ function V2ReviewChipRow({
     needsIsSelect &&
     options.length > 0 &&
     options.length <= V2_REVIEW_CHIP_INLINE_OPTION_MAX;
+  /** Hide panel title when the chip name row is already inside an inline isSelect or selectTargets group. */
+  const hideOuterChipTitleRow =
+    (needsIsSelect && options.length > 0 && (useInlineIsSelect || !chip.multiSelect)) ||
+    (needsTargets && pickTargets.length > 0);
   const blockHint =
     isPlayer && !playerMayUse
       ? 'Assign a character to you to use V2 review chips.'
@@ -874,155 +929,256 @@ function V2ReviewChipRow({
   const panel = (
     <div
       key={stableKey}
-      className="rounded border border-dh-border bg-dh-inset px-2 py-1.5 space-y-1.5"
+      className="rounded border border-dh-border bg-dh-inset px-2 py-2 space-y-1.5"
     >
-      <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
-        <span className="font-semibold text-dh">{chip._featureName}</span>
-        {chip.name && chip.name !== chip._featureName ? (
-          <span className="text-dh-muted"> — {chip.name}</span>
-        ) : null}
-        <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />
-      </div>
+      {!hideOuterChipTitleRow ? (
+        <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
+          <span className="font-semibold text-dh">{chip._featureName}</span>
+          {chip.name && chip.name !== chip._featureName ? (
+            <span className="text-dh-muted"> — {chip.name}</span>
+          ) : null}
+          <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />
+        </div>
+      ) : null}
       {needsIsSelect && options.length === 0 ? (
         <p className="text-[9px] text-dh-muted">No options available for this chip.</p>
       ) : null}
       {needsIsSelect && options.length > 0 ? (
-        <div className="flex flex-col gap-1">
-          {chip.multiSelect && !useInlineIsSelect
-            ? options.map((o) => {
-                const id = optionId(o);
-                const idStr = id != null ? String(id) : '';
-                const checked = id != null && selectedIds.some((x) => String(x) === idStr);
-                return (
-                  <label
-                    key={String(id)}
-                    className="flex items-center gap-2 text-[10px] text-dh cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      className="rounded border-dh-strong"
-                      checked={checked}
-                      onChange={() => id != null && toggleId(idStr)}
-                      disabled={blockedBase}
-                    />
-                    <span>{optionLabel(o)}</span>
-                  </label>
-                );
-              })
-            : null}
-          {chip.multiSelect && useInlineIsSelect ? (
-            <div
-              className="flex w-full max-w-full overflow-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
-              role="group"
-              aria-label={label}
+        <div className="flex flex-col gap-1.5">
+          {chip.multiSelect && !useInlineIsSelect ? (
+            <Tooltip
+              content={<MarkdownText text={chipFeatureTooltipMd} className="text-[11px] leading-relaxed dh-md" />}
+              placement="bottom-left"
+              className="relative block w-full min-w-0"
             >
-              {options.map((o) => {
-                const id = optionId(o);
-                const idStr = id != null ? String(id) : '';
-                const on = id != null && selectedIds.some((x) => String(x) === idStr);
-                const desc = typeof o?.description === 'string' ? o.description : undefined;
-                return (
-                  <button
-                    key={String(id)}
-                    type="button"
-                    title={desc}
-                    disabled={blockedBase}
-                    onClick={() => id != null && toggleId(idStr)}
-                    className={`${V2_INLINE_SEG_BTN_BASE} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
-                  >
-                    <span className="block truncate">{optionLabel(o)}</span>
-                  </button>
-                );
-              })}
+              <div className="w-full min-w-0 flex flex-col gap-1">
+                {options.map((o) => {
+                  const id = optionId(o);
+                  const idStr = id != null ? String(id) : '';
+                  const checked = id != null && selectedIds.some((x) => String(x) === idStr);
+                  return (
+                    <label
+                      key={String(id)}
+                      className="flex items-center gap-2 text-[10px] text-dh cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        className="rounded border-dh-strong"
+                        checked={checked}
+                        onChange={() => id != null && toggleId(idStr)}
+                        disabled={blockedBase}
+                      />
+                      <span>{optionLabel(o)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </Tooltip>
+          ) : null}
+          {chip.multiSelect && useInlineIsSelect ? (
+            <div className="w-full min-w-0">
+              <div className={V2_INLINE_GROUP_OUTER} role="group" aria-label={label}>
+                <Tooltip
+                  content={<MarkdownText text={chipFeatureTooltipMd} className="text-[11px] leading-relaxed dh-md" />}
+                  placement="bottom-left"
+                  className="relative block w-full min-w-0"
+                >
+                  <div className={V2_INLINE_GROUP_TITLE_ROW}>
+                    <span className="font-semibold text-[11px] min-w-0 shrink break-words">{chip._featureName}</span>
+                    {chip.name && chip.name !== chip._featureName ? (
+                      <span className="text-dh-muted text-[10px] min-w-0 shrink break-words"> — {chip.name}</span>
+                    ) : null}
+                    <FeatureResourceCostIcons action={chip} iconSize={9} className="shrink-0" />
+                  </div>
+                </Tooltip>
+                <div ref={inlineMultiBankRef} className="w-full min-w-0">
+                <V2SegmentedRowWrap key={`${stableKey}-${roll._rollDbId}-msel`}>
+                  {options.map((o) => {
+                    const id = optionId(o);
+                    const idStr = id != null ? String(id) : '';
+                    const on = id != null && selectedIds.some((x) => String(x) === idStr);
+                    const optMd = reviewPickerRowTipMd(o);
+                    return (
+                      <button
+                        key={String(id)}
+                        type="button"
+                        disabled={blockedBase}
+                        onMouseEnter={(e) => {
+                          if (blockedBase || !optMd) return;
+                          segHover.showFromPointerEvent(e, {
+                            anchorRef: inlineMultiBankRef,
+                            label: optionLabel(o),
+                            description: optMd,
+                            wide: false,
+                          });
+                        }}
+                        onMouseLeave={segHover.scheduleClose}
+                        onClick={() => id != null && toggleId(idStr)}
+                        className={`${V2_INLINE_SEG_BTN_BASE} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
+                      >
+                        <span className="break-words">{optionLabel(o)}</span>
+                      </button>
+                    );
+                  })}
+                </V2SegmentedRowWrap>
+                </div>
+              </div>
             </div>
           ) : null}
           {!chip.multiSelect && useInlineIsSelect ? (
-            <div
-              className="flex w-full max-w-full overflow-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
-              role="group"
-              aria-label={label}
-            >
-              {options.map((o) => {
-                const id = optionId(o);
-                const idStr = id != null ? String(id) : '';
-                const selected =
-                  selectedIds.length === 1 && id != null && String(selectedIds[0]) === idStr;
-                const desc = typeof o?.description === 'string' ? o.description : undefined;
-                return (
-                  <button
-                    key={String(id)}
-                    type="button"
-                    title={desc}
-                    disabled={blockedBase}
-                    onClick={() => {
-                      if (id == null || blockedBase) return;
-                      if (singleSelectImmediate) {
-                        onV2ReviewChip?.(chip, roll, { selectedId: idStr });
-                      } else {
-                        setSelectedIds([idStr]);
-                      }
-                    }}
-                    className={`${V2_INLINE_SEG_BTN_BASE} ${selected ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
-                  >
-                    <span className="block truncate">{optionLabel(o)}</span>
-                  </button>
-                );
-              })}
+            <div className="w-full min-w-0">
+              <div className={V2_INLINE_GROUP_OUTER} role="group" aria-label={label}>
+                <Tooltip
+                  content={<MarkdownText text={chipFeatureTooltipMd} className="text-[11px] leading-relaxed dh-md" />}
+                  placement="bottom-left"
+                  className="relative block w-full min-w-0"
+                >
+                  <div className={V2_INLINE_GROUP_TITLE_ROW}>
+                    <span className="font-semibold text-[11px] min-w-0 shrink break-words">{chip._featureName}</span>
+                    {chip.name && chip.name !== chip._featureName ? (
+                      <span className="text-dh-muted text-[10px] min-w-0 shrink break-words"> — {chip.name}</span>
+                    ) : null}
+                    <FeatureResourceCostIcons action={chip} iconSize={9} className="shrink-0" />
+                  </div>
+                </Tooltip>
+                <div ref={inlineSingleBankRef} className="w-full min-w-0">
+                <V2SegmentedRowWrap key={`${stableKey}-${roll._rollDbId}-ssel`}>
+                  {options.map((o) => {
+                    const id = optionId(o);
+                    const idStr = id != null ? String(id) : '';
+                    const selected =
+                      selectedIds.length === 1 && id != null && String(selectedIds[0]) === idStr;
+                    const optMd = reviewPickerRowTipMd(o);
+                    return (
+                      <button
+                        key={String(id)}
+                        type="button"
+                        disabled={blockedBase}
+                        onMouseEnter={(e) => {
+                          if (blockedBase || !optMd) return;
+                          segHover.showFromPointerEvent(e, {
+                            anchorRef: inlineSingleBankRef,
+                            label: optionLabel(o),
+                            description: optMd,
+                            wide: false,
+                          });
+                        }}
+                        onMouseLeave={segHover.scheduleClose}
+                        onClick={() => {
+                          if (id == null || blockedBase) return;
+                          if (singleSelectImmediate) {
+                            onV2ReviewChip?.(chip, roll, { selectedId: idStr });
+                          } else {
+                            setSelectedIds([idStr]);
+                          }
+                        }}
+                        className={`${V2_INLINE_SEG_BTN_BASE} ${selected ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
+                      >
+                        <span className="break-words">{optionLabel(o)}</span>
+                      </button>
+                    );
+                  })}
+                </V2SegmentedRowWrap>
+                </div>
+              </div>
             </div>
           ) : null}
           {!chip.multiSelect && !useInlineIsSelect ? (
-            <CustomSelect
-              className="text-[10px] [&_button]:py-1.5 [&_button]:px-2 [&_button]:min-h-0 [&_button]:text-[10px]"
-              value={
-                needsTargets
-                  ? options.find((o) => String(optionId(o)) === String(selectedIds[0] ?? '')) ?? null
-                  : null
-              }
-              placeholder="Choose…"
-              options={options}
-              getOptionKey={(o) => String(optionId(o) ?? '')}
-              getOptionLabel={(o) => optionLabel(o)}
-              getOptionDescription={(o) => (typeof o?.description === 'string' ? o.description : undefined)}
-              disabled={blockedBase}
-              disabledReason={blockedBase ? blockHint : undefined}
-              onChange={(opt) => {
-                if (opt == null || blockedBase) return;
-                const id = optionId(opt);
-                if (id == null) return;
-                const sid = String(id);
-                if (singleSelectImmediate) {
-                  onV2ReviewChip?.(chip, roll, { selectedId: sid });
-                } else {
-                  setSelectedIds([sid]);
-                }
-              }}
-            />
+            <Tooltip
+              content={<MarkdownText text={chipFeatureTooltipMd} className="text-[11px] leading-relaxed dh-md" />}
+              placement="bottom-left"
+              className="relative block w-full min-w-0"
+            >
+              <div className="w-full min-w-0">
+                <CustomSelect
+                  className="text-[10px] [&_button]:py-1.5 [&_button]:px-2 [&_button]:min-h-0 [&_button]:text-[10px]"
+                  value={
+                    needsTargets
+                      ? options.find((o) => String(optionId(o)) === String(selectedIds[0] ?? '')) ?? null
+                      : null
+                  }
+                  placeholder="Choose…"
+                  renderPlaceholder={() => (
+                    <span className="inline-flex items-center gap-1 min-w-0">
+                      <span className="font-semibold text-[11px] truncate">{chip._featureName}</span>
+                      {chip.name && chip.name !== chip._featureName ? (
+                        <span className="text-dh-muted text-[10px] truncate"> — {chip.name}</span>
+                      ) : null}
+                      <FeatureResourceCostIcons action={chip} iconSize={9} className="shrink-0" />
+                    </span>
+                  )}
+                  options={options}
+                  getOptionKey={(o) => String(optionId(o) ?? '')}
+                  getOptionLabel={(o) => optionLabel(o)}
+                  getOptionDescription={(o) => (typeof o?.description === 'string' ? o.description : undefined)}
+                  disabled={blockedBase}
+                  disabledReason={blockedBase ? blockHint : undefined}
+                  onChange={(opt) => {
+                    if (opt == null || blockedBase) return;
+                    const id = optionId(opt);
+                    if (id == null) return;
+                    const sid = String(id);
+                    if (singleSelectImmediate) {
+                      onV2ReviewChip?.(chip, roll, { selectedId: sid });
+                    } else {
+                      setSelectedIds([sid]);
+                    }
+                  }}
+                />
+              </div>
+            </Tooltip>
           ) : null}
         </div>
       ) : null}
       {needsTargets && pickTargets.length > 0 ? (
-        <div
-          className="flex w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
-          role="group"
-          aria-label={`${chip._featureName || 'Feature'} targets`}
-        >
-          {pickTargets.map((t) => {
-            const tid = actorInstanceId(t);
-            if (!tid) return null;
-            const name = t.name || t.label || tid;
-            const on = selectedTargetIds.includes(tid);
-            return (
-              <button
-                key={tid}
-                type="button"
-                disabled={blockedBase || needsPrimaryFirst}
-                onClick={() => toggleTarget(tid)}
-                className={`${V2_INLINE_SEG_TARGET_BTN} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
-              >
-                <span className="block truncate">{name}</span>
-              </button>
-            );
-          })}
+        <div className="w-full min-w-0">
+          <div className={V2_INLINE_GROUP_OUTER} role="group" aria-label={`${chip._featureName || 'Feature'} targets`}>
+            <Tooltip
+              content={<MarkdownText text={chipFeatureTooltipMd} className="text-[11px] leading-relaxed dh-md" />}
+              placement="bottom-left"
+              className="relative block w-full min-w-0"
+            >
+              <div className={V2_INLINE_GROUP_TITLE_ROW}>
+                <span className="font-semibold text-[11px] min-w-0 shrink break-words">{chip._featureName}</span>
+                {chip.name && chip.name !== chip._featureName ? (
+                  <span className="text-dh-muted text-[10px] min-w-0 shrink break-words"> — {chip.name}</span>
+                ) : null}
+                <FeatureResourceCostIcons action={chip} iconSize={9} className="shrink-0" />
+              </div>
+            </Tooltip>
+            <div ref={selectTargetsBankRef} className="w-full min-w-0">
+            <V2SegmentedRowWrap key={`${stableKey}-${roll._rollDbId}-tgt`}>
+              {pickTargets.map((t) => {
+                const tid = actorInstanceId(t);
+                if (!tid) return null;
+                const name = t.name || t.label || tid;
+                const on = selectedTargetIds.includes(tid);
+                const tgtMd = reviewPickerRowTipMd(t);
+                return (
+                  <button
+                    key={tid}
+                    type="button"
+                    disabled={blockedBase || needsPrimaryFirst}
+                    onMouseEnter={(e) => {
+                      if (blockedBase || needsPrimaryFirst || !tgtMd) return;
+                      segHover.showFromPointerEvent(e, {
+                        anchorRef: selectTargetsBankRef,
+                        label: String(name),
+                        description: tgtMd,
+                        wide: false,
+                      });
+                    }}
+                    onMouseLeave={segHover.scheduleClose}
+                    onClick={() => toggleTarget(tid)}
+                    className={`${V2_INLINE_SEG_TARGET_BTN} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
+                  >
+                    <span className="break-words">{name}</span>
+                  </button>
+                );
+              })}
+            </V2SegmentedRowWrap>
+            </div>
+          </div>
         </div>
       ) : null}
       {needsPrimaryFirst ? (
@@ -1042,6 +1198,12 @@ function V2ReviewChipRow({
           Apply
         </button>
       ) : null}
+      <PortalHoverTooltipLayer
+        tooltip={segHover.tooltip}
+        tooltipRef={segHover.tooltipRef}
+        scheduleClose={segHover.scheduleClose}
+        clearLeaveTimer={segHover.clearLeaveTimer}
+      />
     </div>
   );
 
@@ -2604,6 +2766,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   restTableCharacters = [],
   restMovesPerCharacter = {},
   restBannerChipsByInstanceId = {},
+  restRefreshPreviewByInstanceId = {},
   onRestBannerV2Chip,
   restCanEditColumn = () => true,
   restGmUid = null,
@@ -3144,6 +3307,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 restMovesForRoll={entry.roll._rollDbId != null ? (restMovesSelections[entry.roll._rollDbId] || {}) : {}}
                 movesPerCharacter={restMovesPerCharacter}
                 restBannerChipsByInstanceId={restBannerChipsByInstanceId}
+                restRefreshPreviewByInstanceId={restRefreshPreviewByInstanceId}
                 onRestBannerV2Chip={onRestBannerV2Chip}
                 onRestMoveSelect={onRestMoveSelect}
                 canEditColumn={restCanEditColumn}

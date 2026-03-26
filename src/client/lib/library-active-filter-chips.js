@@ -1,12 +1,5 @@
-import { getLibraryFilterConfig } from './library-filter-config.js';
-import { LIBRARY_DEFAULT_INCLUDES } from './library-default-filters.js';
-
-const SOURCE_LABELS = {
-  own: 'Mine',
-  srd: 'SRD',
-  public: 'Public',
-  hod: 'HoD',
-};
+import { formatFeatScopeLabel, getLibraryFilterConfig } from './library-filter-config.js';
+import { LIBRARY_DEFAULT_INCLUDES, getLibraryIncludeMode } from './library-default-filters.js';
 
 function includesMatchDefault(includes) {
   const a = [...(includes || [])].sort().join('\0');
@@ -20,17 +13,24 @@ function truncateForChip(s, max = 48) {
   return `${t.slice(0, max - 1)}…`;
 }
 
-/** Human-readable source selection for chip labels (matches filter bar semantics: [] = All). */
+/** Human-readable source selection for chip labels (matches single-select Include strip). */
 export function formatIncludesForChipLabel(includes) {
-  const arr = includes || [];
-  if (arr.length === 0) return 'All';
-  return arr.map(k => SOURCE_LABELS[k] || k).join(', ');
+  const mode = getLibraryIncludeMode(includes);
+  if (mode === 'all') return 'All';
+  if (mode === 'mine_srd') return 'Mine + SRD';
+  if (mode === 'own') return 'Mine';
+  if (mode === 'srd') return 'SRD';
+  if (mode === 'public') return 'Public';
+  return 'All';
 }
 
 function formatTypeValuesForChip(collection, types) {
   return (types || []).map(val => {
     if (collection === 'adversaries' && typeof val === 'string') {
       return val.charAt(0).toUpperCase() + val.slice(1);
+    }
+    if (collection === 'features' && typeof val === 'string') {
+      return formatFeatScopeLabel(val);
     }
     return String(val);
   }).join(', ');
@@ -72,7 +72,10 @@ export function getActiveLibraryFilterChipSpecs(filters, collection) {
 
   const rankLabel = cfg.rankMode === 'level' ? 'Level' : cfg.rankMode === 'none' ? null : 'Tier';
   if (rankLabel && tiers.length > 0) {
-    const tierStr = [...tiers].sort((a, b) => a - b).join(', ');
+    const tierStr =
+      collection === 'adversaries' && tiers.length === 1 && includeScaledUp
+        ? `${tiers[0]} (scaled up)`
+        : [...tiers].sort((a, b) => a - b).join(', ');
     chips.push({
       key: 'resetTier',
       label: `${rankLabel}: ${tierStr}`,
@@ -103,16 +106,169 @@ export function getActiveLibraryFilterChipSpecs(filters, collection) {
     });
   }
 
-  if (collection === 'adversaries' && tiers.length === 1 && includeScaledUp) {
+  return chips;
+}
+
+/**
+ * Filter chips for Library “All” tab (`useLibraryAllSearch` filters).
+ */
+export function getActiveLibraryAllFilterChipSpecs(filters) {
+  const {
+    includes = [],
+    tiers = [],
+    levels = [],
+    advRole = [],
+    envType = [],
+    ablDomain = [],
+    wpnSlot = [],
+    wpnPhyMag = [],
+    featScope = [],
+    search,
+    includeScaledUp,
+  } = filters || {};
+  const chips = [];
+
+  const q = (search || '').trim();
+  if (q) {
     chips.push({
-      key: 'resetIncludeScaled',
-      label: `Include Scaled: on (T${tiers[0]})`,
-      kind: 'resetIncludeScaled',
-      title: 'Turn off Include Scaled',
+      key: 'resetSearch',
+      label: `Search: "${truncateForChip(q)}"`,
+      kind: 'resetSearch',
+      title: 'Clear search',
+    });
+  }
+
+  if (!includesMatchDefault(includes)) {
+    chips.push({
+      key: 'resetIncludes',
+      label: `Source: ${formatIncludesForChipLabel(includes)}`,
+      kind: 'resetIncludes',
+      title: 'Reset sources to Mine + SRD',
+    });
+  }
+
+  if (tiers.length > 0) {
+    const tierLabel =
+      tiers.length === 1 && includeScaledUp
+        ? `${tiers[0]} (scaled up)`
+        : [...tiers].sort((a, b) => a - b).join(', ');
+    chips.push({
+      key: 'resetTier',
+      label: `Tier: ${tierLabel}`,
+      kind: 'resetTierAll',
+      title: 'Reset tier filter',
+    });
+  }
+
+  if (levels.length > 0) {
+    chips.push({
+      key: 'resetLevel',
+      label: `Level: ${[...levels].sort((a, b) => a - b).join(', ')}`,
+      kind: 'resetLevelAll',
+      title: 'Reset level filter',
+    });
+  }
+
+  if (advRole.length > 0) {
+    chips.push({
+      key: 'resetAdvRole',
+      label: `Role: ${advRole.join(', ')}`,
+      kind: 'resetAdvRole',
+      title: 'Reset role filter',
+    });
+  }
+
+  if (envType.length > 0) {
+    chips.push({
+      key: 'resetEnvType',
+      label: `Env type: ${envType.join(', ')}`,
+      kind: 'resetEnvType',
+      title: 'Reset environment type filter',
+    });
+  }
+
+  if (ablDomain.length > 0) {
+    chips.push({
+      key: 'resetAblDomain',
+      label: `Domain: ${ablDomain.join(', ')}`,
+      kind: 'resetAblDomain',
+      title: 'Reset domain filter',
+    });
+  }
+
+  if (wpnSlot.length > 0) {
+    chips.push({
+      key: 'resetWpnSlot',
+      label: `Slot: ${wpnSlot.join(', ')}`,
+      kind: 'resetWpnSlot',
+      title: 'Reset weapon slot filter',
+    });
+  }
+
+  if (wpnPhyMag.length > 0) {
+    chips.push({
+      key: 'resetWpnPhyMag',
+      label: `Damage: ${wpnPhyMag.join(', ')}`,
+      kind: 'resetWpnPhyMag',
+      title: 'Reset damage type filter',
+    });
+  }
+
+  if (featScope.length > 0) {
+    chips.push({
+      key: 'resetFeatScope',
+      label: `Feat scope: ${featScope.map(formatFeatScopeLabel).join(', ')}`,
+      kind: 'resetFeatScope',
+      title: 'Reset V2 feature scope filter',
     });
   }
 
   return chips;
+}
+
+/**
+ * @param {{ kind: string }} spec — from `getActiveLibraryAllFilterChipSpecs`
+ * @param {(key: string, value: *) => void} setFilter — `useLibraryAllSearch` `setFilter`
+ */
+export function applyLibraryAllFilterChipClear(spec, setFilter) {
+  if (!spec || !setFilter) return;
+  switch (spec.kind) {
+    case 'resetSearch':
+      setFilter('search', '');
+      break;
+    case 'resetIncludes':
+      setFilter('includes', [...LIBRARY_DEFAULT_INCLUDES]);
+      break;
+    case 'resetTierAll':
+      setFilter('tier', null);
+      break;
+    case 'resetLevelAll':
+      setFilter('level', null);
+      break;
+    case 'resetAdvRole':
+      setFilter('advRole', null);
+      break;
+    case 'resetEnvType':
+      setFilter('envType', null);
+      break;
+    case 'resetAblDomain':
+      setFilter('ablDomain', null);
+      break;
+    case 'resetWpnSlot':
+      setFilter('wpnSlot', null);
+      break;
+    case 'resetWpnPhyMag':
+      setFilter('wpnPhyMag', null);
+      break;
+    case 'resetFeatScope':
+      setFilter('featScope', null);
+      break;
+    case 'resetIncludeScaled':
+      setFilter('includeScaledUp', false);
+      break;
+    default:
+      break;
+  }
 }
 
 /**

@@ -11,8 +11,8 @@ describe('formatIncludesForChipLabel', () => {
     expect(formatIncludesForChipLabel([])).toBe('All');
   });
 
-  it('lists friendly source names', () => {
-    expect(formatIncludesForChipLabel(['own', 'hod'])).toBe('Mine, HoD');
+  it('maps legacy includes to the active single-select mode label', () => {
+    expect(formatIncludesForChipLabel(['own', 'hod'])).toBe('Mine');
   });
 });
 
@@ -41,11 +41,11 @@ describe('getActiveLibraryFilterChipSpecs', () => {
     expect(specs).toEqual([expect.objectContaining({ kind: 'resetIncludes', label: 'Source: All' })]);
   });
 
-  it('returns one Tier chip listing selected tiers', () => {
+  it('returns one Tier chip listing selected tier', () => {
     const specs = getActiveLibraryFilterChipSpecs(
       {
         includes: [...LIBRARY_DEFAULT_INCLUDES],
-        tiers: [2, 1],
+        tiers: [2],
         types: [],
         extraTypes: [],
         search: '',
@@ -53,10 +53,10 @@ describe('getActiveLibraryFilterChipSpecs', () => {
       'adversaries'
     );
     expect(specs.filter(s => s.kind === 'resetTier')).toHaveLength(1);
-    expect(specs.find(s => s.kind === 'resetTier').label).toBe('Tier: 1, 2');
+    expect(specs.find(s => s.kind === 'resetTier').label).toBe('Tier: 2');
   });
 
-  it('returns Tier + Include Scaled with values when both apply', () => {
+  it('merges scaled-up into the Tier chip for adversaries', () => {
     const specs = getActiveLibraryFilterChipSpecs(
       {
         includes: [...LIBRARY_DEFAULT_INCLUDES],
@@ -68,8 +68,8 @@ describe('getActiveLibraryFilterChipSpecs', () => {
       },
       'adversaries'
     );
-    expect(specs.map(s => s.kind)).toEqual(['resetTier', 'resetIncludeScaled']);
-    expect(specs.find(s => s.kind === 'resetIncludeScaled').label).toBe('Include Scaled: on (T2)');
+    expect(specs.map(s => s.kind)).toEqual(['resetTier']);
+    expect(specs.find(s => s.kind === 'resetTier').label).toBe('Tier: 2 (scaled up)');
   });
 
   it('uses Level label and value for abilities', () => {
@@ -80,18 +80,32 @@ describe('getActiveLibraryFilterChipSpecs', () => {
     expect(specs.find(s => s.kind === 'resetTier').label).toBe('Level: 3');
   });
 
-  it('includes type row values when set', () => {
+  it('includes type row value when set (single-select)', () => {
     const specs = getActiveLibraryFilterChipSpecs(
       {
         includes: [...LIBRARY_DEFAULT_INCLUDES],
         tiers: [],
-        types: ['solo', 'standard'],
+        types: ['solo'],
         extraTypes: [],
         search: '',
       },
       'adversaries'
     );
-    expect(specs.find(s => s.kind === 'resetType').label).toBe('Role: Solo, Standard');
+    expect(specs.find(s => s.kind === 'resetType').label).toBe('Role: Solo');
+  });
+
+  it('formats features scope type chip labels with spaces', () => {
+    const specs = getActiveLibraryFilterChipSpecs(
+      {
+        includes: [...LIBRARY_DEFAULT_INCLUDES],
+        tiers: [],
+        types: ['weapon_properties'],
+        extraTypes: [],
+        search: '',
+      },
+      'features'
+    );
+    expect(specs.find(s => s.kind === 'resetType').label).toBe('Scope: Weapon Properties');
   });
 });
 

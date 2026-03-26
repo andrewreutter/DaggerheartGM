@@ -33,6 +33,24 @@ export function computeLibrarySnapWidths(w, gap, minCardW) {
   return [...new Set(out)].sort((a, b) => b - a);
 }
 
+/**
+ * Edge-drag / slider: next width after delta (px), clamped, then optional snap to column widths.
+ */
+export function computeResizedLibraryWidth(startWidth, deltaX, min, max, snapWidths) {
+  const snaps = snapWidths ?? [];
+  const raw = Math.round(Number(startWidth) + Number(deltaX));
+  const clamped = Math.min(Math.max(raw, min), max);
+  return snapLibraryCardWidth(clamped, snaps);
+}
+
+/**
+ * Edge-drag / slider: next height after delta (px), clamped.
+ */
+export function computeResizedLibraryHeight(startHeight, deltaY, min, max) {
+  const raw = Math.round(Number(startHeight) + Number(deltaY));
+  return Math.min(Math.max(raw, min), max);
+}
+
 export function snapLibraryCardWidth(px, snaps) {
   if (!snaps.length) return px;
   let best = snaps[0];

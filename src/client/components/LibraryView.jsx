@@ -1,8 +1,8 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ShieldAlert,
-  Map,
+  Map as MapIcon,
   Play,
   BookOpen,
   Plus,
@@ -19,18 +19,24 @@ import {
   Package,
   Layers,
   Sword,
+  LayoutGrid,
+  Puzzle,
 } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
 import { ImageImportModal } from './modals/ImageImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
-import { CollectionFilters } from './CollectionFilters.jsx';
+import { CollectionFilters, LibrarySearchIncludeStrip } from './CollectionFilters.jsx';
+import { LibraryAllFilters } from './LibraryAllFilters.jsx';
 import { DaggerstackImport } from './DaggerstackImport.jsx';
 import { useCollectionSearch } from '../lib/useCollectionSearch.js';
+import { buildLibraryAllApiOpts } from '../lib/library-all-api-params.js';
+import { useLibraryAllSearch } from '../lib/useLibraryAllSearch.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
-import { enrichItems, enrichSingleItem } from '../lib/api.js';
+import { enrichItems, enrichSingleItem, loadLibraryAllCounts } from '../lib/api.js';
 import { generateId } from '../lib/helpers.js';
 import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
+import { buildLibraryModalPath } from '../lib/library-modal-path.js';
 import {
   SRD_UNIFIED_COLLECTIONS,
   LIBRARY_USER_EDITABLE_COLLECTIONS,
@@ -39,6 +45,7 @@ import {
   LIBRARY_INCLUDES_GLOBAL_KEY,
   getLibraryFilterConfig,
 } from '../lib/library-filter-config.js';
+import { LIBRARY_SHARED_FILTERS_KEY, loadAllFiltersFromShared } from '../lib/library-shared-filters.js';
 import {
   computeLibrarySnapWidths,
   snapLibraryCardWidth,
@@ -48,7 +55,12 @@ import {
   libraryWidthSliderIndexFromSnapIndex,
   librarySnapIndexFromWidthSliderIndex,
 } from '../lib/library-card-snap.js';
-import { getActiveLibraryFilterChipSpecs, applyLibraryFilterChipClear } from '../lib/library-active-filter-chips.js';
+import {
+  getActiveLibraryFilterChipSpecs,
+  applyLibraryFilterChipClear,
+  getActiveLibraryAllFilterChipSpecs,
+  applyLibraryAllFilterChipClear,
+} from '../lib/library-active-filter-chips.js';
 import {
   DEFAULT_LIBRARY_CARD_WIDTH as DEFAULT_CARD_WIDTH,
   DEFAULT_LIBRARY_CARD_HEIGHT as DEFAULT_CARD_HEIGHT,
@@ -83,6 +95,7 @@ const SINGULAR_NAMES = {
   items: 'Item',
   subclasses: 'Subclass',
   weapons: 'Weapon',
+  features: 'Feature',
 };
 
 /** Full tab list (sidebar order; hidden ids omitted from `LIBRARY_NAV_TABS`). */
@@ -95,39 +108,26 @@ const TABS = [
   { id: 'weapons', label: 'Weapons', Icon: Sword },
   { id: 'armor', label: 'Armor', Icon: Shield },
   { id: 'adversaries', label: 'Adversaries', Icon: ShieldAlert },
-  { id: 'environments', label: 'Environments', Icon: Map },
+  { id: 'environments', label: 'Environments', Icon: MapIcon },
   { id: 'abilities', label: 'Abilities', Icon: Sparkles },
   { id: 'beastforms', label: 'Beastforms', Icon: PawPrint },
   { id: 'consumables', label: 'Consumables', Icon: FlaskConical },
   { id: 'domains', label: 'Domains', Icon: Library },
   { id: 'items', label: 'Items', Icon: Package },
+  { id: 'features', label: 'Features', Icon: Puzzle },
   { id: 'scenes', label: 'Scenes', Icon: Play },
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
 ];
 
 const LIBRARY_NAV_HIDDEN_IDS = new Set(['characters', 'scenes', 'adventures']);
 const LIBRARY_NAV_TABS = TABS.filter(t => !LIBRARY_NAV_HIDDEN_IDS.has(t.id));
+const LIBRARY_NAV_SIDEBAR = [{ id: 'all', label: 'All', Icon: LayoutGrid }, ...LIBRARY_NAV_TABS];
 
 /** Unified paginated API (Mine + SRD + …) */
 const SRD_FILTER_TABS = new Set(SRD_UNIFIED_COLLECTIONS);
 
 /** Game Table can only add these library types */
 const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
-
-/** Same footprint as `ItemCard` — triggers the same flow as the header "New …" button. */
-function LibraryNewItemCard({ singularLabel, onClick, cardWidth = DEFAULT_CARD_WIDTH, cardHeight = DEFAULT_CARD_HEIGHT }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ width: cardWidth, height: cardHeight }}
-      className="bg-dh-surface/80 border-2 border-dashed border-dh-strong rounded-lg hover:border-red-500/60 hover:bg-dh-raised/50 cursor-pointer transition-colors flex flex-row max-w-full shrink-0 items-center justify-center gap-2 text-dh-muted hover:text-red-300"
-    >
-      <Plus size={22} className="text-red-500/90 shrink-0" />
-      <span className="text-sm font-medium">New {singularLabel}</span>
-    </button>
-  );
-}
 
 export function LibraryView({
   data,
@@ -168,7 +168,15 @@ export function LibraryView({
   const [modalState, setModalState] = useState(null);
   const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
 
-  const isPaginatedTab = SRD_FILTER_TABS.has(activeTab);
+  const lastPaginatedTabRef = useRef('abilities');
+  useEffect(() => {
+    if (activeTab !== 'all' && SRD_FILTER_TABS.has(activeTab)) {
+      lastPaginatedTabRef.current = activeTab;
+    }
+  }, [activeTab]);
+
+  const isPaginatedTab = SRD_FILTER_TABS.has(activeTab) || activeTab === 'all';
+  const collectionSearchCollection = activeTab === 'all' ? lastPaginatedTabRef.current : activeTab;
 
   // Restore card dimensions for this signed-in user and library collection (tab) before paint.
   useLayoutEffect(() => {
@@ -178,7 +186,7 @@ export function LibraryView({
 
   const canCreateNew = LIBRARY_USER_EDITABLE_COLLECTIONS.has(activeTab);
   const filterDefaults = useMemo(() => {
-    const c = getLibraryFilterConfig(activeTab);
+    const c = getLibraryFilterConfig(activeTab === 'all' ? 'abilities' : activeTab);
     return { sort: c.defaultSort || 'popularity' };
   }, [activeTab]);
 
@@ -222,24 +230,122 @@ export function LibraryView({
     } catch { /* ignore */ }
   }, [libraryCardHeight, userUid, activeTab]);
 
-  const search = useCollectionSearch(activeTab, {
-    limit: 20,
-    debounceMs: 400,
-    persistKey: isPaginatedTab ? LIBRARY_FILTERS_PERSIST_KEY : null,
+  const collectionSearch = useCollectionSearch(collectionSearchCollection, {
+    limit: PAGE_SIZE,
+    debounceMs: LOAD_DEBOUNCE_MS,
+    persistKey: isPaginatedTab && activeTab !== 'all' ? LIBRARY_FILTERS_PERSIST_KEY : null,
     sharedSearchKey: LIBRARY_SEARCH_GLOBAL_KEY,
     sharedIncludesKey: LIBRARY_INCLUDES_GLOBAL_KEY,
+    sharedLibraryFiltersKey: isPaginatedTab && activeTab !== 'all' ? LIBRARY_SHARED_FILTERS_KEY : null,
     defaultFilters: filterDefaults,
-    enabled: isPaginatedTab,
+    enabled: isPaginatedTab && activeTab !== 'all',
     infinite: true,
     maxItems: 500,
   });
 
+  const allLibrarySearch = useLibraryAllSearch({
+    limit: PAGE_SIZE,
+    debounceMs: LOAD_DEBOUNCE_MS,
+    persistKey: LIBRARY_FILTERS_PERSIST_KEY,
+    sharedSearchKey: LIBRARY_SEARCH_GLOBAL_KEY,
+    sharedIncludesKey: LIBRARY_INCLUDES_GLOBAL_KEY,
+    enabled: activeTab === 'all',
+    infinite: true,
+    maxItems: 500,
+  });
+
+  const search = activeTab === 'all' ? allLibrarySearch : collectionSearch;
+
+  const filterSig = useMemo(
+    () => JSON.stringify(loadAllFiltersFromShared(LIBRARY_FILTERS_PERSIST_KEY, LIBRARY_SEARCH_GLOBAL_KEY, LIBRARY_INCLUDES_GLOBAL_KEY)),
+    [search.filters, activeTab]
+  );
+
+  const navCountsCacheRef = useRef(new Map());
+  const [navCounts, setNavCounts] = useState(null);
+  const [navCountsLoading, setNavCountsLoading] = useState(false);
+
+  /** Library “All” tab: counts piggyback on list response; cache + fallback when counts not yet loaded. */
+  useEffect(() => {
+    if (activeTab !== 'all') return;
+    if (allLibrarySearch.countsByCollection) {
+      const entry = {
+        countsByCollection: allLibrarySearch.countsByCollection,
+        totalCount: allLibrarySearch.totalCount,
+      };
+      navCountsCacheRef.current.set(filterSig, entry);
+      setNavCounts(entry);
+      return;
+    }
+    const cached = navCountsCacheRef.current.get(filterSig);
+    if (cached) {
+      setNavCounts(cached);
+    } else {
+      setNavCounts(null);
+    }
+  }, [activeTab, filterSig, allLibrarySearch.countsByCollection, allLibrarySearch.totalCount]);
+
+  /** Other SRD tabs: one debounced `library-all-counts` request per filter change (not per nav item). */
+  useEffect(() => {
+    if (activeTab === 'all') return;
+
+    const merged = loadAllFiltersFromShared(LIBRARY_FILTERS_PERSIST_KEY, LIBRARY_SEARCH_GLOBAL_KEY, LIBRARY_INCLUDES_GLOBAL_KEY);
+    const debounceMs = merged.search ? 400 : LOAD_DEBOUNCE_MS;
+    const cached = navCountsCacheRef.current.get(filterSig);
+    if (cached) {
+      setNavCounts(cached);
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setNavCountsLoading(true);
+      try {
+        const apiOpts = buildLibraryAllApiOpts(merged);
+        const r = await loadLibraryAllCounts(apiOpts);
+        if (cancelled) return;
+        const entry = {
+          countsByCollection: r.countsByCollection || {},
+          totalCount: r.totalCount ?? 0,
+        };
+        navCountsCacheRef.current.set(filterSig, entry);
+        setNavCounts(entry);
+      } catch (err) {
+        if (!cancelled) console.error('Library nav counts:', err);
+      } finally {
+        if (!cancelled) setNavCountsLoading(false);
+      }
+    }, debounceMs);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [filterSig, activeTab]);
+
+  const navCountForTab = useCallback(
+    (tabId) => {
+      if (!navCounts) return null;
+      if (tabId === 'all') return navCounts.totalCount ?? 0;
+      const n = navCounts.countsByCollection[tabId];
+      return n == null ? 0 : n;
+    },
+    [navCounts]
+  );
+
+  const navCountLoading = activeTab === 'all'
+    ? allLibrarySearch.loading && !allLibrarySearch.countsByCollection
+    : navCountsLoading;
+
+  useEffect(() => {
+    if (activeTab === 'all') setNavCountsLoading(false);
+  }, [activeTab]);
+
   // Sync paginated items to app-level data.
   useEffect(() => {
-    if (isPaginatedTab && onItemsChange) {
+    if (isPaginatedTab && activeTab !== 'all' && onItemsChange) {
       onItemsChange(activeTab, search.items);
     }
-  }, [search.items, activeTab, isPaginatedTab]);
+  }, [search.items, activeTab, isPaginatedTab, onItemsChange]);
 
   // Lazy-load tier (and full detail) for HoD adversaries/environments that came back
   // from the list search with tier=null. Fires background Foundry detail fetches,
@@ -248,17 +354,53 @@ export function LibraryView({
   useEffect(() => {
     if (!isPaginatedTab) return;
     const needsEnrich = search.items.filter(i =>
-      i._source === 'hod' && (i.tier == null || (i.features || []).length === 0) && !enrichAttemptedRef.current.has(i.id)
+      i._source === 'hod' && (i.tier == null || (i.features || []).length === 0)
     );
-    if (needsEnrich.length === 0) return;
-    needsEnrich.forEach(i => enrichAttemptedRef.current.add(i.id));
-    enrichItems(activeTab, needsEnrich).then(enriched => {
-      if (Object.keys(enriched).length > 0) search.patchItems(enriched);
+    const keyed = needsEnrich.filter(i => {
+      const k = `${i._collection || activeTab}:${i.id}`;
+      if (enrichAttemptedRef.current.has(k)) return false;
+      enrichAttemptedRef.current.add(k);
+      return true;
+    });
+    if (keyed.length === 0) return;
+    const byCol = {};
+    for (const i of keyed) {
+      const col = i._collection || activeTab;
+      if (!byCol[col]) byCol[col] = [];
+      byCol[col].push(i);
+    }
+    Promise.all(
+      Object.entries(byCol).map(([col, list]) =>
+        enrichItems(col, list).then(enriched => ({ col, enriched }))
+      )
+    ).then(results => {
+      const patchMap = {};
+      for (const { col, enriched } of results) {
+        for (const [id, row] of Object.entries(enriched || {})) {
+          patchMap[`${col}:${id}`] = row;
+        }
+      }
+      if (Object.keys(patchMap).length > 0) search.patchItems(patchMap);
     }).catch(() => {});
   }, [search.items, activeTab, isPaginatedTab]);
 
   // For paginated tabs, items come from the hook; for non-paginated, from app data.
   const items = isPaginatedTab ? search.items : (data[activeTab] || []);
+
+  const filteredItems = isPaginatedTab
+    ? items.filter(item => !search.filters.search || item.name?.toLowerCase().includes(search.filters.search.toLowerCase()))
+    : items;
+
+  const resolvedModalItem = modalState && !modalState.isNew
+    ? (items.find(i =>
+        i.id === modalState.item?.id &&
+        (!modalState.item?._collection || i._collection === modalState.item._collection)
+      ) || modalState.item)
+    : modalState?.item;
+
+  const modalCollection = (resolvedModalItem && resolvedModalItem._collection) ? resolvedModalItem._collection : activeTab;
+
+  const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
 
   // Handle deep-link routes: /library/:tab/:id opens the modal.
   const { itemId, action } = route;
@@ -305,11 +447,12 @@ export function LibraryView({
   }, [itemId, modalState]);
 
   const openModal = async (item) => {
-    navigate(`/library/${activeTab}/${item.id || 'new'}`);
+    const col = item._collection || activeTab;
+    navigate(buildLibraryModalPath(activeTab, col, item.id || 'new'));
     if (needsHodEnrich(item)) {
       setModalState({ item, isNew: false, enriching: true });
-      const enriched = await enrichSingleItem(activeTab, item);
-      search.patchItems({ [enriched.id]: enriched });
+      const enriched = await enrichSingleItem(col, item);
+      search.patchItems(activeTab === 'all' ? { [`${col}:${enriched.id}`]: enriched } : { [enriched.id]: enriched });
       setModalState({ item: enriched, isNew: false, enriching: false });
     } else {
       setModalState({ item, isNew: !item.id });
@@ -328,9 +471,9 @@ export function LibraryView({
 
   const handleSave = async (formData) => {
     const itemToSave = { ...formData };
-    await saveItem(activeTab, itemToSave);
+    await saveItem(modalCollection, itemToSave);
     if (formData.id && saveImage && (formData.imageUrl != null || formData._additionalImages != null)) {
-      await saveImage(activeTab, formData.id, formData.imageUrl ?? '', { _additionalImages: formData._additionalImages });
+      await saveImage(modalCollection, formData.id, formData.imageUrl ?? '', { _additionalImages: formData._additionalImages });
     }
     if (isPaginatedTab) search.refresh();
     // Keep modal open after save (auto-save pattern — no explicit "done" step).
@@ -343,12 +486,12 @@ export function LibraryView({
   };
 
   const handleClone = async (item) => {
-    const cloned = await cloneItem(activeTab, item);
+    const cloned = await cloneItem(modalCollection, item);
     if (isPaginatedTab) search.refresh();
     closeModal();
     // Open the clone immediately.
     setModalState({ item: cloned, isNew: false });
-    navigate(`/library/${activeTab}/${cloned.id}`);
+    navigate(buildLibraryModalPath(activeTab, modalCollection, cloned.id));
   };
 
   /**
@@ -397,19 +540,6 @@ export function LibraryView({
       setModalState(prev => prev ? { ...prev, item: updatedParent } : null);
     }
   };
-
-  // Instant client-side name filter before the debounced API search fires.
-  const filteredItems = isPaginatedTab
-    ? items.filter(item => !search.filters.search || item.name?.toLowerCase().includes(search.filters.search.toLowerCase()))
-    : items;
-
-
-  // Resolve modal item: for own items use the latest from items list so edits are fresh.
-  const resolvedModalItem = modalState && !modalState.isNew
-    ? (items.find(i => i.id === modalState.item?.id) || modalState.item)
-    : modalState?.item;
-
-  const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
 
   const scrollRef = useRef(null);
   const sentinelRef = useRef(null);
@@ -518,7 +648,7 @@ export function LibraryView({
     ro.observe(el);
     return () => ro.disconnect();
   }, [isPaginatedTab, activeTab, gridItems.length, search.loading, search.totalCount]);
-  const paginatedCellCount = gridItems.length > 0 ? gridItems.length + (canCreateNew ? 1 : 0) : 0;
+  const paginatedCellCount = gridItems.length;
   const rowCount = columnCount > 0 && paginatedCellCount > 0 ? Math.ceil(paginatedCellCount / columnCount) : 0;
 
   const rowVirtualizer = useVirtualizer({
@@ -541,27 +671,47 @@ export function LibraryView({
     : null;
 
   const activeFilterEmptyChips = useMemo(
-    () => (isPaginatedTab ? getActiveLibraryFilterChipSpecs(search.filters, activeTab) : []),
+    () => {
+      if (!isPaginatedTab) return [];
+      if (activeTab === 'all') return getActiveLibraryAllFilterChipSpecs(search.filters);
+      return getActiveLibraryFilterChipSpecs(search.filters, activeTab);
+    },
     [isPaginatedTab, search.filters, activeTab]
   );
 
+  const libraryCardResize = useMemo(
+    () =>
+      isPaginatedTab
+        ? {
+            widthMin: librarySliderMin,
+            widthMax: librarySliderMax,
+            snapWidths: librarySnapWidths,
+            heightMin: MIN_CARD_HEIGHT,
+            heightMax: libraryCardHeightMax,
+            onWidthChange: setLibraryCardWidth,
+            onHeightChange: setLibraryCardHeight,
+          }
+        : null,
+    [
+      isPaginatedTab,
+      librarySliderMin,
+      librarySliderMax,
+      librarySnapWidths,
+      libraryCardHeightMax,
+    ]
+  );
+
   return (
-    <div className="flex-1 flex overflow-hidden">
-      {/* Sidebar Tabs */}
-      <div className="w-64 bg-dh-surface border-r border-dh-border flex flex-col">
-        {LIBRARY_NAV_TABS.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => navigate(`/library/${tab.id}`)}
-            className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
-              activeTab === tab.id ? 'bg-dh-raised text-red-400 border-r-2 border-red-500' : 'text-dh-muted hover:bg-dh-raised/50'
-            }`}
-          >
-            <tab.Icon size={18} /> {tab.label}
-          </button>
-        ))}
-      </div>
+    <div className="flex-1 flex min-h-0 flex-col overflow-hidden">
+      {isPaginatedTab && (
+        <div className="shrink-0 border-b border-dh-border/50 bg-dh-canvas pl-4 pr-9 py-3">
+          <LibrarySearchIncludeStrip
+            filters={search.filters}
+            onFilterChange={search.setFilter}
+            collection={activeTab === 'all' ? 'library' : activeTab}
+          />
+        </div>
+      )}
 
       {showImageImport && (
         <ImageImportModal
@@ -571,7 +721,7 @@ export function LibraryView({
           onImportSuccess={(collection, id) => {
             setShowImageImport(false);
             search.refresh();
-            navigate(`/library/${collection}/${id}`);
+            navigate(buildLibraryModalPath(activeTab, collection, id));
           }}
         />
       )}
@@ -608,19 +758,19 @@ export function LibraryView({
       {modalState && resolvedModalItem !== undefined && (
         <ItemDetailModal
           item={resolvedModalItem}
-          collection={activeTab}
+          collection={modalCollection}
           data={data}
           editable={(modalState.isNew || modalItemIsOwn) && canCreateNew}
           enriching={!!modalState.enriching}
           onSave={handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           saveImage={saveImage}
-          onDelete={modalItemIsOwn ? () => handleDelete(activeTab, resolvedModalItem?.id) : null}
-          onClone={() => handleClone(resolvedModalItem)}
-          onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab) && !ownedTablesForPicker.length ? () => addToTable(resolvedModalItem, activeTab) : undefined}
-          addToTableMenu={TABLE_ADDABLE_COLLECTIONS.has(activeTab) && ownedTablesForPicker.length ? {
+          onDelete={modalItemIsOwn ? () => handleDelete(modalCollection, resolvedModalItem?.id) : null}
+          onClone={modalCollection === 'features' ? undefined : () => handleClone(resolvedModalItem)}
+          onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && !ownedTablesForPicker.length ? () => addToTable(resolvedModalItem, modalCollection) : undefined}
+          addToTableMenu={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && ownedTablesForPicker.length ? {
             tables: ownedTablesForPicker,
-            onPick: (tableId) => addToTable(resolvedModalItem, activeTab, tableId),
+            onPick: (tableId) => addToTable(resolvedModalItem, modalCollection, tableId),
           } : undefined}
           onEdit={modalItemIsOwn ? () => {} : null}
           isAdmin={isAdmin}
@@ -632,13 +782,43 @@ export function LibraryView({
         />
       )}
 
-      {/* Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-dh-canvas">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* Sidebar tabs */}
+        <div className="w-64 bg-dh-surface border-r border-dh-border flex flex-col min-h-0 h-full">
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {LIBRARY_NAV_SIDEBAR.map(tab => (
+              <Fragment key={tab.id}>
+                {tab.id === 'features' && (
+                  <div className="border-t border-dh-border mx-3 my-1" aria-hidden />
+                )}
+                <button
+                  type="button"
+                  onClick={() => navigate(`/library/${tab.id}`)}
+                  className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors w-full ${
+                    activeTab === tab.id ? 'bg-dh-raised text-red-400 border-r-2 border-red-500' : 'text-dh-muted hover:bg-dh-raised/50'
+                  }`}
+                >
+                  <tab.Icon size={18} className="shrink-0" />
+                  <span className="min-w-0 flex-1">{tab.label}</span>
+                  <span className="ml-auto shrink-0 text-xs tabular-nums text-dh-muted">
+                    {navCounts == null && navCountLoading ? '—' : (navCountForTab(tab.id) ?? '—')}
+                  </span>
+                </button>
+                {tab.id === 'all' && (
+                  <div className="border-t border-dh-border mx-3 my-1" aria-hidden />
+                )}
+              </Fragment>
+            ))}
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-dh-canvas">
 
         {/* Sticky header */}
-        <div className="shrink-0 pl-6 pr-9 pt-6 pb-3 border-b border-dh-border/50 bg-dh-canvas">
+        <div className="shrink-0 pl-6 pr-9 pt-3 pb-3 border-b border-dh-border/50 bg-dh-canvas">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-            <h2 className="text-2xl font-bold text-white capitalize">{activeTab}</h2>
+            <h2 className="text-2xl font-bold text-white capitalize">{activeTab === 'all' ? 'All' : activeTab}</h2>
 
             <div className="flex items-center gap-3 flex-wrap">
               {(activeTab === 'adversaries' || activeTab === 'environments') && (
@@ -671,16 +851,16 @@ export function LibraryView({
             </div>
           </div>
 
-          {/* Filter bar — only for adversaries / environments */}
+          {/* Filter bar — unified collections; “All” uses combined filters */}
           {isPaginatedTab && (
             <>
-              <CollectionFilters
-                collection={activeTab}
-                filters={search.filters}
-                onFilterChange={search.setFilter}
-                variant="bar"
-                showSort
-                viewSlider={{
+              {activeTab === 'all' ? (
+                <LibraryAllFilters
+                  filters={search.filters}
+                  onFilterChange={search.setFilter}
+                  suppressSearchInclude
+                  showSort
+                  viewSlider={{
                   ...(librarySnapWidths.length > 0
                     ? {
                         snapValues: librarySnapWidths,
@@ -706,10 +886,47 @@ export function LibraryView({
                     step: 1,
                   },
                 }}
-              />
+                />
+              ) : (
+                <CollectionFilters
+                  collection={activeTab}
+                  filters={search.filters}
+                  onFilterChange={search.setFilter}
+                  variant="bar"
+                  suppressSearchInclude
+                  suppressCompetingStructuralAllHighlight
+                  showSort
+                  viewSlider={{
+                    ...(librarySnapWidths.length > 0
+                      ? {
+                          snapValues: librarySnapWidths,
+                          snapIndex: libraryWidthSliderSnapIndex,
+                          onSnapChange: (idx) => {
+                            const inner = librarySnapIndexFromWidthSliderIndex(librarySnapWidths.length, idx);
+                            const next = librarySnapWidths[inner];
+                            if (next != null) setLibraryCardWidth(next);
+                          },
+                        }
+                      : {
+                          value: Math.min(Math.max(libraryCardWidth, librarySliderMin), librarySliderMax),
+                          onChange: setLibraryCardWidth,
+                          min: librarySliderMin,
+                          max: librarySliderMax,
+                          step: 1,
+                        }),
+                    height: {
+                      value: Math.min(Math.max(libraryCardHeight, MIN_CARD_HEIGHT), libraryCardHeightMax),
+                      onChange: setLibraryCardHeight,
+                      min: MIN_CARD_HEIGHT,
+                      max: libraryCardHeightMax,
+                      step: 1,
+                    },
+                  }}
+                />
+              )}
               <div className="text-xs text-dh-muted -mt-3">
                 {search.loading && !search.isLoadingMore
-                  ? <span className="animate-pulse">Loading {activeTab}…</span>
+                  ? <span className="animate-pulse">Loading {activeTab === 'all' ? 'library' : activeTab}…</span>
                   : showingRangeText
                 }
               </div>
@@ -750,29 +967,19 @@ export function LibraryView({
                         {Array.from({ length: columnCount }, (_, columnIndex) => {
                           const idx = virtualRow.index * columnCount + columnIndex;
                           if (idx >= paginatedCellCount) return null;
-                          if (canCreateNew && idx === gridItems.length) {
-                            return (
-                              <LibraryNewItemCard
-                                key="library-new-item"
-                                singularLabel={SINGULAR_NAMES[activeTab]}
-                                onClick={openNew}
-                                cardWidth={libraryCardWidth}
-                                cardHeight={libraryCardHeight}
-                              />
-                            );
-                          }
                           const item = gridItems[idx];
+                          const cardCol = activeTab === 'all' ? item._collection : activeTab;
                           return (
                             <ItemCard
-                              key={`${item._source || 'own'}-${item.id}`}
+                              key={`${item._collection || activeTab}-${item._source || 'own'}-${item.id}`}
                               item={item}
-                              tab={activeTab}
+                              tab={cardCol}
                               data={data}
                               onView={(i) => openModal(i)}
                               onEdit={isOwnItem(item) ? (i) => openModal(i) : null}
                               onDelete={isOwnItem(item) ? handleDelete : null}
-                              onClone={() => handleClone(item)}
-                              onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab) ? addToTable : undefined}
+                              onClone={cardCol === 'features' ? undefined : () => handleClone(item)}
+                              onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? addToTable : undefined}
                               ownedTables={ownedTablesForPicker}
                               partySize={partySize}
                               partyTier={partyTier}
@@ -781,6 +988,7 @@ export function LibraryView({
                               characters={characters}
                               cardWidth={libraryCardWidth}
                               cardHeight={libraryCardHeight}
+                              libraryResize={libraryCardResize}
                             />
                           );
                         })}
@@ -801,7 +1009,7 @@ export function LibraryView({
                           <button
                             key={spec.key}
                             type="button"
-                            onClick={() => applyLibraryFilterChipClear(spec, search.setFilter)}
+                            onClick={() => (activeTab === 'all' ? applyLibraryAllFilterChipClear(spec, search.setFilter) : applyLibraryFilterChipClear(spec, search.setFilter))}
                             title={spec.title ? `${spec.title} — click to reset` : `Reset to default — ${spec.label}`}
                             aria-label={spec.title ? `${spec.title}: ${spec.label}` : `Reset filter to default: ${spec.label}`}
                             className="inline-flex max-w-full items-center gap-2 rounded-full border border-dh-strong bg-dh-raised/80 px-4 py-2 text-left text-base leading-snug text-dh hover:border-red-500/60 hover:bg-dh-raised hover:text-red-200 transition-colors"
@@ -813,28 +1021,12 @@ export function LibraryView({
                       </div>
                     )}
                   </div>
-                  {canCreateNew && (
-                    <LibraryNewItemCard
-                      singularLabel={SINGULAR_NAMES[activeTab]}
-                      onClick={openNew}
-                      cardWidth={libraryCardWidth}
-                      cardHeight={libraryCardHeight}
-                    />
-                  )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
                   <div className="text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg animate-pulse">
                     Loading {activeTab}…
                   </div>
-                  {canCreateNew && (
-                    <LibraryNewItemCard
-                      singularLabel={SINGULAR_NAMES[activeTab]}
-                      onClick={openNew}
-                      cardWidth={libraryCardWidth}
-                      cardHeight={libraryCardHeight}
-                    />
-                  )}
                 </div>
               )}
             </div>
@@ -843,21 +1035,22 @@ export function LibraryView({
               <div className="text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg animate-pulse">
                 Loading {activeTab}…
               </div>
-              <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
             </div>
           ) : !isPaginatedTab ? (
             <div className="flex flex-wrap gap-2 overflow-y-auto content-start">
-              {filteredItems.map(item => (
+              {filteredItems.map(item => {
+                const cardCol = activeTab === 'all' ? item._collection : activeTab;
+                return (
                 <ItemCard
-                  key={`${item._source || 'own'}-${item.id}`}
+                  key={`${item._collection || activeTab}-${item._source || 'own'}-${item.id}`}
                   item={item}
-                  tab={activeTab}
+                  tab={cardCol}
                   data={data}
                   onView={(item) => openModal(item)}
                   onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
                   onDelete={isOwnItem(item) ? handleDelete : null}
-                  onClone={() => handleClone(item)}
-                  onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab) ? addToTable : undefined}
+                  onClone={cardCol === 'features' ? undefined : () => handleClone(item)}
+                  onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? addToTable : undefined}
                   ownedTables={ownedTablesForPicker}
                   partySize={partySize}
                   partyTier={partyTier}
@@ -865,15 +1058,16 @@ export function LibraryView({
                   srdData={libraryCharacterSrdData}
                   characters={characters}
                 />
-              ))}
+              );
+              })}
               {filteredItems.length === 0 && (
                 <div className="w-full text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg">
                   {items.length === 0 ? `No ${activeTab} found. Click "New" to create one.` : 'No items match the selected filters.'}
                 </div>
               )}
-              <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
             </div>
           ) : null}
+        </div>
         </div>
       </div>
     </div>

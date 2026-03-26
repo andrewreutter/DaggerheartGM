@@ -267,7 +267,7 @@
   background: rgb(var(--dh-tint-magic-label-bg) / 0.45);
   color: rgb(var(--dh-tint-magic-label-text) / 1);
 }
-/** Domain / spell feature cards (GuideFeatureCard tone=domain) */
+/** Optional magic-tinted card shell (not used by LOADOUT — domain cards share neutral feature-card shell). */
 .dh-tint-magic-feature-card {
   border-color: rgb(var(--dh-tint-magic-card-border) / 0.45);
   background: rgb(var(--dh-tint-magic-card-bg) / 0.35);
@@ -604,6 +604,16 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   .group\/env button.w-4 {
     min-width:  32px;
     min-height: 32px;
+  }
+
+  /* Library ItemCard: show row actions (no hover); hide source badge in badge↔actions swap */
+  .dh-library-item-card .dh-library-card-badge-swap {
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .dh-library-item-card .dh-library-card-actions-swap {
+    opacity: 1 !important;
+    pointer-events: auto !important;
   }
 }
 

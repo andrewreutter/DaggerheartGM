@@ -8,6 +8,7 @@ import {
 import { recomputeCharacter } from '../../src/client/lib/character-calc.js';
 import { parseBeastformBonus } from '../../src/client/lib/helpers.js';
 import v2registry from '../../src/features-v2/registry.js';
+import { RoguesDodge } from '../../src/features-v2/classes/Rogue.js';
 
 describe('v2-declarative-sheet', () => {
   it('resolveSrdAncestryRowToV2Keys maps Human + High Stamina to Human.HighStamina', () => {
@@ -189,7 +190,13 @@ describe('v2-declarative-sheet', () => {
       communitiesById: {},
     };
 
-    const tableMod = { id: 'rogues-dodge-evasion', type: 'evasion', value: 2, name: "Rogue's Dodge" };
+    const tableMod = {
+      id: 'rogues-dodge-evasion',
+      type: 'evasion',
+      value: 2,
+      name: "Rogue's Dodge",
+      description: RoguesDodge.description,
+    };
     const raw = {
       instanceId: 'rogue-1',
       classId: 'srd-cls-rogue',

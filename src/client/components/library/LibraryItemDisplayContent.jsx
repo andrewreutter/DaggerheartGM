@@ -678,16 +678,6 @@ export function LibraryItemCardLeadImage({ item, asFloat = true }) {
   );
 }
 
-/** Compact library cards (no detail preview): thumbnail under title bar, right-aligned. */
-export function LibraryItemCardCompactRow({ item }) {
-  if (getLibraryItemImageUrls(item).length === 0) return null;
-  return (
-    <div className="flex shrink-0 justify-end pt-0.5">
-      <LibraryItemCardLeadImage item={item} asFloat={false} />
-    </div>
-  );
-}
-
 /**
  * Same collection-specific body as the ItemDetailModal preview pane (carousel / header excluded).
  */

@@ -1,8 +1,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { loadCollection } from './api.js';
-import { computeScaledStats, ROLE_STAT_SCALING } from './adversary-defaults.js';
+import { applyAdversaryScaledFilter } from './library-adversary-scaling.js';
 import { readSharedSearchQuery, readSharedIncludes } from './library-filter-config.js';
-import { LIBRARY_DEFAULT_INCLUDES, normalizePersistedIncludes } from './library-default-filters.js';
+import {
+  LIBRARY_DEFAULT_INCLUDES,
+  normalizePersistedIncludes,
+  normalizeIncludesForLibrary,
+  includesFromIncludeMode,
+  normalizeSinglePickList,
+} from './library-default-filters.js';
+import {
+  readSharedLibraryFilters,
+  writeSharedLibraryFilters,
+  sharedToCollectionFilters,
+  mergeSharedFromCollectionFilters,
+  tryMigrateLegacyLibraryFilters,
+  normalizeTierList,
+  clearAllStructuralSharedFilters,
+  LIBRARY_STRUCTURAL_RESET_KEY,
+} from './library-shared-filters.js';
 
 const DEFAULT_FILTERS = {
   includes: [...LIBRARY_DEFAULT_INCLUDES],
@@ -19,12 +35,21 @@ function loadPersistedFilters(
   collection,
   baseFilters = DEFAULT_FILTERS,
   sharedSearchKey = null,
-  sharedIncludesKey = null
+  sharedIncludesKey = null,
+  sharedLibraryFiltersKey = null
 ) {
   const defaults = { ...DEFAULT_FILTERS, ...baseFilters };
   let merged = { ...defaults };
 
-  if (persistKey) {
+  if (sharedLibraryFiltersKey) {
+    tryMigrateLegacyLibraryFilters(persistKey, collection, baseFilters, sharedSearchKey, sharedIncludesKey);
+    const shared = readSharedLibraryFilters();
+    const fromShared = sharedToCollectionFilters(collection, shared, baseFilters);
+    merged = { ...defaults, ...fromShared };
+    merged.tiers = normalizeTierList(merged.tiers || []);
+    merged.types = normalizeSinglePickList(merged.types || []);
+    merged.extraTypes = normalizeSinglePickList(merged.extraTypes || []);
+  } else if (persistKey) {
     try {
       const stored = localStorage.getItem(`${persistKey}_${collection}`);
       if (stored) {
@@ -39,8 +64,11 @@ function loadPersistedFilters(
         if (sharedIncludesKey) delete parsed.includes;
         merged = { ...defaults, ...parsed };
         merged.includes = normalizePersistedIncludes(merged.includes);
+        merged.tiers = normalizeTierList(merged.tiers || []);
+        merged.types = normalizeSinglePickList(merged.types || []);
+        merged.extraTypes = normalizeSinglePickList(merged.extraTypes || []);
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
 
   if (sharedSearchKey) {
@@ -48,10 +76,11 @@ function loadPersistedFilters(
   }
 
   if (sharedIncludesKey) {
-    const shared = readSharedIncludes(sharedIncludesKey);
-    if (shared != null) merged.includes = shared;
+    const sharedInc = readSharedIncludes(sharedIncludesKey);
+    if (sharedInc != null) merged.includes = sharedInc;
   }
 
+  merged.includes = normalizeIncludesForLibrary(merged.includes);
   return merged;
 }
 
@@ -67,6 +96,8 @@ export function useCollectionSearch(collection, {
   sharedSearchKey = null,
   /** When set, `filters.includes` (source filter) is read/written only under this key (library-wide), not per-tab persist. */
   sharedIncludesKey = null,
+  /** When set (e.g. `LIBRARY_SHARED_FILTERS_KEY`), tier/level/type/sort/include-scaled persist library-wide like search/includes. */
+  sharedLibraryFiltersKey = null,
   defaultFilters = {},
   enabled = true,
   infinite = false,
@@ -79,7 +110,8 @@ export function useCollectionSearch(collection, {
       collection,
       { ...DEFAULT_FILTERS, ...defaultFilters },
       sharedSearchKey,
-      sharedIncludesKey
+      sharedIncludesKey,
+      sharedLibraryFiltersKey
     )
   );
   const [offset, setOffsetState] = useState(0);
@@ -99,7 +131,7 @@ export function useCollectionSearch(collection, {
   useEffect(() => {
     if (prevCollectionRef.current !== collection) {
       prevCollectionRef.current = collection;
-      setFiltersState(loadPersistedFilters(persistKey, collection, baseFilters, sharedSearchKey, sharedIncludesKey));
+      setFiltersState(loadPersistedFilters(persistKey, collection, baseFilters, sharedSearchKey, sharedIncludesKey, sharedLibraryFiltersKey));
       setOffsetState(0);
       setItems([]);
       setTotalCount(0);
@@ -108,7 +140,7 @@ export function useCollectionSearch(collection, {
       isLoadingMoreRef.current = false;
       setTrimmedCount(0);
     }
-  }, [collection, persistKey, baseFilters, sharedSearchKey, sharedIncludesKey]);
+  }, [collection, persistKey, baseFilters, sharedSearchKey, sharedIncludesKey, sharedLibraryFiltersKey]);
 
   const getLoadOpts = useCallback(() => {
     const { includes = [], tiers = [], types = [], extraTypes = [], search, includeScaledUp, sort = 'popularity' } = filters;
@@ -134,15 +166,7 @@ export function useCollectionSearch(collection, {
   const applyScaled = useCallback((items, loadOpts) => {
     if (collection !== 'adversaries' || !loadOpts.includeScaledUp) return items;
     const singleTier = loadOpts.tier ?? loadOpts.tiers?.[0];
-    if (singleTier == null) return items;
-    return items.map(item => {
-      const itemTier = item.tier ?? 1;
-      if (itemTier >= singleTier) return item;
-      const role = item.role || 'standard';
-      if (!ROLE_STAT_SCALING[role]) return item;
-      const scaled = computeScaledStats(item, role, itemTier, singleTier);
-      return { ...item, ...scaled, tier: singleTier, _scaledFromTier: itemTier };
-    });
+    return applyAdversaryScaledFilter(items, { includeScaledUp: true, singleTier });
   }, [collection]);
 
   useEffect(() => {
@@ -201,36 +225,42 @@ export function useCollectionSearch(collection, {
   const setFilter = (key, value) => {
     setFiltersState(prev => {
       let next = { ...prev };
-      if (key === 'tier') {
-        if (value == null) next = { ...next, tiers: [] };
-        else {
-          const tiers = next.tiers || [];
-          const has = tiers.includes(value);
-          next.tiers = has ? tiers.filter(t => t !== value) : [...tiers, value].sort((a, b) => a - b);
+      if (key === LIBRARY_STRUCTURAL_RESET_KEY) {
+        if (sharedLibraryFiltersKey) {
+          clearAllStructuralSharedFilters();
+          const shared = readSharedLibraryFilters();
+          next = { ...prev, ...sharedToCollectionFilters(collection, shared, baseFilters) };
+        } else {
+          next = { ...prev, tiers: [], types: [], extraTypes: [], includeScaledUp: false };
+        }
+      } else if (key === 'tier') {
+        if (value == null) next = { ...next, tiers: [], includeScaledUp: false };
+        else if (typeof value === 'object' && value !== null && 'tier' in value) {
+          const t = Number(value.tier);
+          next = {
+            ...next,
+            tiers: Number.isFinite(t) ? [t] : [],
+            includeScaledUp: !!value.scaled,
+          };
+        } else if (typeof value === 'number') {
+          next = { ...next, tiers: [value], includeScaledUp: false };
         }
       } else if (key === 'type') {
         if (value == null) next = { ...next, types: [] };
         else {
-          const types = next.types || [];
-          const has = types.includes(value);
-          next.types = has ? types.filter(t => t !== value) : [...types, value];
+          const cur = (next.types || [])[0];
+          next.types = cur === value ? [] : [value];
         }
       } else if (key === 'extraType') {
         if (value == null) next = { ...next, extraTypes: [] };
         else {
-          const extraTypes = next.extraTypes || [];
-          const has = extraTypes.includes(value);
-          next.extraTypes = has ? extraTypes.filter(t => t !== value) : [...extraTypes, value];
+          const cur = (next.extraTypes || [])[0];
+          next.extraTypes = cur === value ? [] : [value];
         }
       } else if (key === 'include') {
-        if (value == null) next = { ...next, includes: [] };
-        else {
-          const includes = (next.includes ?? []).filter(s => s !== 'reddit');
-          const has = includes.includes(value);
-          next.includes = has ? includes.filter(s => s !== value) : [...includes, value];
-        }
+        next = { ...next, includes: includesFromIncludeMode(value) };
       } else if (key === 'includes') {
-        next = { ...next, includes: normalizePersistedIncludes(value) ?? [] };
+        next = { ...next, includes: normalizeIncludesForLibrary(normalizePersistedIncludes(value) ?? []) };
       } else {
         next[key] = value;
       }
@@ -240,7 +270,15 @@ export function useCollectionSearch(collection, {
       if ((key === 'include' || key === 'includes') && sharedIncludesKey) {
         try { localStorage.setItem(sharedIncludesKey, JSON.stringify(next.includes ?? [])); } catch {}
       }
-      if (persistKey) {
+      if (sharedLibraryFiltersKey && key !== LIBRARY_STRUCTURAL_RESET_KEY) {
+        const shared = mergeSharedFromCollectionFilters(collection, next, readSharedLibraryFilters(), key);
+        writeSharedLibraryFilters(shared);
+      } else if (persistKey && key !== LIBRARY_STRUCTURAL_RESET_KEY) {
+        const toSave = { ...next };
+        if (sharedSearchKey) delete toSave.search;
+        if (sharedIncludesKey) delete toSave.includes;
+        try { localStorage.setItem(`${persistKey}_${collection}`, JSON.stringify(toSave)); } catch {}
+      } else if (persistKey && key === LIBRARY_STRUCTURAL_RESET_KEY) {
         const toSave = { ...next };
         if (sharedSearchKey) delete toSave.search;
         if (sharedIncludesKey) delete toSave.includes;

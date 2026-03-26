@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Flame } from 'lucide-react';
-import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
+import {
+  resolveV2FeatureSourcePath,
+  resolveV2LibraryItemSourcePath,
+} from '../../features-v2/resolve-feature-source-path.js';
 import { SOURCE_BADGE, isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { showLibraryTierShield, showLibraryLevelBadge } from '../lib/library-tier-subtitle.js';
 import { ItemActionButtons } from './ItemActionButtons.jsx';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
 import { LevelBadge } from './LevelBadge.jsx';
-import {
-  LibraryItemCardCompactRow,
-  LibraryItemDisplayContent,
-} from './library/LibraryItemDisplayContent.jsx';
+import { LibraryItemDisplayContent } from './library/LibraryItemDisplayContent.jsx';
+import { LibraryItemImageThumb } from './library/LibraryItemImageThumb.jsx';
+import { getLibraryItemImageUrls } from '../lib/library-item-image-urls.js';
 import {
   LIBRARY_CARD_DETAIL_ZOOM,
   LIBRARY_CARD_PREVIEW_VISIBLE_MIN_HEIGHT,
 } from '../lib/library-card-dimensions.js';
+import {
+  computeResizedLibraryWidth,
+  computeResizedLibraryHeight,
+} from '../lib/library-card-snap.js';
+import { MarkdownText } from '../lib/markdown.js';
 import { V2SourceInspectButton } from './V2SourceInspectButton.jsx';
 
 export function ItemCard({
@@ -36,6 +43,10 @@ export function ItemCard({
   cardWidth = 360,
   /** Library grid: pixel height (default 176, Tailwind h-44). */
   cardHeight = 176,
+  /**
+   * Paginated library only: drag bottom/right edges to resize global card dimensions (same as sliders).
+   */
+  libraryResize = null,
 }) {
   const isOwn = isOwnItem(item);
   const badge = showSourceBadge ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
@@ -45,14 +56,152 @@ export function ItemCard({
   const tierByName = showLibraryTierShield(tab, item);
   const levelByName = showLibraryLevelBadge(tab, item);
   const showPreview = cardHeight >= LIBRARY_CARD_PREVIEW_VISIBLE_MIN_HEIGHT;
-  const v2LibrarySourcePath = useMemo(
-    () => (item?._source === 'srd' ? resolveV2LibraryItemSourcePath(tab, item) : null),
-    [tab, item],
-  );
+  const showCompactTitleThumb = !showPreview && getLibraryItemImageUrls(item).length > 0;
+  const v2LibrarySourcePath = useMemo(() => {
+    if (tab === 'features' && item?._resolveV2) {
+      return resolveV2FeatureSourcePath({ ...item._resolveV2, name: item.name });
+    }
+    return item?._source === 'srd' ? resolveV2LibraryItemSourcePath(tab, item) : null;
+  }, [tab, item]);
 
   const previewClipRef = useRef(null);
   const previewContentRef = useRef(null);
   const [previewClipped, setPreviewClipped] = useState(false);
+
+  const resizeDragRef = useRef(null);
+
+  const applyLibraryResizePointerMove = useCallback(
+    (e) => {
+      const d = resizeDragRef.current;
+      if (!d || !libraryResize) return;
+      const { mode, startX, startY, startWidth, startHeight } = d;
+      if (mode === 'right') {
+        const dx = e.clientX - startX;
+        const next = computeResizedLibraryWidth(
+          startWidth,
+          dx,
+          libraryResize.widthMin,
+          libraryResize.widthMax,
+          libraryResize.snapWidths
+        );
+        libraryResize.onWidthChange(next);
+      } else if (mode === 'bottom') {
+        const dy = e.clientY - startY;
+        const next = computeResizedLibraryHeight(
+          startHeight,
+          dy,
+          libraryResize.heightMin,
+          libraryResize.heightMax
+        );
+        libraryResize.onHeightChange(next);
+      } else if (mode === 'corner') {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const w = computeResizedLibraryWidth(
+          startWidth,
+          dx,
+          libraryResize.widthMin,
+          libraryResize.widthMax,
+          libraryResize.snapWidths
+        );
+        const h = computeResizedLibraryHeight(
+          startHeight,
+          dy,
+          libraryResize.heightMin,
+          libraryResize.heightMax
+        );
+        libraryResize.onWidthChange(w);
+        libraryResize.onHeightChange(h);
+      }
+    },
+    [libraryResize]
+  );
+
+  const endLibraryResizePointer = useCallback(() => {
+    const d = resizeDragRef.current;
+    resizeDragRef.current = null;
+    if (!d?.captureEl || d.pointerId == null) return;
+    try {
+      if (d.captureEl.hasPointerCapture(d.pointerId)) {
+        d.captureEl.releasePointerCapture(d.pointerId);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const onResizeRightPointerDown = useCallback(
+    (e) => {
+      if (!libraryResize) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      resizeDragRef.current = {
+        mode: 'right',
+        pointerId: e.pointerId,
+        captureEl: e.currentTarget,
+        startX: e.clientX,
+        startY: e.clientY,
+        startWidth: cardWidth,
+        startHeight: cardHeight,
+      };
+    },
+    [libraryResize, cardWidth, cardHeight]
+  );
+
+  const onResizeBottomPointerDown = useCallback(
+    (e) => {
+      if (!libraryResize) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      resizeDragRef.current = {
+        mode: 'bottom',
+        pointerId: e.pointerId,
+        captureEl: e.currentTarget,
+        startX: e.clientX,
+        startY: e.clientY,
+        startWidth: cardWidth,
+        startHeight: cardHeight,
+      };
+    },
+    [libraryResize, cardWidth, cardHeight]
+  );
+
+  const onResizeCornerPointerDown = useCallback(
+    (e) => {
+      if (!libraryResize) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      resizeDragRef.current = {
+        mode: 'corner',
+        pointerId: e.pointerId,
+        captureEl: e.currentTarget,
+        startX: e.clientX,
+        startY: e.clientY,
+        startWidth: cardWidth,
+        startHeight: cardHeight,
+      };
+    },
+    [libraryResize, cardWidth, cardHeight]
+  );
+
+  const onResizeHandlePointerMove = useCallback(
+    (e) => {
+      if (!resizeDragRef.current) return;
+      applyLibraryResizePointerMove(e);
+    },
+    [applyLibraryResizePointerMove]
+  );
+
+  const onResizeHandlePointerUp = useCallback(() => {
+    endLibraryResizePointer();
+  }, [endLibraryResizePointer]);
+
+  const onResizeHandlePointerCancel = useCallback(() => {
+    endLibraryResizePointer();
+  }, [endLibraryResizePointer]);
 
   const measurePreviewClipped = useCallback(() => {
     const el = previewClipRef.current;
@@ -98,6 +247,52 @@ export function ItemCard({
    */
   const cardClickOpensModal = !showPreview || isOwn || previewClipped;
 
+  const hasTablePick = ownedTables?.length && onAddToTable;
+  const hasTableAdd = !ownedTables?.length && onAddToTable;
+  const hasAdd = Boolean(hasTablePick || hasTableAdd);
+  const hasClone = Boolean(onClone);
+  const hasEdit = Boolean(isOwn && onEdit);
+  const hasDelete = Boolean(isOwn && onDelete);
+  const hasV2Inspect = Boolean(v2LibrarySourcePath);
+  const hasAnyRowAction = hasAdd || hasClone || hasEdit || hasDelete || hasV2Inspect;
+  const hasSourceBadge = Boolean(badge && showSourceBadge);
+  const showBadgeHoverSwap = hasSourceBadge && hasAnyRowAction;
+
+  const rowActions = (
+    <>
+      {v2LibrarySourcePath ? (
+        <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="card" />
+      ) : null}
+      <ItemActionButtons
+        variant="card"
+        stopPropagation={false}
+        isOwn={isOwn}
+        itemName={item.name}
+        addToTableMenu={
+          ownedTables?.length && onAddToTable
+            ? { tables: ownedTables, onPick: (tableId) => onAddToTable(item, tab, tableId) }
+            : undefined
+        }
+        onAddToTable={
+          !ownedTables?.length && onAddToTable ? () => onAddToTable(item, tab) : undefined
+        }
+        onClone={onClone ? () => onClone(item) : undefined}
+        onEdit={isOwn && onEdit ? () => onEdit(item) : undefined}
+        onDelete={isOwn && onDelete ? () => onDelete(tab, item.id) : undefined}
+      />
+    </>
+  );
+
+  const rowActionsWrap = (
+    <div
+      className="flex shrink-0 items-center gap-0"
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {rowActions}
+    </div>
+  );
+
   return (
     <div
       onClick={() => {
@@ -105,16 +300,16 @@ export function ItemCard({
         onView(item);
       }}
       style={{ width: cardWidth, height: cardHeight }}
-      className={`bg-dh-surface border border-dh-border rounded-lg transition-colors group overflow-hidden flex flex-col max-w-full shrink-0 relative ${
+      className={`dh-library-item-card bg-dh-surface border border-dh-border rounded-lg transition-colors group overflow-hidden flex flex-col max-w-full shrink-0 relative ${
         cardClickOpensModal
           ? 'cursor-pointer hover:border-dh-strong hover:bg-dh-raised/50'
           : 'cursor-default'
       }`}
     >
       <div
-        className={`h-full min-h-0 min-w-0 flex flex-col overflow-hidden px-2 pt-1.5 pb-1 ${showPreview ? '' : 'justify-center'}`}
+        className={`h-full min-h-0 min-w-0 flex flex-col overflow-hidden px-2 pt-1.5 pb-1 ${showPreview ? '' : 'justify-start'}`}
       >
-        {/* Title row: rank chrome, then name + source badge (left-aligned), then actions — no centered title column. */}
+        {/* Title row: rank chrome, name (truncate), optional thumb, then source badge or actions (same grid cell — no swap wiggle). */}
         <div className="flex w-full shrink-0 min-h-0 min-w-0 items-center gap-1.5">
           <div className="flex shrink-0 items-center gap-1">
             {tierByName ? (
@@ -124,49 +319,48 @@ export function ItemCard({
                 className="shrink-0"
               />
             ) : null}
-            {levelByName ? <LevelBadge level={item.level} className="shrink-0" /> : null}
+            {tab !== 'features' && levelByName ? <LevelBadge level={item.level} className="shrink-0" /> : null}
           </div>
-          <div className="flex min-h-0 min-w-0 flex-1 items-center justify-start gap-1.5 overflow-hidden">
-            <h3 className="min-w-0 flex-1 truncate text-left font-bold text-sm leading-tight text-white transition-colors group-hover:text-red-400">
-              {item.name}
-            </h3>
-            {badge && (
-              <span
-                className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${badge.className}`}
+          <h3 className="min-h-0 min-w-0 flex-1 truncate text-left font-bold text-sm leading-tight text-white transition-colors group-hover:text-red-400">
+            {item.name}
+          </h3>
+          {showCompactTitleThumb ? (
+            <LibraryItemImageThumb item={item} variant="card" compact />
+          ) : null}
+          {showBadgeHoverSwap ? (
+            <div className="inline-grid shrink-0 grid-cols-1 grid-rows-1 justify-items-end">
+              <div
+                className="dh-library-card-actions-swap pointer-events-none col-start-1 row-start-1 flex items-center justify-end opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
               >
-                {badge.label}
-              </span>
-            )}
-          </div>
-          <div
-            className="flex shrink-0 items-center justify-end gap-0"
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {v2LibrarySourcePath ? (
-              <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="card" />
-            ) : null}
-            <ItemActionButtons
-              variant="card"
-              stopPropagation
-              isOwn={isOwn}
-              itemName={item.name}
-              addToTableMenu={
-                ownedTables?.length && onAddToTable
-                  ? { tables: ownedTables, onPick: (tableId) => onAddToTable(item, tab, tableId) }
-                  : undefined
-              }
-              onAddToTable={
-                !ownedTables?.length && onAddToTable ? () => onAddToTable(item, tab) : undefined
-              }
-              onClone={onClone ? () => onClone(item) : undefined}
-              onEdit={isOwn && onEdit ? () => onEdit(item) : undefined}
-              onDelete={isOwn && onDelete ? () => onDelete(tab, item.id) : undefined}
-            />
-          </div>
+                {rowActionsWrap}
+              </div>
+              <div
+                className="dh-library-card-badge-swap col-start-1 row-start-1 flex items-center justify-end opacity-100 transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0"
+              >
+                <span
+                  className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${badge.className}`}
+                >
+                  {badge.label}
+                </span>
+              </div>
+            </div>
+          ) : hasSourceBadge && !hasAnyRowAction ? (
+            <span
+              className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${badge.className}`}
+            >
+              {badge.label}
+            </span>
+          ) : hasAnyRowAction ? (
+            rowActionsWrap
+          ) : null}
         </div>
 
-        {!showPreview ? <LibraryItemCardCompactRow item={item} /> : null}
+        {tab === 'features' && (item._scope || item._parentName) ? (
+          <p className="text-[10px] text-dh-muted/90 truncate shrink-0 -mt-0.5 mb-0.5">
+            {item._scope}
+            {item._parentName != null && item._parentName !== '' ? ` · ${item._parentName}` : ''}
+          </p>
+        ) : null}
 
         {popularity > 0 && (
           <div className="mt-0.5 flex shrink-0 justify-center">
@@ -192,6 +386,16 @@ export function ItemCard({
             style={{ zoom: LIBRARY_CARD_DETAIL_ZOOM }}
           >
             <div ref={previewContentRef} className="min-w-0">
+              {tab === 'features' ? (
+                item.description ? (
+                  <MarkdownText
+                    text={item.description}
+                    className="text-[10px] text-dh-muted leading-snug line-clamp-[12]"
+                  />
+                ) : (
+                  <p className="text-[10px] text-dh-muted leading-snug line-clamp-[12]">—</p>
+                )
+              ) : (
               <LibraryItemDisplayContent
                 layout="libraryCard"
                 item={item}
@@ -204,6 +408,7 @@ export function ItemCard({
                 enriching={isEnriching}
                 cardKey={`library-card-${item.id ?? 'new'}`}
               />
+              )}
             </div>
           </div>
           {previewClipped ? (
@@ -223,6 +428,42 @@ export function ItemCard({
         </div>
         ) : null}
       </div>
+      {libraryResize ? (
+        <>
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize card height"
+            className="pointer-events-auto absolute bottom-0 left-0 z-[11] h-2 cursor-ns-resize touch-none right-2 rounded-bl-md"
+            onPointerDown={onResizeBottomPointerDown}
+            onPointerMove={onResizeHandlePointerMove}
+            onPointerUp={onResizeHandlePointerUp}
+            onPointerCancel={onResizeHandlePointerCancel}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize card width"
+            className="pointer-events-auto absolute top-0 right-0 bottom-2 z-[11] w-2 cursor-ew-resize touch-none rounded-tr-md"
+            onPointerDown={onResizeRightPointerDown}
+            onPointerMove={onResizeHandlePointerMove}
+            onPointerUp={onResizeHandlePointerUp}
+            onPointerCancel={onResizeHandlePointerCancel}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div
+            role="separator"
+            aria-label="Resize card width and height"
+            className="pointer-events-auto absolute bottom-0 right-0 z-[12] h-2 w-2 cursor-nwse-resize touch-none rounded-br-md"
+            onPointerDown={onResizeCornerPointerDown}
+            onPointerMove={onResizeHandlePointerMove}
+            onPointerUp={onResizeHandlePointerUp}
+            onPointerCancel={onResizeHandlePointerCancel}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

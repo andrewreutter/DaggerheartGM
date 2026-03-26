@@ -5,6 +5,7 @@ import {
 import { useState, useMemo, useCallback } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { effectiveThresholds, parseBeastformBonus, getEvasionModifierTotal, formatEvasionModifierTooltip } from '../lib/helpers.js';
+import { buildModifierChipHoverTitle } from '../lib/modifier-chip-title.js';
 import {
   traitScoreNumberColorClass,
   traitScoreNumberSizeClassTraitChip,
@@ -17,7 +18,9 @@ import { CheckboxTrack } from './DetailCardContent.jsx';
 import { isCharacterComplete, recomputeCharacter, detectPairedWeapons, parsePairedBonus, applyDamageBonus, detectVersatileWeapons, detectOtherworldlyWeapons, detectChargedWeapons, getEffectiveWeaponRange, runCharacterRender } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay } from '../lib/v2-declarative-sheet.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
+import { FrequencyCycleChipSuffix } from '../lib/frequency-cycle-ui.jsx';
 import { GuideFeatureCard, GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
+import { WidthSortedFlexWrap } from './WidthSortedFlexWrap.jsx';
 import {
   buildFeatureCardModelForCharacter,
   buildGuideFeatureTableSnapshot,
@@ -955,7 +958,6 @@ export function CharacterExperiences({ el, selectedIndex, onSelect, experiencesA
  *   tooltip     — optional override for title (e.g. advantage condition text)
  */
 function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eligible = true, tooltip }) {
-  const isRollMod = mod.mode === 'roll' || (mod.bonus != null && !mod.mode);
   const isClearStress = mod.mode === 'clearStress';
   const isPersistent = mod.type === 'persistent';
   const hasUsageModes = Array.isArray(mod.usageModes) && mod.usageModes.length >= 1;
@@ -963,7 +965,10 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
   const baseLabel = mod.name + (mod.dice ? ` (${mod.dice})` : mod.value != null ? ` (${mod.value})` : mod.bonus != null ? ` +${mod.bonus}` : '');
 
   let colorCls;
-  if (mod.name === 'Prayer Die') colorCls = selected ? 'bg-teal-800/70 border-teal-500 text-teal-100 ring-1 ring-teal-500/50' : 'bg-teal-950/40 border-teal-700/60 text-teal-300 hover:bg-teal-900/40';
+  if (mod.name === 'Prayer Die')
+    colorCls = selected
+      ? 'bg-violet-800/70 border-violet-500 text-violet-100 ring-1 ring-violet-500/50'
+      : 'bg-violet-950/40 border-violet-700/60 text-violet-300 hover:bg-violet-900/40';
   else if (mod.name === 'Sneak Attack') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
   else if (mod.name === 'No Mercy') colorCls = selected ? 'bg-amber-800/70 border-amber-500 text-dh ring-1 ring-amber-500/50' : 'bg-amber-950/40 border-amber-700/60 text-dh hover:bg-amber-900/40';
   else if (mod.name === "Rogue's Dodge") colorCls = selected ? 'bg-cyan-800/70 border-cyan-500 text-cyan-100 ring-1 ring-cyan-500/50' : 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/40';
@@ -1002,8 +1007,7 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
     );
   }
 
-  const defaultTitle = !eligible ? `${mod.name} — not eligible right now` : isPersistent ? `${mod.name} (active until ${mod.refreshOn === 'session' ? 'session end' : mod.refreshOn === 'longRest' ? 'long rest' : 'rest'})` : `${mod.name} — click to ${isRollMod ? 'include in next roll' : isClearStress ? 'roll to clear Stress' : 'use'}`;
-  const title = tooltip != null && tooltip !== '' ? tooltip : defaultTitle;
+  const title = buildModifierChipHoverTitle(mod, { tooltip, eligible });
 
   return (
     <button
@@ -1014,7 +1018,9 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
     >
       <span>{baseLabel}</span>
       {isClearStress && <span className="text-[9px] opacity-70">→ clr Stress</span>}
-      {isPersistent && <span className="text-[9px] opacity-60">●</span>}
+      {isPersistent && (
+        <FrequencyCycleChipSuffix frequency={mod.refreshOn ?? 'rest'} iconSize={10} className="opacity-80" />
+      )}
     </button>
   );
 }
@@ -1057,7 +1063,7 @@ export function CharacterSheetModifierChips({
   );
 
   return (
-    <Section label="Modifiers">
+    <Section label="Temporary actions">
       <div className="flex flex-wrap gap-1">
         {!hasInteractiveModifiers ? (
           <>
@@ -1623,24 +1629,42 @@ function CharacterFeatureActionsBody({
   const loadoutEntries = useMemo(() => getOrderedGuideLoadoutEntries(el), [el]);
   const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
 
+  /** Rows that actually render chips — must match DOM child count for WidthSortedFlexWrap (rows with no chips return null). */
+  const guideEntriesWithChips = useMemo(() => {
+    const out = [];
+    for (const entry of orderedEntries) {
+      if (entry.kind !== 'guide') continue;
+      const { model } = buildFeatureCardModelForCharacter(entry.row, el, v2TableContext);
+      if (model.cardChips?.length) out.push(entry);
+    }
+    return out;
+  }, [orderedEntries, el, v2TableContext]);
+
+  const loadoutEntriesWithChips = useMemo(() => {
+    const out = [];
+    for (const entry of loadoutEntries) {
+      const { model } = buildFeatureCardModelForCharacter(entry.row, el, v2TableContext);
+      if (model.cardChips?.length) out.push(entry);
+    }
+    return out;
+  }, [loadoutEntries, el, v2TableContext]);
+
   return (
-    <div className="flex flex-wrap gap-x-1.5 gap-y-1 items-center content-start">
-      {orderedEntries
-        .filter((e) => e.kind === 'guide')
-        .map((entry) => (
-          <CharacterFeatureActionsRow
-            key={entry.key}
-            entry={entry}
-            el={el}
-            v2TableContext={v2TableContext}
-            interactionMode={mode}
-            onV2CardChip={onV2CardChip}
-            onShareFeature={onShareFeature}
-            activeChanneledElement={activeChanneledElement}
-            pendingBanners={pendingBanners}
-          />
-        ))}
-      {loadoutEntries.map((entry) => (
+    <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
+      {guideEntriesWithChips.map((entry) => (
+        <CharacterFeatureActionsRow
+          key={entry.key}
+          entry={entry}
+          el={el}
+          v2TableContext={v2TableContext}
+          interactionMode={mode}
+          onV2CardChip={onV2CardChip}
+          onShareFeature={onShareFeature}
+          activeChanneledElement={activeChanneledElement}
+          pendingBanners={pendingBanners}
+        />
+      ))}
+      {loadoutEntriesWithChips.map((entry) => (
         <CharacterFeatureActionsRow
           key={entry.key}
           entry={entry}
@@ -1654,7 +1678,7 @@ function CharacterFeatureActionsBody({
           sheetHighlightAbility={entry.ability}
         />
       ))}
-    </div>
+    </WidthSortedFlexWrap>
   );
 }
 
@@ -2270,13 +2294,14 @@ export function CharacterAbilityList({
 }) {
   const [localExpanded, setLocalExpanded] = useState({});
   const abilities = el.abilities || [];
-  if (!abilities.length) return null;
   const inBeastform = !!el.activeBeastform;
 
   const hasLoadoutActions = useMemo(
     () => characterHasLoadoutCardActions(el, v2TableContext),
     [el, v2TableContext],
   );
+
+  if (!abilities.length) return null;
 
   const isOpen = (key) => {
     if (expandedKeys !== undefined) return expandedKeys.includes(key);
@@ -2302,26 +2327,21 @@ export function CharacterAbilityList({
           const key = `ability-${a.id ?? i}`;
           const featRow = resolveLoadoutAbilityFeatRow(el, a);
           return (
-            <div
+            <GuideFeatureCard
               key={a.id || key}
-              className="rounded-lg overflow-hidden bg-violet-950/25 border-t border-violet-400/35"
-            >
-              <GuideFeatureCard
-                featRow={featRow}
-                featureKey={key}
-                el={el}
-                open={isOpen(key)}
-                onToggle={() => toggle(key)}
-                interactionMode={mode}
-                onFeatureUse={onFeatureUse}
-                featureUsage={featureUsage}
-                onV2CardChip={onV2DomainChip}
-                v2TableContext={v2TableContext}
-                tone="domain"
-                sheetHighlightAbility={a}
-                hideV2CardChips={hasLoadoutActions}
-              />
-            </div>
+              featRow={featRow}
+              featureKey={key}
+              el={el}
+              open={isOpen(key)}
+              onToggle={() => toggle(key)}
+              interactionMode={mode}
+              onFeatureUse={onFeatureUse}
+              featureUsage={featureUsage}
+              onV2CardChip={onV2DomainChip}
+              v2TableContext={v2TableContext}
+              sheetHighlightAbility={a}
+              hideV2CardChips={hasLoadoutActions}
+            />
           );
         })}
       </div>

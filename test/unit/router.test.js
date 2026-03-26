@@ -2,10 +2,36 @@ import { describe, it, expect } from 'vitest';
 import { parseRoute, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from '../../src/client/lib/router.js';
 
 describe('parseRoute /library', () => {
-  it('defaults tab to characters when path is /library or tab segment is invalid', () => {
+  it('defaults tab to All when path is /library or tab segment is invalid', () => {
     expect(parseRoute('/library').tab).toBe(DEFAULT_LIBRARY_TAB);
     expect(parseRoute('/library/').tab).toBe(DEFAULT_LIBRARY_TAB);
     expect(parseRoute('/library/not-a-real-tab').tab).toBe(DEFAULT_LIBRARY_TAB);
+  });
+
+  it('parses /library/all and optional item id', () => {
+    expect(parseRoute('/library/all')).toEqual({
+      view: 'library',
+      tab: 'all',
+      itemId: null,
+    });
+    expect(parseRoute('/library/all/some-item-id')).toEqual({
+      view: 'library',
+      tab: 'all',
+      itemId: 'some-item-id',
+    });
+  });
+
+  it('parses /library/features and optional V2 feature id', () => {
+    expect(parseRoute('/library/features')).toEqual({
+      view: 'library',
+      tab: 'features',
+      itemId: null,
+    });
+    expect(parseRoute('/library/features/v2feat-classes-srd-cls-bard-rally')).toEqual({
+      view: 'library',
+      tab: 'features',
+      itemId: 'v2feat-classes-srd-cls-bard-rally',
+    });
   });
 });
 

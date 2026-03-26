@@ -174,7 +174,7 @@ export const PrayerDice = {
     when(
       isPrayerDicePoolNonEmpty,
       {
-        name: 'Prayer Die — gain Hope',
+        name: 'Prayer Dice — gain Hope',
         description: 'Spend one Prayer Die to gain Hope equal to its value.',
         placements: ['card'],
         isSelect: prayerDieSelectOptions,

@@ -9,11 +9,13 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
+import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
+import { unifiedListConfig } from './src/unified-list-config.js';
 import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
@@ -847,29 +849,8 @@ app.get('/api/data', requireAuth, async (req, res) => {
 // --- Per-collection paginated route ---
 
 /** SRD-backed unified list + app-only collections */
-const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures', 'characters'];
+const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'features', 'scenes', 'adventures', 'characters'];
 const UNIFIED_COLLECTIONS = SRD_COLLECTION_NAMES;
-
-/** Maps collection → getUnifiedItems JSON field / tier SQL (see docs/srd-implementation.md) */
-function unifiedListConfig(collection) {
-  const d = { typeField: null, extraTypeField: null, tierExprSql: `COALESCE((data->>'tier')::int, 1)` };
-  const map = {
-    adversaries: { typeField: 'role', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
-    environments: { typeField: 'type', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
-    abilities: { typeField: 'domain', tierExprSql: `COALESCE((data->>'level')::int, 1)` },
-    weapons: { typeField: 'primary_or_secondary', extraTypeField: 'physical_or_magical', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
-    armor: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
-    beastforms: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
-    ancestries: { tierExprSql: `1` },
-    classes: { tierExprSql: `1` },
-    communities: { tierExprSql: `1` },
-    consumables: { tierExprSql: `1` },
-    domains: { tierExprSql: `1` },
-    items: { tierExprSql: `1` },
-    subclasses: { tierExprSql: `1` },
-  };
-  return { ...d, ...map[collection] };
-}
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
   const opts = tierMax != null
@@ -895,6 +876,119 @@ async function fetchDbItems(appId, uid, collection, { includeMine, includePublic
   ]);
   return { items: [...ownSlice, ...communitySlice], dbCount };
 }
+
+/** Shared query parsing for Library “All” merged browse + branch counts */
+function parseLibraryAllQuery(req) {
+  const includeMine = req.query.includeMine !== '0';
+  const includePublic = req.query.includePublic === '1';
+  const includeSrd = req.query.includeSrd === '1';
+  const includeHod = req.query.includeHod === '1';
+  const search = req.query.search || '';
+  const sort = req.query.sort || 'popularity';
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const includeScaledUp = req.query.includeScaledUp === '1';
+
+  const tiersRaw = parseQueryArray(req.query.tier);
+  const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
+  const levelsRaw = parseQueryArray(req.query.level);
+  const levels = levelsRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
+
+  const advRole = parseQueryArray(req.query.advRole);
+  const envType = parseQueryArray(req.query.envType);
+  const ablDomain = parseQueryArray(req.query.ablDomain);
+  const wpnSlot = parseQueryArray(req.query.wpnSlot);
+  const wpnPhyMag = parseQueryArray(req.query.wpnPhyMag);
+  const featScope = parseQueryArray(req.query.featScope);
+
+  return {
+    includeMine,
+    includePublic,
+    includeSrd,
+    includeHod,
+    search,
+    sort,
+    offset,
+    limit,
+    tiers,
+    levels,
+    advRole,
+    envType,
+    ablDomain,
+    wpnSlot,
+    wpnPhyMag,
+    includeScaledUp,
+    featScope,
+  };
+}
+
+/** Per-collection counts for Library nav (same filters as library-all; COUNT only) */
+app.get('/api/data/library-all-counts', requireAuth, async (req, res) => {
+  const q = parseLibraryAllQuery(req);
+  try {
+    const result = await getUnifiedLibraryAllBranchCounts(APP_ID, req.uid, {
+      includeMine: q.includeMine,
+      includePublic: q.includePublic,
+      includeSrd: q.includeSrd,
+      includeHod: q.includeHod,
+      search: q.search,
+      tiers: q.tiers,
+      levels: q.levels,
+      advRole: q.advRole,
+      envType: q.envType,
+      ablDomain: q.ablDomain,
+      wpnSlot: q.wpnSlot,
+      wpnPhyMag: q.wpnPhyMag,
+      includeScaledUp: q.includeScaledUp,
+      featScope: q.featScope,
+    });
+    return res.json({
+      countsByCollection: result.countsByCollection,
+      totalCount: result.totalCount,
+      dbCount: result.totalCount,
+    });
+  } catch (err) {
+    console.error('GET /api/data/library-all-counts error:', err);
+    return res.status(500).json({ error: 'Failed to fetch library-all-counts' });
+  }
+});
+
+/** Merged SRD unified collections for Library “All” tab — see `getUnifiedLibraryAll` in db.js */
+app.get('/api/data/library-all', requireAuth, async (req, res) => {
+  const q = parseLibraryAllQuery(req);
+
+  try {
+    const result = await getUnifiedLibraryAll(APP_ID, req.uid, {
+      includeMine: q.includeMine,
+      includePublic: q.includePublic,
+      includeSrd: q.includeSrd,
+      includeHod: q.includeHod,
+      search: q.search,
+      sort: q.sort,
+      offset: q.offset,
+      limit: q.limit,
+      tiers: q.tiers,
+      levels: q.levels,
+      advRole: q.advRole,
+      envType: q.envType,
+      ablDomain: q.ablDomain,
+      wpnSlot: q.wpnSlot,
+      wpnPhyMag: q.wpnPhyMag,
+      includeScaledUp: q.includeScaledUp,
+      featScope: q.featScope,
+    });
+    return res.json({
+      items: result.items,
+      totalCount: result.totalCount,
+      dbCount: result.totalCount,
+      nextOffset: result.nextOffset,
+      countsByCollection: result.countsByCollection,
+    });
+  } catch (err) {
+    console.error('GET /api/data/library-all error:', err);
+    return res.status(500).json({ error: 'Failed to fetch library-all' });
+  }
+});
 
 app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const { collection } = req.params;
@@ -955,8 +1049,39 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const typeValues = typeValuesRaw.filter(Boolean);
   const extraTypeValues = parseQueryArray(req.query.type2).filter(Boolean);
   const tierMax = collection === 'adversaries' && includeScaledUp && tiers.length === 1 ? tiers[0] : null;
+  const tierMaxExclusive = tierMax != null;
 
   try {
+    if (collection === 'features') {
+      const featScope = parseQueryArray(req.query.featScope);
+      const singleId = req.query.id;
+      if (singleId) {
+        const row = getFeatureCatalogById(singleId);
+        if (!row) return res.status(404).json({ error: 'Not found' });
+        const item = { ...row, popularity: (row.clone_count || 0) + (row.play_count || 0) };
+        return res.json({
+          items: [item],
+          totalCount: 1,
+          dbCount: 1,
+          nextOffset: 1,
+        });
+      }
+      const result = filterFeatureCatalog({
+        search,
+        featScope,
+        tiers,
+        sort,
+        offset,
+        limit,
+      });
+      return res.json({
+        items: result.items,
+        totalCount: result.totalCount,
+        dbCount: result.totalCount,
+        nextOffset: offset + result.items.length,
+      });
+    }
+
     if (UNIFIED_COLLECTIONS.includes(collection)) {
       const cfg = unifiedListConfig(collection);
       const result = await getUnifiedItems(APP_ID, req.uid, collection, {
@@ -966,6 +1091,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         includeHod: req.query.includeHod === '1',
         search,
         tierMax,
+        tierMaxExclusive,
         tiers: tierMax != null ? [] : tiers,
         typeField: cfg.typeField,
         typeValues,

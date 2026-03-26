@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SRD_UNIFIED_COLLECTIONS } from './library-filter-config.js';
 
-const VALID_TABS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
+const VALID_TABS = new Set(['all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
 const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
 
 /** Default tab when URL is `/library` or `/library/` without a segment (and invalid tab names). */
-export const DEFAULT_LIBRARY_TAB = 'characters';
+export const DEFAULT_LIBRARY_TAB = 'all';
 
 /**
  * If pathname is a legacy `/gm-table/...` URL, returns the canonical `/table/...` path.
@@ -67,7 +67,7 @@ function parseGmTableParts(parts) {
  *
  * Supported patterns:
  *   /                              -> { view: 'home' }
- *   /library                        -> { view: 'library', tab: DEFAULT_LIBRARY_TAB, itemId: null }
+ *   /library                        -> { view: 'library', tab: DEFAULT_LIBRARY_TAB (all), itemId: null }
  *   /library/:tab                  -> { view: 'library', tab, itemId: null }
  *   /library/:tab/new              -> { view: 'library', tab, itemId: 'new' }
  *   /library/:tab/:id              -> { view: 'library', tab, itemId }

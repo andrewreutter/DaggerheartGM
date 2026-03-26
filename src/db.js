@@ -1,4 +1,12 @@
 import pg from 'pg';
+import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './srd/parser.js';
+import { unifiedListConfig } from './unified-list-config.js';
+import {
+  resolveLibraryAllBranchTiers,
+  resolveLibraryAllBranchTypes,
+  shouldIncludeLibraryAllBranch,
+} from './library-all-branch-opts.js';
+import { countFeatureCatalog, filterFeatureCatalog } from './v2-feature-catalog.js';
 import { FCG_PUBLIC_USER_ID } from './game-constants.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { readdir, readFile } from 'fs/promises';
@@ -563,6 +571,7 @@ const SORT_OPTIONS = {
  * @param {boolean} opts.includeHod
  * @param {string} opts.search
  * @param {number|null} opts.tierMax
+ * @param {boolean} [opts.tierMaxExclusive] When true with tierMax, filter to tiers strictly below tierMax (adversary upscaled-only).
  * @param {number[]} opts.tiers
  * @param {string} opts.typeField - JSON key for primary type/role filter (e.g. 'role', 'domain')
  * @param {string} opts.tierExprSql - SQL fragment for numeric tier/level column (default: tier from JSON)
@@ -571,6 +580,7 @@ const SORT_OPTIONS = {
  * @param {string[]} opts.extraTypeValues - filter on extraTypeField
  * @param {string} opts.sort - 'popularity' | 'name' | 'type' | 'source' | 'tier'
  * @param {string} opts.sortDir - 'asc' | 'desc'
+ * @param {boolean} opts.countOnly - when true, run COUNT only (no row fetch)
  */
 export async function getUnifiedItems(appId, userId, collection, {
   includeMine = true,
@@ -579,6 +589,7 @@ export async function getUnifiedItems(appId, userId, collection, {
   includeHod = false,
   search = '',
   tierMax = null,
+  tierMaxExclusive = false,
   tiers = [],
   typeField = null,
   typeValues = [],
@@ -589,6 +600,7 @@ export async function getUnifiedItems(appId, userId, collection, {
   sortDir = 'asc',
   offset = 0,
   limit = 20,
+  countOnly = false,
 } = {}) {
   const db = getPool();
   const parts = [];
@@ -661,7 +673,7 @@ export async function getUnifiedItems(appId, userId, collection, {
     p++;
   }
   if (tierMax != null) {
-    filterClauses.push(`u.tier_val <= $${p}`);
+    filterClauses.push(tierMaxExclusive ? `u.tier_val < $${p}` : `u.tier_val <= $${p}`);
     params.push(Number(tierMax));
     p++;
   } else if (tiers.length > 0) {
@@ -686,6 +698,10 @@ export async function getUnifiedItems(appId, userId, collection, {
   const { rows: countRows } = await db.query(countSQL, countParams);
   const totalCount = parseInt(countRows[0]?.cnt ?? 0, 10);
 
+  if (countOnly) {
+    return { items: [], totalCount };
+  }
+
   const orderClause = sortOpt.order;
   const dataParams = [...params, offset, limit];
   const dataSQL = `SELECT u.id, u.data, u.user_id, u.is_public, u.cc, u.pc, u._source FROM (${unionSQL}) u WHERE 1=1 ${filterSQL} ORDER BY ${orderClause} OFFSET $${p} LIMIT $${p + 1}`;
@@ -706,6 +722,221 @@ export async function getUnifiedItems(appId, userId, collection, {
   });
 
   return { items, totalCount };
+}
+
+const LIBRARY_ALL_FETCH_LIMIT = 250000;
+
+function libraryAllTypeSortKey(item, collection) {
+  switch (collection) {
+    case 'adversaries':
+      return String(item.role || '').toLowerCase();
+    case 'environments':
+      return String(item.type || '').toLowerCase();
+    case 'abilities':
+      return String(item.domain || '').toLowerCase();
+    case 'weapons':
+      return `${item.primary_or_secondary || ''}|${item.physical_or_magical || ''}`.toLowerCase();
+    case 'features':
+      return String(item._scope || '').toLowerCase();
+    default:
+      return '';
+  }
+}
+
+function libraryAllTierSortVal(item, collection) {
+  if (collection === 'abilities') return Number(item.level ?? 1);
+  if (collection === 'features') {
+    const t = item.tier;
+    if (t === undefined || t === null || t === '') return 999;
+    return Number(t);
+  }
+  return Number(item.tier ?? 1);
+}
+
+function compareLibraryAllItems(a, b, sort) {
+  const nameCmp = () => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+  if (sort === 'popularity') {
+    const pa = (a.clone_count || 0) + (a.play_count || 0);
+    const pb = (b.clone_count || 0) + (b.play_count || 0);
+    if (pb !== pa) return pb - pa;
+    return nameCmp();
+  }
+  if (sort === 'name') {
+    return nameCmp();
+  }
+  if (sort === 'source') {
+    const sc = String(a._source || '').localeCompare(String(b._source || ''));
+    if (sc !== 0) return sc;
+    return nameCmp();
+  }
+  if (sort === 'tier') {
+    const ta = libraryAllTierSortVal(a, a._collection);
+    const tb = libraryAllTierSortVal(b, b._collection);
+    if (ta !== tb) return ta - tb;
+    return nameCmp();
+  }
+  if (sort === 'type') {
+    const ta = libraryAllTypeSortKey(a, a._collection);
+    const tb = libraryAllTypeSortKey(b, b._collection);
+    const c = ta.localeCompare(tb);
+    if (c !== 0) return c;
+    return nameCmp();
+  }
+  return nameCmp();
+}
+
+/**
+ * Shared per-collection branch fetch for Library "All" (merge) vs count-only.
+ * @param {boolean} countOnly - pass through to getUnifiedItems (no row fetch when true)
+ */
+async function fetchFeaturesLibraryAllBranch(opts, countOnly) {
+  const { search = '', featScope = [], tiers = [], includeSrd = false } = opts;
+  const tierNums = Array.isArray(tiers)
+    ? tiers.map(t => Number(t)).filter(n => !isNaN(n) && n >= 1 && n <= 12)
+    : [];
+  if (!includeSrd) {
+    return { collection: 'features', items: [], totalCount: 0 };
+  }
+  if (countOnly) {
+    const n = countFeatureCatalog({ search, featScope, tiers: tierNums });
+    return { collection: 'features', items: [], totalCount: n };
+  }
+  const { items, totalCount } = filterFeatureCatalog({
+    search,
+    featScope,
+    tiers: tierNums,
+    sort: 'name',
+    offset: 0,
+    limit: LIBRARY_ALL_FETCH_LIMIT,
+  });
+  return { collection: 'features', items, totalCount };
+}
+
+async function runLibraryAllBranches(appId, userId, opts, countOnly) {
+  const {
+    includeMine = true,
+    includePublic = false,
+    includeSrd = false,
+    includeHod = false,
+    search = '',
+    tiers = [],
+    levels = [],
+    advRole = [],
+    envType = [],
+    ablDomain = [],
+    wpnSlot = [],
+    wpnPhyMag = [],
+    includeScaledUp = false,
+    featScope = [],
+  } = opts;
+
+  const tierNums = tiers.map(t => Number(t)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
+  const levelNums = levels.map(t => Number(t)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
+
+  const srdCollections = SRD_COLLECTION_NAMES.filter(c => shouldIncludeLibraryAllBranch(c, opts));
+
+  const srdBranches = await Promise.all(
+    srdCollections.map(async (collection) => {
+      const cfg = unifiedListConfig(collection);
+      const { tiersParam, tierMax, tierMaxExclusive } = resolveLibraryAllBranchTiers(collection, {
+        tierNums,
+        levelNums,
+        includeScaledUp,
+      });
+      const { typeValues, extraTypeValues } = resolveLibraryAllBranchTypes(collection, {
+        advRole,
+        envType,
+        ablDomain,
+        wpnSlot,
+        wpnPhyMag,
+      });
+
+      const result = await getUnifiedItems(appId, userId, collection, {
+        includeMine,
+        includePublic,
+        includeSrd,
+        includeHod,
+        search,
+        tierMax,
+        tierMaxExclusive,
+        tiers: tiersParam,
+        typeField: cfg.typeField,
+        typeValues,
+        extraTypeField: cfg.extraTypeField,
+        extraTypeValues,
+        tierExprSql: cfg.tierExprSql,
+        sort: 'popularity',
+        offset: 0,
+        limit: countOnly ? 0 : LIBRARY_ALL_FETCH_LIMIT,
+        countOnly,
+      });
+
+      return { collection, items: result.items, totalCount: result.totalCount };
+    })
+  );
+
+  const featBranch = shouldIncludeLibraryAllBranch('features', opts)
+    ? await fetchFeaturesLibraryAllBranch(
+      { search, featScope, tiers: tierNums, includeSrd },
+      countOnly
+    )
+    : { collection: 'features', items: [], totalCount: 0 };
+  return [...srdBranches, featBranch];
+}
+
+/**
+ * Per-collection match counts for Library filters (COUNT queries only; no row fetch).
+ */
+export async function getUnifiedLibraryAllBranchCounts(appId, userId, opts = {}) {
+  const branches = await runLibraryAllBranches(appId, userId, opts, true);
+  const countsByCollection = {};
+  let totalCount = 0;
+  for (const b of branches) {
+    countsByCollection[b.collection] = b.totalCount;
+    totalCount += b.totalCount;
+  }
+  return { countsByCollection, totalCount };
+}
+
+/**
+ * Merged library browse across all SRD unified collections. Each row includes `_collection`.
+ * Filters are applied per collection (see server route); results are merged and sorted in memory.
+ */
+export async function getUnifiedLibraryAll(appId, userId, opts = {}) {
+  const {
+    sort = 'popularity',
+    offset = 0,
+    limit = 20,
+  } = opts;
+
+  const branches = await runLibraryAllBranches(appId, userId, opts, false);
+
+  const countsByCollection = {};
+  let totalCount = 0;
+  const merged = [];
+  for (const b of branches) {
+    countsByCollection[b.collection] = b.totalCount;
+    totalCount += b.totalCount;
+    for (const item of b.items) {
+      merged.push({ ...item, _collection: b.collection });
+    }
+  }
+
+  merged.sort((a, b) => {
+    const c = compareLibraryAllItems(a, b, sort);
+    if (c !== 0) return c;
+    const d = String(a._collection || '').localeCompare(String(b._collection || ''));
+    if (d !== 0) return d;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+
+  const slice = merged.slice(offset, offset + limit);
+  const items = slice.map(item => ({
+    ...item,
+    popularity: (item.clone_count || 0) + (item.play_count || 0),
+  }));
+
+  return { items, totalCount, nextOffset: offset + items.length, countsByCollection };
 }
 
 /**

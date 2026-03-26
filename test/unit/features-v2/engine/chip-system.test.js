@@ -22,6 +22,7 @@ import {
 } from '../../../../src/features-v2/engine/chip-system.js';
 import { Privilege } from '../../../../src/features-v2/communities/Highborne.js';
 import { RetractingClaws } from '../../../../src/features-v2/ancestries/Katari.js';
+import { BareBones } from '../../../../src/features-v2/abilities/Valor/BareBones.js';
 import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
 import { mockTable, mockGameState, mockCharacter } from '../helpers.js';
@@ -849,6 +850,11 @@ describe('buildChipsForFeature()', () => {
     };
     expect(buildChipsForFeature(row)).toEqual([]);
     expect(hasDeclarativeSheetRepresentation(row)).toBe(true);
+  });
+
+  it('returns no synthetic card chips for dynamic (function) passiveStatMods — Bare Bones', () => {
+    expect(hasDeclarativeSheetRepresentation(BareBones)).toBe(true);
+    expect(buildChipsForFeature(BareBones)).toEqual([]);
   });
 });
 

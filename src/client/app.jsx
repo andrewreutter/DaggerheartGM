@@ -21,6 +21,7 @@ import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
+import { AppRoot } from './components/AppRoot.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -1080,22 +1081,25 @@ function App() {
   }, [route.tableId, sessionPlayAllowed]);
 
   const handlePlayerAddCharacter = useCallback(async (charData) => {
-    if (!route.tableId) return;
+    if (!route.tableId) return undefined;
     try {
-      await postAddCharacter(route.tableId, charData);
+      const res = await postAddCharacter(route.tableId, charData);
       // State update is handled by the character-added SSE event that the server broadcasts
       // to all room clients (including this player). Updating here too would double-add.
+      return res;
     } catch (err) {
       console.error('postAddCharacter failed:', err);
+      return undefined;
     }
   }, [route.tableId]);
 
   // GM impersonation: add a character on behalf of the previewed player.
-  const handleGmImpersonateAddCharacter = (charData) => {
-    const { name, playerName, tier, maxHope, maxHp, maxStress } = charData;
-    sendAddToTable({
+  const handleGmImpersonateAddCharacter = async (charData) => {
+    const { name, playerName, tier, maxHope, maxHp, maxStress, ...rest } = charData;
+    const newEls = await sendAddToTable({
+      ...rest,
       elementType: 'character',
-      name,
+      name: name ?? '',
       playerName,
       tier: tier ?? 1,
       hope: maxHope ?? 6,
@@ -1107,6 +1111,7 @@ function App() {
       conditions: '',
       assignedPlayerEmail: previewAsPlayerEmail || undefined,
     }, 'characters');
+    return { character: newEls?.[0] };
   };
 
 
@@ -1498,4 +1503,8 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <AppRoot>
+    <App />
+  </AppRoot>,
+);

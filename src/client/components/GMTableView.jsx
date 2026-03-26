@@ -24,6 +24,7 @@ import {
   characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
   shouldSuppressCharacterOverlayOutsideDismiss,
 } from '../lib/character-drawer-edit-mismatch.js';
+import { resolveGameTableCharacterEditMode } from '../lib/game-table-character-modal-url.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
@@ -35,6 +36,7 @@ import {
 import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
 import { getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
+import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { Tooltip } from './Tooltip.jsx';
@@ -106,6 +108,7 @@ import {
   migrateV2PendingMapRollId,
 } from '../lib/v2-pending-map-move.js';
 import { getExperienceModifierForCharacter, insertExperienceIntoRollText } from '../lib/experience-roll.js';
+import { computeRestBannerRefreshPreview } from '../lib/rest-banner-refresh-preview.js';
 import { runBeforeMarkStress, runBeforeMarkHP, runBeforeMarkArmor } from '../lib/origin-lifecycle.js';
 import { reducePendingStressAfterManualMark } from '../lib/pending-resource-costs.js';
 import {
@@ -293,7 +296,7 @@ function getItemData(element) {
   return rest;
 }
 
-const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment' };
+const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment', characters: 'character' };
 
 /** Get damage total and type from a roll. Sums all damage sub-items. Returns null if no damage sub. */
 function getDamageFromRoll(roll) {
@@ -433,6 +436,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const lastHoveredElementRef = useRef(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
+  /** Viewport anchor for programmatic character sheet open (Add Character → create / pick). */
+  const addCharacterAnchorRef = useRef(null);
 
   // Feature card expand/collapse: per-user, unshared (localStorage), keyed by character instanceId.
   const [featureExpanded, setFeatureExpanded] = useState(() => {
@@ -2652,6 +2657,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const gameTableBasePath = tableId ? `/table/${tableId}` : '/table';
 
+  const getAddCharacterAnchorRect = useCallback(() => {
+    const el = addCharacterAnchorRef.current;
+    if (!el) return { top: 140, bottom: 280 };
+    const r = el.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom };
+  }, []);
+
   // Deep-link: open modal when URL has /table/:collection/:id (e.g. refresh, back/forward, shared link)
   const { modalCollection, modalItemId } = route || {};
   useEffect(() => {
@@ -2667,17 +2679,38 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
     const canEditOriginal = isOwnItem(baseElement);
-    const mode = canEditOriginal ? 'original' : 'copy';
-    const item = canEditOriginal
-      ? (data[modalCollection]?.find(i => i.id === baseElement.id) || getItemData(baseElement))
-      : getItemData(baseElement);
-    setEditState({ step: 'form', item, collection: modalCollection, mode, instances, baseElement });
-  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, navigate]);
+    let mode;
+    let item;
+    if (modalCollection === 'characters') {
+      mode = resolveGameTableCharacterEditMode(baseElement, data?.characters, canEditOriginal);
+      const inLibrary = mode !== 'new';
+      item = inLibrary
+        ? (data?.characters?.find(i => i.id === baseElement.id) || getItemData(baseElement))
+        : getItemData(baseElement);
+    } else {
+      mode = canEditOriginal ? 'original' : 'copy';
+      item = canEditOriginal
+        ? (data[modalCollection]?.find(i => i.id === baseElement.id) || getItemData(baseElement))
+        : getItemData(baseElement);
+    }
+    setEditState({
+      step: 'form',
+      item,
+      collection: modalCollection,
+      mode,
+      instances,
+      baseElement,
+      presentation: modalCollection === 'characters' ? 'rightDrawer' : undefined,
+    });
+    if (modalCollection === 'characters') {
+      characterOverlay.show({ element: baseElement, top: 100, bottom: 220 });
+    }
+    // characterOverlay.show is stable; including characterOverlay in deps would re-run every render if the hook returns a new object reference.
+  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, navigate, gameTableBasePath]);
 
   // Close modal when URL no longer has item (e.g. user pressed back).
-  // Do not clear when editState.mode === 'new' (create-from-table flow), since we don't navigate for that.
   useEffect(() => {
-    if (!modalCollection && !modalItemId && editState && editState.mode !== 'new') {
+    if (!modalCollection && !modalItemId && editState) {
       setEditState(null);
     }
   }, [modalCollection, modalItemId, editState]);
@@ -4183,6 +4216,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return out;
   }, [pendingBanners, activeElements, srdData, fearCount, mapConfig, tableFeatureState]);
 
+  const restRefreshPreviewByInstanceId = useMemo(() => {
+    const restBanner = pendingBanners?.find(b => b._rest);
+    if (!restBanner || !srdData) return {};
+    const duration = restBanner._restDuration === 'long' ? 'long' : 'short';
+    const registry = buildV2RegistryWithSrdItems(srdData);
+    const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+    const out = {};
+    for (const c of activeElements.filter(e => e.elementType === 'character')) {
+      const merged = mergeV2DeclarativeSheetOverlay(recomputeCharacter(c, srdData), c, srdData, {
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+      out[c.instanceId] = computeRestBannerRefreshPreview({
+        characterEl: c,
+        mergedCharacterEl: merged,
+        activeElements: activeForLoader,
+        registry,
+        restDuration: duration,
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+    }
+    return out;
+  }, [pendingBanners, activeElements, srdData, fearCount, mapConfig, tableFeatureState]);
+
   // Ranger's Focus: Rangers who have a focused adversary (derived from focusedBy on adversaries).
   // We use the adversary's focusedBy field as the source of truth rather than focusTargetId on the
   // character, because the "Use on next attack" weapon path only sets focusedBy on the adversary.
@@ -4412,6 +4472,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         <div className="p-2 space-y-3">
           {/* + Add Character button — opens the character picker */}
           <button
+            type="button"
+            ref={addCharacterAnchorRef}
             onClick={() => setModalOpen('characters')}
             className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
@@ -4958,13 +5020,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
                   if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
                   const costLabel = costParts.length ? ` (${costParts.join(', ')})` : '';
-                  const resetsOnLabel = chip.resetsOn === 'session' ? 'Once per session' : chip.resetsOn === 'longRest' ? 'Once per long rest' : chip.resetsOn === 'rest' ? 'Once per rest' : null;
+                  const cycleWord = getFrequencyCycleWord(chip.resetsOn);
                   const descForTooltip =
                     typeof chip.description === 'string' && chip.description.trim() !== ''
                       ? chip.description.trim()
                       : null;
                   const tooltipLabel = used
-                    ? (resetsOnLabel ? `Already used (${resetsOnLabel})` : 'Already used')
+                    ? (cycleWord ? `Already used (${cycleWord})` : 'Already used')
                     : v2Hint || (descForTooltip ?? label) + costLabel;
                   const selEmerald = emerald && selected && !used && !v2Disabled;
                   const unselEmerald = emerald && !selected && !used && !v2Disabled;
@@ -4995,12 +5057,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                           <CheckSquare size={12} className={`shrink-0 ${selected && !used ? '' : 'hidden'}`} />
                           <span className="truncate max-w-[180px]">{label}</span>
                           {!used && <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />}
+                          {chip.resetsOn && (
+                            <FrequencyCycleChipSuffix frequency={chip.resetsOn} iconSize={9} className="ml-0.5" />
+                          )}
                         </button>
-                        {resetsOnLabel && (
-                          <span className={`text-[9px] rounded px-1.5 py-0.5 border shrink-0 ${used ? 'border-dh-strong bg-dh-raised/50 text-dh-muted' : 'border-dh-strong bg-dh-raised/60 text-dh-muted'}`}>
-                            {resetsOnLabel}
-                          </span>
-                        )}
                       </span>
                     </Tooltip>
                   );
@@ -5262,6 +5322,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             restTableCharacters={activeElements.filter(e => e.elementType === 'character')}
             restMovesPerCharacter={restMovesPerCharacter}
             restBannerChipsByInstanceId={restBannerChipsByInstanceId}
+            restRefreshPreviewByInstanceId={restRefreshPreviewByInstanceId}
             onRestBannerV2Chip={handleRestBannerV2Chip}
             restCanEditColumn={isPlayer ? (instanceId) => {
               const el = activeElements.find(e => e.instanceId === instanceId);
@@ -5939,17 +6000,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         showDaggerstackImport={false}
         onClose={() => setModalOpen(null)}
         onSelect={(item) => {
-          if (modalOpen === 'characters' && isPlayer && onPlayerAddCharacter) {
-            const { is_public, _source, ...charData } = item;
-            onPlayerAddCharacter({ ...charData, elementType: 'character' });
-          } else {
-            addToTable(item, modalOpen);
-          }
+          void (async () => {
+            if (modalOpen === 'characters' && isPlayer && onPlayerAddCharacter) {
+              const { is_public, _source, ...charData } = item;
+              const res = await onPlayerAddCharacter({ ...charData, elementType: 'character' });
+              const newEl = res?.character;
+              if (newEl) {
+                const rect = getAddCharacterAnchorRect();
+                characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+              }
+            } else if (modalOpen === 'characters' && !isPlayer) {
+              const newEls = await addToTable(item, modalOpen);
+              const el = newEls?.[0];
+              if (el) {
+                const rect = getAddCharacterAnchorRect();
+                characterOverlay.show({ element: el, top: rect.top, bottom: rect.bottom });
+              }
+            } else {
+              await addToTable(item, modalOpen);
+            }
+          })();
           setModalOpen(null);
         }}
         onCreateNew={modalOpen === 'characters' ? () => {
           setModalOpen(null);
-          (async () => {
+          void (async () => {
             const newId = generateId();
             const stub = {
               id: newId,
@@ -5958,12 +6033,38 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               baseTraits: {},
               experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
             };
+            const rect = getAddCharacterAnchorRect();
             if (isPlayer && onPlayerAddCharacter) {
-              onPlayerAddCharacter({ ...stub, elementType: 'character' });
-            } else {
-              await addToTable(stub, 'characters');
+              const res = await onPlayerAddCharacter({ ...stub, elementType: 'character' });
+              const newEl = res?.character;
+              if (!newEl?.instanceId) return;
+              navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
+              setEditState({
+                step: 'form',
+                item: stub,
+                collection: 'characters',
+                mode: 'new',
+                baseElement: newEl,
+                instances: [newEl],
+                presentation: 'rightDrawer',
+              });
+              characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+              return;
             }
-            setEditState({ step: 'form', item: stub, collection: 'characters', mode: 'new', baseElement: null });
+            const newEls = await addToTable(stub, 'characters');
+            const newEl = newEls?.[0];
+            if (!newEl) return;
+            navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
+            setEditState({
+              step: 'form',
+              item: stub,
+              collection: 'characters',
+              mode: 'new',
+              baseElement: newEl,
+              instances: [newEl],
+              presentation: 'rightDrawer',
+            });
+            characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
           })();
         } : undefined}
         isLoading={['scenes', 'adventures', 'characters'].includes(modalOpen) ? pickerLoading : undefined}
