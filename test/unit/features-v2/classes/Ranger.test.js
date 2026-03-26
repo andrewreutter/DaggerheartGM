@@ -260,11 +260,11 @@ describe("Ranger's Focus", () => {
     expect(chips[0].name).toBe('End Focus to reroll');
   });
 
-  it('exposes a card toggle to arm the next weapon attack', () => {
+  it('exposes an intent-phase toggle to arm the next weapon attack', () => {
     const table = buildTableSnapshot(
       mockGameState({ activeElements: [mockCharacter({ instanceId: 'char-1' }), adv], _ownerInstanceId: 'char-1' })
     );
-    const chips = collectChips([rf], 'card', table);
+    const chips = collectChips([rf], 'intent', table);
     const toggle = chips.find((c) => c.name === "Attempt Ranger's Focus");
     expect(toggle?.isToggle).toBe(true);
   });

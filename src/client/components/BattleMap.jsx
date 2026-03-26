@@ -8,6 +8,7 @@ import {
 import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
+import { HOPE_TRACK_FILL } from './CharacterStatBlockGraphic.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { getAuthToken } from '../lib/api.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -563,7 +564,7 @@ function TokenDetailPanel({
               filled={Math.max(0, remaining - hopePending)}
               pendingFilled={hopePending + manualAck.hopeGain}
               pendingClearFilled={manualAck.hopeSpend}
-              fillColor="bg-amber-400"
+              fillColor={HOPE_TRACK_FILL}
               label="Hope"
               verbs={['Gain', 'Spend']}
               pulseOnDecreaseOnly

@@ -251,7 +251,7 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
           <CheckboxTrack
             total={maxHope}
             filled={filled}
-            fillColor="bg-amber-400"
+            fillColor={HOPE_TRACK_FILL}
             fillRow
             className="w-full gap-1"
             itemClassName="max-h-6 rounded border-2"
@@ -267,7 +267,7 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
   const colSpan = useTwelveCol ? 12 / maxHope : 0;
   const boxes = Array.from({ length: maxHope }, (_, i) => {
     const isChecked = i < filled;
-    const on = isChecked ? 'bg-amber-400 border-transparent' : 'border-dh-strong/80';
+    const on = isChecked ? `${HOPE_TRACK_FILL} border-transparent` : 'border-dh-strong/80';
     return (
       <div
         key={i}
@@ -301,7 +301,11 @@ const EVASION_LABEL = 'text-[13px] font-semibold uppercase tracking-wide';
 /** Evasion shell matches Armor (cyan ring/labels); score uses sky (see evasionInner). */
 const EVASION_ICON = 'w-[13px] h-[13px] shrink-0 text-cyan-400 dh-light:text-dh';
 const HOPE_LABEL = 'text-[11px] font-semibold uppercase tracking-wide text-dh-muted shrink-0';
-const HOPE_ICON = 'w-[11px] h-[11px] text-amber-600 dh-light:text-amber-800 shrink-0';
+/** Hope boxes — exported for CheckboxTrack rows that mirror the stat block. */
+export const HOPE_TRACK_FILL = 'bg-yellow-400 dh-light:bg-yellow-500';
+/** Hope Sparkles / small icons — same accent as {@link HopeHeroTrack}. */
+export const HOPE_TRACK_ICON_CLASS = 'text-yellow-500 dh-light:text-yellow-700 shrink-0';
+const HOPE_ICON = `w-[11px] h-[11px] ${HOPE_TRACK_ICON_CLASS}`;
 
 /** Hint under Armor / HP track titles (Daggerheart damage flow). */
 const DEFENSE_TRACK_SUBTITLE =

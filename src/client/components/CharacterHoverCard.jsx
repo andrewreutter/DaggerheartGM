@@ -5,7 +5,12 @@ import {
 } from 'lucide-react';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { CharacterStatBlockGraphic, HopeHeroTrack } from './CharacterStatBlockGraphic.jsx';
+import {
+  CharacterStatBlockGraphic,
+  HopeHeroTrack,
+  HOPE_TRACK_FILL,
+  HOPE_TRACK_ICON_CLASS,
+} from './CharacterStatBlockGraphic.jsx';
 import {
   Section,
   CharacterIdentityHeader,
@@ -353,7 +358,7 @@ export function CharacterHoverCard({
         : (h) => updateFn(id, { hope: h }),
       pendingFilled: hopePending + manualAck.hopeGain,
       pendingClearFilled: manualAck.hopeSpend,
-      fillColor: 'bg-amber-400',
+      fillColor: HOPE_TRACK_FILL,
       label: 'Hope',
       verbs: ['Gain', 'Spend'],
       pulseOnDecreaseOnly: true,
@@ -1125,8 +1130,13 @@ export function CharacterHoverCard({
           <CharacterIdentityHeader el={el} actions={headerActions} />
         </div>
       )}
+      {el.description && (
+        <div className="px-2 pt-2 pb-2 shrink-0 bg-dh-canvas/20 w-full">
+          <p className="text-[11px] text-dh-muted leading-relaxed italic">{el.description}</p>
+        </div>
+      )}
       {(el.maxHope ?? 0) > 0 && (
-        <div className="px-2 pt-4 pb-2 shrink-0 border-b border-dh-border/50 bg-dh-canvas/20">
+        <div className="px-2 py-2 shrink-0 bg-dh-canvas/20">
           <HopeHeroTrack el={displayEl} hopeTrackInteraction={hopeTrackInteraction} />
         </div>
       )}
@@ -1164,52 +1174,6 @@ export function CharacterHoverCard({
               experiencesAsBadges
               hope={currentHope}
               maxHope={el.maxHope ?? 6}
-              rollModifiers={rollModifiers}
-              selectedRollModIndex={selectedRollModIndex}
-              onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
-              selectedModId={selectedModId}
-              onSelectMod={onRoll ? setSelectedModId : undefined}
-              modifierEligibility={modifierEligibility}
-              beastformAdvantages={displayEl.activeBeastform?.advantages
-                ? displayEl.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
-                : undefined}
-              selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
-              onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
-              crossSheetChips={crossSheetChips}
-              onCrossSheetChipClick={
-                tableId ? (isPlayer ? handlePlayerCrossSheetChipClick : handleCrossSheetChipClick) : undefined
-              }
-              onUseMod={updateFn ? (mod) => {
-                if (mod.mode === 'clearStress') {
-                  const stress = Math.max(0, (el.currentStress ?? 0) - 1);
-                  updateFn(el.instanceId, { currentStress: stress });
-                  const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
-                  updateFn(el.instanceId, { activeModifiers: kept });
-                  return;
-                }
-              } : undefined}
-              onUseMode={updateFn ? (mod, mode) => {
-                if (mod.name === 'Prayer Die' && mode === 'gainHope') {
-                  onActionNotification?.({
-                    _action: true,
-                    rollUser: el.name,
-                    actionName: 'Prayer Die',
-                    actionText: `Use Prayer Die to gain ${mod.value} Hope`,
-                    _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
-                    _attackerInstanceId: el.instanceId,
-                  });
-                  return;
-                }
-                const selfEl = wrapEntity(el, updateFn);
-                for (const f of el.classFeatures || []) {
-                  const descriptor = resolveClassFeatureDescriptor(displayEl, f.name);
-                  if (descriptor?.onModifierUsed) {
-                    descriptor.onModifierUsed({ modifier: mod, mode, selfEl, updateActiveElement: updateFn });
-                  }
-                }
-                const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
-                updateFn(el.instanceId, { activeModifiers: kept });
-              } : undefined}
             />
 
             <CharacterFeaturesPanel
@@ -1293,6 +1257,52 @@ export function CharacterHoverCard({
               }
               activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
               pendingBanners={pendingBanners}
+              rollModifiers={rollModifiers}
+              selectedRollModIndex={selectedRollModIndex}
+              onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
+              selectedModId={selectedModId}
+              onSelectMod={onRoll ? setSelectedModId : undefined}
+              modifierEligibility={modifierEligibility}
+              beastformAdvantages={displayEl.activeBeastform?.advantages
+                ? displayEl.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
+                : undefined}
+              selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
+              onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
+              crossSheetChips={crossSheetChips}
+              onCrossSheetChipClick={
+                tableId ? (isPlayer ? handlePlayerCrossSheetChipClick : handleCrossSheetChipClick) : undefined
+              }
+              onUseMod={updateFn ? (mod) => {
+                if (mod.mode === 'clearStress') {
+                  const stress = Math.max(0, (el.currentStress ?? 0) - 1);
+                  updateFn(el.instanceId, { currentStress: stress });
+                  const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+                  updateFn(el.instanceId, { activeModifiers: kept });
+                  return;
+                }
+              } : undefined}
+              onUseMode={updateFn ? (mod, mode) => {
+                if (mod.name === 'Prayer Die' && mode === 'gainHope') {
+                  onActionNotification?.({
+                    _action: true,
+                    rollUser: el.name,
+                    actionName: 'Prayer Die',
+                    actionText: `Use Prayer Die to gain ${mod.value} Hope`,
+                    _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
+                    _attackerInstanceId: el.instanceId,
+                  });
+                  return;
+                }
+                const selfEl = wrapEntity(el, updateFn);
+                for (const f of el.classFeatures || []) {
+                  const descriptor = resolveClassFeatureDescriptor(displayEl, f.name);
+                  if (descriptor?.onModifierUsed) {
+                    descriptor.onModifierUsed({ modifier: mod, mode, selfEl, updateActiveElement: updateFn });
+                  }
+                }
+                const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+                updateFn(el.instanceId, { activeModifiers: kept });
+              } : undefined}
             />
             <CharacterSheetDeclarativeCards
               el={displayEl}
@@ -1345,7 +1355,7 @@ export function CharacterHoverCard({
                     const remainingServer = el.hope ?? maxHope;
                     return maxHope > 0 && (
                       <div className="flex items-center gap-1.5">
-                        <Sparkles size={11} className="text-amber-400 shrink-0" />
+                        <Sparkles size={11} className={HOPE_TRACK_ICON_CLASS} />
                         <span className="text-[11px] text-dh-muted w-10 shrink-0">Hope</span>
                         <CheckboxTrack
                           total={maxHope}
@@ -1355,7 +1365,7 @@ export function CharacterHoverCard({
                           onSetFilled={queueManualTrackEdit
                             ? (h) => queueManualTrackEdit(el, { hope: h })
                             : (h) => updateFn(el.instanceId, { hope: h })}
-                          fillColor="bg-amber-400"
+                          fillColor={HOPE_TRACK_FILL}
                           label="Hope"
                           verbs={['Gain', 'Spend']}
                           pulseOnDecreaseOnly
@@ -1441,12 +1451,6 @@ export function CharacterHoverCard({
             )}
 
             <CharacterInventory el={el} />
-
-            {el.description && (
-              <Section label="Description">
-                <p className="text-[11px] text-dh-muted leading-relaxed italic">{el.description}</p>
-              </Section>
-            )}
           </div>
         </div>
       </div>

@@ -23,12 +23,32 @@ import {
   runV2DamageApplyReviewOutcomePhase,
   buildV2PreRollWeaponAttackRollSkeleton,
   buildV2PreRollTraitRollSkeleton,
-  buildActionConfigFromRoll,
   collectV2WeaponIntentChips,
+  runV2RestHooksForTable,
 } from '../../src/client/lib/v2-action-loop-bridge.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../src/game-constants.js';
 
 describe('v2-action-loop-bridge', () => {
+  it('runV2RestHooksForTable uses longRest action when restDuration is long (long-rest-only onRest)', () => {
+    const srdData = { ancestriesById: {} };
+    const activeElements = [
+      {
+        elementType: 'character',
+        instanceId: 'pc1',
+        abilityIds: ['srd-abl-inspirational-words'],
+        traits: { presence: 3, agility: 0, strength: 0, finesse: 0, instinct: 0, knowledge: 0 },
+        featureState: { 'Inspirational Words': {} },
+      },
+    ];
+    const long = runV2RestHooksForTable({ activeElements, srdData, restDuration: 'long' });
+    const u = long.updates.find((x) => x.instanceId === 'pc1');
+    expect(u?.updates?.featureState?.['Inspirational Words']?.inspirationalWordsTokens).toBe(3);
+
+    const short = runV2RestHooksForTable({ activeElements, srdData, restDuration: 'short' });
+    const u2 = short.updates.find((x) => x.instanceId === 'pc1');
+    expect(u2?.updates?.featureState?.['Inspirational Words']?.inspirationalWordsTokens).toBeUndefined();
+  });
+
   it('buildV2PreRollWeaponAttackRollSkeleton uses weapon damage notation for placeholder damage sub-item', () => {
     const sk = buildV2PreRollWeaponAttackRollSkeleton({
       pendingMeta: {

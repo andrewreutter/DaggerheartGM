@@ -31,7 +31,7 @@ export const SweetMoss = {
   chips: [
     when(isRestAction, {
       name: 'Sweet Moss',
-      placements: ['intent'],
+      placements: ['rest'],
       description:
         'Consume this moss during this rest: roll 1d10 and clear that much HP or Stress (choose one).',
       isSelect: hpOrStressOptions,

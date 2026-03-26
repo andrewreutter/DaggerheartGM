@@ -969,7 +969,7 @@ function buildRollObject(rollData, mutations, rollKey) {
 // Feature-state store
 // ---------------------------------------------------------------------------
 
-function buildFeatureStore(featureKey, featureState, mutations) {
+function buildFeatureStore(featureKey, featureState, mutations, ownerInstanceId) {
   if (!featureState) {
     return {
       get() {
@@ -989,7 +989,11 @@ function buildFeatureStore(featureKey, featureState, mutations) {
     },
     set(key, value) {
       state[key] = value;
-      addMutation(mutations, 'setFeatureState', { featureKey, key, value });
+      const payload = { featureKey, key, value };
+      if (ownerInstanceId != null && ownerInstanceId !== '') {
+        payload.instanceId = String(ownerInstanceId);
+      }
+      addMutation(mutations, 'setFeatureState', payload);
     },
   };
 }
@@ -1239,7 +1243,11 @@ function buildSourceFacade(sourceObject, sourceScopeKey, gameState, store) {
     set(key, value) {
       if (!gameState.featureState[sourceScopeKey]) gameState.featureState[sourceScopeKey] = {};
       gameState.featureState[sourceScopeKey][key] = value;
-      addMutation(store, 'setFeatureState', { featureKey: sourceScopeKey, key, value });
+      const p = { featureKey: sourceScopeKey, key, value };
+      if (gameState._ownerInstanceId != null && gameState._ownerInstanceId !== '') {
+        p.instanceId = String(gameState._ownerInstanceId);
+      }
+      addMutation(store, 'setFeatureState', p);
     },
   };
 }
@@ -1312,7 +1320,7 @@ export function buildTableSnapshot(gameState = {}) {
 
   // Feature state store (keyed by feature name; set by engine before calling hooks)
   const featureKey = gameState._featureKey || '__unknown__';
-  const featureStore = buildFeatureStore(featureKey, gameState.featureState, store);
+  const featureStore = buildFeatureStore(featureKey, gameState.featureState, store, ownerKey);
 
   const activeFeature = gameState._activeFeature ?? null;
   const sourceObject =

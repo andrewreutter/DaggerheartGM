@@ -8,6 +8,7 @@ import { ActionLog } from './ActionLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
+import { HOPE_TRACK_FILL, HOPE_TRACK_ICON_CLASS } from './CharacterStatBlockGraphic.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
@@ -2514,12 +2515,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
     }
     if (cyclesToClear.includes('rest') && srdData) {
+      const restDuration = cyclesToClear.includes('longRest') ? 'long' : 'short';
       const v2r = runV2RestHooksForTable({
         activeElements: charactersList,
         srdData,
         fearCount,
         mapConfig,
         tableFeatureState,
+        restDuration,
       });
       const mergeFs = (a, b) => {
         if (!b) return a || {};
@@ -4507,13 +4510,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   const currentHope = el.hope ?? maxHope;
                   return maxHope > 0 && (
                     <div className="flex items-center gap-1">
-                      <Sparkles size={10} className="text-dh-hope-soft shrink-0" />
+                      <Sparkles size={10} className={HOPE_TRACK_ICON_CLASS} />
                       <CheckboxTrack
                         total={maxHope}
                         filled={Math.max(0, currentHope - hopePending)}
                         pendingFilled={hopePending + manualAck.hopeGain}
                         pendingClearFilled={manualAck.hopeSpend}
-                        fillColor="bg-orange-500"
+                        fillColor={HOPE_TRACK_FILL}
                         label="Hope"
                         verbs={['Gain', 'Spend']}
                         pulseOnDecreaseOnly
@@ -4956,9 +4959,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
                   const costLabel = costParts.length ? ` (${costParts.join(', ')})` : '';
                   const resetsOnLabel = chip.resetsOn === 'session' ? 'Once per session' : chip.resetsOn === 'longRest' ? 'Once per long rest' : chip.resetsOn === 'rest' ? 'Once per rest' : null;
+                  const descForTooltip =
+                    typeof chip.description === 'string' && chip.description.trim() !== ''
+                      ? chip.description.trim()
+                      : null;
                   const tooltipLabel = used
                     ? (resetsOnLabel ? `Already used (${resetsOnLabel})` : 'Already used')
-                    : v2Hint || label + costLabel;
+                    : v2Hint || (descForTooltip ?? label) + costLabel;
                   const selEmerald = emerald && selected && !used && !v2Disabled;
                   const unselEmerald = emerald && !selected && !used && !v2Disabled;
                   return (
@@ -5054,6 +5061,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         </p>
                       </div>
                     )}
+                    <div className="flex flex-wrap gap-1.5 items-center mb-3">
+                      {chips.map((chip, i) => {
+                        if (chip._difficultyChip || chip._advantageTriggerChip) return null;
+                        return renderPrerollToggle(i, false);
+                      })}
+                    </div>
                     {showAdvantageSection && (
                       <div className="mb-3 w-full flex flex-col gap-1.5">
                         <span className="text-[11px] font-semibold text-dh">Advantage</span>
@@ -5135,12 +5148,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         </button>
                       </div>
                     )}
-                    <div className="flex flex-wrap gap-1.5 items-center mb-3">
-                      {chips.map((chip, i) => {
-                        if (chip._difficultyChip || chip._advantageTriggerChip) return null;
-                        return renderPrerollToggle(i, false);
-                      })}
-                    </div>
                   </>
                 );
               })()}

@@ -14,6 +14,7 @@ import { ElementalIncarnation } from '../../src/features-v2/subclasses/WardenOfT
 import { RangersFocus } from '../../src/features-v2/classes/Ranger.js';
 import { Beastform } from '../../src/features-v2/classes/Druid.js';
 import { CaprineLeap } from '../../src/features-v2/ancestries/Faun.js';
+import { Retract } from '../../src/features-v2/ancestries/Galapa.js';
 import { PrayerDice } from '../../src/features-v2/classes/Seraph.js';
 import { buildTableSnapshot } from '../../src/features-v2/engine/table.js';
 import registry from '../../src/features-v2/registry.js';
@@ -204,16 +205,32 @@ describe('buildFeatureCardModel', () => {
     expect(m.cardChips[0].placements || m.cardChips[0].placement).toBeTruthy();
   });
 
-  it('exposes Ranger Focus card toggle chip', () => {
+  it("Ranger's Focus intent chips stay out of cardChips (card vs intent surfaces are separate)", () => {
     const row = {
       ...RangersFocus,
       type: 'class',
       name: RangersFocus.name,
       description: RangersFocus.description,
     };
-    const m = buildFeatureCardModel(row);
-    expect(m.cardChips.length).toBeGreaterThanOrEqual(1);
-    expect(m.cardChips.some((c) => c.isToggle)).toBe(true);
+    const raw = mockCharacter({ instanceId: 'r1' });
+    const table = buildTableSnapshot(
+      mockGameState({
+        registry,
+        activeElements: [raw],
+        _ownerInstanceId: 'r1',
+        _featureKey: "Ranger's Focus",
+        action: {
+          type: 'free',
+          actorInstanceId: 'r1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+      })
+    );
+    const m = buildFeatureCardModel(row, { table, ownerInstanceId: 'r1' });
+    expect(m.cardChips.some((c) => c && c.isToggle)).toBe(false);
+    expect(m.actionLoopPhases.intent).toBe(true);
   });
 
   it('matches engine collectChips when table + ownerInstanceId (Beastform card chips)', () => {
@@ -307,11 +324,11 @@ describe('buildFeatureCardModel', () => {
 describe('collectV2IsToggleCardFeatureGroups', () => {
   it('returns merged feature rows that expose an isToggle card chip', () => {
     const row = {
-      ...RangersFocus,
-      type: 'class',
-      name: RangersFocus.name,
-      description: RangersFocus.description,
-      _sourceScopeKey: 'class:rangers-focus',
+      ...Retract,
+      type: 'ancestry',
+      name: Retract.name,
+      description: Retract.description,
+      _sourceScopeKey: 'ancestry:retract',
     };
     const el = {
       instanceId: 'pc1',

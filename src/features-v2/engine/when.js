@@ -100,6 +100,19 @@ export function youSucceedOnAnAttack(table) {
   return actor.instanceId === me.instanceId;
 }
 
+/**
+ * True when **you** (the feature owner) are the attacker and your attack roll **failed** (resolve phase).
+ * Mirrors SRD phrasing like "when you fail an attack…". Pairs with {@link youSucceedOnAnAttack}.
+ */
+export function youFailOnAnAttack(table) {
+  if (table.action?.type !== 'attack') return false;
+  if (table.rolls?.action?.isSuccess === true) return false;
+  const actor = table.action.actor;
+  const me = table.me;
+  if (!actor?.instanceId || !me?.instanceId) return false;
+  return actor.instanceId === me.instanceId;
+}
+
 // ---------------------------------------------------------------------------
 // Map range: attacker ↔ target (via `actor.rangeFrom(target)`)
 // ---------------------------------------------------------------------------

@@ -46,10 +46,10 @@ describe('traitScoreNumberSizeClassTraitChip', () => {
 });
 
 describe('traitScoreNumberSizeClassReactionGrid', () => {
-  it('tiers 0 / +1 / large for non-compact', () => {
-    expect(traitScoreNumberSizeClassReactionGrid(0, false)).toBe('text-[9px]');
-    expect(traitScoreNumberSizeClassReactionGrid(1, false)).toBe('text-[10px]');
-    expect(traitScoreNumberSizeClassReactionGrid(2, false)).toBe('text-[12px]');
+  it('uses one score size per layout (no magnitude tiers)', () => {
+    expect(traitScoreNumberSizeClassReactionGrid(0, false)).toBe('text-[11px]');
+    expect(traitScoreNumberSizeClassReactionGrid(2, false)).toBe('text-[11px]');
+    expect(traitScoreNumberSizeClassReactionGrid(-1, true)).toBe('text-[10px]');
   });
 });
 

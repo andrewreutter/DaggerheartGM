@@ -1382,7 +1382,9 @@ export function runV2IntentPhaseForTraitRoll(opts) {
 }
 
 /**
- * Run `onRest` on short-rest for all characters (table-level `featureState` merge).
+ * Run `hooks.onRest` for every loaded V2 feature (per owner), using a synthetic rest action.
+ * Must match the **actual** rest being acknowledged: Short Rest → `shortRest`, Long Rest → `longRest`
+ * so registry code that gates on `table.action?.type` (e.g. long-rest-only token refresh) runs correctly.
  *
  * @param {{
  *   activeElements: object[],
@@ -1390,14 +1392,23 @@ export function runV2IntentPhaseForTraitRoll(opts) {
  *   fearCount?: number,
  *   mapConfig?: object|null,
  *   tableFeatureState?: object,
+ *   restDuration?: 'short' | 'long',
  * }} opts
  * @returns {{ updates: { instanceId: string, updates: object }[], skipped: object[] }}
  */
 export function runV2RestHooksForTable(opts) {
-  const { activeElements, srdData, fearCount = 0, mapConfig = null, tableFeatureState } = opts || {};
+  const {
+    activeElements,
+    srdData,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+    restDuration = 'short',
+  } = opts || {};
   if (!Array.isArray(activeElements) || !srdData) {
     return { updates: [], skipped: [] };
   }
+  const actionType = restDuration === 'long' ? 'longRest' : 'shortRest';
   const registry = buildV2RegistryWithSrdItems(srdData);
   const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
   const features = loadAllV2FeaturesForTable(activeForLoader, registry, {
@@ -1418,7 +1429,7 @@ export function runV2RestHooksForTable(opts) {
       other: {},
     },
     action: {
-      type: 'shortRest',
+      type: actionType,
       actorInstanceId: actorId,
       targetInstanceIds: [],
       trait: 'Agility',
@@ -1428,7 +1439,7 @@ export function runV2RestHooksForTable(opts) {
     },
   };
   const actionConfig = {
-    type: 'shortRest',
+    type: actionType,
     actorInstanceId: actorId,
     targetInstanceIds: [],
     traitKey: 'Agility',

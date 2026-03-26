@@ -415,12 +415,16 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
 
     switch (type) {
       case 'setFeatureState': {
-        const { featureKey, key, value } = payload;
-        if (!ownerInstanceId || !featureKey) {
+        const { featureKey, key, value, instanceId: payloadInstanceId } = payload;
+        // Prefer outer owner (banner / chip activation) when set; else payload.instanceId from
+        // engine `table.feature.set` (e.g. lifecycle hooks when applyV2LifecycleMutations has no owner).
+        const targetOwner =
+          ownerInstanceId != null && ownerInstanceId !== '' ? ownerInstanceId : payloadInstanceId;
+        if (!targetOwner || !featureKey) {
           skip();
           break;
         }
-        const el = getBase(ownerInstanceId);
+        const el = getBase(targetOwner);
         if (!el || el.elementType !== 'character') {
           skip();
           break;
@@ -429,9 +433,9 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         const bag = { ...(fs[featureKey] || {}) };
         bag[key] = value;
         fs[featureKey] = bag;
-        merge(ownerInstanceId, { featureState: fs });
+        merge(targetOwner, { featureState: fs });
         if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
-          merge(ownerInstanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
+          merge(targetOwner, { activeBeastform: null, selectedBeastformAdvantage: null });
         }
         break;
       }

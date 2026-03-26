@@ -159,6 +159,7 @@ describe('Winged Sentinel — Wings of Light', () => {
           featureKey: 'WingedSentinel',
           key: '_v2t:Wings of Light::Flying::card',
           value: false,
+          instanceId: 'ws-1',
         },
       })
     );
@@ -192,6 +193,7 @@ describe('Winged Sentinel — Wings of Light', () => {
           featureKey: 'WingedSentinel',
           key: '_v2t:Wings of Light::Flying::card',
           value: true,
+          instanceId: 'ws-1',
         },
       })
     );

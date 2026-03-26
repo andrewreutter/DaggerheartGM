@@ -205,10 +205,10 @@ export function GuideFeatureCardChips({
                     }}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
                       isActive
-                        ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
+                        ? 'dh-sheet-clickable-chip border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
                         : cantUse || preview
                           ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-60 cursor-not-allowed'
-                          : 'border-amber-700/50 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600/70 cursor-pointer'
+                          : 'dh-sheet-clickable-chip border-amber-700/50 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600/70 cursor-pointer'
                     }`}
                     aria-label={opt.name || id}
                   >
@@ -467,8 +467,8 @@ export function GuideFeatureCardChips({
                   preview || !canInteract || chipDisabled || toggleDeferAwait
                     ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-70 cursor-not-allowed'
                     : active
-                      ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
-                      : 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
+                      ? 'dh-sheet-clickable-chip border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
+                      : 'dh-sheet-clickable-chip border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
                 } ${toggleDeferAwait ? 'ring-1 ring-amber-300/70 ring-offset-1 ring-offset-dh-canvas animate-pulse' : ''}`}
                 aria-pressed={active}
                 aria-busy={toggleDeferAwait || undefined}
@@ -535,8 +535,8 @@ export function GuideFeatureCardChips({
                 defaultChipInactive
                   ? 'border-dh-border bg-dh-raised/50 text-dh-muted cursor-not-allowed'
                   : narrativeOnly
-                    ? 'border-dh-border/60 bg-dh-raised/50 text-dh-muted hover:bg-dh-hover/40 hover:border-dh-strong/70 hover:text-dh'
-                    : 'border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'
+                    ? 'dh-sheet-clickable-chip border-dh-border/60 bg-dh-raised/50 text-dh-muted hover:bg-dh-hover/40 hover:border-dh-strong/70 hover:text-dh'
+                    : 'dh-sheet-clickable-chip border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'
               }`}
             >
               <span className="flex items-start gap-1.5 min-w-0">

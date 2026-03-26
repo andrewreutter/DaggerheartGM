@@ -1100,7 +1100,7 @@ describe('table.feature (local state)', () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'setFeatureState',
-        payload: { featureKey: 'MyFeature', key: 'pushActive', value: true },
+        payload: { featureKey: 'MyFeature', key: 'pushActive', value: true, instanceId: 'char-1' },
       })
     );
   });
@@ -1147,7 +1147,12 @@ describe('table.source (shared option state)', () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'setFeatureState',
-        payload: { featureKey: 'WardenOfTheElements', key: 'channeledElement', value: 'air' },
+        payload: {
+          featureKey: 'WardenOfTheElements',
+          key: 'channeledElement',
+          value: 'air',
+          instanceId: 'char-1',
+        },
       })
     );
   });

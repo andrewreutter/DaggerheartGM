@@ -18,8 +18,8 @@ todos:
     content: "Phase E: runCharacterHook inventory closure + add §3.1 hook table in docs/v2-v1-cutover.md"
     status: completed
   - id: tracker-tech-debt
-    content: "Phase F: Tracker tech-debt milestones + update docs/v2-v1-cutover.md (§3–§4 per milestone)"
-    status: pending
+    content: "Phase F: Tracker tech-debt milestones + update docs/v2-v1-cutover.md (§3–§4 per milestone) — 3/4 milestones delivered (domain loadout remaining)"
+    status: in_progress
 isProject: true
 ---
 
@@ -184,9 +184,9 @@ So **“expand” = broaden integration coverage + fix mismatches**, not greenfi
 Pull from `[docs/v2-v1-cutover.md](../../docs/v2-v1-cutover.md)` **Tech Debt** and **V2 UI integration backlog**:
 
 - **Rally (Phase F — delivered):** `crossSheetChips` + `collectV2ReviewActionChips` viewer/actor union for `showOnOtherSheets` `reviewAction` on ally banners; Start/End Session clears per-character and root `table_state.featureState.Rally`. Remaining: scene vs session lifecycle (tracker Tech Debt). Docs: `docs/v2-v1-cutover.md` §3/#15.
-- **Beastform / Druid:** VTT parity (Fragile, advantage chip, voluntary drop) per backlog row.
-- **Rest banner:** new declarative **`placement: 'rest'`** on the Rest banner (per character); **Potion of Stability** uses a rest chip → **`onUse`** → **CONV-011 `passiveStatMods`** (`numShortRestSlots` / `numLongRestSlots`); merged slot-count plumbing for banner UI. Plan: [`.cursor/plans/rest-banner-phase-f.plan.md`](rest-banner-phase-f.plan.md).
-- **Domain loadout / Channel Raw Power:** persisted `**domainLoadout`** on table characters.
+- **Beastform / Druid (Phase F — delivered):** VTT parity (Fragile, advantage chip, voluntary drop) per backlog row.
+- **Rest banner (Phase F — delivered):** new declarative `**placement: 'rest'`** on the Rest banner (per character); **Potion of Stability** uses a rest chip → `**onUse`** → **CONV-011 `passiveStatMods`** (`numShortRestSlots` / `numLongRestSlots`); merged slot-count plumbing for banner UI. Plan: `[.cursor/plans/rest-banner-phase-f.plan.md](rest-banner-phase-f.plan.md)`.
+- **Domain loadout / Channel Raw Power (Phase F — remaining):** persisted `**domainLoadout`** on table characters.
 
 Each item is its own milestone with separate QA.
 

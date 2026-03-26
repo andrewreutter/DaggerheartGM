@@ -1,4 +1,4 @@
-import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
+import { when, isActing, youSucceedOnAnAttack, youFailOnAnAttack } from '../engine/when.js';
 
 /**
  * Ranger class features — SRD: daggerheart-srd/classes/Ranger.md
@@ -33,6 +33,13 @@ function clearRangerFocusVisuals(table) {
     if (adv.focusedBy === n) adv.setFocusedBy(null);
   }
   table.me.setFocusTarget(null);
+}
+
+/** Primary target of the current action is your Ranger focus (instance id match). */
+function againstYourFocus(table) {
+  const stored = table.me?.focusTargetInstanceId;
+  const targetId = table.action?.target?.instanceId;
+  return stored != null && targetId != null && stored === targetId;
 }
 
 export const HoldThemOff = {
@@ -84,23 +91,19 @@ export const RangersFocus = {
   chips: [
     {
       name: "Attempt Ranger's Focus",
-      placements: ['card'],
+      placements: ['intent'],
       isToggle: true,
+      hopeCost: 1,
       description:
-        'When enabled, your next weapon attack spends 1 Hope and attempts Ranger\'s Focus (set Focus on a hit). Matches v1: Hope is spent when the attack resolves, not when arming.',
+        'When enabled, your next weapon attack spends 1 Hope and attempts Ranger\'s Focus (set Focus on a hit).',
       onUse(table, chipState) {
         table.me.setRangerFocusOnNextAttack(!!chipState.isOn);
       },
     },
     when(
       isActing,
-      (table) => table.action?.type === 'attack',
-      (table) => table.rolls?.action?.isSuccess === false,
-      (table) => {
-        const stored = table.me?.focusTargetInstanceId;
-        const targetId = table.action?.target?.instanceId;
-        return stored != null && targetId != null && stored === targetId;
-      },
+      youFailOnAnAttack,
+      againstYourFocus,
       {
         name: 'End Focus to reroll',
         placements: ['reviewAction'],

@@ -21,11 +21,9 @@ export function traitScoreNumberSizeClassTraitChip(score) {
   return 'text-xl';
 }
 
-/** Reaction roll row cells — compact matches CharacterStatBlockGraphic density. */
-export function traitScoreNumberSizeClassReactionGrid(score, compact) {
-  if (score === 0) return compact ? 'text-[8px]' : 'text-[9px]';
-  if (traitScoreNumberIsLargeMagnitude(score)) return compact ? 'text-[11px]' : 'text-[12px]';
-  return compact ? 'text-[9px]' : 'text-[10px]';
+/** Reaction roll score numerals — one size per density; emphasis is color-only (`traitScoreNumberColorClass`). */
+export function traitScoreNumberSizeClassReactionGrid(_score, compact) {
+  return compact ? 'text-[10px]' : 'text-[11px]';
 }
 
 /** Weapon card trait badge numeral. */
