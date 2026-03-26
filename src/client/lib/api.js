@@ -488,7 +488,7 @@ export const postRollSilent = async (rollText, displayName = '', tableId = null)
   return { ...rollData, value };
 };
 
-/** Returns { isAdmin } for the currently signed-in user. */
+/** Returns `{ isAdmin, isQa }` for the currently signed-in user. */
 export const fetchMe = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');

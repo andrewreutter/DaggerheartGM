@@ -1,5 +1,5 @@
 /**
- * Admin-only dev agent queue API (GitHub Issues backend).
+ * Dev agent queue API (GitHub Issues backend). Requires admin or QA (see server `requireAdminOrQa`).
  */
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,10 +40,10 @@ function githubNotConfigured(res) {
 
 /**
  * @param {import('express').Application} app
- * @param {{ requireAuth: Function, requireAdmin: Function }} mw
+ * @param {{ requireAuth: Function, requireAdminOrQa: Function }} mw
  */
-export function registerDevAgentRoutes(app, { requireAuth, requireAdmin }) {
-  app.post('/api/dev-agent/queue', requireAuth, requireAdmin, async (req, res) => {
+export function registerDevAgentRoutes(app, { requireAuth, requireAdminOrQa }) {
+  app.post('/api/dev-agent/queue', requireAuth, requireAdminOrQa, async (req, res) => {
     if (!isDevAgentQueueEnabled()) return devAgentDisabled(res);
 
     const token = getGithubTokenFromEnv();
@@ -105,7 +105,7 @@ export function registerDevAgentRoutes(app, { requireAuth, requireAdmin }) {
     }
   });
 
-  app.get('/api/dev-agent/issues', requireAuth, requireAdmin, async (req, res) => {
+  app.get('/api/dev-agent/issues', requireAuth, requireAdminOrQa, async (req, res) => {
     if (!isDevAgentQueueEnabled()) return devAgentDisabled(res);
 
     const token = getGithubTokenFromEnv();

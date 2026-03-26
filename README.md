@@ -352,6 +352,7 @@ SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 | `HF_EDIT_MODEL` | No | Hugging Face model ID for image-to-image editing (default: `black-forest-labs/FLUX.1-Kontext-dev`) |
 | `HF_PROVIDER` | No | Hugging Face inference provider (default: `replicate`). Other options: `fal-ai`, `together`, `novita`, etc. — see huggingface.co/docs/inference-providers |
 | `ADMIN_EMAILS` | No | Comma-separated list of email addresses granted admin access (e.g. `alice@example.com,bob@example.com`). |
+| `QA_EMAILS` | No | Same format as `ADMIN_EMAILS`. QA users get the optional **Feature Source** dev-agent footer (queue GitHub issues from the V2 source viewer) but not other admin-only UI. |
 | `SUPABASE_URL` | No | Supabase project URL (e.g. `https://xxxx.supabase.co`). Required for battle map image uploads to Supabase Storage. |
 | `SUPABASE_SERVICE_ROLE_KEY` | No | Supabase `service_role` secret key. Required for battle map image uploads. Keep this secret — never expose it client-side. |
 
@@ -430,7 +431,7 @@ The local Supabase Studio at `http://localhost:54323` gives you a full DB browse
 
 ### Dev agent queue (optional)
 
-For maintainers with **admin** access and a configured GitHub repo: enable **`DEV_AGENT_QUEUE_ENABLED=1`**, set **`GITHUB_REPOSITORY=owner/repo`** (or rely on `git remote get-url origin` in a checkout), and **`GITHUB_TOKEN`** or **`GH_TOKEN`** with the **`repo`** scope (Issues read/write). Run **`npm run setup:dev-agent-labels`** once to create the `dh-dev-agent` / `dh-agent-*` labels. Admins then see a footer on **`FeatureSourceModal`** (V2 implementation source viewer) to enqueue **bug | feature | other** requests as GitHub Issues; the local worker runs **`cursor agent`** on a branch and opens a PR. **Public repositories:** Issues created this way are visible like any other repo issue.
+For maintainers with **admin** or **QA** access (`QA_EMAILS`, same comma-separated format as `ADMIN_EMAILS`) and a configured GitHub repo: enable **`DEV_AGENT_QUEUE_ENABLED=1`**, set **`GITHUB_REPOSITORY=owner/repo`** (or rely on `git remote get-url origin` in a checkout), and **`GITHUB_TOKEN`** or **`GH_TOKEN`** with the **`repo`** scope (Issues read/write). Run **`npm run setup:dev-agent-labels`** once to create the `dh-dev-agent` / `dh-agent-*` labels. Those users then see a footer on **`FeatureSourceModal`** (V2 implementation source viewer) to enqueue **bug | feature | other** requests as GitHub Issues; the local worker runs **`cursor agent`** on a branch and opens a PR. **Public repositories:** Issues created this way are visible like any other repo issue.
 
 ### Regression Test Suite
 
@@ -489,7 +490,8 @@ fly secrets set \
   FIREBASE_AUTH_DOMAIN=... \
   FIREBASE_APP_ID=... \
   APP_ID=... \
-  ADMIN_EMAILS=...
+  ADMIN_EMAILS=... \
+  QA_EMAILS=...
 fly deploy
 ```
 

@@ -12,31 +12,37 @@ import { FullPageOverlay, FullPageOverlayHeader } from '../FullPageOverlay.jsx';
 
 /**
  * Read-only full-page modal with syntax-highlighted V2 feature module source.
- * Optional admin footer: enqueue dev-agent work (GitHub Issues) when `DEV_AGENT_QUEUE_ENABLED=1`.
+ * Optional footer (admin or QA): enqueue dev-agent work (GitHub Issues) when `DEV_AGENT_QUEUE_ENABLED=1`.
  */
-export function FeatureSourceModal({ open, relativePath, onClose, isAdmin: isAdminProp }) {
+export function FeatureSourceModal({ open, relativePath, onClose, isAdmin: isAdminProp, isQa: isQaProp }) {
   const [phase, setPhase] = useState({ loading: false, error: null, html: null, label: null });
 
-  const [adminGate, setAdminGate] = useState({ checked: false, isAdmin: false });
+  const [privilegeGate, setPrivilegeGate] = useState({ checked: false, canUseDevAgent: false });
   useEffect(() => {
     if (!open) return undefined;
-    if (isAdminProp !== undefined) {
-      setAdminGate({ checked: true, isAdmin: !!isAdminProp });
+    const explicit = isAdminProp !== undefined || isQaProp !== undefined;
+    if (explicit) {
+      setPrivilegeGate({ checked: true, canUseDevAgent: !!(isAdminProp || isQaProp) });
       return undefined;
     }
     let cancelled = false;
     (async () => {
       try {
         const m = await fetchMe();
-        if (!cancelled) setAdminGate({ checked: true, isAdmin: !!m.isAdmin });
+        if (!cancelled) {
+          setPrivilegeGate({
+            checked: true,
+            canUseDevAgent: !!(m.isAdmin || m.isQa),
+          });
+        }
       } catch {
-        if (!cancelled) setAdminGate({ checked: true, isAdmin: false });
+        if (!cancelled) setPrivilegeGate({ checked: true, canUseDevAgent: false });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [open, isAdminProp]);
+  }, [open, isAdminProp, isQaProp]);
 
   const [kind, setKind] = useState('feature');
   const [message, setMessage] = useState('');
@@ -85,7 +91,7 @@ export function FeatureSourceModal({ open, relativePath, onClose, isAdmin: isAdm
   }, [open, relativePath]);
 
   useEffect(() => {
-    if (!open || !relativePath || serverQueueEnabled !== true || !adminGate.checked || !adminGate.isAdmin) {
+    if (!open || !relativePath || serverQueueEnabled !== true || !privilegeGate.checked || !privilegeGate.canUseDevAgent) {
       return undefined;
     }
 
@@ -112,13 +118,13 @@ export function FeatureSourceModal({ open, relativePath, onClose, isAdmin: isAdm
       cancelled = true;
       clearInterval(id);
     };
-  }, [open, relativePath, serverQueueEnabled, adminGate.checked, adminGate.isAdmin]);
+  }, [open, relativePath, serverQueueEnabled, privilegeGate.checked, privilegeGate.canUseDevAgent]);
 
   const subtitle = phase.label ? `src/features-v2/${phase.label}` : relativePath ? `src/features-v2/${relativePath}` : '';
 
   const canShowDevAgentArea =
-    adminGate.checked &&
-    adminGate.isAdmin &&
+    privilegeGate.checked &&
+    privilegeGate.canUseDevAgent &&
     !!relativePath &&
     !phase.loading &&
     !phase.error;

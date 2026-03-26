@@ -54,6 +54,16 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .map(e => e.trim().toLowerCase())
   .filter(Boolean);
 
+// QA (e.g. dev agent footer on Feature Source modal): same format as ADMIN_EMAILS.
+const QA_EMAILS = (process.env.QA_EMAILS || '')
+  .split(',')
+  .map(e => e.trim().toLowerCase())
+  .filter(Boolean);
+
+function isQaEmail(email) {
+  return QA_EMAILS.includes(email?.toLowerCase());
+}
+
 // --- Supabase Storage client (optional — only when env vars are set) ---
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
   ? createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -89,6 +99,15 @@ async function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (!ADMIN_EMAILS.includes(req.email?.toLowerCase())) {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
+/** Admin or QA — dev-agent queue APIs and Feature Source modal dev agent footer. */
+function requireAdminOrQa(req, res, next) {
+  const em = req.email?.toLowerCase();
+  if (!ADMIN_EMAILS.includes(em) && !QA_EMAILS.includes(em)) {
+    return res.status(403).json({ error: 'Access denied' });
   }
   next();
 }
@@ -143,10 +162,14 @@ app.get('/api/config', (req, res) => {
 
 // --- Current user info ---
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json({ isAdmin: ADMIN_EMAILS.includes(req.email?.toLowerCase()) });
+  const em = req.email?.toLowerCase();
+  res.json({
+    isAdmin: ADMIN_EMAILS.includes(em),
+    isQa: isQaEmail(req.email),
+  });
 });
 
-registerDevAgentRoutes(app, { requireAuth, requireAdmin });
+registerDevAgentRoutes(app, { requireAuth, requireAdminOrQa });
 
 /** Feature authoring guide — reads `docs/feature-authoring-guide.md` on each request (always current on disk). */
 app.get('/api/docs/feature-authoring-guide', requireAuth, async (req, res) => {
