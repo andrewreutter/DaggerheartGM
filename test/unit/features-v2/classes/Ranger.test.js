@@ -265,7 +265,7 @@ describe("Ranger's Focus", () => {
       mockGameState({ activeElements: [mockCharacter({ instanceId: 'char-1' }), adv], _ownerInstanceId: 'char-1' })
     );
     const chips = collectChips([rf], 'card', table);
-    const toggle = chips.find((c) => c.name === 'Next weapon attack');
+    const toggle = chips.find((c) => c.name === "Attempt Ranger's Focus");
     expect(toggle?.isToggle).toBe(true);
   });
 

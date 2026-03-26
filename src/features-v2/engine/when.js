@@ -457,6 +457,25 @@ export function unwrap(value, table) {
 }
 
 /**
+ * Unwrap only a leading chain of `when()` wrappers. Chip descriptors may embed plain
+ * objects in `placements` (e.g. declarative shape anchors) — {@link unwrapAll} would
+ * recurse into them and break reference identity.
+ *
+ * @param {*} value
+ * @param {object} table
+ * @returns {*}
+ */
+export function unwrapTopLevelWhenChain(value, table) {
+  let node = value;
+  while (isWhen(node)) {
+    const r = unwrap(node, table);
+    if (r === undefined || r === null) return undefined;
+    node = r;
+  }
+  return node;
+}
+
+/**
  * Deeply unwrap an object, array, or primitive, resolving all when()-wrappers
  * found anywhere in the tree. Non-wrapper primitives are returned as-is.
  *

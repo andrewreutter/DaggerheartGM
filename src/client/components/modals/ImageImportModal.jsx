@@ -355,16 +355,16 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
     scene:        'bg-amber-900/90 text-amber-200 hover:bg-amber-800 border-t border-amber-700/50',
     adversaries:  'bg-red-900/90 text-red-200 hover:bg-red-800 border-t border-red-700/50',
     environments: 'bg-teal-900/90 text-teal-200 hover:bg-teal-800 border-t border-teal-700/50',
-    parsing:      'bg-slate-800/90 text-slate-400 border-t border-slate-700/50',
-    default:      'bg-slate-800/90 text-slate-300 hover:bg-slate-700 border-t border-slate-700/50',
+    parsing:      'bg-dh-raised/90 text-dh-muted border-t border-dh-border/50',
+    default:      'bg-dh-raised/90 text-dh hover:bg-dh-hover border-t border-dh-border/50',
   };
 
   const borderStyles = {
     scene:        'border-amber-500/70',
     adversaries:  'border-red-500/60',
     environments: 'border-teal-500/60',
-    parsing:      'border-slate-600',
-    default:      'border-slate-700',
+    parsing:      'border-dh-strong',
+    default:      'border-dh-border',
   };
 
   // ---------------------------------------------------------------------------
@@ -379,7 +379,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
     <>
       <button
         onClick={onClose}
-        className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+        className="px-4 py-2 text-sm text-dh-muted hover:text-white transition-colors"
       >
         Cancel
       </button>
@@ -414,14 +414,14 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
           className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors select-none ${
             isDragging
               ? 'border-red-500 bg-red-950/20'
-              : 'border-slate-700 hover:border-slate-500 bg-slate-950/50'
+              : 'border-dh-border hover:border-dh-strong bg-dh-inset/50'
           }`}
         >
-          <Upload size={28} className={isDragging ? 'text-red-400' : 'text-slate-500'} />
-          <p className="text-slate-300 font-medium text-sm">
+          <Upload size={28} className={isDragging ? 'text-red-400' : 'text-dh-muted'} />
+          <p className="text-dh font-medium text-sm">
             Drop images here, click to browse, or paste with Ctrl/Cmd+V
           </p>
-          <p className="text-slate-500 text-xs">
+          <p className="text-dh-muted text-xs">
             PNG, JPG, WebP &middot; Stat block screenshots are auto-parsed
           </p>
           <input
@@ -476,14 +476,14 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
               })}
               <button
                 onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-                className="rounded-lg border border-dashed border-slate-700 hover:border-slate-500 flex items-center justify-center text-slate-500 hover:text-slate-300 transition-colors"
+                className="rounded-lg border border-dashed border-dh-border hover:border-dh-strong flex items-center justify-center text-dh-muted hover:text-dh transition-colors"
                 style={{ width: 88, height: 100 }}
                 title="Add more images"
               >
                 <Image size={20} />
               </button>
             </div>
-            <p className="text-[10px] text-slate-500 mt-1.5">
+            <p className="text-[10px] text-dh-muted mt-1.5">
               Click image to enlarge &middot; Click label to change type
             </p>
           </div>
@@ -491,7 +491,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
 
         {/* Text paste area */}
         <div>
-          <label className="flex items-center gap-1.5 text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">
+          <label className="flex items-center gap-1.5 text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">
             <FileText size={12} /> Paste stat block text (optional)
           </label>
           <textarea
@@ -499,7 +499,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
             onChange={e => setPastedText(e.target.value)}
             rows={4}
             placeholder="Paste one or more stat block texts here (separate multiple blocks with blank lines)&hellip;"
-            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm font-mono outline-none focus:border-slate-500 resize-none placeholder:text-slate-600"
+            className="w-full bg-dh-inset border border-dh-border rounded-lg px-3 py-2.5 text-dh text-sm font-mono outline-none focus:border-dh-strong resize-none placeholder:text-dh-muted"
           />
         </div>
 
@@ -512,7 +512,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
 
         {/* Parsing indicator */}
         {parsing && (
-          <div className="flex items-center gap-2 text-sm text-slate-400 py-2">
+          <div className="flex items-center gap-2 text-sm text-dh-muted py-2">
             <Loader2 size={14} className="animate-spin" />
             Analyzing images&hellip;
           </div>
@@ -520,8 +520,8 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
 
         {/* Parsed results */}
         {!parsing && parsedItems.length > 0 && (
-          <div className="border-t border-slate-800 pt-4 space-y-4">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <div className="border-t border-dh-border pt-4 space-y-4">
+            <h3 className="text-xs font-semibold text-dh-muted uppercase tracking-wider">
               Detected Items
             </h3>
 
@@ -557,7 +557,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
 
         {/* Scene builder */}
         {hasContent && (
-          <div className="border-t border-slate-800 pt-4">
+          <div className="border-t border-dh-border pt-4">
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -566,7 +566,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
                 className="accent-amber-500"
               />
               <MapIcon size={14} className="text-amber-400" />
-              <span className="text-sm font-medium text-slate-300">Create a Scene from imported items</span>
+              <span className="text-sm font-medium text-dh">Create a Scene from imported items</span>
             </label>
 
             {createScene && (
@@ -576,14 +576,14 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
                   value={sceneName}
                   onChange={e => setSceneName(e.target.value)}
                   placeholder="Scene name&hellip;"
-                  className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm outline-none focus:border-amber-600"
+                  className="w-full bg-dh-inset border border-dh-border rounded px-3 py-2 text-dh text-sm outline-none focus:border-amber-600"
                 />
                 <textarea
                   value={sceneDescription}
                   onChange={e => setSceneDescription(e.target.value)}
                   placeholder="Scene description (optional)&hellip;"
                   rows={2}
-                  className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white text-sm outline-none focus:border-amber-600 resize-none"
+                  className="w-full bg-dh-inset border border-dh-border rounded px-3 py-2 text-dh text-sm outline-none focus:border-amber-600 resize-none"
                 />
                 {sceneImageCount > 0 && (
                   <p className="text-xs text-amber-400/80">
@@ -591,7 +591,7 @@ export function ImageImportModal({ onClose, saveItem, data, onImportSuccess }) {
                   </p>
                 )}
                 {selectedCount > 0 && (
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-dh-muted">
                     {selectedCount} detected item{selectedCount !== 1 ? 's' : ''} will be added to the scene
                   </p>
                 )}
@@ -660,7 +660,7 @@ function CollectionToggleCard({
     <div className="relative">
       <div className="absolute top-2.5 right-8 z-10 flex items-center gap-1.5">
         {confidencePct != null && (
-          <span className={`text-[10px] font-mono leading-none ${confColor} bg-slate-900 border border-slate-700 rounded px-1 py-0.5`}>
+          <span className={`text-[10px] font-mono leading-none ${confColor} bg-dh-surface border border-dh-border rounded px-1 py-0.5`}>
             {confidencePct}%
           </span>
         )}
@@ -668,7 +668,7 @@ function CollectionToggleCard({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onToggleCollection(); }}
           title={`Switch to ${otherLabel}`}
-          className="text-[10px] text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded px-1.5 py-0.5 flex items-center gap-0.5 transition-colors leading-none"
+          className="text-[10px] text-dh-muted hover:text-white bg-dh-raised hover:bg-dh-hover border border-dh-border rounded px-1.5 py-0.5 flex items-center gap-0.5 transition-colors leading-none"
         >
           <ArrowLeftRight size={9} className="flex-shrink-0" />
           {otherLabel}

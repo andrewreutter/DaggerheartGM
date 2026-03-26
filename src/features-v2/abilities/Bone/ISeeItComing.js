@@ -3,6 +3,7 @@
  * SRD: When targeted by an attack from beyond Melee range, mark Stress to roll d4 and add to Evasion vs that attack.
  */
 
+import { PENDING_EVASION_BONUS_STATE_KEY } from '../../../game-constants.js';
 import { when, isTargeted } from '../../engine/when.js';
 
 function attackFromBeyondMelee(table) {
@@ -30,10 +31,10 @@ export const ISeeItComing = {
           'Mark 1 Stress: roll a d4 and add the result to your Evasion against this attack.',
         onUse(table) {
           const n = table.rollDie('d4');
-          table.feature.set('iSeeItComingEvasionBonus', n);
+          table.feature.set(PENDING_EVASION_BONUS_STATE_KEY, n);
         },
         temporaryStatMods: {
-          evasion: (t) => t.feature.get('iSeeItComingEvasionBonus') ?? 0,
+          evasion: (t) => t.feature.get(PENDING_EVASION_BONUS_STATE_KEY) ?? 0,
         },
       }
     ),
@@ -43,8 +44,8 @@ export const ISeeItComing = {
       isTargeted,
       (t) => t.action?.type === 'attack',
       (t) => {
-        if ((t.feature.get('iSeeItComingEvasionBonus') ?? 0) > 0) {
-          t.feature.set('iSeeItComingEvasionBonus', 0);
+        if ((t.feature.get(PENDING_EVASION_BONUS_STATE_KEY) ?? 0) > 0) {
+          t.feature.set(PENDING_EVASION_BONUS_STATE_KEY, 0);
         }
       }
     ),

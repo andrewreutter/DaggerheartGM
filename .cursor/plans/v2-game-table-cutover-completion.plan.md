@@ -7,16 +7,16 @@ todos:
     status: completed
   - id: ancestry-v2-convergence
     content: "Phase B: Ancestry/review convergence + update docs/v2-v1-cutover.md (§2–§4 per phase contract)"
-    status: pending
+    status: completed
   - id: damage-pipeline-hydration
     content: "Phase C: Damage pipeline hydration slices + update docs/v2-v1-cutover.md (§2–§4 per phase contract)"
-    status: pending
+    status: completed
   - id: weapon-intent-chips
-    content: "Phase D: Weapon intent chips + display hints + update docs/v2-v1-cutover.md (§2–§4 per phase contract)"
-    status: pending
+    content: "Phase D: Unified phased banner (intent panel at top) + Devastating VTT integration + weaponRenderHints; update docs/v2-v1-cutover.md (§2–§4 per phase contract)"
+    status: completed
   - id: hook-inventory-reduction
     content: "Phase E: runCharacterHook inventory closure + add §3.1 hook table in docs/v2-v1-cutover.md"
-    status: pending
+    status: completed
   - id: tracker-tech-debt
     content: "Phase F: Tracker tech-debt milestones + update docs/v2-v1-cutover.md (§3–§4 per milestone)"
     status: pending
@@ -33,8 +33,8 @@ isProject: true
 
 ## Preconditions (already true)
 
-- Legacy `**src/features/`** removed; `**game-table-mechanics.js`** resolves only from `**activeFeatures**`.
-- Phase **2–4** UI integration and Phase **B/E** bridge work are **done** (see `[docs/v2-migration-tracker.md](../../docs/v2-migration-tracker.md)` § V2 UI integration backlog).
+- Legacy `**src/features/`** removed; `**game-table-mechanics.js`** resolves only from `**activeFeatures`**.
+- Phase **2–4** UI integration and Phase **B/E** bridge work are **done** (see `[docs/v2-v1-cutover.md](../../docs/v2-v1-cutover.md)` § V2 UI integration backlog).
 - **Selection chips** on V2 review banners: `**isSelect` / `multiSelect` / `selectTargets`** wired with Apply — not blocked.
 
 ---
@@ -64,8 +64,8 @@ Use the **per-phase checklist** under each phase below; do not skip it.
 **Execute the existing checklist:** `[.cursor/plans/phase-6-banner-pipeline-cleanup.plan.md](phase-6-banner-pipeline-cleanup.plan.md)`
 
 - Strip unused `**feature.onBanner`** / `**bannerAction`** paths in `ancestryBannerReactions` once verified unused in `features-v2/`.
-- Banner chips: `**chip.isVisible(chipContext)**` only (single arity).
-- Remove `**acknowledge` / `cancel**` aliases on chips; use `**onBannerAck` / `onBannerReject**` only.
+- Banner chips: `**chip.isVisible(chipContext)`** only (single arity).
+- Remove `**acknowledge` / `cancel`** aliases on chips; use `**onBannerAck` / `onBannerReject`** only.
 - `**getBannerNarration`:** weapon lines from `**automated` + `description`** (and `buildWeaponTagBannerNarrationParts`), not `f.onBanner`.
 - Add regression test for automated weapon narration merge.
 
@@ -83,7 +83,7 @@ Use the **per-phase checklist** under each phase below; do not skip it.
 
 **Goal:** One mental model for “things on the pending roll banner.”
 
-1. Inventory `**ancestryBannerReactions`** entries that still rely on imperative `**onBanner` / `isVisible`** patterns vs V2 `**placement: 'banner'**` chips (e.g. Bone **I See It Coming**).
+1. Inventory `**ancestryBannerReactions`** entries that still rely on imperative `**onBanner` / `isVisible`** patterns vs V2 `**placement: 'banner'`** chips (e.g. Bone **I See It Coming**).
 2. For each, ensure an equivalent **engine chip** + **visibility** path; then **delete** parallel GMTableView-only reaction construction.
 3. Re-verify `**setBannerReactionsFallback`** / `DiceRoller` contract after shape changes.
 
@@ -95,6 +95,8 @@ Use the **per-phase checklist** under each phase below; do not skip it.
 - **§3:** Row **#11** — update **Status** / **Current mechanism**; any rows affected by `DiceRoller` / fallback contract.
 - **§4:** **Dual banner surfaces** — update or close out if the gap is materially smaller.
 
+**Status (delivered):** Legacy `**ancestryBannerReactions`** and `**setBannerReactionsFallback`** wiring are **removed** from the client; there is no parallel GMTableView→`DiceRoller` reaction list. Interactive pending-roll UI is `**collectV2ReviewActionChips`** only. Bone **I See It Coming** uses V2 `**reviewAction`** chips (`src/features-v2/abilities/Bone/ISeeItComing.js`). `**docs/v2-v1-cutover.md`** §2 / §4 reflect the converged model.
+
 ---
 
 ## Phase C — Damage pipeline / `applyDamageToTarget`
@@ -105,8 +107,8 @@ Use the **per-phase checklist** under each phase below; do not skip it.
 
 1. Document current call graph: `handleApplyDamage` → `applyDamageToTarget` → hooks / armor / Parry.
 2. For **one** vertical slice (e.g. pure physical weapon damage), build `table` from `buildTableSnapshot`, run `**reviewAction` / `reviewOutcome`** hooks from engine, apply `**applyV2LifecycleMutations`** where applicable; keep server rolls in `api.js`.
-3. Expand slice by slice; add `**test/unit**` fixtures per slice.
-4. Track remaining `**runCharacterHook(..., 'onDamageReceived'|'onHpDealt')**` — migrate or justify.
+3. Expand slice by slice; add `**test/unit`** fixtures per slice.
+4. Track remaining `**runCharacterHook(..., 'onDamageReceived'|'onHpDealt')`** — migrate or justify.
 
 **Exit (code):** Slices covered by tests; remaining hooks documented.
 
@@ -120,18 +122,37 @@ Use the **per-phase checklist** under each phase below; do not skip it.
 
 ## Phase D — Weapon tag intent + display
 
-**Goal:** Match tracker **“Weapon property chips”** row: intent-phase controls for tags where the engine already defines chips (e.g. Startling).
+**Goal:** Match tracker **“Weapon property chips”** row: intent-phase controls for weapon tags where the engine already defines chips. **First vertical slice:** **Devastating** (intent placement, attack-scoped).
 
-1. From pending roll + attacker, resolve **active weapon** and collect `**intent`** chips via existing engine `**collectChips`** paths (or bridge equivalent).
-2. Surface in UI (banner or pre-send strip) per UX decision.
-3. `**CharacterDisplay` / weapon cards:** consume `**weaponRenderHints`** / `**isDisabled`** from merge; remove name-based gates where `**onRender**` supplies hints (`[docs/v2-migration-tracker.md](../../docs/v2-migration-tracker.md)` backlog).
+### UX lock — single phased banner (replaces “two surfaces” mental model)
 
-**Exit (code):** “Click weapon → optional intent chip → roll” for implemented weapon modules where chips exist.
+**Intent:** One **continuous** dice/banner surface that **includes** what the old **pre-roll intent panel** did, at the **top**, instead of a separate `preRollBanner` overlay vs `DiceRoller` strip as two stops.
+
+- **Phase A (top, always relevant when initiating):** Intent choices — experiences, advantage toggles, V2 **intent** chips (e.g. Devastating), difficulty (when shown), serialized player→GM intent, etc. Same **content** as today’s intent panel; **placement** is inside the unified component.
+- **Phase B+ (below, when appropriate):** After the roll exists, **reviewAction** / **reviewOutcome** chips, target/armor controls, ack, etc. — the action **fills in** downward as phases apply (no duplicate intent row on the pending banner: intent stays in the upper section; post-roll strip remains review phases + read-only “used intent” lines as today).
+
+**Implementation note:** This is a **refactor of presentation** (merge `preRollBanner` + `DiceRoller` / `ResultBanner` into one shell with sections), not a second copy of logic. GM vs player and mobile constraints still apply (touch targets, scroll, `postPlayerIntent` parity).
+
+### Engine vs VTT — what “expand per weapon module” means (and does not)
+
+**Does *not* mean:** Writing new SRD behavior in `src/features-v2/weapon_properties/` or extending the core engine for each tag. **Weapon property modules and `collectChips` are already the source of truth**; Devastating and other intent chips are already defined there.
+
+**Does mean:** **VTT integration** — for each weapon property that exposes `**placements: ['intent']`**, verify and wire **end-to-end**:
+
+1. **Synthetic pre-roll `gameState`** (attack + weapon + placeholder damage) matches what that chip’s `onUse` / `when()` expect.
+2. **Mutations map** to the client roll (`postRoll` text/meta) and resource updates.
+3. **Tests** for that tag’s bridge edge cases if something differs (e.g. toggle vs one-shot, stress timing).
+
+So **“expand” = broaden integration coverage + fix mismatches**, not greenfield feature authoring. If a module already works in engine tests only, Phase D is when it becomes **true on the table** (or we document a **Blocked** gap).
+
+1. `**CharacterDisplay` / weapon cards:** consume `**weaponRenderHints`** / `**isDisabled`** from merge; remove name-based gates where `**onRender`** supplies hints (`[docs/v2-v1-cutover.md](../../docs/v2-v1-cutover.md)` backlog).
+
+**Exit (code):** “Click weapon → see intent chip(s) in the **unified banner (top)** → roll includes chosen effect”; Devastating slice complete; **integration checklist** for remaining intent weapon tags (no parallel feature-code track).
 
 `**docs/v2-v1-cutover.md` updates (Phase D):**
 
 - **§3:** Rows **#8, #9** — intent chips, `rewriteDamage` / roll-tag flow, **Status** when intent UI lands.
-- **§2:** Stable UI entry points (banner vs pre-send) once chosen.
+- **§2:** Single phased banner shell + which sections map to engine phases (intent vs review).
 
 ---
 
@@ -160,11 +181,11 @@ Use the **per-phase checklist** under each phase below; do not skip it.
 
 ## Phase F — Tracker Tech Debt (prioritized product passes)
 
-Pull from `[docs/v2-migration-tracker.md](../../docs/v2-migration-tracker.md)` **Tech Debt** and **V2 UI integration backlog**:
+Pull from `[docs/v2-v1-cutover.md](../../docs/v2-v1-cutover.md)` **Tech Debt** and **V2 UI integration backlog**:
 
-- **Rally:** cross-sheet chips + optional non-owner `**reviewAction`** merge on ally banners; session/scene end clear for `**partyDice`** / modifiers.
+- **Rally (Phase F — delivered):** `crossSheetChips` + `collectV2ReviewActionChips` viewer/actor union for `showOnOtherSheets` `reviewAction` on ally banners; Start/End Session clears per-character and root `table_state.featureState.Rally`. Remaining: scene vs session lifecycle (tracker Tech Debt). Docs: `docs/v2-v1-cutover.md` §3/#15.
 - **Beastform / Druid:** VTT parity (Fragile, advantage chip, voluntary drop) per backlog row.
-- **Rest banner:** extensible slots for consumables (Potion of Stability) when ready.
+- **Rest banner:** new declarative **`placement: 'rest'`** on the Rest banner (per character); **Potion of Stability** uses a rest chip → **`onUse`** → **CONV-011 `passiveStatMods`** (`numShortRestSlots` / `numLongRestSlots`); merged slot-count plumbing for banner UI. Plan: [`.cursor/plans/rest-banner-phase-f.plan.md`](rest-banner-phase-f.plan.md).
 - **Domain loadout / Channel Raw Power:** persisted `**domainLoadout`** on table characters.
 
 Each item is its own milestone with separate QA.
@@ -180,13 +201,13 @@ Each item is its own milestone with separate QA.
 
 - Reintroducing `**src/features/`** or a global name → descriptor import map.
 - Replacing `**wrapEntity`** everywhere in one PR — **incremental** migration only.
-- Duplicating SRD feature names in `**engine/`** or `**v2-action-loop-bridge.js**` ([CONV-029](../../docs/v2-code-conventions.md)).
+- Duplicating SRD feature names in `**engine/`** or `**v2-action-loop-bridge.js`** ([CONV-029](../../docs/v2-code-conventions.md)).
 
 ---
 
 ## Verification
 
-- `**npm run test:unit**` after each phase; add tests for every behavior moved off imperative paths.
+- `**npm run test:unit`** after each phase; add tests for every behavior moved off imperative paths.
 - Manual: GM + player + preview-as-player for banner and chip flows (`app.jsx` effective player props).
 - `**docs/v2-v1-cutover.md`:** §2–§4 (and §3.1 after Phase E) updated per **Documentation contract** for that phase.
 

@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, Pencil, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying } from '../lib/helpers.js';
@@ -12,13 +12,27 @@ import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
 import { buildSystemContext } from '../lib/feature-context.js';
-import { postRoll, postRollSilent, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerGenericRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerMakeASceneTarget, postBannerChipResolve, postBannerAddDamage, postBannerActionAddDie, postBannerActionAddStatic, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, postPlayerV2ReviewChip, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import { postRoll as postRollToServer, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerGenericRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerMakeASceneTarget, postBannerChipResolve, postBannerAddDamage, postBannerActionAddDie, postBannerActionAddStatic, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, postPlayerV2ReviewChip, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import {
+  characterSheetTableInteractionFlags,
+  gateTableOpForPrepMode,
+  isPrepModeElementUpdateBlocked,
+} from '../lib/table-session-gate.js';
 import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
+import {
+  characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
+  shouldSuppressCharacterOverlayOutsideDismiss,
+} from '../lib/character-drawer-edit-mismatch.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
-import { CompanionSheet, getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
-import { GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
+import { GameTableCharacterSheetTitleBar } from './GameTableCharacterSheetTitleBar.jsx';
+import {
+  CharacterSheetSourceHighlightProvider,
+  CharacterSheetHighlightSurface,
+} from './CharacterSheetSourceHighlight.jsx';
+import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
+import { getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
@@ -43,8 +57,7 @@ import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp,
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
-import { collectV2IsToggleCardFeatureGroups } from '../lib/build-feature-card-model.js';
-import { runV2OwnedCardChipTableAction, applyDeferredV2ToggleOnAckFromRoll } from '../lib/v2-owned-card-chip-table.js';
+import { applyDeferredV2ToggleOnAckFromRoll, applyV2OwnedCardChipEngineResultToTable } from '../lib/v2-owned-card-chip-table.js';
 import {
   collectV2ReviewActionChips,
   activateV2ReviewChip,
@@ -59,17 +72,29 @@ import {
   runV2IntentPhaseForTraitRoll,
   runV2RestHooksForTable,
   computeV2DamageBannerAckNotices,
-  getISeeItComingDefenseBonus,
-  buildISeeItComingAckCleanupUpdates,
+  sumPendingEvasionBonusFromFeatureState,
+  buildPendingEvasionBonusAckCleanupUpdates,
+  runV2DamageApplyReviewOutcomePhase,
+  collectV2WeaponIntentChips,
+  buildV2PreRollWeaponAttackRollSkeleton,
+  buildV2PreRollTraitRollSkeleton,
+  collectV2RestPlacementChipsForCharacter,
+  activateV2RestPlacementChip,
+  expandTableCharactersAncestryForV2Loader,
 } from '../lib/v2-action-loop-bridge.js';
 import { buildV2ChipViewer } from '../lib/v2-chip-session-view.js';
 import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
 import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
 import { buildTableSnapshot, applyMutations } from '../../features-v2/engine/table.js';
+import { dispatchSessionEndHooks } from '../../features-v2/engine/action-loop.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../lib/v2-class-subclass-feature-descriptors.js';
 import { getV2OriginFeatureDescriptor } from '../lib/v2-origin-feature-descriptors.js';
 import { v2RollDieExtrasFromActionLoopPayload } from '../lib/v2-action-notification-dice.js';
+import {
+  applyChargedProficiencyBonusToRollText,
+  applyDevastatingDamageRewriteToRollText,
+} from '../lib/weapon-roll-text.js';
 import {
   registerV2PendingMapMove,
   clearV2PendingMoveElementsForRoll,
@@ -82,6 +107,12 @@ import {
 import { getExperienceModifierForCharacter, insertExperienceIntoRollText } from '../lib/experience-roll.js';
 import { runBeforeMarkStress, runBeforeMarkHP, runBeforeMarkArmor } from '../lib/origin-lifecycle.js';
 import { reducePendingStressAfterManualMark } from '../lib/pending-resource-costs.js';
+import {
+  buildClearBeastformStateMutations,
+  hasDeclarativeBeastformFragileDrop,
+  legacyBeastformFeaturesLookFragile,
+  shouldDropBeastformFromDamage,
+} from '../lib/beastform-vtt-drop.js';
 import { getRestMovesForCharacter } from '../lib/rest-moves.js';
 import {
   buildManualTrackActionRoll,
@@ -207,15 +238,15 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
+      <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-bold text-white flex items-center gap-2"><Camera size={18} /> Capture Table as Scene</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={18} /></button>
+          <h2 className="text-lg font-bold text-dh flex items-center gap-2"><Camera size={18} /> Capture Table as Scene</h2>
+          <button onClick={onClose} className="text-dh-muted hover:text-dh"><X size={18} /></button>
         </div>
 
-        <p className="text-sm text-slate-400 mb-5">Save the current table contents as a reusable Scene, including all adversaries and environments.</p>
+        <p className="text-sm text-dh-muted mb-5">Save the current table contents as a reusable Scene, including all adversaries and environments.</p>
 
-        <label className="block text-sm font-medium text-slate-300 mb-1">Scene Name</label>
+        <label className="block text-sm font-medium text-dh mb-1">Scene Name</label>
         <input
           type="text"
           value={name}
@@ -223,11 +254,11 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
           onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onClose(); }}
           placeholder="e.g. Bandit Ambush"
           autoFocus
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-red-500 mb-5"
+          className="w-full bg-dh-raised border border-dh-strong rounded-lg px-3 py-2 text-sm text-dh placeholder-dh-muted outline-none focus:border-red-500 mb-5"
         />
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white bg-slate-800 border border-slate-700 hover:border-slate-500 transition-colors">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-dh-muted hover:text-dh bg-dh-raised border border-dh-strong hover:border-dh-strong transition-colors">Cancel</button>
           <button
             onClick={handleSave}
             disabled={!name.trim() || saving}
@@ -291,25 +322,106 @@ function enrichRollWithDamage(roll, elements) {
   roll.dmgType = dmg.type;
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {} }) {
+/** Width of the character table editor column (unified sheet + slide-out form). */
+const CHARACTER_TABLE_EDITOR_DRAWER_WIDTH = 'min(42rem, calc(100vw - 15rem))';
+
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const v2Registry = useMemo(() => (srdData ? buildV2RegistryWithSrdItems(srdData) : null), [srdData]);
-  const v2TableContextForPanels = useMemo(
-    () => ({
-      activeElements,
-      fearCount,
-      mapConfig,
-      tableFeatureState,
-      registry: v2Registry,
-    }),
-    [activeElements, fearCount, mapConfig, tableFeatureState, v2Registry]
+
+  /** Mirrors `table_state` top for `gateTableOpForPrepMode` (sendOp bypass path). */
+  const tableStateForGate = useMemo(
+    () => ({ top: { sessionStarted: sessionStarted === false ? false : true, sessionPaused: sessionPaused === true } }),
+    [sessionStarted, sessionPaused]
   );
-  const sendOp = useCallback((op) => postTableOp(op, tableId), [tableId]);
+
+  const [playBlockedDialog, setPlayBlockedDialog] = useState(null);
+  /** Until reload: GM skips prep/pause prompts; blocked ops get `bypassPrepGate` (session flags unchanged). */
+  const [playBlockedAllowAllEdits, setPlayBlockedAllowAllEdits] = useState(false);
+
+  const sendOp = useCallback(
+    (op) => {
+      if (
+        playBlockedAllowAllEdits &&
+        !sessionPlayAllowed &&
+        op &&
+        typeof op === 'object' &&
+        op.bypassPrepGate !== true
+      ) {
+        const gated = gateTableOpForPrepMode(tableStateForGate, op);
+        if (!gated.ok) {
+          postTableOp({ ...op, bypassPrepGate: true }, tableId);
+          return;
+        }
+      }
+      postTableOp(op, tableId);
+    },
+    [tableId, playBlockedAllowAllEdits, sessionPlayAllowed, tableStateForGate]
+  );
+
+  const updateActiveElement = useCallback((instanceId, updates) => {
+    if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
+      if (!isPlayer) {
+        if (playBlockedAllowAllEdits) {
+          return pushTableElementUpdate(instanceId, updates, { bypassPrepGate: true });
+        }
+        setPlayBlockedDialog({ kind: 'element', instanceId, updates });
+      }
+      return;
+    }
+    return pushTableElementUpdate(instanceId, updates);
+  }, [sessionPlayAllowed, pushTableElementUpdate, isPlayer, playBlockedAllowAllEdits]);
+
+  const handleRollTransportError = useCallback((err, logLabel) => {
+    if (err?.playBlocked === 'paused' || err?.playBlocked === 'prep') return;
+    if (err?.message === 'cancelled') return;
+    if (logLabel) console.error(logLabel, err);
+  }, []);
+
+  const postRoll = useCallback((rollText, displayName, tid, rollMeta = {}) => {
+    if (!sessionPlayAllowed && !rollMeta.silent) {
+      if (isPlayer) return Promise.reject(new Error('Session not started'));
+      if (playBlockedAllowAllEdits) {
+        return postRollToServer(rollText, displayName, tid, { ...rollMeta, bypassPrepGate: true });
+      }
+      return new Promise((resolve, reject) => {
+        setPlayBlockedDialog({
+          kind: 'roll',
+          rollText,
+          displayName,
+          tid,
+          rollMeta,
+          resolve,
+          reject,
+        });
+      });
+    }
+    return postRollToServer(rollText, displayName, tid, rollMeta);
+  }, [sessionPlayAllowed, postRollToServer, isPlayer, playBlockedAllowAllEdits]);
+
+  /** Silent server roll (no banner). Mirrors `api.postRollSilent` but uses wrapped `postRoll` for prep/session behavior. */
+  const postRollSilent = useCallback(async (rollText, displayName, tid) => {
+    const rollData = await postRoll(rollText, displayName, tid, { silent: true });
+    const value =
+      typeof rollData.total === 'number'
+        ? rollData.total
+        : parseInt(rollData.subItems?.[0]?.result, 10) || 0;
+    return { ...rollData, value };
+  }, [postRoll]);
 
   // ── Hover overlay hooks (desktop: mouseenter/leave; touch: tap-to-toggle) ──
+  const suppressCharacterOverlayOutsideDismissRef = useRef(false);
   const trackerOverlay    = useHoverOverlay({ hideDelay: 120, isTouch });
-  const characterOverlay  = useHoverOverlay({ hideDelay: 120, isTouch });
+  const characterOverlay  = useHoverOverlay({
+    hideDelay: 120,
+    isTouch,
+    mode: 'click',
+    getClickToggleKey: (d) => d?.element?.instanceId,
+    suppressOutsideDismissRef: suppressCharacterOverlayOutsideDismissRef,
+    // Sheet closes via same-character trigger toggle or dismissAllHoverCards (rolls/actions); not on outside click (portaled UI / inputs).
+    disableDesktopOutsideDismiss: true,
+  });
   const potAdvOverlay     = useHoverOverlay({ hideDelay: 120, isTouch });
   const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch });
 
@@ -385,7 +497,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
   const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
   const [hoveredCompactTooltip, setHoveredCompactTooltip] = useState(null);
-  const [hoveredTrackTooltip, setHoveredTrackTooltip] = useState(null); // { label, top, bottom, side: 'left'|'right' }
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   // In-place target picker for adversary attacks (shown before rolling when attackers are on the map with a range).
@@ -414,9 +525,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   // dialogSyncing / dialogSyncError removed — character dialog replaced by Library picker
   const overlayScrollRef = useRef(null);
   const gmFeatureOverlayRef = useRef(null); // outer ref for touch outside-tap dismiss
+  /** Main character sheet column (not companion) — layout ref for the unified sheet + editor card. */
+  const characterSheetColumnRef = useRef(null);
+  const [characterEditorPortalEl, setCharacterEditorPortalEl] = useState(null);
+  /** Live form + save flags from portaled `ItemDetailModal` for the shared Game Table title bar. */
+  const [characterDrawerChromeSync, setCharacterDrawerChromeSync] = useState(null);
+  const characterTableDetailModalRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances? }
   const [editState, setEditState] = useState(null);
+
+  useEffect(() => {
+    const portaledChar =
+      editState?.step === 'form' &&
+      editState?.presentation === 'rightDrawer' &&
+      editState?.collection === 'characters';
+    if (!portaledChar) setCharacterDrawerChromeSync(null);
+  }, [editState?.step, editState?.presentation, editState?.collection]);
+
   const [characterCardExpanded, setCharacterCardExpanded] = useState(() => new Set());
   const [scaledToggleState, setScaledToggleState] = useState({});
   const trackerKey = trackerOverlay.data
@@ -434,7 +560,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const [preRollDisadvantages, setPreRollDisadvantages] = useState([]); // string[]: optional name per disadvantage ('' = default "Disadvantage")
   /** Intent panel: review/change attack target (same list as in-sheet target menu). */
   const [preRollTargetInstanceId, setPreRollTargetInstanceId] = useState(null);
-  const characterTargetMenuOpenRef = useRef(false); // set by CharacterHoverCard when target menu is open; avoid closing overlay on mouse leave
 
   const potAdvKey = potAdvOverlay.data?.element?.id ?? null;
   const potAdvAdjust = useViewportClamp(potAdvOverlay.overlayRef, potAdvOverlay.isOpen, potAdvKey);
@@ -687,6 +812,55 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
 
+    // V2 Phase C: one hydrated `reviewOutcome` pass at damage commit (opt-in registry rows only).
+    if (
+      (target.type === 'character' ||
+        target.type === 'adversary' ||
+        target.elementType === 'character' ||
+        target.elementType === 'adversary') &&
+      srdData &&
+      roll?._attackerInstanceId &&
+      hpLossToApply > 0
+    ) {
+      const v2DamageOutcome = runV2DamageApplyReviewOutcomePhase({
+        roll,
+        targetElement: target,
+        activeElements,
+        srdData,
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+        damageAmount: wrappedRoll.damageTotal,
+        hpLossAmount: hpLossToApply,
+      });
+      for (const u of v2DamageOutcome.elementUpdates) {
+        updateActiveElement(u.instanceId, u.updates);
+      }
+      for (const p of v2DamageOutcome.actionLoopNotifications || []) {
+        const baseDesc = p.description || '';
+        const actionText =
+          p.affectedSummary && String(p.affectedSummary).trim()
+            ? `${baseDesc}\n${p.affectedSummary}`
+            : baseDesc;
+        postActionNotification({
+          _action: true,
+          rollUser: 'Table',
+          actionName: p.title,
+          actionText,
+          _v2ActionLoop: true,
+          _reactorInstanceId: p.instanceId,
+          ...v2RollDieExtrasFromActionLoopPayload(p),
+          ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+            ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+            : {}),
+        }).catch(() => {});
+      }
+      if (typeof v2DamageOutcome.adjustedHpLoss === 'number') {
+        hpLossToApply = v2DamageOutcome.adjustedHpLoss;
+        wrappedRoll.hpLoss = hpLossToApply;
+      }
+    }
+
     // Origin lifecycle: onMarkHP can cancel (character only)
     if (target.elementType === 'character' && hpLossToApply > 0) {
       const hpCancel = runBeforeMarkHP(target, hpLossToApply, 'damage', updateActiveElement, { characters: wrappedPartyCharacters, system });
@@ -733,21 +907,47 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
 
-    // Beastform auto-drop: character has an active beastform and either hit 0 HP,
-    // or took Major-or-greater damage (hpLoss >= 2) while the beastform has Fragile.
-    if (target.elementType === 'character' && entityTarget.activeBeastform) {
-      const bf = entityTarget.activeBeastform;
-      const isFragile = (bf.features || []).some(f => /fragile/i.test(f.name || ''));
-      const dropped = entityTarget.currentHp === 0 || (wrappedRoll.hpLoss >= 2 && isFragile);
-      if (dropped) {
-        updateActiveElement(target.instanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
-        const reason = entityTarget.currentHp === 0 ? '(last HP)' : '(Fragile — Major or greater damage)';
-        handleActionNotification({
-          _action: true,
-          rollUser: target.name || '',
-          actionName: 'Dropped out of Beastform',
-          actionText: `${target.name} drops out of Beastform ${reason}.`,
+    // Beastform auto-drop: same scoped `setFeatureState` clears as V2 Drop chip / `clearBeastformState`
+    // (table-ops mirrors legacy `activeBeastform` + `selectedBeastformAdvantage` when scoped activeBeastform is nulled).
+    if (target.elementType === 'character') {
+      let displayMerged = null;
+      if (srdData) {
+        try {
+          displayMerged = mergeV2DeclarativeSheetOverlay(recomputeCharacter(target, srdData), target, srdData, {
+            fearCount,
+            mapConfig,
+            tableFeatureState,
+          });
+        } catch {
+          displayMerged = null;
+        }
+      }
+      const activeBf = displayMerged?.activeBeastform ?? target.activeBeastform;
+      if (activeBf) {
+        const effectiveAf = displayMerged?.activeFeatures ?? target.activeFeatures;
+        const fragileDeclarative = hasDeclarativeBeastformFragileDrop(effectiveAf);
+        const isFragile = fragileDeclarative || legacyBeastformFeaturesLookFragile(activeBf);
+        const dropped = shouldDropBeastformFromDamage({
+          currentHp: entityTarget.currentHp,
+          hpLossToApply,
+          hasFragile: isFragile,
         });
+        if (dropped) {
+          const mutations = buildClearBeastformStateMutations();
+          const { updates } = applyV2LifecycleMutations(activeElements, mutations, target.instanceId);
+          if (updates.length > 0) {
+            sendOp({ op: 'update-elements', updates });
+          } else {
+            updateActiveElement(target.instanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
+          }
+          const reason = entityTarget.currentHp === 0 ? '(last HP)' : '(Fragile — Major or greater damage)';
+          handleActionNotification({
+            _action: true,
+            rollUser: target.name || '',
+            actionName: 'Dropped out of Beastform',
+            actionText: `${target.name} drops out of Beastform ${reason}.`,
+          });
+        }
       }
     }
 
@@ -821,7 +1021,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
       armorOpts = { applyReduction: true, markSlot, feature };
     }
-    const postRollSilent = (text, displayName) => postRoll(text, displayName, tableId, { silent: true });
     armorOpts = { ...armorOpts, postRollSilent, useImpenetrable: !!target.useImpenetrable };
 
     // Generic damage modifiers from active banner chips (e.g. Increased Fortitude toggle path)
@@ -868,7 +1067,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       sendOp({ op: 'update-elements', updates: v2DamageAck.elementUpdates });
     }
     for (const pr of v2DamageAck.postRolls || []) {
-      postRoll(pr.rollText, pr.displayName, tableId, pr.rollMeta).catch(() => {});
+      postRoll(pr.rollText, pr.displayName, tableId, pr.rollMeta).catch(err => handleRollTransportError(err));
     }
     for (const n of v2DamageAck.actionNotifications || []) {
       handleActionNotification(n);
@@ -911,7 +1110,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         postRoll(`${charEl.name} Sharp retaliation damage [1d4]`, charEl.name, tableId, {
           _attackerInstanceId: charEl.instanceId,
           _selectedTargetInstanceId: sharpTargetId,
-        }).catch(() => {});
+        }).catch(err => handleRollTransportError(err));
       }
     }
 
@@ -968,38 +1167,64 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   // Action notification (e.g. Startling, session-cycle banners): fire-and-forget broadcast.
   // Defined before handleConcussiveKnock so it can be listed in that useCallback's dependency array.
   const handleActionNotification = (notification) => {
+    if (!sessionPlayAllowed && !notification._sessionStart) {
+      if (!isPlayer) {
+        if (playBlockedAllowAllEdits) {
+          dismissAllHoverCards();
+          postActionNotification(notification, tableId, { bypassPrepGate: true }).catch(() => {});
+          return;
+        }
+        setPlayBlockedDialog({ kind: 'action', notification });
+      }
+      return;
+    }
     dismissAllHoverCards();
-    postActionNotification(notification).catch(() => {});
+    postActionNotification(notification, tableId).catch(() => {});
   };
 
-  /** V2 `isToggle` card chips on sidebar character cards (GM only — same activation path as hover sheet). */
-  const handleCharacterPanelV2CardChip = useCallback(
-    (characterEl, displayEl) => (payload) => {
-      if (isPlayer || !tableId || !v2Registry) return;
-      void runV2OwnedCardChipTableAction({
-        featRow: payload.featRow,
-        chip: payload.chip,
-        passedFeatureKey: payload.featureKey,
-        selectOpts: payload.selectOpts,
-        displayEl,
-        el: characterEl,
-        activeElementsForV2Snapshots: activeElements,
-        v2Registry,
-        tableFeatureState,
+  const handleRestBannerV2Chip = useCallback(
+    (rawChip, characterEl, isPlayerSession) => {
+      if (!srdData || !characterEl?.instanceId) return;
+      const restBanner = pendingBanners?.find((b) => b._rest);
+      if (!restBanner) return;
+      const duration = restBanner._restDuration === 'long' ? 'long' : 'short';
+      const merged = mergeV2DeclarativeSheetOverlay(recomputeCharacter(characterEl, srdData), characterEl, srdData, {
         fearCount,
         mapConfig,
+        tableFeatureState,
+      });
+      const registry = buildV2RegistryWithSrdItems(srdData);
+      const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+      const { mutations, engineChip, error } = activateV2RestPlacementChip({
+        mergedCharacterEl: merged,
+        rawChip,
+        activeElements: activeForLoader,
+        registry,
+        restDuration: duration,
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+      if (error || !mutations?.length) return;
+      applyV2OwnedCardChipEngineResultToTable({
+        result: { mutations, engineChip },
+        featRow: { name: rawChip._featureName || engineChip?._featureName || 'Rest' },
+        passedFeatureKey: null,
+        el: characterEl,
+        activeElementsForV2Snapshots: activeElements,
         tableId,
         onActionLoopNotification: handleActionNotification,
+        isPlayer: isPlayerSession,
       });
     },
-    [isPlayer, tableId, v2Registry, activeElements, tableFeatureState, fearCount, mapConfig, handleActionNotification]
+    [srdData, pendingBanners, activeElements, fearCount, mapConfig, tableFeatureState, tableId]
   );
 
   /** V2 Phase 4: token move hooks (e.g. Cloaked, Attack of Opportunity) after map drag commit. */
   const handleTokenDragEnd = useCallback(
     ({ instanceId, previousTokenFt, postMoveActiveElements }) => {
       if (!postMoveActiveElements?.length || isPlayer) return;
-      if (v2Registry) {
+      if (v2Registry && sessionPlayAllowed) {
         const { mutations } = runV2TokenMoveHooks(
           {
             moverInstanceId: instanceId,
@@ -1033,11 +1258,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
                 ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
                 : {}),
-            }).catch(() => {});
+            }, tableId).catch(() => {});
           }
         }
       }
-      if (srdData && pendingBanners?.length) {
+      if (srdData && pendingBanners?.length && sessionPlayAllowed) {
         const moveUpdates = evaluateV2PendingMapMovesForMover(instanceId, {
           postMoveActiveElements,
           pendingBanners,
@@ -1051,11 +1276,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         }
       }
     },
-    [v2Registry, isPlayer, tableFeatureState, fearCount, mapConfig, sendOp, srdData, pendingBanners]
+    [v2Registry, isPlayer, sessionPlayAllowed, tableFeatureState, fearCount, mapConfig, sendOp, srdData, pendingBanners, tableId]
   );
 
   // Player action notification — fire-and-forget broadcast to GM room.
   const handlePlayerActionNotification = (notification) => {
+    if (!sessionPlayAllowed && !notification._sessionStart) {
+      return;
+    }
     dismissAllHoverCards();
     postActionNotification(notification, tableId).catch(() => {});
   };
@@ -1162,8 +1390,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     postRoll(roll.rollText, roll.rollUser ?? roll.displayName, isPlayer ? tableId : null, {
       _attackerInstanceId: attacker?.instanceId,
       ...extraMeta,
-    }).catch(err => console.error('Full reroll failed:', err));
-  }, [isPlayer, tableId, activeElements, postBannerAck, postRoll]);
+    }).catch(err => handleRollTransportError(err, 'Full reroll failed:'));
+  }, [isPlayer, tableId, activeElements, postBannerAck, postRoll, handleRollTransportError]);
 
   // Quick: apply the same damage to a second target, marking 1 Stress on the attacker.
   const handleQuickTarget = async (target, dmgTotal, tags, roll, dmgType = '') => {
@@ -1218,7 +1446,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       _notThisTime: true, _wizardName: wizard.name,
       _notThisTimeHopeCost: 3,
       _wizardInstanceId: wizard.instanceId,
-    }).catch(err => console.error('Not This Time reroll failed:', err));
+    }).catch(err => handleRollTransportError(err, 'Not This Time reroll failed:'));
   };
 
   // Origin lifecycle (e.g. Unshakable): post action banner with character name.
@@ -1310,7 +1538,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (secDmgTotal > 0) {
         handleApplyDamage(target, secDmgTotal, [], secRollData);
       }
-    }).catch(err => console.error('Doubled Up roll failed:', err));
+    }).catch(err => handleRollTransportError(err, 'Doubled Up roll failed:'));
   };
 
   /** Set roll.isSuccess from selected target (adversary: difficulty, character: evasion). Used by banner reactions and virtual-weapon onAcknowledge. */
@@ -1322,9 +1550,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     let defense = isAdversary
       ? target.difficulty
       : (effectiveEvasion(target, srdData) ?? target.evasion ?? null);
-    if (!isAdversary && roll._rollDbId != null) {
-      const isee = getISeeItComingDefenseBonus(target, roll._rollDbId);
-      if (isee > 0) defense = (defense ?? 0) + isee;
+    if (!isAdversary) {
+      const pending = sumPendingEvasionBonusFromFeatureState(target);
+      if (pending > 0) defense = (defense ?? 0) + pending;
     }
     if (defense == null) return;
     let effectiveTotal = roll.total ?? 0;
@@ -1451,9 +1679,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       return;
     }
 
-    // Start Session banner: acknowledge then run session clear + onSessionStart hooks.
+    // Start Session banner: acknowledge, mark session active on table state, then run session clear + onSessionStart hooks.
     if (roll._sessionStart && roll._rollDbId) {
       postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
+      await postTableOp({ op: 'set-table-top', top: { sessionStarted: true, sessionPaused: false, lastPlayActivityAt: Date.now() } }, tableId);
       runSessionStartClear();
       return;
     }
@@ -1806,11 +2035,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
     }
     if (!options?.alreadyAcked) {
-      if (roll._rollDbId) {
+      {
         const sel = roll._selectedTargetInstanceId ?? (Array.isArray(roll._selectedTargetInstanceIds) && roll._selectedTargetInstanceIds[0]);
         for (const el of activeElements) {
           if (el.elementType !== 'character') continue;
-          const u = buildISeeItComingAckCleanupUpdates(el, roll._rollDbId, sel);
+          const u = buildPendingEvasionBonusAckCleanupUpdates(el, sel);
           if (u) updateActiveElement(el.instanceId, u);
         }
       }
@@ -1937,6 +2166,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
   // Run session-start clear and ancestry hooks (used when GM acknowledges Start Session banner).
   const runSessionStartClear = () => {
+    let sessionTableFeatureState = tableFeatureState;
     const charactersList = activeElements.filter(e => e.elementType === 'character');
     const cyclesToClear = ['session'];
     for (const char of charactersList) {
@@ -1968,6 +2198,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (Object.keys(updates).length > 0) {
         updateActiveElement(char.instanceId, updates);
       }
+    }
+    // Root `table_state.featureState` merges into banner snapshots; clear Rally bags here too (mirrors `runSessionEndClear`).
+    if (tableFeatureState?.Rally) {
+      const tf = { ...tableFeatureState };
+      const rally = { ...tf.Rally };
+      delete rally.partyDice;
+      delete rally.maestroRallyChoices;
+      if (Object.keys(rally).length === 0) delete tf.Rally;
+      else tf.Rally = rally;
+      sessionTableFeatureState = tf;
+      sendOp({ op: 'set-table-feature-state', featureState: tf });
     }
     // V2: `hooks.onSessionStart(table)` lives on registry rows; merged `activeFeatures` often omit `hooks`.
     if (v2Registry && srdData) {
@@ -2006,8 +2247,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         const gameState = {
           fear: fearCount,
           mapConfig,
+          top: { sessionStarted: true },
           activeElements: workingElements,
-          featureState: mergeV2TableFeatureState(tableFeatureState, workingElements),
+          featureState: mergeV2TableFeatureState(sessionTableFeatureState, workingElements),
           registry: v2Registry,
           _ownerInstanceId: instanceId,
         };
@@ -2108,6 +2350,90 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     }
   };
 
+  /** GM End Session: clear Rally/session bags, optional V2 `onSessionEnd`, then persist `top.sessionStarted: false`. */
+  const runSessionEndClear = () => {
+    const charactersList = activeElements.filter((e) => e.elementType === 'character');
+    const batchMap = {};
+    for (const char of charactersList) {
+      const updates = {};
+      if (char.featureState?.Rally) {
+        const fs = { ...char.featureState };
+        const rally = { ...fs.Rally };
+        delete rally.partyDice;
+        delete rally.maestroRallyChoices;
+        if (Object.keys(rally).length === 0) {
+          delete fs.Rally;
+        } else {
+          fs.Rally = rally;
+        }
+        updates.featureState = fs;
+      }
+      if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
+    }
+    if (Object.keys(batchMap).length > 0) {
+      sendOp({
+        op: 'update-elements',
+        updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })),
+      });
+    }
+    if (tableFeatureState?.Rally) {
+      const tf = { ...tableFeatureState };
+      const rally = { ...tf.Rally };
+      delete rally.partyDice;
+      delete rally.maestroRallyChoices;
+      if (Object.keys(rally).length === 0) delete tf.Rally;
+      else tf.Rally = rally;
+      sendOp({ op: 'set-table-feature-state', featureState: tf });
+    }
+    if (v2Registry && srdData) {
+      let workingElements = activeElements.map((e) => {
+        if (e.elementType !== 'character') return { ...e };
+        const rec = recomputeCharacter(e, srdData);
+        if (!rec || rec === e) return { ...e };
+        return {
+          ...e,
+          spellcastTrait: rec.spellcastTrait ?? e.spellcastTrait,
+          traits: rec.traits ?? e.traits,
+          tier: rec.tier ?? e.tier,
+        };
+      });
+      const flat = [];
+      for (const char of charactersList) {
+        for (const f of char.activeFeatures || []) {
+          const t = f.type;
+          if (t !== 'ancestry' && t !== 'community' && t !== 'class' && t !== 'subclass') continue;
+          if (typeof f.hooks?.onSessionEnd !== 'function') continue;
+          flat.push({ ...f, _ownerInstanceId: char.instanceId });
+        }
+      }
+      if (flat.length) {
+        const gameState = {
+          fear: fearCount,
+          mapConfig,
+          top: { sessionStarted: false },
+          activeElements: workingElements,
+          featureState: mergeV2TableFeatureState(tableFeatureState, workingElements),
+          registry: v2Registry,
+        };
+        const { mutations: sessionEndMutations } = dispatchSessionEndHooks(gameState, flat);
+        if (sessionEndMutations?.length) {
+          const { updates } = applyV2LifecycleMutations(workingElements, sessionEndMutations, undefined);
+          if (updates.length) sendOp({ op: 'update-elements', updates });
+        }
+      }
+    }
+  };
+
+  const handleEndSession = async () => {
+    if (!window.confirm('End the session? You can use Start Session again when you are ready to play.')) return;
+    runSessionEndClear();
+    await postTableOp({ op: 'set-table-top', top: { sessionStarted: false, sessionPaused: false } }, tableId);
+  };
+
+  const handleResumeSession = async () => {
+    await postTableOp({ op: 'set-table-top', top: { sessionPaused: false, lastPlayActivityAt: Date.now() } }, tableId);
+  };
+
   // ── Session / Rest cycle handlers ────────────────────────────────────────────
   // Start Session: post action banner; clear + onSessionStart run when GM acknowledges.
   // Short/Long Rest: post 1d4 roll → RestBanner; clear runs on ack.
@@ -2116,18 +2442,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       : cycle === 'rest' ? 'Short Rest'
       : 'Long Rest';
 
+    if ((cycle === 'rest' || cycle === 'longRest') && !sessionPlayAllowed) {
+      return;
+    }
+
     if (cycle === 'rest' || cycle === 'longRest') {
       const displayName = user?.displayName || user?.email || 'GM';
       const actionText = cycle === 'rest'
         ? 'Short rest — choose your moves per character (some ancestries grant extra slots), then acknowledge to add Fear and refresh rest-use features.'
         : 'Long rest — choose your moves per character (some ancestries grant extra slots), then acknowledge to add Fear and refresh rest and long-rest features.';
-      postRoll(' [1d4]', displayName, isPlayer ? tableId : null, {
+      postRoll(' [1d4]', displayName, tableId, {
         _action: true,
         _rest: true,
         _restDuration: cycle === 'rest' ? 'short' : 'long',
         actionName: label,
         actionText,
-      }).catch(err => console.error('Rest roll failed:', err));
+      }).catch(err => handleRollTransportError(err, 'Rest roll failed:'));
       return;
     }
 
@@ -2137,7 +2467,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       _sessionStart: true,
       rollUser: 'GM',
       actionName: label,
-      actionText: 'Start Session — acknowledge to refresh session-use features for all characters.',
+      actionText:
+        'Start Session — acknowledge to reset **session-frequency feature uses**, clear **session-refresh modifiers** (e.g. Rally die tokens), refresh **Bard Rally** pooled dice, and run **session-start hooks** (e.g. Seraph Prayer Dice pool).',
     };
     handleActionNotification(cycleNotification);
   };
@@ -2167,6 +2498,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       // Shifting (armor): disadvantage until rest — clear on rest
       if (cyclesToClear.includes('rest') && Array.isArray(char.disadvantageSources) && char.disadvantageSources.includes('Shifting')) {
         updates.disadvantageSources = char.disadvantageSources.filter(s => s !== 'Shifting');
+      }
+      // Potion of Stability (rest) — clear `restBonusActive` on consumable scope bags after rest completes
+      if (char.featureState && typeof char.featureState === 'object') {
+        let nextFs = null;
+        for (const [k, bag] of Object.entries(char.featureState)) {
+          if (!/^consumables:/.test(k) || !bag || typeof bag !== 'object' || bag.restBonusActive !== true) continue;
+          if (!nextFs) nextFs = { ...char.featureState };
+          const { restBonusActive: _rb, ...restBag } = bag;
+          if (Object.keys(restBag).length === 0) delete nextFs[k];
+          else nextFs[k] = restBag;
+        }
+        if (nextFs) updates.featureState = nextFs;
       }
       if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
     }
@@ -2341,6 +2684,57 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     navigate(gameTableBasePath, { replace: true });
   };
 
+  /** Pinned sheet (hover overlay) vs character being edited — when they diverge, do not merge form into the sheet and close the editor. */
+  const characterDrawerEditMismatch = useMemo(
+    () => computeCharacterDrawerEditMismatch(editState, characterOverlay),
+    [editState, characterOverlay.isOpen, characterOverlay.data?.element?.instanceId],
+  );
+
+  suppressCharacterOverlayOutsideDismissRef.current = shouldSuppressCharacterOverlayOutsideDismiss(
+    editState,
+    characterOverlay,
+    characterDrawerEditMismatch,
+  );
+
+  useEffect(() => {
+    if (characterDrawerEditMismatch) setCharacterDrawerChromeSync(null);
+  }, [characterDrawerEditMismatch]);
+
+  useLayoutEffect(() => {
+    if (!characterDrawerEditMismatch) return;
+    setEditState(null);
+    navigate(gameTableBasePath, { replace: true });
+  }, [characterDrawerEditMismatch, navigate, gameTableBasePath]);
+
+  /** Opens the library character editor as a right-hand drawer (from CharacterHoverCard sheet). */
+  const openTableCharacterEditor = useCallback((liveEl) => {
+    if (!liveEl) return;
+    if (liveEl.id) {
+      const libraryItem = data.characters?.find(i => i.id === liveEl.id) || liveEl;
+      navigate(`${gameTableBasePath}/characters/${liveEl.id}`);
+      setEditState({
+        step: 'form',
+        item: libraryItem,
+        collection: 'characters',
+        mode: 'original',
+        instances: [liveEl],
+        baseElement: liveEl,
+        presentation: 'rightDrawer',
+      });
+    } else {
+      navigate(`${gameTableBasePath}/characters/${liveEl.instanceId}`);
+      setEditState({
+        step: 'form',
+        item: liveEl,
+        collection: 'characters',
+        mode: 'copy',
+        instances: [liveEl],
+        baseElement: liveEl,
+        presentation: 'rightDrawer',
+      });
+    }
+  }, [data.characters, gameTableBasePath, navigate]);
+
   const handleAddPotentialAdversary = async (adversaryId) => {
     try {
       const result = await resolveItems({ adversaries: [adversaryId] });
@@ -2403,6 +2797,39 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     setGmHoverOverlayActive(false);
   };
 
+  const cancelPlayBlockedDialog = useCallback(() => {
+    setPlayBlockedDialog((d) => {
+      if (d?.kind === 'roll' && d.reject) d.reject(new Error('cancelled'));
+      return null;
+    });
+  }, []);
+
+  const confirmPlayBlockedDialog = useCallback(async (dlg) => {
+    if (!dlg) return;
+    setPlayBlockedDialog(null);
+    if (dlg.kind === 'element') {
+      pushTableElementUpdate(dlg.instanceId, dlg.updates, { bypassPrepGate: true });
+    } else if (dlg.kind === 'roll') {
+      try {
+        const result = await postRollToServer(dlg.rollText, dlg.displayName, dlg.tid, {
+          ...dlg.rollMeta,
+          bypassPrepGate: true,
+        });
+        dlg.resolve?.(result);
+      } catch (e) {
+        dlg.reject?.(e);
+      }
+    } else if (dlg.kind === 'action') {
+      dismissAllHoverCards();
+      postActionNotification(dlg.notification, tableId, { bypassPrepGate: true }).catch(() => {});
+    }
+  }, [pushTableElementUpdate, postRollToServer, postActionNotification, dismissAllHoverCards]);
+
+  const allowAllEditsAndConfirmPending = useCallback(() => {
+    setPlayBlockedAllowAllEdits(true);
+    if (playBlockedDialog) void confirmPlayBlockedDialog(playBlockedDialog);
+  }, [playBlockedDialog, confirmPlayBlockedDialog]);
+
   const handleRoll = (feature, event) => {
     if (!feature._rollData && !feature._diceRoll) return;
     dismissAllHoverCards();
@@ -2450,7 +2877,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     postRoll(rollText, displayName, tableId).then(() => {
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
-    }).catch(err => console.error('Roll failed:', err));
+    }).catch(err => handleRollTransportError(err, 'Roll failed:'));
   };
 
   const handleCardRoll = (attackData, sourceName, attackerInstances, event) => {
@@ -2491,13 +2918,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets });
       return;
     }
-    postRoll(rollText, displayName, tableId, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => console.error('Roll failed:', err));
+    postRoll(rollText, displayName, tableId, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => handleRollTransportError(err, 'Roll failed:'));
   };
 
   const handleTraitRoll = (rollText, displayName, rollMeta = {}) => {
     dismissAllHoverCards();
     postRoll(rollText, displayName || rollText, tableId, rollMeta)
-      .catch(err => console.error('Trait roll failed:', err));
+      .catch(err => handleRollTransportError(err, 'Trait roll failed:'));
   };
 
   // Roll handler for a player acting on their own character.
@@ -2520,7 +2947,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     if (!characterEl) {
       dismissAllHoverCards();
       postRoll(rollText, displayName || rollText, targetTableId, meta)
-        .catch(err => console.error('Player roll failed:', err));
+        .catch(err => handleRollTransportError(err, 'Player roll failed:'));
       return;
     }
 
@@ -2673,6 +3100,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       canvas.addChip(advChip);
     }
 
+    if (srdData && meta._intentPanelForActionRoll === true) {
+      const tableChars = activeElements.filter((e) => e.elementType === 'character');
+      const { viewer } = buildV2ChipViewer({
+        isPlayer,
+        user,
+        playerEmail,
+        previewAsPlayerEmail,
+        tableCharacters: tableChars,
+      });
+      const v2WeaponIntent = collectV2WeaponIntentChips({
+        pendingMeta: meta,
+        pendingRollText: textToUse,
+        characterEl,
+        activeElements,
+        srdData,
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+        viewer,
+      });
+      for (const c of v2WeaponIntent) {
+        canvas.chips.push(c);
+      }
+    }
+
     const intentMandatory = meta._intentPanelForActionRoll === true;
     if (canvas.chips.length === 0 && !intentMandatory) {
       const tkFast = pending.meta?._traitKey;
@@ -2711,7 +3163,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       }
       const metaWithLabel = { ...pending.meta, ...(pending.rollBonusLabel ? { _staticModifierLabel: pending.rollBonusLabel } : {}) };
       dismissAllHoverCards();
-      postRoll(rollWrapper.getFinalRollText(), pending.displayName || rollText, targetTableId, metaWithLabel);
+      postRoll(rollWrapper.getFinalRollText(), pending.displayName || rollText, targetTableId, metaWithLabel)
+        .catch(err => handleRollTransportError(err, 'Player roll failed:'));
       return;
     }
 
@@ -2723,7 +3176,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         setPreRollBanner(null);
         setSelectedPreRollChips([]);
       } catch (err) {
-        console.error('[GMTableView] onProceed postRoll failed:', err);
+        handleRollTransportError(err, '[GMTableView] onProceed postRoll failed:');
       }
     };
     dismissAllHoverCards();
@@ -2738,12 +3191,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       const serializableChips = canvas.chips
         .filter(c => !c._difficultyChip)
         .map(c => ({
-          label: c.label || c._featureName || '',
+          label: c.label || c.name || c._featureName || '',
           description: c.description || '',
           hopeCost: c.hopeCost || 0,
           stressCost: c.stressCost || 0,
           frequency: c.frequency || null,
           isToggle: c.isToggle || false,
+          v2Intent: !!c._v2IntentChip,
         }));
       postPlayerIntent(tableId, {
         characterName: characterEl?.name || '',
@@ -2874,6 +3328,36 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       if (chip._difficultyChip) continue;
       if (chip._used) continue;
       if (!selectedPreRollChips[i]) continue;
+      if (chip._v2IntentChip) {
+        const updates = {};
+        if (chip.stressCost) {
+          const cur = charEl.currentStress ?? 0;
+          const max = charEl.maxStress ?? 6;
+          updates.currentStress = Math.min(cur + chip.stressCost, max);
+        }
+        if (chip.hopeCost) {
+          const cur = charEl.hope ?? (charEl.maxHope ?? 6);
+          updates.hope = Math.max(0, cur - chip.hopeCost);
+        }
+        if (Object.keys(updates).length) updateActiveElement(charEl.instanceId, updates);
+        if (chip._featureName === 'Devastating' && chip.isToggle) {
+          pending.meta = { ...pending.meta, devastating: true };
+          pending.rollText = applyDevastatingDamageRewriteToRollText(pending.rollText);
+        }
+        if (chip._featureName === 'Charged' && chip.isToggle) {
+          pending.meta = { ...pending.meta, chargedIntent: true };
+          pending.rollText = applyChargedProficiencyBonusToRollText(pending.rollText);
+        }
+        if (chip._featureName === 'Persuasive') {
+          rollWrapper.addRollBonus(2);
+        }
+        const line = chip.label || chip.name || chip._featureName || 'Feature';
+        const costBits = [];
+        if (chip.hopeCost) costBits.push(`${chip.hopeCost} Hope`);
+        if (chip.stressCost) costBits.push(`${chip.stressCost} Stress`);
+        intentUsedLog.push(costBits.length ? `${line} (${costBits.join(', ')})` : line);
+        continue;
+      }
       if (chip._advantageTriggerChip) {
         if (chip._featureName) rollWrapper.addAdvantageDie(chip._featureName);
         intentUsedLog.push(`Advantage die: ${chip._featureName || chip.label || 'feature'}`);
@@ -3027,7 +3511,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           armorFeatureName: el.armorMods?.feature?.name ?? null,
           armorScore: el.armorScore ?? 0,
           evasion: effectiveEvasion(el, srdData) ?? el.evasion ?? null,
-          _iSeeItComingRollBonus: el._iSeeItComingRollBonus,
           featureUsage: el.featureUsage ?? {},
           conditions: el.conditions ?? '',
           resistance: el.resistance ?? [],
@@ -3241,7 +3724,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
   const totalMod = computeTotalBudgetMod(tableAutoMods, effectiveMods);
   const adjustedBudget = tableBudget + totalMod;
   const tableDiff = tableBP - adjustedBudget;
-  const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-slate-400';
+  const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-dh-muted';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
   const tableCharacters = activeElements.filter(e => e.elementType === 'character');
   /** Session role + assigned PC + `viewer` for {@link collectV2ReviewActionChips} (single source of truth). */
@@ -3651,18 +4134,51 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
     return store;
   }, [pendingBanners, chipHopeConvertedIds]);
 
-  // Per-character rest move lists (ancestry onRest hooks, e.g. Clank Efficient).
+  // Per-character rest move lists — merged V2 `passiveStatMods` (CONV-011) via `_v2RestSlotStats`.
   const restMovesPerCharacter = useMemo(() => {
     const restBanner = pendingBanners?.find(b => b._rest);
-    if (!restBanner) return {};
+    if (!restBanner || !srdData) return {};
     const duration = restBanner._restDuration || 'short';
     const chars = activeElements.filter(e => e.elementType === 'character');
     const out = {};
     for (const c of chars) {
-      out[c.instanceId] = getRestMovesForCharacter(c, duration);
+      const merged = mergeV2DeclarativeSheetOverlay(recomputeCharacter(c, srdData), c, srdData, {
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+      out[c.instanceId] = getRestMovesForCharacter(c, duration === 'long' ? 'long' : 'short', {
+        mergedRestStats: merged._v2RestSlotStats,
+      });
     }
     return out;
-  }, [pendingBanners, activeElements]);
+  }, [pendingBanners, activeElements, srdData, fearCount, mapConfig, tableFeatureState]);
+
+  const restBannerChipsByInstanceId = useMemo(() => {
+    const restBanner = pendingBanners?.find(b => b._rest);
+    if (!restBanner || !srdData) return {};
+    const duration = restBanner._restDuration === 'long' ? 'long' : 'short';
+    const registry = buildV2RegistryWithSrdItems(srdData);
+    const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+    const out = {};
+    for (const c of activeElements.filter(e => e.elementType === 'character')) {
+      const merged = mergeV2DeclarativeSheetOverlay(recomputeCharacter(c, srdData), c, srdData, {
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+      out[c.instanceId] = collectV2RestPlacementChipsForCharacter({
+        mergedCharacterEl: merged,
+        activeElements: activeForLoader,
+        registry,
+        restDuration: duration,
+        fearCount,
+        mapConfig,
+        tableFeatureState,
+      });
+    }
+    return out;
+  }, [pendingBanners, activeElements, srdData, fearCount, mapConfig, tableFeatureState]);
 
   // Ranger's Focus: Rangers who have a focused adversary (derived from focusedBy on adversaries).
   // We use the adversary's focusedBy field as the source of truth rather than focusTargetId on the
@@ -3723,14 +4239,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         const p = connectedPlayers.find(c => c.email === previewAsPlayerEmail);
         const name = p?.name || previewAsPlayerEmail;
         return (
-          <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-amber-900/80 border-b border-amber-700 text-amber-200 text-xs shrink-0">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-dh-raised border-b border-dh-strong text-dh text-xs shrink-0">
             <div className="flex items-center gap-1.5">
               <Eye size={12} className="shrink-0" />
               <span>Previewing as <strong>{name}</strong></span>
             </div>
             <button
               onClick={onExitPreview}
-              className="flex items-center gap-1 hover:text-white transition-colors"
+              className="flex items-center gap-1 hover:text-dh transition-colors"
               title="Exit preview"
             >
               <EyeOff size={12} />
@@ -3741,16 +4257,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       })()}
       <div className="flex-1 flex overflow-hidden">
       {/* Characters Panel */}
-      <div className="w-56 bg-slate-950 border-r border-slate-800 flex flex-col overflow-y-auto shrink-0">
-        <div className="p-3 bg-slate-950 border-b border-slate-800 sticky top-0 z-10">
+      <div className="w-56 bg-dh-canvas border-r border-dh-border flex flex-col overflow-y-auto shrink-0">
+        <div className="p-3 bg-dh-canvas border-b border-dh-border sticky top-0 z-10">
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
+            <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
               <Users size={15} className="text-sky-400" /> Characters
             </h2>
             {!isPlayer && (
               <button
                 onClick={() => setShowPlayerEmailPanel(p => !p)}
-                className="text-slate-500 hover:text-sky-400 transition-colors"
+                className="text-dh-muted hover:text-sky-400 transition-colors"
                 title="Manage invited players"
               ><Users size={13} /></button>
             )}
@@ -3758,7 +4274,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           {/* Player email management (GM only) */}
           {!isPlayer && showPlayerEmailPanel && (
             <div className="mt-2 space-y-2">
-              <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Invited Players</p>
+              <p className="text-[10px] text-dh-muted uppercase tracking-wider font-semibold">Invited Players</p>
               {playerEmails.map(email => {
                 const connected = connectedPlayers.find(p => p.email === email);
                 const isPreviewing = previewAsPlayerEmail === email;
@@ -3767,17 +4283,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                     {connected && (
                       <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
                     )}
-                    <span className="flex-1 text-xs text-slate-300 truncate">{email}</span>
+                    <span className="flex-1 text-xs text-dh truncate">{email}</span>
                     <button
                       onClick={() => onPreviewAsPlayer?.(isPreviewing ? null : email)}
                       title={isPreviewing ? 'Exit preview' : `Preview as ${connected?.name || email}`}
-                      className={`shrink-0 transition-colors ${isPreviewing ? 'text-amber-400 hover:text-amber-300' : 'text-slate-500 hover:text-sky-400'}`}
+                      className={`shrink-0 transition-colors ${isPreviewing ? 'text-sky-400 hover:text-sky-300' : 'text-dh-muted hover:text-sky-400'}`}
                     >
                       {isPreviewing ? <EyeOff size={11} /> : <Eye size={11} />}
                     </button>
                     <button
                       onClick={() => setPlayerEmails?.(prev => prev.filter(e => e !== email))}
-                      className="text-slate-600 hover:text-red-400 transition-colors shrink-0"
+                      className="text-dh-muted hover:text-red-400 transition-colors shrink-0"
                     ><X size={11} /></button>
                   </div>
                 );
@@ -3816,7 +4332,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       }
                     }}
                     onBlur={() => setTimeout(() => setContactSuggestions([]), 150)}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none focus:border-sky-500 min-w-0"
+                    className="flex-1 bg-dh-surface border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none focus:border-sky-500 min-w-0"
                   />
                   <button
                     onClick={() => {
@@ -3831,7 +4347,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 </div>
                 {/* Autocomplete dropdown */}
                 {contactSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-0.5 bg-slate-800 border border-slate-700 rounded shadow-lg z-30 overflow-hidden">
+                  <div className="absolute left-0 right-0 top-full mt-0.5 bg-dh-raised border border-dh-strong rounded shadow-lg z-30 overflow-hidden">
                     {contactSuggestions.map(({ name, email }) => (
                       <button
                         key={email}
@@ -3841,10 +4357,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           setPlayerEmailInput('');
                           setContactSuggestions([]);
                         }}
-                        className="w-full text-left px-2 py-1.5 hover:bg-slate-700 cursor-pointer"
+                        className="w-full text-left px-2 py-1.5 hover:bg-dh-hover cursor-pointer"
                       >
-                        {name && <span className="block text-xs text-white truncate">{name}</span>}
-                        <span className="block text-[10px] text-slate-400 truncate">{email}</span>
+                        {name && <span className="block text-xs text-dh truncate">{name}</span>}
+                        <span className="block text-[10px] text-dh-muted truncate">{email}</span>
                       </button>
                     ))}
                   </div>
@@ -3864,10 +4380,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               </div>
               {/* Connected players */}
               {connectedPlayers.length > 0 && (
-                <div className="pt-1 border-t border-slate-800">
-                  <p className="text-[10px] text-slate-500 mb-1">Online ({connectedPlayers.length})</p>
+                <div className="pt-1 border-t border-dh-border">
+                  <p className="text-[10px] text-dh-muted mb-1">Online ({connectedPlayers.length})</p>
                   {connectedPlayers.map(p => (
-                    <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                    <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-dh">
                       <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
                       <span className="truncate">{p.name || p.email}</span>
                     </div>
@@ -3879,9 +4395,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           {/* Player view: show who's online */}
           {isPlayer && connectedPlayers.length > 0 && (
             <div className="mt-2 space-y-0.5">
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Online ({connectedPlayers.length})</p>
+              <p className="text-[10px] text-dh-muted uppercase tracking-wider">Online ({connectedPlayers.length})</p>
               {connectedPlayers.map(p => (
-                <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                <div key={p.uid} className="flex items-center gap-1.5 text-[10px] text-dh">
                   <Circle size={6} className="text-green-400 fill-green-400 shrink-0" />
                   <span className="truncate">{p.name || p.email}</span>
                 </div>
@@ -3894,15 +4410,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           {/* + Add Character button — opens the character picker */}
           <button
             onClick={() => setModalOpen('characters')}
-            className="w-full rounded-lg border border-dashed border-sky-900/50 bg-sky-950/20 hover:border-sky-700/60 hover:bg-sky-950/40 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+            className="w-full rounded-lg border border-dashed border-dh-strong bg-dh-raised/60 hover:border-sky-500/50 hover:bg-dh-hover px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
           >
             <Plus size={12} className="text-sky-500" />
-            <span className="text-xs font-semibold text-sky-400">Add Character</span>
+            <span className="text-xs font-semibold text-dh">Add Character</span>
           </button>
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
             const isMyCharacter = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
-            const isAssigned = !isPlayer || isMyCharacter;
             const pendingManual = findPendingManualTrackBanner(pendingBanners, el.instanceId);
             const manualAck = getPendingManualTrackAckDeltas(el, pendingManual);
             const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, el.instanceId);
@@ -3913,53 +4428,48 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             return (
             <div
               key={el.instanceId}
-              className={`rounded-lg border overflow-hidden group/char transition-colors ${isMyCharacter ? 'bg-green-950/30 border-green-700/50' : 'bg-sky-950/30 border-sky-900/40'}`}
+              className={`rounded-lg border overflow-hidden group/char transition-colors bg-dh-surface cursor-pointer ${isMyCharacter ? 'border-emerald-500/45' : 'border-dh-border'}`}
               {...characterOverlay.triggerProps(e => ({ element: el, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
             >
               <div
-                className="px-2.5 py-1.5 border-b border-sky-900/30 flex items-center gap-1.5 cursor-pointer hover:bg-sky-900/30 transition-colors"
-                onClick={() => setCharacterCardExpanded(prev => {
-                  const next = new Set(prev);
-                  if (next.has(el.instanceId)) next.delete(el.instanceId);
-                  else next.add(el.instanceId);
-                  return next;
-                })}
+                className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5 hover:bg-dh-hover transition-colors"
               >
-                {isExpanded ? <ChevronDown size={12} className="text-slate-400 shrink-0" /> : <ChevronRight size={12} className="text-slate-400 shrink-0" />}
-                <User size={10} className={isMyCharacter ? 'text-green-400 shrink-0' : 'text-sky-400 shrink-0'} />
-                <span className="text-xs font-semibold text-sky-200 truncate flex-1">{el.name || 'Unnamed'}</span>
+                <button
+                  type="button"
+                  className="p-0.5 -m-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-raised/80 shrink-0"
+                  title={isExpanded ? 'Collapse' : 'Expand'}
+                  aria-expanded={isExpanded}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCharacterCardExpanded((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(el.instanceId)) next.delete(el.instanceId);
+                      else next.add(el.instanceId);
+                      return next;
+                    });
+                  }}
+                >
+                  {isExpanded ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
+                </button>
+                <User size={10} className={isMyCharacter ? 'text-emerald-500 shrink-0' : 'text-sky-500 shrink-0'} />
+                <span className="text-xs font-semibold text-dh truncate flex-1">{el.name || 'Unnamed'}</span>
                 {isIncomplete && (
-                  <span className="flex items-center gap-0.5 text-amber-400 shrink-0" title={`Missing: ${charComplete.missing?.join(', ') ?? ''}`}>
+                  <span className="flex items-center gap-0.5 text-orange-400 shrink-0" title={`Missing: ${charComplete.missing?.join(', ') ?? ''}`}>
                     <AlertTriangle size={10} />
                     <span className="text-[10px]">Incomplete</span>
                   </span>
                 )}
-                <span className="text-[10px] font-bold text-sky-400/70 bg-sky-900/50 border border-sky-800/50 rounded px-1 shrink-0 group-hover/char:hidden">T{el.tier ?? 1}</span>
+                <span className="text-[10px] font-bold text-sky-500 bg-dh-raised border border-dh-strong rounded px-1 shrink-0 group-hover/char:hidden">T{el.tier ?? 1}</span>
                 {el.playerName && (
-                  <span className="text-[10px] text-sky-300/60 truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
+                  <span className="text-[10px] text-dh-muted truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
                 )}
-                {/* GM: edit/remove */}
+                {/* GM: remove from table (edit lives on the character sheet header) */}
                 {!isPlayer && (
                   <div className="hidden group-hover/char:flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                     <button
-                      onClick={() => {
-                        if (el.id) {
-                          // Characters are stored by reference — always edit the library original
-                          // directly (no "edit copy" option) so changes propagate to the table.
-                          const libraryItem = data.characters?.find(i => i.id === el.id) || el;
-                          navigate(`${gameTableBasePath}/characters/${el.id}`);
-                          setEditState({ step: 'form', item: libraryItem, collection: 'characters', mode: 'original', instances: [el], baseElement: el });
-                        } else {
-                          navigate(`${gameTableBasePath}/characters/${el.instanceId}`);
-                          setEditState({ step: 'form', item: el, collection: 'characters', mode: 'copy', instances: [el], baseElement: el });
-                        }
-                      }}
-                      className="text-slate-500 hover:text-sky-400 transition-colors"
-                      title="Edit character"
-                    ><Pencil size={11} /></button>
-                    <button
+                      type="button"
                       onClick={() => { if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) removeActiveElement(el.instanceId); }}
-                      className="text-slate-500 hover:text-red-400 transition-colors"
+                      className="text-dh-muted hover:text-red-400 transition-colors"
                       title="Remove from table"
                     ><X size={11} /></button>
                   </div>
@@ -3969,11 +4479,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               <>
               {/* GM: player assignment dropdown */}
               {!isPlayer && playerEmails.length > 0 && (
-                <div className="px-2 pt-1 pb-0.5 border-b border-sky-900/20">
+                <div
+                  className="px-2 pt-1 pb-0.5 border-b border-dh-border cursor-default"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
                   <select
                     value={el.assignedPlayerEmail || ''}
                     onChange={e => updateActiveElement(el.instanceId, { assignedPlayerEmail: e.target.value || undefined })}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-slate-300 outline-none focus:border-sky-500"
+                    className="w-full bg-dh-surface border border-dh-strong rounded px-1.5 py-0.5 text-[10px] text-dh outline-none focus:border-sky-500"
                   >
                     <option value="">Unassigned</option>
                     {playerEmails.map(email => {
@@ -3992,15 +4506,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
                   const currentHope = el.hope ?? maxHope;
                   return maxHope > 0 && (
-                    <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Hope', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
-                      <Sparkles size={10} className="text-amber-400 shrink-0" />
+                    <div className="flex items-center gap-1">
+                      <Sparkles size={10} className="text-dh-hope-soft shrink-0" />
                       <CheckboxTrack
                         total={maxHope}
                         filled={Math.max(0, currentHope - hopePending)}
                         pendingFilled={hopePending + manualAck.hopeGain}
                         pendingClearFilled={manualAck.hopeSpend}
-                        onSetFilled={isAssigned ? (h) => queueManualTrackEdit(el, { hope: h }) : undefined}
-                        fillColor="bg-amber-400"
+                        fillColor="bg-orange-500"
                         label="Hope"
                         verbs={['Gain', 'Spend']}
                         pulseOnDecreaseOnly
@@ -4017,12 +4530,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       return (
                         <Tooltip
                           content={evasionTip || undefined}
-                          className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums bg-cyan-900/50 border border-cyan-800/50 rounded px-1 ${evModTotal ? 'text-amber-200' : 'text-cyan-400/70'}`}
+                          className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums bg-cyan-900/50 border border-cyan-800/50 rounded px-1 ${evModTotal ? 'text-sky-300' : 'text-cyan-400/70'}`}
                           placement="top"
                         >
                           <span>EVA {displayChar.evasion}</span>
                           {evModTotal !== 0 ? (
-                            <span className={`text-[9px] font-semibold ${evModTotal > 0 ? 'text-amber-400' : 'text-amber-500'}`}>
+                            <span className={`text-[9px] font-semibold text-sky-400 dh-light:text-sky-800`}>
                               ({evModTotal > 0 ? '+' : ''}{evModTotal})
                             </span>
                           ) : null}
@@ -4034,12 +4547,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       if (!t) return null;
                       const eb = displayChar._v2MajorThresholdBonus ?? 0;
                       return (
-                        <span className="text-[10px] text-slate-400">
+                        <span className="text-[10px] text-dh-muted">
                           Thresholds{' '}
-                          {eb > 0 ? <><span className="font-bold text-yellow-300/50">{t.major - eb}</span><span className="text-slate-600"> +{eb} =</span>{' '}</> : null}
-                          <span className="font-bold text-yellow-300">{t.major}</span>
-                          <span className="text-slate-600"> / </span>
-                          {eb > 0 ? <><span className="font-bold text-red-300/50">{t.severe - eb}</span><span className="text-slate-600"> +{eb} =</span>{' '}</> : null}
+                          {eb > 0 ? <><span className="font-bold text-dh-muted">{t.major - eb}</span><span className="text-dh-muted"> +{eb} =</span>{' '}</> : null}
+                          <span className="font-bold text-dh">{t.major}</span>
+                          <span className="text-dh-muted"> / </span>
+                          {eb > 0 ? <><span className="font-bold text-red-300/50">{t.severe - eb}</span><span className="text-dh-muted"> +{eb} =</span>{' '}</> : null}
                           <span className="font-bold text-red-300">{t.severe}</span>
                         </span>
                       );
@@ -4048,18 +4561,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 )}
                 {/* Armor track */}
                 {(el.maxArmor || 0) > 0 && (
-                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Armor', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
+                  <div className="flex items-center gap-1">
                     <Shield size={10} className="text-cyan-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxArmor || 0}
                       filled={el.currentArmor || 0}
                       pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
                       pendingClearFilled={manualAck.armorClear}
-                      onSetFilled={isAssigned ? (v) => {
-                        const upd = { currentArmor: v };
-                        if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                        queueManualTrackEdit(el, upd);
-                      } : undefined}
                       fillColor="bg-cyan-500"
                       label="Armor"
                       verbs={['Mark', 'Clear']}
@@ -4068,14 +4576,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 )}
                 {/* HP track */}
                 {(el.maxHp || 0) > 0 && (
-                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'HP', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
+                  <div className="flex items-center gap-1">
                     <Heart size={10} className="text-red-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxHp || 0}
                       filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
                       pendingFilled={manualAck.hpDamageAdd}
                       pendingClearFilled={manualAck.hpHealSlots + lsHeal}
-                      onSetFilled={isAssigned ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg }) : undefined}
                       fillColor="bg-red-500"
                       label="HP"
                       verbs={['Mark', 'Clear']}
@@ -4084,144 +4591,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 )}
                 {/* Stress track */}
                 {(el.maxStress || 0) > 0 && (
-                  <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Stress', top: r.top, bottom: r.bottom, side: 'left' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
+                  <div className="flex items-center gap-1">
                     <AlertCircle size={10} className="text-orange-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxStress || 0}
                       filled={el.currentStress || 0}
                       pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
                       pendingClearFilled={manualAck.stressClear}
-                      onSetFilled={isAssigned ? (s) => queueManualTrackEdit(el, { currentStress: s }) : undefined}
                       fillColor="bg-orange-500"
                       label="Stress"
                       verbs={['Mark', 'Clear']}
                     />
-                    {isAssigned && !el.conditions && !openConditions.has(el.instanceId) && (
-                      <button
-                        onClick={() => setOpenConditions(prev => new Set([...prev, el.instanceId]))}
-                        className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
-                        title="Add conditions"
-                      ><Tag size={10} /></button>
-                    )}
                   </div>
                 )}
                 {/* Numeric feature state (e.g. Seaborne Know the Tide tokens) — badge aligned with first track box */}
                 {getNumericFeatureStateEntries(el).map(({ featureName, key, label, value }) => (
                   <div key={`${featureName}-${key}`} className="ml-[14px]">
-                    <span className="text-[10px] font-bold text-sky-300/90 bg-sky-900/50 border border-sky-800/50 rounded px-1.5">
+                    <span className="text-[10px] font-bold text-dh bg-dh-hover border border-dh-border rounded px-1.5">
                       {featureName} — {label}: {value}
                     </span>
                   </div>
                 ))}
-                {/* Conditions */}
-                {(el.conditions || openConditions.has(el.instanceId)) && (
-                  <ConditionsTextInput
-                    instanceId={el.instanceId}
-                    placeholder="Conditions..."
-                    autoFocus={openConditions.has(el.instanceId) && !el.conditions}
-                    value={el.conditions || ''}
-                    readOnly={!isAssigned}
-                    onCommit={isAssigned ? (v) => updateActiveElement(el.instanceId, { conditions: v }) : undefined}
-                    onBlur={() => {
-                      if (!el.conditions) {
-                        setOpenConditions(prev => { const s = new Set(prev); s.delete(el.instanceId); return s; });
-                      }
-                    }}
-                    className="w-full bg-slate-800/50 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white outline-none focus:border-sky-500 placeholder-slate-600"
-                  />
+                {el.conditions && (
+                  <div className="ml-[14px] text-[10px] text-dh leading-snug">
+                    <span className="font-semibold text-dh-muted">Conditions: </span>
+                    {el.conditions}
+                  </div>
                 )}
-                {/* Card toggle chips (onCard + onToggle) — e.g. Galapa Retract */}
-                {(() => {
-                  const allFeatures = [...(el.ancestryFeatures || []), ...(el.communityFeatures || [])];
-                  const toggleChips = [];
-                  for (const f of allFeatures) {
-                    const descriptor = resolveOriginFeatureDescriptor(el, f?.name);
-                    const cardChips = descriptor?.chips?.filter(c => c.placement === 'card') || descriptor?.cardChips || [];
-                    if (!cardChips.length) continue;
-                    for (const chip of cardChips) {
-                      if (typeof chip.onToggle !== 'function') continue;
-                      toggleChips.push({ feature: f, chip, descriptor });
-                    }
-                  }
-                  if (toggleChips.length === 0) return null;
-                  const postToggle = isAssigned ? (isPlayer ? handlePlayerActionNotification : handleActionNotification) : null;
-                  return (
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      {toggleChips.map(({ feature, chip, descriptor }, idx) => {
-                        const derivedToggleKey = `_toggle.${feature.source ?? ''}.${feature.name ?? ''}`;
-                        const isGalapaRetract = feature.name === 'Retract' && feature.source === 'Galapa';
-                        const active = isGalapaRetract ? (el.retractedActive ?? el[derivedToggleKey]) : !!el[derivedToggleKey];
-                        const displayName = feature.name ?? 'Toggle';
-                        const tooltipContent = chip.label ?? feature.name ?? '';
-                        const nextActive = !active;
-                        const payload = () => ({
-                          _action: true,
-                          rollUser: el.name,
-                          actionName: [...[el.name, feature.source, feature.name].filter(Boolean), nextActive ? 'ACTIVATE' : 'DEACTIVATE'].join(' - '),
-                          actionText: descriptor.description ?? feature.description ?? '',
-                          _featureUse: true,
-                          _attackerInstanceId: el.instanceId,
-                          _stressCost: chip.stressCost ?? 0,
-                          _hopeCost: chip.hopeCost ?? 0,
-                          _cardToggle: {
-                            instanceId: el.instanceId,
-                            derivedToggleKey,
-                            nextActive,
-                            featureName: feature.name,
-                            featureSource: feature.source,
-                          },
-                          tags: [
-                            ...(chip.hopeCost > 0 ? [{ name: 'HopeCost', text: `Spend ${chip.hopeCost} Hope` }] : []),
-                            ...(chip.stressCost > 0 ? [{ name: 'StressCost', text: `Mark ${chip.stressCost} Stress` }] : []),
-                          ],
-                        });
-                        return (
-                          <Tooltip key={idx} content={tooltipContent} placement="top">
-                            <button
-                              type="button"
-                              onClick={postToggle ? () => postToggle(payload()) : undefined}
-                              disabled={!postToggle}
-                              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-semibold border transition-colors ${
-                                active
-                                  ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
-                                  : 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
-                              } ${!postToggle ? 'opacity-70 cursor-default' : 'cursor-pointer'}`}
-                              aria-pressed={active}
-                            >
-                              {active ? <CheckSquare size={12} className="shrink-0" /> : <Square size={12} className="shrink-0" />}
-                              <span className="truncate max-w-[120px]">{displayName}</span>
-                            </button>
-                          </Tooltip>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-                {/* V2 isToggle card chips (engine merged activeFeatures) — GM only; same behavior as sheet Actions */}
-                {!isPlayer && v2Registry && srdData && (() => {
-                  const displayElPanel = characterDisplayByInstanceId.get(el.instanceId) ?? el;
-                  const toggleGroups = collectV2IsToggleCardFeatureGroups(displayElPanel, v2TableContextForPanels);
-                  if (toggleGroups.length === 0) return null;
-                  return (
-                    <div className="flex flex-wrap gap-1.5 pt-1.5 mt-1 border-t border-sky-900/25">
-                      {toggleGroups.map((g, gi) => (
-                        <GuideFeatureCardChips
-                          key={`${g.featRow._sourceScopeKey || g.featRow.name}-${g.featRow.type}-${gi}`}
-                          model={g.model}
-                          tableForChips={g.table}
-                          featRow={g.featRow}
-                          el={displayElPanel}
-                          featureKey={g.featRow._sourceScopeKey || g.featRow.name}
-                          v2TableContext={v2TableContextForPanels}
-                          interactionMode="interactive"
-                          onlyIsToggle
-                          onV2CardChip={handleCharacterPanelV2CardChip(el, displayElPanel)}
-                          pendingBanners={pendingBanners}
-                        />
-                      ))}
-                    </div>
-                  );
-                })()}
               </div>
               </>
               )}
@@ -4230,7 +4626,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           })}
 
           {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
-            <div className="text-center text-slate-600 text-xs py-6">
+            <div className="text-center text-dh-muted text-xs py-6">
               No characters yet.
             </div>
           )}
@@ -4245,10 +4641,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         style={{ right: 'calc(14rem)', paddingRight: '8px', top: 90, width: 'calc(20rem + 8px)', maxHeight: 'calc(100dvh - 98px)' }}
         {...gmMovesOverlay.overlayHandlers}
       >
-      <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100dvh - 98px)' }}>
-        <div className="p-3 bg-slate-950 border-b border-slate-700 sticky top-0 z-10 rounded-t-xl shrink-0">
-          <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
-            <Zap size={16} className="text-yellow-500" /> GM Moves
+      <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100dvh - 98px)' }}>
+        <div className="p-3 bg-dh-canvas border-b border-dh-strong sticky top-0 z-10 rounded-t-xl shrink-0">
+          <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
+            <Zap size={16} className="text-dh-hope" /> GM Moves
           </h2>
         </div>
 
@@ -4260,14 +4656,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               <div key={category}>
                 <button
                   onClick={() => toggleSection(category)}
-                  className="w-full flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1 hover:text-slate-200 transition-colors"
+                  className="w-full flex items-center gap-1.5 text-xs font-semibold text-dh-muted uppercase tracking-wider mb-3 border-b border-dh-border pb-1 hover:text-dh transition-colors"
                 >
                   {catCollapsed
                     ? <ChevronRight size={12} className="shrink-0" />
                     : <ChevronDown size={12} className="shrink-0" />
                   }
                   <span className="flex-1 text-left">{category}</span>
-                  <span className="text-[10px] font-normal text-slate-600 normal-case tracking-normal">{features.length}</span>
+                  <span className="text-[10px] font-normal text-dh-muted normal-case tracking-normal">{features.length}</span>
                 </button>
                 {!catCollapsed && <div className="space-y-1.5">
                   {features.map((feature, idx) => {
@@ -4302,39 +4698,39 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           }
                           if (canRoll) handleRoll(feature, e);
                         }}
-                        className={`w-full text-left bg-slate-800/50 hover:bg-slate-800 rounded border transition-all group flex ${(category === 'Fear Actions' || canRoll) ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-slate-700 hover:border-r-yellow-500'}`}
+                        className={`w-full text-left bg-dh-raised/50 hover:bg-dh-raised rounded border transition-all group flex ${(category === 'Fear Actions' || canRoll) ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-dh-strong hover:border-r-yellow-500'}`}
                       >
                         {feature._isRoleMove && (
                           <div className="flex shrink-0 gap-[3px] py-1.5 pl-1">
-                            <div className="w-1 rounded-full bg-amber-500/90" />
-                            <div className="w-1 rounded-full bg-violet-400/80" />
+                            <div className="w-1 rounded-full bg-dh-hope/90" />
+                            <div className="w-1 rounded-full bg-fuchsia-500/85" />
                           </div>
                         )}
                         <div className="flex-1 min-w-0 p-2">
                           <div className="flex justify-between items-start gap-2">
-                            <span className="font-medium text-slate-200 group-hover:text-white text-sm flex items-center gap-1.5 min-w-0">
+                            <span className="font-medium text-dh group-hover:text-dh text-sm flex items-center gap-1.5 min-w-0">
                               {feature.name}
                               {canRoll && (
-                                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : 'text-slate-500 group-hover:text-red-400 transition-colors'}`} />
+                                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : 'text-dh-muted group-hover:text-red-400 transition-colors'}`} />
                               )}
                             </span>
-                            <span className="text-[10px] bg-slate-900 px-1.5 py-0.5 rounded text-slate-400 shrink-0">{feature.sourceName}</span>
+                            <span className="text-[10px] bg-dh-surface px-1.5 py-0.5 rounded text-dh-muted shrink-0">{feature.sourceName}</span>
                           </div>
-                          {!feature._isRoleMove && feature.featureKey !== 'attack' && <p className="text-xs text-slate-400 line-clamp-2 leading-snug mt-0.5"><FeatureDescription description={feature.description} /></p>}
+                          {!feature._isRoleMove && feature.featureKey !== 'attack' && <p className="text-xs text-dh-muted line-clamp-2 leading-snug mt-0.5"><FeatureDescription description={feature.description} /></p>}
                           {allCds.length > 0 && (
-                            <div className="mt-1.5 pt-1.5 border-t border-slate-700 flex flex-wrap items-center gap-2" onClick={e => e.stopPropagation()}>
+                            <div className="mt-1.5 pt-1.5 border-t border-dh-strong flex flex-wrap items-center gap-2" onClick={e => e.stopPropagation()}>
                               {allCds.map((cd, cdIdx) => (
                                 <div key={cdIdx} className="flex items-center gap-1">
-                                  <span className="text-[10px] text-slate-400">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
+                                  <span className="text-[10px] text-dh-muted">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
                                   <div className="inline-flex items-center gap-0.5">
                                     <button
                                       onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
-                                      className="w-4 h-4 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
+                                      className="w-4 h-4 rounded bg-dh-hover hover:bg-red-800 text-dh flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
                                     >−</button>
-                                    <span className="min-w-[1.25rem] text-center font-bold text-yellow-400 text-xs tabular-nums">{cdVals[cdIdx]}</span>
+                                    <span className="min-w-[1.25rem] text-center font-bold text-dh-hope text-xs tabular-nums">{cdVals[cdIdx]}</span>
                                     <button
                                       onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
-                                      className="w-4 h-4 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
+                                      className="w-4 h-4 rounded bg-dh-hover hover:bg-green-800 text-dh flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
                                     >+</button>
                                   </div>
                                 </div>
@@ -4350,7 +4746,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             );
           })}
           {activeElements.length === 0 && (
-            <div className="text-center text-slate-500 text-sm py-8">
+            <div className="text-center text-dh-muted text-sm py-8">
               No active elements.<br />Add adversaries, environments, or scenes to populate the table.
             </div>
           )}
@@ -4359,14 +4755,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           <div>
             <button
               onClick={() => toggleSection('Defaults')}
-              className="w-full flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 border-b border-slate-800 pb-1 hover:text-slate-200 transition-colors"
+              className="w-full flex items-center gap-1.5 text-xs font-semibold text-dh-muted uppercase tracking-wider mb-3 border-b border-dh-border pb-1 hover:text-dh transition-colors"
             >
               {collapsedSections.has('Defaults')
                 ? <ChevronRight size={12} className="shrink-0" />
                 : <ChevronDown size={12} className="shrink-0" />
               }
               <span className="flex-1 text-left">Defaults</span>
-              <span className="text-[10px] font-normal text-slate-600 normal-case tracking-normal">{DEFAULT_GM_MOVES.length}</span>
+              <span className="text-[10px] font-normal text-dh-muted normal-case tracking-normal">{DEFAULT_GM_MOVES.length}</span>
             </button>
             {!collapsedSections.has('Defaults') && (
               <div className="flex">
@@ -4377,24 +4773,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   onMouseLeave={() => { if (!isTouch) setShowStripLegend(false); }}
                   onClick={() => { if (isTouch) setShowStripLegend(v => !v); }}
                 >
-                  <div className="absolute left-0 w-1 rounded-full bg-amber-500/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
-                  <div className="absolute left-[5px] w-1 rounded-full bg-violet-400/80" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                  <div className="absolute left-0 w-1 rounded-full bg-dh-hope/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                  <div className="absolute left-[5px] w-1 rounded-full bg-fuchsia-500/85" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
                   <div className="absolute left-[10px] w-1 rounded-full bg-blue-900" style={{ top: `${(FEAR_FAILURE_START / DEFAULT_GM_MOVES.length) * 100}%`, bottom: 0 }} />
                   {showStripLegend && (
-                    <div className="absolute left-6 top-0 z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl p-3 w-48 pointer-events-none">
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">When to use</p>
+                    <div className="absolute left-6 top-0 z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-xl p-3 w-48 pointer-events-none">
+                      <p className="text-[10px] font-semibold text-dh-muted uppercase tracking-wide mb-2">When to use</p>
                       <div className="space-y-1.5">
                         <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-sm bg-amber-500 shrink-0" />
-                          <span className="text-xs text-slate-300">Failure with Hope</span>
+                          <div className="w-2.5 h-2.5 rounded-sm bg-dh-hope shrink-0" />
+                          <span className="text-xs text-dh">Failure with Hope</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-sm bg-violet-400 shrink-0" />
-                          <span className="text-xs text-slate-300">Success with Fear</span>
+                          <div className="w-2.5 h-2.5 rounded-sm bg-fuchsia-500 shrink-0" />
+                          <span className="text-xs text-dh">Success with Fear</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="w-2.5 h-2.5 rounded-sm bg-blue-900 shrink-0" />
-                          <span className="text-xs text-slate-300">Failure with Fear</span>
+                          <span className="text-xs text-dh">Failure with Fear</span>
                         </div>
                       </div>
                     </div>
@@ -4416,9 +4812,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                         const rect = e.currentTarget.getBoundingClientRect();
                         setHoveredDefaultMove(prev => prev?.name === move.name ? null : { ...move, top: rect.top, bottom: rect.bottom });
                       }}
-                      className="w-full text-left px-2 py-1 rounded hover:bg-slate-800 transition-colors cursor-default"
+                      className="w-full text-left px-2 py-1 rounded hover:bg-dh-raised transition-colors cursor-default"
                     >
-                      <span className="text-slate-300 text-xs leading-snug">{move.name}</span>
+                      <span className="text-dh text-xs leading-snug">{move.name}</span>
                     </div>
                   ))}
                 </div>
@@ -4431,23 +4827,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       )}
 
       {/* Center Column */}
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-slate-950 relative">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-dh-canvas relative">
         {/* Pre-roll banner (onAct chips, e.g. Quick Reactions) — popover overlay */}
-        {preRollBanner && createPortal(
+        {preRollBanner && (
           <div
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-            role="dialog"
-            aria-modal="true"
+            className="shrink-0 z-20 border-b border-dh-border bg-dh-surface/95 px-4 py-3 text-dh max-h-[min(50vh,420px)] overflow-y-auto pointer-events-auto"
+            role="region"
             aria-labelledby="preroll-title"
           >
-            <div
-              className="absolute inset-0 bg-black/50"
-              onClick={clearPreRollBanner}
-              aria-hidden="true"
-            />
-            <div className="relative px-4 py-3 rounded-xl shadow-2xl bg-slate-900/95 border-2 border-amber-500/60 text-amber-50 max-w-md">
-              <div id="preroll-title" className="text-sm font-bold text-amber-200 mb-2">Before you roll</div>
-              <p className="text-xs text-slate-300 mb-2">Choose experience and optional toggles, then Proceed.</p>
+            <div className="max-w-3xl mx-auto w-full">
+              <div id="preroll-title" className="text-sm font-bold text-dh mb-2">Before you roll</div>
+              <p className="text-xs text-dh mb-2">Choose experience and optional toggles, then Proceed.</p>
               {preRollBanner.pending?.meta?._deferExperienceToPreRoll && (() => {
                 const cel = activeElements.find(e => e.instanceId === preRollBanner.characterEl.instanceId) || preRollBanner.characterEl;
                 const meta = preRollBanner.pending.meta;
@@ -4457,8 +4847,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 if (exps.length === 0) return null;
                 return (
                   <div className="mb-3 w-full">
-                    <div className="text-[11px] font-semibold text-slate-300 mb-1.5">
-                      Experience <span className="text-amber-400/90 font-normal">(1 Hope)</span>
+                    <div className="text-[11px] font-semibold text-dh mb-1.5">
+                      Experience <span className="text-dh-hope-soft font-normal">(1 Hope)</span>
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {exps.map((exp, i) => {
@@ -4479,14 +4869,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             }}
                             className={`text-[11px] rounded px-2 py-0.5 border transition-colors font-medium
                               ${disabled
-                                ? 'opacity-35 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500'
+                                ? 'opacity-35 cursor-not-allowed bg-dh-raised border-dh-strong text-dh-muted'
                                 : selected
                                   ? 'bg-sky-900/60 border-sky-500 text-sky-100 ring-1 ring-sky-500/50 cursor-pointer'
-                                  : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700/60 hover:border-slate-500 cursor-pointer'}`}
+                                  : 'bg-dh-raised border-dh-strong text-dh hover:bg-dh-hover/60 hover:border-dh-strong cursor-pointer'}`}
                           >
                             {exp.name}
                             {exp.score != null && (
-                              <span className={`font-bold ml-1 ${disabled ? 'text-slate-500' : 'text-sky-400'}`}>+{exp.score}</span>
+                              <span className={`font-bold ml-1 ${disabled ? 'text-dh-muted' : 'text-sky-400'}`}>+{exp.score}</span>
                             )}
                           </button>
                         );
@@ -4530,40 +4920,68 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       : null;
                 const showPreRollTargetPicker = !!meta?._selectedTargetInstanceId && prerollIntentTargets.length > 0;
 
+                const celForIntent =
+                  activeElements.find((e) => e.instanceId === preRollBanner.characterEl.instanceId) ||
+                  preRollBanner.characterEl;
+                const syntheticRollForV2Intent =
+                  srdData &&
+                  (meta?._weaponRangeFt != null || meta?._weaponId != null
+                    ? buildV2PreRollWeaponAttackRollSkeleton({
+                        pendingMeta: meta,
+                        pendingRollText: preRollBanner.pending.rollText,
+                        characterEl: celForIntent,
+                      })
+                    : buildV2PreRollTraitRollSkeleton({
+                        pendingMeta: meta,
+                        pendingRollText: preRollBanner.pending.rollText,
+                        characterEl: celForIntent,
+                      }));
+
                 const renderPrerollToggle = (i, emerald) => {
                   const chip = chips[i];
                   const selected = selectedPreRollChips[i];
                   const used = chip._used;
-                  const label = chip.label ?? '';
+                  const v2Hint =
+                    chip._v2IntentChip && syntheticRollForV2Intent
+                      ? getV2ReviewChipDisableHint(chip, syntheticRollForV2Intent, activeElements, srdData, {
+                          fearCount,
+                          mapConfig,
+                          tableFeatureState,
+                        })
+                      : null;
+                  const v2Disabled = !!v2Hint;
+                  const label = chip.label ?? chip.name ?? '';
                   const costParts = [];
                   if (chip.stressCost) costParts.push(`${chip.stressCost} Stress`);
                   if (chip.hopeCost) costParts.push(`${chip.hopeCost} Hope`);
                   const costLabel = costParts.length ? ` (${costParts.join(', ')})` : '';
                   const resetsOnLabel = chip.resetsOn === 'session' ? 'Once per session' : chip.resetsOn === 'longRest' ? 'Once per long rest' : chip.resetsOn === 'rest' ? 'Once per rest' : null;
-                  const tooltipLabel = used ? (resetsOnLabel ? `Already used (${resetsOnLabel})` : 'Already used') : label + costLabel;
-                  const selEmerald = emerald && selected && !used;
-                  const unselEmerald = emerald && !selected && !used;
+                  const tooltipLabel = used
+                    ? (resetsOnLabel ? `Already used (${resetsOnLabel})` : 'Already used')
+                    : v2Hint || label + costLabel;
+                  const selEmerald = emerald && selected && !used && !v2Disabled;
+                  const unselEmerald = emerald && !selected && !used && !v2Disabled;
                   return (
                     <Tooltip key={i} label={tooltipLabel} placement="bottom-left">
                       <span className="inline-flex items-center gap-1">
                         <button
                           type="button"
-                          disabled={used}
-                          onClick={used ? undefined : () => setSelectedPreRollChips((prev) => {
+                          disabled={used || v2Disabled}
+                          onClick={used || v2Disabled ? undefined : () => setSelectedPreRollChips((prev) => {
                             const next = [...prev];
                             next[i] = !next[i];
                             return next;
                           })}
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors ${
                             used
-                              ? 'border-slate-700 bg-slate-800/30 text-slate-500 cursor-not-allowed opacity-70'
+                              ? 'border-dh-strong bg-dh-raised/30 text-dh-muted cursor-not-allowed opacity-70'
                               : selEmerald
                                 ? 'border-emerald-600 bg-emerald-900/50 text-emerald-100'
                                 : unselEmerald
                                   ? 'border-emerald-700/60 bg-emerald-950/35 text-emerald-200/90 hover:border-emerald-500 hover:bg-emerald-900/30'
                                   : selected
-                                    ? 'border-amber-600 bg-amber-900/50 text-amber-200'
-                                    : 'border-slate-600 bg-slate-800/40 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                                    ? 'border-sky-500 bg-sky-950/40 text-dh ring-1 ring-sky-500/40'
+                                    : 'border-dh-strong bg-dh-raised/40 text-dh-muted hover:border-dh-strong hover:text-dh'
                           }`}
                         >
                           <Square size={12} className={`shrink-0 ${selected && !used ? 'hidden' : ''}`} />
@@ -4572,7 +4990,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           {!used && <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />}
                         </button>
                         {resetsOnLabel && (
-                          <span className={`text-[9px] rounded px-1.5 py-0.5 border shrink-0 ${used ? 'border-slate-700 bg-slate-800/50 text-slate-500' : 'border-slate-600 bg-slate-800/60 text-slate-400'}`}>
+                          <span className={`text-[9px] rounded px-1.5 py-0.5 border shrink-0 ${used ? 'border-dh-strong bg-dh-raised/50 text-dh-muted' : 'border-dh-strong bg-dh-raised/60 text-dh-muted'}`}>
                             {resetsOnLabel}
                           </span>
                         )}
@@ -4585,7 +5003,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   <>
                     {hasDifficultyChip && (
                       <div className="mb-3 w-full flex flex-col gap-1">
-                        <label className="text-[11px] font-semibold text-slate-300" htmlFor="preroll-difficulty">
+                        <label className="text-[11px] font-semibold text-dh" htmlFor="preroll-difficulty">
                           {diffChip.label}
                         </label>
                         <div className="flex items-center gap-2">
@@ -4597,19 +5015,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             step={1}
                             value={preRollDifficulty}
                             onChange={(e) => setPreRollDifficulty(Number(e.target.value))}
-                            className="flex-1 h-2 rounded-full appearance-none bg-gradient-to-r from-violet-400 to-violet-900 cursor-pointer accent-violet-600"
+                            className="flex-1 h-2 rounded-full appearance-none bg-gradient-to-r from-slate-600 to-slate-900 cursor-pointer accent-sky-500"
                             aria-label="Difficulty (DC 5–30)"
                           />
-                          <span className="text-sm font-bold tabular-nums text-violet-200 shrink-0 w-8" aria-live="polite">
+                          <span className="text-sm font-bold tabular-nums text-dh shrink-0 w-8" aria-live="polite">
                             {preRollDifficulty}
                           </span>
                         </div>
-                        <span className="text-[10px] text-slate-400">{getDifficultyLabel(preRollDifficulty)}</span>
+                        <span className="text-[10px] text-dh-muted">{getDifficultyLabel(preRollDifficulty)}</span>
                       </div>
                     )}
                     {showPreRollTargetPicker && (
                       <div className="mb-3 w-full flex flex-col gap-1.5">
-                        <span className="text-[11px] font-semibold text-slate-300">
+                        <span className="text-[11px] font-semibold text-dh">
                           Target{prerollTargetRangeLabel ? ` (within ${prerollTargetRangeLabel})` : ''}
                         </span>
                         <div className="flex flex-wrap gap-1.5">
@@ -4622,8 +5040,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                                 onClick={() => setPreRollTargetInstanceId(t.instanceId)}
                                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors ${
                                   selected
-                                    ? 'border-amber-500 bg-amber-900/50 text-amber-100 ring-1 ring-amber-400/80'
-                                    : 'border-slate-600 bg-slate-800/40 text-slate-300 hover:border-slate-500 hover:text-slate-200'
+                                    ? 'border-sky-500 bg-sky-950/40 text-dh ring-1 ring-sky-500/40'
+                                    : 'border-dh-strong bg-dh-raised/40 text-dh hover:border-dh-strong hover:text-dh'
                                 }`}
                               >
                                 {t.name}
@@ -4631,14 +5049,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             );
                           })}
                         </div>
-                        <p className="text-[9px] text-slate-500">
+                        <p className="text-[9px] text-dh-muted">
                           Same valid targets as the in-sheet picker (range, map position, etc.).
                         </p>
                       </div>
                     )}
                     {showAdvantageSection && (
                       <div className="mb-3 w-full flex flex-col gap-1.5">
-                        <span className="text-[11px] font-semibold text-slate-300">Advantage</span>
+                        <span className="text-[11px] font-semibold text-dh">Advantage</span>
                         {advantageTriggerIndices.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
                             {advantageTriggerIndices.map((ti) => renderPrerollToggle(ti, true))}
@@ -4657,13 +5075,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                                     return next;
                                   })}
                                   placeholder="Advantage"
-                                  className="flex-1 min-w-0 rounded px-2 py-1 text-[11px] bg-slate-800 border border-slate-600 text-slate-200 placeholder-slate-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+                                  className="flex-1 min-w-0 rounded px-2 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh placeholder-dh-muted focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
                                   aria-label="Advantage name"
                                 />
                                 <button
                                   type="button"
                                   onClick={() => setPreRollAdvantages((prev) => prev.filter((_, i) => i !== idx))}
-                                  className="shrink-0 p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                                  className="shrink-0 p-1 rounded text-dh-muted hover:bg-dh-hover hover:text-dh"
                                   aria-label="Remove advantage"
                                 >
                                   <X size={14} />
@@ -4673,7 +5091,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             <button
                               type="button"
                               onClick={() => setPreRollAdvantages((prev) => [...prev, ''])}
-                              className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-slate-400 hover:text-violet-300 hover:bg-slate-800/80 border border-slate-600 hover:border-slate-500"
+                              className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-dh-muted hover:text-sky-400 hover:bg-dh-raised/80 border border-dh-strong hover:border-dh-strong"
                             >
                               <Plus size={12} /> Add advantage [d6]
                             </button>
@@ -4683,7 +5101,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                     )}
                     {hasDifficultyChip && (
                       <div className="mb-3 w-full flex flex-col gap-1">
-                        <span className="text-[11px] font-semibold text-slate-300">Disadvantage</span>
+                        <span className="text-[11px] font-semibold text-dh">Disadvantage</span>
                         {preRollDisadvantages.map((name, idx) => (
                           <div key={idx} className="flex items-center gap-1.5">
                             <input
@@ -4695,13 +5113,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                                 return next;
                               })}
                               placeholder="Disadvantage"
-                              className="flex-1 min-w-0 rounded px-2 py-1 text-[11px] bg-slate-800 border border-slate-600 text-slate-200 placeholder-slate-500 focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+                              className="flex-1 min-w-0 rounded px-2 py-1 text-[11px] bg-dh-raised border border-dh-strong text-dh placeholder-dh-muted focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
                               aria-label="Disadvantage name"
                             />
                             <button
                               type="button"
                               onClick={() => setPreRollDisadvantages((prev) => prev.filter((_, i) => i !== idx))}
-                              className="shrink-0 p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                              className="shrink-0 p-1 rounded text-dh-muted hover:bg-dh-hover hover:text-dh"
                               aria-label="Remove disadvantage"
                             >
                               <X size={14} />
@@ -4711,7 +5129,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                         <button
                           type="button"
                           onClick={() => setPreRollDisadvantages((prev) => [...prev, ''])}
-                          className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-slate-400 hover:text-violet-300 hover:bg-slate-800/80 border border-slate-600 hover:border-slate-500"
+                          className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-dh-muted hover:text-sky-400 hover:bg-dh-raised/80 border border-dh-strong hover:border-dh-strong"
                         >
                           <Plus size={12} /> Add disadvantage [d6]
                         </button>
@@ -4730,43 +5148,91 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 <button
                   type="button"
                   onClick={handlePreRollProceed}
-                  className="px-3 py-1.5 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100"
+                  className="px-3 py-1.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong"
                 >
                   Proceed
                 </button>
                 <button
                   type="button"
                   onClick={clearPreRollBanner}
-                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh"
                 >
                   Cancel
                 </button>
               </div>
             </div>
-          </div>,
-          document.body
+          </div>
         )}
         {/* GM read-only intent banner: shown when a player has opened their pre-roll banner */}
         {!isPlayer && pendingPlayerIntent && createPortal(
-          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-slate-900/95 border border-violet-500/50 text-slate-200 flex flex-col gap-1.5 pointer-events-none">
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-full px-3 py-2.5 rounded-xl shadow-2xl bg-dh-surface/95 border border-dh-strong text-dh flex flex-col gap-1.5 pointer-events-none">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-violet-300">Intent</span>
-              <span className="text-[11px] font-semibold text-slate-100 truncate">{pendingPlayerIntent.characterName}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wide text-dh-muted">Intent</span>
+              <span className="text-[11px] font-semibold text-dh truncate">{pendingPlayerIntent.characterName}</span>
             </div>
             {pendingPlayerIntent.rollText && (
-              <p className="text-[10px] text-slate-400 truncate font-mono">{pendingPlayerIntent.rollText}</p>
+              <p className="text-[10px] text-dh-muted truncate font-mono">{pendingPlayerIntent.rollText}</p>
             )}
             {pendingPlayerIntent.chips?.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {pendingPlayerIntent.chips.map((chip, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-900/50 border border-violet-700/50 text-violet-200">
+                  <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-dh-inset border border-dh-border text-dh">
                     <span className="truncate max-w-[140px]">{chip.label || chip.description}</span>
                     <FeatureResourceCostIcons action={chip} iconSize={9} />
                   </span>
                 ))}
               </div>
             )}
-            <p className="text-[9px] text-slate-500 italic">Player is deciding — dice haven't rolled yet.</p>
+            <p className="text-[9px] text-dh-muted italic">Player is deciding — dice haven't rolled yet.</p>
+          </div>,
+          document.body
+        )}
+
+        {typeof document !== 'undefined' && playBlockedDialog && !isPlayer && createPortal(
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="play-blocked-dialog-title"
+            onClick={cancelPlayBlockedDialog}
+          >
+            <div
+              className="max-w-md w-full rounded-xl border border-dh-strong bg-dh-surface p-5 shadow-2xl text-dh"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 id="play-blocked-dialog-title" className="text-base font-semibold text-dh mb-2">
+                {sessionStarted === false ? 'Session not started' : 'Session paused'}
+              </h2>
+              <p className="text-sm text-dh-muted mb-4">
+                {sessionStarted === false
+                  ? 'Play is blocked until you start the session. You can cancel, apply this one action, or allow all further edits until you reload — prep mode stays on.'
+                  : 'Play is blocked while the session is paused. You can cancel, apply this one action, or allow all further edits until you reload — the pause stays.'}
+              </p>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-sm border border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover"
+                  onClick={cancelPlayBlockedDialog}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  title="Until page reload"
+                  className="px-3 py-1.5 rounded-lg text-sm border border-sky-700/70 bg-sky-950/50 text-sky-100 hover:bg-sky-900/60"
+                  onClick={allowAllEditsAndConfirmPending}
+                >
+                  Allow all edits
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium border border-amber-700/80 bg-amber-900/50 text-amber-100 hover:bg-amber-800/60"
+                  onClick={() => confirmPlayBlockedDialog(playBlockedDialog)}
+                >
+                  Do it anyway
+                </button>
+              </div>
+            </div>
           </div>,
           document.body
         )}
@@ -4788,6 +5254,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             onRestMoveClear={onRestMoveClear}
             restTableCharacters={activeElements.filter(e => e.elementType === 'character')}
             restMovesPerCharacter={restMovesPerCharacter}
+            restBannerChipsByInstanceId={restBannerChipsByInstanceId}
+            onRestBannerV2Chip={handleRestBannerV2Chip}
             restCanEditColumn={isPlayer ? (instanceId) => {
               const el = activeElements.find(e => e.instanceId === instanceId);
               const byUid = el?.assignedPlayerUid === user?.uid;
@@ -4866,15 +5334,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         {/* Action log footer — collapsed title bar; click to open overlay with roll/action history */}
         <ActionLog
           rolls={actionLog}
-          rollBuilder={{ onRoll: (rollText, displayName) => postRoll(rollText, displayName, isPlayer ? tableId : null), displayName: user?.displayName || user?.email || (isPlayer ? 'Player' : 'GM') }}
+          rollBuilder={{ onRoll: (rollText, displayName) => postRoll(rollText, displayName, tableId).catch(err => handleRollTransportError(err, 'Action log roll failed:')), displayName: user?.displayName || user?.email || (isPlayer ? 'Player' : 'GM') }}
         />
       </div>
 
       {/* Encounter Panel — hidden for players */}
-      {!isPlayer && <div className="w-56 bg-slate-950 border-l border-slate-800 flex flex-col overflow-y-auto shrink-0">
-        <div className="px-2 py-2 bg-slate-950 border-b border-slate-800 sticky top-0 z-10 space-y-2">
+      {!isPlayer && <div className="w-56 bg-dh-canvas border-l border-dh-border flex flex-col overflow-y-auto shrink-0">
+        <div className="px-2 py-2 bg-dh-canvas border-b border-dh-border sticky top-0 z-10 space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
+            <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
               <Swords size={15} className="text-red-400" /> Encounter
             </h2>
             <div className="flex items-center gap-0.5">
@@ -4882,7 +5350,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 onClick={() => setCaptureOpen(true)}
                 disabled={activeElements.length === 0}
                 title="Save current table as a Scene"
-                className="p-1 rounded text-slate-500 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="p-1 rounded text-dh-muted hover:text-dh disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               ><Camera size={13} /></button>
               <button
                 onClick={() => {
@@ -4891,7 +5359,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 }}
                 disabled={activeElements.length === 0}
                 title="Remove all items from the table"
-                className="p-1 rounded text-slate-500 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="p-1 rounded text-dh-muted hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               ><Trash2 size={13} /></button>
             </div>
           </div>
@@ -4903,13 +5371,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           >
             <button
               onClick={() => setAddMenuOpen(p => !p)}
-              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-slate-500 bg-slate-800/60' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`}
+              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-dh-strong bg-dh-raised/60' : 'border-dh-strong bg-dh-surface/50 hover:border-dh-strong'}`}
             >
-              <Plus size={12} className="text-slate-400" />
-              <span className="text-xs font-semibold text-slate-400">Add...</span>
+              <Plus size={12} className="text-dh-muted" />
+              <span className="text-xs font-semibold text-dh-muted">Add...</span>
             </button>
             {addMenuOpen && (
-              <div className="absolute left-0 right-0 top-full z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
+              <div className="absolute left-0 right-0 top-full z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-xl overflow-hidden">
                 {[
                   { col: 'adversaries', label: 'Adversary' },
                   { col: 'environments', label: 'Environment' },
@@ -4918,7 +5386,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   <button
                     key={col}
                     onClick={() => { setModalOpen(col); setAddMenuOpen(false); }}
-                    className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    className="w-full text-left px-3 py-2 text-xs text-dh hover:bg-dh-hover hover:text-dh transition-colors"
                   >
                     {label}
                   </button>
@@ -4927,20 +5395,20 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             )}
           </div>
           {/* Battle Budget card */}
-          <div className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
+          <div className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden">
             <button
               onClick={() => setBudgetCardOpen(o => !o)}
-              className="w-full px-2.5 py-2 flex items-center gap-1.5 text-left hover:bg-slate-800/50 transition-colors"
+              className="w-full px-2.5 py-2 flex items-center gap-1.5 text-left hover:bg-dh-raised/50 transition-colors"
             >
               {budgetCardOpen
-                ? <ChevronDown size={11} className="text-slate-500 shrink-0" />
-                : <ChevronRight size={11} className="text-slate-500 shrink-0" />
+                ? <ChevronDown size={11} className="text-dh-muted shrink-0" />
+                : <ChevronRight size={11} className="text-dh-muted shrink-0" />
               }
-              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex-1">BP Budget</span>
-              <span className="text-xs tabular-nums text-slate-400">
-                <span className="font-bold text-white">{tableBP}</span>
-                <span className="text-slate-500"> of </span>
-                <span className="font-bold text-white">{adjustedBudget}</span>
+              <span className="text-xs font-semibold text-dh-muted uppercase tracking-wider flex-1">BP Budget</span>
+              <span className="text-xs tabular-nums text-dh-muted">
+                <span className="font-bold text-dh">{tableBP}</span>
+                <span className="text-dh-muted"> of </span>
+                <span className="font-bold text-dh">{adjustedBudget}</span>
               </span>
               {tableBP > 0 && (
                 <span className={`text-[10px] font-semibold tabular-nums ml-1 ${tableDiffColor}`}>
@@ -4949,27 +5417,27 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               )}
             </button>
             {budgetCardOpen && (
-              <div className="border-t border-slate-800 px-2.5 py-2.5 space-y-3">
+              <div className="border-t border-dh-border px-2.5 py-2.5 space-y-3">
                 {/* Budget formula */}
                 <div className="text-xs">
-                  <span className="text-slate-400">({partySize} PCs × 3) + 2 = </span>
-                  <span className="font-bold text-white tabular-nums">{tableBudget}</span>
+                  <span className="text-dh-muted">({partySize} PCs × 3) + 2 = </span>
+                  <span className="font-bold text-dh tabular-nums">{tableBudget}</span>
                   {totalMod !== 0 && (
                     <>
                       <span className={`tabular-nums ${totalMod < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                         {' '}{totalMod > 0 ? `+${totalMod}` : totalMod}
                       </span>
-                      <span className="text-slate-400"> = </span>
-                      <span className="font-bold text-white tabular-nums">{adjustedBudget}</span>
+                      <span className="text-dh-muted"> = </span>
+                      <span className="font-bold text-dh tabular-nums">{adjustedBudget}</span>
                     </>
                   )}
-                  <span className="text-slate-500"> BP</span>
+                  <span className="text-dh-muted"> BP</span>
                 </div>
 
                 {/* Auto-detected modifiers */}
                 {activeAutoMods.length > 0 && (
                   <div className="space-y-1">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wide">Auto-detected</p>
+                    <p className="text-[10px] text-dh-muted uppercase tracking-wide">Auto-detected</p>
                     {activeAutoMods.map(m => {
                       const isLowerTier = m === tableAutoMods.lowerTierAdversary;
                       const topTierChars = isLowerTier
@@ -4981,7 +5449,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       return (
                         <div key={m.label} className="flex items-start justify-between text-xs gap-2">
                           <div className="flex flex-col gap-0.5 leading-tight min-w-0">
-                            <span className="text-slate-300">{m.label}</span>
+                            <span className="text-dh">{m.label}</span>
                             {isLowerTier && (
                               <>
                                 <span className="text-[10px] text-sky-400/80 leading-snug">
@@ -5006,11 +5474,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
                 {/* Difficulty / Length dropdown */}
                 <div className="space-y-1">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wide">Difficulty / Length</p>
+                  <p className="text-[10px] text-dh-muted uppercase tracking-wide">Difficulty / Length</p>
                   <select
                     value={difficultyValue}
                     onChange={e => setDifficulty(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-slate-500 cursor-pointer"
+                    className="w-full bg-dh-raised border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none focus:border-dh-strong cursor-pointer"
                   >
                     <option value="lessDifficult">Less difficult / shorter fight  −1</option>
                     <option value="">Standard</option>
@@ -5021,11 +5489,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
                 {/* Damage Boost dropdown */}
                 <div className="space-y-1">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wide">Damage Boost</p>
+                  <p className="text-[10px] text-dh-muted uppercase tracking-wide">Damage Boost</p>
                   <select
                     value={damageBoostValue}
                     onChange={e => setDamageBoost(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-slate-500 cursor-pointer"
+                    className="w-full bg-dh-raised border border-dh-strong rounded px-2 py-1 text-xs text-dh outline-none focus:border-dh-strong cursor-pointer"
                   >
                     <option value="">None</option>
                     <option value="plusOne">+1 damage to all adversaries  −1</option>
@@ -5035,7 +5503,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 </div>
 
                 {tableDamageBoost && (
-                  <p className="text-[10px] text-amber-400 flex items-center gap-1">
+                  <p className="text-[10px] text-dh-hope-soft flex items-center gap-1">
                     <Zap size={10} /> {tableDamageBoost === 'plusOne' ? '+1' : tableDamageBoost === 'static' ? '+2' : '+1d4'} damage boost active on all adversaries
                   </p>
                 )}
@@ -5044,11 +5512,28 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           </div>
           {/* Session / Rest cycle buttons */}
           <div className="flex items-center gap-1">
-            <button
-              title="Start Session — acknowledge to refresh session-use features for all characters"
-              onClick={() => handleSessionCycle('session')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
-            >▶ Session</button>
+            {sessionPlayAllowed ? (
+              <button
+                type="button"
+                title="End Session — pause play mechanics until you start again"
+                onClick={() => { void handleEndSession(); }}
+                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
+              >■ End</button>
+            ) : sessionPaused ? (
+              <button
+                type="button"
+                title="Resume Session — table was idle; click to continue play"
+                onClick={() => { void handleResumeSession(); }}
+                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+              >▶ Resume</button>
+            ) : (
+              <button
+                type="button"
+                title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
+                onClick={() => handleSessionCycle('session')}
+                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+              >▶ Session</button>
+            )}
             <button
               title="Short Rest — refresh rest-use features for all characters"
               onClick={() => handleSessionCycle('rest')}
@@ -5057,18 +5542,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             <button
               title="Long Rest — refresh rest and long-rest features for all characters"
               onClick={() => handleSessionCycle('longRest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-violet-800/60 bg-violet-950/30 text-violet-400 hover:bg-violet-900/40 hover:border-violet-700 transition-colors"
+              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
             >⏹ Long</button>
           </div>
           {/* Fear tracker */}
-          <div className="rounded-lg border px-2.5 py-2 border-slate-700 bg-slate-900">
-            <div className="flex items-center gap-1.5 mb-1.5" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Fear', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
-              <Flame size={12} className="shrink-0 text-purple-500" />
+          <div className="rounded-lg border px-2.5 py-2 border-dh-strong bg-dh-surface">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Flame size={12} className="shrink-0 text-fuchsia-400" />
               <CheckboxTrack
                 total={6}
                 filled={Math.min(fearCount, 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v)}
-                fillColor="bg-purple-500"
+                fillColor="bg-fuchsia-600"
                 label="Fear"
                 verbs={['Gain', 'Spend']}
                 currentAbsoluteValue={fearCount}
@@ -5081,7 +5566,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 total={6}
                 filled={Math.max(0, fearCount - 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
-                fillColor="bg-purple-500"
+                fillColor="bg-fuchsia-600"
                 label="Fear"
                 verbs={['Gain', 'Spend']}
                 currentAbsoluteValue={fearCount}
@@ -5092,14 +5577,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           {/* GM Moves hover trigger */}
           <div
             data-testid="gm-moves-trigger"
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${gmMovesOverlay.isOpen ? 'border-yellow-600/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-900 hover:border-yellow-600/40'}`}
+            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
             {...gmMovesOverlay.triggerProps(true)}
           >
-            <Zap size={14} className="text-yellow-500 shrink-0" />
-            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex-1">GM Moves</span>
+            <Zap size={14} className="text-dh-hope shrink-0" />
+            <span className="text-xs font-semibold text-dh uppercase tracking-wider flex-1">GM Moves</span>
             {(() => {
               const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
-              return count > 0 ? <span className="text-[10px] text-slate-500 tabular-nums">{count}</span> : null;
+              return count > 0 ? <span className="text-[10px] text-dh-muted tabular-nums">{count}</span> : null;
             })()}
           </div>
         </div>
@@ -5117,7 +5602,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
                   <button
                     onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
-                    className="hidden group-hover/env:block text-slate-500 hover:text-red-400 transition-colors shrink-0"
+                    className="hidden group-hover/env:block text-dh-muted hover:text-red-400 transition-colors shrink-0"
                     title="Remove from table"
                   ><X size={12} /></button>
                 </div>
@@ -5131,19 +5616,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             return (
               <div
                 key={el.id}
-                className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden group/adv"
+                className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden group/adv"
                 {...trackerOverlay.triggerProps(e => ({ kind: 'adversary', baseElement: item.baseElement, instances: item.instances, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
               >
-                <div className="px-2.5 py-1.5 border-b border-slate-800 flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-slate-200 truncate flex-1">{displayEl.name}</span>
-                  {count > 1 && <span className="text-[10px] text-slate-500 shrink-0 group-hover/adv:hidden tabular-nums">×{count}</span>}
+                <div className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-dh truncate flex-1">{displayEl.name}</span>
+                  {count > 1 && <span className="text-[10px] text-dh-muted shrink-0 group-hover/adv:hidden tabular-nums">×{count}</span>}
                   <div className="hidden group-hover/adv:flex items-center gap-0.5 shrink-0">
                     <button
                       onClick={() => addToTable(getItemData(el), 'adversaries')}
-                      className="w-4 h-4 rounded bg-slate-800 hover:bg-green-900 text-slate-400 hover:text-green-300 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
+                      className="w-4 h-4 rounded bg-dh-raised hover:bg-green-900 text-dh-muted hover:text-green-300 flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
                       title="Add one more"
                     >+</button>
-                    <span className="min-w-[1rem] text-center text-[10px] text-slate-400 font-semibold tabular-nums">{count}</span>
+                    <span className="min-w-[1rem] text-center text-[10px] text-dh-muted font-semibold tabular-nums">{count}</span>
                     <button
                       onClick={() => {
                         if (count === 1) {
@@ -5155,7 +5640,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           removeActiveElement(instances[instances.length - 1].instanceId);
                         }
                       }}
-                      className="w-4 h-4 rounded bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-red-300 flex items-center justify-center transition-colors leading-none"
+                      className="w-4 h-4 rounded bg-dh-raised hover:bg-red-900 text-dh-muted hover:text-red-300 flex items-center justify-center transition-colors leading-none"
                       title={count === 1 ? 'Remove from table' : 'Remove one'}
                     >{count === 1 ? <X size={9} /> : <span className="text-[10px] font-bold">−</span>}</button>
                   </div>
@@ -5169,9 +5654,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       </span>
                     )}
                     {displayEl.hp_thresholds && (displayEl.hp_thresholds.major != null || displayEl.hp_thresholds.severe != null) && (
-                      <span className="text-[10px] text-slate-400">
-                        Thresholds <span className="font-bold text-yellow-300">{displayEl.hp_thresholds.major}</span>
-                        <span className="text-slate-600"> / </span>
+                      <span className="text-[10px] text-dh-muted">
+                        Thresholds <span className="font-bold text-dh">{displayEl.hp_thresholds.major}</span>
+                        <span className="text-dh-muted"> / </span>
                         <span className="font-bold text-red-300">{displayEl.hp_thresholds.severe}</span>
                       </span>
                     )}
@@ -5189,16 +5674,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                         className="space-y-1 rounded"
                       >
                         {(count > 1 || budgetCardOpen) && (
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                            {count > 1 && <span className="text-slate-600 font-medium">#{idx + 1}</span>}
+                          <div className="flex items-center gap-1.5 text-[10px] text-dh-muted">
+                            {count > 1 && <span className="text-dh-muted font-medium">#{idx + 1}</span>}
                             {budgetCardOpen && (
                               <>
-                                {count > 1 && <span className="text-slate-700">·</span>}
+                                {count > 1 && <span className="text-dh-muted">·</span>}
                                 <span className="capitalize">{displayEl.role || 'Standard'}</span>
-                                <span className="text-slate-700">·</span>
+                                <span className="text-dh-muted">·</span>
                                 {displayEl.role === 'minion'
                                   ? <span>1/group BP</span>
-                                  : <span className="text-slate-400 tabular-nums">{ROLE_BP_COST[displayEl.role || 'standard'] ?? ROLE_BP_COST.standard} BP</span>
+                                  : <span className="text-dh-muted tabular-nums">{ROLE_BP_COST[displayEl.role || 'standard'] ?? ROLE_BP_COST.standard} BP</span>
                                 }
                               </>
                             )}
@@ -5206,10 +5691,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                         )}
                         {inst.vulnerable && (
                           <div className="flex items-center gap-1">
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-900/60 border border-amber-600/70 text-amber-200">Vulnerable</span>
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-950/50 border border-orange-700/60 text-orange-200">Vulnerable</span>
                             <button
                               onClick={() => updateActiveElement(inst.instanceId, { vulnerable: false })}
-                              className="p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+                              className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
                               title="Clear Vulnerable"
                             >
                               <X size={10} />
@@ -5221,7 +5706,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/50 border border-emerald-600/60 text-emerald-200">Focused by {inst.focusedBy}</span>
                             <button
                               onClick={() => updateActiveElement(inst.instanceId, { focusedBy: null })}
-                              className="p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+                              className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
                               title="Clear Focus"
                             >
                               <X size={10} />
@@ -5235,7 +5720,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             </span>
                             <button
                               onClick={() => updateActiveElement(inst.instanceId, { difficultyMod: 0 })}
-                              className="p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+                              className="p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover transition-colors"
                               title="Clear difficulty modifier"
                             >
                               <X size={10} />
@@ -5243,10 +5728,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                           </div>
                         )}
                         {isAdversaryDefeated({ hp_max: displayEl.hp_max, currentHp: inst.currentHp }) && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/80 border border-slate-600 text-slate-300">Defeated</span>
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-dh-hover/80 border border-dh-strong text-dh">Defeated</span>
                         )}
                         {(displayEl.hp_max || 0) > 0 && (
-                          <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'HP', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
+                          <div className="flex items-center gap-1">
                             <Heart size={10} className="text-red-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.hp_max || 0}
@@ -5261,14 +5746,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             {(displayEl.stress_max || 0) === 0 && !inst.conditions && !openConditions.has(inst.instanceId) && (
                               <button
                                 onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
-                                className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                                className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
                                 title="Add conditions"
                               ><Tag size={10} /></button>
                             )}
                           </div>
                         )}
                         {(displayEl.stress_max || 0) > 0 && (
-                          <div className="flex items-center gap-1" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Stress', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
+                          <div className="flex items-center gap-1">
                             <AlertCircle size={10} className="text-orange-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.stress_max || 0}
@@ -5283,7 +5768,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             {!inst.conditions && !openConditions.has(inst.instanceId) && (
                               <button
                                 onClick={() => setOpenConditions(prev => new Set([...prev, inst.instanceId]))}
-                                className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                                className="ml-1 text-dh-muted hover:text-dh transition-colors shrink-0"
                                 title="Add conditions"
                               ><Tag size={10} /></button>
                             )}
@@ -5301,11 +5786,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                                 setOpenConditions(prev => { const s = new Set(prev); s.delete(inst.instanceId); return s; });
                               }
                             }}
-                            className="w-full bg-slate-800/50 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-white outline-none focus:border-blue-500 placeholder-slate-600"
+                            className="w-full bg-dh-raised/50 border border-dh-strong rounded px-1.5 py-0.5 text-xs text-dh outline-none focus:border-blue-500 placeholder-dh-muted"
                           />
                         )}
                         {idx < instances.length - 1 && (
-                          <div className="border-t border-slate-800 mt-1" />
+                          <div className="border-t border-dh-border mt-1" />
                         )}
                       </div>
                     );
@@ -5315,7 +5800,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             );
           })}
           {consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
-            <div className="text-center text-slate-600 text-xs py-6">
+            <div className="text-center text-dh-muted text-xs py-6">
               No adversaries on table.
             </div>
           )}
@@ -5324,19 +5809,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
 
       {/* Player Encounter Panel — read-only Fear + damaged adversaries */}
       {isPlayer && (
-        <div className="w-56 bg-slate-950 border-l border-slate-800 flex flex-col overflow-y-auto shrink-0">
-          <div className="px-2 py-2 bg-slate-950 border-b border-slate-800 sticky top-0 z-10 space-y-2">
-            <h2 className="font-bold text-white uppercase tracking-wider flex items-center gap-2 text-sm">
+        <div className="w-56 bg-dh-canvas border-l border-dh-border flex flex-col overflow-y-auto shrink-0">
+          <div className="px-2 py-2 bg-dh-canvas border-b border-dh-border sticky top-0 z-10 space-y-2">
+            <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
               <Swords size={15} className="text-red-400" /> Encounter
             </h2>
             {/* Fear tracker — read-only */}
-            <div className="rounded-lg border px-2.5 py-2 border-slate-700 bg-slate-900">
-              <div className="flex items-center gap-1.5 mb-1.5" onMouseEnter={(e) => { if (!isTouch) { const r = e.currentTarget.getBoundingClientRect(); setHoveredTrackTooltip({ label: 'Fear', top: r.top, bottom: r.bottom, side: 'right' }); } }} onMouseLeave={() => { if (!isTouch) setHoveredTrackTooltip(null); }}>
-                <Flame size={12} className="shrink-0 text-purple-500" />
+            <div className="rounded-lg border px-2.5 py-2 border-dh-strong bg-dh-surface">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Flame size={12} className="shrink-0 text-fuchsia-400" />
                 <CheckboxTrack
                   total={6}
                   filled={Math.min(fearCount, 6)}
-                  fillColor="bg-purple-500"
+                  fillColor="bg-fuchsia-600"
                   label="Fear"
                 />
               </div>
@@ -5346,7 +5831,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   <CheckboxTrack
                     total={6}
                     filled={Math.max(0, fearCount - 6)}
-                    fillColor="bg-purple-500"
+                    fillColor="bg-fuchsia-600"
                     label="Fear"
                   />
                 </div>
@@ -5377,10 +5862,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
               return damagedGroups.map(({ displayEl, instances, damagedInstances }) => (
                 <div
                   key={displayEl.id || displayEl.instanceId}
-                  className="rounded-lg bg-slate-900 border border-slate-800 overflow-hidden"
+                  className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden"
                 >
-                  <div className="px-2.5 py-1.5 border-b border-slate-800">
-                    <span className="text-xs font-semibold text-slate-200 truncate block">{displayEl.name}</span>
+                  <div className="px-2.5 py-1.5 border-b border-dh-border">
+                    <span className="text-xs font-semibold text-dh truncate block">{displayEl.name}</span>
                   </div>
                   <div className="p-2 space-y-1.5">
                     {damagedInstances.map((inst, idx) => {
@@ -5389,7 +5874,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       return (
                         <div key={inst.instanceId} className="space-y-1">
                           {instances.length > 1 && (
-                            <span className="text-[10px] text-slate-600 font-medium">
+                            <span className="text-[10px] text-dh-muted font-medium">
                               #{instances.indexOf(inst) + 1}
                             </span>
                           )}
@@ -5410,7 +5895,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             />
                           )}
                           {inst.vulnerable && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-900/60 border border-amber-600/70 text-amber-200">Vulnerable</span>
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-950/50 border border-orange-700/60 text-orange-200">Vulnerable</span>
                           )}
                           {inst.focusedBy && (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/50 border border-emerald-600/60 text-emerald-200">Focused by {inst.focusedBy}</span>
@@ -5421,13 +5906,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                             </span>
                           )}
                           {isAdversaryDefeated({ hp_max: displayEl.hp_max, currentHp: inst.currentHp }) && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/80 border border-slate-600 text-slate-300">Defeated</span>
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-dh-hover/80 border border-dh-strong text-dh">Defeated</span>
                           )}
                           {inst.conditions && (
-                            <p className="text-[10px] text-slate-400 italic ml-3.5">{inst.conditions}</p>
+                            <p className="text-[10px] text-dh-muted italic ml-3.5">{inst.conditions}</p>
                           )}
                           {idx < damagedInstances.length - 1 && (
-                            <div className="border-t border-slate-800 mt-1" />
+                            <div className="border-t border-dh-border mt-1" />
                           )}
                         </div>
                       );
@@ -5444,6 +5929,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       <ItemPickerModal
         collection={modalOpen}
         data={data}
+        showDaggerstackImport={false}
         onClose={() => setModalOpen(null)}
         onSelect={(item) => {
           if (modalOpen === 'characters' && isPlayer && onPlayerAddCharacter) {
@@ -5487,6 +5973,122 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       />
     )}
 
+    {/* Character sheet overlay — right of Characters panel; sheet + editor share one rounded card (editor slides from behind). Mounts before ItemDetailModal so the editor portal target exists. */}
+    {characterOverlay.isOpen && (() => {
+      const liveEl = activeElements.find(e => e.instanceId === characterOverlay.data.element.instanceId) || characterOverlay.data.element;
+      const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
+      const editDrawerOpen = editState?.step === 'form' && editState?.presentation === 'rightDrawer';
+      const effectiveEditDrawerOpen = editDrawerOpen && !characterDrawerEditMismatch;
+      const titleBarEl =
+        effectiveEditDrawerOpen && characterDrawerChromeSync?.formData
+          ? { ...liveEl, ...characterDrawerChromeSync.formData }
+          : liveEl;
+      const libraryCharacterRow = data?.characters?.find(c => c.id === liveEl?.id);
+      const itemForTitleBadge =
+        effectiveEditDrawerOpen && editState?.collection === 'characters' && editState?.item
+          ? editState.item
+          : libraryCharacterRow || liveEl;
+      const v2TitlePath =
+        itemForTitleBadge?._source === 'srd'
+          ? resolveV2LibraryItemSourcePath('characters', itemForTitleBadge)
+          : null;
+      const sync = characterDrawerChromeSync;
+      return (
+        <div
+          ref={characterOverlay.overlayRef}
+          className="fixed z-[55] flex flex-row gap-2 items-start max-w-[calc(100vw-14rem-8px)]"
+          style={{
+            left: 'calc(14rem + 8px)',
+            top: 90,
+            height: 'calc(100dvh - 98px)',
+          }}
+        >
+          <CharacterSheetSourceHighlightProvider>
+          <CharacterSheetHighlightSurface className="flex flex-col rounded-xl border border-dh-strong bg-dh-surface shadow-2xl overflow-hidden max-h-full h-full min-h-0 shrink-0 min-w-0">
+            <GameTableCharacterSheetTitleBar
+              el={titleBarEl}
+              item={itemForTitleBadge}
+              editDrawerOpen={effectiveEditDrawerOpen}
+              onEdit={(!isPlayer || isMyCharacter) ? () => openTableCharacterEditor(liveEl) : undefined}
+              onDone={closeEditModal}
+              onUndo={() => characterTableDetailModalRef.current?.undo()}
+              onRedo={() => characterTableDetailModalRef.current?.redo()}
+              canUndo={!!sync?.canUndo}
+              canRedo={!!sync?.canRedo}
+              isSaving={sync?.isSaving}
+              showUnsavedDirtyHint={sync?.showUnsavedDirtyHint}
+              userHasInteractedWithEditor={sync?.userHasInteractedWithEditor}
+              savedFlash={sync?.savedFlash}
+              v2LibrarySourcePath={v2TitlePath}
+              showIncomplete
+              editorColumnWidth={CHARACTER_TABLE_EDITOR_DRAWER_WIDTH}
+            />
+            <div className="flex flex-row items-stretch flex-1 min-h-0 overflow-hidden">
+            <div
+              ref={characterSheetColumnRef}
+              className="relative z-10 flex flex-col overflow-hidden min-w-0 shrink-0"
+              style={{
+                width: 'min(44rem, calc(100vw - 15rem))',
+              }}
+            >
+              {(() => {
+                const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
+                  sessionPlayAllowed,
+                  isPlayer,
+                  isMyCharacter,
+                );
+                return (
+                  <CharacterHoverCard
+                    el={titleBarEl}
+                    surfaceVariant="panelEmbedded"
+                    omitHeader
+                    fearCount={fearCount}
+                    updateFn={sheetOwner ? updateActiveElement : undefined}
+                    expandedKeys={featureExpanded[liveEl.instanceId] ?? []}
+                    onToggleFeature={(key) => toggleFeatureExpanded(liveEl.instanceId, key)}
+                    onSetFeatureExpandedKeys={(keys) => setFeatureExpandedKeys(liveEl.instanceId, keys)}
+                    onResync={(isMyCharacter || !isPlayer) && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
+                    isSyncing={resyncingCharId === liveEl.instanceId}
+                    onRoll={allowPlayMechanics ? handlePlayerOwnRoll : undefined}
+                    onSpendHope={allowPlayMechanics ? handleSpendHope : undefined}
+                    onUseHopeAbility={allowPlayMechanics ? handleUseHopeAbility : undefined}
+                    onEdit={!isPlayer || isMyCharacter ? () => openTableCharacterEditor(liveEl) : undefined}
+                    onActionNotification={allowPlayMechanics ? (isPlayer ? handlePlayerActionNotification : handleActionNotification) : undefined}
+                    activeElements={activeElements}
+                    mapConfig={mapConfig}
+                    pendingBanners={pendingBanners}
+                    lifeSupportSelections={lifeSupportSelections}
+                    queueManualTrackEdit={allowPlayMechanics ? queueManualTrackEdit : undefined}
+                    pendingResourceCosts={pendingResourceCosts}
+                    consumePendingStressForManualMark={consumePendingStressForManualMark}
+                    isPlayer={isPlayer}
+                    getValidTargets={allowPlayMechanics ? getValidTargets : undefined}
+                    system={system}
+                    characters={wrappedPartyCharacters}
+                    tableFeatureState={tableFeatureState}
+                    tableId={tableId}
+                  />
+                );
+              })()}
+            </div>
+            <div
+              className="relative z-0 overflow-hidden shrink-0 h-full min-h-0 border-l border-dh-border transition-[width] duration-300 ease-out"
+              style={{ width: effectiveEditDrawerOpen ? CHARACTER_TABLE_EDITOR_DRAWER_WIDTH : 0 }}
+              aria-hidden={!effectiveEditDrawerOpen}
+            >
+              <div
+                ref={setCharacterEditorPortalEl}
+                className={`h-full min-h-0 flex flex-col transition-transform duration-300 ease-out will-change-transform ${effectiveEditDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}
+                style={{ width: CHARACTER_TABLE_EDITOR_DRAWER_WIDTH }}
+              />
+            </div>
+            </div>
+          </CharacterSheetHighlightSurface>
+          </CharacterSheetSourceHighlightProvider>
+        </div>
+      );
+    })()}
+
     {editState?.step === 'choice' && (
       <EditChoiceDialog
         itemName={editState.baseElement.name}
@@ -5497,12 +6099,20 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         onClose={closeEditModal}
       />
     )}
-    {editState?.step === 'form' && (
+    {editState?.step === 'form' && !characterDrawerEditMismatch && (
       <ItemDetailModal
+        ref={characterTableDetailModalRef}
         item={editState.item}
         collection={editState.collection}
         data={data}
         editable={true}
+        presentation={editState.presentation ?? 'center'}
+        onCharacterDrawerChromeSync={setCharacterDrawerChromeSync}
+        rightDrawerPortalTo={
+          editState.presentation === 'rightDrawer'
+            ? (characterOverlay.isOpen ? characterEditorPortalEl : null)
+            : undefined
+        }
         saveImage={saveImage}
         onSave={async (editedData) => {
           if (editState.mode === 'new') {
@@ -5547,7 +6157,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         style={{ right: 'calc(14rem)', paddingRight: '12px', top: (trackerOverlay.data.top + trackerOverlay.data.bottom) / 2 + trackerAdjust, transform: 'translateY(-50%)', width: 'calc(26rem + 12px)', maxHeight: 'calc(100dvh - 110px)' }}
         {...trackerOverlay.overlayHandlers}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
+        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
           <div className="p-5 relative">
             {trackerOverlay.data.kind === 'environment' ? (() => {
               const el = trackerOverlay.data.element;
@@ -5556,12 +6166,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
                     <button
                       onClick={() => { trackerOverlay.close(); handleEditClick([el], el, 'environments'); }}
-                      className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
+                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-blue-400 hover:bg-dh-hover transition-colors"
                       title="Edit"
                     ><Edit size={14} /></button>
                     <button
                       onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
-                      className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-red-400 hover:bg-dh-hover transition-colors"
                       title="Remove from table"
                     ><Trash2 size={14} /></button>
                   </div>
@@ -5570,7 +6180,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       <img src={el.imageUrl} alt={el.name} className="w-full h-full object-cover opacity-80" />
                     </div>
                   )}
-                  <h3 className={`text-xl font-bold text-white mb-1 pr-20`}>
+                  <h3 className={`text-xl font-bold text-dh mb-1 pr-20`}>
                     {el.name}
                   </h3>
                   <EnvironmentCardContent
@@ -5598,12 +6208,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                   <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
                     <button
                       onClick={() => { trackerOverlay.close(); handleEditClick(liveInstances, liveBaseElement, 'adversaries'); }}
-                      className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
+                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-blue-400 hover:bg-dh-hover transition-colors"
                       title="Edit"
                     ><Edit size={14} /></button>
                     <button
                       onClick={() => { removeGroup(liveInstances); trackerOverlay.close(); }}
-                      className="p-1.5 rounded-lg bg-slate-800/90 text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                      className="p-1.5 rounded-lg bg-dh-raised/90 text-dh-muted hover:text-red-400 hover:bg-dh-hover transition-colors"
                       title="Remove from table"
                     ><Trash2 size={14} /></button>
                   </div>
@@ -5612,10 +6222,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                       <img src={liveBaseElement.imageUrl} alt={liveBaseElement.name} className="w-full h-full object-cover opacity-80" />
                     </div>
                   )}
-                  <h3 className={`text-xl font-bold text-white mb-1 pr-20`}>
+                  <h3 className={`text-xl font-bold text-dh mb-1 pr-20`}>
                     {liveBaseElement.name}
                     {liveInstances.length > 1 && (
-                      <span className="text-slate-400 font-normal ml-1.5">×{liveInstances.length}</span>
+                      <span className="text-dh-muted font-normal ml-1.5">×{liveInstances.length}</span>
                     )}
                   </h3>
                   <AdversaryCardContent
@@ -5649,14 +6259,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         style={{ right: 'calc(40rem + 12px)', paddingRight: '8px', top: (potAdvOverlay.data.top + potAdvOverlay.data.bottom) / 2 + potAdvAdjust, transform: 'translateY(-50%)', width: 'calc(24rem + 8px)', maxHeight: 'calc(100dvh - 110px)' }}
         {...potAdvOverlay.overlayHandlers}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
+        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl overflow-y-auto" style={{ maxHeight: 'calc(100dvh - 110px)' }}>
           <div className="p-5 relative">
             {potAdvOverlay.data.element.imageUrl && (
               <div className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl">
                 <img src={potAdvOverlay.data.element.imageUrl} alt={potAdvOverlay.data.element.name} className="w-full h-full object-cover opacity-80" />
               </div>
             )}
-            <h3 className="text-xl font-bold text-white mb-1 pr-16">{potAdvOverlay.data.element.name}</h3>
+            <h3 className="text-xl font-bold text-dh mb-1 pr-16">{potAdvOverlay.data.element.name}</h3>
             <AdversaryCardContent
               element={potAdvOverlay.data.element}
               hoveredFeature={null}
@@ -5684,24 +6294,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         className="fixed z-50 pointer-events-none"
         style={{ right: 'calc(34rem + 20px)', top: (hoveredDefaultMove.top + hoveredDefaultMove.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
-          <p className="text-sm text-slate-300 italic leading-relaxed">{hoveredDefaultMove.example}</p>
-        </div>
-      </div>
-    )}
-
-    {/* Resource track label tooltips — shown on hover over Hope/Armor/HP/Stress/Fear rows */}
-    {hoveredTrackTooltip && (
-      <div
-        className="fixed z-[65] pointer-events-none"
-        style={
-          hoveredTrackTooltip.side === 'left'
-            ? { left: 'calc(14rem + 10px)', top: (hoveredTrackTooltip.top + hoveredTrackTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '18rem' }
-            : { right: 'calc(14rem + 10px)', top: (hoveredTrackTooltip.top + hoveredTrackTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '18rem' }
-        }
-      >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl px-4 py-3">
-          <p className="text-sm font-semibold text-slate-200">{hoveredTrackTooltip.label}</p>
+        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl p-5">
+          <p className="text-sm text-dh italic leading-relaxed">{hoveredDefaultMove.example}</p>
         </div>
       </div>
     )}
@@ -5712,8 +6306,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         className="fixed z-[60] pointer-events-none"
         style={{ right: 'calc(34rem + 20px)', top: (hoveredCompactTooltip.top + hoveredCompactTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
       >
-        <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-5">
-          <p className="text-sm text-slate-300 leading-relaxed"><FeatureDescription description={hoveredCompactTooltip.description} /></p>
+        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl p-5">
+          <p className="text-sm text-dh leading-relaxed"><FeatureDescription description={hoveredCompactTooltip.description} /></p>
         </div>
       </div>
     )}
@@ -5730,7 +6324,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         onMouseEnter={() => { if (isTouch) return; if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; } setGmHoverOverlayActive(true); }}
         onMouseLeave={() => { if (!isTouch) setGmHoverOverlayActive(false); }}
       >
-        <div ref={overlayScrollRef} className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
+        <div ref={overlayScrollRef} className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl overflow-y-auto max-h-[80vh]">
           {displayElement.kind === 'environment' ? (
             <div className="p-5 relative">
               {displayElement.element.imageUrl && (
@@ -5742,7 +6336,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 </div>
               )}
               <div>
-                <h3 className={`text-xl font-bold text-white mb-1 ${displayElement.element.imageUrl ? 'pr-20' : ''}`}>{displayElement.element.name}</h3>
+                <h3 className={`text-xl font-bold text-dh mb-1 ${displayElement.element.imageUrl ? 'pr-20' : ''}`}>{displayElement.element.name}</h3>
                 <EnvironmentCardContent
                   element={displayElement.element}
                   hoveredFeature={hoveredFeature}
@@ -5769,10 +6363,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                 </div>
               )}
               <div>
-                <h3 className={`text-xl font-bold text-white mb-1 ${el.imageUrl ? 'pr-20' : ''}`}>
+                <h3 className={`text-xl font-bold text-dh mb-1 ${el.imageUrl ? 'pr-20' : ''}`}>
                   {displayEl.name}
                   {displayElement.instances.length > 1 && (
-                    <span className="text-slate-400 font-normal ml-1.5">×{displayElement.instances.length}</span>
+                    <span className="text-dh-muted font-normal ml-1.5">×{displayElement.instances.length}</span>
                   )}
                 </h3>
                 <AdversaryCardContent
@@ -5802,7 +6396,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
       <>
         <div className="fixed inset-0 z-[200]" onClick={() => setAdversaryTargetMenu(null)} />
         <div
-          className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+          className="fixed z-[201] rounded-lg border border-dh-strong bg-dh-surface shadow-2xl p-2 space-y-2"
           style={{
             top: adversaryTargetMenu.anchorRect
               ? Math.min(adversaryTargetMenu.anchorRect.bottom + 4, window.innerHeight - 200)
@@ -5814,12 +6408,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
             maxWidth: '240px',
           }}
         >
-          <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">
+          <div className="text-[11px] font-semibold text-dh uppercase tracking-wide">
             {adversaryTargetMenu.validTargets.length > 0 ? 'Choose target' : 'No targets in range'}
           </div>
           <div className="space-y-1">
             {adversaryTargetMenu.validTargets.length === 0 ? (
-              <p className="text-[11px] text-slate-400 italic px-1 py-1">No characters are in range of this attack.</p>
+              <p className="text-[11px] text-dh-muted italic px-1 py-1">No characters are in range of this attack.</p>
             ) : adversaryTargetMenu.validTargets.map((t) => {
               const disadvantageForTarget = t.type === 'character' ? getDisadvantageForTarget(adversaryTargetMenu.rollText, t.instanceId) : [];
               return (
@@ -5852,20 +6446,20 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
                         setTimeout(() => setRolledKey(prev => prev === rk ? null : prev), 1500);
                       }
                     })
-                    .catch(err => console.error('Roll failed:', err));
+                    .catch(err => handleRollTransportError(err, 'Roll failed:'));
                   setAdversaryTargetMenu(null);
                 }}
-                className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
+                className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-dh-strong bg-dh-raised/80 text-dh hover:bg-dh-hover hover:border-sky-500/50 transition-colors"
               >
                 <div>{t.name}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
+                <div className="text-[10px] text-dh-muted mt-0.5">
                   {[
                     t.maxHp > 0 ? `HP ${t.currentHp ?? t.maxHp}/${t.maxHp}` : null,
                     t.maxStress > 0 ? `Stress ${t.currentStress ?? 0}/${t.maxStress}` : null,
                   ].filter(Boolean).join(' · ')}
                   {t.conditions ? ` · ${t.conditions}` : ''}
                   {disadvantageForTarget.length ? (
-                    <span className="text-amber-300/95 font-medium">
+                    <span className="text-orange-400/95 font-medium">
                       {' · '}{disadvantageForTarget.map(f => `${f} (−1d6)`).join(', ')}
                     </span>
                   ) : null}
@@ -5877,7 +6471,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
           <button
             type="button"
             onClick={() => setAdversaryTargetMenu(null)}
-            className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors w-full text-center"
+            className="text-[11px] text-dh-muted hover:text-dh transition-colors w-full text-center"
           >
             Cancel (roll without target)
           </button>
@@ -5892,7 +6486,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         onClick={() => setLightboxUrl(null)}
       >
         <button
-          className="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+          className="absolute top-4 right-4 p-2 rounded-full bg-dh-raised/80 text-dh hover:text-dh hover:bg-dh-hover transition-colors"
           onClick={() => setLightboxUrl(null)}
         >
           <X size={20} />
@@ -5905,125 +6499,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement, remo
         />
       </div>
     )}
-
-    {/* Character hover card overlay — appears to the RIGHT of the Characters panel */}
-    {characterOverlay.isOpen && (() => {
-      // Look up the live element so CheckboxTrack interactions reflect current state
-      const liveEl = activeElements.find(e => e.instanceId === characterOverlay.data.element.instanceId) || characterOverlay.data.element;
-      const hasCompanion = !!liveEl.companion;
-      return (
-        <div
-          ref={characterOverlay.overlayRef}
-          className="fixed z-[55] flex flex-row"
-          style={{
-            left: 'calc(14rem)',
-            paddingLeft: '8px',
-            top: 90,
-            width: hasCompanion ? 'calc(36rem + 16px)' : 'calc(22rem + 8px)',
-            height: 'calc(100dvh - 98px)',
-          }}
-          onMouseEnter={characterOverlay.overlayHandlers.onMouseEnter}
-          onMouseLeave={() => {
-            if (!characterTargetMenuOpenRef.current) characterOverlay.close();
-          }}
-        >
-          <div className="flex flex-col overflow-hidden shrink-0" style={{ width: '22rem' }}>
-            {(() => {
-              const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
-              const allowInteract = !isPlayer || isMyCharacter;
-              return (
-                <CharacterHoverCard
-                  el={liveEl}
-                  fearCount={fearCount}
-                  updateFn={allowInteract ? updateActiveElement : undefined}
-                  expandedKeys={featureExpanded[liveEl.instanceId] ?? []}
-                  onToggleFeature={(key) => toggleFeatureExpanded(liveEl.instanceId, key)}
-                  onSetFeatureExpandedKeys={(keys) => setFeatureExpandedKeys(liveEl.instanceId, keys)}
-                  onResync={(isMyCharacter || !isPlayer) && liveEl.daggerstackUrl ? () => handleResyncCharacter(liveEl) : null}
-                  isSyncing={resyncingCharId === liveEl.instanceId}
-                  onRoll={allowInteract ? handlePlayerOwnRoll : undefined}
-                  onSpendHope={allowInteract ? handleSpendHope : undefined}
-                  onUseHopeAbility={allowInteract ? handleUseHopeAbility : undefined}
-                  onEdit={isMyCharacter && liveEl.id ? () => {
-                    const libraryItem = data.characters?.find(i => i.id === liveEl.id) || liveEl;
-                    navigate(`${gameTableBasePath}/characters/${liveEl.id}`);
-                    setEditState({ step: 'form', item: libraryItem, collection: 'characters', mode: 'original', instances: [liveEl], baseElement: liveEl });
-                  } : undefined}
-                  onDebugMouseEnter={characterOverlay.cancelClose}
-                  onDebugMouseLeave={characterOverlay.close}
-                  onActionNotification={allowInteract ? (isPlayer ? handlePlayerActionNotification : handleActionNotification) : undefined}
-                  activeElements={activeElements}
-                  mapConfig={mapConfig}
-                  pendingBanners={pendingBanners}
-                  lifeSupportSelections={lifeSupportSelections}
-                  queueManualTrackEdit={allowInteract ? queueManualTrackEdit : undefined}
-                  pendingResourceCosts={pendingResourceCosts}
-                  consumePendingStressForManualMark={consumePendingStressForManualMark}
-                  hideCompanionSection={hasCompanion}
-                  isPlayer={isPlayer}
-                  getValidTargets={allowInteract ? getValidTargets : undefined}
-                  targetMenuOpenRef={characterTargetMenuOpenRef}
-                  system={system}
-                  characters={wrappedPartyCharacters}
-                  tableFeatureState={tableFeatureState}
-                  tableId={tableId}
-                />
-              );
-            })()}
-          </div>
-          {hasCompanion && (() => {
-            const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
-            const allowInteract = !isPlayer || isMyCharacter;
-            const comp = liveEl.companion;
-            const handleCompanionRoll = allowInteract
-              ? (rollText, displayName, meta) => handlePlayerOwnRoll(rollText, displayName, meta, { characterEl: liveEl })
-              : undefined;
-            const spellcastKey = (liveEl.spellcastTrait || 'presence').toLowerCase();
-            const spellcastScore = liveEl.traits?.[spellcastKey] ?? 0;
-            const buildCompanionAttackRollText = () => {
-              const parts = [`${comp.name} ${comp.attackName} Hope [d12] Fear [d12]`];
-              if (spellcastScore !== 0) parts.push(`${spellcastKey} [${spellcastScore}]`);
-              parts.push('damage [d6] melee');
-              return parts.join(' ');
-            };
-            const buildCompanionActRollText = () => {
-              const parts = [`${liveEl.name} Companion Act Hope [d12] Fear [d12]`];
-              if (spellcastScore !== 0) parts.push(`${spellcastKey} [${spellcastScore}]`);
-              return parts.join(' ');
-            };
-            const buildCompanionRollMeta = () => ({
-              _attackerInstanceId: liveEl.instanceId,
-              _traitKey: spellcastKey,
-              _intentPanelForActionRoll: true,
-              _deferExperienceToPreRoll: true,
-              _companionExperienceForRoll: true,
-            });
-            return (
-              <div className="flex flex-col overflow-hidden pl-2 shrink-0" style={{ width: '14rem' }}>
-                <CompanionSheet
-                  companion={liveEl.companion}
-                  onStressChange={
-                    allowInteract && queueManualTrackEdit
-                      ? (filled) => queueManualTrackEdit(liveEl, { companion: { ...liveEl.companion, currentStress: filled } })
-                      : updateActiveElement
-                        ? (filled) => updateActiveElement(liveEl.instanceId, { companion: { ...liveEl.companion, currentStress: filled } })
-                        : undefined
-                  }
-                  onAttackRoll={handleCompanionRoll && comp.attackName?.trim() ? () => {
-                    const rollText = buildCompanionAttackRollText();
-                    handleCompanionRoll(rollText, `${liveEl.name} (${comp.name})`, buildCompanionRollMeta());
-                  } : undefined}
-                  onActRoll={handleCompanionRoll ? () => {
-                    const rollText = buildCompanionActRollText();
-                    handleCompanionRoll(rollText, `${liveEl.name} Companion Act`, buildCompanionRollMeta());
-                  } : undefined}
-                />
-              </div>
-            );
-          })()}
-        </div>
-      );
-    })()}
 
       </div>{/* end flex-1 flex overflow-hidden */}
     </div>

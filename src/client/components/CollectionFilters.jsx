@@ -7,25 +7,23 @@ import { ABILITY_LEVELS, getLibraryFilterConfig } from '../lib/library-filter-co
 export function LibrarySearchField({ collection, value, onChange, className = '' }) {
   return (
     <div className={`relative min-w-0 flex-1 ${className}`}>
-      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dh-muted pointer-events-none" />
       <input
         type="text"
         value={value ?? ''}
         onChange={e => onChange(e.target.value)}
         placeholder={`Search ${collection}…`}
-        className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
+        className="w-full bg-dh-raised border border-dh-strong rounded pl-7 pr-3 py-1.5 text-xs text-dh placeholder-dh-muted focus:outline-none focus:border-dh-strong transition-colors"
       />
     </div>
   );
 }
 
 const SOURCE_OPTIONS = [
-  { val: 'own',     label: 'Mine' },
-  { val: null,      label: 'All' },
-  { val: 'srd',     label: 'SRD' },
-  { val: 'public',  label: 'Public' },
-  { val: 'hod',     label: 'HoD' },
-  { val: 'fcg',     label: 'FCG' },
+  { val: 'own', label: 'Mine' },
+  { val: null, label: 'All' },
+  { val: 'srd', label: 'SRD' },
+  { val: 'public', label: 'Public' },
 ];
 
 const SORT_OPTIONS = [
@@ -113,19 +111,27 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOpts
   const rankNums = rankNumbers(cfg);
 
   const baseBtn = 'px-2 py-0.5 rounded font-medium border transition-colors';
-  const inactive = 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300';
-  const headingCls = 'text-slate-500 font-medium uppercase tracking-wider shrink-0 whitespace-nowrap';
+  const inactive = 'bg-dh-raised border-dh-strong text-dh-muted hover:border-dh-strong hover:text-dh';
+  const headingCls = 'text-dh-muted font-medium uppercase tracking-wider shrink-0 whitespace-nowrap';
+
+  const hasMiddleFilters =
+    !!rankNums
+    || (typeOptions && typeOptions.length > 0)
+    || (extraOpts && extraOpts.length > 0);
+
+  const hasSortOrView = showSort || viewSlider;
 
   return (
     <div className="mb-5 space-y-2">
-      <LibrarySearchField
-        collection={collection}
-        value={search}
-        onChange={v => onFilterChange('search', v)}
-      />
-
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 text-xs text-slate-400">
-        <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
+      {/* Row 1 — search + source (all collection types) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <LibrarySearchField
+          collection={collection}
+          value={search}
+          onChange={v => onFilterChange('search', v)}
+          className="min-w-[10rem]"
+        />
+        <div className="inline-flex max-w-full items-center gap-2 flex-nowrap text-xs text-dh-muted">
           <span className={headingCls}>Include</span>
           {SOURCE_OPTIONS.map(({ val, label }) => (
             <button
@@ -138,10 +144,12 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOpts
             </button>
           ))}
         </div>
+      </div>
 
-        {rankNums && (
-          <>
-            <span className="text-slate-700 select-none shrink-0" aria-hidden>|</span>
+      {/* Row 2 — tier / type / extra (varies by collection) */}
+      {hasMiddleFilters && (
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2 text-xs text-dh-muted">
+          {rankNums && (
             <div className="inline-flex max-w-full items-start gap-2 flex-nowrap">
               <span className={`${headingCls} pt-0.5`}>
                 {cfg.rankMode === 'level' ? 'Level' : 'Tier'}
@@ -163,136 +171,140 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOpts
                       type="checkbox"
                       checked={!!includeScaledUp}
                       onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
-                      className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50"
+                      className="rounded border-dh-strong bg-dh-raised text-amber-500 focus:ring-amber-500/50"
                     />
-                    <span className="text-slate-400">Include Scaled</span>
+                    <span className="text-dh-muted">Include Scaled</span>
                   </label>
                 )}
               </div>
             </div>
-          </>
-        )}
+          )}
 
-        {typeOptions && typeOptions.length > 0 && (
-          <>
-            <span className="text-slate-700 select-none shrink-0" aria-hidden>|</span>
-            <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
-              <span className={headingCls}>{typeLabel}</span>
-              <button
-                type="button"
-                onClick={() => onFilterChange('type', null)}
-                className={`${baseBtn} shrink-0 ${types.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
-              >
-                All
-              </button>
-              {typeOptions.map(val => (
+          {typeOptions && typeOptions.length > 0 && (
+            <>
+              {rankNums && <span className="text-dh-muted select-none shrink-0 pt-0.5" aria-hidden>|</span>}
+              <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
+                <span className={headingCls}>{typeLabel}</span>
                 <button
-                  key={val}
                   type="button"
-                  onClick={() => onFilterChange('type', val)}
-                  className={`${baseBtn} shrink-0 ${collection === 'adversaries' ? 'capitalize' : ''} ${types.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                  onClick={() => onFilterChange('type', null)}
+                  className={`${baseBtn} shrink-0 ${types.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
                 >
-                  {val}
+                  All
                 </button>
-              ))}
-            </div>
-          </>
-        )}
+                {typeOptions.map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => onFilterChange('type', val)}
+                    className={`${baseBtn} shrink-0 ${collection === 'adversaries' ? 'capitalize' : ''} ${types.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
-        {extraOpts && extraOpts.length > 0 && (
-          <>
-            <span className="text-slate-700 select-none shrink-0" aria-hidden>|</span>
-            <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
-              <span className={headingCls}>{extraLabel}</span>
-              <button
-                type="button"
-                onClick={() => onFilterChange('extraType', null)}
-                className={`${baseBtn} shrink-0 ${extraTypes.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
-              >
-                All
-              </button>
-              {extraOpts.map(val => (
+          {extraOpts && extraOpts.length > 0 && (
+            <>
+              {(rankNums || (typeOptions && typeOptions.length > 0)) && (
+                <span className="text-dh-muted select-none shrink-0 pt-0.5" aria-hidden>|</span>
+              )}
+              <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
+                <span className={headingCls}>{extraLabel}</span>
                 <button
-                  key={val}
                   type="button"
-                  onClick={() => onFilterChange('extraType', val)}
-                  className={`${baseBtn} shrink-0 ${extraTypes.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                  onClick={() => onFilterChange('extraType', null)}
+                  className={`${baseBtn} shrink-0 ${extraTypes.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
                 >
-                  {val}
+                  All
                 </button>
-              ))}
-            </div>
-          </>
-        )}
+                {extraOpts.map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => onFilterChange('extraType', val)}
+                    className={`${baseBtn} shrink-0 ${extraTypes.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
-        {showSort && (
-          <>
-            <span className="text-slate-700 select-none shrink-0" aria-hidden>|</span>
+      {/* Last row — sort + view (library) */}
+      {hasSortOrView && (
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-dh-border/60 pt-2 text-xs text-dh-muted">
+          {showSort && (
             <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
               <span className={headingCls}>Sort</span>
               <select
                 value={sort}
                 onChange={e => onFilterChange('sort', e.target.value)}
-                className="shrink-0 rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300"
+                className="shrink-0 rounded border border-dh-strong bg-dh-raised px-2 py-0.5 text-xs text-dh"
               >
-                {SORT_OPTIONS.map(({ val, label }) => (
-                  <option key={val} value={val}>{label}</option>
+                {SORT_OPTIONS.map(({ val: v, label }) => (
+                  <option key={v} value={v}>{label}</option>
                 ))}
               </select>
             </div>
-          </>
-        )}
-      </div>
-
-      {viewSlider && (
-        <div className="mt-2 flex w-full min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-800/60 pt-2 text-xs text-slate-400">
-          <span className={headingCls}>View</span>
-          <span className="inline-flex min-w-[10rem] max-w-[14rem] flex-1 items-center gap-1.5 sm:min-w-[12rem]">
-            <ArrowLeftRight size={14} className="shrink-0 text-slate-500" aria-hidden />
-            <span className="shrink-0 text-slate-500">Width</span>
-            <label className="flex min-w-0 flex-1 items-center">
-              {Array.isArray(viewSlider.snapValues) && viewSlider.snapValues.length > 0 ? (
-                <input
-                  type="range"
-                  aria-label="Cards per row"
-                  min={0}
-                  max={Math.max(0, viewSlider.snapValues.length - 1)}
-                  step={1}
-                  value={Math.min(viewSlider.snapIndex ?? 0, viewSlider.snapValues.length - 1)}
-                  onChange={e => viewSlider.onSnapChange?.(Number(e.target.value))}
-                  className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-cyan-500"
-                />
-              ) : (
-                <input
-                  type="range"
-                  aria-label="Card width"
-                  min={viewSlider.min ?? 220}
-                  max={viewSlider.max ?? 520}
-                  step={viewSlider.step ?? 10}
-                  value={viewSlider.value}
-                  onChange={e => viewSlider.onChange(Number(e.target.value))}
-                  className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-cyan-500"
-                />
+          )}
+          {viewSlider && (
+            <>
+              {showSort && <span className="text-dh-muted select-none shrink-0" aria-hidden>|</span>}
+              <span className={headingCls}>View</span>
+              <span className="inline-flex min-w-[10rem] max-w-[14rem] flex-1 items-center gap-1.5 sm:min-w-[12rem]">
+                <ArrowLeftRight size={14} className="shrink-0 text-dh-muted" aria-hidden />
+                <span className="shrink-0 text-dh-muted">Width</span>
+                <label className="flex min-w-0 flex-1 items-center">
+                  {Array.isArray(viewSlider.snapValues) && viewSlider.snapValues.length > 0 ? (
+                    <input
+                      type="range"
+                      aria-label="Cards per row"
+                      min={0}
+                      max={Math.max(0, viewSlider.snapValues.length - 1)}
+                      step={1}
+                      value={Math.min(viewSlider.snapIndex ?? 0, viewSlider.snapValues.length - 1)}
+                      onChange={e => viewSlider.onSnapChange?.(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                    />
+                  ) : (
+                    <input
+                      type="range"
+                      aria-label="Card width"
+                      min={viewSlider.min ?? 220}
+                      max={viewSlider.max ?? 520}
+                      step={viewSlider.step ?? 10}
+                      value={viewSlider.value}
+                      onChange={e => viewSlider.onChange(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                    />
+                  )}
+                </label>
+              </span>
+              {viewSlider.height && (
+                <span className="inline-flex min-w-[10rem] max-w-[14rem] flex-1 items-center gap-1.5 sm:min-w-[12rem]">
+                  <ArrowUpDown size={14} className="shrink-0 text-dh-muted" aria-hidden />
+                  <span className="shrink-0 text-dh-muted">Height</span>
+                  <label className="flex min-w-0 flex-1 items-center">
+                    <input
+                      type="range"
+                      aria-label="Card height"
+                      min={viewSlider.height.min ?? 120}
+                      max={viewSlider.height.max ?? 480}
+                      step={viewSlider.height.step ?? 1}
+                      value={viewSlider.height.value}
+                      onChange={e => viewSlider.height.onChange(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                    />
+                  </label>
+                </span>
               )}
-            </label>
-          </span>
-          {viewSlider.height && (
-            <span className="inline-flex min-w-[10rem] max-w-[14rem] flex-1 items-center gap-1.5 sm:min-w-[12rem]">
-              <ArrowUpDown size={14} className="shrink-0 text-slate-500" aria-hidden />
-              <span className="shrink-0 text-slate-500">Height</span>
-              <label className="flex min-w-0 flex-1 items-center">
-                <input
-                  type="range"
-                  aria-label="Card height"
-                  min={viewSlider.height.min ?? 120}
-                  max={viewSlider.height.max ?? 480}
-                  step={viewSlider.height.step ?? 1}
-                  value={viewSlider.height.value}
-                  onChange={e => viewSlider.height.onChange(Number(e.target.value))}
-                  className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-700 accent-cyan-500"
-                />
-              </label>
-            </span>
+            </>
           )}
         </div>
       )}
@@ -310,40 +322,41 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOp
 
   const btnBase = 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors border';
   const btnActive = 'bg-red-700 border-red-600 text-white';
-  const btnInactive = 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600 hover:text-white';
+  const btnInactive = 'bg-dh-raised border-dh-strong text-dh hover:border-dh-strong hover:text-white';
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
-        <Search size={14} className="text-slate-400 shrink-0" />
-        <input
-          autoFocus={autoFocusSearch}
-          className="flex-1 bg-transparent text-sm text-white outline-none placeholder-slate-500"
-          placeholder="Search by name..."
-          value={search}
-          onChange={e => onFilterChange('search', e.target.value)}
-        />
-      </div>
-
-      <div>
-        <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Source</div>
-        <div className="flex flex-wrap gap-1.5">
-          {SOURCE_OPTIONS.map(({ val, label }) => (
-            <button
-              key={String(val)}
-              type="button"
-              onClick={() => onFilterChange('include', val === null ? null : val)}
-              className={`${btnBase} ${(val === null ? includes.length === 0 : includes.includes(val)) ? btnActive : btnInactive}`}
-            >
-              {label}
-            </button>
-          ))}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border border-dh-strong bg-dh-raised px-3 py-2 transition-colors focus-within:border-blue-500">
+          <Search size={14} className="shrink-0 text-dh-muted" />
+          <input
+            autoFocus={autoFocusSearch}
+            className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder-dh-muted"
+            placeholder="Search by name..."
+            value={search}
+            onChange={e => onFilterChange('search', e.target.value)}
+          />
+        </div>
+        <div className="min-w-0">
+          <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-dh-muted">Source</div>
+          <div className="flex flex-wrap gap-1.5">
+            {SOURCE_OPTIONS.map(({ val, label }) => (
+              <button
+                key={String(val)}
+                type="button"
+                onClick={() => onFilterChange('include', val === null ? null : val)}
+                className={`${btnBase} ${(val === null ? includes.length === 0 : includes.includes(val)) ? btnActive : btnInactive}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {rankNums && (
         <div>
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">
             {cfg.rankMode === 'level' ? 'Level' : 'Tier'}
           </div>
           <div className="flex flex-col gap-1.5">
@@ -363,7 +376,7 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOp
                   type="checkbox"
                   checked={!!includeScaledUp}
                   onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50"
+                  className="rounded border-dh-strong bg-dh-raised text-amber-500 focus:ring-amber-500/50"
                 />
                 <span>Include Scaled</span>
               </label>
@@ -374,7 +387,7 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOp
 
       {typeOptions && typeOptions.length > 0 && (
         <div>
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">{typeLabel}</div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">{typeLabel}</div>
           <div className="flex flex-wrap gap-1.5">
             <button type="button" onClick={() => onFilterChange('type', null)} className={`${btnBase} ${types.length === 0 ? btnActive : btnInactive}`}>All</button>
             {typeOptions.map(val => (
@@ -386,7 +399,7 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOp
 
       {extraOpts && extraOpts.length > 0 && (
         <div>
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">{extraLabel}</div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">{extraLabel}</div>
           <div className="flex flex-wrap gap-1.5">
             <button type="button" onClick={() => onFilterChange('extraType', null)} className={`${btnBase} ${extraTypes.length === 0 ? btnActive : btnInactive}`}>All</button>
             {extraOpts.map(val => (
@@ -398,7 +411,7 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOp
 
       {showSort && (
         <div>
-          <div className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Sort</div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">Sort</div>
           <select value={sort} onChange={e => onFilterChange('sort', e.target.value)} className={`${btnBase} w-full`}>
             {SORT_OPTIONS.map(({ val, label }) => (
               <option key={val} value={val}>{label}</option>
@@ -409,3 +422,4 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOp
     </div>
   );
 }
+

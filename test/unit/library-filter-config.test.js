@@ -3,7 +3,9 @@ import {
   SRD_UNIFIED_COLLECTIONS,
   LIBRARY_FILTERS_PERSIST_KEY,
   LIBRARY_SEARCH_GLOBAL_KEY,
+  LIBRARY_INCLUDES_GLOBAL_KEY,
   readSharedSearchQuery,
+  readSharedIncludes,
   getLibraryFilterConfig,
   LIBRARY_GENERIC_DETAIL_COLLECTIONS,
 } from '../../src/client/lib/library-filter-config.js';
@@ -52,6 +54,26 @@ describe('library-filter-config', () => {
 
     it('returns empty string when key is missing', () => {
       expect(readSharedSearchQuery(LIBRARY_SEARCH_GLOBAL_KEY)).toBe('');
+    });
+  });
+
+  describe('readSharedIncludes', () => {
+    it('returns null when key is null', () => {
+      expect(readSharedIncludes(null)).toBe(null);
+    });
+
+    it('returns null when key is missing', () => {
+      expect(readSharedIncludes(LIBRARY_INCLUDES_GLOBAL_KEY)).toBe(null);
+    });
+
+    it('reads JSON array under LIBRARY_INCLUDES_GLOBAL_KEY', () => {
+      localStorage.setItem(LIBRARY_INCLUDES_GLOBAL_KEY, JSON.stringify(['own', 'srd']));
+      expect(readSharedIncludes(LIBRARY_INCLUDES_GLOBAL_KEY)).toEqual(['own', 'srd']);
+    });
+
+    it('returns null for invalid JSON', () => {
+      localStorage.setItem(LIBRARY_INCLUDES_GLOBAL_KEY, 'not-json');
+      expect(readSharedIncludes(LIBRARY_INCLUDES_GLOBAL_KEY)).toBe(null);
     });
   });
 });

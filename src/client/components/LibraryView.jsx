@@ -31,7 +31,14 @@ import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { enrichItems, enrichSingleItem } from '../lib/api.js';
 import { generateId } from '../lib/helpers.js';
 import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
-import { SRD_UNIFIED_COLLECTIONS, LIBRARY_FILTERS_PERSIST_KEY, LIBRARY_SEARCH_GLOBAL_KEY, getLibraryFilterConfig } from '../lib/library-filter-config.js';
+import {
+  SRD_UNIFIED_COLLECTIONS,
+  LIBRARY_USER_EDITABLE_COLLECTIONS,
+  LIBRARY_FILTERS_PERSIST_KEY,
+  LIBRARY_SEARCH_GLOBAL_KEY,
+  LIBRARY_INCLUDES_GLOBAL_KEY,
+  getLibraryFilterConfig,
+} from '../lib/library-filter-config.js';
 import {
   computeLibrarySnapWidths,
   snapLibraryCardWidth,
@@ -104,8 +111,6 @@ const LIBRARY_NAV_TABS = TABS.filter(t => !LIBRARY_NAV_HIDDEN_IDS.has(t.id));
 /** Unified paginated API (Mine + SRD + …) */
 const SRD_FILTER_TABS = new Set(SRD_UNIFIED_COLLECTIONS);
 
-const CREATOR_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
-
 /** Game Table can only add these library types */
 const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
 
@@ -116,7 +121,7 @@ function LibraryNewItemCard({ singularLabel, onClick, cardWidth = DEFAULT_CARD_W
       type="button"
       onClick={onClick}
       style={{ width: cardWidth, height: cardHeight }}
-      className="bg-slate-900/80 border-2 border-dashed border-slate-700 rounded-lg hover:border-red-500/60 hover:bg-slate-800/50 cursor-pointer transition-colors flex flex-row max-w-full shrink-0 items-center justify-center gap-2 text-slate-400 hover:text-red-300"
+      className="bg-dh-surface/80 border-2 border-dashed border-dh-strong rounded-lg hover:border-red-500/60 hover:bg-dh-raised/50 cursor-pointer transition-colors flex flex-row max-w-full shrink-0 items-center justify-center gap-2 text-dh-muted hover:text-red-300"
     >
       <Plus size={22} className="text-red-500/90 shrink-0" />
       <span className="text-sm font-medium">New {singularLabel}</span>
@@ -171,7 +176,7 @@ export function LibraryView({
     setLibraryCardHeight(readStoredLibraryCardHeight(userUid, activeTab));
   }, [userUid, activeTab]);
 
-  const canCreateNew = CREATOR_COLLECTIONS.has(activeTab);
+  const canCreateNew = LIBRARY_USER_EDITABLE_COLLECTIONS.has(activeTab);
   const filterDefaults = useMemo(() => {
     const c = getLibraryFilterConfig(activeTab);
     return { sort: c.defaultSort || 'popularity' };
@@ -222,6 +227,7 @@ export function LibraryView({
     debounceMs: 400,
     persistKey: isPaginatedTab ? LIBRARY_FILTERS_PERSIST_KEY : null,
     sharedSearchKey: LIBRARY_SEARCH_GLOBAL_KEY,
+    sharedIncludesKey: LIBRARY_INCLUDES_GLOBAL_KEY,
     defaultFilters: filterDefaults,
     enabled: isPaginatedTab,
     infinite: true,
@@ -542,14 +548,14 @@ export function LibraryView({
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* Sidebar Tabs */}
-      <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
+      <div className="w-64 bg-dh-surface border-r border-dh-border flex flex-col">
         {LIBRARY_NAV_TABS.map(tab => (
           <button
             key={tab.id}
             type="button"
             onClick={() => navigate(`/library/${tab.id}`)}
             className={`flex items-center gap-3 px-4 py-3 text-sm text-left transition-colors ${
-              activeTab === tab.id ? 'bg-slate-800 text-red-400 border-r-2 border-red-500' : 'text-slate-400 hover:bg-slate-800/50'
+              activeTab === tab.id ? 'bg-dh-raised text-red-400 border-r-2 border-red-500' : 'text-dh-muted hover:bg-dh-raised/50'
             }`}
           >
             <tab.Icon size={18} /> {tab.label}
@@ -572,10 +578,10 @@ export function LibraryView({
 
       {showDaggerstackImport && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 p-5 relative">
+          <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-5 relative">
             <button
               onClick={() => setShowDaggerstackImport(false)}
-              className="absolute top-3 right-3 text-slate-400 hover:text-white transition-colors"
+              className="absolute top-3 right-3 text-dh-muted hover:text-dh transition-colors"
             >
               <X size={18} />
             </button>
@@ -627,10 +633,10 @@ export function LibraryView({
       )}
 
       {/* Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+      <div className="flex-1 flex flex-col overflow-hidden bg-dh-canvas">
 
         {/* Sticky header */}
-        <div className="shrink-0 pl-6 pr-9 pt-6 pb-3 border-b border-slate-800/50 bg-slate-950">
+        <div className="shrink-0 pl-6 pr-9 pt-6 pb-3 border-b border-dh-border/50 bg-dh-canvas">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
             <h2 className="text-2xl font-bold text-white capitalize">{activeTab}</h2>
 
@@ -639,7 +645,7 @@ export function LibraryView({
                 <button
                   type="button"
                   onClick={() => setShowImageImport(true)}
-                  className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
+                  className="text-xs bg-dh-raised hover:bg-dh-hover text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-dh-strong hover:border-amber-700"
                 >
                   Import
                 </button>
@@ -648,7 +654,7 @@ export function LibraryView({
                 <button
                   type="button"
                   onClick={() => setShowDaggerstackImport(true)}
-                  className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-slate-700 hover:border-amber-700"
+                  className="text-xs bg-dh-raised hover:bg-dh-hover text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-dh-strong hover:border-amber-700"
                 >
                   Import from Daggerstack
                 </button>
@@ -701,7 +707,7 @@ export function LibraryView({
                   },
                 }}
               />
-              <div className="text-xs text-slate-500 -mt-3">
+              <div className="text-xs text-dh-muted -mt-3">
                 {search.loading && !search.isLoadingMore
                   ? <span className="animate-pulse">Loading {activeTab}…</span>
                   : showingRangeText
@@ -787,8 +793,8 @@ export function LibraryView({
                 </>
               ) : !search.loading ? (
                 <div className="flex flex-col gap-4">
-                  <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
-                    <p className="text-base text-slate-400">No items match the selected filters.</p>
+                  <div className="text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg">
+                    <p className="text-base text-dh-muted">No items match the selected filters.</p>
                     {activeFilterEmptyChips.length > 0 && (
                       <div className="mt-4 flex flex-wrap justify-center gap-2">
                         {activeFilterEmptyChips.map(spec => (
@@ -798,7 +804,7 @@ export function LibraryView({
                             onClick={() => applyLibraryFilterChipClear(spec, search.setFilter)}
                             title={spec.title ? `${spec.title} — click to reset` : `Reset to default — ${spec.label}`}
                             aria-label={spec.title ? `${spec.title}: ${spec.label}` : `Reset filter to default: ${spec.label}`}
-                            className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-600 bg-slate-800/80 px-4 py-2 text-left text-base leading-snug text-slate-200 hover:border-red-500/60 hover:bg-slate-800 hover:text-red-200 transition-colors"
+                            className="inline-flex max-w-full items-center gap-2 rounded-full border border-dh-strong bg-dh-raised/80 px-4 py-2 text-left text-base leading-snug text-dh hover:border-red-500/60 hover:bg-dh-raised hover:text-red-200 transition-colors"
                           >
                             <span className="min-w-0 break-words">{spec.label}</span>
                             <X size={18} strokeWidth={2} className="shrink-0 opacity-70" aria-hidden />
@@ -818,7 +824,7 @@ export function LibraryView({
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
-                  <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
+                  <div className="text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg animate-pulse">
                     Loading {activeTab}…
                   </div>
                   {canCreateNew && (
@@ -834,7 +840,7 @@ export function LibraryView({
             </div>
           ) : !isPaginatedTab && nonPaginatedLoading ? (
             <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
-              <div className="text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg animate-pulse">
+              <div className="text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg animate-pulse">
                 Loading {activeTab}…
               </div>
               <LibraryNewItemCard singularLabel={SINGULAR_NAMES[activeTab]} onClick={openNew} />
@@ -861,7 +867,7 @@ export function LibraryView({
                 />
               ))}
               {filteredItems.length === 0 && (
-                <div className="w-full text-center p-8 text-slate-500 border border-dashed border-slate-800 rounded-lg">
+                <div className="w-full text-center p-8 text-dh-muted border border-dashed border-dh-border rounded-lg">
                   {items.length === 0 ? `No ${activeTab} found. Click "New" to create one.` : 'No items match the selected filters.'}
                 </div>
               )}

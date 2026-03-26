@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { isAdversaryDefeated, effectiveEvasion, isWingsOfLightFlying, getPendingV2DeferToggleNext } from '../../src/client/lib/helpers.js';
+import {
+  isAdversaryDefeated,
+  effectiveEvasion,
+  isWingsOfLightFlying,
+  getPendingV2DeferToggleNext,
+  formatArmorChipTooltip,
+  formatStatModsTooltip,
+} from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
   it('returns true when hp_max > 0 and currentHp <= 0', () => {
@@ -110,5 +117,37 @@ describe('effectiveEvasion', () => {
       activeModifiers: [{ type: 'evasion', value: 5, id: 'x' }],
     };
     expect(effectiveEvasion(el, srdData)).toBe(17);
+  });
+});
+
+describe('formatArmorChipTooltip', () => {
+  it('lists weapon sources for armor score', () => {
+    const el = {
+      weaponMods: {
+        armorScore: 2,
+        sources: [
+          { stat: 'armor score', feature: 'Bonded', weapon: 'Spear', value: 2 },
+        ],
+      },
+    };
+    expect(formatArmorChipTooltip(el)).toBe('Bonded (Spear): +2 to Armor Score');
+  });
+
+  it('returns empty when no armor score bonus', () => {
+    expect(formatArmorChipTooltip({ weaponMods: {} })).toBe('');
+  });
+});
+
+describe('formatStatModsTooltip', () => {
+  it('describes ancestry max HP bonus', () => {
+    expect(formatStatModsTooltip({ ancestryMods: { maxHp: 2 } }, 'maxHp')).toBe('Ancestry: +2 to Max HP');
+  });
+
+  it('describes ancestry max Stress bonus', () => {
+    expect(formatStatModsTooltip({ ancestryMods: { maxStress: 1 } }, 'maxStress')).toBe('Ancestry: +1 to Max Stress');
+  });
+
+  it('returns empty when no matching bonus', () => {
+    expect(formatStatModsTooltip({}, 'maxHp')).toBe('');
   });
 });

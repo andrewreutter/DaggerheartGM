@@ -41,25 +41,25 @@ export function MarkdownHelpTooltip() {
     <span ref={wrapperRef} className="relative inline-flex items-center">
       <HelpCircle
         size={12}
-        className="text-slate-500 hover:text-slate-300 cursor-help transition-colors ml-1"
+        className="text-dh-muted hover:text-dh cursor-help transition-colors ml-1"
         onMouseEnter={() => { if (!isTouch) show(); }}
         onMouseLeave={() => { if (!isTouch) hide(); }}
         onClick={() => { if (isTouch) setVisible(v => !v); }}
       />
       {visible && (
         <div
-          className="absolute top-0 left-full ml-2 z-50 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-3 text-xs text-slate-300"
+          className="absolute top-0 left-full ml-2 z-50 w-56 bg-dh-surface border border-dh-border rounded-lg shadow-xl p-3 text-xs text-dh"
           onMouseEnter={() => { if (!isTouch) show(); }}
           onMouseLeave={() => { if (!isTouch) hide(); }}
         >
-          <p className="font-semibold text-slate-200 mb-2">Markdown supported</p>
+          <p className="font-semibold text-dh mb-2">Markdown supported</p>
           <table className="w-full text-[10px] leading-relaxed">
             <tbody>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5">**bold**</td><td><strong>bold</strong></td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5">*italic*</td><td><em>italic</em></td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5">- item</td><td>bullet list</td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5">1. item</td><td>numbered list</td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5">(blank line)</td><td>new paragraph</td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5">**bold**</td><td><strong>bold</strong></td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5">*italic*</td><td><em>italic</em></td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5">- item</td><td>bullet list</td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5">1. item</td><td>numbered list</td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5">(blank line)</td><td>new paragraph</td></tr>
             </tbody>
           </table>
           <a
@@ -70,18 +70,18 @@ export function MarkdownHelpTooltip() {
           >
             Full syntax ↗
           </a>
-          <p className="font-semibold text-slate-200 mt-3 mb-1">Auto-decorated</p>
+          <p className="font-semibold text-dh mt-3 mb-1">Auto-decorated</p>
           <table className="w-full text-[10px] leading-relaxed">
             <tbody>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5 align-top">spend … fear</td><td><strong className="text-slate-200">bolded</strong></td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5 align-top">mark … fear</td><td><strong className="text-slate-200">bolded</strong></td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5 align-top">mark … stress</td><td><strong className="text-slate-200">bolded</strong></td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5 align-top">trailing ?</td><td><em>italicized</em></td></tr>
-              <tr><td className="font-mono text-slate-400 pr-2 py-0.5 align-top">Countdown (N)</td><td>interactive counter</td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5 align-top">spend … fear</td><td><strong className="text-dh">bolded</strong></td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5 align-top">mark … fear</td><td><strong className="text-dh">bolded</strong></td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5 align-top">mark … stress</td><td><strong className="text-dh">bolded</strong></td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5 align-top">trailing ?</td><td><em>italicized</em></td></tr>
+              <tr><td className="font-mono text-dh-muted pr-2 py-0.5 align-top">Countdown (N)</td><td>interactive counter</td></tr>
             </tbody>
           </table>
           {/* Left-pointing arrow */}
-          <div className="absolute top-2 right-full w-0 h-0 border-t-4 border-b-4 border-r-4 border-t-transparent border-b-transparent border-r-slate-700" />
+          <div className="absolute top-2 right-full w-0 h-0 border-t-4 border-b-4 border-r-4 border-t-transparent border-b-transparent border-r-dh-border" />
         </div>
       )}
     </span>

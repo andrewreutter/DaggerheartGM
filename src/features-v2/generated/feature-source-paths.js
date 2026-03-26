@@ -189,7 +189,10 @@ export const pathByAbilityId = {
   "srd-abl-support-tank": "abilities/Valor/SupportTank.js",
   "srd-abl-unbreakable": "abilities/Valor/Unbreakable.js",
   "srd-abl-unyielding-armor": "abilities/Valor/UnyieldingArmor.js",
-  "srd-abl-valor-touched": "abilities/Valor/ValorTouched.js"
+  "srd-abl-valor-touched": "abilities/Valor/ValorTouched.js",
+  "srd-abl-a-soldier-s-bond": "abilities/Blade/ASoldiersBond.js",
+  "srd-abl-champion-s-edge": "abilities/Blade/ChampionsEdge.js",
+  "srd-abl-nature-s-tongue": "abilities/Sage/NaturesTongue.js"
 };
 
 export const pathByClassId = {
@@ -261,7 +264,43 @@ export const pathByAncestryKey = {
   "Ribbet.Amphibious": "ancestries/Ribbet.js",
   "Ribbet.LongTongue": "ancestries/Ribbet.js",
   "Simiah.NaturalClimber": "ancestries/Simiah.js",
-  "Simiah.Nimble": "ancestries/Simiah.js"
+  "Simiah.Nimble": "ancestries/Simiah.js",
+  "srd-anc-efficient": "ancestries/Clank.js",
+  "srd-anc-purposeful-design": "ancestries/Clank.js",
+  "srd-anc-elemental-breath": "ancestries/Drakona.js",
+  "srd-anc-scales": "ancestries/Drakona.js",
+  "srd-anc-increased-fortitude": "ancestries/Dwarf.js",
+  "srd-anc-thick-skin": "ancestries/Dwarf.js",
+  "srd-anc-celestial-trance": "ancestries/Elf.js",
+  "srd-anc-quick-reactions": "ancestries/Elf.js",
+  "srd-anc-luckbender": "ancestries/Faerie.js",
+  "srd-anc-wings": "ancestries/Faerie.js",
+  "srd-anc-caprine-leap": "ancestries/Faun.js",
+  "srd-anc-kick": "ancestries/Faun.js",
+  "srd-anc-charge": "ancestries/Firbolg.js",
+  "srd-anc-unshakable": "ancestries/Firbolg.js",
+  "srd-anc-death-connection": "ancestries/Fungril.js",
+  "srd-anc-fungril-network": "ancestries/Fungril.js",
+  "srd-anc-retract": "ancestries/Galapa.js",
+  "srd-anc-shell": "ancestries/Galapa.js",
+  "srd-anc-endurance": "ancestries/Giant.js",
+  "srd-anc-reach": "ancestries/Giant.js",
+  "srd-anc-danger-sense": "ancestries/Goblin.js",
+  "srd-anc-surefooted": "ancestries/Goblin.js",
+  "srd-anc-internal-compass": "ancestries/Halfling.js",
+  "srd-anc-luckbringer": "ancestries/Halfling.js",
+  "srd-anc-adaptability": "ancestries/Human.js",
+  "srd-anc-high-stamina": "ancestries/Human.js",
+  "srd-anc-dread-visage": "ancestries/Infernis.js",
+  "srd-anc-fearless": "ancestries/Infernis.js",
+  "srd-anc-feline-instincts": "ancestries/Katari.js",
+  "srd-anc-retracting-claws": "ancestries/Katari.js",
+  "srd-anc-sturdy": "ancestries/Orc.js",
+  "srd-anc-tusks": "ancestries/Orc.js",
+  "srd-anc-amphibious": "ancestries/Ribbet.js",
+  "srd-anc-long-tongue": "ancestries/Ribbet.js",
+  "srd-anc-natural-climber": "ancestries/Simiah.js",
+  "srd-anc-nimble": "ancestries/Simiah.js"
 };
 
 export const pathByCommunityId = {
@@ -277,26 +316,30 @@ export const pathByCommunityId = {
 };
 
 export const pathByBeastformId = {
-  "srd-bst-agile-scout": "beastforms/NimbleGrazer.js",
+  "srd-bst-agile-scout": "beastforms/AgileScout.js",
+  "srd-bst-aquatic-predator": "beastforms/AquaticPredator.js",
   "srd-bst-aquatic-scout": "beastforms/AquaticScout.js",
-  "srd-bst-great-predator": "beastforms/GreatPredator.js",
   "srd-bst-armored-sentry": "beastforms/ArmoredSentry.js",
   "srd-bst-epic-aquatic-beast": "beastforms/EpicAquaticBeast.js",
-  "srd-bst-mighty-strider": "beastforms/MythicAerialHunter.js",
-  "srd-bst-winged-beast": "beastforms/WingedBeast.js",
+  "srd-bst-great-predator": "beastforms/GreatPredator.js",
+  "srd-bst-great-winged-beast": "beastforms/GreatWingedBeast.js",
   "srd-bst-household-friend": "beastforms/HouseholdFriend.js",
-  "srd-bst-legendary-beast": "beastforms/MythicBeast.js",
-  "srd-bst-legendary-hybrid": "beastforms/MythicHybrid.js",
+  "srd-bst-legendary-beast": "beastforms/LegendaryBeast.js",
+  "srd-bst-legendary-hybrid": "beastforms/LegendaryHybrid.js",
   "srd-bst-massive-behemoth": "beastforms/MassiveBehemoth.js",
   "srd-bst-mighty-lizard": "beastforms/MightyLizard.js",
+  "srd-bst-mighty-strider": "beastforms/MightyStrider.js",
   "srd-bst-mythic-aerial-hunter": "beastforms/MythicAerialHunter.js",
+  "srd-bst-mythic-beast": "beastforms/MythicBeast.js",
+  "srd-bst-mythic-hybrid": "beastforms/MythicHybrid.js",
   "srd-bst-nimble-grazer": "beastforms/NimbleGrazer.js",
   "srd-bst-pack-predator": "beastforms/PackPredator.js",
   "srd-bst-pouncing-predator": "beastforms/PouncingPredator.js",
   "srd-bst-powerful-beast": "beastforms/PowerfulBeast.js",
   "srd-bst-stalking-arachnid": "beastforms/StalkingArachnid.js",
   "srd-bst-striking-serpent": "beastforms/StrikingSerpent.js",
-  "srd-bst-terrible-lizard": "beastforms/TerribleLizard.js"
+  "srd-bst-terrible-lizard": "beastforms/TerribleLizard.js",
+  "srd-bst-winged-beast": "beastforms/WingedBeast.js"
 };
 
 export const pathByItemId = {

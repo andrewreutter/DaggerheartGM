@@ -9,6 +9,7 @@ import {
   computeWeaponModifiers,
   computeArmorModifiers,
   buildV2SheetUnwrapGameState,
+  isArmorFeatureEvasionOnlyTooltipRedundant,
 } from '../../src/client/lib/character-calc.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +37,12 @@ describe('computeArmorModifiers (V2 armor_properties only)', () => {
     const result = computeArmorModifiers(armor);
     expect(result.rollModifiers).toHaveLength(1);
     expect(result.rollModifiers[0]).toMatchObject({ name: 'Quiet', score: 2, rollType: 'stealth' });
+  });
+
+  it('Flexible: evasion-only registry feature is redundant for stat-block armor cards', () => {
+    expect(isArmorFeatureEvasionOnlyTooltipRedundant('Flexible', {})).toBe(true);
+    expect(isArmorFeatureEvasionOnlyTooltipRedundant('Quiet', {})).toBe(false);
+    expect(isArmorFeatureEvasionOnlyTooltipRedundant('Unknown Homebrew', {})).toBe(false);
   });
 
   it('buildV2SheetUnwrapGameState maps reinforcedActive for Reinforced unwrap', () => {

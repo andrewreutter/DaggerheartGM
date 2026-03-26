@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { FCG_PUBLIC_USER_ID } from './game-constants.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
@@ -8,8 +9,10 @@ const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
 
-/** Stores canonical copies of external (SRD played/cloned, FCG, etc.) items for local-first search and popularity tracking. */
+/** Stores canonical copies of external (SRD played/cloned, etc.) items for local-first search and popularity tracking. */
 export const MIRROR_USER_ID = '__MIRROR__';
+
+export { FCG_PUBLIC_USER_ID };
 
 let pool;
 
@@ -550,7 +553,7 @@ const SORT_OPTIONS = {
 };
 
 /**
- * Unified paginated query combining items (own + public) and external_item_cache (srd, fcg, hod).
+ * Unified paginated query combining items (own + public) and external_item_cache (srd, hod).
  * Single OFFSET/LIMIT, no source ordering.
  *
  * @param {object} opts
@@ -558,7 +561,6 @@ const SORT_OPTIONS = {
  * @param {boolean} opts.includePublic
  * @param {boolean} opts.includeSrd
  * @param {boolean} opts.includeHod
- * @param {boolean} opts.includeFcg
  * @param {string} opts.search
  * @param {number|null} opts.tierMax
  * @param {number[]} opts.tiers
@@ -575,7 +577,6 @@ export async function getUnifiedItems(appId, userId, collection, {
   includePublic = false,
   includeSrd = false,
   includeHod = false,
-  includeFcg = false,
   search = '',
   tierMax = null,
   tiers = [],
@@ -631,7 +632,6 @@ export async function getUnifiedItems(appId, userId, collection, {
   const extSources = [];
   if (includeSrd) extSources.push('srd');
   if (includeHod) extSources.push('hod');
-  if (includeFcg) extSources.push('fcg');
 
   if (extSources.length > 0) {
     parts.push(`(
@@ -845,14 +845,62 @@ export function stripCharacterElementsForDb(elements) {
   });
 }
 
+const SESSION_IDLE_MS = 60 * 60 * 1000;
+
+let onTableStateNotify = () => {};
+
+/** Server startup: `setTableStateNotifyHook((id) => subscriptionManager.notifyChange('table_state', id))` */
+export function setTableStateNotifyHook(fn) {
+  onTableStateNotify = typeof fn === 'function' ? fn : () => {};
+}
+
+function tableStateBlobForSave(stateData) {
+  return {
+    ...stateData,
+    elements: stripCharacterElementsForDb(stateData.elements || []),
+  };
+}
+
 /**
  * Fetch and resolve table state by globally unique tableId.
  * Used by the 'table_state' subscription channel.
+ * Seeds `top.lastPlayActivityAt`, applies 1h idle `top.sessionPaused`, and notifies subscribers when the blob changes.
  */
 export async function getResolvedTableState(appId, tableId) {
   const row = await getTableStateById(appId, tableId);
   if (!row) return null;
-  const stateData = row.data || {};
+  let stateData = row.data || {};
+  const userId = row.userId;
+  let didPersist = false;
+
+  const top0 = stateData.top;
+  if (top0 && typeof top0 === 'object' && top0.sessionStarted && !top0.sessionPaused && top0.lastPlayActivityAt == null) {
+    const seeded = {
+      ...stateData,
+      top: { ...top0, lastPlayActivityAt: Date.now() },
+    };
+    await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(seeded), false);
+    stateData = seeded;
+    didPersist = true;
+  }
+
+  const top = stateData.top;
+  if (top && typeof top === 'object' && top.sessionStarted && !top.sessionPaused && typeof top.lastPlayActivityAt === 'number' && !Number.isNaN(top.lastPlayActivityAt)) {
+    if (Date.now() - top.lastPlayActivityAt > SESSION_IDLE_MS) {
+      const paused = {
+        ...stateData,
+        top: { ...top, sessionPaused: true },
+      };
+      await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(paused), false);
+      stateData = paused;
+      didPersist = true;
+    }
+  }
+
+  if (didPersist) {
+    onTableStateNotify(tableId);
+  }
+
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
   return { ...stateData, elements: resolved };

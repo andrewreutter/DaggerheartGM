@@ -222,7 +222,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
   })();
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border-b border-slate-800 text-xs shrink-0 flex-wrap">
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
       {/* Table name + Delete table button — left */}
       <div className="flex items-center gap-2">
         {onTableNameChange ? (
@@ -234,28 +234,28 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
               onChange={e => setNameInput(e.target.value)}
               onBlur={commitName}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitName(); } }}
-              className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-100 font-semibold text-sm focus:outline-none focus:border-sky-500"
+              className="min-w-[120px] max-w-[240px] px-2 py-1 rounded bg-dh-raised border border-dh-strong text-dh font-semibold text-sm focus:outline-none focus:border-sky-500"
               placeholder="Table name"
             />
           ) : (
             <button
               type="button"
               onClick={() => setIsEditingName(true)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-slate-700/80 text-slate-200 font-semibold text-sm transition-colors"
+              className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-dh-hover/80 text-dh font-semibold text-sm transition-colors"
               title="Edit table name"
             >
               <span className="truncate max-w-[200px]">{tableName || 'Untitled'}</span>
-              <Pencil size={12} className="shrink-0 text-slate-500" />
+              <Pencil size={12} className="shrink-0 text-dh-muted" />
             </button>
           )
         ) : (
-          <span className="px-2 py-1 text-slate-300 font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
+          <span className="px-2 py-1 text-dh font-semibold text-sm truncate max-w-[200px]">{tableName || 'Untitled'}</span>
         )}
         {onDeleteTable && (
           <button
             type="button"
             onClick={onDeleteTable}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-slate-400 hover:text-red-400 hover:bg-slate-800/80 transition-colors"
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-dh-muted hover:text-red-400 hover:bg-dh-raised/80 transition-colors"
             title="Delete table"
           >
             <Trash2 size={12} />
@@ -266,13 +266,17 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
 
       {/* Everything else — right */}
       <div className="flex items-center gap-2 ml-auto">
-        <div className="w-px h-4 bg-slate-700" />
+        <div className="w-px h-4 bg-dh-hover" />
+
+        {mapImageUrl && !isUploading ? (
+          <span className="text-[10px] text-dh-muted/45 select-none whitespace-nowrap">Paste or</span>
+        ) : null}
 
         <label
           className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer transition-colors ${
             isUploading
-              ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-              : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white'
+              ? 'bg-dh-hover text-dh-muted cursor-not-allowed'
+              : 'bg-dh-hover hover:bg-dh-hover text-dh hover:opacity-90'
           }`}
           title="Upload or replace map image"
         >
@@ -290,7 +294,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
 
         {mapImageUrl && (
           <button
-            className="flex items-center gap-1 px-2 py-1 rounded bg-slate-700 hover:bg-red-900 text-slate-400 hover:text-red-300 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded bg-dh-hover hover:bg-red-900 text-dh-muted hover:text-red-300 transition-colors"
             title="Remove map image"
             onClick={() => onMapConfigChange({ mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null }, true)}
           >
@@ -298,16 +302,16 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
           </button>
         )}
 
-        <div className="w-px h-4 bg-slate-700" />
+        <div className="w-px h-4 bg-dh-hover" />
 
-        <span className="text-slate-500">Size:</span>
+        <span className="text-dh-muted">Size:</span>
         <div className="flex items-center gap-1">
           <button
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'width' ? 'bg-sky-700 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'width' ? 'bg-sky-700 text-white' : 'bg-dh-hover text-dh-muted hover:text-white'}`}
             onClick={() => onMapConfigChange({ mapDimension: 'width' })}
           >W</button>
           <button
-            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'height' ? 'bg-sky-700 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'}`}
+            className={`px-1.5 py-0.5 rounded text-xs transition-colors ${mapDimension === 'height' ? 'bg-sky-700 text-white' : 'bg-dh-hover text-dh-muted hover:text-white'}`}
             onClick={() => onMapConfigChange({ mapDimension: 'height' })}
           >H</button>
         </div>
@@ -319,11 +323,11 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
           onChange={e => setSizeInput(e.target.value)}
           onBlur={commitSize}
           onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } }}
-          className="w-14 px-1.5 py-0.5 rounded bg-slate-700 border border-slate-600 text-slate-200 text-xs text-right focus:outline-none focus:border-sky-500"
+          className="w-14 px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs text-right focus:outline-none focus:border-sky-500"
         />
-        <span className="text-slate-500">ft</span>
+        <span className="text-dh-muted">ft</span>
 
-        <span className="text-slate-600 italic">{wxh}</span>
+        <span className="text-dh-muted italic">{wxh}</span>
       </div>
     </div>
   );
@@ -387,7 +391,7 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
         ${isDragging ? 'opacity-30' : ''}
         ${isGhost ? 'opacity-90 pointer-events-none' : ''}
         ${isProxy ? 'opacity-20' : ''}
-        ${isPinned ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-900' : ''}
+        ${isPinned ? 'ring-2 ring-white ring-offset-1 ring-offset-dh-surface' : ''}
       `}
       style={{
         width: size,
@@ -481,7 +485,7 @@ function TokenDetailPanel({
   return (
     <div
       ref={panelRef}
-      className="fixed z-50 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl p-3 min-w-[180px] max-w-[240px]"
+      className="fixed z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] max-w-[240px]"
       style={{ left: pos.left, top: pos.top }}
       onPointerDown={e => e.stopPropagation()}
     >
@@ -490,23 +494,23 @@ function TokenDetailPanel({
         <div className="min-w-0">
           <div className="font-semibold text-white text-sm truncate">{element.name}</div>
           {isChar && element.playerName && (
-            <div className="text-xs text-slate-400 truncate">{element.playerName}</div>
+            <div className="text-xs text-dh-muted truncate">{element.playerName}</div>
           )}
           {isAdv && (
-            <div className="text-xs text-slate-400 capitalize">{element.role || ''} {element.tier ? `T${element.tier}` : ''}</div>
+            <div className="text-xs text-dh-muted capitalize">{element.role || ''} {element.tier ? `T${element.tier}` : ''}</div>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {onRemoveFromMap && (
             <button
               onClick={onRemoveFromMap}
-              className="p-1 rounded text-slate-500 hover:text-amber-400 transition-colors"
+              className="p-1 rounded text-dh-muted hover:text-amber-400 transition-colors"
               title="Remove from map (return to tray)"
             >
               <ArrowLeftToLine size={13} />
             </button>
           )}
-          <button onClick={onClose} className="p-1 rounded text-slate-500 hover:text-white transition-colors">
+          <button onClick={onClose} className="p-1 rounded text-dh-muted hover:text-white transition-colors">
             <X size={13} />
           </button>
         </div>
@@ -515,7 +519,7 @@ function TokenDetailPanel({
       {/* HP — filled = damage taken (matches sidebar & token dots) */}
       {hpMax > 0 && (
         <div className="mb-1.5">
-          <div className="text-xs text-slate-500 mb-0.5">HP {element.currentHp ?? hpMax}/{hpMax}</div>
+          <div className="text-xs text-dh-muted mb-0.5">HP {element.currentHp ?? hpMax}/{hpMax}</div>
           <CheckboxTrack
             total={hpMax}
             filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
@@ -532,7 +536,7 @@ function TokenDetailPanel({
       {/* Stress */}
       {stressMax > 0 && (
         <div className="mb-1.5">
-          <div className="text-xs text-slate-500 mb-0.5">Stress {element.currentStress ?? 0}/{stressMax}</div>
+          <div className="text-xs text-dh-muted mb-0.5">Stress {element.currentStress ?? 0}/{stressMax}</div>
           <CheckboxTrack
             total={stressMax}
             filled={element.currentStress ?? 0}
@@ -553,7 +557,7 @@ function TokenDetailPanel({
         const remaining = element.hope ?? maxH;
         return (
           <div className="mb-1.5">
-            <div className="text-xs text-slate-500 mb-0.5">Hope {remaining}/{maxH}</div>
+            <div className="text-xs text-dh-muted mb-0.5">Hope {remaining}/{maxH}</div>
             <CheckboxTrack
               total={maxH}
               filled={Math.max(0, remaining - hopePending)}
@@ -572,7 +576,7 @@ function TokenDetailPanel({
       {/* Armor (Daggerstack characters) */}
       {isChar && (element.maxArmor ?? 0) > 0 && (
         <div className="mb-1.5">
-          <div className="text-xs text-slate-500 mb-0.5">Armor {displayEl.currentArmor ?? element.maxArmor ?? 0}/{element.maxArmor ?? 0}</div>
+          <div className="text-xs text-dh-muted mb-0.5">Armor {displayEl.currentArmor ?? element.maxArmor ?? 0}/{element.maxArmor ?? 0}</div>
           <CheckboxTrack
             total={element.maxArmor ?? 0}
             filled={displayEl.currentArmor ?? element.maxArmor ?? 0}
@@ -589,21 +593,21 @@ function TokenDetailPanel({
       {/* Conditions */}
       {(canEdit || canEditAdv) && (
         <div>
-          <div className="text-xs text-slate-500 mb-0.5">Conditions</div>
+          <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
           <ConditionsTextInput
             instanceId={element.instanceId}
             value={element.conditions ?? ''}
             onCommit={(v) => updateActiveElement(element.instanceId, { conditions: v })}
             placeholder="none"
-            className="w-full px-1.5 py-0.5 rounded bg-slate-700 border border-slate-600 text-slate-200 text-xs focus:outline-none focus:border-sky-500"
+            className="w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus:outline-none focus:border-sky-500"
           />
         </div>
       )}
       {/* Read-only conditions for player on enemy */}
       {isPlayer && isAdv && element.conditions && (
         <div>
-          <div className="text-xs text-slate-500 mb-0.5">Conditions</div>
-          <div className="text-xs text-slate-300">{element.conditions}</div>
+          <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
+          <div className="text-xs text-dh">{element.conditions}</div>
         </div>
       )}
     </div>
@@ -615,14 +619,14 @@ function TokenDetailPanel({
 function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef, onPointerDown, onPointerMove, onPointerUp, pinnedInstanceId }) {
   if (tokens.length === 0) return null;
 
-  const borderClass = side === 'left' ? 'border-r border-slate-800' : 'border-l border-slate-800';
+  const borderClass = side === 'left' ? 'border-r border-dh-border' : 'border-l border-dh-border';
 
   return (
     <div
       ref={trayRef}
       className={`flex flex-col items-center gap-2 py-3 px-1.5 shrink-0 overflow-y-auto
         transition-colors duration-150 ${borderClass}
-        ${isHighlighted ? 'bg-amber-900/30' : 'bg-slate-900/60'}`}
+        ${isHighlighted ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
       style={{ width: tokenSizePx + 16, minHeight: 0 }}
     >
       {tokens.map(({ element, instanceNum, isMyCharacter, isProxy }) => (
@@ -1228,7 +1232,7 @@ export function BattleMap({
         {showLeftTray && (
           <div
             ref={leftTrayRef}
-            className={`flex flex-col shrink-0 border-r border-slate-800 ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-slate-900/60'}`}
+            className={`flex flex-col shrink-0 border-r border-dh-border ${highlightLeftTray ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
             style={{ width: CHARACTER_TRAY_WIDTH_PX, minHeight: 0 }}
           >
             <div className="flex-1 min-h-0 overflow-hidden">
@@ -1246,13 +1250,13 @@ export function BattleMap({
               />
             </div>
             {showDiceTrayControls && (
-              <div className="p-1.5 border-t border-slate-800 shrink-0 flex flex-col">
+              <div className="p-1.5 border-t border-dh-border shrink-0 flex flex-col">
                 {typeof onCancelAllBanners === 'function' && pendingBannerCount > 0 && (
                   <Tooltip label={`Cancel all ${pendingBannerCount} pending roll banner${pendingBannerCount === 1 ? '' : 's'} (no effects)`}>
                     <button
                       type="button"
                       onClick={onCancelAllBanners}
-                      className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-amber-300/90 hover:text-amber-200 border border-amber-800/60 transition-colors mb-7"
+                      className="w-full flex items-center justify-center py-1.5 rounded bg-dh-raised/80 hover:bg-dh-hover text-amber-300/90 hover:text-amber-200 border border-amber-800/60 transition-colors mb-7"
                       aria-label="Cancel all pending banners"
                     >
                       <CircleX size={14} className="shrink-0" />
@@ -1265,7 +1269,7 @@ export function BattleMap({
                       <button
                         type="button"
                         onClick={onToggleDiceVisibility}
-                        className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                        className="w-full flex items-center justify-center py-1.5 rounded bg-dh-raised/80 hover:bg-dh-hover text-dh-muted hover:text-dh border border-dh-strong transition-colors"
                         aria-label={diceCanvasHidden ? 'Show dice' : 'Hide dice'}
                       >
                         {diceCanvasHidden ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -1277,7 +1281,7 @@ export function BattleMap({
                       <button
                         type="button"
                         onClick={onClearDice}
-                        className="w-full flex items-center justify-center py-1.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors"
+                        className="w-full flex items-center justify-center py-1.5 rounded bg-dh-raised/80 hover:bg-dh-hover text-dh-muted hover:text-dh border border-dh-strong transition-colors"
                         aria-label="Clear dice"
                       >
                         <Eraser size={14} />
@@ -1330,15 +1334,15 @@ export function BattleMap({
                   draggable={false}
                 />
               ) : (
-                <div className="absolute inset-0 bg-white flex items-center justify-center">
+                <div className="absolute inset-0 bg-dh-map-blank flex items-center justify-center">
                   {!isPlayer && charTrayTokens.length === 0 && advTrayTokens.length === 0 && charMapTokens.length === 0 && advMapTokens.length === 0 && (
-                    <div className="text-slate-400 text-sm text-center pointer-events-none">
+                    <div className="text-dh-muted text-sm text-center pointer-events-none">
                       <Map size={32} className="mx-auto mb-2 opacity-50" />
                       <div>Upload a map image or drag tokens here</div>
                     </div>
                   )}
                   {isPlayer && charMapTokens.length === 0 && advMapTokens.length === 0 && (
-                    <div className="text-slate-400 text-sm text-center pointer-events-none">
+                    <div className="text-dh-muted text-sm text-center pointer-events-none">
                       <Map size={32} className="mx-auto mb-2 opacity-50" />
                       <div>No map loaded</div>
                     </div>

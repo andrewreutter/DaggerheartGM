@@ -6,7 +6,6 @@ const SOURCE_LABELS = {
   srd: 'SRD',
   public: 'Public',
   hod: 'HoD',
-  fcg: 'FCG',
 };
 
 function includesMatchDefault(includes) {

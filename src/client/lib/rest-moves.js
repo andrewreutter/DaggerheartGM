@@ -160,14 +160,19 @@ function applyV2AbilityRestMods(rest, character) {
 
 /**
  * Build the effective rest move list and slot counts for a character.
- * Applies V2 ancestry passive rest modifiers (e.g. Elf Celestial Trance slots, Clank Efficient long-in-short).
+ * When **`options.mergedRestStats`** is set (from `mergeV2DeclarativeSheetOverlay` → `_v2RestSlotStats`),
+ * slot counts use the full merged V2 declarative pipeline (consumables, conditional `passiveStatMods`, …).
+ * Otherwise falls back to ancestry + ability registry scans (library / tests without merged overlay).
+ *
  * @param {{ ancestry?: string | string[] }} character — resolved character with ancestry name(s)
  * @param {'short' | 'long'} restDuration
+ * @param {{ mergedRestStats?: { numShortRestSlots?: number, numLongRestSlots?: number, numLongMovesInShortRest?: number } }} [options]
  * @returns {{ moves: Array<{ id: string, name: string, description: string }>, shortSlots: number, longSlots: number, shortSlotLabels: string[], longSlotLabels: string[] }}
  */
-export function getRestMovesForCharacter(character, restDuration) {
+export function getRestMovesForCharacter(character, restDuration, options = {}) {
   const shortMoves = SHORT_REST_MOVES.map(m => ({ ...m }));
   const longMoves = LONG_REST_MOVES.map(m => ({ ...m }));
+  const merged = options.mergedRestStats;
   const rest = {
     shortMoves,
     longMoves,
@@ -186,8 +191,20 @@ export function getRestMovesForCharacter(character, restDuration) {
       this.longSlotLabels.push(name != null && name !== '' ? String(name) : `Move ${this.longMoveSlots}`);
     },
   };
-  applyV2AncestryRestMods(rest, character);
-  applyV2AbilityRestMods(rest, character);
+
+  if (merged && typeof merged === 'object') {
+    const nShort = Math.max(0, Math.floor(Number(merged.numShortRestSlots) || 0));
+    const nLong = Math.max(0, Math.floor(Number(merged.numLongRestSlots) || 0));
+    const nLongInShort = Math.max(0, Math.floor(Number(merged.numLongMovesInShortRest) || 0));
+    for (let i = 0; i < nShort; i++) rest.addShortMoveSlot('Move');
+    for (let i = 0; i < nLong; i++) rest.addLongMoveSlot('Move');
+    for (let i = 0; i < nLongInShort; i++) {
+      rest.longMoves.forEach((m) => rest.addShortMove(m));
+    }
+  } else {
+    applyV2AncestryRestMods(rest, character);
+    applyV2AbilityRestMods(rest, character);
+  }
 
   return {
     moves: restDuration === 'long' ? rest.longMoves : rest.shortMoves,

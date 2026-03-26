@@ -452,6 +452,19 @@ export function loadCharacterFeatures(character, registry) {
     }
   }
 
+  // Rest-banner / consumable use: passiveStatMods may still apply after inventory removes the row
+  // (e.g. Potion of Stability — `restBonusActive` until rest completes). Re-include those consumables.
+  if (character.featureState && registry.consumables) {
+    for (const [featKey, bag] of Object.entries(character.featureState)) {
+      if (!bag || typeof bag !== 'object' || bag.restBonusActive !== true) continue;
+      const m = /^consumables:(.+)$/.exec(featKey);
+      const cid = m ? m[1] : null;
+      if (cid && registry.consumables[cid] && !consumableIdsSeen.has(cid)) {
+        pushConsumableFeaturesForId(cid);
+      }
+    }
+  }
+
   return features.map((f) => enrichHoverActionMeta(f));
 }
 

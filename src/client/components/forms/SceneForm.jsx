@@ -173,12 +173,12 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
   const { tier, bp, budget, autoMods, totalMod, adjustedBudget } = computeSceneBudget(sceneForBP, data, partySize, partyTier);
 
   const diff = bp - adjustedBudget;
-  const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-slate-400';
+  const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-dh-muted';
 
   return (
     <div className="space-y-4">
-      <FormRow label="Scene Name"><input type="text" value={fd.name} onChange={e => updateField('name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
-      <FormRow label={<>Description<MarkdownHelpTooltip /></>}><textarea value={fd.description} onChange={e => updateField('description', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-20 resize-none w-full" /></FormRow>
+      <FormRow label="Scene Name"><input type="text" value={fd.name} onChange={e => updateField('name', e.target.value)} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow>
+      <FormRow label={<>Description<MarkdownHelpTooltip /></>}><textarea value={fd.description} onChange={e => updateField('description', e.target.value)} className="bg-dh-inset border border-dh-border rounded p-2 text-dh h-20 resize-none w-full" /></FormRow>
       <FormRow label="Images (optional)">
         <ImageEditor
           imageUrl={fd.imageUrl}
@@ -217,30 +217,30 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
               </span>
             ))}
           </div>
-          <p className="text-xs text-slate-500 mt-1">Local copies can be edited from the Scene detail view.</p>
+          <p className="text-xs text-dh-muted mt-1">Local copies can be edited from the Scene detail view.</p>
         </div>
       )}
 
       {/* Battle Budget */}
-      <div className="mt-4 pt-4 border-t border-slate-800">
+      <div className="mt-4 pt-4 border-t border-dh-border">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Battle Budget</span>
-          <span className="text-xs text-slate-500">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
+          <span className="text-xs font-semibold text-dh-muted uppercase tracking-wider">Battle Budget</span>
+          <span className="text-xs text-dh-muted">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
         </div>
 
         {/* BP summary row */}
-        <div className="flex items-center gap-3 mb-3 bg-slate-900 rounded-lg px-3 py-2 border border-slate-800">
+        <div className="flex items-center gap-3 mb-3 bg-dh-surface rounded-lg px-3 py-2 border border-dh-border">
           {tier != null && (
             <span className="text-xs font-bold text-blue-300 border border-blue-700/50 bg-blue-900/30 rounded px-1.5 py-0.5">
               Tier {tier}
             </span>
           )}
-          <span className="text-sm text-slate-300">
+          <span className="text-sm text-dh">
             <span className="font-semibold text-white">{bp}</span>
-            <span className="text-slate-500"> BP</span>
+            <span className="text-dh-muted"> BP</span>
           </span>
-          <span className="text-slate-600">·</span>
-          <span className="text-sm text-slate-300">
+          <span className="text-dh-muted">·</span>
+          <span className="text-sm text-dh">
             Budget <span className="font-semibold text-white">{adjustedBudget}</span>
             {totalMod !== 0 && (
               <span className={`ml-1 text-xs ${totalMod > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -293,7 +293,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
 
         {/* User-controlled modifiers */}
         <div className="space-y-2">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400 hover:text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted hover:text-dh">
             <input
               type="checkbox"
               checked={!!battleMods.lessDifficult}
@@ -303,7 +303,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
             <span>Less difficult / shorter fight</span>
             <span className="ml-auto text-xs text-red-400">−1</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400 hover:text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted hover:text-dh">
             <input
               type="checkbox"
               checked={!!battleMods.damageBoostD4}
@@ -313,7 +313,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
             <span>+1d4 damage to all adversaries</span>
             <span className="ml-auto text-xs text-red-400">−2</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400 hover:text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted hover:text-dh">
             <input
               type="checkbox"
               checked={!!battleMods.damageBoostStatic}
@@ -323,7 +323,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
             <span>+2 damage to all adversaries</span>
             <span className="ml-auto text-xs text-red-400">−2</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400 hover:text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted hover:text-dh">
             <input
               type="checkbox"
               checked={!!battleMods.moreDangerous}
@@ -337,8 +337,8 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
       </div>
 
       {!isControlled && (
-        <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+        <div className="flex justify-between items-center mt-6 pt-6 border-t border-dh-border">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
             <input
               type="checkbox"
               checked={!!fd.is_public}
@@ -348,15 +348,15 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
             Make Public
           </label>
           <div className="flex gap-3">
-            <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+            <button onClick={onCancel} className="px-4 py-2 text-dh-muted hover:text-white">Cancel</button>
             <button onClick={handleSave} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Scene</button>
           </div>
         </div>
       )}
 
       {isControlled && (
-        <div className="mt-6 pt-4 border-t border-slate-800">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+        <div className="mt-6 pt-4 border-t border-dh-border">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
             <input
               type="checkbox"
               checked={!!fd.is_public}

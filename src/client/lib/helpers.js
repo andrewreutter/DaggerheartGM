@@ -206,6 +206,34 @@ export function formatEvasionModifierTooltip(el) {
   return parts.join('; ');
 }
 
+/** Tooltip for graphical armor chip — weapon sources that modify Armor Score. */
+export function formatArmorChipTooltip(el) {
+  const wm = el?.weaponMods || {};
+  if (!wm.armorScore) return '';
+  return (wm.sources || [])
+    .filter((s) => s.stat === 'armor score')
+    .map(
+      (s) =>
+        `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to Armor Score`,
+    )
+    .join('; ');
+}
+
+/**
+ * Tooltip for graphical HP / Stress chips — ancestry (and similar) bonuses to max pools.
+ * @param {'maxHp' | 'maxStress'} resourceKey
+ */
+export function formatStatModsTooltip(el, resourceKey) {
+  const am = el?.ancestryMods;
+  if (resourceKey === 'maxHp' && am?.maxHp) {
+    return `Ancestry: +${am.maxHp} to Max HP`;
+  }
+  if (resourceKey === 'maxStress' && am?.maxStress) {
+    return `Ancestry: +${am.maxStress} to Max Stress`;
+  }
+  return '';
+}
+
 /**
  * Returns a character's effective damage thresholds with their level added to each value.
  * Per Daggerheart rules, characters add their level to their armor's base thresholds.

@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
 import { generateId } from './lib/helpers.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
+import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-storage.js';
 import { isOwnItem } from './lib/constants.js';
-import { RUNTIME_KEYS } from './lib/table-ops.js';
+import { RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
+import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
+import { postDebugLog } from './lib/debug-log.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
@@ -17,6 +20,7 @@ import { LibraryView } from './components/LibraryView.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
+import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -59,6 +63,8 @@ function App() {
   const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
   /** V2 shared table bags (e.g. Bard Rally) — persisted in `table_state.featureState` */
   const [tableFeatureState, setTableFeatureState] = useState({});
+  /** `table_state.top` — when absent (legacy), session is treated as active */
+  const [tableTop, setTableTop] = useState(null);
   const [pendingSceneAdd, setPendingSceneAdd] = useState(null); // { scene }
   // tableStateReady: true after we've applied table state for the current table (avoids opening name editor before load)
   const [tableStateReady, setTableStateReady] = useState(false);
@@ -93,6 +99,7 @@ function App() {
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [uiTheme, setUiTheme] = useState(() => getStoredTheme());
   const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [onboardingFlash, setOnboardingFlash] = useState('');
@@ -102,6 +109,11 @@ function App() {
   const myTablesFetchedRef = useRef(false);
   /** Firebase uid of the table owner; set from GET table_state (ownerUid). Undefined until first load for this tableId. */
   const [tableOwnerUid, setTableOwnerUid] = useState(undefined);
+
+  useLayoutEffect(() => {
+    initThemeFromStorage();
+    setUiTheme(getStoredTheme());
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -436,6 +448,7 @@ function App() {
       setLifeSupportSelections({});
       setRestMovesSelections({});
       setTableFeatureState({});
+      setTableTop(null);
       setTableStateReady(false);
     }
     prevTableIdRef.current = route.tableId;
@@ -459,6 +472,7 @@ function App() {
         setLifeSupportSelections({});
         setRestMovesSelections({});
         setTableFeatureState({});
+        setTableTop(null);
         setTableStateReady(true);
         tableStateReadyRef.current = true;
         return;
@@ -477,6 +491,11 @@ function App() {
         setTableFeatureState(tableState.featureState);
       } else {
         setTableFeatureState({});
+      }
+      if (tableState.top != null && typeof tableState.top === 'object') {
+        setTableTop(tableState.top);
+      } else {
+        setTableTop(null);
       }
       setTableStateReady(true);
       tableStateReadyRef.current = true;
@@ -516,6 +535,11 @@ function App() {
           setTableFeatureState(state.featureState);
         } else {
           setTableFeatureState({});
+        }
+        if (state.top != null && typeof state.top === 'object') {
+          setTableTop(state.top);
+        } else {
+          setTableTop(null);
         }
         setTableStateReady(true);
         tableStateReadyRef.current = true;
@@ -568,6 +592,11 @@ function App() {
           setTableFeatureState(state.featureState);
         } else {
           setTableFeatureState({});
+        }
+        if (state.top != null && typeof state.top === 'object') {
+          setTableTop(state.top);
+        } else {
+          setTableTop(null);
         }
         setTableStateReady(true);
         setMyRooms(prev => {
@@ -667,6 +696,16 @@ function App() {
             ? prev[collectionName].map(i => i.id === saved.id ? saved : i)
             : [...prev[collectionName], saved];
           return { ...prev, [collectionName]: updated };
+        });
+      }
+      // Mirror server `character-library-update` so sidebar cards + sheet stay in sync without waiting for SSE.
+      if (collectionName === 'characters' && saved?.id) {
+        setActiveElements(prev => {
+          const result = applyTableOp(
+            { op: 'character-library-update', characterId: saved.id, newBaseData: saved },
+            { activeElements: prev },
+          );
+          return result.activeElements ?? prev;
         });
       }
       return saved;
@@ -871,11 +910,60 @@ function App() {
   // optimistically so the UI stays responsive; the next table_state snapshot confirms.
   const tableId = route.view === 'table' ? route.tableId : user?.uid;
 
-  const sendUpdateActiveElement = (instanceId, updates) => {
+  const sessionPlayAllowed = useMemo(
+    () => isTablePlayAllowed(tableTop == null ? {} : { top: tableTop }),
+    [tableTop]
+  );
+  const sessionStarted = tableTop == null ? true : tableTop.sessionStarted !== false;
+  const sessionPaused = tableTop?.sessionPaused === true;
+
+  // #region agent log
+  useEffect(() => {
+    if (route.view !== 'table' || !user) return;
+    const portalGate = route.view === 'table' && !!user && !sessionPlayAllowed;
+    postDebugLog({
+      _debugSessionId: '7dabc3',
+      sessionId: '7dabc3',
+      location: 'app.jsx:tableSessionPortalGate',
+      message: 'table session + SessionBlockedBanner portal gate',
+      hypothesisId: 'H1-H2-H4-H5',
+      data: {
+        portalGate,
+        sessionPlayAllowed,
+        sessionStarted,
+        sessionPaused,
+        tableTopNull: tableTop == null,
+        topSessionStarted: tableTop?.sessionStarted,
+        topSessionPaused: tableTop?.sessionPaused,
+        isPlayer,
+        effectiveIsPlayer,
+        isPreviewMode: !isPlayer && !!previewAsPlayerEmail && route.view === 'table',
+        routeTableId: route.tableId,
+      },
+      timestamp: Date.now(),
+      runId: 'pre-fix',
+    });
+  }, [
+    route.view,
+    route.tableId,
+    user,
+    sessionPlayAllowed,
+    sessionStarted,
+    sessionPaused,
+    tableTop,
+    isPlayer,
+    effectiveIsPlayer,
+    previewAsPlayerEmail,
+  ]);
+  // #endregion
+
+  const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
     if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
-    postTableOp({ op: 'update-element', instanceId, updates }, tableId);
+    const op = { op: 'update-element', instanceId, updates };
+    if (options.bypassPrepGate) op.bypassPrepGate = true;
+    postTableOp(op, tableId);
   };
 
   const sendRemoveActiveElement = (instanceId) => {
@@ -977,15 +1065,19 @@ function App() {
   // Token positions and conditions text are applied optimistically like the GM path.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.tableId) return;
+    if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
+      return;
+    }
     if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     try {
       await postCharacterUpdate(route.tableId, instanceId, updates);
     } catch (err) {
+      if (err?.playBlocked === 'paused' || err?.playBlocked === 'prep') return;
       console.error('postCharacterUpdate failed:', err);
     }
-  }, [route.tableId]);
+  }, [route.tableId, sessionPlayAllowed]);
 
   const handlePlayerAddCharacter = useCallback(async (charData) => {
     if (!route.tableId) return;
@@ -1018,12 +1110,16 @@ function App() {
   };
 
 
-  if (loading) return <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Loading...</div>;
+  if (loading) return <div className="min-h-screen bg-dh-surface flex items-center justify-center text-dh">Loading...</div>;
 
   return (
-    <div className="h-[100dvh] bg-slate-900 text-slate-200 font-sans flex flex-col overflow-hidden">
+    <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
+      {typeof document !== 'undefined' && route.view === 'table' && user && !sessionPlayAllowed && createPortal(
+        <SessionBlockedBanner isPlayer={effectiveIsPlayer} sessionStarted={sessionStarted} />,
+        document.body
+      )}
       {user && (
-        <nav className="bg-slate-950 border-b border-slate-800 p-4 flex items-center justify-between shadow-md z-[70]">
+        <nav className="bg-dh-canvas border-b border-dh-border p-4 flex items-center justify-between shadow-md z-[70]">
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold text-red-500 tracking-wider flex items-center gap-2">
               <Swords size={24} /> DAGGERTOP
@@ -1069,62 +1165,95 @@ function App() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-4 text-sm text-slate-400">
+          <div className="flex items-center gap-4 text-sm text-dh-muted">
             {(importStatus || onboardingFlash) && (
               <span className="text-xs text-green-400 font-medium">{importStatus || onboardingFlash}</span>
             )}
             <div className="relative" ref={userMenuRef}>
               <button
                 onClick={() => setUserMenuOpen(o => !o)}
-                className="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                className="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-dh-raised transition-colors"
               >
                 <div className="flex flex-col items-end">
                   <span className="text-green-500 font-medium">{user.displayName || user.email || 'Signed In'}</span>
                   <span className="text-[10px] opacity-60 font-mono">{user.email}</span>
                 </div>
-                <ChevronDown size={14} className={`text-slate-500 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown size={14} className={`text-dh-muted transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>
 
               {userMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-1">
+                <div className="absolute right-0 top-full mt-1 w-56 bg-dh-raised border border-dh-strong rounded-lg shadow-xl z-50 py-1">
+                  <div className="px-3 py-2 border-b border-dh-border">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted mb-2">Theme</div>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          applyTheme('dark');
+                          setUiTheme('dark');
+                        }}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                          uiTheme === 'dark'
+                            ? 'bg-dh-hover text-dh ring-1 ring-sky-500/80'
+                            : 'bg-dh-canvas text-dh-muted hover:bg-dh-hover hover:text-dh'
+                        }`}
+                      >
+                        <Moon size={14} /> Dark
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          applyTheme('light');
+                          setUiTheme('light');
+                        }}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                          uiTheme === 'light'
+                            ? 'bg-dh-hover text-dh ring-1 ring-sky-500/80'
+                            : 'bg-dh-canvas text-dh-muted hover:bg-dh-hover hover:text-dh'
+                        }`}
+                      >
+                        <Sun size={14} /> Light
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
                       setUserMenuOpen(false);
                       setFeatureAuthoringGuideOpen(true);
                     }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors"
                   >
                     <ScrollText size={15} /> Feature authoring guide
                   </button>
                   <button
                     type="button"
                     onClick={handleEnableOnboarding}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors"
                   >
                     <Sparkles size={15} /> Enable onboarding
                   </button>
                   <button
                     onClick={handleExport}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors"
                   >
                     <Download size={15} /> Export JSON
                   </button>
-                  <label className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors cursor-pointer">
+                  <label className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors cursor-pointer">
                     <Upload size={15} /> Import JSON
                     <input type="file" accept=".json" onChange={handleImport} className="hidden" />
                   </label>
-                  <div className="border-t border-slate-700 my-1" />
+                  <div className="border-t border-dh-strong my-1" />
                   <button
                     onClick={handleDeleteAllData}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-orange-400 hover:bg-slate-700 hover:text-orange-300 transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-orange-400 hover:bg-dh-hover hover:text-orange-300 transition-colors"
                   >
                     <Trash2 size={15} /> Delete All Data
                   </button>
-                  <div className="border-t border-slate-700 my-1" />
+                  <div className="border-t border-dh-strong my-1" />
                   <button
                     onClick={handleSignOut}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-slate-700 hover:text-red-300 transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-dh-hover hover:text-red-300 transition-colors"
                   >
                     <LogOut size={15} /> Sign Out
                   </button>
@@ -1137,10 +1266,10 @@ function App() {
 
       <main className="flex-1 overflow-hidden flex flex-col">
         {!user || route.view === 'home' ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-slate-900 to-slate-950">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-b from-dh-surface to-dh-canvas">
             <Swords size={64} className="text-red-500 mb-6" />
-            <h1 className="text-4xl font-bold text-white mb-2">Daggertop</h1>
-            <p className="text-slate-400 mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
+            <h1 className="text-4xl font-bold text-dh mb-2">Daggertop</h1>
+            <p className="text-dh-muted mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
             <button
               onClick={handleGoogleSignIn}
               className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-red-900/20"
@@ -1269,6 +1398,9 @@ function App() {
                 onRestMoveSelect={sendRestMoveSelect}
                 onRestMoveClear={effectiveIsPlayer ? () => {} : sendRestMoveClear}
                 tableFeatureState={tableFeatureState}
+                sessionPlayAllowed={sessionPlayAllowed}
+                sessionStarted={sessionStarted}
+                sessionPaused={sessionPaused}
               />
             </div>
           </>
@@ -1307,20 +1439,20 @@ function App() {
           aria-labelledby="delete-table-title"
         >
           <div
-            className="bg-slate-800 border border-slate-600 rounded-xl shadow-xl max-w-md w-full p-6"
+            className="bg-dh-raised border border-dh-strong rounded-xl shadow-xl max-w-md w-full p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="delete-table-title" className="text-lg font-semibold text-red-400 mb-2">Delete table?</h2>
-            <p className="text-slate-300 text-sm mb-4">
+            <p className="text-dh text-sm mb-4">
               Permanently delete &ldquo;{deleteTablePending.name}&rdquo;? All encounter data, map, tokens, and settings will be lost. This cannot be undone.
             </p>
-            <p className="text-slate-400 text-xs mb-2">Type <strong className="text-slate-300 font-mono">DELETE</strong> to confirm:</p>
+            <p className="text-dh-muted text-xs mb-2">Type <strong className="text-dh font-mono">DELETE</strong> to confirm:</p>
             <input
               type="text"
               value={deleteConfirmInput}
               onChange={(e) => setDeleteConfirmInput(e.target.value)}
               placeholder="DELETE"
-              className="w-full px-3 py-2 rounded-md bg-slate-900 border border-slate-600 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500 mb-4 font-mono"
+              className="w-full px-3 py-2 rounded-md bg-dh-surface border border-dh-strong text-dh placeholder-dh-muted focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500 mb-4 font-mono"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Escape') { setDeleteTablePending(null); setDeleteConfirmInput(''); }
@@ -1330,7 +1462,7 @@ function App() {
               <button
                 type="button"
                 onClick={() => { setDeleteTablePending(null); setDeleteConfirmInput(''); }}
-                className="px-4 py-2 rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+                className="px-4 py-2 rounded-md bg-dh-hover text-dh hover:opacity-90 transition-colors"
               >
                 Cancel
               </button>

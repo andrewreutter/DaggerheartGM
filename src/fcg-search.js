@@ -104,7 +104,6 @@ function translateAdversary(item) {
     experiences,
     features,
     imageUrl: item.image ? `https://freshcutgrass.app${item.image}` : '',
-    _source: 'fcg',
   };
 }
 
@@ -130,7 +129,6 @@ function translateEnvironment(item) {
     potential_adversaries: (item.potentialAdversaries || []).filter(Boolean).map(name => ({ name: name.trim() })),
     features,
     imageUrl: item.image ? `https://freshcutgrass.app${item.image}` : '',
-    _source: 'fcg',
   };
 }
 

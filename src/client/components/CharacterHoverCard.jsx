@@ -5,30 +5,31 @@ import {
 } from 'lucide-react';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
+import { CharacterStatBlockGraphic, HopeHeroTrack } from './CharacterStatBlockGraphic.jsx';
 import {
   Section,
   CharacterIdentityHeader,
   CharacterTraitGrid,
   CharacterExperiences,
-  CharacterDefenseRow,
   CharacterWeaponList,
   CharacterFeaturesPanel,
+  CharacterFeatureActionsEmphasisCard,
+  CharacterSheetDeclarativeCards,
   CharacterAbilityList,
   CharacterInventory,
-  CharacterCompanion,
+  DefenseReactionRollGrid,
   TRAIT_FULL,
-  WEAPON_TAG_DESCRIPTIONS,
   formatGold,
   parseBeastformBonus,
 } from './CharacterDisplay.jsx';
+import {
+  CharacterSheetSourceHighlightProvider,
+  CharacterSheetHighlightSurface,
+} from './CharacterSheetSourceHighlight.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { buildActionForFeatureUse } from '../lib/feature-actions.js';
 import {
-  runCharacterHook,
   wrapEntity,
-  wrapRoll,
-  resolveWeaponTagDescriptor,
-  getWeaponTagAutomatedForBanner,
   resolveOriginFeatureDescriptor,
   resolveClassFeatureDescriptor,
   resolveAbilityDescriptor,
@@ -53,6 +54,7 @@ import {
   getPendingManualTrackAckDeltas,
   getLifeSupportPendingHealSlots,
 } from '../lib/manual-track-action-loop.js';
+import { buildWeaponRollText } from '../lib/weapon-roll-text.js';
 
 // formatGold is re-exported from CharacterDisplay; re-export it for callers that
 // already import it from here (keeps backwards-compatibility during migration).
@@ -96,96 +98,6 @@ function buildTraitRollText(charName, traitKey, traitScore, expName, experienceM
   return parts.join(' ');
 }
 
-/** Returns true when the feature should be shown as a tag on the roll banner. */
-function isShowTagFeature(name, characterEl) {
-  return resolveWeaponTagDescriptor(name, characterEl)?.showTag === true;
-}
-
-/**
- * Build descriptive tag text for a feature in the roll banner.
- * Delegates to the merged descriptor's `tagText` (string or function).
- * Falls back to SRD text or WEAPON_TAG_DESCRIPTIONS for unregistered features.
- */
-function buildFeatureTagText(feature, traits, level, characterEl) {
-  const f = resolveWeaponTagDescriptor(feature.name, characterEl);
-  if (f) {
-    const t = f.tagText;
-    if (typeof t === 'function') return t({ traits, level });
-    if (typeof t === 'string') return t;
-  }
-  return feature.text || feature.description || WEAPON_TAG_DESCRIPTIONS[feature.name] || '';
-}
-
-function buildWeaponRollText(charName, weaponName, traitKey, traitScore, expName, damageStr, feature, traits, level, opts = {}, rollMeta = {}, characterEl = null) {
-  const experienceModifier = opts.experienceModifier ?? 2;
-  const traitName = TRAIT_FULL[traitKey] || traitKey;
-  const parts = [`${charName} ${weaponName} Hope [d12] Fear [d12]`];
-  if (traitScore !== 0) {
-    parts.push(`${traitName} [${traitScore}]`);
-  }
-  if (expName) {
-    parts.push(`${expName} [${experienceModifier}]`);
-  }
-
-  const featureSet = feature?.name ? [feature.name] : [];
-  const rollCtx = { traits, level, opts };
-
-  // Pre-damage additions (e.g. Reliable [1])
-  for (const name of featureSet) {
-    const f = resolveWeaponTagDescriptor(name, characterEl);
-    const pre = f?.prependRollParts;
-    if (Array.isArray(pre) && pre.length) parts.push(...pre);
-  }
-
-  // Damage string — rewrite via pipeline hook, except when devastating toggle overrides
-  if (damageStr) {
-    let effectiveDamage = damageStr;
-    if (opts.devastating) {
-      const dm = damageStr.trim().match(/^(\d*d\d+)([+-]\d+)?(.*)$/i);
-      if (dm) effectiveDamage = `d20${dm[2] || ''}${dm[3] || ''}`;
-    } else {
-      // Create synthetic roll object and wrap it for mutation-based rewriteDamage hooks
-      const syntheticRoll = { damageStr, ...rollMeta };
-      const wrappedRoll = wrapRoll(syntheticRoll);
-      rollCtx.roll = wrappedRoll;
-      const weaponRows = (characterEl?.activeFeatures || []).filter(
-        (row) => row.type === 'weapon' && featureSet.includes(row.name)
-      );
-      if (weaponRows.length) {
-        runCharacterHook(weaponRows, 'rewriteDamage', rollCtx);
-      }
-      // Read the mutated value (fallback to original if no mutation occurred)
-      effectiveDamage = wrappedRoll.damageStr ?? damageStr;
-    }
-    const m = effectiveDamage.trim().match(/^([^\s]+)(?:\s+(.+))?$/);
-    if (m) {
-      parts.push(`damage [${m[1]}]`);
-      if (m[2]) parts.push(m[2].toLowerCase());
-    }
-  }
-
-  // Post-damage additions (e.g. Reload [d6], Invigorate [d4], Lifesteal [d6])
-  for (const name of featureSet) {
-    const f = resolveWeaponTagDescriptor(name, characterEl);
-    const app = f?.appendRollParts;
-    if (Array.isArray(app) && app.length) parts.push(...app);
-  }
-
-  // Feature tag when feature opts in with showTag: true, or automated (banner narration / applied style).
-  if (feature && (isShowTagFeature(feature.name, characterEl) || getWeaponTagAutomatedForBanner(feature.name, characterEl))) {
-    let tagText;
-    if (opts.devastating) {
-      tagText = 'd20 damage die, mark 1 Stress (active)';
-    } else if (feature.name === 'Doubled Up' && opts.secondaryDamage) {
-      tagText = `${opts.secondaryDamage} -- deal to another Melee target`;
-    } else {
-      tagText = buildFeatureTagText(feature, traits, level, characterEl);
-    }
-    if (tagText) parts.push(`{${feature.name}: ${tagText}}`);
-  }
-  return parts.join(' ');
-}
-
 // ─── Collapsible JSON tree (for debug panel) ──────────────────────────────────
 
 function JsonTree({ data, label, depth = 0, defaultOpen }) {
@@ -196,7 +108,7 @@ function JsonTree({ data, label, depth = 0, defaultOpen }) {
     return (
       <span className="inline">
         {label != null && <span className="text-violet-300">{label}: </span>}
-        <span className="text-slate-500 italic">null</span>
+        <span className="text-dh-muted italic">null</span>
       </span>
     );
   }
@@ -205,7 +117,7 @@ function JsonTree({ data, label, depth = 0, defaultOpen }) {
     const color = typeof data === 'string' ? 'text-emerald-400'
       : typeof data === 'number' ? 'text-amber-300'
       : typeof data === 'boolean' ? 'text-sky-400'
-      : 'text-slate-300';
+      : 'text-dh';
     const display = typeof data === 'string' ? `"${data}"` : String(data);
     return (
       <span className="inline">
@@ -223,7 +135,7 @@ function JsonTree({ data, label, depth = 0, defaultOpen }) {
     return (
       <span className="inline">
         {label != null && <span className="text-violet-300">{label}: </span>}
-        <span className="text-slate-600">{brackets[0]}{brackets[1]}</span>
+        <span className="text-dh-muted">{brackets[0]}{brackets[1]}</span>
       </span>
     );
   }
@@ -232,27 +144,27 @@ function JsonTree({ data, label, depth = 0, defaultOpen }) {
     <div>
       <button
         onClick={() => setOpen(o => !o)}
-        className="inline-flex items-center gap-0.5 hover:bg-slate-800/60 rounded px-0.5 -ml-0.5 transition-colors text-left"
+        className="inline-flex items-center gap-0.5 hover:bg-dh-raised/60 rounded px-0.5 -ml-0.5 transition-colors text-left"
       >
         {open
-          ? <ChevronDown size={9} className="text-slate-500 shrink-0" />
-          : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
+          ? <ChevronDown size={9} className="text-dh-muted shrink-0" />
+          : <ChevronRight size={9} className="text-dh-muted shrink-0" />}
         {label != null && <span className="text-violet-300">{label}: </span>}
         {!open && (
-          <span className="text-slate-600">
-            {brackets[0]}<span className="text-slate-500 mx-0.5">{entries.length} item{entries.length !== 1 ? 's' : ''}</span>{brackets[1]}
+          <span className="text-dh-muted">
+            {brackets[0]}<span className="text-dh-muted mx-0.5">{entries.length} item{entries.length !== 1 ? 's' : ''}</span>{brackets[1]}
           </span>
         )}
-        {open && <span className="text-slate-600">{brackets[0]}</span>}
+        {open && <span className="text-dh-muted">{brackets[0]}</span>}
       </button>
       {open && (
-        <div className="pl-3 border-l border-slate-800 ml-1">
+        <div className="pl-3 border-l border-dh-border ml-1">
           {entries.map(([key, val]) => (
             <div key={key} className="leading-relaxed">
               <JsonTree data={val} label={isArray ? String(key) : key} depth={depth + 1} />
             </div>
           ))}
-          <span className="text-slate-600">{brackets[1]}</span>
+          <span className="text-dh-muted">{brackets[1]}</span>
         </div>
       )}
     </div>
@@ -274,7 +186,7 @@ function JsonTree({ data, label, depth = 0, defaultOpen }) {
  *   onUseHopeAbility — (instanceId) => void  (legacy; now routed through onFeatureUse)
  *   showResources   — bool
  *   onEdit          — () => void
- *   onDebugMouseEnter / onDebugMouseLeave — for debug panel hover
+ *   hideEditButton  — when true, the Edit control is hidden (e.g. character editor already open)
  *   onActionNotification — (data) => void
  */
 
@@ -305,18 +217,16 @@ export function CharacterHoverCard({
   onUseHopeAbility,
   showResources = false,
   onEdit,
-  onDebugMouseEnter,
-  onDebugMouseLeave,
+  /** When true, omit the header Edit control (e.g. right-drawer editor is open for this character). */
+  hideEditButton = false,
   onActionNotification,
   activeElements,
   mapConfig,
-  hideCompanionSection = false,
   pendingResourceCosts = {},
   /** When set, manual stress increases reduce dashed "pending ack" stress (Game Table). */
   consumePendingStressForManualMark,
   isPlayer = false,
   getValidTargets,
-  targetMenuOpenRef,
   system,
   characters,
   fearCount = 0,
@@ -329,6 +239,10 @@ export function CharacterHoverCard({
   lifeSupportSelections = {},
   /** When set, manual resource track clicks queue an action banner (GM ack applies) */
   queueManualTrackEdit,
+  /** `panelEmbedded` — outer frame provides border/shadow (Game Table unified sheet + editor). */
+  surfaceVariant = 'default',
+  /** When true, identity header is omitted (Game Table shared title bar above sheet + editor). */
+  omitHeader = false,
 }) {
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
@@ -362,14 +276,94 @@ export function CharacterHoverCard({
     [pendingBanners, lifeSupportSelections, el.instanceId]
   );
 
-  // targetMenuOpenRef is kept in sync synchronously in every setTargetMenuPending call below.
-  // (useEffect would be async/post-render, causing a race condition with onMouseLeave.)
+  /** Wires DEFENSE stat-block CheckboxTracks — mirrors the Resources section (pending GM ack, reinforced clear, etc.). */
+  const defenseTrackInteraction = useMemo(() => {
+    if (!updateFn) return null;
+    const id = el.instanceId;
+    const pr = pendingResourceCosts[id] ?? {};
+    const out = { stress: undefined, armor: undefined, hp: undefined };
+    if ((el.maxStress || 0) > 0) {
+      out.stress = {
+        onSetFilled: queueManualTrackEdit
+          ? (s) => queueManualTrackEdit(el, { currentStress: s })
+          : (s) => {
+              const prev = el.currentStress ?? 0;
+              if (s > prev) consumePendingStressForManualMark?.(id, s - prev);
+              updateFn(id, { currentStress: s });
+            },
+        pendingFilled: (pr.stress ?? 0) + manualAck.stressAdd,
+        pendingClearFilled: manualAck.stressClear,
+        label: 'Stress',
+        verbs: ['Mark', 'Clear'],
+      };
+    }
+    if ((el.maxArmor || 0) > 0) {
+      out.armor = {
+        onSetFilled: queueManualTrackEdit
+          ? (v) => {
+              const upd = { currentArmor: v };
+              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+              queueManualTrackEdit(el, upd);
+            }
+          : (v) => {
+              const upd = { currentArmor: v };
+              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+              updateFn(id, upd);
+            },
+        pendingFilled: (pr.armorMark ?? 0) + manualAck.armorMarkAdd,
+        pendingClearFilled: manualAck.armorClear,
+        label: 'Armor',
+        verbs: ['Mark', 'Clear'],
+      };
+    }
+    if ((el.maxHp || 0) > 0) {
+      out.hp = {
+        onSetFilled: queueManualTrackEdit
+          ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
+          : (dmg) => updateFn(id, { currentHp: (el.maxHp || 0) - dmg }),
+        pendingFilled: manualAck.hpDamageAdd,
+        pendingClearFilled: manualAck.hpHealSlots + lifeSupportHealSlots,
+        label: 'HP',
+        verbs: ['Mark', 'Clear'],
+      };
+    }
+    return out;
+  }, [
+    updateFn,
+    el,
+    pendingResourceCosts,
+    manualAck,
+    lifeSupportHealSlots,
+    queueManualTrackEdit,
+    consumePendingStressForManualMark,
+  ]);
+
+  /** Header Hope row — same pending/ack semantics as Resources Hope {@link CheckboxTrack}. */
+  const hopeTrackInteraction = useMemo(() => {
+    if (!updateFn) return null;
+    const id = el.instanceId;
+    const maxHope = el.maxHope ?? 6;
+    if (maxHope <= 0) return null;
+    const hopePending = pendingResourceCosts[id]?.hope ?? 0;
+    const remainingServer = el.hope ?? maxHope;
+    return {
+      filled: Math.max(0, remainingServer - hopePending),
+      onSetFilled: queueManualTrackEdit
+        ? (h) => queueManualTrackEdit(el, { hope: h })
+        : (h) => updateFn(id, { hope: h }),
+      pendingFilled: hopePending + manualAck.hopeGain,
+      pendingClearFilled: manualAck.hopeSpend,
+      fillColor: 'bg-amber-400',
+      label: 'Hope',
+      verbs: ['Gain', 'Spend'],
+      pulseOnDecreaseOnly: true,
+    };
+  }, [updateFn, el, pendingResourceCosts, manualAck, queueManualTrackEdit]);
+
   const openTargetMenu = (value) => {
-    if (targetMenuOpenRef) targetMenuOpenRef.current = true;
     setTargetMenuPending(value);
   };
   const closeTargetMenu = () => {
-    if (targetMenuOpenRef) targetMenuOpenRef.current = false;
     setTargetMenuPending(null);
   };
 
@@ -468,7 +462,7 @@ export function CharacterHoverCard({
   );
 
   const handleV2DomainChip = useCallback(
-    async ({ featRow, chip, featureKey: passedFeatureKey, selectOpts }) => {
+    async ({ featRow, chip, featureKey: passedFeatureKey, selectOpts, placementShape }) => {
       if (!v2Registry || !el.instanceId || !tableId || !Array.isArray(activeElementsForV2Snapshots)) return;
       await runV2OwnedCardChipTableAction({
         featRow,
@@ -484,10 +478,25 @@ export function CharacterHoverCard({
         mapConfig,
         tableId,
         onActionLoopNotification: onActionNotification,
+        onRoll,
+        placementShape,
         isPlayer: !!isPlayer,
       });
     },
-    [v2Registry, el, el.instanceId, displayEl, isPlayer, tableId, activeElementsForV2Snapshots, tableFeatureState, fearCount, mapConfig, onActionNotification]
+    [
+      v2Registry,
+      el,
+      el.instanceId,
+      displayEl,
+      isPlayer,
+      tableId,
+      activeElementsForV2Snapshots,
+      tableFeatureState,
+      fearCount,
+      mapConfig,
+      onActionNotification,
+      onRoll,
+    ]
   );
 
   const traits = displayEl.traits || {};
@@ -958,20 +967,22 @@ export function CharacterHoverCard({
   // ── Header action buttons ────────────────────────────────────────────────────
   const headerActions = (
     <>
-      {onEdit && (
+      {onEdit && !hideEditButton && (
         <button
+          type="button"
           onClick={onEdit}
           title="Edit character"
-          className="p-1 rounded text-slate-500 hover:text-sky-400 transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-dh-muted hover:text-sky-400 border border-dh-strong/35 hover:border-sky-500/45 transition-colors"
         >
-          <Pencil size={11} />
+          <Pencil size={11} className="shrink-0" aria-hidden />
+          Edit
         </button>
       )}
       {(el._daggerstackDebug || el._daggerstackLookupTables) && (
         <button
           onClick={() => setShowDebug(d => !d)}
           title="Debug: view raw Daggerstack payloads"
-          className={`p-1 rounded transition-colors ${showDebug ? 'text-amber-400' : 'text-slate-500 hover:text-amber-400'}`}
+          className={`p-1 rounded transition-colors ${showDebug ? 'text-amber-400' : 'text-dh-muted hover:text-amber-400'}`}
         >
           <Bug size={11} />
         </button>
@@ -981,7 +992,7 @@ export function CharacterHoverCard({
           onClick={onResync}
           disabled={isSyncing}
           title="Re-sync from Daggerstack"
-          className="p-1 rounded text-slate-500 hover:text-sky-400 disabled:opacity-40 transition-colors"
+          className="p-1 rounded text-dh-muted hover:text-sky-400 disabled:opacity-40 transition-colors"
         >
           <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
         </button>
@@ -992,7 +1003,7 @@ export function CharacterHoverCard({
           target="_blank"
           rel="noopener noreferrer"
           title="Open on Daggerstack"
-          className="p-1 rounded text-slate-500 hover:text-sky-400 transition-colors"
+          className="p-1 rounded text-dh-muted hover:text-sky-400 transition-colors"
         >
           <ExternalLink size={11} />
         </a>
@@ -1004,7 +1015,8 @@ export function CharacterHoverCard({
   const currentHope = trackEl.hope ?? (el.maxHope ?? 6);
 
   return (
-    <div className="relative flex flex-col flex-1 min-h-0">
+    <CharacterSheetSourceHighlightProvider disabled={omitHeader}>
+    <CharacterSheetHighlightSurface className="relative flex flex-col flex-1 min-h-0">
 
     {/* ── Target selection popover (fixed, anchored to clicked weapon card) ── */}
     {targetMenuPending && (() => {
@@ -1020,7 +1032,7 @@ export function CharacterHoverCard({
           />
           {/* Popover */}
           <div
-            className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+            className="fixed z-[201] rounded-lg border border-amber-600/70 bg-dh-surface shadow-2xl p-2 space-y-2"
             style={{ top, left, minWidth: '140px', maxWidth: '220px' }}
           >
             <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">
@@ -1028,7 +1040,7 @@ export function CharacterHoverCard({
             </div>
             <div className="space-y-1">
               {targetMenuPending.validTargets.length === 0 ? (
-                <p className="text-[11px] text-slate-400 italic px-1 py-1">No valid targets are in range of this attack.</p>
+                <p className="text-[11px] text-dh-muted italic px-1 py-1">No valid targets are in range of this attack.</p>
               ) : targetMenuPending.validTargets.map((t) => {
                 const sum = formatTargetSummary(t, { hideMax: isPlayer });
                 return (
@@ -1036,7 +1048,7 @@ export function CharacterHoverCard({
                     key={t.instanceId}
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleTargetMenuSelect(t); }}
-                    className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
+                    className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-dh-raised/80 text-dh hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
                   >
                     <div className="flex items-center gap-1 flex-wrap">
                       <span>{t.name}</span>
@@ -1044,7 +1056,7 @@ export function CharacterHoverCard({
                         <span className="text-[10px] font-medium px-1 py-0.5 rounded bg-amber-900/60 border border-amber-600/70 text-amber-200" title="Attacker gains advantage die: Vulnerable Target">Vulnerable</span>
                       )}
                     </div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">
+                    <div className="text-[10px] text-dh-muted mt-0.5">
                       {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                       {sum.conditions ? ` · ${sum.conditions}` : ''}
                     </div>
@@ -1055,7 +1067,7 @@ export function CharacterHoverCard({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); handleTargetMenuCancel(); }}
-              className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+              className="text-[11px] text-dh-muted hover:text-dh transition-colors"
             >
               Cancel
             </button>
@@ -1064,287 +1076,393 @@ export function CharacterHoverCard({
       );
     })()}
 
-    <div className="w-[22rem] bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col flex-1 min-h-0">
+    <div
+      className={
+        surfaceVariant === 'panelEmbedded'
+          ? 'w-full max-w-full min-w-0 h-full min-h-0 bg-transparent border-0 rounded-none shadow-none overflow-hidden flex flex-col flex-1'
+          : 'w-full max-w-full min-w-0 h-full min-h-0 bg-dh-surface border border-dh-border rounded-xl shadow-2xl overflow-hidden flex flex-col flex-1'
+      }
+    >
 
-      {/* ── Header ── */}
-      <div className="shrink-0">
-        <CharacterIdentityHeader el={el} actions={headerActions} />
-      </div>
+      {/* ── Header + Hope (outside sheet scroll) — header omitted when Game Table provides a shared title bar ── */}
+      {omitHeader ? (
+        (el._daggerstackDebug || el._daggerstackLookupTables || (hasDaggerstack && onResync) || hasDaggerstack) && (
+          <div className="flex justify-end items-center gap-1 px-3 py-1.5 border-b dh-tint-spellcast-strip shrink-0">
+            {(el._daggerstackDebug || el._daggerstackLookupTables) && (
+              <button
+                onClick={() => setShowDebug(d => !d)}
+                title="Debug: view raw Daggerstack payloads"
+                className={`p-1 rounded transition-colors ${showDebug ? 'text-amber-400' : 'text-dh-muted hover:text-amber-400'}`}
+              >
+                <Bug size={11} />
+              </button>
+            )}
+            {hasDaggerstack && onResync && (
+              <button
+                onClick={onResync}
+                disabled={isSyncing}
+                title="Re-sync from Daggerstack"
+                className="p-1 rounded text-dh-muted hover:text-sky-400 disabled:opacity-40 transition-colors"
+              >
+                <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
+              </button>
+            )}
+            {hasDaggerstack && (
+              <a
+                href={el.daggerstackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open on Daggerstack"
+                className="p-1 rounded text-dh-muted hover:text-sky-400 transition-colors"
+              >
+                <ExternalLink size={11} />
+              </a>
+            )}
+          </div>
+        )
+      ) : (
+        <div className="shrink-0">
+          <CharacterIdentityHeader el={el} actions={headerActions} />
+        </div>
+      )}
+      {(el.maxHope ?? 0) > 0 && (
+        <div className="px-2 pt-4 pb-2 shrink-0 border-b border-dh-border/50 bg-dh-canvas/20">
+          <HopeHeroTrack el={displayEl} hopeTrackInteraction={hopeTrackInteraction} />
+        </div>
+      )}
 
-      <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+      <div className="p-3 overflow-y-auto flex-1 min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-3 items-start">
+          <div className="space-y-3 min-w-0">
+            <div className="space-y-2 min-w-0">
+              <CharacterStatBlockGraphic
+                el={displayEl}
+                variant="stack"
+                compact
+                srdData={srdData}
+                hideHope
+                defenseTrackInteraction={defenseTrackInteraction}
+                defenseFooter={
+                  <DefenseReactionRollGrid el={displayEl} compact onTraitClick={handleTraitClick} />
+                }
+              />
+            </div>
 
-        <CharacterDefenseRow el={displayEl} />
+            <CharacterTraitGrid
+              el={displayEl}
+              onTraitClick={handleTraitClick}
+              onSpellcastRoll={handleSpellcastRoll}
+              omitOuterSection
+              sheetEmphasisTitle="Traits"
+              sheetEmphasisSubtitle="Action Rolls"
+            />
 
-        {/* ── Traits ── */}
-        <CharacterTraitGrid
-          el={displayEl}
-          onTraitClick={handleTraitClick}
-          onSpellcastRoll={handleSpellcastRoll}
-        />
+            <CharacterExperiences
+              el={displayEl}
+              omitOuterSection
+              sheetEmphasisTitle="Experiences"
+              experiencesAsBadges
+              hope={currentHope}
+              maxHope={el.maxHope ?? 6}
+              rollModifiers={rollModifiers}
+              selectedRollModIndex={selectedRollModIndex}
+              onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
+              selectedModId={selectedModId}
+              onSelectMod={onRoll ? setSelectedModId : undefined}
+              modifierEligibility={modifierEligibility}
+              beastformAdvantages={displayEl.activeBeastform?.advantages
+                ? displayEl.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
+                : undefined}
+              selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
+              onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
+              crossSheetChips={crossSheetChips}
+              onCrossSheetChipClick={
+                tableId ? (isPlayer ? handlePlayerCrossSheetChipClick : handleCrossSheetChipClick) : undefined
+              }
+              onUseMod={updateFn ? (mod) => {
+                if (mod.mode === 'clearStress') {
+                  const stress = Math.max(0, (el.currentStress ?? 0) - 1);
+                  updateFn(el.instanceId, { currentStress: stress });
+                  const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+                  updateFn(el.instanceId, { activeModifiers: kept });
+                  return;
+                }
+              } : undefined}
+              onUseMode={updateFn ? (mod, mode) => {
+                if (mod.name === 'Prayer Die' && mode === 'gainHope') {
+                  onActionNotification?.({
+                    _action: true,
+                    rollUser: el.name,
+                    actionName: 'Prayer Die',
+                    actionText: `Use Prayer Die to gain ${mod.value} Hope`,
+                    _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
+                    _attackerInstanceId: el.instanceId,
+                  });
+                  return;
+                }
+                const selfEl = wrapEntity(el, updateFn);
+                for (const f of el.classFeatures || []) {
+                  const descriptor = resolveClassFeatureDescriptor(displayEl, f.name);
+                  if (descriptor?.onModifierUsed) {
+                    descriptor.onModifierUsed({ modifier: mod, mode, selfEl, updateActiveElement: updateFn });
+                  }
+                }
+                const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
+                updateFn(el.instanceId, { activeModifiers: kept });
+              } : undefined}
+            />
 
-        {/* ── Experiences + Modifier Bin ── */}
-        <CharacterExperiences
-          el={displayEl}
-          experiencesAsBadges
-          hope={currentHope}
-          maxHope={el.maxHope ?? 6}
-          rollModifiers={rollModifiers}
-          selectedRollModIndex={selectedRollModIndex}
-          onSelectRollMod={onRoll ? setSelectedRollModIndex : undefined}
-          selectedModId={selectedModId}
-          onSelectMod={onRoll ? setSelectedModId : undefined}
-          modifierEligibility={modifierEligibility}
-          beastformAdvantages={displayEl.activeBeastform?.advantages
-            ? displayEl.activeBeastform.advantages.split(',').map(s => s.trim()).filter(Boolean)
-            : undefined}
-          selectedBeastformAdvantage={el.selectedBeastformAdvantage ?? null}
-          onSelectBeastformAdvantage={updateFn ? handleBeastformAdvantageSelect : undefined}
-          crossSheetChips={crossSheetChips}
-          onCrossSheetChipClick={
-            tableId ? (isPlayer ? handlePlayerCrossSheetChipClick : handleCrossSheetChipClick) : undefined
-          }
-          onUseMod={updateFn ? (mod) => {
-            // clearStress mode chips (e.g. Rogue's Dodge): clear 1 Stress and consume the modifier
-            if (mod.mode === 'clearStress') {
-              const stress = Math.max(0, (el.currentStress ?? 0) - 1);
-              updateFn(el.instanceId, { currentStress: stress });
-              const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
-              updateFn(el.instanceId, { activeModifiers: kept });
-              return;
-            }
-          } : undefined}
-          onUseMode={updateFn ? (mod, mode) => {
-            // Prayer Die: gainHope → post ActionBanner for GM ack (not direct apply)
-            if (mod.name === 'Prayer Die' && mode === 'gainHope') {
-              onActionNotification?.({
+            <CharacterFeaturesPanel
+              el={displayEl}
+              omitActions
+              omitDeclarativeCards
+              expandedKeys={expandedKeys}
+              onToggleFeature={onToggleFeature}
+              onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
+              onUseHopeAbility={onUseHopeAbility}
+              onFeatureUse={handleFeatureUse}
+              featureUsage={el.featureUsage}
+              currentHope={currentHope}
+              updateFn={updateFn}
+              activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
+              prayerDice={(el.activeModifiers || []).filter(m => m.name === 'Prayer Die')}
+              onPrayerDieGainHope={onActionNotification ? (mod) => onActionNotification({
                 _action: true,
                 rollUser: el.name,
                 actionName: 'Prayer Die',
                 actionText: `Use Prayer Die to gain ${mod.value} Hope`,
                 _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
                 _attackerInstanceId: el.instanceId,
-              });
-              return; // Die is consumed on GM ack, not here
-            }
-            // Dispatch class feature onModifierUsed hook (per-feature)
-            const selfEl = wrapEntity(el, updateFn);
-            for (const f of el.classFeatures || []) {
-              const descriptor = resolveClassFeatureDescriptor(displayEl, f.name);
-              if (descriptor?.onModifierUsed) {
-                descriptor.onModifierUsed({ modifier: mod, mode, selfEl, updateActiveElement: updateFn });
+              }) : undefined}
+              onShareFeature={onActionNotification ? (feature) => onActionNotification({
+                _action: true,
+                rollUser: el.name,
+                actionName: feature.name,
+                actionText: feature.description ?? '',
+              }) : undefined}
+              onV2CardChip={v2TableScoped ? handleV2DomainChip : undefined}
+              v2TableContext={
+                v2TableScoped
+                  ? {
+                      fearCount,
+                      mapConfig,
+                      tableFeatureState,
+                      activeElements,
+                      registry: v2Registry ?? undefined,
+                    }
+                  : undefined
               }
-            }
-            // Consume the modifier chip after use
-            const kept = (el.activeModifiers || []).filter(m => m.id !== mod.id);
-            updateFn(el.instanceId, { activeModifiers: kept });
-          } : undefined}
-        />
+              pendingBanners={pendingBanners}
+              queueManualTrackEdit={queueManualTrackEdit}
+              onRoll={onRoll}
+            />
+          </div>
 
-        {/* ── Resource tracks ── */}
-        {showResources && (
-          <Section label="Resources">
-            <div className="space-y-1.5">
-              {(() => {
-                const maxHope = el.maxHope ?? 6;
-                const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
-                const remainingServer = el.hope ?? maxHope;
-                return maxHope > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles size={11} className="text-amber-400 shrink-0" />
-                    <span className="text-[11px] text-slate-400 w-10 shrink-0">Hope</span>
-                    <CheckboxTrack
-                      total={maxHope}
-                      filled={Math.max(0, remainingServer - hopePending)}
-                      pendingFilled={hopePending + manualAck.hopeGain}
-                      pendingClearFilled={manualAck.hopeSpend}
-                      onSetFilled={queueManualTrackEdit
-                        ? (h) => queueManualTrackEdit(el, { hope: h })
-                        : (h) => updateFn(el.instanceId, { hope: h })}
-                      fillColor="bg-amber-400"
-                      label="Hope"
-                      verbs={['Gain', 'Spend']}
-                      pulseOnDecreaseOnly
-                    />
-                    <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.hope ?? maxHope}/{maxHope}</span>
-                  </div>
-                );
-              })()}
-              {(el.maxArmor || 0) > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <Shield size={11} className="text-cyan-500 shrink-0" />
-                  <span className="text-[11px] text-slate-400 w-10 shrink-0">Armor</span>
-                  <CheckboxTrack
-                    total={el.maxArmor}
-                    filled={el.currentArmor || 0}
-                    pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
-                    pendingClearFilled={manualAck.armorClear}
-                    onSetFilled={queueManualTrackEdit
-                      ? (v) => {
-                          const upd = { currentArmor: v };
-                          if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                          queueManualTrackEdit(el, upd);
-                        }
-                      : (v) => {
-                          const upd = { currentArmor: v };
-                          if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                          updateFn(el.instanceId, upd);
-                        }}
-                    fillColor="bg-cyan-500"
-                    label="Armor"
-                    verbs={['Mark', 'Clear']}
-                  />
-                    <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.currentArmor || 0}/{el.maxArmor}</span>
+          <div className="space-y-3 min-w-0">
+            <CharacterWeaponList
+              el={displayEl}
+              onWeaponClick={handleWeaponClick}
+              devastatingActive={devastatingActive}
+              onDevastatingToggle={() => setDevastatingActive(d => !d)}
+              stressMaxed={stressMaxed}
+              onActionNotification={onActionNotification}
+              onBeastformAttack={handleBeastformAttack}
+              getValidTargets={getValidTargets}
+              omitOuterSection
+              sheetEmphasisTitle="Offense"
+            />
+            <CharacterFeatureActionsEmphasisCard
+              el={displayEl}
+              onV2CardChip={v2TableScoped ? handleV2DomainChip : undefined}
+              onShareFeature={onActionNotification ? (feature) => onActionNotification({
+                _action: true,
+                rollUser: el.name,
+                actionName: feature.name,
+                actionText: feature.description ?? '',
+              }) : undefined}
+              v2TableContext={
+                v2TableScoped
+                  ? {
+                      fearCount,
+                      mapConfig,
+                      tableFeatureState,
+                      activeElements,
+                      registry: v2Registry ?? undefined,
+                    }
+                  : undefined
+              }
+              activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
+              pendingBanners={pendingBanners}
+            />
+            <CharacterSheetDeclarativeCards
+              el={displayEl}
+              v2TableContext={
+                v2TableScoped
+                  ? {
+                      fearCount,
+                      mapConfig,
+                      tableFeatureState,
+                      activeElements,
+                      registry: v2Registry ?? undefined,
+                    }
+                  : undefined
+              }
+              queueManualTrackEdit={queueManualTrackEdit}
+              updateFn={updateFn}
+              onRoll={onRoll}
+              onV2CardChip={v2TableScoped ? handleV2DomainChip : undefined}
+              interactionMode={
+                (v2TableScoped ? handleV2DomainChip : undefined) || onActionNotification
+                  ? 'interactive'
+                  : 'preview'
+              }
+            />
+            <CharacterAbilityList
+              el={displayEl}
+              expandedKeys={expandedKeys}
+              onToggleFeature={onToggleFeature}
+              onFeatureUse={handleFeatureUse}
+              featureUsage={el.featureUsage}
+              onV2DomainChip={v2TableScoped ? handleV2DomainChip : undefined}
+              v2TableContext={
+                v2TableScoped
+                  ? {
+                      fearCount,
+                      mapConfig,
+                      tableFeatureState,
+                      activeElements,
+                      registry: v2Registry ?? undefined,
+                    }
+                  : undefined
+              }
+            />
+            {showResources && (
+              <Section label="Resources">
+                <div className="space-y-1.5">
+                  {(() => {
+                    const maxHope = el.maxHope ?? 6;
+                    const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
+                    const remainingServer = el.hope ?? maxHope;
+                    return maxHope > 0 && (
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles size={11} className="text-amber-400 shrink-0" />
+                        <span className="text-[11px] text-dh-muted w-10 shrink-0">Hope</span>
+                        <CheckboxTrack
+                          total={maxHope}
+                          filled={Math.max(0, remainingServer - hopePending)}
+                          pendingFilled={hopePending + manualAck.hopeGain}
+                          pendingClearFilled={manualAck.hopeSpend}
+                          onSetFilled={queueManualTrackEdit
+                            ? (h) => queueManualTrackEdit(el, { hope: h })
+                            : (h) => updateFn(el.instanceId, { hope: h })}
+                          fillColor="bg-amber-400"
+                          label="Hope"
+                          verbs={['Gain', 'Spend']}
+                          pulseOnDecreaseOnly
+                          fillRow
+                          className="flex-1 min-w-0 gap-1"
+                          itemClassName="min-h-5 max-h-6 rounded border-2"
+                        />
+                        <span className="text-[10px] text-dh-muted tabular-nums ml-auto">{maxHope}</span>
+                      </div>
+                    );
+                  })()}
+                  {(el.maxArmor || 0) > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <Shield size={11} className="text-cyan-500 shrink-0" />
+                      <span className="text-[11px] text-dh-muted w-10 shrink-0">Armor</span>
+                      <CheckboxTrack
+                        total={el.maxArmor}
+                        filled={el.currentArmor || 0}
+                        pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
+                        pendingClearFilled={manualAck.armorClear}
+                        onSetFilled={queueManualTrackEdit
+                          ? (v) => {
+                              const upd = { currentArmor: v };
+                              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                              queueManualTrackEdit(el, upd);
+                            }
+                          : (v) => {
+                              const upd = { currentArmor: v };
+                              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                              updateFn(el.instanceId, upd);
+                            }}
+                        fillColor="bg-cyan-500"
+                        label="Armor"
+                        verbs={['Mark', 'Clear']}
+                      />
+                      <span className="text-[10px] text-dh-muted tabular-nums ml-auto">{el.maxArmor}</span>
+                    </div>
+                  )}
+                  {(el.maxHp || 0) > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <Heart size={11} className="text-red-500 shrink-0" />
+                      <span className="text-[11px] text-dh-muted w-10 shrink-0">HP</span>
+                      <CheckboxTrack
+                        total={el.maxHp}
+                        filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
+                        pendingFilled={manualAck.hpDamageAdd}
+                        pendingClearFilled={manualAck.hpHealSlots + lifeSupportHealSlots}
+                        onSetFilled={queueManualTrackEdit
+                          ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
+                          : (dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
+                        fillColor="bg-red-500"
+                        label="HP"
+                        verbs={['Mark', 'Clear']}
+                      />
+                      <span className="text-[10px] text-dh-muted tabular-nums ml-auto">{el.maxHp}</span>
+                    </div>
+                  )}
+                  {(el.maxStress || 0) > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle size={11} className="text-orange-500 shrink-0" />
+                      <span className="text-[11px] text-dh-muted w-10 shrink-0">Stress</span>
+                      <CheckboxTrack
+                        total={el.maxStress}
+                        filled={el.currentStress || 0}
+                        pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
+                        pendingClearFilled={manualAck.stressClear}
+                        onSetFilled={queueManualTrackEdit
+                          ? (s) => queueManualTrackEdit(el, { currentStress: s })
+                          : (s) => {
+                              const prev = el.currentStress ?? 0;
+                              if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
+                              updateFn(el.instanceId, { currentStress: s });
+                            }}
+                        fillColor="bg-orange-500"
+                        label="Stress"
+                        verbs={['Mark', 'Clear']}
+                      />
+                      <span className="text-[10px] text-dh-muted tabular-nums ml-auto">{el.maxStress}</span>
+                    </div>
+                  )}
                 </div>
-              )}
-              {(el.maxHp || 0) > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <Heart size={11} className="text-red-500 shrink-0" />
-                  <span className="text-[11px] text-slate-400 w-10 shrink-0">HP</span>
-                  <CheckboxTrack
-                    total={el.maxHp}
-                    filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
-                    pendingFilled={manualAck.hpDamageAdd}
-                    pendingClearFilled={manualAck.hpHealSlots + lifeSupportHealSlots}
-                    onSetFilled={queueManualTrackEdit
-                      ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
-                      : (dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
-                    fillColor="bg-red-500"
-                    label="HP"
-                    verbs={['Mark', 'Clear']}
-                  />
-                  <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.currentHp ?? el.maxHp}/{el.maxHp}</span>
-                </div>
-              )}
-              {(el.maxStress || 0) > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <AlertCircle size={11} className="text-orange-500 shrink-0" />
-                  <span className="text-[11px] text-slate-400 w-10 shrink-0">Stress</span>
-                  <CheckboxTrack
-                    total={el.maxStress}
-                    filled={el.currentStress || 0}
-                    pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
-                    pendingClearFilled={manualAck.stressClear}
-                    onSetFilled={queueManualTrackEdit
-                      ? (s) => queueManualTrackEdit(el, { currentStress: s })
-                      : (s) => {
-                          const prev = el.currentStress ?? 0;
-                          if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
-                          updateFn(el.instanceId, { currentStress: s });
-                        }}
-                    fillColor="bg-orange-500"
-                    label="Stress"
-                    verbs={['Mark', 'Clear']}
-                  />
-                  <span className="text-[10px] text-slate-500 tabular-nums ml-auto">{el.currentStress || 0}/{el.maxStress}</span>
-                </div>
-              )}
-            </div>
-          </Section>
-        )}
+              </Section>
+            )}
 
-        {/* ── Weapons (or Beastform Attack when transformed) ── */}
-        <CharacterWeaponList
-          el={displayEl}
-          onWeaponClick={handleWeaponClick}
-          devastatingActive={devastatingActive}
-          onDevastatingToggle={() => setDevastatingActive(d => !d)}
-          stressMaxed={stressMaxed}
-          onActionNotification={onActionNotification}
-          onBeastformAttack={handleBeastformAttack}
-          getValidTargets={getValidTargets}
-        />
+            <CharacterInventory el={el} />
 
-        {/* ── Inventory ── */}
-        <CharacterInventory el={el} />
-
-        <CharacterFeaturesPanel
-          el={displayEl}
-          expandedKeys={expandedKeys}
-          onToggleFeature={onToggleFeature}
-          onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
-          onUseHopeAbility={onUseHopeAbility}
-          onFeatureUse={handleFeatureUse}
-          featureUsage={el.featureUsage}
-          currentHope={currentHope}
-          updateFn={updateFn}
-          activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
-          prayerDice={(el.activeModifiers || []).filter(m => m.name === 'Prayer Die')}
-          onPrayerDieGainHope={onActionNotification ? (mod) => onActionNotification({
-            _action: true,
-            rollUser: el.name,
-            actionName: 'Prayer Die',
-            actionText: `Use Prayer Die to gain ${mod.value} Hope`,
-            _prayerDieGainHope: { modId: mod.id, value: mod.value, instanceId: el.instanceId },
-            _attackerInstanceId: el.instanceId,
-          }) : undefined}
-          onShareFeature={onActionNotification ? (feature) => onActionNotification({
-            _action: true,
-            rollUser: el.name,
-            actionName: feature.name,
-            actionText: feature.description ?? '',
-          }) : undefined}
-          onV2CardChip={v2TableScoped ? handleV2DomainChip : undefined}
-          v2TableContext={
-            v2TableScoped
-              ? {
-                  fearCount,
-                  mapConfig,
-                  tableFeatureState,
-                  activeElements,
-                  registry: v2Registry ?? undefined,
-                }
-              : undefined
-          }
-          pendingBanners={pendingBanners}
-        />
-
-        {/* ── Domain Cards ── */}
-        <CharacterAbilityList
-          el={displayEl}
-          expandedKeys={expandedKeys}
-          onToggleFeature={onToggleFeature}
-          onFeatureUse={handleFeatureUse}
-          featureUsage={el.featureUsage}
-          onV2DomainChip={v2TableScoped ? handleV2DomainChip : undefined}
-          v2TableContext={
-            v2TableScoped
-              ? {
-                  fearCount,
-                  mapConfig,
-                  tableFeatureState,
-                  activeElements,
-                  registry: v2Registry ?? undefined,
-                }
-              : undefined
-          }
-        />
-
-        {/* ── Companion (hidden when shown as second card in overlay) ── */}
-        {!hideCompanionSection && <CharacterCompanion el={trackEl} />}
-
-        {/* ── Description ── */}
-        {el.description && (
-          <Section label="Description">
-            <p className="text-[11px] text-slate-400 leading-relaxed italic">{el.description}</p>
-          </Section>
-        )}
-
+            {el.description && (
+              <Section label="Description">
+                <p className="text-[11px] text-dh-muted leading-relaxed italic">{el.description}</p>
+              </Section>
+            )}
+          </div>
+        </div>
       </div>
     </div>
 
     {showDebug && (el._daggerstackDebug || el._daggerstackLookupTables) && (
       <div
         className="absolute top-0 flex gap-2 pl-2"
-        style={{ left: '22rem' }}
-        onMouseEnter={onDebugMouseEnter}
-        onMouseLeave={onDebugMouseLeave}
+        style={{ left: 'min(96vw, 44rem)' }}
       >
         {[
           ['Supabase Row', el._daggerstackDebug?.supabaseRow],
           ['Resolved Lookups', el._daggerstackDebug?.resolved],
           ['Lookup Tables', el._daggerstackLookupTables],
         ].filter(([, data]) => data).map(([label, data]) => (
-          <div key={label} className="w-80 h-[80vh] bg-slate-900 border border-amber-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+          <div key={label} className="w-80 h-[80vh] bg-dh-surface border border-amber-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col">
             <div className="px-3 py-2 bg-amber-950/30 border-b border-amber-900/30 shrink-0">
               <p className="text-[10px] uppercase tracking-widest text-amber-400 font-semibold">{label}</p>
             </div>
@@ -1358,26 +1476,26 @@ export function CharacterHoverCard({
 
     {/* ── Feature input overlay (e.g. Sorcerer Channel Raw Power card level) ── */}
     {featureInputPending && (
-      <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/80 rounded-xl">
-        <div className="bg-slate-900 border border-amber-600/60 rounded-lg p-4 shadow-2xl w-56 text-center">
+      <div className="absolute inset-0 z-20 flex items-center justify-center bg-dh-canvas/80 rounded-xl">
+        <div className="bg-dh-surface border border-amber-600/60 rounded-lg p-4 shadow-2xl w-56 text-center">
           <div className="text-[11px] font-bold text-amber-300 mb-1">{featureInputPending.feature.name}</div>
           {featureInputPending.subFeature && (
-            <div className="text-[10px] text-slate-400 mb-2">{featureInputPending.subFeature.name}</div>
+            <div className="text-[10px] text-dh-muted mb-2">{featureInputPending.subFeature.name}</div>
           )}
-          <label className="text-[10px] text-slate-400 block mb-1">{featureInputPending.spec.label}</label>
+          <label className="text-[10px] text-dh-muted block mb-1">{featureInputPending.spec.label}</label>
           <input
             type="number"
             min={featureInputPending.spec.min ?? 1}
             max={featureInputPending.spec.max ?? 10}
             value={featureInputValue}
             onChange={e => setFeatureInputValue(e.target.value)}
-            className="w-full text-center bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white mb-3 focus:outline-none focus:border-amber-500"
+            className="w-full text-center bg-dh-raised border border-dh-strong rounded px-2 py-1 text-sm text-dh mb-3 focus:outline-none focus:border-amber-500"
             autoFocus
           />
           <div className="flex gap-2">
             <button
               onClick={() => setFeatureInputPending(null)}
-              className="flex-1 px-2 py-1 rounded text-[11px] border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors"
+              className="flex-1 px-2 py-1 rounded text-[11px] border border-dh-strong text-dh-muted hover:bg-dh-raised transition-colors"
             >Cancel</button>
             <button
               onClick={() => handleFeatureUse(featureInputPending.feature, featureInputPending.subFeature)}
@@ -1388,6 +1506,7 @@ export function CharacterHoverCard({
       </div>
     )}
 
-    </div>
+    </CharacterSheetHighlightSurface>
+    </CharacterSheetSourceHighlightProvider>
   );
 }

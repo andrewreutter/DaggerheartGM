@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Undo2, Redo2, Trash2, Sparkles, RefreshCw, ExternalLink, Check } from 'lucide-react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Undo2, Redo2, Trash2, Sparkles, RefreshCw, ExternalLink, Check, User } from 'lucide-react';
 import { ItemActionButtons } from '../ItemActionButtons.jsx';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryForm } from '../forms/AdversaryForm.jsx';
@@ -7,6 +8,7 @@ import { EnvironmentForm } from '../forms/EnvironmentForm.jsx';
 import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { CharacterForm } from '../forms/CharacterForm.jsx';
+import { GenericSrdLibraryForm } from '../forms/GenericSrdLibraryForm.jsx';
 import { SOURCE_BADGE, isOwnItem } from '../../lib/constants.js';
 import { generateId } from '../../lib/helpers.js';
 import { getBaselineStats, getUnscaledAdversary, computeScaledStats } from '../../lib/adversary-defaults.js';
@@ -20,7 +22,15 @@ import { LibraryItemDisplayContent } from '../library/LibraryItemDisplayContent.
 import { LibraryItemImageThumb } from '../library/LibraryItemImageThumb.jsx';
 import { getLibraryItemImageUrls } from '../../lib/library-item-image-urls.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
-import { showLibraryTierShield } from '../../lib/library-tier-subtitle.js';
+import { LevelBadge } from '../LevelBadge.jsx';
+import { showLibraryTierShield, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
+import { resolveV2LibraryItemSourcePath } from '../../../features-v2/resolve-feature-source-path.js';
+import { V2SourceInspectButton } from '../V2SourceInspectButton.jsx';
+import { SRD_UNIFIED_COLLECTIONS, LIBRARY_CUSTOM_DETAIL_COLLECTIONS } from '../../lib/library-filter-config.js';
+import { buildDefaultNewSrdLibraryItem } from '../../lib/library-default-new-item.js';
+import { CharacterIdentityTitleRow } from '../CharacterDisplay.jsx';
+
+const SRD_UNIFIED_SET = new Set(SRD_UNIFIED_COLLECTIONS);
 
 const COLLECTION_LABELS = {
   adversaries: 'Adversary',
@@ -47,7 +57,7 @@ const COLLECTION_LABELS = {
  * Editable items show a split layout:
  *   [Live Preview] | [Edit Form] | [Feature Library (adversaries/environments only, narrow)]
  *
- * Non-editable items (SRD/public/FCG) show only the display pane with a Clone action.
+ * Non-editable items (SRD/public, including Fresh Cut Grass catalog) show only the display pane with a Clone action.
  *
  * Auto-saves on every change (debounced 800ms). Editable header shows status chips and a **Done** button (no separate close icon); characters may show a one-time dismissible tip. Provides infinite undo/redo within the session.
  * Keyboard: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo, Escape = close lightbox (if open) or close modal.
@@ -56,7 +66,7 @@ const COLLECTION_LABELS = {
  *   item          – item to view/edit (pass `{}` for new)
    *   collection    – 'adversaries' | 'environments' | 'scenes' | 'adventures'
    *   data          – app-level data for ref resolution (scene preview)
- *   editable      – boolean; false for SRD/public/FCG items
+ *   editable      – boolean; false for SRD/public catalog items
  *   onSave        – async (formData) => void; called by auto-save with full item data
    *   onSaveElement – optional; for scene inline element edits
  *   onDelete      – optional () => void
@@ -65,8 +75,11 @@ const COLLECTION_LABELS = {
  *   addToTableMenu – optional { tables: { id, name }[], onPick (tableId) => void }; when set, Play opens a table picker (Library)
  *   onEdit        – optional () => void
  *   onClose       – () => void
+ *   presentation  – 'center' (default) full-screen modal; 'rightDrawer' slides the editor in from the right (form only, no preview — Game Table character edit).
+ *   rightDrawerPortalTo — optional; with `rightDrawer`, mount the editor into this element (unified sheet card on the Game Table). Omit for fixed-viewport fallback; `null` means waiting for the portal node.
+ *   onCharacterDrawerChromeSync — optional; when the Game Table portals the character editor, called with form + save UI state for the shared title bar (header is omitted in the modal).
  */
-export function ItemDetailModal({
+export const ItemDetailModal = forwardRef(function ItemDetailModal({
   item,
   collection,
   data,
@@ -86,9 +99,13 @@ export function ItemDetailModal({
   partyTier = 1,
   characters = [],
   onMergeAdversary,
-}) {
+  presentation = 'center',
+  rightDrawerPortalTo,
+  onCharacterDrawerChromeSync,
+}, ref) {
   const isNew = !item?.id;
-  const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments');
+  const isRightDrawer = presentation === 'rightDrawer';
+  const showFeatureLibrary = editable && (collection === 'adversaries' || collection === 'environments') && !isRightDrawer;
 
   const [libraryPortal, setLibraryPortal] = useState(null);
   const [cloningStatus, setCloningStatus] = useState('');
@@ -96,6 +113,7 @@ export function ItemDetailModal({
   const [showScaled, setShowScaled] = useState(true);
   const [charAutosaveHintDismissed, setCharAutosaveHintDismissed] = useState(isCharacterEditorAutosaveHintDismissed);
   const overlayRef = useRef(null);
+  const [drawerEntered, setDrawerEntered] = useState(false);
 
   useEffect(() => {
     const onReset = () => setCharAutosaveHintDismissed(isCharacterEditorAutosaveHintDismissed());
@@ -124,17 +142,29 @@ export function ItemDetailModal({
   if (!initialRef.current) {
     const raw = item || {};
     const ensureIds = (arr) => (arr || []).map(entry => entry.id ? entry : { ...entry, id: generateId() });
-    const defaultsForNew = !raw.id && collection === 'adversaries' ? (() => {
-      const baseline = getBaselineStats('standard', 1);
-      return {
-        tier: 1,
-        role: 'standard',
-        ...baseline,
-        attack: { name: '', range: 'Melee', trait: 'Phy', ...baseline?.attack },
-      };
-    })() : !raw.id && collection === 'characters' ? {
-      level: 1, baseTraits: {}, experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-    } : {};
+    let defaultsForNew = {};
+    if (!raw.id) {
+      if (collection === 'adversaries') {
+        const baseline = getBaselineStats('standard', 1);
+        defaultsForNew = {
+          tier: 1,
+          role: 'standard',
+          ...baseline,
+          attack: { name: '', range: 'Melee', trait: 'Phy', ...baseline?.attack },
+        };
+      } else if (collection === 'characters') {
+        defaultsForNew = {
+          level: 1,
+          baseTraits: {},
+          experiences: [
+            { name: '', score: 2, id: generateId() },
+            { name: '', score: 2, id: generateId() },
+          ],
+        };
+      } else if (SRD_UNIFIED_SET.has(collection)) {
+        defaultsForNew = buildDefaultNewSrdLibraryItem(collection);
+      }
+    }
     initialRef.current = {
       ...defaultsForNew,
       ...raw,
@@ -147,6 +177,22 @@ export function ItemDetailModal({
   }
 
   const editorSessionKey = item?.id ?? initialRef.current?.id ?? collection;
+
+  useLayoutEffect(() => {
+    if (!isRightDrawer) {
+      setDrawerEntered(false);
+      return;
+    }
+    if (rightDrawerPortalTo !== undefined) {
+      setDrawerEntered(false);
+      return;
+    }
+    setDrawerEntered(false);
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => setDrawerEntered(true));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isRightDrawer, rightDrawerPortalTo, editorSessionKey]);
 
   const { formData, setFormData, undo, redo, canUndo, canRedo, isSaving, debouncePending, showUnsavedDirtyHint, savedFlash } = useAutoSaveUndo({
     initial: initialRef.current,
@@ -233,6 +279,15 @@ export function ItemDetailModal({
     ? getUnscaledAdversary(baseDisplayItem)
     : baseDisplayItem;
 
+  /** Live preview pane: Hope / Stress / Armor / HP tracks on the new character sheet. */
+  const onCharacterRuntimeUpdate = useMemo(
+    () =>
+      editable && collection === 'characters'
+        ? (patch) => setFormData({ ...formData, ...patch })
+        : undefined,
+    [editable, collection, formData, setFormData],
+  );
+
   // Edit form should show the same data as the display pane when scaled toggle is active.
   const formValue = (() => {
     if (collection !== 'adversaries' || !hasScaledToggle) return baseDisplayItem;
@@ -246,8 +301,13 @@ export function ItemDetailModal({
   })();
   const badge = SOURCE_BADGE[item?._source];
   const isOwn = isOwnItem(item);
+  const v2LibrarySourcePath = useMemo(
+    () => (item?._source === 'srd' ? resolveV2LibraryItemSourcePath(collection, item) : null),
+    [collection, item],
+  );
   const headerItem = editable ? formData : item;
   const showTierByName = showLibraryTierShield(collection, headerItem);
+  const showLevelByName = showLibraryLevelBadge(collection, headerItem);
 
   // --- Display Pane content ---
   const renderDisplayContent = () => {
@@ -261,7 +321,7 @@ export function ItemDetailModal({
         {editable && (
           <div className="mb-3">
             <h3 className="text-xl font-bold text-white truncate">
-              {displayItem.name || <span className="text-slate-500 italic">Untitled</span>}
+              {displayItem.name || <span className="text-dh-muted italic">Untitled</span>}
             </h3>
           </div>
         )}
@@ -280,6 +340,7 @@ export function ItemDetailModal({
           onSaveElement={onSaveElement}
           isOwn={isOwn}
           cardKey="preview"
+          onCharacterRuntimeUpdate={onCharacterRuntimeUpdate}
         />
 
         </div>
@@ -302,24 +363,43 @@ export function ItemDetailModal({
     };
 
     return (
-      <div className="flex-1 min-w-0 overflow-y-auto p-4">
+      <div
+        className={`flex-1 min-w-0 overflow-y-auto p-4 ${isRightDrawer ? '[scrollbar-gutter:stable]' : ''}`}
+      >
         {collection === 'adversaries' && <AdversaryForm {...sharedProps} />}
         {collection === 'environments' && <EnvironmentForm {...sharedProps} />}
         {collection === 'scenes' && <SceneForm {...sharedProps} />}
         {collection === 'adventures' && <AdventureForm {...sharedProps} />}
         {collection === 'characters' && <CharacterForm {...sharedProps} />}
+        {!LIBRARY_CUSTOM_DETAIL_COLLECTIONS.has(collection) && (
+          <GenericSrdLibraryForm
+            value={formData}
+            onChange={setFormData}
+            collection={collection}
+            formData={formData}
+            onImageSaved={item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined}
+          />
+        )}
       </div>
     );
   };
 
-  const maxWidth = showFeatureLibrary ? 'max-w-[110rem]' : editable ? 'max-w-[88rem]' : 'max-w-3xl';
+  const maxWidth =
+    showFeatureLibrary ? 'max-w-[110rem]' :
+    editable ? 'max-w-[88rem]' :
+    collection === 'characters' ? 'max-w-[88rem]' :
+    'max-w-3xl';
 
   const showCharAutosaveHint = editable && collection === 'characters' && !charAutosaveHintDismissed;
 
   const saveStatus = (() => {
     if (!editable) return null;
     if (isSaving) {
-      return <span className="text-xs text-slate-400 shrink-0">Saving…</span>;
+      return (
+        <span className={`text-xs shrink-0 ${isRightDrawer ? 'dh-text-spellcast-header-sub' : 'text-dh-muted'}`}>
+          Saving…
+        </span>
+      );
     }
     if (showUnsavedDirtyHint && userHasInteractedWithEditor) {
       return <span className="text-xs text-amber-400/90 shrink-0">Unsaved changes…</span>;
@@ -335,60 +415,182 @@ export function ItemDetailModal({
     return null;
   })();
 
-  return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 pt-[4.5rem] overflow-hidden"
-      onClick={handleOverlayClick}
-    >
-      <div className={`flex gap-3 items-start w-full ${maxWidth}`}>
-        {/* Main modal card */}
-        <div
-          className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden"
-          style={{ height: 'calc(100dvh - 5.5rem)' }}
-          {...(editable
-            ? {
-                onPointerDownCapture: onModalEditorUserGesture,
-                onWheelCapture: onModalEditorUserGesture,
-                onKeyDownCapture: onModalEditorUserGesture,
-              }
-            : {})}
-        >
+  const editorGestureProps = editable
+    ? {
+        onPointerDownCapture: onModalEditorUserGesture,
+        onWheelCapture: onModalEditorUserGesture,
+        onKeyDownCapture: onModalEditorUserGesture,
+      }
+    : {};
 
-          {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 shrink-0 gap-3">
-            <div className="flex items-start gap-2 min-w-0 flex-1">
+  const isCharacterRightDrawer = isRightDrawer && collection === 'characters';
+  const hidePortaledCharacterHeader = isCharacterRightDrawer && rightDrawerPortalTo;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+    }),
+    [undo, redo, canUndo, canRedo],
+  );
+
+  useEffect(() => {
+    if (!hidePortaledCharacterHeader || !onCharacterDrawerChromeSync) return;
+    onCharacterDrawerChromeSync({
+      formData,
+      isSaving,
+      showUnsavedDirtyHint,
+      userHasInteractedWithEditor,
+      savedFlash,
+      canUndo,
+      canRedo,
+    });
+  }, [
+    hidePortaledCharacterHeader,
+    onCharacterDrawerChromeSync,
+    formData,
+    isSaving,
+    showUnsavedDirtyHint,
+    userHasInteractedWithEditor,
+    savedFlash,
+    canUndo,
+    canRedo,
+  ]);
+
+  const mainCardBody = (
+    <>
+          {/* Header — omitted when Game Table provides a shared title bar above sheet + editor (portaled character editor). */}
+          {!hidePortaledCharacterHeader && (
+          <div
+            className={
+              isRightDrawer
+                ? 'flex items-center justify-between px-3 py-2.5 border-b dh-tint-spellcast-strip shrink-0 gap-2'
+                : 'flex items-center justify-between px-5 py-3 border-b border-dh-border shrink-0 gap-3'
+            }
+          >
+            {isCharacterRightDrawer ? (
+              <>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <User size={14} className="dh-text-magic-icon shrink-0" aria-hidden />
+                  {editable && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={undo}
+                        disabled={!canUndo}
+                        title="Undo (Ctrl+Z)"
+                        className="p-1 rounded text-dh-muted hover:text-sky-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
+                      >
+                        <Undo2 size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={redo}
+                        disabled={!canRedo}
+                        title="Redo (Ctrl+Shift+Z)"
+                        className="p-1 rounded text-dh-muted hover:text-sky-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
+                      >
+                        <Redo2 size={14} />
+                      </button>
+                      <span className="w-px h-4 self-center bg-dh-strong/50 mx-0.5 shrink-0" />
+                    </>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <CharacterIdentityTitleRow el={formData} showIncomplete>
+                      {badge && (
+                        <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 ${badge.className}`}>
+                          {badge.label}
+                        </span>
+                      )}
+                    </CharacterIdentityTitleRow>
+                  </div>
+                </div>
+                <div className="flex justify-end shrink-0 items-center gap-1.5">
+                  <ItemActionButtons
+                    variant="header"
+                    isOwn={isOwn}
+                    itemName={displayItem?.name}
+                    addToTableMenu={addToTableMenu}
+                    onAddToTable={addToTableMenu ? undefined : onAddToTable}
+                    onClone={onClone ? handleClone : undefined}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    cloningStatus={cloningStatus}
+                  />
+                  {saveStatus}
+                  {v2LibrarySourcePath ? <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="header" /> : null}
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors"
+                  >
+                    Done
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+            <div className={`flex gap-2 min-w-0 flex-1 ${isRightDrawer ? 'items-center' : 'items-start'}`}>
+              {isRightDrawer && (
+                <User size={14} className="dh-text-magic-icon shrink-0" aria-hidden />
+              )}
               {editable && (
                 <>
                   <button
                     onClick={undo}
                     disabled={!canUndo}
                     title="Undo (Ctrl+Z)"
-                    className="p-1.5 rounded text-slate-500 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0 mt-0.5"
+                    className={
+                      isRightDrawer
+                        ? 'p-1 rounded text-dh-muted hover:text-sky-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0'
+                        : 'p-1.5 rounded text-dh-muted hover:text-dh hover:bg-dh-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0 mt-0.5'
+                    }
                   >
-                    <Undo2 size={16} />
+                    <Undo2 size={isRightDrawer ? 14 : 16} />
                   </button>
                   <button
                     onClick={redo}
                     disabled={!canRedo}
                     title="Redo (Ctrl+Shift+Z)"
-                    className="p-1.5 rounded text-slate-500 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0 mt-0.5"
+                    className={
+                      isRightDrawer
+                        ? 'p-1 rounded text-dh-muted hover:text-sky-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0'
+                        : 'p-1.5 rounded text-dh-muted hover:text-dh hover:bg-dh-raised disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0 mt-0.5'
+                    }
                   >
-                    <Redo2 size={16} />
+                    <Redo2 size={isRightDrawer ? 14 : 16} />
                   </button>
-                  <span className="w-px h-5 bg-slate-700 mx-1 shrink-0 mt-1" />
+                  <span
+                    className={
+                      isRightDrawer
+                        ? 'w-px h-4 self-center bg-dh-strong/50 mx-0.5 shrink-0'
+                        : 'w-px h-5 bg-dh-strong mx-1 shrink-0 mt-1'
+                    }
+                  />
                 </>
               )}
               <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                {showTierByName && (
-                  <TierShieldBadge
-                    tier={headerItem?.tier}
-                    scaledFromTier={headerItem?._scaledFromTier}
-                    className="shrink-0"
-                  />
-                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  {showTierByName && (
+                    <TierShieldBadge
+                      tier={headerItem?.tier}
+                      scaledFromTier={headerItem?._scaledFromTier}
+                      className="shrink-0"
+                    />
+                  )}
+                  {showLevelByName && <LevelBadge level={headerItem?.level} className="shrink-0" />}
+                </div>
                 <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                  <h2 className="text-lg font-bold text-white truncate min-w-0">
+                  <h2
+                    className={
+                      isRightDrawer
+                        ? 'text-sm font-bold dh-text-spellcast-header leading-tight truncate min-w-0'
+                        : 'text-lg font-bold text-white truncate min-w-0'
+                    }
+                  >
                     {(editable ? formData.name : item?.name) ||
                       (isNew ? `New ${COLLECTION_LABELS[collection] || collection}` : 'Item')}
                   </h2>
@@ -400,7 +602,7 @@ export function ItemDetailModal({
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 shrink-0">
+            <div className={`flex justify-end shrink-0 ${isRightDrawer ? 'items-center gap-1.5' : 'items-center gap-2'}`}>
               <ItemActionButtons
                 variant="header"
                 isOwn={isOwn}
@@ -413,15 +615,23 @@ export function ItemDetailModal({
                 cloningStatus={cloningStatus}
               />
               {saveStatus}
+              {v2LibrarySourcePath ? <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="header" /> : null}
               <button
                 type="button"
                 onClick={onClose}
-                className="text-sm font-medium text-slate-200 hover:text-white px-2.5 py-1.5 rounded-md border border-slate-600 hover:bg-slate-800 transition-colors"
+                className={
+                  isRightDrawer
+                    ? 'text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors'
+                    : 'text-sm font-medium text-dh hover:text-dh px-2.5 py-1.5 rounded-md border border-dh-strong hover:bg-dh-raised transition-colors'
+                }
               >
                 Done
               </button>
             </div>
+              </>
+            )}
           </div>
+          )}
 
           {showCharAutosaveHint && (
             <div className="flex items-start justify-between gap-3 px-5 py-2.5 border-b border-sky-900/40 bg-sky-950/35 shrink-0">
@@ -441,22 +651,116 @@ export function ItemDetailModal({
           {/* Body */}
           <div className="flex-1 overflow-hidden flex min-h-0">
             {editable ? (
-              <>
-                {/* Preview pane — fixed 42% width */}
-                <div className="w-[42%] shrink-0 border-r border-slate-800 overflow-hidden flex flex-col">
-                  {renderDisplayContent()}
-                </div>
-                {/* Form pane */}
+              isRightDrawer ? (
                 <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
                   {renderFormContent()}
                 </div>
-              </>
+              ) : (
+                <>
+                  {/* Preview pane — fixed 42% width */}
+                  <div className="w-[42%] shrink-0 border-r border-dh-border overflow-hidden flex flex-col">
+                    {renderDisplayContent()}
+                  </div>
+                  {/* Form pane */}
+                  <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+                    {renderFormContent()}
+                  </div>
+                </>
+              )
             ) : (
               <div className="flex-1 overflow-hidden flex flex-col">
                 {renderDisplayContent()}
               </div>
             )}
           </div>
+    </>
+  );
+
+  const lightboxOverlay = lightboxUrl && (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      onClick={() => setLightboxUrl(null)}
+    >
+      <button
+        className="absolute top-4 right-4 p-2 rounded-full bg-dh-raised/80 text-dh hover:text-dh hover:bg-dh-hover transition-colors"
+        onClick={() => setLightboxUrl(null)}
+      >
+        <X size={20} />
+      </button>
+      <img
+        src={lightboxUrl}
+        alt="Enlarged image"
+        className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+        onClick={e => e.stopPropagation()}
+      />
+    </div>
+  );
+
+  if (isRightDrawer) {
+    if (rightDrawerPortalTo) {
+      return (
+        <>
+          {/* No fullscreen backdrop: the Game Table sheet is already the shell; a dim layer
+              captured clicks and interfered with the pinned character overlay. Close via Done / Escape. */}
+          {createPortal(
+            <div
+              className="h-full min-h-0 flex flex-col overflow-hidden bg-dh-surface"
+              {...editorGestureProps}
+            >
+              {mainCardBody}
+            </div>,
+            rightDrawerPortalTo,
+          )}
+          {lightboxOverlay}
+        </>
+      );
+    }
+    if (rightDrawerPortalTo === null) {
+      return <>{lightboxOverlay}</>;
+    }
+    const slideClass = drawerEntered ? 'translate-x-0' : 'translate-x-full';
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-[80] bg-black/50"
+          aria-hidden
+          onClick={onClose}
+        />
+        <div
+          className={`fixed z-[81] flex flex-col transition-transform duration-300 ease-out will-change-transform ${slideClass}`}
+          style={{
+            top: '4.5rem',
+            right: 0,
+            bottom: 0,
+            width: 'min(42rem, calc(100vw - 12px))',
+          }}
+        >
+          <div
+            className="bg-dh-surface border border-dh-strong border-r-0 rounded-l-xl shadow-2xl h-full min-h-0 flex flex-col overflow-hidden"
+            {...editorGestureProps}
+          >
+            {mainCardBody}
+          </div>
+        </div>
+        {lightboxOverlay}
+      </>
+    );
+  }
+
+  return (
+    <div
+      ref={overlayRef}
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 pt-[4.5rem] overflow-hidden"
+      onClick={handleOverlayClick}
+    >
+      <div className={`flex gap-3 items-start w-full ${maxWidth}`}>
+        {/* Main modal card */}
+        <div
+          className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex-1 min-w-0 flex flex-col overflow-hidden"
+          style={{ height: 'calc(100dvh - 5.5rem)' }}
+          {...editorGestureProps}
+        >
+          {mainCardBody}
         </div>
 
         {/* Feature Library portal target — narrow column to the right of the card.
@@ -471,26 +775,9 @@ export function ItemDetailModal({
         )}
       </div>
 
-      {/* Lightbox overlay for images */}
-      {lightboxUrl && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
-          onClick={() => setLightboxUrl(null)}
-        >
-          <button
-            className="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
-            onClick={() => setLightboxUrl(null)}
-          >
-            <X size={20} />
-          </button>
-          <img
-            src={lightboxUrl}
-            alt="Enlarged image"
-            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
-            onClick={e => e.stopPropagation()}
-          />
-        </div>
-      )}
+      {lightboxOverlay}
     </div>
   );
-}
+});
+
+ItemDetailModal.displayName = 'ItemDetailModal';

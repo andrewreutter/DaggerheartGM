@@ -21,7 +21,7 @@ export function TierSelector({
   showAll = false,
   numbers = TIERS,
   activeClass = 'bg-amber-700 border-amber-500 text-amber-100',
-  inactiveClass = 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300',
+  inactiveClass = 'bg-dh-raised border-dh-border text-dh-muted hover:border-dh-strong hover:text-dh',
   btnClass = 'px-2 py-0.5 rounded font-medium border transition-colors',
 }) {
   const tiers = multi ? (Array.isArray(value) ? value : []) : [];

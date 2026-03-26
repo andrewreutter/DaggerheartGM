@@ -105,18 +105,21 @@ export function ItemActionButtons({
   };
 
   const base = variant === 'header' ? 'p-1.5 rounded' : '';
+  /** Card list: compact square targets; icons stay aligned without large gaps between glyphs. */
+  const cardIconWrap =
+    variant === 'card' ? 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded' : '';
   const addClass = variant === 'header'
-    ? `text-slate-500 hover:text-white hover:bg-slate-800`
-    : 'text-slate-400 hover:text-white';
+    ? `text-dh-muted hover:text-white hover:bg-dh-hover`
+    : 'text-dh-muted hover:text-white';
   const cloneClass = variant === 'header'
-    ? `text-slate-500 hover:text-violet-400 hover:bg-slate-800`
-    : 'text-slate-400 hover:text-violet-400';
+    ? `text-dh-muted hover:text-violet-400 hover:bg-dh-hover`
+    : 'text-dh-muted hover:text-violet-400';
   const editClass = variant === 'header'
-    ? `text-slate-500 hover:text-blue-400 hover:bg-slate-800`
-    : 'text-slate-400 hover:text-blue-400';
+    ? `text-dh-muted hover:text-blue-400 hover:bg-dh-hover`
+    : 'text-dh-muted hover:text-blue-400';
   const deleteClass = variant === 'header'
-    ? `text-slate-500 hover:text-red-400 hover:bg-slate-800`
-    : 'text-slate-400 hover:text-red-400';
+    ? `text-dh-muted hover:text-red-400 hover:bg-dh-hover`
+    : 'text-dh-muted hover:text-red-400';
 
   const addButton = useTableMenu ? (
     <Tooltip label="Add to Game Table">
@@ -130,7 +133,7 @@ export function ItemActionButtons({
         aria-label="Add to Game Table"
         aria-expanded={menuOpen}
         aria-haspopup="listbox"
-        className={`${base} transition-colors duration-150 ${addedToTable ? 'text-yellow-400' : addClass} ${menuOpen ? 'text-amber-300' : ''}`}
+        className={`${base} ${cardIconWrap} transition-colors duration-150 ${addedToTable ? 'text-dh-hope' : addClass} ${menuOpen ? 'text-dh-hope-soft' : ''}`}
       >
         <Play size={ICON_SIZE} aria-hidden />
       </button>
@@ -144,7 +147,7 @@ export function ItemActionButtons({
           handleAddToTable();
         }}
         aria-label="Add to Game Table"
-        className={`${base} transition-colors duration-150 ${addedToTable ? 'text-yellow-400' : addClass}`}
+        className={`${base} ${cardIconWrap} transition-colors duration-150 ${addedToTable ? 'text-dh-hope' : addClass}`}
       >
         <Play size={ICON_SIZE} aria-hidden />
       </button>
@@ -156,16 +159,16 @@ export function ItemActionButtons({
       ref={menuRef}
       role="listbox"
       aria-label="Choose game table"
-      className="rounded-lg border border-slate-600 bg-slate-900 shadow-xl shadow-black/40 max-h-[min(50vh,280px)] flex flex-col overflow-hidden"
+      className="rounded-lg border border-dh-strong bg-dh-surface shadow-xl shadow-black/40 max-h-[min(50vh,280px)] flex flex-col overflow-hidden"
       style={menuStyle}
       onMouseDown={e => e.stopPropagation()}
       onClick={e => e.stopPropagation()}
     >
-      <div className="shrink-0 px-3 py-2 border-b border-slate-700/90 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+      <div className="shrink-0 px-3 py-2 border-b border-dh-border/90 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-dh-muted">
           Add to game table...
         </span>
-        <ExternalLink size={12} className="shrink-0 text-slate-500" aria-hidden title="Opens in a new tab" />
+        <ExternalLink size={12} className="shrink-0 text-dh-muted" aria-hidden title="Opens in a new tab" />
       </div>
       <div className="overflow-y-auto py-1 min-h-0">
       {addToTableMenu.tables.map(t => (
@@ -175,7 +178,7 @@ export function ItemActionButtons({
           target="_blank"
           rel="noopener noreferrer"
           role="option"
-          className="group w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 hover:text-white transition-colors flex items-center justify-between gap-2 min-w-0 no-underline"
+          className="group w-full text-left px-3 py-2 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors flex items-center justify-between gap-2 min-w-0 no-underline"
           title={`${t.name || t.id} — opens in a new tab`}
           aria-label={`${t.name?.trim() || 'Untitled table'}, add to this table and open in a new tab`}
           onClick={e => {
@@ -187,7 +190,7 @@ export function ItemActionButtons({
           }}
         >
           <span className="truncate min-w-0">{t.name?.trim() || 'Untitled table'}</span>
-          <ExternalLink size={14} className="shrink-0 text-slate-500 group-hover:text-slate-300" aria-hidden />
+          <ExternalLink size={14} className="shrink-0 text-dh-muted group-hover:text-dh" aria-hidden />
         </a>
       ))}
       </div>
@@ -205,7 +208,7 @@ export function ItemActionButtons({
             onClick={handleClone}
             disabled={!!cloningStatus}
             aria-label={cloningStatus || 'Clone to My Library'}
-            className={`${base} ${cloneClass} transition-colors disabled:opacity-60`}
+            className={`${base} ${cardIconWrap} ${cloneClass} transition-colors disabled:opacity-60`}
           >
             <Copy size={ICON_SIZE} aria-hidden />
           </button>
@@ -216,7 +219,7 @@ export function ItemActionButtons({
           <button
             onClick={onEdit}
             aria-label="Edit"
-            className={`${base} ${editClass} transition-colors`}
+            className={`${base} ${cardIconWrap} ${editClass} transition-colors`}
           >
             <Edit size={ICON_SIZE} aria-hidden />
           </button>
@@ -227,7 +230,7 @@ export function ItemActionButtons({
           <button
             onClick={handleDelete}
             aria-label="Delete"
-            className={`${base} ${deleteClass} transition-colors`}
+            className={`${base} ${cardIconWrap} ${deleteClass} transition-colors`}
           >
             <Trash2 size={ICON_SIZE} aria-hidden />
           </button>
@@ -237,7 +240,9 @@ export function ItemActionButtons({
   );
 
   const content = (
-    <div className={`flex items-center gap-1 ${variant === 'card' ? '' : 'shrink-0'}`}>
+    <div
+      className={`flex items-center shrink-0 ${variant === 'card' ? 'gap-0' : 'gap-1'}`}
+    >
       {buttons}
     </div>
   );

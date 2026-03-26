@@ -38,34 +38,34 @@ export function DaggerstackImport({ onImported, compact = false }) {
   const content = (
     <div className="space-y-2">
       <div>
-        <label className="block text-[10px] text-slate-400 mb-0.5">Daggerstack Character URL</label>
+        <label className="block text-[10px] text-dh-muted mb-0.5">Daggerstack Character URL</label>
         <input
           type="url"
           value={url}
           onChange={e => setUrl(e.target.value)}
           placeholder="https://daggerstack.com/characters/..."
-          className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh placeholder-dh-muted focus:border-sky-500 focus:outline-none"
         />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="block text-[10px] text-slate-400 mb-0.5">Email</label>
+          <label className="block text-[10px] text-dh-muted mb-0.5">Email</label>
           <input
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             placeholder="email@example.com"
-            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+            className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh placeholder-dh-muted focus:border-sky-500 focus:outline-none"
           />
         </div>
         <div>
-          <label className="block text-[10px] text-slate-400 mb-0.5">Password</label>
+          <label className="block text-[10px] text-dh-muted mb-0.5">Password</label>
           <input
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
             placeholder="••••••••"
-            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+            className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh placeholder-dh-muted focus:border-sky-500 focus:outline-none"
           />
         </div>
       </div>
@@ -84,7 +84,7 @@ export function DaggerstackImport({ onImported, compact = false }) {
 
   if (compact) {
     return (
-      <div className="border border-slate-700 rounded-lg bg-slate-800/50 p-3">
+      <div className="border border-dh-border rounded-lg bg-dh-raised/50 p-3">
         <div className="flex items-center gap-2 mb-2">
           <ExternalLink size={12} className="text-sky-400" />
           <span className="text-xs font-semibold text-sky-300">Import from Daggerstack</span>
@@ -95,12 +95,12 @@ export function DaggerstackImport({ onImported, compact = false }) {
   }
 
   return (
-    <div className="border border-slate-700 rounded-lg bg-slate-800/50 overflow-hidden">
+    <div className="border border-dh-border rounded-lg bg-dh-raised/50 overflow-hidden">
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full px-3 py-2 flex items-center gap-2 hover:bg-slate-700/40 transition-colors"
+        className="w-full px-3 py-2 flex items-center gap-2 hover:bg-dh-hover/40 transition-colors"
       >
-        {open ? <ChevronDown size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
+        {open ? <ChevronDown size={12} className="text-dh-muted" /> : <ChevronRight size={12} className="text-dh-muted" />}
         <ExternalLink size={12} className="text-sky-400" />
         <span className="text-xs font-semibold text-sky-300">Import from Daggerstack</span>
       </button>

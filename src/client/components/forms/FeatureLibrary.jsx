@@ -10,7 +10,7 @@ import { MarkdownText } from '../../lib/markdown.js';
 const TYPE_BADGE = {
   action: 'bg-amber-900/60 text-amber-300',
   reaction: 'bg-teal-900/60 text-teal-300',
-  passive: 'bg-slate-700/80 text-slate-300',
+  passive: 'bg-dh-hover/80 text-dh',
 };
 
 function buildKey(feature) {
@@ -80,13 +80,13 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
     .map(([key, val]) => ({ key, ...val }));
 
   return (
-    <div className="h-full bg-slate-900 border border-slate-700 rounded-xl flex flex-col overflow-hidden">
+    <div className="h-full bg-dh-surface border border-dh-border rounded-xl flex flex-col overflow-hidden">
       {/* Header with filters */}
-      <div className="p-3 bg-slate-950 border-b border-slate-800 shrink-0">
+      <div className="p-3 bg-dh-inset border-b border-dh-border shrink-0">
         <h4 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2 mb-3">
           <BookOpen size={15} className="text-blue-400" /> Feature Library
           {search.totalCount > 0 && (
-            <span className="text-[10px] text-slate-500 font-normal ml-1 normal-case tracking-normal">
+            <span className="text-[10px] text-dh-muted font-normal ml-1 normal-case tracking-normal">
               {search.items.length} of {search.totalCount} items
             </span>
           )}
@@ -98,14 +98,14 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
           variant="panel"
         />
         {search.loading && !search.isLoadingMore && (
-          <p className="text-[10px] text-slate-500 mt-2 animate-pulse">Loading…</p>
+          <p className="text-[10px] text-dh-muted mt-2 animate-pulse">Loading…</p>
         )}
       </div>
 
       {/* Scrollable feature list */}
       <div ref={listRef} className="p-3 space-y-2 overflow-y-auto flex-1">
         {!search.loading && candidates.length === 0 && (
-          <p className="text-xs text-slate-500 italic mt-2">
+          <p className="text-xs text-dh-muted italic mt-2">
             No features found for the selected filter.
           </p>
         )}
@@ -122,12 +122,12 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
         ))}
 
         {search.isLoadingMore && (
-          <div className="text-center text-slate-500 text-[10px] py-2 animate-pulse">
+          <div className="text-center text-dh-muted text-[10px] py-2 animate-pulse">
             Loading more of the {search.totalCount.toLocaleString()} items…
           </div>
         )}
         {!search.hasMore && !search.loading && search.totalCount > 0 && (
-          <div className="text-center text-slate-500 text-[10px] py-2">
+          <div className="text-center text-dh-muted text-[10px] py-2">
             Loaded last of {search.totalCount.toLocaleString()} items
           </div>
         )}
@@ -140,6 +140,7 @@ export function FeatureLibrary({ tier, subtype, subtypeKey, currentFeatures, onA
 }
 
 function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
+  const sourceBadge = SOURCE_BADGE[source] ?? SOURCE_BADGE.own;
   const [hoverTop, setHoverTop] = useState(null);
   const isTouch = useTouchDevice();
   // Touch: track tap count — first tap shows preview, second adds
@@ -187,7 +188,7 @@ function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
           setHoverTop(Math.max(8, Math.min(rect.top, window.innerHeight - 300)));
         })}
         onMouseLeave={isTouch ? undefined : (() => setHoverTop(null))}
-        className="w-full text-left bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 p-2.5 rounded transition-colors"
+        className="w-full text-left bg-dh-raised/50 hover:bg-dh-hover border border-dh-border hover:border-dh-strong p-2.5 rounded transition-colors"
         title={isTouch ? 'Tap to preview · tap again to add' : undefined}
       >
         <div className="flex items-start justify-between gap-1 mb-1">
@@ -195,22 +196,22 @@ function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
             {(feature.type || showSourceBadge) && (
               <div className="flex flex-wrap gap-1 shrink-0">
                 {feature.type && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || 'bg-slate-700 text-slate-300'}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_BADGE[feature.type] || 'bg-dh-hover text-dh'}`}>
                     {feature.type}
                   </span>
                 )}
                 {showSourceBadge && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || 'bg-slate-700 text-slate-300'}`}>
-                    {SOURCE_BADGE[source]?.label ?? source}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${sourceBadge.className || 'dh-badge dh-badge-mine'}`}>
+                    {sourceBadge.label}
                   </span>
                 )}
               </div>
             )}
-            <span className="font-medium text-slate-200 text-xs leading-tight truncate">{feature.name || '(unnamed)'}</span>
+            <span className="font-medium text-dh text-xs leading-tight truncate">{feature.name || '(unnamed)'}</span>
           </div>
-          <Plus size={12} className="text-slate-500 group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
+          <Plus size={12} className="text-dh-muted group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
         </div>
-        <p className="text-xs text-slate-400 line-clamp-2 leading-snug">{feature.description}</p>
+        <p className="text-xs text-dh-muted line-clamp-2 leading-snug">{feature.description}</p>
       </button>
 
       {/* Fixed-position popover to avoid overflow clipping */}
@@ -219,7 +220,7 @@ function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
           className="fixed z-[60] pointer-events-none"
           style={{ right: 'calc(18rem + 12px)', top: hoverTop, width: '22rem' }}
         >
-          <div className="bg-slate-900 border border-slate-600 rounded-xl shadow-2xl p-4 max-h-72 overflow-y-auto">
+          <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl p-4 max-h-72 overflow-y-auto">
             <div className="flex items-start justify-between gap-2 mb-2">
               <span className="font-bold text-white text-sm leading-tight">{feature.name || '(unnamed)'}</span>
               <div className="flex flex-wrap gap-1 shrink-0">
@@ -229,15 +230,15 @@ function FeatureCard({ feature, source, sourceName, onAdd, showSourceBadge }) {
                   </span>
                 )}
                 {showSourceBadge && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_BADGE[source]?.className || ''}`}>
-                    {SOURCE_BADGE[source]?.label ?? source}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${sourceBadge.className || ''}`}>
+                    {sourceBadge.label}
                   </span>
                 )}
               </div>
             </div>
-            <MarkdownText text={feature.description} className="text-xs text-slate-300 leading-relaxed" />
+            <MarkdownText text={feature.description} className="text-xs text-dh leading-relaxed" />
             {sourceName && (
-              <p className="text-[10px] text-slate-500 mt-2 border-t border-slate-700 pt-2">
+              <p className="text-[10px] text-dh-muted mt-2 border-t border-dh-border pt-2">
                 From: {sourceName}
               </p>
             )}

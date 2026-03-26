@@ -1,3 +1,4 @@
+import { useCallback, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { Swords } from 'lucide-react';
 import { AdversaryCardContent, EnvironmentCardContent } from '../DetailCardContent.jsx';
 import { CharacterDetailPane, TRAIT_LABELS } from '../CharacterDisplay.jsx';
@@ -9,15 +10,32 @@ import { computeSceneBudget } from '../../lib/battle-points.js';
 import { LIBRARY_GENERIC_DETAIL_COLLECTIONS } from '../../lib/library-filter-config.js';
 import { GuideFeatureCard } from '../features/GuideFeatureCard.jsx';
 import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
-import { libraryTierBodyLine } from '../../lib/library-tier-subtitle.js';
+import { libraryTierBodyLine, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
 import { expandDomainCardEntries } from '../../lib/library-domain-cards.js';
+import { TierShieldBadge } from '../TierShieldBadge.jsx';
 
 const GENERIC_DETAIL_SET = new Set(LIBRARY_GENERIC_DETAIL_COLLECTIONS);
 
+/**
+ * Generic metadata keys that skip the chip row (full-width label + value, always after chips).
+ * Keys are SRD/normalized field names (see `normalizeClass` / `normalizeCommunity` in parser).
+ */
+const LIBRARY_GENERIC_METADATA_TAIL_KEYS = {
+  classes: new Set(['background_questions', 'class_items', 'connections']),
+  communities: new Set(['traits']),
+};
+
 /** Uppercase section titles in Library card preview / item detail (features, attack, domain spell tiers, etc.). */
 const LIB_SECTION_HEADER_BORDER =
-  'text-xs font-semibold text-slate-400 uppercase tracking-wide border-b border-slate-800 pb-1 mb-1.5';
-const LIB_SECTION_LABEL = 'text-xs font-medium uppercase tracking-wider text-slate-500 mb-1';
+  'text-xs font-semibold text-dh-muted uppercase tracking-wide border-b border-dh-border pb-1 mb-1.5';
+const LIB_SECTION_LABEL = 'text-xs font-medium uppercase tracking-wider text-dh-muted mb-1';
+
+/** Label + value column; width is set by GenericMetadataFieldChips after measuring content. */
+const LIB_GENERIC_FIELD_CHIP = 'min-w-0 flex flex-col';
+/** Chip labels must stay one line so width measurement matches full text (e.g. "RECALL COST"). */
+const LIB_GENERIC_FIELD_CHIP_TITLE = `${LIB_SECTION_LABEL} whitespace-nowrap`;
+/** Floor so tiny values (e.g. "1") still get a readable chip width. */
+const GENERIC_METADATA_CHIP_MIN_PX = 64;
 
 /** Stub character element so `GuideFeatureCard` can run V2 preview chips in `interactionMode="preview"`. */
 const LIBRARY_PREVIEW_EL_STUB = { instanceId: null, elementType: 'character', name: '' };
@@ -42,7 +60,7 @@ function attackTraitBadge(trait) {
   const k = t.toLowerCase();
   const short = TRAIT_LABELS[k] || (t.length <= 8 ? t.toUpperCase() : `${t.slice(0, 8)}…`);
   return (
-    <span className="text-[9px] rounded px-1 py-0.5 border shrink-0 font-bold bg-sky-900/50 border-sky-700/50 text-sky-300">
+    <span className="text-[9px] rounded px-1 py-0.5 border shrink-0 font-bold dh-tint-attack-trait">
       {short}
     </span>
   );
@@ -58,9 +76,9 @@ function LibraryAttackAsWeaponCard({ attack }) {
         <div className={LIB_SECTION_HEADER_BORDER}>
           Attack
         </div>
-        <div className="w-full min-w-0 rounded border border-slate-700 bg-slate-800/60 px-2 py-1.5 text-[11px] text-slate-200">
+        <div className="w-full min-w-0 rounded border border-dh-border bg-dh-raised/70 px-2 py-1.5 text-[11px] text-dh">
           <div className="flex items-start gap-2">
-            <Swords size={10} className="shrink-0 text-slate-500 mt-0.5" />
+            <Swords size={10} className="shrink-0 text-dh-muted mt-0.5" />
             <MarkdownText text={coerced.text} className="dh-md text-[11px] leading-snug flex-1 min-w-0" />
           </div>
         </div>
@@ -73,14 +91,14 @@ function LibraryAttackAsWeaponCard({ attack }) {
       <div className={LIB_SECTION_HEADER_BORDER}>
         Attack
       </div>
-      <div className="w-full min-w-0 rounded border border-slate-700 bg-slate-800/60 px-2 py-1.5 select-none text-[11px]">
+      <div className="w-full min-w-0 rounded border border-dh-border bg-dh-raised/70 px-2 py-1.5 select-none text-[11px]">
         <div className="flex items-center gap-2 flex-wrap">
-          <Swords size={10} className="shrink-0 text-slate-500" />
-          <span className="font-semibold text-slate-200 truncate min-w-0">{name}</span>
+          <Swords size={10} className="shrink-0 text-dh-muted" />
+          <span className="font-semibold text-dh truncate min-w-0">{name}</span>
           {damage ? (
-            <span className="text-yellow-300 font-semibold tabular-nums shrink-0">{damage}</span>
+            <span className="text-dh font-semibold tabular-nums shrink-0">{damage}</span>
           ) : null}
-          <span className="text-slate-500 shrink-0">
+          <span className="text-dh-muted shrink-0">
             {modifier >= 0 ? '+' : ''}
             {modifier} {range}
           </span>
@@ -108,13 +126,33 @@ function normalizeLibraryFeatureRow(feat, parentItem, collection) {
   if (!row.source && parentItem?.name) row.source = parentItem.name;
   const st = LIBRARY_COLLECTION_SOURCE_TYPE[collection];
   if (st && row.sourceType == null) row.sourceType = st;
+
+  const scopeByIdCollections = new Set([
+    'abilities',
+    'classes',
+    'subclasses',
+    'ancestries',
+    'communities',
+    'beastforms',
+    'items',
+    'consumables',
+  ]);
+  if (scopeByIdCollections.has(collection) && typeof row.id === 'string') {
+    row._sourceScopeKey = `${collection}:${row.id}`;
+  }
+  if (collection === 'weapons' && typeof row.name === 'string') {
+    row._source = 'weapon_property';
+  }
+  if (collection === 'armor' && typeof row.name === 'string') {
+    row._source = 'armor_property';
+  }
   return row;
 }
 
 /** SRD ability row → GuideFeatureCard row (Library abilities tab / domain dereference). */
 function abilityToLibraryGuideRow(ability, parentDomain) {
   if (!ability || typeof ability !== 'object') return null;
-  const meta = `Level ${ability.level} · ${ability.type || 'passive'} · Recall ${ability.recall_cost ?? 0}`;
+  const meta = `${ability.type || 'passive'} · Recall ${ability.recall_cost ?? 0}`;
   return normalizeLibraryFeatureRow(
     {
       id: ability.id,
@@ -152,13 +190,16 @@ function getLibraryFeatureSections(item, collection) {
   return sections;
 }
 
-/** Extra subtitle for generic library preview (tier icon is on the card/modal title). */
+/**
+ * Extra subtitle when tier is lifted to the card title (adversaries, environments, etc.).
+ * Weapons omit this — `primary_or_secondary` / `physical_or_magical` are shown as metadata chips.
+ */
 function LibraryTierAdversaryRow({ item, collection }) {
   if (item?.tier === undefined || item?.tier === null || item?.tier === '') return null;
   const sub = libraryTierBodyLine(item, collection);
   if (!sub) return null;
   return (
-    <div className="mb-4 text-sm text-slate-400 capitalize">{sub}</div>
+    <div className="mb-4 text-sm text-dh-muted capitalize">{sub}</div>
   );
 }
 
@@ -248,25 +289,36 @@ function labelizeKey(key) {
   return String(key).replace(/_/g, ' ');
 }
 
+/** Cheap fingerprint so metadata chips remount when any field value changes (uniform width remeasure). */
+function hashFieldEntriesKey(rows) {
+  let h = 0;
+  for (const r of rows) {
+    h = (Math.imul(31, h) + r.key.length) | 0;
+    const s = typeof r.val === 'string' ? r.val : JSON.stringify(r.val);
+    for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  return String(h);
+}
+
 function GenericFieldValue({ value }) {
-  if (value == null) return <span className="text-slate-500">—</span>;
+  if (value == null) return <span className="text-dh-muted">—</span>;
   if (typeof value === 'boolean') return <span>{value ? 'Yes' : 'No'}</span>;
   if (typeof value === 'number') return <span>{value}</span>;
   if (typeof value === 'string') {
     if (value.length > 120 || value.includes('\n')) {
-      return <MarkdownText text={value} className="text-sm text-slate-200 dh-md" />;
+      return <MarkdownText text={value} className="text-sm text-dh dh-md" />;
     }
-    return <span className="text-slate-200">{value}</span>;
+    return <span className="text-dh">{value}</span>;
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-slate-500">—</span>;
+    if (value.length === 0) return <span className="text-dh-muted">—</span>;
     if (value.every(v => v && typeof v === 'object' && (v.name != null || v.description != null))) {
       return (
         <ul className="list-disc pl-4 space-y-2">
           {value.map((v, i) => (
-            <li key={v.id || i} className="text-slate-200">
-              {v.name && <span className="font-medium text-white">{v.name}</span>}
-              {v.type && <span className="text-xs text-slate-500 ml-1">({v.type})</span>}
+            <li key={v.id || i} className="text-dh">
+              {v.name && <span className="font-medium text-dh">{v.name}</span>}
+              {v.type && <span className="text-xs text-dh-muted ml-1">({v.type})</span>}
               {v.description && <MarkdownText text={v.description} className="text-sm mt-0.5 dh-md" />}
             </li>
           ))}
@@ -274,7 +326,7 @@ function GenericFieldValue({ value }) {
       );
     }
     return (
-      <ul className="list-disc pl-4 text-slate-300">
+      <ul className="list-disc pl-4 text-dh">
         {value.map((v, i) => (
           <li key={i}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</li>
         ))}
@@ -283,12 +335,84 @@ function GenericFieldValue({ value }) {
   }
   if (typeof value === 'object') {
     return (
-      <pre className="text-xs bg-slate-950/80 border border-slate-800 rounded p-2 overflow-x-auto text-slate-300">
+      <pre className="text-xs bg-dh-inset border border-dh-border rounded p-2 overflow-x-auto text-dh">
         {JSON.stringify(value, null, 2)}
       </pre>
     );
   }
   return <span>{String(value)}</span>;
+}
+
+/**
+ * Flex-wrap field chips with uniform width = min(longest title/value block, container),
+ * so wrapped rows stay column-aligned without fixed minmax columns.
+ * Remount via `key` from parent when the item/fields change so width state resets before measure.
+ */
+function GenericMetadataFieldChips({ fields }) {
+  const rootRef = useRef(null);
+  const [chipWidth, setChipWidth] = useState(null);
+
+  const measure = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const chips = root.querySelectorAll('[data-lib-field-chip]');
+    if (!chips.length) {
+      setChipWidth(null);
+      return;
+    }
+    const containerW = root.clientWidth;
+    if (containerW <= 0) return;
+
+    let maxNatural = 0;
+    chips.forEach((chip) => {
+      const titleEl = chip.querySelector('[data-lib-field-chip-title]');
+      const valueEl = chip.querySelector('[data-lib-field-chip-value]');
+      const titleW = titleEl?.scrollWidth ?? 0;
+      const valueW = valueEl?.scrollWidth ?? 0;
+      const blockW = Math.max(titleW, valueW, chip.scrollWidth);
+      maxNatural = Math.max(maxNatural, blockW);
+    });
+    const w = Math.min(Math.max(maxNatural, GENERIC_METADATA_CHIP_MIN_PX), containerW);
+    setChipWidth((prev) => (prev === w ? prev : w));
+  }, []);
+
+  useLayoutEffect(() => {
+    measure();
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [measure]);
+
+  return (
+    <div ref={rootRef} className="flex flex-wrap items-start gap-x-4 gap-y-3">
+      {fields.map(({ key, val }) => (
+        <div
+          key={key}
+          data-lib-field-chip
+          className={`${LIB_GENERIC_FIELD_CHIP} ${chipWidth == null ? 'w-max max-w-full' : ''}`}
+          style={
+            chipWidth != null
+              ? {
+                  width: chipWidth,
+                  flex: '0 0 auto',
+                  maxWidth: '100%',
+                  boxSizing: 'border-box',
+                }
+              : undefined
+          }
+        >
+          <div data-lib-field-chip-title className={LIB_GENERIC_FIELD_CHIP_TITLE}>
+            {labelizeKey(key)}
+          </div>
+          <div data-lib-field-chip-value className="min-w-0 w-max max-w-full">
+            <GenericFieldValue value={val} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function GenericLibraryRecordBody({ item, collection, srdData }) {
@@ -305,16 +429,8 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
     '_additionalImages',
   ]);
   const renderTierAdversaryRow = item?.tier != null && item.tier !== '';
-  const tierFieldSkip = new Set();
-  if (renderTierAdversaryRow) {
-    tierFieldSkip.add('tier');
-    if (collection === 'weapons') {
-      tierFieldSkip.add('primary_or_secondary');
-      tierFieldSkip.add('physical_or_magical');
-    }
-  }
   const featureSections = getLibraryFeatureSections(item, collection);
-  const featureKeysRendered = new Set(featureSections.map((s) => s.key));
+  const featureKeysSig = featureSections.map((s) => s.key).join('|');
   const renderClassHopeFeature =
     collection === 'classes' && item?.hope_feature && typeof item.hope_feature === 'object' && item.hope_feature.name;
   const renderAttackWeaponCard = coerceLibraryAttack(item?.attack) != null;
@@ -322,13 +438,50 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   const hasDomainCardList = collection === 'domains' && Array.isArray(item?.cards) && item.cards.length > 0;
   const abilitiesReady = srdData && Array.isArray(srdData.abilities);
 
-  const entries = Object.entries(item || {}).filter(([k]) => {
-    if (skip.has(k) || tierFieldSkip.has(k) || k.startsWith('_')) return false;
-    if (collection === 'domains' && k === 'description') return false;
-    if (collection === 'domains' && k === 'cards' && hasDomainCardList) return false;
-    return true;
-  });
-  entries.sort(([a], [b]) => a.localeCompare(b));
+  const { chipFieldEntries, tailFieldEntries } = useMemo(() => {
+    const tierFieldSkip = new Set();
+    if (item?.tier != null && item.tier !== '') {
+      tierFieldSkip.add('tier');
+    }
+    if (showLibraryLevelBadge(collection, item)) {
+      tierFieldSkip.add('level');
+    }
+    const keysRendered = new Set(featureKeysSig ? featureKeysSig.split('|').filter(Boolean) : []);
+    const ent = Object.entries(item || {})
+      .filter(([k]) => {
+        if (skip.has(k) || tierFieldSkip.has(k) || k.startsWith('_')) return false;
+        if (k === 'description') return false;
+        if (collection === 'domains' && k === 'cards' && hasDomainCardList) return false;
+        return true;
+      })
+      .sort(([a], [b]) => a.localeCompare(b));
+    const filtered = ent.filter(
+      ([key]) =>
+        !keysRendered.has(key) &&
+        !(renderClassHopeFeature && key === 'hope_feature') &&
+        !(renderAttackWeaponCard && key === 'attack'),
+    );
+    const tailKeySet = LIBRARY_GENERIC_METADATA_TAIL_KEYS[collection] ?? new Set();
+    const chipPairs = [];
+    const tailPairs = [];
+    for (const pair of filtered) {
+      if (tailKeySet.has(pair[0])) tailPairs.push(pair);
+      else chipPairs.push(pair);
+    }
+    chipPairs.sort(([a], [b]) => a.localeCompare(b));
+    tailPairs.sort(([a], [b]) => a.localeCompare(b));
+    return {
+      chipFieldEntries: chipPairs.map(([key, val]) => ({ key, val })),
+      tailFieldEntries: tailPairs.map(([key, val]) => ({ key, val })),
+    };
+  }, [
+    item,
+    collection,
+    hasDomainCardList,
+    featureKeysSig,
+    renderClassHopeFeature,
+    renderAttackWeaponCard,
+  ]);
 
   const featureBlocks = (
     <>
@@ -354,16 +507,21 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   );
 
   const attackBlock = renderAttackWeaponCard ? <LibraryAttackAsWeaponCard attack={item.attack} /> : null;
-  const tierBlock = renderTierAdversaryRow ? <LibraryTierAdversaryRow item={item} collection={collection} /> : null;
-
-  const domainDescriptionBlock =
-    collection === 'domains' && item?.description ? (
-      <MarkdownText text={item.description} className="text-sm text-slate-200 dh-md mb-4" />
+  const tierBlock =
+    renderTierAdversaryRow && collection !== 'weapons' ? (
+      <LibraryTierAdversaryRow item={item} collection={collection} />
     ) : null;
+
+  /** Full-width prose, no label — always before other generic fields. */
+  const descriptionBlock = item?.description ? (
+    <div className="w-full min-w-0">
+      <MarkdownText text={item.description} className="text-sm text-dh dh-md" />
+    </div>
+  ) : null;
 
   const domainSpellBlock =
     hasDomainCardList && !abilitiesReady ? (
-      <div className="mb-4 text-sm text-slate-400">Loading spell reference…</div>
+      <div className="mb-4 text-sm text-dh-muted">Loading spell reference…</div>
     ) : hasDomainCardList && abilitiesReady && srdData.abilities.length === 0 ? (
       <div className="mb-4">
         <div className={LIB_SECTION_LABEL}>Cards</div>
@@ -373,28 +531,31 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
       <LibraryDomainSpellCards domainItem={item} srdData={srdData} parentItem={item} />
     ) : null;
 
-  const entryBlocks = entries
-    .filter(
-      ([key]) =>
-        !featureKeysRendered.has(key) &&
-        !(renderClassHopeFeature && key === 'hope_feature') &&
-        !(renderAttackWeaponCard && key === 'attack'),
-    )
-    .map(([key, val]) => (
-      <div key={key}>
-        <div className={LIB_SECTION_LABEL}>{labelizeKey(key)}</div>
-        <GenericFieldValue value={val} />
-      </div>
-    ));
+  const metadataChipsKey =
+    chipFieldEntries.length > 0
+      ? `${item?.id ?? 'na'}:${chipFieldEntries.map((f) => f.key).join(',')}:${hashFieldEntriesKey(chipFieldEntries)}`
+      : '';
 
   return (
     <div className="space-y-4 pr-1">
-      {attackBlock}
+      {descriptionBlock}
       {tierBlock}
-      {domainDescriptionBlock}
+      {chipFieldEntries.length > 0 ? (
+        <GenericMetadataFieldChips key={metadataChipsKey} fields={chipFieldEntries} />
+      ) : null}
+      {tailFieldEntries.length > 0 ? (
+        <div className="flex flex-col gap-4 w-full min-w-0">
+          {tailFieldEntries.map(({ key, val }) => (
+            <div key={key} className="w-full min-w-0">
+              <div className={LIB_SECTION_LABEL}>{labelizeKey(key)}</div>
+              <GenericFieldValue value={val} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {attackBlock}
       {domainSpellBlock}
       {featureBlocks}
-      {entryBlocks}
     </div>
   );
 }
@@ -410,7 +571,7 @@ function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1, characters =
   if (!hasAdversaries) return null;
 
   const diff = bp - adjustedBudget;
-  const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-slate-400';
+  const diffColor = diff > 0 ? 'text-red-400' : diff < 0 ? 'text-emerald-400' : 'text-dh-muted';
 
   const { lowerTierAdversary } = autoMods;
   const topTierChars = lowerTierAdversary.active
@@ -439,23 +600,20 @@ function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1, characters =
   ].filter(Boolean);
 
   return (
-    <div className="mb-3 p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg">
+    <div className="mb-3 p-2.5 bg-dh-inset border border-dh-border rounded-lg">
       <div className="flex items-center gap-3 flex-wrap">
         {tier != null && (
-          <span className="relative inline-flex items-center justify-center w-6 h-6 shrink-0" title={`Tier ${tier}`}>
-            <svg viewBox="0 0 20 22" className="absolute inset-0 w-full h-full" fill="none">
-              <path d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z" fill="#0f2040" stroke="#3b82f6" strokeWidth="1.5" />
-            </svg>
-            <span className="relative text-[11px] font-bold text-blue-200 leading-none mt-0.5">{tier}</span>
+          <span className="shrink-0" title={`Tier ${tier}`}>
+            <TierShieldBadge tier={tier} size="md" />
           </span>
         )}
-        <span className="text-sm text-slate-300">
-          <span className="font-bold text-white">{bp}</span>
-          <span className="text-slate-500"> BP</span>
+        <span className="text-sm text-dh">
+          <span className="font-bold text-dh">{bp}</span>
+          <span className="text-dh-muted"> BP</span>
         </span>
-        <span className="text-slate-600">·</span>
-        <span className="text-sm text-slate-300">
-          Budget <span className="font-bold text-white">{adjustedBudget}</span>
+        <span className="text-dh-muted">·</span>
+        <span className="text-sm text-dh">
+          Budget <span className="font-bold text-dh">{adjustedBudget}</span>
           {totalMod !== 0 && (
             <span className={`ml-1 text-xs ${totalMod > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
               ({totalMod > 0 ? '+' : ''}{totalMod})
@@ -466,7 +624,7 @@ function SceneBudgetBar({ item, data, partySize = 1, partyTier = 1, characters =
           {diff === 0 ? 'On budget' : diff > 0 ? `+${diff} over budget` : `${Math.abs(diff)} under budget`}
         </span>
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
-          <span className="text-xs text-slate-500">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
+          <span className="text-xs text-dh-muted">{partySize} PC{partySize !== 1 ? 's' : ''}</span>
         </div>
       </div>
       {activeMods.length > 0 && (
@@ -545,6 +703,8 @@ export function LibraryItemDisplayContent({
   adversaryScaledMeta = null,
   onAdversaryScaledToggle,
   onSaveElement,
+  /** Own characters only: updates Hope / HP / Stress / Armor from the live sheet preview. */
+  onCharacterRuntimeUpdate,
   isOwn = false,
   cardKey = 'library-preview',
   /** When `'libraryCard'`, shows the first image floated upper-right so content flows around it. */
@@ -579,7 +739,7 @@ export function LibraryItemDisplayContent({
       {collection === 'scenes' && data && (
         <>
           {item.description && (
-            <MarkdownText text={item.description} className="text-sm italic text-slate-300 mb-3" />
+            <MarkdownText text={item.description} className="text-sm italic text-dh mb-3" />
           )}
           <SceneBudgetBar item={item} data={data} partySize={partySize} partyTier={partyTier} characters={characters} />
           <ExpandedTablePreview
@@ -598,10 +758,10 @@ export function LibraryItemDisplayContent({
         </>
       )}
       {collection === 'adventures' && item.description && (
-        <MarkdownText text={item.description} className="text-sm italic text-slate-300" />
+        <MarkdownText text={item.description} className="text-sm italic text-dh" />
       )}
       {collection === 'characters' && (
-        <CharacterDetailPane item={item} srdData={srdData} />
+        <CharacterDetailPane item={item} srdData={srdData} onCharacterRuntimeUpdate={onCharacterRuntimeUpdate} />
       )}
       {GENERIC_DETAIL_SET.has(collection) && (
         <GenericLibraryRecordBody item={item} collection={collection} srdData={srdData} />

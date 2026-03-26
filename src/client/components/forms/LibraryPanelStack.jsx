@@ -37,7 +37,7 @@ export function LibraryPanelStack({
       <button
         type="button"
         onClick={swapLibrary}
-        className="h-7 shrink-0 flex items-center justify-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-300 bg-slate-800/60 border border-slate-700 border-b-slate-800 rounded-t-xl transition-colors cursor-pointer"
+        className="h-7 shrink-0 flex items-center justify-center gap-1.5 text-xs font-medium text-dh-muted hover:text-dh bg-dh-raised/60 border border-dh-border border-b-dh-border rounded-t-xl transition-colors cursor-pointer"
         title={`Switch to ${backLibrary === 'feature' ? 'Feature' : 'Experience'} Library`}
       >
         {backLibrary === 'feature' ? (

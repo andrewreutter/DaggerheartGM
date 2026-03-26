@@ -15,6 +15,22 @@ export function showLibraryTierShield(collection, item) {
 }
 
 /**
+ * Whether the library card/modal chrome should show the level badge (spell level for abilities).
+ * Mirrors {@link showLibraryTierShield}: lift rank out of the body into title chrome.
+ *
+ * @param {string} collection
+ * @param {object} [item]
+ * @returns {boolean}
+ */
+export function showLibraryLevelBadge(collection, item) {
+  if (item == null) return false;
+  if (collection !== 'abilities') return false;
+  const lv = item.level;
+  if (lv === undefined || lv === null || lv === '') return false;
+  return true;
+}
+
+/**
  * Single-line tier caption matching Library adversary card copy (Tier + role/type/extras).
  *
  * @param {object} item

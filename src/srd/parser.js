@@ -12,36 +12,15 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { ROLES } from '../game-constants.js';
+import { slugifySrdListName, makeSrdListId } from './srd-list-ids.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const JSON_DIR = join(__dirname, '..', '..', 'daggerheart-srd', '.build', '03_json');
 
-// --- ID / slug helpers ---
+// --- ID / slug helpers (nested feat/exp ids use same slugify as list rows) ---
 
-function slugify(name) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-const COLLECTION_PREFIXES = {
-  abilities:    'srd-abl',
-  adversaries:  'srd-adv',
-  ancestries:   'srd-anc',
-  armor:        'srd-arm',
-  beastforms:   'srd-bst',
-  classes:      'srd-cls',
-  communities:  'srd-com',
-  consumables:  'srd-cns',
-  domains:      'srd-dom',
-  environments: 'srd-env',
-  items:        'srd-itm',
-  subclasses:   'srd-sub',
-  weapons:      'srd-wpn',
-};
-
-function makeId(collection, name) {
-  const prefix = COLLECTION_PREFIXES[collection] || 'srd';
-  return `${prefix}-${slugify(name)}`;
-}
+const slugify = slugifySrdListName;
+const makeId = makeSrdListId;
 
 // --- Shared feature parsing ---
 

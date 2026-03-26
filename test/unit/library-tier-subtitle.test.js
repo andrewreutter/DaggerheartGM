@@ -3,6 +3,7 @@ import {
   libraryTierSubtitleText,
   libraryTierBodyLine,
   showLibraryTierShield,
+  showLibraryLevelBadge,
 } from '../../src/client/lib/library-tier-subtitle.js';
 
 describe('libraryTierSubtitleText', () => {
@@ -58,5 +59,20 @@ describe('showLibraryTierShield', () => {
 
   it('is false when tier is missing', () => {
     expect(showLibraryTierShield('adversaries', { name: 'X' })).toBe(false);
+  });
+});
+
+describe('showLibraryLevelBadge', () => {
+  it('is true for abilities with a level', () => {
+    expect(showLibraryLevelBadge('abilities', { level: 2 })).toBe(true);
+    expect(showLibraryLevelBadge('abilities', { level: '1' })).toBe(true);
+  });
+
+  it('is false when level is missing', () => {
+    expect(showLibraryLevelBadge('abilities', { name: 'X' })).toBe(false);
+  });
+
+  it('is false outside abilities collection', () => {
+    expect(showLibraryLevelBadge('weapons', { level: 1 })).toBe(false);
   });
 });

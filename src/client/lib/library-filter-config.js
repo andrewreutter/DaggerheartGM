@@ -1,4 +1,5 @@
 import { ROLES, ENV_TYPES } from './constants.js';
+import { normalizePersistedIncludes } from './library-default-filters.js';
 
 /**
  * Library browse: which collections use unified paginated API + per-tab filter UI.
@@ -20,11 +21,25 @@ export const SRD_UNIFIED_COLLECTIONS = [
   'weapons',
 ];
 
+/**
+ * Library tabs where the user can create a new item and edit/delete own items (Mine).
+ * All 13 SRD unified collections plus scenes, adventures, and characters.
+ */
+export const LIBRARY_USER_EDITABLE_COLLECTIONS = new Set([
+  ...SRD_UNIFIED_COLLECTIONS,
+  'scenes',
+  'adventures',
+  'characters',
+]);
+
 /** localStorage key — bumped when default source filters change */
 export const LIBRARY_FILTERS_PERSIST_KEY = 'dh_collectionFilters_v2';
 
 /** Single search string shared across all Library collection tabs (see useCollectionSearch `sharedSearchKey`). */
 export const LIBRARY_SEARCH_GLOBAL_KEY = 'dh_library_search_query';
+
+/** Source (Mine / All / SRD / …) selection shared across all Library SRD tabs (see useCollectionSearch `sharedIncludesKey`). */
+export const LIBRARY_INCLUDES_GLOBAL_KEY = 'dh_library_includes_sources';
 
 /** Read library-wide search string from localStorage (used with `LIBRARY_SEARCH_GLOBAL_KEY`). */
 export function readSharedSearchQuery(sharedSearchKey) {
@@ -34,6 +49,20 @@ export function readSharedSearchQuery(sharedSearchKey) {
     return g != null ? g : '';
   } catch {
     return '';
+  }
+}
+
+/** Read library-wide `includes` array from localStorage; `null` if unset or invalid (caller keeps per-tab default). */
+export function readSharedIncludes(sharedKey) {
+  if (!sharedKey) return null;
+  try {
+    const raw = localStorage.getItem(sharedKey);
+    if (raw == null) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return normalizePersistedIncludes(parsed);
+  } catch {
+    return null;
   }
 }
 

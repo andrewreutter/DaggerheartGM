@@ -69,13 +69,13 @@ export function ExperienceLibrary({ tier, subtype, currentExperiences, onAdd }) 
     .map(([key, val]) => ({ key, ...val }));
 
   return (
-    <div className="h-full bg-slate-900 border border-slate-700 rounded-xl flex flex-col overflow-hidden">
+    <div className="h-full bg-dh-surface border border-dh-border rounded-xl flex flex-col overflow-hidden">
       {/* Header with filters */}
-      <div className="p-3 bg-slate-950 border-b border-slate-800 shrink-0">
+      <div className="p-3 bg-dh-inset border-b border-dh-border shrink-0">
         <h4 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2 mb-3">
           <Sparkles size={15} className="text-amber-400" /> Experience Library
           {search.totalCount > 0 && (
-            <span className="text-[10px] text-slate-500 font-normal ml-1 normal-case tracking-normal">
+            <span className="text-[10px] text-dh-muted font-normal ml-1 normal-case tracking-normal">
               {search.items.length} of {search.totalCount} items
             </span>
           )}
@@ -87,14 +87,14 @@ export function ExperienceLibrary({ tier, subtype, currentExperiences, onAdd }) 
           variant="panel"
         />
         {search.loading && !search.isLoadingMore && (
-          <p className="text-[10px] text-slate-500 mt-2 animate-pulse">Loading…</p>
+          <p className="text-[10px] text-dh-muted mt-2 animate-pulse">Loading…</p>
         )}
       </div>
 
       {/* Scrollable experience list */}
       <div ref={listRef} className="p-3 space-y-2 overflow-y-auto flex-1">
         {!search.loading && candidates.length === 0 && (
-          <p className="text-xs text-slate-500 italic mt-2">
+          <p className="text-xs text-dh-muted italic mt-2">
             No experiences found for the selected filter.
           </p>
         )}
@@ -111,12 +111,12 @@ export function ExperienceLibrary({ tier, subtype, currentExperiences, onAdd }) 
         ))}
 
         {search.isLoadingMore && (
-          <div className="text-center text-slate-500 text-[10px] py-2 animate-pulse">
+          <div className="text-center text-dh-muted text-[10px] py-2 animate-pulse">
             Loading more of the {search.totalCount.toLocaleString()} items…
           </div>
         )}
         {!search.hasMore && !search.loading && search.totalCount > 0 && (
-          <div className="text-center text-slate-500 text-[10px] py-2">
+          <div className="text-center text-dh-muted text-[10px] py-2">
             Loaded last of {search.totalCount.toLocaleString()} items
           </div>
         )}
@@ -129,25 +129,26 @@ export function ExperienceLibrary({ tier, subtype, currentExperiences, onAdd }) 
 }
 
 function ExperienceCard({ experience, source, sourceName, onAdd, showSourceBadge }) {
+  const sourceBadge = SOURCE_BADGE[source] ?? SOURCE_BADGE.own;
   return (
     <button
       type="button"
       onClick={() => onAdd({ ...experience, modifier: 2, id: generateId() })}
-      className="w-full text-left bg-slate-800/50 hover:bg-slate-800 border border-slate-700 hover:border-slate-500 p-2.5 rounded transition-colors"
+      className="w-full text-left bg-dh-raised/50 hover:bg-dh-hover border border-dh-border hover:border-dh-strong p-2.5 rounded transition-colors"
     >
       <div className="flex items-start justify-between gap-1 mb-1">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           {showSourceBadge && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${SOURCE_BADGE[source]?.className || 'bg-slate-700 text-slate-300'}`}>
-              {SOURCE_BADGE[source]?.label ?? source}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${sourceBadge.className || 'dh-badge dh-badge-mine'}`}>
+              {sourceBadge.label}
             </span>
           )}
-          <span className="font-medium text-slate-200 text-xs leading-tight truncate">{experience.name || '(unnamed)'}</span>
+          <span className="font-medium text-dh text-xs leading-tight truncate">{experience.name || '(unnamed)'}</span>
         </div>
-        <Plus size={12} className="text-slate-500 group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
+        <Plus size={12} className="text-dh-muted group-hover:text-green-400 shrink-0 mt-0.5 transition-colors" />
       </div>
       {sourceName && (
-        <p className="text-[10px] text-slate-500 mt-1.5">
+        <p className="text-[10px] text-dh-muted mt-1.5">
           From: {sourceName}
         </p>
       )}

@@ -105,11 +105,11 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
-        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex-1">Potential Adversaries</h4>
+        <h4 className="text-xs font-semibold text-dh-muted uppercase tracking-wide flex-1">Potential Adversaries</h4>
         <button
           type="button"
           onClick={() => setPickerMode('add')}
-          className="flex items-center gap-1 text-xs text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 rounded px-2 py-1 transition-colors"
+          className="flex items-center gap-1 text-xs text-dh-muted hover:text-white border border-dh-border hover:border-dh-strong rounded px-2 py-1 transition-colors"
         >
           <Search size={11} /> Find
         </button>
@@ -124,12 +124,12 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
                 key={idx}
                 className={`flex items-center gap-2 rounded px-2 py-1.5 text-sm ${
                   isLinked
-                    ? 'bg-slate-950 border border-slate-700'
-                    : 'bg-slate-950 border border-dashed border-slate-600'
+                    ? 'bg-dh-inset border border-dh-border'
+                    : 'bg-dh-inset border border-dashed border-dh-strong'
                 }`}
               >
                 {isLinked && <Link2 size={12} className="text-blue-400 shrink-0" />}
-                <span className={`flex-1 truncate ${isLinked ? 'text-white' : 'text-slate-400 italic'}`}>
+                <span className={`flex-1 truncate ${isLinked ? 'text-white' : 'text-dh-muted italic'}`}>
                   {entry.name}
                 </span>
                 {!isLinked && (
@@ -138,7 +138,7 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
                       type="button"
                       title="Find and link an adversary"
                       onClick={() => setPickerMode({ linkIdx: idx })}
-                      className="text-slate-500 hover:text-blue-400 shrink-0"
+                      className="text-dh-muted hover:text-blue-400 shrink-0"
                     >
                       <Search size={13} />
                     </button>
@@ -147,7 +147,7 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
                       title="Create a new adversary with this name"
                       onClick={() => handleCreateFromPlaceholder(idx)}
                       disabled={creating}
-                      className="text-slate-500 hover:text-green-400 shrink-0 disabled:opacity-40"
+                      className="text-dh-muted hover:text-green-400 shrink-0 disabled:opacity-40"
                     >
                       <Plus size={13} />
                     </button>
@@ -156,7 +156,7 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
                 <button
                   type="button"
                   onClick={() => handleRemove(idx)}
-                  className="text-slate-500 hover:text-red-500 shrink-0"
+                  className="text-dh-muted hover:text-red-500 shrink-0"
                 >
                   <Trash2 size={13} />
                 </button>
@@ -173,13 +173,13 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
           value={newName}
           onChange={e => setNewName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddPlaceholder(); } }}
-          className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm text-white placeholder-slate-600 outline-none focus:border-slate-500"
+          className="flex-1 bg-dh-inset border border-dh-border rounded px-2 py-1.5 text-sm text-dh placeholder-dh-muted outline-none focus:border-dh-strong"
         />
         <button
           type="button"
           onClick={handleAddPlaceholder}
           disabled={!newName.trim()}
-          className="flex items-center gap-1 text-xs text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 rounded px-2 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-default"
+          className="flex items-center gap-1 text-xs text-dh-muted hover:text-white border border-dh-border hover:border-dh-strong rounded px-2 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-default"
         >
           <Plus size={12} /> Add
         </button>
@@ -244,24 +244,24 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
     <>
       <div className="space-y-4">
         <div className="grid grid-cols-4 gap-4">
-          <div className="col-span-2"><FormRow label="Name"><input type="text" value={formData.name} onChange={e => update({ ...formData, name: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow></div>
+          <div className="col-span-2"><FormRow label="Name"><input type="text" value={formData.name} onChange={e => update({ ...formData, name: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow></div>
           <FormRow label="Tier">
-            <select value={formData.tier} onChange={e => update({ ...formData, tier: parseInt(e.target.value) })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full">
+            <select value={formData.tier} onChange={e => update({ ...formData, tier: parseInt(e.target.value) })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full">
               {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </FormRow>
-          <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => update({ ...formData, difficulty: parseInt(e.target.value) || 0 })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" /></FormRow>
+          <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => update({ ...formData, difficulty: parseInt(e.target.value) || 0 })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow>
         </div>
         <FormRow label="Type">
-          <select value={formData.type} onChange={e => update({ ...formData, type: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white">
+          <select value={formData.type} onChange={e => update({ ...formData, type: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh">
             {ENV_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </FormRow>
         <FormRow label={<>Description<MarkdownHelpTooltip /></>}>
-          <textarea value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white h-24 resize-none" />
+          <textarea value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh h-24 resize-none" />
         </FormRow>
         <FormRow label="Impulses">
-          <input type="text" value={formData.impulses || ''} onChange={e => update({ ...formData, impulses: e.target.value })} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full" placeholder="e.g. Spread toxins, strip the land bare, end life" />
+          <input type="text" value={formData.impulses || ''} onChange={e => update({ ...formData, impulses: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" placeholder="e.g. Spread toxins, strip the land bare, end life" />
         </FormRow>
 
         <PotentialAdversariesInput
@@ -283,8 +283,8 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
         <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} />
 
         {!isControlled && (
-          <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
-            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+          <div className="flex justify-between items-center mt-6 pt-6 border-t border-dh-border">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
               <input
                 type="checkbox"
                 checked={!!formData.is_public}
@@ -294,15 +294,15 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
               Make Public
             </label>
             <div className="flex gap-3">
-              <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+              <button onClick={onCancel} className="px-4 py-2 text-dh-muted hover:text-white">Cancel</button>
               <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Environment</button>
             </div>
           </div>
         )}
 
         {isControlled && (
-          <div className="mt-6 pt-4 border-t border-slate-800">
-            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+          <div className="mt-6 pt-4 border-t border-dh-border">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
               <input
                 type="checkbox"
                 checked={!!formData.is_public}

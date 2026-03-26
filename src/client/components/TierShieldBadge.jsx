@@ -29,8 +29,7 @@ export function TierShieldBadge({ tier, scaledFromTier, size = 'sm', className =
         <svg viewBox="0 0 20 22" className="absolute inset-0 z-0 h-full w-full" fill="none" aria-hidden>
           <path
             d="M10 1L19 5v7c0 5-4 8-9 9C5 20 1 17 1 12V5l9-4z"
-            fill="#1e293b"
-            stroke="#64748b"
+            className="fill-dh-tier-shield stroke-dh-tier-shield-stroke"
             strokeWidth="1.5"
           />
         </svg>
@@ -42,7 +41,7 @@ export function TierShieldBadge({ tier, scaledFromTier, size = 'sm', className =
             <ArrowUpRight size={arrowSize} strokeWidth={2.5} className="block" style={{ position: 'relative', top: `${arrowSize}px`, left: `-${arrowSize}px` }} />
           </span>
         )}
-        <span className={`relative z-[2] font-bold leading-none text-slate-200 ${font}`}>{t}</span>
+        <span className={`relative z-[2] font-bold leading-none text-dh-tier-shield-text ${font}`}>{t}</span>
       </span>
     </Tooltip>
   );

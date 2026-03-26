@@ -44,6 +44,11 @@ export const ElementalIncarnation = {
   name: 'Elemental Incarnation',
   /** Game Table: run `onReviewAction` after HP is applied (side effects only — not pre-HP mitigation). */
   runOnReviewActionAfterHpApplied: true,
+  /**
+   * Game Table (Phase C damage pipeline): run hydrated `createActionLoop(...).runPhase('reviewOutcome')`
+   * at damage commit (after final `hpLoss` is known, before `markHp`). See `runV2DamageApplyReviewOutcomePhase`.
+   */
+  runOnVttDamageApplyReviewOutcome: true,
   description:
     'Mark a Stress to Channel one of the following elements until you take Severe damage or until your next rest:\n\n- Fire: When an adversary within Melee range deals damage to you, they take 1d10 magic damage.\n- Earth: Gain a bonus to your damage thresholds equal to your Proficiency.\n- Water: When you deal damage to an adversary within Melee range, all other adversaries within Very Close range must mark a Stress.\n- Air: You can hover, gaining advantage on Agility Rolls.',
   passiveStatMods: when(
@@ -239,6 +244,8 @@ export const ElementalAura = {
 
 export const ElementalDominion = {
   name: 'Elemental Dominion',
+  /** @see ElementalIncarnation — Game Table damage commit (`runV2DamageApplyReviewOutcomePhase`). Earth: d6-per-HP reduction updates `adjustedHpLoss`. */
+  runOnVttDamageApplyReviewOutcome: true,
   description:
     'You further embody your element. While Channeling, you gain the following benefit:\n\n- Fire: You gain a +1 bonus to your Proficiency for attacks and spells that deal damage.\n- Earth: When you would mark Hit Points, roll a d6 per Hit Point marked. For each result of 6, reduce the number of Hit Points you mark by 1.\n- Water: When an attack against you succeeds, you can mark a Stress to make the attacker temporarily Vulnerable.\n- Air: You gain a +1 bonus to your Evasion and can fly.',
   passiveStatMods: when(

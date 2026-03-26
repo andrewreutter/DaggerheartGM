@@ -69,7 +69,7 @@ export function ImportPreviewCard({
         <div className="flex flex-wrap gap-x-3 gap-y-0.5">
           <span className="capitalize">Tier {item.tier} {item.type}</span>
           {item.difficulty != null && (
-            <span>DC <strong className="text-slate-200">{item.difficulty}</strong></span>
+            <span>DC <strong className="text-dh">{item.difficulty}</strong></span>
           )}
           {item.features?.length > 0 && <span>{item.features.length} feature(s)</span>}
           {item.description && <span className="italic opacity-75 line-clamp-1">{item.description}</span>}
@@ -85,8 +85,8 @@ export function ImportPreviewCard({
     <div
       className={`border rounded-lg overflow-hidden transition-opacity ${
         selected
-          ? 'border-slate-700 bg-slate-950'
-          : 'border-slate-800/50 bg-slate-900/10 opacity-40'
+          ? 'border-dh-border bg-dh-inset'
+          : 'border-dh-border/50 bg-dh-surface/10 opacity-40'
       }`}
     >
       {/* Header row */}
@@ -106,13 +106,13 @@ export function ImportPreviewCard({
         >
           {/* Name row */}
           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-            <span className={`font-semibold text-sm ${selected ? 'text-white' : 'text-slate-500'}`}>
+            <span className={`font-semibold text-sm ${selected ? 'text-white' : 'text-dh-muted'}`}>
               {item.name || '(unnamed)'}
             </span>
 
             {collection === 'adversaries' && (
               <div
-                className="flex items-center gap-1 text-xs text-slate-400"
+                className="flex items-center gap-1 text-xs text-dh-muted"
                 onClick={e => e.stopPropagation()}
               >
                 <span>×</span>
@@ -121,7 +121,7 @@ export function ImportPreviewCard({
                   min="1"
                   value={item.count ?? 1}
                   onChange={e => onUpdate({ ...item, count: parseInt(e.target.value) || 1 })}
-                  className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-white text-center text-xs outline-none"
+                  className="w-12 bg-dh-surface border border-dh-border rounded px-1 py-0.5 text-dh text-center text-xs outline-none"
                 />
               </div>
             )}
@@ -133,25 +133,25 @@ export function ImportPreviewCard({
                 </span>
                 {selected && (
                   <div
-                    className="flex items-center text-[10px] rounded-full border border-slate-700 overflow-hidden flex-shrink-0"
+                    className="flex items-center text-[10px] rounded-full border border-dh-border overflow-hidden flex-shrink-0"
                     onClick={e => e.stopPropagation()}
                   >
                     <button
                       onClick={() => replaceMode && onToggleReplace()}
                       className={`px-2 py-0.5 transition-colors ${
                         !replaceMode
-                          ? 'bg-slate-700 text-slate-200'
-                          : 'text-slate-500 hover:text-slate-300'
+                          ? 'bg-dh-hover text-dh'
+                          : 'text-dh-muted hover:text-dh'
                       }`}
                     >
                       Add as new
                     </button>
                     <button
                       onClick={() => !replaceMode && onToggleReplace()}
-                      className={`px-2 py-0.5 border-l border-slate-700 transition-colors ${
+                      className={`px-2 py-0.5 border-l border-dh-border transition-colors ${
                         replaceMode
                           ? 'bg-yellow-900/60 text-yellow-300'
-                          : 'text-slate-500 hover:text-slate-300'
+                          : 'text-dh-muted hover:text-dh'
                       }`}
                     >
                       Replace existing
@@ -164,7 +164,7 @@ export function ImportPreviewCard({
 
           {/* Collapsed summary */}
           {!expanded && (
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-dh-muted">
               {summaryContent ?? defaultSummary}
             </div>
           )}
@@ -172,7 +172,7 @@ export function ImportPreviewCard({
 
         <button
           onClick={() => setExpanded(v => !v)}
-          className="text-slate-500 hover:text-slate-300 flex-shrink-0 mt-0.5"
+          className="text-dh-muted hover:text-dh flex-shrink-0 mt-0.5"
           title={expanded ? 'Collapse' : 'Expand to edit'}
         >
           {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -181,7 +181,7 @@ export function ImportPreviewCard({
 
       {/* Expanded content — controlled mode: edits propagate immediately */}
       {expanded && (
-        <div className="border-t border-slate-800 p-4">
+        <div className="border-t border-dh-border p-4">
           {collection === 'adversaries' && (
             <AdversaryForm
               value={item}
@@ -197,33 +197,33 @@ export function ImportPreviewCard({
           {collection === 'scenes' && (
             <div className="space-y-3">
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                <label className="text-xs font-medium text-dh-muted uppercase tracking-wider">
                   Name
                 </label>
                 <input
                   type="text"
                   value={item.name}
                   onChange={e => onUpdate({ ...item, name: e.target.value })}
-                  className={`bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white text-sm outline-none ${focusClass}`}
+                  className={`bg-dh-surface border border-dh-border rounded px-3 py-2 text-dh text-sm outline-none ${focusClass}`}
                 />
               </div>
               {'description' in item && (
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                  <label className="text-xs font-medium text-dh-muted uppercase tracking-wider">
                     Description
                   </label>
                   <textarea
                     value={item.description || ''}
                     onChange={e => onUpdate({ ...item, description: e.target.value })}
                     rows={3}
-                    className={`bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white text-sm outline-none resize-none ${focusClass}`}
+                    className={`bg-dh-surface border border-dh-border rounded px-3 py-2 text-dh text-sm outline-none resize-none ${focusClass}`}
                   />
                 </div>
               )}
               <div className="flex justify-end">
                 <button
                   onClick={() => setExpanded(false)}
-                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                  className="px-3 py-1.5 text-xs text-dh-muted hover:text-white"
                 >
                   Collapse
                 </button>

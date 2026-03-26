@@ -6,7 +6,7 @@
  * frequency tracking.
  */
 
-import { unwrapAll, unwrap } from './when.js';
+import { unwrapAll, unwrap, isWhen, unwrapTopLevelWhenChain } from './when.js';
 import { applyMutations, queueInternalMutation, buildTableSnapshot } from './table.js';
 import { applyDeclarativeFeatures, loadCharacterFeatures } from './feature-loader.js';
 
@@ -228,6 +228,87 @@ export function getChipDisableHint(chip, table) {
  * @param {object}   [usageStore]  — { [chipKey]: { used?, cycle, count? } }  for frequency checks
  * @returns {object[]}  active chips with metadata
  */
+/**
+ * Whether a declarative chip **`placements`** entry matches **`shape`** (same reference or same **`shape.id`**).
+ * Merged `activeFeatures` rows often shallow-copy SRD + V2 data so `cards[].shape` and `chips[].placements[0]`
+ * are not the same object instance even when they describe the same template.
+ *
+ * @param {object} shape — anchor from the sheet card (`collectSheetCards` / UI)
+ * @param {object} placementRef — entry from `chip.placements`
+ */
+export function shapePlacementMatches(shape, placementRef) {
+  if (!shape || typeof shape !== 'object' || !placementRef || typeof placementRef !== 'object') {
+    return false;
+  }
+  if (placementRef === shape) return true;
+  const sid = shape.id != null ? String(shape.id) : '';
+  const pid = placementRef.id != null ? String(placementRef.id) : '';
+  return sid !== '' && pid !== '' && sid === pid;
+}
+
+/**
+ * Placement anchor for declarative **sheet** cards: chips list the **same `shape` reference or `shape.id`**
+ * as {@link buildCardsForFeature} `entry.shape` (e.g. Beastbound `companionShape`) so UI can render
+ * them in a slot **below** the rendered template for that shape.
+ *
+ * @param {object[]} features — merged `activeFeatures` rows
+ * @param {object} shape — anchor from the resolved sheet card (reference or same **`id`** as module `cards[].shape`)
+ * @param {object} table — from {@link buildTableSnapshot}
+ * @param {object} [usageStore]
+ * @returns {object[]}
+ */
+export function collectChipsForShapePlacement(features, shape, table, usageStore = {}) {
+  const result = [];
+  if (!shape || typeof shape !== 'object' || !Array.isArray(features) || !table) return result;
+  const shapeKey = shape.id != null ? String(shape.id) : 'shape';
+
+  for (const feature of features) {
+    const chipsSource = buildChipsForFeature(feature);
+
+    for (const rawChip of chipsSource) {
+      const chip = unwrapTopLevelWhenChain(rawChip, table);
+      if (!chip || typeof chip !== 'object') continue;
+
+      const placements = chip.placements || (chip.placement ? [chip.placement] : ['card']);
+      if (!placements.some((p) => shapePlacementMatches(shape, p))) continue;
+
+      const resolvedName =
+        typeof chip.name === 'function' ? chip.name(table) : chip.name;
+      const chipDisplayName = resolvedName ?? feature.name;
+      const chipWithName =
+        typeof chip.name === 'function' ? { ...chip, name: chipDisplayName } : { ...chip, name: chipDisplayName };
+
+      const chipKey = `${feature.name}::${chipDisplayName}::shape:${shapeKey}`;
+
+      if (chip.frequency) {
+        let maxUses = 1;
+        if (chip.frequencyMaxUses !== undefined) {
+          const raw =
+            typeof chip.frequencyMaxUses === 'function' ? chip.frequencyMaxUses(table) : chip.frequencyMaxUses;
+          maxUses = Math.max(1, Math.floor(Number(raw)) || 1);
+        }
+        if (!isChipAvailable(chipKey, chip.frequency, usageStore, maxUses)) continue;
+      }
+
+      const logicDisabled = resolveChipDisabled(chipWithName, table);
+      const resourceUnaffordable = !canPayChipCosts(chipWithName, table);
+      const disableHint = getChipDisableHint(chipWithName, table);
+      result.push({
+        ...chipWithName,
+        disabled: logicDisabled,
+        resourceUnaffordable,
+        disableHint,
+        _featureName: feature.name,
+        _featureSource: feature._source,
+        _ownerInstanceId: feature._ownerInstanceId,
+        _chipKey: chipKey,
+      });
+    }
+  }
+
+  return result;
+}
+
 export function collectChips(features, phase, table, usageStore = {}) {
   const result = [];
 
@@ -237,10 +318,10 @@ export function collectChips(features, phase, table, usageStore = {}) {
 
     for (const rawChip of chipsSource) {
       // Resolve when() wrappers using current table snapshot
-      const chip = unwrapAll(rawChip, table);
+      const chip = unwrapTopLevelWhenChain(rawChip, table);
       if (!chip || typeof chip !== 'object') continue;
 
-      const placements = chip.placements || ['card'];
+      const placements = chip.placements || (chip.placement ? [chip.placement] : ['card']);
       if (!placements.includes(phase)) continue;
 
       const resolvedName =
@@ -745,6 +826,7 @@ export function resetChipFrequency(cycle, usageStore) {
  */
 export function hasDeclarativeSheetRepresentation(feature) {
   if (!feature || typeof feature !== 'object') return false;
+  if (Array.isArray(feature.cards) && feature.cards.length > 0) return true;
   if (Array.isArray(feature.advantageTriggers) && feature.advantageTriggers.length > 0) return true;
   if (Array.isArray(feature.virtualWeapons) && feature.virtualWeapons.length > 0) return true;
 
@@ -833,6 +915,104 @@ export function buildChipsForFeature(feature) {
       narrativeBannerOnly: true,
     },
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Declarative sheet cards (SRD-shaped display objects; not action-loop chips)
+// ---------------------------------------------------------------------------
+
+/**
+ * @typedef {{ placement: 'sheet'|'editor', shape: object|null, resolve: unknown }} NormalizedCardEntry
+ */
+
+/**
+ * @param {unknown} raw
+ * @returns {NormalizedCardEntry}
+ */
+export function normalizeCardEntry(raw) {
+  if (
+    raw != null &&
+    typeof raw === 'object' &&
+    !isWhen(raw) &&
+    (raw.placement === 'sheet' || raw.placement === 'editor') &&
+    Object.prototype.hasOwnProperty.call(raw, 'resolve')
+  ) {
+    return {
+      placement: raw.placement,
+      shape: raw.shape ?? null,
+      resolve: raw.resolve,
+    };
+  }
+  return { placement: 'sheet', shape: null, resolve: raw };
+}
+
+/**
+ * Normalized `cards` entries from a feature definition (`when()` wrappers live under `resolve`).
+ * @param {object} feature
+ * @returns {NormalizedCardEntry[]}
+ */
+export function buildCardsForFeature(feature) {
+  if (!feature || typeof feature !== 'object') return [];
+  const cards = Array.isArray(feature.cards) ? feature.cards : [];
+  return cards.map(normalizeCardEntry);
+}
+
+/**
+ * @param {'sheet'|'editor'} placement
+ * @param {object[]} features — merged `activeFeatures` rows
+ * @param {object} table — from {@link buildTableSnapshot} or editor stub
+ * @returns {{ feature: object, card: object, shape: object|null }[]}
+ */
+function collectCardsForPlacement(features, table, placement) {
+  const result = [];
+  if (!Array.isArray(features) || !table) return result;
+
+  for (const feature of features) {
+    if (!feature || typeof feature !== 'object') continue;
+    const entries = buildCardsForFeature(feature);
+    for (const entry of entries) {
+      if (entry.placement !== placement) continue;
+      const resolved = unwrapAll(entry.resolve, table);
+      if (resolved === undefined || resolved === null) continue;
+      const items = Array.isArray(resolved) ? resolved : [resolved];
+      for (const item of items) {
+        let card = item;
+        if (typeof item === 'function') {
+          try {
+            card = item(table);
+          } catch {
+            continue;
+          }
+        }
+        if (!card || typeof card !== 'object') continue;
+        result.push({ feature, card, shape: entry.shape });
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Evaluate declarative **sheet** cards for the current table snapshot.
+ * Each leaf resolves to a plain object (optionally via `(table) => object`). Skips undefined / null.
+ *
+ * @param {object[]} features — merged `activeFeatures` rows
+ * @param {object} table — from {@link buildTableSnapshot}
+ * @returns {{ feature: object, card: object, shape: object|null }[]}
+ */
+export function collectSheetCards(features, table) {
+  return collectCardsForPlacement(features, table, 'sheet');
+}
+
+/**
+ * Declarative **editor** cards (character builder). Uses the same `when()` / `resolve` rules with an editor `table` stub.
+ *
+ * @param {object[]} features — merged `activeFeatures` rows
+ * @param {object} table — editor stub (`buildEditorTableStub`)
+ * @returns {{ feature: object, card: object, shape: object|null }[]}
+ */
+export function collectEditorCards(features, table) {
+  return collectCardsForPlacement(features, table, 'editor');
 }
 
 /**

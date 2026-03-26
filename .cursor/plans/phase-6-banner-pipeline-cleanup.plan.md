@@ -49,7 +49,7 @@ Unrelated but good mental model: `[handleV2ReviewChip](src/client/components/GMT
 | Comment referencing “onBanner” on banner shell                                             | ~1335         |
 
 
-Registry facts unchanged: no `onBanner` / `bannerAction` under `[src/features-v2/](src/features-v2)`; only banner `placement: 'banner'` + `isVisible(ctx)` in `[ISeeItComing.js](src/features-v2/abilities/Bone/ISeeItComing.js)`.
+Registry facts unchanged: no `onBanner` / `bannerAction` under `[src/features-v2/](src/features-v2)`; Bone **I See It Coming** lives in `[ISeeItComing.js](src/features-v2/abilities/Bone/ISeeItComing.js)`.
 
 ### Other wiring
 
@@ -70,7 +70,7 @@ In `ancestryBannerReactions` (~3918+):
 
 ### 2. Collapse `isVisible` for **banner** chips only
 
-- Replace ~4054–4056 with `**chip.isVisible(chipContext)`** (registry already uses single-arg `ISeeItComing`).
+- Replace ~4054–4056 with `**chip.isVisible(chipContext)`** (registry uses single-arg visibility where applicable).
 - Grep tests/fixtures for two-arg banner `isVisible`; fix or document.
 
 **Do not** conflate with preroll canvas (~2978–2981): that path still uses `(canvasContext)` vs `(rollWrapper, featureReader, canvasContext)` — optional follow-up, not required for Phase 6 banner completion.

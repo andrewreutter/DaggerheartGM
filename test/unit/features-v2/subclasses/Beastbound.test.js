@@ -5,15 +5,33 @@ import {
   BattleBonded,
   AdvancedTraining,
   LoyalFriend,
+  srdifyRangerCompanion,
 } from '../../../../src/features-v2/subclasses/Beastbound.js';
 import { applyDeclarativeFeatures } from '../../../../src/features-v2/engine/feature-loader.js';
 import { mockCharacter, mockAdversary, mockAction, runIntent } from '../helpers.js';
 
 describe('Beastbound — Companion / training / Loyal Friend (narrative)', () => {
-  it('Companion has no executable hooks or chips (sheet + level-up choices)', () => {
-    expect(Companion.chips).toBeUndefined();
+  it('Companion has shape-anchored sheet chip + declarative cards (no engine hooks)', () => {
+    expect(Array.isArray(Companion.chips)).toBe(true);
+    expect(Companion.chips[0].placements?.[0]).toBe(Companion.cards[0].shape);
+    expect(Companion.chips[0].onUse).toBeTypeOf('function');
     expect(Companion.hooks).toBeUndefined();
     expect(Companion.name).toBe('Companion');
+  });
+
+  it('srdifyRangerCompanion maps runtime companion to shapeId + display fields', () => {
+    const out = srdifyRangerCompanion({
+      name: 'Artaq',
+      species: 'Jhereg',
+      evasion: 12,
+      attackName: 'Stinger',
+      maxStress: 4,
+      currentStress: 1,
+      experiences: [{ name: 'Odd Clues', score: 2 }],
+    });
+    expect(out.shapeId).toBe('dh.shape.rangerCompanion');
+    expect(out.name).toBe('Artaq');
+    expect(out.experiences[0].score).toBe(2);
   });
 
   it('Expert Training and Advanced Training are advancement-only text', () => {

@@ -10,7 +10,7 @@ function primaryImageUrl(item) {
   const s = String(raw).trim();
   if (!s) return '';
   if (/^https?:\/\//i.test(s)) return s;
-  if (item._source === 'fcg') {
+  if (item.id && String(item.id).startsWith('fcg-')) {
     return `https://freshcutgrass.app${s.startsWith('/') ? s : `/${s}`}`;
   }
   return s;

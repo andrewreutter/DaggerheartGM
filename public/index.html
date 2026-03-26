@@ -4,9 +4,29 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Daggertop</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('dh_theme');
+        document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 
   <link rel="stylesheet" href="/styles.css" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark-dimmed.min.css" />
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('dh_theme') === 'light') {
+          var l = document.getElementById('hljs-theme');
+          if (l) l.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+        }
+      } catch (e) {}
+    })();
+  </script>
 
   <!--
     Import map: maps bare module specifiers to CDN ESM URLs.
@@ -31,7 +51,7 @@
   }
   </script>
 </head>
-<body class="bg-slate-950 min-h-screen">
+<body class="min-h-screen bg-dh-canvas text-dh">
   <div id="root"></div>
 
   <!-- Bump ?v= when shipping client bundle changes so browsers don’t keep a stale cached app.js -->

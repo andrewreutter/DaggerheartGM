@@ -50,22 +50,22 @@ export function MultiSelectRef({ label, options, selectedIds, onChange, isCounta
   const singular = collection ? (ITEM_PICKER_SINGULAR[collection] || collection) : null;
 
   return (
-    <div className="mb-4 p-4 border border-slate-800 rounded-lg bg-slate-900/50">
-      <label className="text-sm font-medium text-slate-300 block mb-2">{label}</label>
+    <div className="mb-4 p-4 border border-dh-border rounded-lg bg-dh-surface/50">
+      <label className="text-sm font-medium text-dh block mb-2">{label}</label>
 
       <div className="flex gap-2 mb-3">
         {collection ? (
           <button
             type="button"
             onClick={() => setPickerOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white rounded transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm bg-dh-raised hover:bg-dh-hover border border-dh-border hover:border-dh-strong text-dh hover:text-dh rounded transition-colors"
           >
             <Plus size={14} />
             Add {singular}…
           </button>
         ) : (
           <select
-            className="flex-1 bg-slate-950 border border-slate-700 rounded p-2 text-white text-sm outline-none"
+            className="flex-1 bg-dh-inset border border-dh-border rounded p-2 text-dh text-sm outline-none"
             onChange={(e) => { addById(e.target.value); e.target.value = ''; }}
             defaultValue=""
           >
@@ -79,22 +79,22 @@ export function MultiSelectRef({ label, options, selectedIds, onChange, isCounta
         {(isCountable ? selectedIds : selectedIds.map(id => ({ id }))).map(item => {
           const displayName = getDisplayName(item.id);
           return (
-            <div key={item.id} className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800">
+            <div key={item.id} className="flex justify-between items-center bg-dh-inset p-2 rounded border border-dh-border">
               <span className="text-sm text-white">{displayName}</span>
               <div className="flex items-center gap-3">
                 {isCountable && (
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-slate-500">Qty</span>
+                    <span className="text-xs text-dh-muted">Qty</span>
                     <input
                       type="number"
                       min="1"
                       value={item.count}
                       onChange={e => updateCount(item.id, e.target.value)}
-                      className="w-12 bg-slate-900 border border-slate-700 rounded px-1 text-center text-sm text-white"
+                      className="w-12 bg-dh-surface border border-dh-border rounded px-1 text-center text-sm text-dh"
                     />
                   </div>
                 )}
-                <button type="button" onClick={() => removeOption(item.id)} className="text-slate-500 hover:text-red-500">
+                <button type="button" onClick={() => removeOption(item.id)} className="text-dh-muted hover:text-red-500">
                   <Trash2 size={14} />
                 </button>
               </div>

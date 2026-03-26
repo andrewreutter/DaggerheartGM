@@ -1,5 +1,5 @@
 /**
- * Pure helpers for docs/v2-migration-tracker.md — implementation queue (see scripts/v2-migration-queue.mjs).
+ * Pure helpers for V2 implementation queue reporting (see scripts/v2-migration-queue.mjs + GitHub Issues).
  */
 
 export const PRIORITY_DOMAINS = [
@@ -263,7 +263,8 @@ export function buildQueueReport(parsed, options = {}) {
 
 export function formatQueueText(report, options = {}) {
   const lines = [];
-  lines.push('V2 implementation queue (derived from docs/v2-migration-tracker.md merged with docs/v2-migration-to-review.md)');
+  const derived = options.queueSourceDescription || 'GitHub Issues (v2-migration)';
+  lines.push(`V2 implementation queue (derived from ${derived})`);
   lines.push('Rules: docs/agent-prompts/implementation-agent.md (Cross-collection priority, Domain tier order).');
   lines.push('');
 
@@ -296,7 +297,8 @@ export function formatQueueText(report, options = {}) {
 
   lines.push('');
   lines.push(
-    'Claim: set Status to In Progress and Agent id on the row (docs/v2-migration-tracker.md or docs/v2-migration-to-review.md per implementation-agent).',
+    options.claimFooter ||
+      'Claim: set v2-status label and agent in the GitHub Issue JSON body.',
   );
   return lines.join('\n');
 }

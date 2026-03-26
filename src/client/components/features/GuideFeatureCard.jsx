@@ -34,6 +34,14 @@ import { ACTION_LOOP_PHASE_UI, FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI } from '../../
 import { resolveV2FeatureSourcePath } from '../../../features-v2/resolve-feature-source-path.js';
 import { FeatureSourceModal } from './FeatureSourceModal.jsx';
 import { getPendingV2DeferToggleNext } from '../../lib/helpers.js';
+import {
+  V2_REVIEW_CHIP_INLINE_OPTION_MAX,
+  V2_INLINE_SEG_BTN_BASE,
+  V2_INLINE_SEG_TARGET_BTN,
+  V2_INLINE_SEG_OFF,
+} from '../../lib/v2-inline-select-ui.js';
+import { useCharacterSheetSourceHighlightState } from '../CharacterSheetSourceHighlight.jsx';
+import { shouldDimFeatOrAbilityRow, SHEET_SOURCE_DIM_CLASS } from '../../lib/source-badge-sheet-highlight.js';
 
 const ELEMENT_ICONS = { fire: Flame, earth: Mountain, water: Droplets, air: Wind, Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
 
@@ -115,11 +123,15 @@ export function GuideFeatureCardChips({
   onlyIsToggle = false,
   /** Pending action banners — tentative on/off for deferred toggles (`gameTableDeferUntilBannerAck`) until GM ack. */
   pendingBanners,
+  /** When set (e.g. below a declarative template), passed through to `onV2CardChip` → `runV2OwnedCardChipTableAction` / `activateV2OwnedCardChip` (`placementShape` for `collectChipsForShapePlacement`). */
+  placementShape,
 }) {
   const [isSelectNonce, setIsSelectNonce] = useState({});
   const bumpIsSelect = (ci) => {
     setIsSelectNonce((prev) => ({ ...prev, [ci]: (prev[ci] || 0) + 1 }));
   };
+
+  const chipPayloadExtras = placementShape != null ? { placementShape } : {};
 
   const preview = interactionMode === 'preview';
   const canInteract = !preview && typeof onV2CardChip === 'function';
@@ -183,13 +195,19 @@ export function GuideFeatureCardChips({
                     onClick={(e) => {
                       e.stopPropagation();
                       if (preview || cantUse || !canInteract || chipDisabled) return;
-                      onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey, selectOpts: { selectedId: id } });
+                      onV2CardChip({
+                        featRow,
+                        chip: chipForEngine,
+                        featureKey: effectiveKey,
+                        selectOpts: { selectedId: id },
+                        ...chipPayloadExtras,
+                      });
                     }}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
                       isActive
                         ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-200 ring-1 ring-emerald-700/40'
                         : cantUse || preview
-                          ? 'border-slate-600/50 bg-slate-800/30 text-slate-500 opacity-60 cursor-not-allowed'
+                          ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-60 cursor-not-allowed'
                           : 'border-amber-700/50 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600/70 cursor-pointer'
                     }`}
                     aria-label={opt.name || id}
@@ -230,20 +248,72 @@ export function GuideFeatureCardChips({
         if (isSelect && selectOpts.length > 0 && chip.selectPresentation !== 'iconGrid') {
           const n = isSelectNonce[ci] ?? 0;
           const selectCls = actionsStripLayout ? 'text-xs w-full' : 'text-xs';
-          const closedName = actionsStripLayout ? model.displayName : label;
+          /** Actions strip: chip name (e.g. "Prayer Die — Action"); expanded card: chip name. */
+          const closedName = label;
+          const selectDisabled = preview || !canInteract || chipDisabled || chipUsed;
+
+          if (selectOpts.length <= V2_REVIEW_CHIP_INLINE_OPTION_MAX && !chip.multiSelect) {
+            return (
+              <div key={`${ci}-isseg-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
+                <div className="flex flex-col gap-1">
+                  <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                    <span className="font-semibold text-dh">{closedName}</span>
+                    <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
+                    {chip.frequency ? (
+                      <span className="text-dh-muted text-[9px] shrink-0">{chipFrequencySuffix(chip)}</span>
+                    ) : null}
+                  </div>
+                  <div
+                    className="flex w-full max-w-full overflow-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+                    role="group"
+                    aria-label={String(closedName)}
+                  >
+                    {selectOpts.map((o) => {
+                      const id = o.id ?? o.name;
+                      const idStr = id != null ? String(id) : '';
+                      const name = o.name ?? o.label ?? String(id ?? '');
+                      return (
+                        <button
+                          key={idStr || name}
+                          type="button"
+                          disabled={selectDisabled}
+                          title={typeof o.description === 'string' ? o.description : undefined}
+                          onClick={() => {
+                            if (selectDisabled || id == null || id === '') return;
+                            onV2CardChip({
+                              featRow,
+                              chip: chipForEngine,
+                              featureKey: effectiveKey,
+                              selectOpts: { selectedId: idStr },
+                              ...chipPayloadExtras,
+                            });
+                            bumpIsSelect(ci);
+                          }}
+                          className={`${V2_INLINE_SEG_BTN_BASE} ${V2_INLINE_SEG_OFF}`}
+                        >
+                          <span className="block truncate">{name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div key={`${ci}-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
               <CustomSelect
                 key={`isselect-${ci}-${n}`}
                 value={null}
-                placeholder={actionsStripLayout ? model.displayName : 'Choose…'}
+                placeholder={actionsStripLayout ? closedName : 'Choose…'}
                 truncateClosedLabel={!!actionsStripLayout}
                 renderPlaceholder={() => (
                   <span className="inline-flex items-center gap-1 min-w-0">
                     <span className={`min-w-0 text-inherit ${actionsStripLayout ? 'truncate' : ''}`}>{closedName}</span>
                     <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
                     {chip.frequency ? (
-                      <span className="text-slate-400 text-[9px] shrink-0">{chipFrequencySuffix(chip)}</span>
+                      <span className="text-dh-muted text-[9px] shrink-0">{chipFrequencySuffix(chip)}</span>
                     ) : null}
                   </span>
                 )}
@@ -272,7 +342,13 @@ export function GuideFeatureCardChips({
                   if (opt == null || !canInteract || chipDisabled || chipUsed) return;
                   const id = opt.id ?? opt.name;
                   if (id == null || id === '') return;
-                  onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey, selectOpts: { selectedId: id } });
+                  onV2CardChip({
+                    featRow,
+                    chip: chipForEngine,
+                    featureKey: effectiveKey,
+                    selectOpts: { selectedId: id },
+                    ...chipPayloadExtras,
+                  });
                   bumpIsSelect(ci);
                 }}
               />
@@ -292,54 +368,49 @@ export function GuideFeatureCardChips({
 
         if (needsSelectTargets && selectTargetOpts.length > 0) {
           const n = isSelectNonce[ci] ?? 0;
-          const selectCls = actionsStripLayout ? 'text-xs w-full' : 'text-xs';
-          const closedName = actionsStripLayout ? model.displayName : label;
+          const closedName = label;
+          const targetPickDisabled = preview || !canInteract || chipDisabled || chipUsed;
+
           return (
-            <div key={`${ci}-st-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
-              <CustomSelect
-                key={`selectTargets-${ci}-${n}`}
-                value={null}
-                placeholder={actionsStripLayout ? model.displayName : 'Choose target…'}
-                truncateClosedLabel={!!actionsStripLayout}
-                renderPlaceholder={() => (
-                  <span className="inline-flex items-center gap-1 min-w-0">
-                    <span className={`min-w-0 text-inherit ${actionsStripLayout ? 'truncate' : ''}`}>{closedName}</span>
-                    <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
-                  </span>
-                )}
-                options={selectTargetOpts}
-                getOptionKey={(o) => o.instanceId ?? o.id ?? o.name}
-                getOptionLabel={(o) => o.name ?? String(o.instanceId ?? '')}
-                getOptionDescription={() => ''}
-                disabled={preview || !canInteract || chipDisabled || chipUsed}
-                disabledReason={
-                  preview
-                    ? undefined
-                    : !canInteract
-                      ? undefined
-                      : usedHint || (chipDisabled ? engineDisableHint : undefined)
-                }
-                disabledTooltipContent={
-                  preview ? (
-                    <PreviewModeTooltipBody>
-                      <MarkdownText text={String(tipText || '')} className="text-[11px] leading-relaxed dh-md" />
-                    </PreviewModeTooltipBody>
-                  ) : undefined
-                }
-                className={selectCls}
-                onChange={(opt) => {
-                  if (opt == null || !canInteract || chipDisabled || chipUsed) return;
-                  const tid = opt.instanceId ?? opt.id;
-                  if (tid == null || tid === '') return;
-                  onV2CardChip({
-                    featRow,
-                    chip: chipForEngine,
-                    featureKey: effectiveKey,
-                    selectOpts: { selectedTargetIds: [tid] },
-                  });
-                  bumpIsSelect(ci);
-                }}
-              />
+            <div key={`${ci}-stseg-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
+              <div className="flex flex-col gap-1">
+                <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                  <span className="font-semibold text-dh">{closedName}</span>
+                  <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
+                </div>
+                <div
+                  className="flex w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+                  role="group"
+                  aria-label={`${closedName} targets`}
+                >
+                  {selectTargetOpts.map((o) => {
+                    const tid = o.instanceId ?? o.id;
+                    if (tid == null || tid === '') return null;
+                    const name = o.name ?? String(tid);
+                    return (
+                      <button
+                        key={String(tid)}
+                        type="button"
+                        disabled={targetPickDisabled}
+                        onClick={() => {
+                          if (targetPickDisabled) return;
+                          onV2CardChip({
+                            featRow,
+                            chip: chipForEngine,
+                            featureKey: effectiveKey,
+                            selectOpts: { selectedTargetIds: [tid] },
+                            ...chipPayloadExtras,
+                          });
+                          bumpIsSelect(ci);
+                        }}
+                        className={`${V2_INLINE_SEG_TARGET_BTN} ${V2_INLINE_SEG_OFF}`}
+                      >
+                        <span className="block truncate">{name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           );
         }
@@ -390,21 +461,23 @@ export function GuideFeatureCardChips({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (preview || !canInteract || chipDisabled || toggleDeferAwait) return;
-                  onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey });
+                  onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey, ...chipPayloadExtras });
                 }}
-                className={`inline-flex items-center gap-1 max-w-full rounded px-1.5 py-0.5 text-[10px] border transition-colors ${
+                className={`inline-flex items-start gap-1 max-w-full rounded px-1.5 py-1 text-left border transition-colors ${
                   preview || !canInteract || chipDisabled || toggleDeferAwait
-                    ? 'border-slate-600/50 bg-slate-800/30 text-slate-500 opacity-70 cursor-not-allowed'
+                    ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-70 cursor-not-allowed'
                     : active
                       ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70'
                       : 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
-                } ${toggleDeferAwait ? 'ring-1 ring-amber-300/70 ring-offset-1 ring-offset-slate-900/90 animate-pulse' : ''}`}
+                } ${toggleDeferAwait ? 'ring-1 ring-amber-300/70 ring-offset-1 ring-offset-dh-canvas animate-pulse' : ''}`}
                 aria-pressed={active}
                 aria-busy={toggleDeferAwait || undefined}
               >
-                {active ? <CheckSquare size={10} className="shrink-0" /> : <Square size={10} className="shrink-0" />}
-                <span className="truncate">{label}</span>
-                <FeatureResourceCostIcons action={chipForEngine} iconSize={9} />
+                {active ? <CheckSquare size={11} className="shrink-0 mt-0.5" /> : <Square size={11} className="shrink-0 mt-0.5" />}
+                <span className="flex min-w-0 flex-1 items-start gap-1.5">
+                  <span className="text-sm font-semibold leading-tight min-w-0 flex-1">{label}</span>
+                  <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
+                </span>
               </button>
             </Tooltip>
           );
@@ -452,27 +525,33 @@ export function GuideFeatureCardChips({
                     onShareFeature(featRow);
                     return;
                   }
-                  onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey });
+                  onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey, ...chipPayloadExtras });
                   return;
                 }
                 if (!canInteract) return;
-                onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey });
+                onV2CardChip({ featRow, chip: chipForEngine, featureKey: effectiveKey, ...chipPayloadExtras });
               }}
-              className={`inline-flex items-center gap-1 max-w-full rounded px-1.5 py-0.5 border transition-colors ${
-                narrativeOnly ? 'text-[9px] font-normal' : 'text-[10px]'
-              } ${
+              className={`inline-flex flex-col items-stretch gap-1 max-w-full rounded px-1.5 py-1 text-left border transition-colors ${
                 defaultChipInactive
-                  ? 'border-slate-600 bg-slate-800/50 text-slate-500 cursor-not-allowed'
+                  ? 'border-dh-border bg-dh-raised/50 text-dh-muted cursor-not-allowed'
                   : narrativeOnly
-                    ? 'border-slate-600/60 bg-slate-900/40 text-slate-400 hover:bg-slate-800/50 hover:border-slate-500/70 hover:text-slate-300'
+                    ? 'border-dh-border/60 bg-dh-raised/50 text-dh-muted hover:bg-dh-hover/40 hover:border-dh-strong/70 hover:text-dh'
                     : 'border-amber-700/50 bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-600/60'
               }`}
             >
-              <span className="truncate">{label}</span>
-              <FeatureResourceCostIcons action={chip} iconSize={9} />
-              {chip.frequency ? (
-                <span className="truncate text-slate-400">{chipFrequencySuffix(chip)}</span>
-              ) : null}
+              <span className="flex items-start gap-1.5 min-w-0">
+                <span
+                  className={`min-w-0 flex-1 truncate font-semibold leading-tight ${narrativeOnly ? 'text-[11px] font-normal' : 'text-sm'}`}
+                >
+                  {label}
+                </span>
+                <span className="inline-flex flex-wrap items-center gap-1 shrink-0 justify-end">
+                  <FeatureResourceCostIcons action={chip} iconSize={9} />
+                  {chip.frequency ? (
+                    <span className="text-[9px] text-dh-muted whitespace-nowrap">{chipFrequencySuffix(chip)}</span>
+                  ) : null}
+                </span>
+              </span>
             </button>
           </Tooltip>
         );
@@ -500,6 +579,8 @@ export function GuideFeatureCardChips({
  * @param {function} [props.onShareFeature]
  * @param {string} [props.tone] — 'default' | 'domain'
  * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, activeElements?: object[] }} [props.v2TableContext] — for `isSelect` chips (Druid Beastform, etc.)
+ * @param {boolean} [props.hideV2CardChips] — when true, omit the V2 chip row (e.g. chips live in a separate Actions card).
+ * @param {object} [props.sheetHighlightAbility] — when set, row is a domain ability from `el.abilities` (source-badge dimming).
  */
 export function GuideFeatureCard({
   featRow,
@@ -519,6 +600,8 @@ export function GuideFeatureCard({
   tone = 'default',
   v2TableContext,
   pendingBanners,
+  hideV2CardChips = false,
+  sheetHighlightAbility = null,
 }) {
   const [sourceViewer, setSourceViewer] = useState(null);
   const preview = interactionMode === 'preview';
@@ -538,14 +621,18 @@ export function GuideFeatureCard({
   const legacy = model.legacyAction;
   const hasDice = model.hasDice;
 
+  const highlightCtx = useCharacterSheetSourceHighlightState();
+  const highlight = highlightCtx?.highlight ?? null;
+  const cardDimmed = shouldDimFeatOrAbilityRow(sheetHighlightAbility, featRow, el, highlight);
+
   const shellClass =
     tone === 'domain'
-      ? 'overflow-hidden border-0 bg-transparent'
-      : 'rounded-lg overflow-hidden bg-slate-800/40 border-t border-slate-500/35';
+      ? 'rounded-lg overflow-hidden dh-tint-magic-feature-card border border-dh-border/30'
+      : 'rounded-lg overflow-hidden bg-dh-raised/40 border-t border-dh-border/60';
 
   const sourceBadge = model.sourceLabel && (
     <span
-      className={`ml-auto text-[9px] rounded px-1 shrink-0 ${
+      className={`text-[9px] rounded px-1 shrink-0 ${
         model.sourceType === 'class'
           ? 'bg-violet-900/60 text-violet-300'
           : model.sourceType === 'subclass'
@@ -557,7 +644,7 @@ export function GuideFeatureCard({
                 : model.sourceType === 'beastform'
                   ? 'bg-teal-900/60 text-teal-300'
                   : model.sourceType === 'domain'
-                    ? 'bg-violet-900/60 text-violet-300'
+                    ? 'text-[9px] dh-magic-source-badge'
                     : 'bg-emerald-900/60 text-emerald-300'
       }`}
     >
@@ -578,8 +665,10 @@ export function GuideFeatureCard({
 
   const showHiddenPhaseChipsIcon = !!model.hasHiddenConditionalPhaseChips;
 
+  const hasVisibleCardChips = model.cardChips.length > 0 && !hideV2CardChips;
+
   const showWidgetRow =
-    model.cardChips.length > 0 ||
+    hasVisibleCardChips ||
     model.showLegacyUseStrip ||
     model.declarativePassive.length > 0 ||
     model.legacyPassive.length > 0 ||
@@ -587,100 +676,119 @@ export function GuideFeatureCard({
     !!faerieWingsProps ||
     ((prayerDiceProps?.dice?.length ?? 0) > 0);
 
+  const badgeRow =
+    (showPhaseIcons || showHiddenPhaseChipsIcon) ||
+    titleCostAction ||
+    freqLabel ||
+    activeChanneledElement ||
+    sourceBadge;
+
+  const legacyStatusLine =
+    legacy.isActive && !open && !activeChanneledElement && model.cardChips.length === 0 ? (
+      <span
+        className={`text-[9px] rounded px-1 border shrink-0 w-fit max-w-full ${
+          legacy.frequency
+            ? isUsed
+              ? 'bg-dh-raised border-dh-border text-dh-muted'
+              : 'bg-emerald-950/50 border-emerald-700/50 text-emerald-400'
+            : isUsed
+              ? 'bg-dh-raised border-dh-border text-dh-muted'
+              : hasDice
+                ? 'bg-amber-950/50 border-amber-700/50 text-amber-400'
+                : legacy.hopeCost > 0
+                  ? 'bg-amber-950/50 border-amber-700/50 text-amber-400'
+                  : 'bg-amber-950/30 border-amber-700/30 text-amber-500/70'
+        }`}
+      >
+        {legacy.frequency
+          ? isUsed
+            ? `Used until ${legacy.frequency === 'session' ? 'next session' : legacy.frequency === 'longRest' ? 'long rest' : 'any rest'}`
+            : 'Unused'
+          : isUsed
+            ? `✓ used/${legacy.frequency === 'session' ? 'session' : legacy.frequency === 'longRest' ? 'long rest' : 'rest'}`
+            : hasDice
+              ? '⚄ active'
+              : 'active'}
+      </span>
+    ) : null;
+
   return (
+    <div className={cardDimmed ? SHEET_SOURCE_DIM_CLASS : 'transition-opacity duration-150'}>
     <div className={shellClass}>
-      <div className="px-2 py-1 flex items-center gap-1 min-w-0">
+      <div className="px-2 py-1.5 min-w-0">
         <button
           type="button"
           onClick={onToggle}
-          className={`flex-1 min-w-0 flex items-center gap-1 text-left transition-colors rounded -m-1 p-1 ${
-            tone === 'domain' ? 'hover:bg-violet-950/50' : 'hover:bg-slate-700/40'
+          className={`w-full min-w-0 flex items-start gap-1 text-left transition-colors rounded -m-1 p-1 ${
+            tone === 'domain' ? 'hover:bg-dh-hover/30' : 'hover:bg-dh-hover/40'
           }`}
         >
-          {open ? <ChevronDown size={9} className="text-slate-500 shrink-0" /> : <ChevronRight size={9} className="text-slate-500 shrink-0" />}
-          <span className="text-[11px] font-semibold text-slate-200 leading-tight truncate">{model.displayName}</span>
-          {(showPhaseIcons || showHiddenPhaseChipsIcon) && (
-            <span className="inline-flex items-center gap-0.5 shrink-0 ml-0.5 text-slate-200">
-              {showHiddenPhaseChipsIcon && (
-                <Tooltip label={FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.tooltip} placement="bottom">
-                  <span className="inline-flex" aria-label={FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.tooltip}>
-                    <FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.Icon size={10} className="shrink-0" aria-hidden />
-                  </span>
-                </Tooltip>
-              )}
-              {actionLoopPhases.intent && (
-                <Tooltip label={ACTION_LOOP_PHASE_UI.intent.tooltip} placement="bottom">
-                  <span className="inline-flex" aria-label={ACTION_LOOP_PHASE_UI.intent.tooltip}>
-                    <ACTION_LOOP_PHASE_UI.intent.Icon size={10} className="shrink-0" aria-hidden />
-                  </span>
-                </Tooltip>
-              )}
-              {actionLoopPhases.reviewAction && (
-                <Tooltip label={ACTION_LOOP_PHASE_UI.reviewAction.tooltip} placement="bottom">
-                  <span className="inline-flex" aria-label={ACTION_LOOP_PHASE_UI.reviewAction.tooltip}>
-                    <ACTION_LOOP_PHASE_UI.reviewAction.Icon size={10} className="shrink-0" aria-hidden />
-                  </span>
-                </Tooltip>
-              )}
-              {actionLoopPhases.reviewOutcome && (
-                <Tooltip label={ACTION_LOOP_PHASE_UI.reviewOutcome.tooltip} placement="bottom">
-                  <span className="inline-flex" aria-label={ACTION_LOOP_PHASE_UI.reviewOutcome.tooltip}>
-                    <ACTION_LOOP_PHASE_UI.reviewOutcome.Icon size={10} className="shrink-0" aria-hidden />
-                  </span>
-                </Tooltip>
-              )}
-            </span>
-          )}
-          {titleCostAction && <FeatureResourceCostIcons action={titleCostAction} iconSize={10} className="ml-0.5" />}
-          {freqLabel && (
-            <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-slate-700/60 border-slate-600 text-slate-400">{freqLabel}</span>
-          )}
-          {activeChanneledElement && (
-            <span className="ml-1 text-[9px] rounded px-1 border shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300 font-semibold">
-              {activeChanneledElement === 'fire'
-                ? '🔥'
-                : activeChanneledElement === 'earth'
-                  ? '🪨'
-                  : activeChanneledElement === 'water'
-                    ? '💧'
-                    : '💨'}{' '}
-              {activeChanneledElement.charAt(0).toUpperCase() + activeChanneledElement.slice(1)}
-            </span>
-          )}
-          {legacy.isActive && !open && !activeChanneledElement && model.cardChips.length === 0 && (
-            <span
-              className={`ml-1 text-[9px] rounded px-1 border shrink-0 ${
-                legacy.frequency
-                  ? isUsed
-                    ? 'bg-slate-800 border-slate-600 text-slate-500'
-                    : 'bg-emerald-950/50 border-emerald-700/50 text-emerald-400'
-                  : isUsed
-                    ? 'bg-slate-800 border-slate-700 text-slate-500'
-                    : hasDice
-                      ? 'bg-amber-950/50 border-amber-700/50 text-amber-400'
-                      : legacy.hopeCost > 0
-                        ? 'bg-amber-950/50 border-amber-700/50 text-amber-400'
-                        : 'bg-amber-950/30 border-amber-700/30 text-amber-500/70'
-              }`}
-            >
-              {legacy.frequency
-                ? isUsed
-                  ? `Used until ${legacy.frequency === 'session' ? 'next session' : legacy.frequency === 'longRest' ? 'long rest' : 'any rest'}`
-                  : 'Unused'
-                : isUsed
-                  ? `✓ used/${legacy.frequency === 'session' ? 'session' : legacy.frequency === 'longRest' ? 'long rest' : 'rest'}`
-                  : hasDice
-                    ? '⚄ active'
-                    : 'active'}
-            </span>
-          )}
-          {sourceBadge}
+          {open ? <ChevronDown size={11} className="text-dh-muted shrink-0 mt-0.5" /> : <ChevronRight size={11} className="text-dh-muted shrink-0 mt-0.5" />}
+          <div className="flex-1 min-w-0 flex flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 w-full">
+              <span className="text-sm font-semibold text-dh leading-snug min-w-0 shrink-0 max-w-full">{model.displayName}</span>
+              {badgeRow ? (
+                <div className="flex flex-wrap items-center gap-1 justify-end min-w-0 flex-1">
+                  {(showPhaseIcons || showHiddenPhaseChipsIcon) && (
+                    <span className="inline-flex items-center gap-0.5 shrink-0 text-dh">
+                      {showHiddenPhaseChipsIcon && (
+                        <Tooltip label={FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.tooltip} placement="bottom">
+                          <span className="inline-flex" aria-label={FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.tooltip}>
+                            <FEATURE_CARD_HIDDEN_PHASE_CHIPS_UI.Icon size={10} className="shrink-0" aria-hidden />
+                          </span>
+                        </Tooltip>
+                      )}
+                      {actionLoopPhases?.intent && (
+                        <Tooltip label={ACTION_LOOP_PHASE_UI.intent.tooltip} placement="bottom">
+                          <span className="inline-flex" aria-label={ACTION_LOOP_PHASE_UI.intent.tooltip}>
+                            <ACTION_LOOP_PHASE_UI.intent.Icon size={10} className="shrink-0" aria-hidden />
+                          </span>
+                        </Tooltip>
+                      )}
+                      {actionLoopPhases?.reviewAction && (
+                        <Tooltip label={ACTION_LOOP_PHASE_UI.reviewAction.tooltip} placement="bottom">
+                          <span className="inline-flex" aria-label={ACTION_LOOP_PHASE_UI.reviewAction.tooltip}>
+                            <ACTION_LOOP_PHASE_UI.reviewAction.Icon size={10} className="shrink-0" aria-hidden />
+                          </span>
+                        </Tooltip>
+                      )}
+                      {actionLoopPhases?.reviewOutcome && (
+                        <Tooltip label={ACTION_LOOP_PHASE_UI.reviewOutcome.tooltip} placement="bottom">
+                          <span className="inline-flex" aria-label={ACTION_LOOP_PHASE_UI.reviewOutcome.tooltip}>
+                            <ACTION_LOOP_PHASE_UI.reviewOutcome.Icon size={10} className="shrink-0" aria-hidden />
+                          </span>
+                        </Tooltip>
+                      )}
+                    </span>
+                  )}
+                  {titleCostAction && <FeatureResourceCostIcons action={titleCostAction} iconSize={10} className="shrink-0" />}
+                  {freqLabel && (
+                    <span className="text-[9px] rounded px-1 border shrink-0 bg-dh-hover/50 border-dh-border text-dh-muted">{freqLabel}</span>
+                  )}
+                  {activeChanneledElement && (
+                    <span className="text-[9px] rounded px-1 border shrink-0 bg-emerald-950/60 border-emerald-600/60 text-emerald-300 font-semibold">
+                      {activeChanneledElement === 'fire'
+                        ? '🔥'
+                        : activeChanneledElement === 'earth'
+                          ? '🪨'
+                          : activeChanneledElement === 'water'
+                            ? '💧'
+                            : '💨'}{' '}
+                      {activeChanneledElement.charAt(0).toUpperCase() + activeChanneledElement.slice(1)}
+                    </span>
+                  )}
+                  {sourceBadge}
+                </div>
+              ) : null}
+            </div>
+            {legacyStatusLine ? <div className="min-w-0">{legacyStatusLine}</div> : null}
+          </div>
         </button>
       </div>
 
       {showWidgetRow && (
         <div className="px-2 pb-2 pt-1.5 space-y-1.5">
-          {model.cardChips.length > 0 && (
+          {hasVisibleCardChips && (
             <GuideFeatureCardChips
               model={model}
               tableForChips={tableForChips}
@@ -701,7 +809,7 @@ export function GuideFeatureCard({
             <div className="pt-1.5 space-y-1">
               {canLegacy && (!v2OriginFeatureDescriptorsByName[model.name] || !!v2OriginFeatureDescriptorsByName[model.name]?.onUse) ? (
                 isUsed ? (
-                  <p className="text-[10px] text-slate-500 italic">
+                  <p className="text-[10px] text-dh-muted italic">
                     Used this {legacy.frequency === 'session' ? 'session' : legacy.frequency === 'longRest' ? 'long rest' : 'rest'}
                   </p>
                 ) : (
@@ -733,15 +841,15 @@ export function GuideFeatureCard({
               className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
                 rangerFocusToggle.value
                   ? 'bg-amber-950/50 border-amber-600/70 text-amber-200 hover:bg-amber-900/50'
-                  : 'border-slate-600/60 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                  : 'border-dh-border/60 text-dh-muted hover:border-dh-strong hover:text-dh'
               }`}
               title={
                 rangerFocusToggle.value
-                  ? "Next weapon attack will spend 1 Hope and attempt Ranger's Focus"
-                  : "Enable to use Ranger's Focus on next attack"
+                  ? "Your next weapon attack will spend 1 Hope and attempt Ranger's Focus"
+                  : "Arm your next weapon attack to spend 1 Hope and attempt Ranger's Focus"
               }
             >
-              Use on next attack
+              {"Attempt Ranger's Focus"}
             </button>
           )}
 
@@ -753,9 +861,9 @@ export function GuideFeatureCard({
                   disabled={preview}
                   checked={!!faerieWingsProps.flying}
                   onChange={(e) => faerieWingsProps.onFlyingChange(e.target.checked)}
-                  className="rounded border-slate-600"
+                  className="rounded border-dh-border"
                 />
-                <span className="text-[10px] font-medium text-slate-300">Flying</span>
+                <span className="text-[10px] font-medium text-dh">Flying</span>
               </label>
             </div>
           )}
@@ -763,7 +871,7 @@ export function GuideFeatureCard({
           {model.declarativePassive.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {model.declarativePassive.map((text, i) => (
-                <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-slate-800/80 border border-slate-700 text-slate-400">
+                <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-dh-raised/80 border border-dh-border text-dh-muted">
                   {text}
                 </span>
               ))}
@@ -773,7 +881,7 @@ export function GuideFeatureCard({
           {model.legacyPassive.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {model.legacyPassive.map((ps, i) => (
-                <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-slate-800/80 border border-slate-700 text-slate-400">
+                <span key={i} className="text-[9px] rounded px-1.5 py-0.5 bg-dh-raised/80 border border-dh-border text-dh-muted">
                   {ps.label}
                 </span>
               ))}
@@ -804,14 +912,14 @@ export function GuideFeatureCard({
                   </div>
                 ))}
               </div>
-              <p className="text-[9px] text-slate-500">Use +Roll / −Dmg in roll/damage banners</p>
+              <p className="text-[9px] text-dh-muted">Use +Roll / −Dmg in roll/damage banners</p>
             </div>
           )}
         </div>
       )}
 
       {open && (
-        <div className="px-2 pb-2 pt-1.5 text-[11px] text-slate-300 leading-relaxed">
+        <div className="px-2 pb-2 pt-1.5 text-[11px] text-dh leading-relaxed">
           {((onShareFeature && !preview) || (featureSourcePath && !preview)) && (
             <div className="float-right ml-2 mb-1 flex items-center gap-0.5">
               {featureSourcePath && !preview && (
@@ -822,7 +930,7 @@ export function GuideFeatureCard({
                       e.stopPropagation();
                       setSourceViewer({ path: featureSourcePath });
                     }}
-                    className="shrink-0 p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
+                    className="shrink-0 p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
                     aria-label="View implementation source"
                   >
                     <Search size={12} />
@@ -837,7 +945,7 @@ export function GuideFeatureCard({
                       e.stopPropagation();
                       onShareFeature(featRow);
                     }}
-                    className="shrink-0 p-0.5 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
+                    className="shrink-0 p-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
                     aria-label="Share Feature Text"
                   >
                     <Share2 size={12} />
@@ -848,7 +956,7 @@ export function GuideFeatureCard({
           )}
           {model.description ? <MarkdownText text={model.description} className="dh-md" /> : null}
           {featRow.charge && (
-            <span className="block clear-both mt-0.5 text-[10px] text-slate-500 italic">
+            <span className="block clear-both mt-0.5 text-[10px] text-dh-muted italic">
               {featRow.charge.max} charge{featRow.charge.max !== 1 ? 's' : ''} · recharges on {featRow.charge.recharge?.on || 'rest'}
             </span>
           )}
@@ -859,6 +967,7 @@ export function GuideFeatureCard({
         relativePath={sourceViewer?.path}
         onClose={() => setSourceViewer(null)}
       />
+    </div>
     </div>
   );
 }

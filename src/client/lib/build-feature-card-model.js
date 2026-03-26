@@ -3,13 +3,21 @@
  * Uses the same chip list synthesis as the V2 engine (`buildChipsForFeature`).
  */
 
-import { buildChipsForFeature, collectChips, flattenChipsForDisplay } from '../../features-v2/engine/chip-system.js';
+import {
+  buildChipsForFeature,
+  collectChips,
+  collectChipsForShapePlacement,
+  collectSheetCards,
+  collectEditorCards,
+  flattenChipsForDisplay,
+} from '../../features-v2/engine/chip-system.js';
 import { buildTableSnapshot } from '../../features-v2/engine/table.js';
 import { unwrapAll, isWhen } from '../../features-v2/engine/when.js';
 import { mergeV2TableFeatureState } from './v2-action-loop-bridge.js';
 import { filterCardPhaseChips } from './card-phase-chips.js';
 import { parsePassiveStats } from './feature-actions.js';
 import { deriveFeatureActionFromV2Row } from './v2-derive-feature-action.js';
+import { resolveLoadoutAbilityFeatRow } from './guide-feature-entries.js';
 
 /**
  * Safe `table.me` for sheet preview when there is no owner id (library / new character).
@@ -20,6 +28,7 @@ const STUB_SHEET_ME = Object.freeze({
   isCharacter: true,
   isAdversary: false,
   lastPosition: null,
+  companion: null,
   rangeFrom: () => null,
   get rangeFromTarget() {
     return null;
@@ -427,21 +436,101 @@ export function getSheetOwnerKey(el) {
   return k;
 }
 
+/**
+ * Library / preview `el` often has **no** `instanceId` or `id` until saved. {@link buildGuideFeatureTableSnapshot}
+ * would then use {@link V2_TABLE_STUB_NO_INSTANCE_ID} whose `me.companion` is always null — Beastbound
+ * declarative `when((t) => t.me?.companion != null)` never passes and **no** sheet cards resolve.
+ */
+function normalizeElForDeclarativeSheetSnapshot(el) {
+  if (!el || typeof el !== 'object') return el;
+  const hasKey =
+    (el.instanceId != null && el.instanceId !== '') || (el.id != null && el.id !== '');
+  if (hasKey) return el;
+  if (el.elementType !== 'character' && el.companion == null) return el;
+  return {
+    ...el,
+    instanceId: '__declarative-sheet-preview__',
+    elementType: el.elementType || 'character',
+  };
+}
+
+/**
+ * Resolved declarative sheet cards for a character (library or table). Uses the same `table` snapshot
+ * as V2 card chips for `when()` parity.
+ *
+ * @param {object} el — display character (`activeFeatures` merged)
+ * @param {{ activeElements?: object[], fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, registry?: object } | null | undefined} v2TableContext
+ * @returns {{ feature: object, card: object }[]}
+ */
+export function collectSheetCardsForCharacter(el, v2TableContext) {
+  const af = Array.isArray(el.activeFeatures) ? el.activeFeatures : [];
+  if (!af.length) return [];
+  const table = buildGuideFeatureTableSnapshot(el, af[0], v2TableContext);
+  return collectSheetCards(af, table);
+}
+
+/**
+ * Chips anchored **below** a declarative sheet template (`placements` includes the shape object).
+ *
+ * @param {object} el
+ * @param {object} shape — same reference as `cards[].shape` on the feature module
+ * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, activeElements?: object[], registry?: object } | null | undefined} v2TableContext
+ */
+export function collectShapePlacementChipsForCharacter(el, shape, v2TableContext) {
+  const af = Array.isArray(el.activeFeatures) ? el.activeFeatures : [];
+  if (!af.length || !shape) return [];
+  const table = buildGuideFeatureTableSnapshot(el, af[0], v2TableContext);
+  const usageStore =
+    el?.featureUsage && typeof el.featureUsage === 'object' ? el.featureUsage : {};
+  return collectChipsForShapePlacement(af, shape, table, usageStore);
+}
+
+/**
+ * Minimal `table` for evaluating `when()` on **editor** `cards` (character form).
+ * @param {object} formCharacter — `recomputeCharacter` output (draft builder)
+ */
+export function buildEditorTableStub(formCharacter) {
+  const fc = formCharacter || {};
+  return {
+    ...V2_TABLE_STUB_NO_INSTANCE_ID,
+    me: {
+      ...V2_TABLE_STUB_NO_INSTANCE_ID.me,
+      companion: fc.companion ?? null,
+      isCharacter: true,
+    },
+  };
+}
+
+/**
+ * Declarative **editor** cards for the character builder (`placement: 'editor'`).
+ * @param {object} formCharacter
+ */
+export function collectEditorCardsForCharacter(formCharacter) {
+  const af = Array.isArray(formCharacter?.activeFeatures) ? formCharacter.activeFeatures : [];
+  const table = buildEditorTableStub(formCharacter);
+  return collectEditorCards(af, table);
+}
+
 export function buildGuideFeatureTableSnapshot(el, featRow, v2TableContext) {
-  const ownerKey = getSheetOwnerKey(el);
+  const elNorm = normalizeElForDeclarativeSheetSnapshot(el);
+  const ownerKey = getSheetOwnerKey(elNorm);
   if (ownerKey == null) {
     return V2_TABLE_STUB_NO_INSTANCE_ID;
   }
-  let activeElements = mergeDisplayElIntoTableActiveElements(el, v2TableContext);
-  let table = buildTableSnapshot(buildSheetSnapshotGameState(el, featRow, v2TableContext, activeElements, ownerKey));
+  let activeElements = mergeDisplayElIntoTableActiveElements(elNorm, v2TableContext);
+  let table = buildTableSnapshot(
+    buildSheetSnapshotGameState(elNorm, featRow, v2TableContext, activeElements, ownerKey)
+  );
   if (!table.me) {
     const idStr = String(ownerKey);
     const withoutDup = activeElements.filter((a) => String(a.instanceId ?? a.id) !== idStr);
     activeElements = [
       ...withoutDup,
-      { ...el, elementType: el.elementType || 'character', instanceId: ownerKey },
+      { ...elNorm, elementType: elNorm.elementType || 'character', instanceId: ownerKey },
     ];
-    table = buildTableSnapshot(buildSheetSnapshotGameState(el, featRow, v2TableContext, activeElements, ownerKey));
+    table = buildTableSnapshot(
+      buildSheetSnapshotGameState(elNorm, featRow, v2TableContext, activeElements, ownerKey)
+    );
   }
   return table;
 }
@@ -469,6 +558,15 @@ export function buildFeatureCardModelForCharacter(featRow, el, v2TableContext) {
     }),
     table,
   };
+}
+
+/**
+ * Merge SRD/list ability with V2 `activeFeatures` for sheet + Actions strip (same as {@link resolveLoadoutAbilityFeatRow}).
+ * @param {object} el — character element
+ * @param {object} ability — entry from `el.abilities`
+ */
+export function resolveAbilityFeatRowForSheet(el, ability) {
+  return resolveLoadoutAbilityFeatRow(el, ability);
 }
 
 /**

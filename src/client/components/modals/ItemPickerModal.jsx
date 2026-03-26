@@ -29,8 +29,20 @@ export const ITEM_PICKER_SINGULAR = {
  *   onClose       — called when the modal is dismissed
  *   onSelect      — called with the selected item; modal closes itself after
  *   onCreateNew   — optional; when collection === 'characters', called when user clicks "Create new character"
+ *   showDaggerstackImport — when true (default) and collection === 'characters', show the collapsible Daggerstack import block (Game Table passes false).
  */
-export function ItemPickerModal({ collection, data = {}, title, initialSearch, onClose, onSelect, onCreateNew, isLoading, excludeIds }) {
+export function ItemPickerModal({
+  collection,
+  data = {},
+  title,
+  initialSearch,
+  onClose,
+  onSelect,
+  onCreateNew,
+  isLoading,
+  excludeIds,
+  showDaggerstackImport = true,
+}) {
   const isPaginated = collection === 'adversaries' || collection === 'environments';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
@@ -85,27 +97,27 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center pt-24 p-4" onClick={onClose}>
       <div
-        className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[75vh]"
+        className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[75vh]"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dh-border shrink-0">
           <div className="flex items-baseline gap-3">
             <h2 className="font-bold text-white text-lg">{actionLabel}</h2>
             {isPaginated && !search.loading && search.totalCount > 0 && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-dh-muted">
                 {search.items.length} of {search.totalCount.toLocaleString()}
               </span>
             )}
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+          <button onClick={onClose} className="text-dh-muted hover:text-white transition-colors">
             <X size={18} />
           </button>
         </div>
 
         {/* Create new character — only for characters; at top, opens editor, add to table on first complete */}
         {collection === 'characters' && onCreateNew && (
-          <div className="px-5 py-3 border-b border-slate-800 shrink-0">
+          <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -120,13 +132,13 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
           </div>
         )}
 
-        {/* Daggerstack import — only for characters; collapsible, collapsed by default; right under Create */}
-        {collection === 'characters' && (
-          <div className="border-b border-slate-800 shrink-0">
+        {/* Daggerstack import — only for characters; collapsible, collapsed by default; right under Create. Hidden on Game Table Add Character via showDaggerstackImport={false}. */}
+        {collection === 'characters' && showDaggerstackImport && (
+          <div className="border-b border-dh-border shrink-0">
             <button
               type="button"
               onClick={() => setDaggerstackOpen(prev => !prev)}
-              className="w-full px-5 py-2.5 flex items-center gap-2 text-left text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors"
+              className="w-full px-5 py-2.5 flex items-center gap-2 text-left text-dh hover:text-white hover:bg-dh-raised/50 transition-colors"
             >
               {daggerstackOpen ? <ChevronDown size={16} className="shrink-0" /> : <ChevronRight size={16} className="shrink-0" />}
               <span className="text-sm font-medium">Import from Daggerstack</span>
@@ -154,7 +166,7 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
 
         {/* Filters — only for paginated collections (adversaries / environments) */}
         {isPaginated && (
-          <div className="px-5 py-4 border-b border-slate-800 shrink-0">
+          <div className="px-5 py-4 border-b border-dh-border shrink-0">
             <CollectionFilters
               collection={collection}
               filters={search.filters}
@@ -167,12 +179,12 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
 
         {/* Simple search for non-paginated (scenes / adventures / characters) */}
         {!isPaginated && (
-          <div className="px-5 py-3 border-b border-slate-800 shrink-0">
-            <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400 shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <div className="px-5 py-3 border-b border-dh-border shrink-0">
+            <div className="flex items-center gap-2 bg-dh-raised border border-dh-border rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-dh-muted shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
               <input
                 autoFocus={collection !== 'characters'}
-                className="flex-1 bg-transparent text-sm text-white outline-none placeholder-slate-500"
+                className="flex-1 bg-transparent text-sm text-white outline-none placeholder-dh-muted"
                 placeholder="Search by name..."
                 value={search.filters.search}
                 onChange={e => search.setFilter('search', e.target.value)}
@@ -184,10 +196,10 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
         {/* Results */}
         <div ref={resultsRef} className="flex-1 overflow-y-auto min-h-0">
           {(search.loading || showNonPaginatedLoading) && !search.isLoadingMore && (
-            <div className="text-center text-slate-500 text-sm py-10">Loading…</div>
+            <div className="text-center text-dh-muted text-sm py-10">Loading…</div>
           )}
           {!search.loading && !showNonPaginatedLoading && clientItems.length === 0 && (
-            <div className="text-center text-slate-500 text-sm py-10">No results</div>
+            <div className="text-center text-dh-muted text-sm py-10">No results</div>
           )}
           {clientItems.map(item => {
             const charCheck = collection === 'characters' ? isCharacterComplete(item) : null;
@@ -199,11 +211,11 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
                   onSelect(item);
                   onClose();
                 }}
-                className={`w-full text-left px-5 py-3 border-b border-slate-800/50 transition-colors flex items-baseline justify-between gap-4 hover:bg-slate-800`}
+                className={`w-full text-left px-5 py-3 border-b border-dh-border/50 transition-colors flex items-baseline justify-between gap-4 hover:bg-dh-hover`}
                 title={incomplete ? `Incomplete — missing: ${charCheck.missing.join(', ')}` : undefined}
               >
                 <span className="font-medium text-sm truncate text-white">{item.name}</span>
-                <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1.5">
+                <span className="text-xs text-dh-muted shrink-0 flex items-center gap-1.5">
                   {incomplete && (
                     <span className="flex items-center gap-0.5 text-amber-400" title={`Missing: ${charCheck.missing.join(', ')}`}>
                       <AlertTriangle size={10} />
@@ -220,12 +232,12 @@ export function ItemPickerModal({ collection, data = {}, title, initialSearch, o
             );
           })}
           {search.isLoadingMore && (
-            <div className="text-center text-slate-500 text-xs py-3 animate-pulse">
+            <div className="text-center text-dh-muted text-xs py-3 animate-pulse">
               Loading more of the {search.totalCount.toLocaleString()} entries…
             </div>
           )}
           {!search.hasMore && !search.loading && search.totalCount > 0 && (
-            <div className="text-center text-slate-500 text-xs py-3">
+            <div className="text-center text-dh-muted text-xs py-3">
               Loaded last of {search.totalCount.toLocaleString()} entries
             </div>
           )}

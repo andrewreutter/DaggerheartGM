@@ -38,15 +38,15 @@ export function useImportSelection() {
 export function ImportModalShell({ title, onClose, children, footer }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-slate-800">
+      <div className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-dh-border">
           <h2 className="text-xl font-bold text-white">{title}</h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-white"><X size={20} /></button>
+          <button onClick={onClose} className="text-dh-muted hover:text-white"><X size={20} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">
           {children}
         </div>
-        <div className="p-5 border-t border-slate-800 flex justify-end gap-3">
+        <div className="p-5 border-t border-dh-border flex justify-end gap-3">
           {footer}
         </div>
       </div>
@@ -69,14 +69,14 @@ export function ImportSuccessStep({ importedItems, onImportSuccess, onClose, col
           <button
             key={`${item.collection}-${item.id}`}
             onClick={() => { onImportSuccess(item.collection, item.id); onClose(); }}
-            className="w-full text-left bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg p-3 flex items-center justify-between group transition-colors"
+            className="w-full text-left bg-dh-inset border border-dh-border hover:border-dh-strong rounded-lg p-3 flex items-center justify-between group transition-colors"
           >
             <span className={`text-white font-medium text-sm ${hoverClass}`}>{item.name}</span>
             <div className="flex items-center gap-2">
               {item.replaced && (
                 <span className="text-[10px] text-yellow-400 bg-yellow-900/30 border border-yellow-700/50 px-1.5 py-0.5 rounded">replaced</span>
               )}
-              <span className="text-xs text-slate-500 capitalize">{item.collection.replace(/s$/, '')}</span>
+              <span className="text-xs text-dh-muted capitalize">{item.collection.replace(/s$/, '')}</span>
             </div>
           </button>
         ))}
@@ -116,7 +116,7 @@ export function ImportPreviewSection({
   if (items.length === 0) return null;
   return (
     <div>
-      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-800 pb-1">
+      <h3 className="text-xs font-semibold text-dh-muted uppercase tracking-wider mb-2 border-b border-dh-border pb-1">
         {label} ({items.length})
       </h3>
       <div className="space-y-2">
@@ -146,7 +146,7 @@ export function ImportPreviewSection({
  */
 export function ImportPreviewSummary({ summaryParts }) {
   return (
-    <div className="text-xs text-slate-500 bg-slate-950 rounded-lg p-3 border border-slate-800">
+    <div className="text-xs text-dh-muted bg-dh-inset rounded-lg p-3 border border-dh-border">
       Will create: {summaryParts || 'nothing selected'}
     </div>
   );

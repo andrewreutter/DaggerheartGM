@@ -6,7 +6,7 @@
 |-----|------|
 | This file | **Goals, phases, exit criteria, and order of operations** |
 | [`v2-v1-cutover.md`](v2-v1-cutover.md) | **Analysis + parity matrix** — VTT bridge vs V2 engine; [completion plan](../.cursor/plans/v2-game-table-cutover-completion.plan.md) |
-| [`v2-migration-tracker.md`](v2-migration-tracker.md) | **SRD feature coverage** in `src/features-v2/` (separate from table wiring) |
+| [`docs/v2-migration-tracker-snapshot.md`](v2-migration-tracker-snapshot.md) (GitHub `v2-migration` Issues) | **SRD feature coverage** in `src/features-v2/` (separate from table wiring) |
 | [`v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md) | Bridge hardening history + deferred items |
 | [`v2-ui-integration-phase3-handoff.md`](v2-ui-integration-phase3-handoff.md) | Review-action / banner UX |
 | [`v2-ui-integration-phase4-handoff.md`](v2-ui-integration-phase4-handoff.md) | Cross-sheet / Rally |
@@ -29,7 +29,7 @@ The project is **done** with the Game Table cutover when **all** of the followin
    `character-calc.js` merges SRD data with **`src/features-v2/registry.js`** and related descriptors; character elements expose merged **`activeFeatures`** for the Game Table.
 
 4. **Debt is closed or explicitly out-of-scope**  
-   Items listed under **§5** here are either implemented or recorded in [`v2-migration-tracker.md`](v2-migration-tracker.md) **Tech Debt** / handoff docs with a **won’t-fix / later** reason (not silently drifting).
+   Items listed under **§5** here are either implemented or recorded in [`docs/v2-migration-tracker-snapshot.md`](v2-migration-tracker-snapshot.md) (GitHub `v2-migration` Issues) **Tech Debt** / handoff docs with a **won’t-fix / later** reason (not silently drifting).
 
 5. **Regression bar**  
    `npm run test:unit` green; **one** Playwright “golden path” scenario (V2 sheet on, roll → acknowledge → state change) green in CI or documented as blocked with issue id.
@@ -43,7 +43,7 @@ The project is **done** with the Game Table cutover when **all** of the followin
 - **(A) Gate:** V2-only mode requires minimum ability/ancestry coverage **or**
 - **(B) Hybrid:** allow logged fallbacks when `activeFeatures` lacks a row (hybrid must be **explicit** in UI/logs, not silent).
 
-Record the choice in [`v2-migration-tracker.md`](v2-migration-tracker.md) (summary or V2 UI backlog) so implementers do not re-debate it.
+Record the choice in [`docs/v2-migration-tracker-snapshot.md`](v2-migration-tracker-snapshot.md) (GitHub `v2-migration` Issues) (summary or V2 UI backlog) so implementers do not re-debate it.
 
 ---
 
@@ -126,7 +126,7 @@ These overlap the polestar but are **tracked in detail** elsewhere — pull into
 ## 6. How to use this doc
 
 1. **Starting a table-focused task:** Read **§4** for phase, **§1** for exit checks, **v2-v1-cutover.md** for the exact call site.
-2. **Starting SRD coverage:** Use **v2-migration-tracker.md** and agent prompts — that work **feeds** Phase G–J but does not replace table wiring.
+2. **Starting SRD coverage:** Use **docs/v2-migration-tracker-snapshot.md** and agent prompts — that work **feeds** Phase G–J but does not replace table wiring.
 3. **Closing the program:** Re-run **§1** checklist; update **v2-v1-cutover.md** status column to “VTT done” or remove rows when obsolete.
 
 ---

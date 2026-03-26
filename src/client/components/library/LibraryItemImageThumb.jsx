@@ -21,7 +21,7 @@ export function LibraryItemImageThumb({ item, variant = 'modal', onOpenLightbox 
     <div
       className={
         isCard
-          ? 'h-[2.8125rem] w-[2.8125rem] shrink-0 overflow-hidden rounded border border-slate-700/80 pointer-events-none'
+          ? 'h-[2.8125rem] w-[2.8125rem] shrink-0 overflow-hidden rounded border border-dh-border/80 pointer-events-none'
           : 'absolute top-0 right-0 z-10 h-32 w-32 shrink-0 overflow-hidden rounded-bl-xl cursor-pointer group'
       }
       onClick={!isCard ? () => onOpenLightbox?.(urls[safeIdx]) : undefined}

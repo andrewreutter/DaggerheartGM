@@ -115,14 +115,14 @@ export function CollectionRefPicker({ collections, values, onChange, data, onAdv
   }, [collections, values]);
 
   return (
-    <div className="mb-4 p-4 border border-slate-800 rounded-lg bg-slate-900/50">
+    <div className="mb-4 p-4 border border-dh-border rounded-lg bg-dh-surface/50">
       <div className="flex flex-wrap gap-2 mb-3">
         {collections.map(({ key, label }) => (
           <button
             key={key}
             type="button"
             onClick={() => setModalOpen(key)}
-            className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors"
+            className="flex items-center gap-1.5 bg-dh-surface border border-dh-border hover:border-dh-strong text-sm rounded px-3 py-2 text-dh hover:text-dh outline-none transition-colors"
           >
             <Plus size={14} /> Add {label || ITEM_PICKER_SINGULAR[key] || key}
           </button>
@@ -137,28 +137,28 @@ export function CollectionRefPicker({ collections, values, onChange, data, onAdv
             const typeLabel = cfg?.label || ITEM_PICKER_SINGULAR[collection] || collection;
             const subtypeLabel = subtype ? (subtype.startsWith('Tier ') ? subtype : subtype.charAt(0).toUpperCase() + subtype.slice(1)) : null;
             return (
-              <div key={`${collection}-${id}`} className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800">
+              <div key={`${collection}-${id}`} className="flex justify-between items-center bg-dh-inset p-2 rounded border border-dh-border">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">{typeLabel}</span>
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-dh-raised text-dh-muted shrink-0">{typeLabel}</span>
                   {subtypeLabel && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300 shrink-0">{subtypeLabel}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-dh-hover/80 text-dh shrink-0">{subtypeLabel}</span>
                   )}
                   <span className="text-sm text-white truncate">{displayName}</span>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   {isCountable && (
                     <div className="flex items-center gap-1">
-                      <span className="text-xs text-slate-500">Qty</span>
+                      <span className="text-xs text-dh-muted">Qty</span>
                       <input
                         type="number"
                         min="1"
                         value={count}
                         onChange={e => handleCountChange(collection, id, e.target.value)}
-                        className="w-12 bg-slate-900 border border-slate-700 rounded px-1 text-center text-sm text-white"
+                        className="w-12 bg-dh-surface border border-dh-border rounded px-1 text-center text-sm text-dh"
                       />
                     </div>
                   )}
-                  <button type="button" onClick={() => handleRemove(collection, id)} className="text-slate-500 hover:text-red-500">
+                  <button type="button" onClick={() => handleRemove(collection, id)} className="text-dh-muted hover:text-red-500">
                     <Trash2 size={14} />
                   </button>
                 </div>

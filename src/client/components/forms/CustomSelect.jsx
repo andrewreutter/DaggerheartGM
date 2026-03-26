@@ -168,12 +168,12 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
         disabled={disabled}
         title={disabled && disabledReason && !disabledTooltipContent ? disabledReason : undefined}
         onClick={() => !disabled && setOpen(!open)}
-        className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-left flex items-center justify-between focus:outline-none focus:border-blue-500 ${
-          disabled ? 'opacity-40 cursor-not-allowed' : 'text-white hover:border-slate-600'
+        className={`w-full bg-dh-inset border border-dh-border rounded p-2 text-left flex items-center justify-between focus:outline-none focus:border-blue-500 ${
+          disabled ? 'opacity-40 cursor-not-allowed' : 'text-dh hover:border-dh-strong'
         }`}
       >
         <span
-          className={`flex-1 min-w-0 ${hasValue ? '' : 'text-slate-500'} ${!hasValue && truncateClosedLabel && typeof renderPlaceholder !== 'function' ? 'truncate' : ''}`}
+          className={`flex-1 min-w-0 ${hasValue ? '' : 'text-dh-muted'} ${!hasValue && truncateClosedLabel && typeof renderPlaceholder !== 'function' ? 'truncate' : ''}`}
           title={
             typeof closedContent === 'string'
               ? closedContent
@@ -184,13 +184,13 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
         >
           {closedContent}
         </span>
-        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ml-1 ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 text-dh-muted transition-transform shrink-0 ml-1 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && !disabled && dropdownPos && createPortal(
         <div
           ref={dropdownRef}
-          className={`bg-slate-900 border border-slate-700 rounded shadow-xl overflow-y-auto fixed z-[90] ${dropdownClassName}`}
+          className={`bg-dh-surface border border-dh-border rounded shadow-xl overflow-y-auto fixed z-[90] ${dropdownClassName}`}
           style={{
             top: dropdownPos.top,
             bottom: dropdownPos.bottom,
@@ -204,7 +204,7 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
               type="button"
               onClick={() => { onChange(null); setOpen(false); }}
               onMouseEnter={() => setTooltip(null)}
-              className={`w-full text-left px-3 py-2.5 hover:bg-slate-800 transition-colors border-b border-slate-800 text-slate-500 ${!hasValue ? 'bg-slate-800/80' : ''}`}
+              className={`w-full text-left px-3 py-2.5 hover:bg-dh-hover transition-colors border-b border-dh-border text-dh-muted ${!hasValue ? 'bg-dh-raised/80' : ''}`}
             >
               {placeholder}
             </button>
@@ -220,14 +220,14 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
                 onClick={() => { onChange(opt); setOpen(false); }}
                 onMouseEnter={(e) => handleOptionMouseEnter(opt, e)}
                 onMouseLeave={scheduleTooltipClose}
-                className={`relative w-full text-left px-3 py-2.5 hover:bg-slate-800 transition-colors border-b border-slate-800 last:border-b-0 ${isSelected ? 'bg-slate-800/80 text-white' : 'text-slate-200'} ${hasDesc ? 'pr-6' : ''}`}
+                className={`relative w-full text-left px-3 py-2.5 hover:bg-dh-hover transition-colors border-b border-dh-border last:border-b-0 ${isSelected ? 'bg-dh-raised/80 text-dh' : 'text-dh'} ${hasDesc ? 'pr-6' : ''}`}
               >
                 {renderOption
                   ? renderOption(opt, { isSelected })
                   : <span className="font-medium">{getOptionLabel(opt)}</span>
                 }
                 {hasDesc && (
-                  <span className="absolute right-2 top-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-slate-500 opacity-50" />
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-dh-muted opacity-50" />
                 )}
               </button>
             );
@@ -249,11 +249,11 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
           onMouseEnter={tooltip.extra ? clearTooltipLeaveTimer : undefined}
           onMouseLeave={tooltip.extra ? scheduleTooltipClose : undefined}
         >
-          <div className="bg-slate-800 border border-slate-600 rounded-lg shadow-2xl p-3 overflow-y-auto max-h-[min(70vh,calc(100vh-32px))]">
+          <div className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 overflow-y-auto max-h-[min(70vh,calc(100vh-32px))]">
             <div className="text-xs font-semibold text-white mb-1.5">{tooltip.label}</div>
             {!!tooltip.description?.trim() && (
               <div
-                className="text-xs text-slate-300 leading-relaxed dh-md"
+                className="text-xs text-dh leading-relaxed dh-md"
                 dangerouslySetInnerHTML={{ __html: renderMarkdown(tooltip.description) }}
               />
             )}

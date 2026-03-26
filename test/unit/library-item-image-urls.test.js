@@ -14,10 +14,10 @@ describe('getLibraryItemImageUrls', () => {
     ).toEqual(['https://example.com/a.webp', 'https://example.com/b.webp']);
   });
 
-  it('uses FCG relative image when imageUrl is missing', () => {
+  it('uses Fresh Cut Grass CDN for relative image when id is fcg-* and imageUrl is missing', () => {
     expect(
       getLibraryItemImageUrls({
-        _source: 'fcg',
+        id: 'fcg-123',
         name: 'Test',
         image: '/images/adversaries/Bear.webp',
       }),
