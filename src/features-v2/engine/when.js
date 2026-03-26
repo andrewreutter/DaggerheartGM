@@ -100,6 +100,19 @@ export function youSucceedOnAnAttack(table) {
   return actor.instanceId === me.instanceId;
 }
 
+/**
+ * True when **you** (the feature owner) are the attacker and your attack roll **failed** (resolve phase).
+ * Mirrors SRD phrasing like "when you fail an attack…". Pairs with {@link youSucceedOnAnAttack}.
+ */
+export function youFailOnAnAttack(table) {
+  if (table.action?.type !== 'attack') return false;
+  if (table.rolls?.action?.isSuccess === true) return false;
+  const actor = table.action.actor;
+  const me = table.me;
+  if (!actor?.instanceId || !me?.instanceId) return false;
+  return actor.instanceId === me.instanceId;
+}
+
 // ---------------------------------------------------------------------------
 // Map range: attacker ↔ target (via `actor.rangeFrom(target)`)
 // ---------------------------------------------------------------------------
@@ -454,6 +467,25 @@ export function unwrap(value, table) {
   }
 
   return value._value;
+}
+
+/**
+ * Unwrap only a leading chain of `when()` wrappers. Chip descriptors may embed plain
+ * objects in `placements` (e.g. declarative shape anchors) — {@link unwrapAll} would
+ * recurse into them and break reference identity.
+ *
+ * @param {*} value
+ * @param {object} table
+ * @returns {*}
+ */
+export function unwrapTopLevelWhenChain(value, table) {
+  let node = value;
+  while (isWhen(node)) {
+    const r = unwrap(node, table);
+    if (r === undefined || r === null) return undefined;
+    node = r;
+  }
+  return node;
 }
 
 /**

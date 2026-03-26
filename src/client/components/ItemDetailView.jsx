@@ -258,7 +258,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
 
   if (elements.length === 0) {
     return (
-      <div className="text-center text-slate-500 text-sm py-6 border border-dashed border-slate-800 rounded-lg mt-4">
+      <div className="text-center text-dh-muted text-sm py-6 border border-dashed border-dh-border rounded-lg mt-4">
         No elements in this scene.
       </div>
     );
@@ -274,7 +274,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
             const el = entry.element;
             const cardKey = el.instanceId;
             return (
-              <div key={el.instanceId} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden relative">
+              <div key={el.instanceId} className="bg-dh-inset border border-dh-border rounded-xl overflow-hidden relative">
                 {el.imageUrl && (
                   <div
                     className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
@@ -286,7 +286,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
                 {showEditBtn && (
                   <button
                     onClick={() => handleEditClick(el)}
-                    className={`absolute top-2 right-2 z-10 text-slate-500 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
+                    className={`absolute top-2 right-2 z-10 text-dh-muted hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-dh-inset/80 rounded p-0.5' : ''}`}
                     title="Edit"
                   >
                     <Pencil size={14} />
@@ -312,7 +312,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
           const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
 
           return (
-            <div key={advCardKey} className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden relative">
+            <div key={advCardKey} className="bg-dh-inset border border-dh-border rounded-xl overflow-hidden relative">
               {el.imageUrl && (
                 <div
                   className="absolute top-0 right-0 w-16 aspect-square overflow-hidden rounded-bl-xl cursor-pointer"
@@ -324,7 +324,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
               {canEditEl && (
                 <button
                   onClick={() => handleEditClick(el)}
-                  className={`absolute top-2 right-2 z-10 text-slate-500 hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-slate-950/80 rounded p-0.5' : ''}`}
+                  className={`absolute top-2 right-2 z-10 text-dh-muted hover:text-blue-400 transition-colors ${el.imageUrl ? 'bg-dh-inset/80 rounded p-0.5' : ''}`}
                   title="Edit"
                 >
                   <Pencil size={14} />
@@ -334,7 +334,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
                 <div className={`flex items-center gap-2 mb-0.5 ${el.imageUrl ? 'pr-20' : 'pr-6'}`}>
                   <h4 className="text-lg font-bold text-white">
                     {displayEl.name}
-                    {count > 1 && <span className="text-slate-400 font-normal ml-1.5">×{count}</span>}
+                    {count > 1 && <span className="text-dh-muted font-normal ml-1.5">×{count}</span>}
                   </h4>
                 </div>
                 {el._isOwnedCopy && (
@@ -388,7 +388,7 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
           onClick={() => setLightboxUrl(null)}
         >
           <button
-            className="absolute top-4 right-4 p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+            className="absolute top-4 right-4 p-2 rounded-full bg-dh-raised/80 text-dh hover:text-dh hover:bg-dh-hover transition-colors"
             onClick={() => setLightboxUrl(null)}
           >
             <X size={20} />

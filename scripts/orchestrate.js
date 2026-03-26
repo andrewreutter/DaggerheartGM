@@ -52,6 +52,17 @@ import {
   estimateOrchestratorCost,
   sumSessionCostUsd,
 } from './orchestrator-cost.js';
+import {
+  useGithubMigrationTracker,
+  listAllV2MigrationIssues,
+  readTrackerSummaryFromIssues,
+  parseFeatureRowsFromIssues,
+  parseBlockedRowsFromIssues,
+  updateGithubFeatureIssuesByNames,
+  writeTrackerSnapshotFile,
+  getGithubTokenFromEnv,
+  resolveGithubRepository,
+} from './lib/github-v2-tracker.mjs';
 
 /**
  * Node's `--env-file` is strict; a single bad line can leave GITHUB_TOKEN unset while
@@ -100,6 +111,27 @@ function loadDotEnvManual() {
 
 loadDotEnvManual();
 
+const ORCH_FILE = fileURLToPath(import.meta.url);
+const ORCH_DIR = dirname(ORCH_FILE);
+const ORCH_REPO_ROOT = resolve(ORCH_DIR, '..');
+
+const USE_GH_TRACKER = useGithubMigrationTracker();
+let githubIssuesCache = null;
+function invalidateGithubIssuesCache() {
+  githubIssuesCache = null;
+}
+
+async function getGithubMigrationIssues() {
+  if (githubIssuesCache) return githubIssuesCache;
+  const full = resolveGithubRepository();
+  if (!full) throw new Error('Could not resolve GitHub owner/repo (origin or GITHUB_REPOSITORY)');
+  const [owner, repo] = full.split('/');
+  const token = getGithubTokenFromEnv();
+  if (!token) throw new Error('GITHUB_TOKEN or GH_TOKEN required for V2 GitHub migration tracker');
+  githubIssuesCache = await listAllV2MigrationIssues(owner, repo, token);
+  return githubIssuesCache;
+}
+
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
 const args     = process.argv.slice(2);
@@ -122,6 +154,13 @@ const STALE_MS     = 4 * 60 * 60 * 1000; // 4 hours — prune agents older than 
 const CURSOR_API_KEY = process.env.CURSOR_API_KEY;
 if (!CURSOR_API_KEY) {
   console.error('Error: CURSOR_API_KEY is not set.  Add it to .env — see .env.example.');
+  process.exit(1);
+}
+
+if (!USE_GH_TRACKER) {
+  console.error(
+    'Error: Overnight orchestrator requires GITHUB_TOKEN (or GH_TOKEN) and a GitHub remote (git remote origin or GITHUB_REPOSITORY) for the V2 migration Issues tracker.',
+  );
   process.exit(1);
 }
 
@@ -290,9 +329,9 @@ function getGitBranch() {
   return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
 }
 
-// ── Tracker helpers ───────────────────────────────────────────────────────────
+// ── Tracker helpers (GitHub Issues only) ────────────────────────────────────
 
-const TRACKER = 'docs/v2-migration-tracker.md';
+const TRACKER_SNAPSHOT = 'docs/v2-migration-tracker-snapshot.md';
 
 const SOURCE_TO_COLLECTION = {
   ancestries:        'Ancestries (features)',
@@ -307,152 +346,24 @@ const SOURCE_TO_COLLECTION = {
   consumables:       'Consumables',
 };
 
-const ALL_COLLECTIONS = Object.values(SOURCE_TO_COLLECTION);
-
-const STATUS_KEYS = ['Validated', 'Reviewed', 'Validating', 'Done', 'In Progress',
-                     'Unclaimed', 'Needs Fix', 'Fixing', 'Blocked', 'Skipped'];
-
 function collectionFromSourceFile(src) {
   const prefix = (src || '').split('/')[0];
   return SOURCE_TO_COLLECTION[prefix] || null;
 }
 
-/** Read the TOTAL row from the Summary table (lines 1-20). */
-function readTrackerSummary() {
-  const lines = readFileSync(TRACKER, 'utf8').split('\n').slice(0, 20);
-  for (const line of lines) {
-    if (!line.includes('TOTAL')) continue;
-    const cols = line.split('|').map(c => c.trim().replace(/\*\*/g, '')).filter(Boolean);
-    return {
-      total:      parseInt(cols[1],  10) || 0,
-      validated:  parseInt(cols[2],  10) || 0,
-      reviewed:   parseInt(cols[3],  10) || 0,
-      validating: parseInt(cols[4],  10) || 0,
-      done:       parseInt(cols[5],  10) || 0,
-      inProgress: parseInt(cols[6],  10) || 0,
-      unclaimed:  parseInt(cols[7],  10) || 0,
-      needsFix:   parseInt(cols[8],  10) || 0,
-      fixing:     parseInt(cols[9],  10) || 0,
-      blocked:    parseInt(cols[10], 10) || 0,
-      skipped:    parseInt(cols[11], 10) || 0,
-    };
-  }
-  return {};
+async function readTrackerSummaryAsync() {
+  const issues = await getGithubMigrationIssues();
+  return readTrackerSummaryFromIssues(issues);
 }
 
-/** Return feature rows matching any status in the filter array. */
-function parseFeatureRows(statusFilter) {
-  const lines = readFileSync(TRACKER, 'utf8').split('\n');
-  const features = [];
-  for (const line of lines) {
-    if (!line.startsWith('| ') || line.includes('---') || line.includes('Feature Name')
-        || line.includes('Resolution') || line.includes('Collection')) continue;
-    const cols = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cols.length < 3) continue;
-    const [name, sourceFile, status] = cols;
-    if (statusFilter.includes(status)) {
-      features.push({ name, sourceFile, status, collection: collectionFromSourceFile(sourceFile) });
-    }
-  }
-  return features;
+async function parseFeatureRowsAsync(statusFilter) {
+  const issues = await getGithubMigrationIssues();
+  return parseFeatureRowsFromIssues(issues, statusFilter);
 }
 
-/** Return Open blocked resolution rows (for dispatching Unblock agents and the report). */
-function parseBlockedRows() {
-  const content = readFileSync(TRACKER, 'utf8');
-  const items = [];
-  let inBlocked = false;
-  for (const line of content.split('\n')) {
-    if (line.startsWith('## Blocked')) { inBlocked = true; continue; }
-    if (!inBlocked) continue;
-    if (!line.startsWith('| ') || line.includes('---') || line.includes('Resolution')) continue;
-    const cols = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cols.length < 4) continue;
-    const [resolution, features, srdReq, status, , notes] = cols;
-    if (status === 'Open') items.push({ resolution, features, srdReq: srdReq || '', notes: notes || '' });
-  }
-  return items;
-}
-
-/** Recount every feature row and rewrite the Summary table in-place. */
-function regenerateSummaryTable() {
-  const content = readFileSync(TRACKER, 'utf8');
-  const lines = content.split('\n');
-
-  const counts = {};
-  for (const c of ALL_COLLECTIONS) { counts[c] = {}; for (const s of STATUS_KEYS) counts[c][s] = 0; }
-
-  let inBlocked = false;
-  for (const line of lines) {
-    if (line.startsWith('## Blocked')) { inBlocked = true; continue; }
-    if (inBlocked) continue;
-    if (!line.startsWith('| ') || line.includes('---') || line.includes('Feature Name')
-        || line.includes('Collection')) continue;
-    const cols = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cols.length < 3) continue;
-    const coll = collectionFromSourceFile(cols[1]);
-    const status = cols[2];
-    if (coll && counts[coll] && STATUS_KEYS.includes(status)) counts[coll][status]++;
-  }
-
-  const totals = {};
-  for (const s of STATUS_KEYS) totals[s] = 0;
-
-  const newRows = [];
-  for (const coll of ALL_COLLECTIONS) {
-    const c = counts[coll];
-    const total = STATUS_KEYS.reduce((sum, s) => sum + c[s], 0);
-    for (const s of STATUS_KEYS) totals[s] += c[s];
-    newRows.push(
-      `| ${coll} | ${total} | ${c.Validated} | ${c.Reviewed} | ${c.Validating} | ${c.Done} | ${c['In Progress']} | ${c.Unclaimed} | ${c['Needs Fix']} | ${c.Fixing} | ${c.Blocked} | ${c.Skipped} |`
-    );
-  }
-  const grand = STATUS_KEYS.reduce((sum, s) => sum + totals[s], 0);
-  newRows.push(
-    `| **TOTAL** | **${grand}** | **${totals.Validated}** | **${totals.Reviewed}** | **${totals.Validating}** | **${totals.Done}** | **${totals['In Progress']}** | **${totals.Unclaimed}** | **${totals['Needs Fix']}** | **${totals.Fixing}** | **${totals.Blocked}** | **${totals.Skipped}** |`
-  );
-
-  const headerLine = '| Collection | Total | Validated | Reviewed | Validating | Done | In Progress | Unclaimed | Needs Fix | Fixing | Blocked | Skipped |';
-  const hIdx = content.indexOf(headerLine);
-  if (hIdx === -1) { console.error('  regenerate: could not find Summary table header'); return; }
-
-  const afterHeader = content.indexOf('\n', hIdx) + 1;
-  const afterSep    = content.indexOf('\n', afterHeader) + 1;
-  const dividerIdx  = content.indexOf('\n---', afterSep);
-  if (dividerIdx === -1) { console.error('  regenerate: could not find section divider'); return; }
-
-  const newContent = content.slice(0, afterSep) + newRows.join('\n') + '\n' + content.slice(dividerIdx);
-  writeFileSync(TRACKER, newContent, 'utf8');
-  console.log('  Summary table regenerated.');
-}
-
-/** Update specific feature rows in the tracker to a new status. */
-function updateTrackerRowStatuses(featureNames, newStatus) {
-  const namesSet = new Set(featureNames);
-  if (namesSet.size === 0) return 0;
-
-  const content = readFileSync(TRACKER, 'utf8');
-  const lines = content.split('\n');
-  let updated = 0;
-
-  const newLines = lines.map(line => {
-    if (!line.startsWith('| ') || line.includes('---') || line.includes('Feature Name')
-        || line.includes('Resolution') || line.includes('Collection')) return line;
-    const cols = line.split('|');
-    if (cols.length < 4) return line;
-    const name = cols[1].trim();
-    if (namesSet.has(name)) {
-      cols[3] = ` ${newStatus} `;
-      updated++;
-      return cols.join('|');
-    }
-    return line;
-  });
-
-  if (updated > 0) {
-    writeFileSync(TRACKER, newLines.join('\n'), 'utf8');
-  }
-  return updated;
+async function parseBlockedRowsAsync() {
+  const issues = await getGithubMigrationIssues();
+  return parseBlockedRowsFromIssues(issues);
 }
 
 // ── Batch assignment ──────────────────────────────────────────────────────────
@@ -506,7 +417,7 @@ ${list}
 
 If any feature in your list is already In Progress, Done, or otherwise not Unclaimed when you check it, skip it and continue with the remaining features.  Do NOT re-run mode selection or claim replacement features.
 
-OVERRIDE 2 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).  Only update the specific feature rows listed above.  The orchestrator regenerates the Summary table after merging all branches.
+OVERRIDE 2 — Do NOT edit GitHub Issue labels / JSON body for features outside your assigned list. Only update the matching Issue rows for the features above. The orchestrator regenerates docs/v2-migration-tracker-snapshot.md after merges.
 
 OVERRIDE 3 — Tests (streamlined — same collections as this batch):
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
@@ -529,7 +440,7 @@ ${list}
 
 If any feature in your list is already Validating, Validated, or otherwise not in Done status when you check it, skip it and continue with the remaining features.  Do NOT re-run mode selection or claim replacement features.
 
-OVERRIDE 2 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).  Only update the specific feature rows listed above.  The orchestrator regenerates the Summary table after merging all branches.
+OVERRIDE 2 — Do NOT edit GitHub Issue labels / JSON body for features outside your assigned list. Only update the matching Issue rows for the features above. The orchestrator regenerates docs/v2-migration-tracker-snapshot.md after merges.
 
 OVERRIDE 3 — Tests (streamlined — collections in this batch):
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
@@ -551,12 +462,12 @@ OVERRIDE 1 — Pre-assigned feature to fix:
 
 If this feature is not in Needs Fix status when you check it, exit immediately without making any changes.
 
-OVERRIDE 2 — After fixing the code and passing tests, update the tracker row:
-  - Set Status to "Done" (not "Fixing" or "Validated" — back to Done so the val agent re-validates it)
-  - Write a brief summary of what you changed in the Fix Notes column
+OVERRIDE 2 — After fixing the code and passing tests, update the GitHub Issue:
+  - Set v2-status to "Done" (not "Fixing" or "Validated" — back to Done so the val agent re-validates it)
+  - Write a brief summary of what you changed in the Issue body / notes
   Do NOT stop and wait for human verification.  The orchestrator will auto-merge your branch and the val agent will pick it up next round.  The human will review the code naturally when promoting Validated → Reviewed.
 
-OVERRIDE 3 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).
+OVERRIDE 3 — Do not bulk-edit unrelated Issues; snapshot regeneration is orchestrator-owned.
 
 OVERRIDE 4 — Tests (streamlined — this feature's collection):
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
@@ -584,10 +495,10 @@ If this resolution row is not in Open status when you check it, exit immediately
 OVERRIDE 2 — Do NOT stop and wait for human verification.  After implementing the engine change, updating the authoring guide, and running tests, do all of the following and then exit:
   a. Update affected feature rows in the feature checklists: set Status from Blocked to Done (so the val agent picks them up after the human merges your branch).  Follow the same eligibility check as Step 5: only promote a feature if no OTHER active Blocked row still lists it.
   b. Write a brief summary of what you changed in the Notes column of the resolution row.
-  c. Leave the resolution row in the ACTIVE Blocked table — do NOT move it to docs/v2-blocked-resolutions-done.md.  The human will archive it after reviewing and merging your branch.
+  c. Leave the resolution Issue in **Open** status on GitHub — do NOT archive it in docs/v2-blocked-resolutions-done.md.  The human will archive it after reviewing and merging your branch.
   The orchestrator will present your branch for human sign-off before merging.
 
-OVERRIDE 3 — Do NOT update the Summary table in docs/v2-migration-tracker.md (lines 7-19).
+OVERRIDE 3 — Do not bulk-edit unrelated Issues; snapshot regeneration is orchestrator-owned.
 
 OVERRIDE 4 — Before running tests:
   export PATH="/Users/andrewreutter/.nvm/versions/node/v25.2.1/bin:$PATH"
@@ -735,7 +646,7 @@ async function createPullRequest(branchName, baseBranch, entry, repo) {
 
 // ── Branch merging ────────────────────────────────────────────────────────────
 
-function mergeBranches(entries, baseBranch) {
+async function mergeBranches(entries, baseBranch) {
   const branches = entries.map(e => typeof e === 'string' ? e : e.branchName);
   console.log('\n── Merging branches ────────────────────────────────────────');
 
@@ -759,7 +670,8 @@ function mergeBranches(entries, baseBranch) {
           git(`git commit --no-edit --allow-empty -m "chore: merge ${branch}"`, { quiet: true });
         } else {
           for (const file of conflicted) {
-            execSync(`git checkout ${file === TRACKER ? '--ours' : '--theirs'} "${file}"`, { encoding: 'utf8' });
+            const keepOurs = file === TRACKER_SNAPSHOT;
+            execSync(`git checkout ${keepOurs ? '--ours' : '--theirs'} "${file}"`, { encoding: 'utf8' });
             execSync(`git add "${file}"`, { encoding: 'utf8' });
           }
           // --allow-empty handles the case where resolution matches HEAD exactly
@@ -779,15 +691,25 @@ function mergeBranches(entries, baseBranch) {
     .filter(e => typeof e === 'object' && (e.mode === 'impl' || e.mode === 'fix'))
     .flatMap(e => e.items || []);
   if (mergedFeatureNames.length > 0) {
-    const count = updateTrackerRowStatuses(mergedFeatureNames, 'Done');
-    if (count > 0) console.log(`  Updated ${count} tracker row(s) to Done.`);
+    const full = resolveGithubRepository();
+    const [owner, repo] = full.split('/');
+    const token = getGithubTokenFromEnv();
+    const count = await updateGithubFeatureIssuesByNames(owner, repo, token, mergedFeatureNames, 'Done');
+    invalidateGithubIssuesCache();
+    if (count > 0) console.log(`  Updated ${count} GitHub migration issue(s) to Done.`);
   }
 
-  regenerateSummaryTable();
+  {
+    const full = resolveGithubRepository();
+    const [owner, repo] = full.split('/');
+    const token = getGithubTokenFromEnv();
+    await writeTrackerSnapshotFile(owner, repo, token, resolve(ORCH_REPO_ROOT, TRACKER_SNAPSHOT));
+    console.log(`  Wrote ${TRACKER_SNAPSHOT} from GitHub Issues.`);
+  }
 
   try {
-    git(`git add ${TRACKER}`, { quiet: true });
-    git('git commit -m "chore: regenerate tracker Summary table" --allow-empty', { quiet: true });
+    git(`git add ${TRACKER_SNAPSHOT}`, { quiet: true });
+    git('git commit -m "chore: regenerate v2 migration snapshot from GitHub" --allow-empty', { quiet: true });
   } catch (_) {}
 
   try {
@@ -804,9 +726,9 @@ function mergeBranches(entries, baseBranch) {
 
 // ── Final report ──────────────────────────────────────────────────────────────
 
-function printFinalReport(reviewQueue) {
+async function printFinalReport(reviewQueue) {
   const line    = '═'.repeat(56);
-  const summary = readTrackerSummary();
+  const summary = await readTrackerSummaryAsync();
 
   const valPRs     = reviewQueue.filter(r => r.mode === 'val');
   const unblockPRs = reviewQueue.filter(r => r.mode === 'unblock');
@@ -841,8 +763,8 @@ function printFinalReport(reviewQueue) {
     console.log(line);
   }
 
-  const needsFix = parseFeatureRows(['Needs Fix']);
-  const blocked  = parseBlockedRows();
+  const needsFix = await parseFeatureRowsAsync(['Needs Fix']);
+  const blocked  = await parseBlockedRowsAsync();
 
   if (needsFix.length === 0 && blocked.length === 0 && reviewQueue.length === 0) {
     if ((summary.validated ?? 0) === 0) {
@@ -901,16 +823,16 @@ function formatSummary(s) {
  * Priority: fix (1 at a time) > unblock (1 at a time) > impl/val (balanced).
  * Returns { mode, label, prompt, model, items, resolution } or null.
  */
-function pickNextWork(state) {
+async function pickNextWork(state) {
   const inFlightNames       = getInFlightItemNames(state);
   const inFlightResolutions = getInFlightResolutions(state);
-  const summary             = readTrackerSummary();
+  const summary             = await readTrackerSummaryAsync();
 
   // Priority 1: Fix (at most 1 in-flight at a time)
   if (!NO_FIX && !IMPL_ONLY && !VAL_ONLY && summary.needsFix > 0) {
     const inFlightFix = state.inFlight.filter(e => e.mode === 'fix').length;
     if (inFlightFix === 0) {
-      const fix = parseFeatureRows(['Needs Fix']).find(f => !inFlightNames.has(f.name));
+      const fix = (await parseFeatureRowsAsync(['Needs Fix'])).find(f => !inFlightNames.has(f.name));
       if (fix) return {
         mode: 'fix', label: `${fix.name} (${fix.sourceFile})`,
         prompt: buildFixPrompt(fix), model: MODEL,
@@ -923,7 +845,7 @@ function pickNextWork(state) {
   if (!NO_UNBLOCK && !IMPL_ONLY && !VAL_ONLY && summary.blocked > 0) {
     const inFlightUnblock = state.inFlight.filter(e => e.mode === 'unblock').length;
     if (inFlightUnblock === 0) {
-      const ub = parseBlockedRows().find(r => !inFlightResolutions.has(r.resolution));
+      const ub = (await parseBlockedRowsAsync()).find(r => !inFlightResolutions.has(r.resolution));
       if (ub) return {
         mode: 'unblock', label: ub.resolution,
         prompt: buildUnblockPrompt(ub), model: MODEL,
@@ -949,7 +871,7 @@ function pickNextWork(state) {
 
   for (const mode of tryOrder) {
     if (mode === 'impl') {
-      const features = parseFeatureRows(['Unclaimed']).filter(f => !inFlightNames.has(f.name));
+      const features = (await parseFeatureRowsAsync(['Unclaimed'])).filter(f => !inFlightNames.has(f.name));
       const batch = assignBatches(features, 1)[0];
       if (batch) return {
         mode: 'impl', label: batchLabel(batch),
@@ -957,7 +879,7 @@ function pickNextWork(state) {
         items: batch.features.map(f => f.name), resolution: null,
       };
     } else {
-      const features = parseFeatureRows(['Done']).filter(f => !inFlightNames.has(f.name));
+      const features = (await parseFeatureRowsAsync(['Done'])).filter(f => !inFlightNames.has(f.name));
       const batch = assignBatches(features, 1, VAL_BATCH_SIZE)[0];
       if (batch) return {
         mode: 'val', label: batchLabel(batch),
@@ -983,7 +905,7 @@ async function fillAgentSlots(state, baseBranch, repo) {
       pulled = true;
     }
 
-    const work = pickNextWork(state);
+    const work = await pickNextWork(state);
     if (!work) break;
 
     const ts     = timestamp();
@@ -1065,7 +987,7 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
 
   // Merge any branches that finished while we were away
   if (autoMergeEntries.length > 0) {
-    mergeBranches(autoMergeEntries, baseBranch);
+    await mergeBranches(autoMergeEntries, baseBranch);
   }
 
   // Poll remaining running agents
@@ -1094,7 +1016,7 @@ async function recoverInFlightAgents(state, baseBranch, repo) {
       e => !state.inFlight.some(s => s.agentId === e.agentId) && e.mode !== 'unblock' && e.mode !== 'val'
     );
     if (justFinished.length > 0) {
-      mergeBranches(justFinished, baseBranch);
+      await mergeBranches(justFinished, baseBranch);
     }
   }
 
@@ -1151,7 +1073,7 @@ async function main() {
   // ── Worker pool: fill slots, poll, merge/PR, refill ────────────────────────
 
   console.log('\n── Filling initial agent pool ──────────────────────────────');
-  const summary = readTrackerSummary();
+  const summary = await readTrackerSummaryAsync();
   console.log(`  Tracker: ${formatSummary(summary)}`);
 
   await fillAgentSlots(state, baseBranch, repo);
@@ -1159,7 +1081,7 @@ async function main() {
   if (state.inFlight.length === 0) {
     console.log('  No dispatchable work found.');
     logSessionCostSummary(state);
-    printFinalReport(state.reviewQueue);
+    await printFinalReport(state.reviewQueue);
   } else {
     console.log(`\n── Pool active: ${state.inFlight.length}/${NUM_AGENTS} slots ──────────────────────`);
     console.log(`  Polling every ${POLL_MS / 1000}s...`);
@@ -1203,7 +1125,7 @@ async function main() {
 
       // Batch-merge all auto-mergeable branches that finished this cycle
       if (autoMergeEntries.length > 0) {
-        mergeBranches(autoMergeEntries, baseBranch);
+        await mergeBranches(autoMergeEntries, baseBranch);
       }
 
       // Fill any freed slots with new work
@@ -1221,7 +1143,7 @@ async function main() {
     }
 
     logSessionCostSummary(state);
-    printFinalReport(state.reviewQueue);
+    await printFinalReport(state.reviewQueue);
   }
 
   // Clear the state file on clean exit

@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, Square, CheckSquare, Loader2 } from 'lucide-react';
+import { Info, Check, CheckCircle, AlertTriangle, RotateCcw, Shield, ChevronDown, CheckSquare, Loader2 } from 'lucide-react';
 import DiceBox from '@3d-dice/dice-box-threejs';
 import { Tooltip } from './Tooltip.jsx';
 import { CustomSelect } from './forms/CustomSelect.jsx';
@@ -21,6 +21,15 @@ import { MarkdownText } from '../lib/markdown.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
+import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
+import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
+import {
+  V2_REVIEW_CHIP_INLINE_OPTION_MAX,
+  V2_INLINE_SEG_BTN_BASE,
+  V2_INLINE_SEG_TARGET_BTN,
+  V2_INLINE_SEG_OFF,
+  V2_INLINE_SEG_ON,
+} from '../lib/v2-inline-select-ui.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -249,7 +258,21 @@ function getConditionalTagStatus(tag, roll, attackerEl) {
   return getConditionalWeaponTagStatus(tag, roll, attackerEl);
 }
 
-function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerCharacter = {}, onRestMoveSelect, canEditColumn, isPlayer, onAcknowledge, onCancel, disableDismiss, gmUid = null }) {
+function RestBanner({
+  roll,
+  characters = [],
+  restMovesForRoll = {},
+  movesPerCharacter = {},
+  restBannerChipsByInstanceId = {},
+  onRestBannerV2Chip,
+  onRestMoveSelect,
+  canEditColumn,
+  isPlayer,
+  onAcknowledge,
+  onCancel,
+  disableDismiss,
+  gmUid = null,
+}) {
   const visible = useBannerVisible();
   const duration = roll._restDuration === 'long' ? 'Long' : 'Short';
   const defaultMoves = roll._restDuration === 'long' ? LONG_REST_MOVES : SHORT_REST_MOVES;
@@ -310,20 +333,20 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
         minWidth: '560px',
       }}
     >
-      <div className="px-4 py-3 rounded-xl shadow-2xl bg-slate-900/90 border-2 border-amber-500/60 text-amber-50">
-        <div className="text-base font-bold text-amber-200 mb-2">{duration} Rest - Choose Your Moves</div>
+      <div className="px-4 py-3 rounded-xl shadow-2xl bg-dh-surface/90 border-2 border-dh-strong text-dh">
+        <div className="text-base font-bold text-dh mb-2">{duration} Rest - Choose Your Moves</div>
         <div className="flex items-center gap-4 mb-3 flex-wrap">
           {(roll.subItems || []).length > 0 && (
             <div className="flex items-center gap-1">
               {(roll.subItems || []).map((sub, i) => (
-                <span key={i} className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-xs font-mono">
-                  {sub.pre && <span className="text-slate-400">{sub.pre} </span>}
+                <span key={i} className="px-1.5 py-0.5 rounded bg-dh-raised text-dh text-xs font-mono">
+                  {sub.pre && <span className="text-dh-muted">{sub.pre} </span>}
                   {sub.result}
                 </span>
               ))}
             </div>
           )}
-          <span className="text-sm font-semibold text-amber-300/90">+{fearN} Fear</span>
+          <span className="text-sm font-semibold text-dh-hope-soft">+{fearN} Fear</span>
         </div>
         <div className="flex flex-col gap-2 overflow-y-auto max-h-[40vh] pb-1">
           {characters.map(char => {
@@ -355,9 +378,45 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
               if (!def?.canTargetAlly) return true;
               return (o._targetInstanceId ?? null) === (sel['move' + slotNum + 'TargetInstanceId'] ?? null);
             }) ?? null;
+            const restChips = restBannerChipsByInstanceId[char.instanceId] || [];
             return (
-              <div key={char.instanceId} className="flex flex-row items-center gap-2 border border-slate-700 rounded-lg px-2 py-1.5 bg-slate-800/50">
-                <div className="text-[11px] font-semibold text-amber-200 truncate w-24 shrink-0" title={char.name}>{char.name}</div>
+              <div key={char.instanceId} className="flex flex-col gap-1.5 border border-dh-strong rounded-lg px-2 py-1.5 bg-dh-raised/50">
+                <div className="flex flex-row items-center gap-2 flex-wrap">
+                  <div className="text-[11px] font-semibold text-dh truncate w-24 shrink-0" title={char.name}>{char.name}</div>
+                  {restChips.length > 0 && onRestBannerV2Chip && (
+                    <div className="flex flex-row flex-wrap gap-1 items-center flex-1 min-w-0">
+                      {restChips.map((chip) => {
+                        const chipDisabled = chip.disabled === true || chip.resourceUnaffordable === true;
+                        const hint =
+                          typeof chip.disableHint === 'string'
+                            ? chip.disableHint
+                            : chipDisabled && typeof chip.disabled === 'string'
+                              ? chip.disabled
+                              : undefined;
+                        return (
+                          <button
+                            key={chip._chipKey || `${chip._featureName}-${chip.name}`}
+                            type="button"
+                            disabled={chipDisabled || !baseCanEdit}
+                            title={hint}
+                            onClick={() => {
+                              if (chipDisabled || !baseCanEdit) return;
+                              onRestBannerV2Chip(chip, char, isPlayer);
+                            }}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border max-w-[min(100%,14rem)] truncate ${
+                              chipDisabled || !baseCanEdit
+                                ? 'border-dh-muted/40 bg-dh-surface/40 text-dh-muted cursor-not-allowed'
+                                : 'border-dh-hope/30 bg-dh-raised text-dh hover:bg-dh-strong'
+                            }`}
+                          >
+                            {chip.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-row items-center gap-2 flex-wrap">
                 {Array.from({ length: slotCount }, (_, i) => i + 1).map(slot => {
                   const options = flattenOptions(moves);
                   const moveVal = findSelectedOption(options, slot);
@@ -391,11 +450,11 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
                           <span className="flex flex-col gap-0.5 justify-center">
                             <span className="flex items-center gap-1">
                               {m?._targetName != null ? `${m?.name} (${m._targetName})` : (m?.name ?? slotTitle)}
-                              {isRolling && <Loader2 className="w-3 h-3 animate-spin text-amber-400 shrink-0" />}
-                              {!isRolling && rollResult && <span className="text-amber-400 text-[10px]">({rollResult.dice} → {rollResult.value})</span>}
+                              {isRolling && <Loader2 className="w-3 h-3 animate-spin text-sky-400 shrink-0" />}
+                              {!isRolling && rollResult && <span className="text-sky-300 text-[10px]">({rollResult.dice} → {rollResult.value})</span>}
                             </span>
                             {formulaLine != null && (
-                              <span className="text-[10px] text-slate-400 leading-tight">{formulaLine}</span>
+                              <span className="text-[10px] text-dh-muted leading-tight">{formulaLine}</span>
                             )}
                           </span>
                         );
@@ -403,6 +462,7 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
                     />
                   );
                 })}
+                </div>
               </div>
             );
           })}
@@ -414,7 +474,7 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
                 type="button"
                 onClick={handleRestAcknowledge}
                 title={!allFilled ? 'Not all moves are chosen — click to confirm and acknowledge anyway' : undefined}
-                className={`flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors ${!allFilled ? 'ring-1 ring-amber-500/40' : ''}`}
+                className={`flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors ${!allFilled ? 'ring-1 ring-dh-hope/35' : ''}`}
               >
                 Acknowledge
               </button>
@@ -422,7 +482,7 @@ function RestBanner({ roll, characters = [], restMovesForRoll = {}, movesPerChar
             {onCancel != null && (
               <button
                 onClick={onCancel}
-                className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
               >
                 Cancel
               </button>
@@ -494,23 +554,23 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
       }}
     >
       <div
-        className="px-5 py-3 rounded-xl shadow-2xl text-center bg-slate-900/90 border-2 border-amber-500/60 text-amber-50"
+        className="px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/90 border-2 border-dh-strong text-dh"
       >
         {displayName && (
-          <div className="text-[11px] uppercase tracking-widest opacity-70 mb-1">{displayName}</div>
+          <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">{displayName}</div>
         )}
-        <div className="text-base font-bold text-amber-200 mb-1">{actionTitle}</div>
+        <div className="text-base font-bold text-dh mb-1">{actionTitle}</div>
         {roll.actionText && (
-          <MarkdownText text={roll.actionText} className="text-[12px] text-slate-300 mb-2 text-left dh-md" />
+          <MarkdownText text={roll.actionText} className="text-[12px] text-dh mb-2 text-left dh-md" />
         )}
         {(roll.tags || []).length > 0 && (
           <div className="flex flex-col gap-1 mb-2">
             {(roll.tags || []).map((tag, i) => (
-              <div key={i} className="flex items-start gap-1.5 rounded px-2 py-1 text-left border bg-amber-950/50 border-amber-700/50">
-                <Info size={10} className="text-amber-400 shrink-0 mt-0.5" />
+              <div key={i} className="flex items-start gap-1.5 rounded px-2 py-1 text-left border bg-dh-inset border-dh-strong">
+                <Info size={10} className="text-sky-400 shrink-0 mt-0.5" />
                 <div className="text-[10px] leading-snug min-w-0 flex-1">
-                  <span className="font-bold text-amber-200">{tag.name}:</span>{' '}
-                  <MarkdownText text={tag.text || ''} className="text-amber-400/80 dh-md text-[10px] leading-snug" />
+                  <span className="font-bold text-dh">{tag.name}:</span>{' '}
+                  <MarkdownText text={tag.text || ''} className="text-dh-muted dh-md text-[10px] leading-snug" />
                 </div>
               </div>
             ))}
@@ -518,11 +578,11 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
         )}
         {(roll._rousingSpeechTargets != null) && (
           <div className="mb-2">
-            <div className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+            <div className="text-[10px] text-dh-muted mb-1 uppercase tracking-wider">
               Clear 2 Stress each:
             </div>
             {roll._rousingSpeechTargets.length === 0 ? (
-              <div className="text-[10px] text-slate-500 italic">No other characters within Far range</div>
+              <div className="text-[10px] text-dh-muted italic">No other characters within Far range</div>
             ) : (
               <div className="flex flex-wrap gap-1 justify-center">
                 {roll._rousingSpeechTargets.map(t => (
@@ -539,11 +599,11 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
         )}
         {isActionAdversary && (
           <div className="mb-2">
-            <div className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+            <div className="text-[10px] text-dh-muted mb-1 uppercase tracking-wider">
               −2 Difficulty on:
             </div>
             {(actionAdversaryTargetsList?.length ?? 0) === 0 ? (
-              <div className="text-[10px] text-slate-500 italic">No adversaries on the table</div>
+              <div className="text-[10px] text-dh-muted italic">No adversaries on the table</div>
             ) : (
               <>
                 <button
@@ -551,8 +611,8 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                   onClick={(e) => setActionAdversaryMenuRect(e.currentTarget.getBoundingClientRect())}
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors cursor-pointer ${
                     selectedActionAdversaryInstanceId
-                      ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
-                      : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                      ? 'ring-1 ring-sky-500/50 bg-sky-950/45 border-sky-500 text-dh'
+                      : 'bg-dh-raised/80 border-dh-strong text-dh hover:bg-dh-hover hover:border-dh-muted'
                   }`}
                 >
                   <ChevronDown size={10} />
@@ -562,7 +622,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                   <>
                     <div className="fixed inset-0 z-[400]" onClick={() => setActionAdversaryMenuRect(null)} />
                     <div
-                      className="fixed z-[401] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-1"
+                      className="fixed z-[401] rounded-lg border border-dh-strong bg-dh-surface shadow-2xl p-2 space-y-1"
                       style={{
                         top: Math.min(actionAdversaryMenuRect.bottom + 4, window.innerHeight - 200),
                         left: Math.min(actionAdversaryMenuRect.left, window.innerWidth - 200),
@@ -580,12 +640,12 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
                             onClick={(e) => { e.stopPropagation(); onActionAdversarySelect?.(t.instanceId); setActionAdversaryMenuRect(null); }}
                             className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${
                               isSelected
-                                ? 'border-amber-500 bg-amber-800/60 text-amber-100'
-                                : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'
+                                ? 'border-sky-500 bg-sky-950/45 text-dh'
+                                : 'border-dh-strong bg-dh-raised/80 text-dh hover:bg-dh-hover hover:border-sky-500/60'
                             }`}
                           >
                             <div>{t.name}</div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">
+                            <div className="text-[10px] text-dh-muted mt-0.5">
                               {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                               {sum.conditions ? ` · ${sum.conditions}` : ''}
                             </div>
@@ -602,25 +662,27 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
         )}
         {isLifeSupport && (
           <div className="mb-2">
-            <div className="text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+            <div className="text-[10px] text-dh-muted mb-1 uppercase tracking-wider">
               Clear 1 HP on (choose one):
             </div>
             {(lifeSupportTargets?.length ?? 0) === 0 ? (
-              <div className="text-[10px] text-slate-500 italic">No other characters within Close range with marked HP</div>
+              <div className="text-[10px] text-dh-muted italic">No other characters within Close range with marked HP</div>
             ) : (
-              <div className="flex flex-wrap gap-1 justify-center">
-                {lifeSupportTargets.map(t => {
+              <div
+                className="flex w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+                role="group"
+                aria-label="Life Support ally"
+              >
+                {lifeSupportTargets.map((t) => {
                   const selected = t.instanceId === selectedLifeSupportInstanceId;
                   return (
                     <button
                       key={t.instanceId}
                       type="button"
                       onClick={() => onLifeSupportSelect?.(t.instanceId)}
-                      className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${!disableDismiss
-                        ? 'cursor-pointer bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600'
-                        : 'cursor-default bg-sky-900/40 border-sky-800 text-sky-300'} ${selected ? 'ring-2 ring-amber-400 border-amber-500 bg-sky-800' : ''}`}
+                      className={`${V2_INLINE_SEG_TARGET_BTN} ${selected ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF} ${!disableDismiss ? '' : 'cursor-default'}`}
                     >
-                      {t.name}
+                      <span className="block truncate font-semibold">{t.name}</span>
                     </button>
                   );
                 })}
@@ -634,7 +696,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
               <button
                 onClick={handleAcknowledge}
                 disabled={!canAcknowledge}
-                className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-amber-900/50 disabled:hover:text-amber-200"
+                className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-hover"
               >
                 Acknowledge
               </button>
@@ -642,7 +704,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
             {showActionBannerCancel && (
               <button
                 onClick={onCancel}
-                className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
               >
                 Cancel
               </button>
@@ -755,6 +817,10 @@ function V2ReviewChipRow({
   const pickerMissing = needsPickerUi && !picker;
   const blocked = blockedBase || pickerMissing || (needsPickerUi && needsPrimaryFirst);
 
+  const useInlineIsSelect =
+    needsIsSelect &&
+    options.length > 0 &&
+    options.length <= V2_REVIEW_CHIP_INLINE_OPTION_MAX;
   const blockHint =
     isPlayer && !playerMayUse
       ? 'Assign a character to you to use V2 review chips.'
@@ -767,13 +833,13 @@ function V2ReviewChipRow({
       <Tooltip key={stableKey} label="Applied" placement="bottom-left" className="relative flex w-full min-w-0">
         <div
           role="status"
-          className="w-full flex items-center gap-2 text-left px-2 py-1 rounded text-[11px] border border-slate-600/50 bg-slate-900/50 text-slate-400"
+          className="w-full flex items-center gap-2 text-left px-2 py-1 rounded text-[11px] border border-dh-strong/50 bg-dh-surface/50 text-dh-muted"
         >
           <CheckSquare className="shrink-0 text-emerald-500/90" size={14} strokeWidth={2.5} aria-hidden />
           <span className="min-w-0">
-            <span className="font-semibold text-slate-300">{chip._featureName}</span>
+            <span className="font-semibold text-dh">{chip._featureName}</span>
             {chip.name && chip.name !== chip._featureName ? (
-              <span className="text-slate-500"> — {chip.name}</span>
+              <span className="text-dh-muted"> — {chip.name}</span>
             ) : null}
           </span>
         </div>
@@ -791,13 +857,13 @@ function V2ReviewChipRow({
           onClick={() => onV2ReviewChip?.(chip, roll)}
           className={`w-full text-left px-2 py-1 rounded text-[11px] border transition-colors ${
             blockedBase
-              ? 'border-slate-700/50 bg-slate-900/40 text-slate-500 cursor-not-allowed'
-              : 'border-violet-600/60 bg-violet-900/40 text-violet-100 hover:bg-violet-800/50'
+              ? 'border-dh-strong/50 bg-dh-surface/40 text-dh-muted cursor-not-allowed'
+              : 'border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover'
           }`}
         >
-          <span className="font-semibold text-violet-200">{chip._featureName}</span>
+          <span className="font-semibold text-dh">{chip._featureName}</span>
           {chip.name && chip.name !== chip._featureName ? (
-            <span className="text-violet-300/80"> — {chip.name}</span>
+            <span className="text-dh-muted"> — {chip.name}</span>
           ) : null}
           <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />
         </button>
@@ -808,21 +874,21 @@ function V2ReviewChipRow({
   const panel = (
     <div
       key={stableKey}
-      className="rounded border border-violet-600/40 bg-violet-950/40 px-2 py-1.5 space-y-1.5"
+      className="rounded border border-dh-border bg-dh-inset px-2 py-1.5 space-y-1.5"
     >
-      <div className="text-[11px] text-violet-100 flex flex-wrap items-center gap-x-1 gap-y-0.5">
-        <span className="font-semibold text-violet-200">{chip._featureName}</span>
+      <div className="text-[11px] text-dh flex flex-wrap items-center gap-x-1 gap-y-0.5">
+        <span className="font-semibold text-dh">{chip._featureName}</span>
         {chip.name && chip.name !== chip._featureName ? (
-          <span className="text-violet-300/80"> — {chip.name}</span>
+          <span className="text-dh-muted"> — {chip.name}</span>
         ) : null}
         <FeatureResourceCostIcons action={chip} iconSize={9} className="ml-0.5" />
       </div>
       {needsIsSelect && options.length === 0 ? (
-        <p className="text-[9px] text-slate-500">No options available for this chip.</p>
+        <p className="text-[9px] text-dh-muted">No options available for this chip.</p>
       ) : null}
       {needsIsSelect && options.length > 0 ? (
         <div className="flex flex-col gap-1">
-          {chip.multiSelect
+          {chip.multiSelect && !useInlineIsSelect
             ? options.map((o) => {
                 const id = optionId(o);
                 const idStr = id != null ? String(id) : '';
@@ -830,11 +896,11 @@ function V2ReviewChipRow({
                 return (
                   <label
                     key={String(id)}
-                    className="flex items-center gap-2 text-[10px] text-slate-200 cursor-pointer"
+                    className="flex items-center gap-2 text-[10px] text-dh cursor-pointer"
                   >
                     <input
                       type="checkbox"
-                      className="rounded border-slate-600"
+                      className="rounded border-dh-strong"
                       checked={checked}
                       onChange={() => id != null && toggleId(idStr)}
                       disabled={blockedBase}
@@ -843,38 +909,103 @@ function V2ReviewChipRow({
                   </label>
                 );
               })
-            : (
-              <CustomSelect
-                className="text-[10px] [&_button]:py-1.5 [&_button]:px-2 [&_button]:min-h-0 [&_button]:text-[10px]"
-                value={
-                  needsTargets
-                    ? options.find((o) => String(optionId(o)) === String(selectedIds[0] ?? '')) ?? null
-                    : null
+            : null}
+          {chip.multiSelect && useInlineIsSelect ? (
+            <div
+              className="flex w-full max-w-full overflow-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+              role="group"
+              aria-label={label}
+            >
+              {options.map((o) => {
+                const id = optionId(o);
+                const idStr = id != null ? String(id) : '';
+                const on = id != null && selectedIds.some((x) => String(x) === idStr);
+                const desc = typeof o?.description === 'string' ? o.description : undefined;
+                return (
+                  <button
+                    key={String(id)}
+                    type="button"
+                    title={desc}
+                    disabled={blockedBase}
+                    onClick={() => id != null && toggleId(idStr)}
+                    className={`${V2_INLINE_SEG_BTN_BASE} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
+                  >
+                    <span className="block truncate">{optionLabel(o)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {!chip.multiSelect && useInlineIsSelect ? (
+            <div
+              className="flex w-full max-w-full overflow-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+              role="group"
+              aria-label={label}
+            >
+              {options.map((o) => {
+                const id = optionId(o);
+                const idStr = id != null ? String(id) : '';
+                const selected =
+                  selectedIds.length === 1 && id != null && String(selectedIds[0]) === idStr;
+                const desc = typeof o?.description === 'string' ? o.description : undefined;
+                return (
+                  <button
+                    key={String(id)}
+                    type="button"
+                    title={desc}
+                    disabled={blockedBase}
+                    onClick={() => {
+                      if (id == null || blockedBase) return;
+                      if (singleSelectImmediate) {
+                        onV2ReviewChip?.(chip, roll, { selectedId: idStr });
+                      } else {
+                        setSelectedIds([idStr]);
+                      }
+                    }}
+                    className={`${V2_INLINE_SEG_BTN_BASE} ${selected ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
+                  >
+                    <span className="block truncate">{optionLabel(o)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {!chip.multiSelect && !useInlineIsSelect ? (
+            <CustomSelect
+              className="text-[10px] [&_button]:py-1.5 [&_button]:px-2 [&_button]:min-h-0 [&_button]:text-[10px]"
+              value={
+                needsTargets
+                  ? options.find((o) => String(optionId(o)) === String(selectedIds[0] ?? '')) ?? null
+                  : null
+              }
+              placeholder="Choose…"
+              options={options}
+              getOptionKey={(o) => String(optionId(o) ?? '')}
+              getOptionLabel={(o) => optionLabel(o)}
+              getOptionDescription={(o) => (typeof o?.description === 'string' ? o.description : undefined)}
+              disabled={blockedBase}
+              disabledReason={blockedBase ? blockHint : undefined}
+              onChange={(opt) => {
+                if (opt == null || blockedBase) return;
+                const id = optionId(opt);
+                if (id == null) return;
+                const sid = String(id);
+                if (singleSelectImmediate) {
+                  onV2ReviewChip?.(chip, roll, { selectedId: sid });
+                } else {
+                  setSelectedIds([sid]);
                 }
-                placeholder="Choose…"
-                options={options}
-                getOptionKey={(o) => String(optionId(o) ?? '')}
-                getOptionLabel={(o) => optionLabel(o)}
-                getOptionDescription={(o) => (typeof o?.description === 'string' ? o.description : undefined)}
-                disabled={blockedBase}
-                disabledReason={blockedBase ? blockHint : undefined}
-                onChange={(opt) => {
-                  if (opt == null || blockedBase) return;
-                  const id = optionId(opt);
-                  if (id == null) return;
-                  const sid = String(id);
-                  if (singleSelectImmediate) {
-                    onV2ReviewChip?.(chip, roll, { selectedId: sid });
-                  } else {
-                    setSelectedIds([sid]);
-                  }
-                }}
-              />
-            )}
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
       {needsTargets && pickTargets.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
+        <div
+          className="flex w-full max-w-full overflow-x-auto overflow-y-hidden rounded-md border border-dh-strong bg-dh-surface/50 shadow-sm"
+          role="group"
+          aria-label={`${chip._featureName || 'Feature'} targets`}
+        >
           {pickTargets.map((t) => {
             const tid = actorInstanceId(t);
             if (!tid) return null;
@@ -886,23 +1017,19 @@ function V2ReviewChipRow({
                 type="button"
                 disabled={blockedBase || needsPrimaryFirst}
                 onClick={() => toggleTarget(tid)}
-                className={`px-1.5 py-0.5 rounded text-[10px] border ${
-                  on
-                    ? 'border-amber-500 bg-amber-900/50 text-amber-100'
-                    : 'border-slate-600 bg-slate-900/60 text-slate-200'
-                }`}
+                className={`${V2_INLINE_SEG_TARGET_BTN} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`}
               >
-                {name}
+                <span className="block truncate">{name}</span>
               </button>
             );
           })}
         </div>
       ) : null}
       {needsPrimaryFirst ? (
-        <p className="text-[9px] text-slate-500">Select a damage target above first.</p>
+        <p className="text-[9px] text-dh-muted">Select a damage target above first.</p>
       ) : null}
       {pickerMissing ? (
-        <p className="text-[9px] text-slate-500">Could not load chip options.</p>
+        <p className="text-[9px] text-dh-muted">Could not load chip options.</p>
       ) : null}
       {showApply ? (
         <button
@@ -910,7 +1037,7 @@ function V2ReviewChipRow({
           disabled={blocked || !canConfirm()}
           onClick={doConfirm}
           aria-label={label}
-          className="w-full px-2 py-1 rounded text-[10px] font-medium border border-violet-500/70 bg-violet-800/40 text-violet-100 hover:bg-violet-700/50 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full px-2 py-1 rounded text-[10px] font-medium border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Apply
         </button>
@@ -928,11 +1055,14 @@ function V2ReviewChipRow({
   return panel;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, bannerReactions = [], displayOverridesByRollId, onBannerReactionActivate, onChipResolve, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
   const visible = useBannerVisible();
+  const effectiveSessionRole = sessionRole ?? (isPlayer ? 'player' : 'gm');
   const attackerEl = roll._attackerInstanceId
     ? tableCharacters.find((c) => c.instanceId === roll._attackerInstanceId)
     : null;
+  const gmHelperSuffix = getGmHelperBannerSuffix({ sessionRole: effectiveSessionRole, roll, attackerElement: attackerEl });
+  const gmHelperTooltip = getGmHelperBannerTooltip({ sessionRole: effectiveSessionRole, roll, attackerElement: attackerEl });
   const { dominant, total, characterName, rollUser } = roll;
   const displayName = roll.displayName || characterName || rollUser || '';
   const v2MoveBlocksAck = !isPlayer && v2PendingMoveInfo?.blocked === true;
@@ -1007,7 +1137,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     }
   }, [holdThemOffActive, selectedDamageTargetIds.length, selectedDamageTargetId, roll._selectedTargetInstanceId]);
 
-  // Sync single-target selection to server so ancestry chips (e.g. Danger Sense) see the selected target.
+  // Sync single-target selection to server so all clients share the same target chips / ack state.
   useEffect(() => {
     if (holdThemOffActive || roll._multiTarget || !onBannerTargetsChange || roll._rollDbId == null) return;
     if (targetsSyncDebounceRef.current) clearTimeout(targetsSyncDebounceRef.current);
@@ -1047,7 +1177,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const extraItems   = (roll.subItems || []).filter(s => EXTRA_PRE_RE.test(s.pre || ''));
   const damageSubs  = (roll.subItems || []).filter(s => /damage/i.test(s.pre || '') && s.input);
   const damageTotal = damageSubs.reduce((sum, s) => sum + (parseInt(s.result, 10) || 0), 0);
-  /** Base damage used for thresholds and application; ancestry chips can override via setDamageTotal(). */
+  /** Base damage used for thresholds and application. */
   const baseDamage  = (roll._damageTotalOverride != null ? roll._damageTotalOverride : damageTotal);
   const damageSub   = damageSubs[0];
   const dmg         = parseDiceSub(damageSub);
@@ -1120,12 +1250,12 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     : null;
 
   // Color schemes for DH (hope/fear) vs generic rolls. Use hope/fear only when resolved or when Hope/Fear dice were preset (e.g. augmented roll).
-  const neutralScheme = { card: 'bg-slate-900/90 border-2 border-sky-500/60 text-sky-100', detail: 'text-sky-200/60' };
+  const neutralScheme = { card: 'bg-dh-surface/90 border-2 border-sky-500/60 text-sky-100', detail: 'text-sky-200/60' };
   const scheme = (!hasDuality || (!resolved && !dominantFromPreset))
     ? neutralScheme
     : isHope
-      ? { card: 'bg-amber-900/90 border-2 border-amber-400 text-amber-50', detail: 'text-amber-400/80' }
-      : { card: 'bg-purple-950/90 border-2 border-purple-500/60 text-purple-100', detail: 'text-purple-200/60' };
+      ? { card: 'bg-dh-raised/95 border-2 border-dh-hope text-dh', detail: 'text-dh-hope-soft' }
+      : { card: 'bg-dh-raised/95 border-2 border-purple-500/70 text-dh', detail: 'text-dh-muted' };
 
   // Character rolls target adversaries; adversary/other rolls target characters.
   // Use getTargetsForRoll for virtual weapon features, character attacks with weapon range, or adversary attacks with range.
@@ -1155,8 +1285,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     ? `${displayName} → ${selectedTargetsForTitle.map(t => t.name).join(', ')}`
     : selectedTargetForTitle ? `${displayName} → ${selectedTargetForTitle.name}` : displayName;
 
-  // Generic ancestry banner reactions — pre-matched by GMTableView for this roll.
-  const applicableReactions = bannerReactions.filter(r => r.matchesRoll(roll));
+  const canReplayBannerTitle = resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input));
+  const bannerTitleTooltip = [canReplayBannerTitle ? 'Replay dice animation' : '', gmHelperTooltip].filter(Boolean).join(' — ') || undefined;
 
   // Ranger's Focus: Fear result, attack vs Focus target — can end Focus to reroll Duality dice.
   // Use roll._selectedTargetInstanceId as fallback for players who pre-select before rolling
@@ -1179,13 +1309,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const selectedTargetForLockedOn = selectedDamageTargetId || roll._selectedTargetInstanceId || selectedDamageTargetIds[0];
   const ackClearsLockedOn =
     !!(attackerEl?.lockedOnTargetInstanceId && selectedTargetForLockedOn && attackerEl.lockedOnTargetInstanceId === selectedTargetForLockedOn);
-  const hasISeeItComingCleanup =
-    roll._rollDbId != null &&
-    tableCharacters.some((el) => el._iSeeItComingRollBonus && roll._rollDbId in el._iSeeItComingRollBonus);
   const ackWouldApplyMechanicalEffectsWhenResolved =
     needsInteraction ||
     v2MoveBlocksAck ||
-    applicableReactions.length > 0 ||
     ((roll.tags || []).length > 0 && roll._attackerInstanceId) ||
     (Number(roll._stressCost) > 0 ||
       Number(roll._hopeCost) > 0 ||
@@ -1208,16 +1334,21 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     !!roll._multiTarget ||
     (Number(roll._rangerFocusAttempt) > 0 && Number(roll._hopeCost) > 0) ||
     !!roll._wingsOfLightAddD8 ||
-    ackClearsLockedOn ||
-    hasISeeItComingCleanup;
-
-  const showBannerDismissCancel =
-    onCancel != null && (!resolved || ackWouldApplyMechanicalEffectsWhenResolved);
+    ackClearsLockedOn;
 
   // Attack success/failure: total >= target Difficulty (adversary) or Evasion (character).
   const selectedTargetIds = isMultiTargetMode
     ? selectedDamageTargetIds
     : (selectedDamageTargetId || roll._selectedTargetInstanceId ? [selectedDamageTargetId || roll._selectedTargetInstanceId] : []);
+  const hasPendingEvasionBonusCleanup = selectedTargetIds.some((id) => {
+    const c = tableCharacters.find((t) => t.instanceId === id);
+    return c != null && sumPendingEvasionBonusFromFeatureState(c) > 0;
+  });
+  const ackWouldApplyMechanicalEffectsWhenResolvedOrPending =
+    ackWouldApplyMechanicalEffectsWhenResolved || hasPendingEvasionBonusCleanup;
+
+  const showBannerDismissCancel =
+    onCancel != null && (!resolved || ackWouldApplyMechanicalEffectsWhenResolvedOrPending);
   const effectiveAttackTotal = hasDuality
     ? (total + (selectedAddRollDie?.value ?? 0))
     : genericTotal;
@@ -1228,12 +1359,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
     if (!target) continue;
     let defense = target.type === 'adversary' ? target.difficulty : target.evasion;
     if (defense == null) continue;
-    if (
-      target.type === 'character' &&
-      roll._rollDbId != null &&
-      target._iSeeItComingRollBonus?.[roll._rollDbId] != null
-    ) {
-      defense += target._iSeeItComingRollBonus[roll._rollDbId];
+    if (target.type === 'character') {
+      const full = tableCharacters.find((c) => c.instanceId === id) || target;
+      const pending = sumPendingEvasionBonusFromFeatureState(full);
+      if (pending > 0) defense += pending;
     }
     if (effectiveAttackTotal >= defense) hitCount++;
     else missCount++;
@@ -1256,7 +1385,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const resultSuccess = showHitMiss ? (hitCount > 0 && missCount === 0) : (showSuccessFailure && difficultySuccess);
   const resultFailure = showHitMiss ? (hitCount === 0 && missCount > 0) : (showSuccessFailure && !difficultySuccess);
   const resultMixed = showHitMiss && hitCount > 0 && missCount > 0;
-  const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-amber-400' : '';
+  const resultLabelClass = resultSuccess ? 'text-emerald-400' : resultFailure ? 'text-red-400' : resultMixed ? 'text-orange-400' : '';
   const isLockedOnAutoSuccess = roll._rollDbId != null && lockedOnAutoSuccessRollDbIds instanceof Set && lockedOnAutoSuccessRollDbIds.has(roll._rollDbId);
 
   const handleResolveClick = !resolved && onResolveInstantly
@@ -1284,13 +1413,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       >
         {bannerTitle && (
           <div
-            className={`text-[11px] uppercase tracking-widest opacity-70 mb-1.5 ${resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? 'cursor-pointer hover:opacity-90' : ''}`}
-            style={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? { pointerEvents: 'auto' } : undefined}
-            onClick={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? (e) => { e.stopPropagation(); onReplayDice(); } : undefined}
-            title={resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input)) ? 'Replay dice animation' : undefined}
-            role={resolved && onReplayDice ? 'button' : undefined}
+            className={`text-[11px] uppercase tracking-widest opacity-70 mb-1.5 ${canReplayBannerTitle ? 'cursor-pointer hover:opacity-90' : ''}`}
+            style={canReplayBannerTitle ? { pointerEvents: 'auto' } : undefined}
+            onClick={canReplayBannerTitle ? (e) => { e.stopPropagation(); onReplayDice(); } : undefined}
+            title={bannerTitleTooltip}
+            role={canReplayBannerTitle ? 'button' : undefined}
           >
             {bannerTitle}
+            {gmHelperSuffix}
           </div>
         )}
 
@@ -1325,9 +1455,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         {sep}
                         {p.isDisadvantage ? (
                           partKnown ? (
-                            <span className="text-amber-300/90">{p.label} (−{Math.abs(displayVal ?? 0)})</span>
+                            <span className="text-orange-400/95">{p.label} (−{Math.abs(displayVal ?? 0)})</span>
                           ) : (
-                            <span className="text-amber-300/70">{p.label} <Spinner /></span>
+                            <span className="text-orange-400/80">{p.label} <Spinner /></span>
                           )
                         ) : (
                           <>{p.label} {displayVal !== undefined && displayVal !== null ? Math.abs(displayVal) : <Spinner />}</>
@@ -1403,12 +1533,12 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           )}
         </div>
         {disadvantageRemovedNote && (
-          <div className="text-[10px] text-slate-400 italic mt-0.5">
+          <div className="text-[10px] text-dh-muted italic mt-0.5">
             Disadvantage ignored: {disadvantageRemovedNote}
           </div>
         )}
         {isLockedOnAutoSuccess && hasDamage && (
-          <div className="text-[10px] text-amber-300 font-medium mt-1">
+          <div className="text-[10px] text-sky-400/95 font-medium mt-1">
             Locked On: this attack automatically succeeds
           </div>
         )}
@@ -1465,7 +1595,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   ? (roll._damageTotalOverride != null
                       ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
                       : hasPhysicalResistance && isPhysicalDmg
-                        ? <><span className="line-through">{displayDmg}</span> <span className="text-amber-300/90">{effectiveDisplayDmg}</span></>
+                        ? <><span className="line-through">{displayDmg}</span> <span className="text-orange-400/95">{effectiveDisplayDmg}</span></>
                         : effectiveDisplayDmg)
                   : <Spinner />}
               </span>
@@ -1474,7 +1604,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               )}
               <span className="text-sm font-semibold text-red-300/80">damage</span>
               {hasPhysicalResistance && isPhysicalDmg && (
-                <span className="text-[10px] font-medium text-amber-400/90 ml-1">(Resistance)</span>
+                <span className="text-[10px] font-medium text-orange-400/90 ml-1">(Resistance)</span>
               )}
             </div>
           );
@@ -1485,31 +1615,31 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           const label = (sub.pre || '').trim();
           const result = parseInt(sub.result, 10);
           let statusText = null;
-          let statusCls = 'text-slate-400';
+          let statusCls = 'text-dh-muted';
           if (resolved) {
             if (label === 'Reload') {
               if (result === 1) { statusText = 'Must reload!'; statusCls = 'text-red-400 font-semibold'; }
               else { statusText = 'Loaded'; statusCls = 'text-green-400'; }
             } else if (label === 'Invigorate') {
               if (result === 4) { statusText = 'Clear 1 Stress!'; statusCls = 'text-green-400 font-semibold'; }
-              else { statusText = 'No effect'; statusCls = 'text-slate-500'; }
+              else { statusText = 'No effect'; statusCls = 'text-dh-muted'; }
             } else if (label === 'Lifesteal') {
               if (result === 6) { statusText = 'Clear 1 HP!'; statusCls = 'text-green-400 font-semibold'; }
-              else { statusText = 'No effect'; statusCls = 'text-slate-500'; }
+              else { statusText = 'No effect'; statusCls = 'text-dh-muted'; }
             }
           }
           return (
             <div key={i} className="flex items-baseline justify-center gap-x-1 mt-1 leading-snug">
-              <span className="text-[11px] text-slate-400/70">
+              <span className="text-[11px] text-dh-muted/70">
                 {label} {sub.input}{' '}
-                <span className="text-slate-200">{resolved ? result : <Spinner />}</span>
+                <span className="text-dh">{resolved ? result : <Spinner />}</span>
                 {statusText && <span className={`ml-1 ${statusCls}`}>{statusText}</span>}
               </span>
             </div>
           );
         })}
 
-        {/* ── Feature tags (only show tag pill when feature has showTag: true; onBanner-only features use narration) ── */}
+        {/* ── Feature tags (showTag: true); automated tags use green styling; banner narrations also merge automated descriptions via buildRollBaseBannerNarrationParts ── */}
         {(roll.tags || []).filter((t) => resolveWeaponTagDescriptor(t.name, attackerEl)?.showTag === true).length > 0 && (
           <div className="mt-2 flex flex-col gap-1">
             {(roll.tags || []).filter((t) => resolveWeaponTagDescriptor(t.name, attackerEl)?.showTag === true).map((tag, i) => {
@@ -1523,18 +1653,18 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 : Info;
               const cardCls = effectiveStyle === 'green' ? 'bg-green-950/50 border-green-700/50'
                 : effectiveStyle === 'red' ? 'bg-red-950/50 border-red-700/50'
-                : effectiveStyle === 'muted' ? 'bg-slate-800/40 border-slate-700/50'
-                : 'bg-slate-800/60 border-slate-600/60';
+                : effectiveStyle === 'muted' ? 'bg-dh-raised/40 border-dh-strong/50'
+                : 'bg-dh-raised/60 border-dh-strong/60';
               const iconCls = effectiveStyle === 'green' ? 'text-green-400'
                 : effectiveStyle === 'red' ? 'text-red-400'
-                : 'text-slate-400';
+                : 'text-dh-muted';
               const nameCls = effectiveStyle === 'green' ? 'text-green-200'
                 : effectiveStyle === 'red' ? 'text-red-200'
-                : 'text-slate-200';
+                : 'text-dh';
               const textCls = effectiveStyle === 'green' ? 'text-green-400/80'
                 : effectiveStyle === 'red' ? 'text-red-400/80'
-                : effectiveStyle === 'muted' ? 'text-slate-500'
-                : 'text-slate-400';
+                : effectiveStyle === 'muted' ? 'text-dh-muted'
+                : 'text-dh-muted';
               const displayText = conditional ? conditional.text : tag.text;
               return (
                 <div key={i} className={`flex items-start gap-1.5 rounded px-2 py-1 text-left border ${cardCls}`}>
@@ -1572,16 +1702,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             (Array.isArray(selectedDamageTargetIds) && selectedDamageTargetIds[0]) ||
             null;
           return (
-            <div className="mt-2 rounded-lg border border-violet-600/40 bg-violet-950/30 px-2 py-1.5 space-y-2">
+            <div className="mt-2 rounded-lg border border-dh-border bg-dh-inset px-2 py-1.5 space-y-2">
               {intentUsedLines.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-1 mb-1 text-[9px] font-semibold uppercase tracking-wider text-violet-300/90">
-                    <ACTION_LOOP_PHASE_UI.intent.Icon size={10} className="shrink-0 text-violet-300/85" aria-hidden />
+                  <div className="flex items-center gap-1 mb-1 text-[9px] font-semibold uppercase tracking-wider text-dh-muted">
+                    <ACTION_LOOP_PHASE_UI.intent.Icon size={10} className="shrink-0 text-sky-400" aria-hidden />
                     <span>
                       {ACTION_LOOP_PHASE_UI.intent.sectionHeader} (used)
                     </span>
                   </div>
-                  <ul className="text-[10px] text-violet-100/90 space-y-0.5 list-disc list-inside pl-0.5">
+                  <ul className="text-[10px] text-dh space-y-0.5 list-disc list-inside pl-0.5">
                     {intentUsedLines.map((line, li) => (
                       <li key={li}>{line}</li>
                     ))}
@@ -1593,8 +1723,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 const PhaseIcon = ACTION_LOOP_PHASE_UI[pk].Icon;
                 return (
                   <div key={pk}>
-                    <div className="flex items-center gap-1 mb-1 text-[9px] font-semibold uppercase tracking-wider text-violet-300/90">
-                      <PhaseIcon size={10} className="shrink-0 text-violet-300/85" aria-hidden />
+                    <div className="flex items-center gap-1 mb-1 text-[9px] font-semibold uppercase tracking-wider text-dh-muted">
+                      <PhaseIcon size={10} className="shrink-0 text-sky-400" aria-hidden />
                       <span>{phaseLabel[pk]}</span>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -1628,150 +1758,6 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           </div>
         )}
 
-        {/* Ancestry banner reaction chips (Fearless, Feline Instincts, Kick, etc.) — above Acknowledge/Cancel */}
-        {applicableReactions.length > 0 && (
-          <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap gap-1.5 items-center">
-            {applicableReactions.map((reaction) => {
-              const { featureName, character, getDisabledState, isActive: reactionIsActive, button, stateKey, chip } = reaction;
-              const active = reactionIsActive(roll);
-              const disabledState = typeof getDisabledState === 'function' ? getDisabledState(roll) : { disabled: false, message: '' };
-              const isEnabled = !disabledState.disabled;
-              const disabledMessage = disabledState.message || '';
-              const requested = !!reaction.isRequested;
-              const hasChipAckReject = chip?.onChipAck != null || chip?.onChipReject != null;
-              const chipResolved = stateKey && roll._chipResolved?.[stateKey];
-              const showChipAckRejectRow = hasChipAckReject && onChipResolve && !isPlayer && active && !chipResolved;
-              const checked = active || requested || chipResolved;
-
-              if (hasChipAckReject && chipResolved) {
-                return (
-                  <Tooltip key={`${featureName}-${character.instanceId}`} label={button?.label || ''} placement="bottom-left">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-500">
-                      <CheckSquare size={12} className="shrink-0" />
-                      {featureName}
-                    </div>
-                  </Tooltip>
-                );
-              }
-
-              if (showChipAckRejectRow) {
-                return (
-                  <Tooltip key={`${featureName}-${character.instanceId}`} label={button?.label ? `${button.label} — click to turn off` : 'Click to turn off'} placement="bottom-left">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-amber-600 bg-amber-900/50 text-amber-200">
-                      <button
-                        type="button"
-                        onClick={() => onBannerReactionActivate?.(reaction, roll)}
-                        className="flex items-center gap-1.5 shrink-0 rounded -m-1 p-1 hover:bg-amber-800/50 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      >
-                        <CheckSquare size={12} className="shrink-0" />
-                        <span className="truncate max-w-[120px]">{featureName}</span>
-                      </button>
-                      <span className="flex items-center gap-1 shrink-0 flex-wrap items-center">
-                        {chip?.hopeCost > 0 && (() => {
-                          const instId = character?.instanceId;
-                          const hasHopeful = character?.armorFeatureName === 'Hopeful' || character?.armorMods?.feature?.name === 'Hopeful';
-                          const armorSlotsFree = (character?.maxArmor ?? 0) - (character?.currentArmor ?? 0);
-                          const showHopeful = hasHopeful && armorSlotsFree > 0 && instId;
-                          if (!showHopeful) return null;
-                          const useHopeful = !!useHopefulArmorByInstanceId[instId];
-                          return (
-                            <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={useHopeful}
-                                onChange={(e) => {
-                                  const next = e.target.checked;
-                                  setUseHopefulArmorByInstanceId(prev => ({ ...prev, [instId]: next }));
-                                  if (onBannerTargetsChange && roll._rollDbId != null) {
-                                    const nextMap = { ...(roll._hopefulArmorInsteadByInstanceId || {}), [instId]: next };
-                                    targetsSyncDebounceRef.current = setTimeout(() => {
-                                      targetsSyncDebounceRef.current = null;
-                                      onBannerTargetsChange(roll._rollDbId, { hopefulArmorInsteadByInstanceId: nextMap });
-                                    }, 200);
-                                  }
-                                }}
-                                className="rounded border-amber-600"
-                              />
-                              <span>Mark Armor instead</span>
-                            </label>
-                          );
-                        })()}
-                        {chip?.onChipAck != null && (
-                          <button
-                            type="button"
-                            disabled={!isEnabled}
-                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'ack', { hopefulArmorInsteadByInstanceId: useHopefulArmorByInstanceId }); }}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-emerald-600 bg-emerald-800/60 text-emerald-100 hover:bg-emerald-700/70 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            OK
-                          </button>
-                        )}
-                        {chip?.onChipReject != null && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); onChipResolve(reaction, roll, 'reject'); }}
-                            className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700/70"
-                          >
-                            Reject
-                          </button>
-                        )}
-                      </span>
-                    </div>
-                  </Tooltip>
-                );
-              }
-
-              const reactionTooltip =
-                active
-                  ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
-                  : isEnabled
-                    ? (button?.label ? `${character.name}: ${button.label}` : `${character.name}: ${featureName}`)
-                    : disabledMessage || `${character.name}: cannot use ${featureName}`;
-
-              // Non-toggleable chips (no onChipAck/onChipReject): no checkbox, badge-only style.
-              if (!hasChipAckReject) {
-                const El = chip?.activate ? 'button' : 'div';
-                return (
-                  <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
-                    <El
-                      {...(El === 'button' ? {
-                        type: 'button',
-                        onClick: (active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined,
-                        disabled: !active && !isEnabled && !requested,
-                      } : {})}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/40 text-slate-400 shrink-0 ${
-                        El === 'button' && (active || isEnabled || requested) ? 'hover:bg-slate-700/50 cursor-pointer' : ''
-                      }`}
-                    >
-                      {featureName}
-                    </El>
-                  </Tooltip>
-                );
-              }
-
-              return (
-                <Tooltip key={`${featureName}-${character.instanceId}`} label={reactionTooltip} placement="bottom-left">
-                  <button
-                    type="button"
-                    onClick={(active || isEnabled || requested) ? () => onBannerReactionActivate?.(reaction, roll) : undefined}
-                    disabled={!active && !isEnabled && !requested}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold border transition-colors shrink-0 ${
-                      active || requested
-                        ? 'border-amber-500 bg-amber-800/60 text-amber-100 hover:bg-amber-700/70 cursor-pointer'
-                        : isEnabled
-                          ? 'border-amber-600 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100 cursor-pointer'
-                          : 'border-slate-600 bg-slate-800/40 text-slate-500 cursor-not-allowed'
-                    }`}
-                  >
-                    {checked ? <CheckSquare size={12} className="shrink-0" /> : <Square size={12} className="shrink-0" />}
-                    {featureName}
-                  </button>
-                </Tooltip>
-              );
-            })}
-          </div>
-        )}
-
         {/* ── Action row: target badges or Acknowledge ── */}
         {showActionRow && (() => {
           // ── Post-apply interaction phase (Quick, Doubled Up, Bouncing) ──
@@ -1799,7 +1785,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
             return (
               <div className="mt-2.5 pt-2 border-t border-white/10">
-                <div className="text-[10px] text-amber-300 mb-1.5 uppercase tracking-wider">{prompt}</div>
+                <div className="text-[10px] text-dh-muted mb-1.5 uppercase tracking-wider">{prompt}</div>
                 <div className="flex flex-wrap justify-center gap-1">
                   {filteredTargets.map(t => (
                     <button
@@ -1808,7 +1794,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
                         t.type === 'character'
                           ? 'bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-500'
-                          : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                          : 'bg-dh-raised/80 border-dh-strong text-dh hover:bg-dh-hover hover:border-dh-muted'
                       }`}
                     >
                       {t.name}
@@ -1817,7 +1803,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   <button
                     onClick={() => { setActiveInteractionTag(null); onAcknowledge?.(); }}
                     disabled={v2MoveBlocksAck}
-                    className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {skipLabel}
                   </button>
@@ -1847,7 +1833,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 <button
                   key={wizard.instanceId}
                   onClick={() => { onNotThisTime(wizard, roll); }}
-                  className="w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border border-violet-700 bg-violet-900/50 text-violet-200 hover:bg-violet-800 hover:text-violet-100 transition-colors flex items-center justify-center gap-1"
+                  className="w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors flex items-center justify-center gap-1"
                 >
                   <Tooltip label={`${wizard.name} spends 3 Hope to force a reroll (Not This Time)`}>
                     <span><RotateCcw size={10} /> {wizard.name}: Not This Time (3 Hope)</span>
@@ -1875,7 +1861,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 <Tooltip label={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}>
                   <button
                     onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
-                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-dh-hope bg-dh-hover text-dh ring-1 ring-dh-hope/35' : 'border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover'}`}
                   >
                     {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
                     Spend 3 Hope to select two more targets
@@ -1888,7 +1874,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   <button
                     type="button"
                     onClick={() => setConcussiveKnockActive(prev => !prev)}
-                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${concussiveKnockActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                    className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${concussiveKnockActive ? 'border-dh-hope bg-dh-hover text-dh ring-1 ring-dh-hope/35' : 'border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover'}`}
                   >
                     {concussiveKnockActive ? <Check size={12} className="shrink-0" /> : null}
                     Concussive: knock target to Far (1 Hope)
@@ -1897,7 +1883,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               )}
               {(hasDamage || roll._featureNeedsTarget || (roll._attackerInstanceId && roll._weaponRangeFt != null && roll._attackerType !== 'adversary')) && canShowTargetRow && (filteredTargets.length > 0 || roll._featureNeedsTarget || (roll._attackerType === 'adversary' && roll._attackRangeFt != null) || (roll._attackerInstanceId && roll._weaponRangeFt != null && roll._attackerType !== 'adversary')) ? (
                 <>
-                  <div className="text-[10px] text-slate-400 mb-1.5 uppercase tracking-wider">
+                  <div className="text-[10px] text-dh-muted mb-1.5 uppercase tracking-wider">
                     {(() => {
                       const rangeLabel = roll._weaponRangeFt != null ? rangeFtToLabel(roll._weaponRangeFt) : (roll._attackerType === 'adversary' && roll._attackRangeFt != null ? rangeFtToLabel(roll._attackRangeFt) : null);
                       return rangeLabel ? `Apply within ${rangeLabel}` : 'Apply to';
@@ -1906,10 +1892,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   <div className="flex flex-col gap-2">
                     <div className="flex flex-wrap justify-center items-center gap-1">
                       {roll._attackerType === 'adversary' && roll._attackRangeFt != null && filteredTargets.length === 0 ? (
-                        <span className="text-[10px] text-slate-500 italic">No characters in range</span>
+                        <span className="text-[10px] text-dh-muted italic">No characters in range</span>
                       ) : roll._featureNeedsTarget ? (
                         filteredTargets.length === 0 ? (
-                          <span className="text-[10px] text-slate-500 italic">No valid targets in range</span>
+                          <span className="text-[10px] text-dh-muted italic">No valid targets in range</span>
                         ) : (
                           <>
                             <Tooltip label="Choose target">
@@ -1918,8 +1904,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
                                   featureTargetSelectedId
-                                    ? 'bg-amber-800/80 border-amber-500 text-amber-100 ring-1 ring-amber-400'
-                                    : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                                    ? 'bg-sky-950/50 border-sky-500 text-dh ring-1 ring-sky-500/40'
+                                    : 'bg-dh-raised/80 border-dh-strong text-dh hover:bg-dh-hover hover:border-dh-muted'
                                 }`}
                               >
                                 {featureTargetSelectedId
@@ -1932,14 +1918,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               <>
                                 <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
                                 <div
-                                  className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+                                  className="fixed z-[201] rounded-lg border border-dh-strong bg-dh-surface shadow-2xl p-2 space-y-2"
                                   style={{
                                     bottom: typeof window !== 'undefined' ? window.innerHeight - targetMenuAnchorRect.top + 4 : 8,
                                     left: Math.min(targetMenuAnchorRect.left, typeof window !== 'undefined' ? window.innerWidth - 220 : 0),
                                     minWidth: '140px',
                                   }}
                                 >
-                                  <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Choose target</div>
+                                  <div className="text-[11px] font-semibold text-dh uppercase tracking-wide">Choose target</div>
                                   <div className="space-y-1 max-w-[220px]">
                                     {filteredTargets.map((t) => {
                                       const sum = formatTargetSummary(t, { hideMax: isPlayer });
@@ -1952,10 +1938,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                             setFeatureTargetSelectedId(t.instanceId);
                                             setTargetMenuAnchorRect(null);
                                           }}
-                                          className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
+                                          className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-dh-strong bg-dh-raised/80 text-dh hover:bg-dh-hover hover:border-sky-500/50 transition-colors"
                                         >
                                           <div>{t.name}</div>
-                                          <div className="text-[10px] text-slate-400 mt-0.5">
+                                          <div className="text-[10px] text-dh-muted mt-0.5">
                                             {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                                             {sum.conditions ? ` · ${sum.conditions}` : ''}
                                           </div>
@@ -1966,7 +1952,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }}
-                                    className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+                                    className="text-[11px] text-dh-muted hover:text-dh transition-colors"
                                   >
                                     Cancel
                                   </button>
@@ -1978,7 +1964,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         )
                       ) : isMultiTargetMode ? (
                         filteredTargets.length === 0 ? (
-                          <span className="text-[10px] text-slate-500 italic">No valid targets</span>
+                          <span className="text-[10px] text-dh-muted italic">No valid targets</span>
                         ) : (
                           <>
                             <Tooltip label={`Select up to ${multiTargetCap} targets`}>
@@ -1987,8 +1973,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
                                   selectedDamageTargetIds.length > 0
-                                    ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
-                                    : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                                    ? 'ring-1 ring-sky-500/50 bg-sky-950/50 border-sky-500 text-dh'
+                                    : 'bg-dh-raised/80 border-dh-strong text-dh hover:bg-dh-hover hover:border-dh-muted'
                                 }`}
                               >
                                 {selectedDamageTargetIds.length > 0
@@ -2015,9 +2001,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
                                     return (
                                       <div key={id} className="flex items-center justify-between gap-2 text-[11px] w-full">
-                                        <span className="font-medium text-slate-200 truncate min-w-0">{t.name}</span>
+                                        <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
                                         <span className="flex items-center gap-1.5 shrink-0">
-                                          {hasDamage && (resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : hasDamage && resolved ? <span className="text-slate-500">—</span> : hasDamage ? <Spinner /> : null)}
+                                          {hasDamage && (resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : hasDamage && resolved ? <span className="text-dh-muted">—</span> : hasDamage ? <Spinner /> : null)}
                                           {hasArmor ? (
                                             <label className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border border-cyan-700 bg-cyan-900/40 text-cyan-200 cursor-pointer hover:bg-cyan-800/50">
                                               <input
@@ -2048,14 +2034,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               <>
                                 <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
                                 <div
-                                  className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+                                  className="fixed z-[201] rounded-lg border border-dh-strong bg-dh-surface shadow-2xl p-2 space-y-2"
                                   style={{
                                     bottom: typeof window !== 'undefined' ? window.innerHeight - targetMenuAnchorRect.top + 4 : 8,
                                     left: Math.min(targetMenuAnchorRect.left, typeof window !== 'undefined' ? window.innerWidth - 220 : 0),
                                     minWidth: '140px',
                                   }}
                                 >
-                                  <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Select targets (1–{multiTargetCap})</div>
+                                  <div className="text-[11px] font-semibold text-dh uppercase tracking-wide">Select targets (1–{multiTargetCap})</div>
                                   <div className="space-y-1 max-w-[220px]">
                                     {(() => {
                                       const dmgReduction = selectedDmgReduceDie?.value ?? 0;
@@ -2081,13 +2067,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                                 return next;
                                               });
                                             }}
-                                            className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-amber-500 bg-amber-800/60 text-amber-100' : 'border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500'}`}
+                                            className={`w-full text-left px-2 py-1.5 rounded text-xs font-medium border transition-colors ${isSelected ? 'border-sky-500 bg-sky-950/45 text-dh' : 'border-dh-strong bg-dh-raised/80 text-dh hover:bg-dh-hover hover:border-sky-500/50'}`}
                                           >
                                             <div className="flex items-center justify-between gap-2">
                                               <span>{isSelected ? <Check size={10} className="inline mr-1 shrink-0" /> : null}{t.name}</span>
                                               {hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums shrink-0">{hpLoss} HP</span> : null}
                                             </div>
-                                            <div className="text-[10px] text-slate-400 mt-0.5">
+                                            <div className="text-[10px] text-dh-muted mt-0.5">
                                               {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                                               {sum.conditions ? ` · ${sum.conditions}` : ''}
                                             </div>
@@ -2096,7 +2082,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       });
                                     })()}
                                   </div>
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }} className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }} className="text-[11px] text-dh-muted hover:text-dh transition-colors">Cancel</button>
                                 </div>
                               </>,
                               document.body
@@ -2105,7 +2091,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         )
                       ) : (
                         filteredTargets.length === 0 ? (
-                          <span className="text-[10px] text-slate-500 italic">No valid targets</span>
+                          <span className="text-[10px] text-dh-muted italic">No valid targets</span>
                         ) : (
                           <>
                             <Tooltip label="Choose target">
@@ -2114,8 +2100,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 onClick={(e) => setTargetMenuAnchorRect(e.currentTarget.getBoundingClientRect())}
                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
                                   selectedDamageTargetId
-                                    ? 'ring-1 ring-amber-400 bg-amber-800/80 border-amber-500 text-amber-100'
-                                    : 'bg-slate-800/80 border-slate-600 text-slate-200 hover:bg-slate-700 hover:border-slate-400'
+                                    ? 'ring-1 ring-sky-500/50 bg-sky-950/50 border-sky-500 text-dh'
+                                    : 'bg-dh-raised/80 border-dh-strong text-dh hover:bg-dh-hover hover:border-dh-muted'
                                 }`}
                               >
                                 {selectedDamageTargetId
@@ -2163,7 +2149,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const showImpenetrable = wouldBeZero && hasImpenetrable && hasStressSpace && !usedThisRest;
                                     if (!showImpenetrable) return null;
                                     return (
-                                      <label className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-amber-700/60 bg-amber-900/30 text-amber-200 cursor-pointer hover:bg-amber-800/40 transition-colors">
+                                      <label className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-dh-strong bg-dh-inset text-dh cursor-pointer hover:bg-dh-hover transition-colors">
                                         <input
                                           type="checkbox"
                                           checked={useImpenetrableForSelected}
@@ -2180,7 +2166,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                               return nextMap;
                                             });
                                           }}
-                                          className="rounded border-amber-600"
+                                          className="rounded border-dh-strong"
                                         />
                                         <span>Use Impenetrable (1/rest)</span>
                                       </label>
@@ -2199,8 +2185,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       disabled={!!onWingsD8Toggle && wingsActive && wingsD8Result != null}
                                       className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
                                         wingsActive
-                                          ? 'border-amber-500 bg-amber-900/50 text-amber-200'
-                                          : 'border-amber-700/60 text-amber-300/90 hover:bg-amber-950/40'
+                                          ? 'border-dh-hope bg-dh-hover text-dh ring-1 ring-dh-hope/30'
+                                          : 'border-dh-strong text-dh-muted hover:bg-dh-raised'
                                       } disabled:opacity-60 disabled:cursor-default`}
                                     >
                                       <Tooltip label={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result}` : 'Spend 1 Hope to add d8 to damage (applied on Acknowledge)') : 'Spend a Hope to add a d8 to damage'}>
@@ -2221,9 +2207,9 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
                               return (
                                 <div className="mt-1 flex items-center justify-between gap-2 text-[11px] w-full">
-                                  <span className="font-medium text-slate-200 truncate min-w-0">{t.name}</span>
+                                  <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
                                   <span className="shrink-0">
-                                    {resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : resolved ? <span className="text-slate-500">—</span> : <Spinner />}
+                                    {resolved && hpLoss != null ? <span className="text-red-400 font-semibold tabular-nums">{hpLoss} HP</span> : resolved ? <span className="text-dh-muted">—</span> : <Spinner />}
                                   </span>
                                 </div>
                               );
@@ -2233,14 +2219,14 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               <>
                                 <div className="fixed inset-0 z-[200]" onClick={() => setTargetMenuAnchorRect(null)} aria-hidden />
                                 <div
-                                  className="fixed z-[201] rounded-lg border border-amber-600/70 bg-slate-900 shadow-2xl p-2 space-y-2"
+                                  className="fixed z-[201] rounded-lg border border-dh-strong bg-dh-surface shadow-2xl p-2 space-y-2"
                                   style={{
                                     bottom: typeof window !== 'undefined' ? window.innerHeight - targetMenuAnchorRect.top + 4 : 8,
                                     left: Math.min(targetMenuAnchorRect.left, typeof window !== 'undefined' ? window.innerWidth - 220 : 0),
                                     minWidth: '140px',
                                   }}
                                 >
-                                  <div className="text-[11px] font-semibold text-amber-200 uppercase tracking-wide">Choose target</div>
+                                  <div className="text-[11px] font-semibold text-dh uppercase tracking-wide">Choose target</div>
                                   <div className="space-y-1 max-w-[220px]">
                                     {filteredTargets.map((t) => {
                                       const sum = formatTargetSummary(t, { hideMax: isPlayer });
@@ -2255,10 +2241,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                             setUseArmorForSelected(false);
                                             setTargetMenuAnchorRect(null);
                                           }}
-                                          className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-amber-600/60 bg-slate-800/80 text-slate-200 hover:bg-amber-800/60 hover:border-amber-500 transition-colors"
+                                          className="w-full text-left px-2 py-1.5 rounded text-xs font-medium border border-dh-strong bg-dh-raised/80 text-dh hover:bg-dh-hover hover:border-sky-500/50 transition-colors"
                                         >
                                           <div>{t.name}</div>
-                                          <div className="text-[10px] text-slate-400 mt-0.5">
+                                          <div className="text-[10px] text-dh-muted mt-0.5">
                                             {[sum.hp, sum.stress].filter(Boolean).join(' · ')}
                                             {sum.conditions ? ` · ${sum.conditions}` : ''}
                                             {disadvantageFeatures?.length ? ` · ${disadvantageFeatures.map(f => `${f} (−1d6)`).join(', ')}` : ''}
@@ -2270,7 +2256,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setTargetMenuAnchorRect(null); }}
-                                    className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+                                    className="text-[11px] text-dh-muted hover:text-dh transition-colors"
                                   >
                                     Cancel
                                   </button>
@@ -2289,7 +2275,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       return (
                         <div className="mt-1 space-y-0.5">
                           {lines.map((text, i) => (
-                            <div key={i} className="text-[10px] text-slate-300/90">{text}</div>
+                            <div key={i} className="text-[10px] text-dh/90">{text}</div>
                           ))}
                         </div>
                       );
@@ -2302,7 +2288,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               <button
                                 onClick={() => onAcknowledge(featureTargetSelectedId ? { selectedFeatureTargetInstanceId: featureTargetSelectedId } : undefined)}
                                 disabled={(filteredTargets.length > 0 && !featureTargetSelectedId) || v2MoveBlocksAck}
-                                className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                                className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                               >
                                 {v2MoveAckLabel}
                               </button>
@@ -2311,7 +2297,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                           {!isPlayer && showBannerDismissCancel && (
                             <button
                               onClick={onCancel}
-                              className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                              className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
                             >
                               Cancel
                             </button>
@@ -2329,10 +2315,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       for (const id of selectedDamageTargetIds) {
                                         const target = filteredTargets.find(t => t.instanceId === id);
                                         if (target) {
-                                          const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === id);
-                                          const damageModifiers = targetReactions
-                                            .filter(r => r.isActive(roll) && r.chip?.damageModifierWhenActive)
-                                            .map(r => ({ ...r.chip.damageModifierWhenActive }));
+                                          const damageModifiers = [];
                                           await onApplyDamage({ ...target, useArmor: !!useArmorByTargetId[id], damageModifiers, useImpenetrable: !!useImpenetrableByTargetId[id] }, baseDamage, tags, roll, dmgType);
                                         }
                                       }
@@ -2344,7 +2327,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     }
                                   }}
                                   disabled={selectedDamageTargetIds.length === 0 || v2MoveBlocksAck}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                                 >
                                   {v2MoveAckLabel}
                                 </button>
@@ -2353,7 +2336,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 <button
                                   onClick={() => onAcknowledge?.()}
                                   disabled={v2MoveBlocksAck}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Skip
                                 </button>
@@ -2361,7 +2344,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               {showBannerDismissCancel && (
                                 <button
                                   onClick={onCancel}
-                                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
                                 >
                                   Cancel
                                 </button>
@@ -2389,10 +2372,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       if (selectedTarget) {
                                         const dmgType = dmg?.type || '';
                                         const effectiveTargetId = selectedDamageTargetId || roll._selectedTargetInstanceId;
-                                        const targetReactions = bannerReactions.filter(r => r.matchesRoll(roll) && r.character?.instanceId === effectiveTargetId);
-                                        const damageModifiers = targetReactions
-                                          .filter(r => r.isActive(roll) && r.chip?.damageModifierWhenActive)
-                                          .map(r => ({ ...r.chip.damageModifierWhenActive }));
+                                        const damageModifiers = [];
                                         await onApplyDamage({ ...selectedTarget, useArmor: useArmorForSelected, damageModifiers, useImpenetrable: useImpenetrableForSelected }, totalDamage, tags, roll, dmgType);
                                       }
                                     }
@@ -2416,7 +2396,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     onAcknowledge?.(Object.keys(ackOpts).length > 0 ? ackOpts : undefined);
                                   }}
                                   disabled={(filteredTargets.length > 0 && !selectedDamageTargetId) || v2MoveBlocksAck}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800/60"
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-dh-raised/60"
                                 >
                                   {v2MoveAckLabel}
                                 </button>
@@ -2425,7 +2405,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                 <button
                                   onClick={() => onAcknowledge?.()}
                                   disabled={v2MoveBlocksAck}
-                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Skip
                                 </button>
@@ -2433,7 +2413,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               {showBannerDismissCancel && (
                                 <button
                                   onClick={onCancel}
-                                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
                                 >
                                   Cancel
                                 </button>
@@ -2453,7 +2433,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                         <button
                           onClick={() => onAcknowledge?.()}
                           disabled={v2MoveBlocksAck}
-                          className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-slate-600 bg-slate-800/60 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex-1 min-w-0 px-3 py-1 rounded text-[11px] font-semibold border border-dh-strong bg-dh-raised/60 text-dh hover:bg-dh-hover hover:text-dh transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {v2MoveAckLabel}
                         </button>
@@ -2461,7 +2441,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                       {showBannerDismissCancel && (
                         <button
                           onClick={onCancel}
-                          className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+                          className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
                         >
                           Cancel
                         </button>
@@ -2478,7 +2458,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           <div className="mt-2.5 pt-2 border-t border-white/10 flex justify-center">
             <button
               onClick={onCancel}
-              className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+              className="px-2 py-0.5 rounded text-[10px] font-medium border border-dh-strong bg-dh-surface/60 text-dh-muted hover:bg-dh-raised hover:text-dh transition-colors"
             >
               Cancel
             </button>
@@ -2508,7 +2488,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             <Tooltip label={holdThemOffActive ? 'On — select up to 3 targets (3 Hope when 2–3 targets)' : 'Spend 3 Hope to select two more targets'}>
               <button
                 onClick={() => onHoldThemOffToggle(roll._rollDbId, !holdThemOffActive)}
-                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${holdThemOffActive ? 'border-dh-hope bg-dh-hover text-dh ring-1 ring-dh-hope/35' : 'border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover'}`}
               >
                 {holdThemOffActive ? <Check size={12} className="shrink-0" /> : null}
                 Spend 3 Hope to select two more targets
@@ -2522,7 +2502,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               <button
                 type="button"
                 onClick={() => setConcussiveKnockActive(prev => !prev)}
-                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${concussiveKnockActive ? 'border-amber-500 bg-amber-800/80 text-amber-100' : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'}`}
+                className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${concussiveKnockActive ? 'border-dh-hope bg-dh-hover text-dh ring-1 ring-dh-hope/35' : 'border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover'}`}
               >
                 {concussiveKnockActive ? <Check size={12} className="shrink-0" /> : null}
                 Concussive: knock target to Far (1 Hope)
@@ -2543,8 +2523,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                   disabled={wingsActive && wingsD8Result != null}
                   className={`w-full mb-1.5 px-3 py-1 rounded text-[11px] font-semibold border transition-colors flex items-center justify-center gap-1.5 ${
                     wingsActive
-                      ? 'border-amber-500 bg-amber-800/80 text-amber-100'
-                      : 'border-amber-700 bg-amber-900/50 text-amber-200 hover:bg-amber-800 hover:text-amber-100'
+                      ? 'border-dh-hope bg-dh-hover text-dh ring-1 ring-dh-hope/30'
+                      : 'border-dh-strong bg-dh-raised text-dh-muted hover:bg-dh-hover'
                   } disabled:opacity-60 disabled:cursor-default`}
                 >
                   <Tooltip label={wingsActive ? (wingsD8Result != null ? `+d8: ${wingsD8Result} — already applied` : 'Spend 1 Hope to add d8 to damage (applied on GM Acknowledge)') : 'Spend a Hope to add a d8 to damage'}>
@@ -2558,7 +2538,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
         {/* Narration (e.g. Faun Kick knockback, Burning automated) */}
         {((roll._narrations?.length) ? roll._narrations : (roll._narration ? [{ text: roll._narration }] : [])).map((item, i) => {
           const isAutomated = item.style === 'automated';
-          const cls = isAutomated ? 'text-[10px] text-green-400/90 italic text-center mt-1 dh-md' : 'text-[10px] text-slate-400 italic text-center mt-1 dh-md';
+          const cls = isAutomated ? 'text-[10px] text-green-400/90 italic text-center mt-1 dh-md' : 'text-[10px] text-dh-muted italic text-center mt-1 dh-md';
           return <MarkdownText key={i} text={item.text || ''} className={cls} />;
         })}
       </div>
@@ -2598,10 +2578,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onBouncingTarget,
   wizardsWithHope = [],
   onNotThisTime,
-  bannerReactions = [],
   displayOverridesByRollId = {},
-  onBannerReactionActivate,
-  onChipResolve,
   tableCharacters = [],
   rangerFocusRerollChars = [],
   onRangerFocusReroll,
@@ -2626,11 +2603,14 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onRestMoveClear,
   restTableCharacters = [],
   restMovesPerCharacter = {},
+  restBannerChipsByInstanceId = {},
+  onRestBannerV2Chip,
   restCanEditColumn = () => true,
   restGmUid = null,
   bannerStripLeftOffset = 0,
   diceCanvasHidden = false,
   getV2PendingMoveBlockInfo,
+  sessionRole,
 }, ref) {
   const diceCanvasHiddenRef = useRef(diceCanvasHidden);
   useEffect(() => {
@@ -2651,12 +2631,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
   // All mutations update the ref synchronously first, then trigger re-render via setActiveBanners.
   const activeBannersRef = useRef([]); // [{ _bannerId, roll, resolved }]
   const [activeBanners, setActiveBanners] = useState([]);
-  // Fallback when bannerReactions prop is empty due to render race (e.g. Fearless chip on Fear roll).
-  const bannerReactionsFallbackRef = useRef([]);
-  function setBannerReactionsFallback(reactions) {
-    bannerReactionsFallbackRef.current = Array.isArray(reactions) ? reactions : [];
-  }
-
   // dbIds for which a dismiss was triggered before updateRoll stamped _rollDbId (race condition).
   // updateRoll checks this set and auto-dismisses if the newly-stamped id is pending.
   const pendingDismissalsRef = useRef(new Set());
@@ -3069,7 +3043,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
     diceBoxRef.current?.clearDice();
   }
 
-  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, setBannerReactionsFallback, clearDice }), [isPlayer]);
+  useImperativeHandle(ref, () => ({ addRoll, updateRoll, dismiss, dismissFirst, dismissBannerId: dismissBannerById, dismissBannerByDbId, stampBannerDbId, updateBannerRollByDbId, replaceBannerByDbId, replayDiceForBanner, clearDice }), [isPlayer]);
 
   // ── DiceBox initialization ─────────────────────────────────────────────────
 
@@ -3131,6 +3105,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   const DICE_BOTTOM_RESERVE = '10rem';
 
   return (
+    <>
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 15 }}>
       <div
         ref={containerRef}
@@ -3168,6 +3143,8 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 characters={restTableCharacters}
                 restMovesForRoll={entry.roll._rollDbId != null ? (restMovesSelections[entry.roll._rollDbId] || {}) : {}}
                 movesPerCharacter={restMovesPerCharacter}
+                restBannerChipsByInstanceId={restBannerChipsByInstanceId}
+                onRestBannerV2Chip={onRestBannerV2Chip}
                 onRestMoveSelect={onRestMoveSelect}
                 canEditColumn={restCanEditColumn}
                 isPlayer={isPlayer}
@@ -3228,10 +3205,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onBouncingTarget={onBouncingTarget}
                 wizardsWithHope={wizardsWithHope}
                 onNotThisTime={onNotThisTime}
-                bannerReactions={bannerReactions?.length ? bannerReactions : bannerReactionsFallbackRef.current}
                 displayOverridesByRollId={displayOverridesByRollId}
-                onBannerReactionActivate={onBannerReactionActivate}
-                onChipResolve={onChipResolve}
                 tableCharacters={tableCharacters}
                 rangerFocusRerollChars={rangerFocusRerollChars}
                 onRangerFocusReroll={onRangerFocusReroll}
@@ -3246,6 +3220,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onWingsD8ToggleRequest={onWingsD8ToggleRequest}
                 onGetWingsD8Extra={onGetWingsD8Extra}
                 getV2DamageBannerAckNotices={getV2DamageBannerAckNotices}
+                sessionRole={sessionRole}
                 isPlayer={isPlayer}
                 currentUserUid={currentUserUid}
                 onResolveInstantly={!entry.resolved ? () => resolveBannerInstantly(entry._bannerId) : undefined}
@@ -3262,5 +3237,6 @@ export const DiceRoller = forwardRef(function DiceRoller({
         </div>
       )}
     </div>
+    </>
   );
 });

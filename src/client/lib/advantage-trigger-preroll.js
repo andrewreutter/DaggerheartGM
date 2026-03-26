@@ -38,6 +38,9 @@ export function buildAdvantageTriggerPrerollChips(characterEl, resolvers) {
       const short = cond.length > 100 ? `${cond.slice(0, 97)}…` : cond;
       out.push({
         label: `${featureName}: ${short}`,
+        ...(typeof row.description === 'string' && row.description.trim() !== ''
+          ? { description: row.description.trim() }
+          : {}),
         _featureName: featureName,
         _advantageTriggerChip: true,
         isVisible: () => true,

@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { FCG_PUBLIC_USER_ID } from './game-constants.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
@@ -8,8 +9,10 @@ const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
 
-/** Stores canonical copies of external (SRD played/cloned, FCG, etc.) items for local-first search and popularity tracking. */
+/** Stores canonical copies of external (SRD played/cloned, etc.) items for local-first search and popularity tracking. */
 export const MIRROR_USER_ID = '__MIRROR__';
+
+export { FCG_PUBLIC_USER_ID };
 
 let pool;
 
@@ -550,7 +553,7 @@ const SORT_OPTIONS = {
 };
 
 /**
- * Unified paginated query combining items (own + public) and external_item_cache (srd, fcg, hod).
+ * Unified paginated query combining items (own + public) and external_item_cache (srd, hod).
  * Single OFFSET/LIMIT, no source ordering.
  *
  * @param {object} opts
@@ -558,12 +561,14 @@ const SORT_OPTIONS = {
  * @param {boolean} opts.includePublic
  * @param {boolean} opts.includeSrd
  * @param {boolean} opts.includeHod
- * @param {boolean} opts.includeFcg
  * @param {string} opts.search
  * @param {number|null} opts.tierMax
  * @param {number[]} opts.tiers
- * @param {string} opts.typeField - 'role' | 'type'
+ * @param {string} opts.typeField - JSON key for primary type/role filter (e.g. 'role', 'domain')
+ * @param {string} opts.tierExprSql - SQL fragment for numeric tier/level column (default: tier from JSON)
+ * @param {string} opts.extraTypeField - optional second JSON key (e.g. physical_or_magical on weapons)
  * @param {string[]} opts.typeValues
+ * @param {string[]} opts.extraTypeValues - filter on extraTypeField
  * @param {string} opts.sort - 'popularity' | 'name' | 'type' | 'source' | 'tier'
  * @param {string} opts.sortDir - 'asc' | 'desc'
  */
@@ -572,12 +577,14 @@ export async function getUnifiedItems(appId, userId, collection, {
   includePublic = false,
   includeSrd = false,
   includeHod = false,
-  includeFcg = false,
   search = '',
   tierMax = null,
   tiers = [],
   typeField = null,
   typeValues = [],
+  extraTypeField = null,
+  extraTypeValues = [],
+  tierExprSql = null,
   sort = 'popularity',
   sortDir = 'asc',
   offset = 0,
@@ -589,8 +596,9 @@ export async function getUnifiedItems(appId, userId, collection, {
   let p = 1;
 
   const sortOpt = SORT_OPTIONS[sort] || SORT_OPTIONS.popularity;
-  const typeExpr = typeField ? `data->>'${typeField}'` : `''`;
-  const tierExpr = `COALESCE((data->>'tier')::int, 1)`;
+  const typeExpr = typeField ? `data->>'${typeField.replace(/[^a-z0-9_]/gi, '')}'` : `''`;
+  const tierExpr = tierExprSql || `COALESCE((data->>'tier')::int, 1)`;
+  const extraTypeExpr = extraTypeField ? `data->>'${extraTypeField.replace(/[^a-z0-9_]/gi, '')}'` : `''`;
 
   if (includeMine || includePublic) {
     const srcClauses = [];
@@ -612,7 +620,8 @@ export async function getUnifiedItems(appId, userId, collection, {
         COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS pc,
         CASE WHEN i.user_id = $${uidParam} THEN 'own' ELSE 'public' END AS _source,
         ${typeExpr} AS type_val,
-        ${tierExpr} AS tier_val
+        (${tierExpr})::int AS tier_val,
+        ${extraTypeExpr} AS extra_type_val
       FROM items i
       WHERE i.app_id = $${p} AND i.collection = $${p + 1} AND (${srcSQL})
     )`);
@@ -623,7 +632,6 @@ export async function getUnifiedItems(appId, userId, collection, {
   const extSources = [];
   if (includeSrd) extSources.push('srd');
   if (includeHod) extSources.push('hod');
-  if (includeFcg) extSources.push('fcg');
 
   if (extSources.length > 0) {
     parts.push(`(
@@ -632,7 +640,8 @@ export async function getUnifiedItems(appId, userId, collection, {
         COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = e.app_id AND ip.collection = e.collection AND ip.item_id = e.external_id AND ip.action = 'play'), 0) AS pc,
         e.source AS _source,
         ${typeExpr} AS type_val,
-        ${tierExpr} AS tier_val
+        (${tierExpr})::int AS tier_val,
+        ${extraTypeExpr} AS extra_type_val
       FROM external_item_cache e
       WHERE e.app_id = $${p} AND e.collection = $${p + 1} AND e.source = ANY($${p + 2}::text[])
     )`);
@@ -663,6 +672,11 @@ export async function getUnifiedItems(appId, userId, collection, {
   if (typeField && typeValues.length > 0) {
     filterClauses.push(`LOWER(u.type_val) = ANY($${p}::text[])`);
     params.push(typeValues.map(v => String(v).toLowerCase()));
+    p++;
+  }
+  if (extraTypeField && extraTypeValues.length > 0) {
+    filterClauses.push(`LOWER(u.extra_type_val) = ANY($${p}::text[])`);
+    params.push(extraTypeValues.map(v => String(v).toLowerCase()));
     p++;
   }
   const filterSQL = filterClauses.length > 0 ? 'AND ' + filterClauses.join(' AND ') : '';
@@ -831,14 +845,62 @@ export function stripCharacterElementsForDb(elements) {
   });
 }
 
+const SESSION_IDLE_MS = 60 * 60 * 1000;
+
+let onTableStateNotify = () => {};
+
+/** Server startup: `setTableStateNotifyHook((id) => subscriptionManager.notifyChange('table_state', id))` */
+export function setTableStateNotifyHook(fn) {
+  onTableStateNotify = typeof fn === 'function' ? fn : () => {};
+}
+
+function tableStateBlobForSave(stateData) {
+  return {
+    ...stateData,
+    elements: stripCharacterElementsForDb(stateData.elements || []),
+  };
+}
+
 /**
  * Fetch and resolve table state by globally unique tableId.
  * Used by the 'table_state' subscription channel.
+ * Seeds `top.lastPlayActivityAt`, applies 1h idle `top.sessionPaused`, and notifies subscribers when the blob changes.
  */
 export async function getResolvedTableState(appId, tableId) {
   const row = await getTableStateById(appId, tableId);
   if (!row) return null;
-  const stateData = row.data || {};
+  let stateData = row.data || {};
+  const userId = row.userId;
+  let didPersist = false;
+
+  const top0 = stateData.top;
+  if (top0 && typeof top0 === 'object' && top0.sessionStarted && !top0.sessionPaused && top0.lastPlayActivityAt == null) {
+    const seeded = {
+      ...stateData,
+      top: { ...top0, lastPlayActivityAt: Date.now() },
+    };
+    await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(seeded), false);
+    stateData = seeded;
+    didPersist = true;
+  }
+
+  const top = stateData.top;
+  if (top && typeof top === 'object' && top.sessionStarted && !top.sessionPaused && typeof top.lastPlayActivityAt === 'number' && !Number.isNaN(top.lastPlayActivityAt)) {
+    if (Date.now() - top.lastPlayActivityAt > SESSION_IDLE_MS) {
+      const paused = {
+        ...stateData,
+        top: { ...top, sessionPaused: true },
+      };
+      await upsertItem(appId, userId, 'table_state', tableId, tableStateBlobForSave(paused), false);
+      stateData = paused;
+      didPersist = true;
+    }
+  }
+
+  if (didPersist) {
+    onTableStateNotify(tableId);
+  }
+
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
   return { ...stateData, elements: resolved };

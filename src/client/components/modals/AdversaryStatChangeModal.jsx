@@ -62,24 +62,24 @@ export function AdversaryStatChangeModal({
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4">
-      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-md">
+      <div className="bg-dh-raised border border-dh-strong rounded-xl shadow-2xl w-full max-w-md">
         <div className="flex items-start justify-between p-5 pb-2">
           <div>
             <h2 className="text-lg font-bold text-white">{title}</h2>
-            <p className="text-slate-400 text-sm mt-1">{subtitle}</p>
+            <p className="text-dh-muted text-sm mt-1">{subtitle}</p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white shrink-0 ml-2">
+          <button onClick={onClose} className="text-dh-muted hover:text-white shrink-0 ml-2">
             <X size={18} />
           </button>
         </div>
 
         <div className="px-5 py-3">
-          <div className="bg-slate-900/80 rounded-lg border border-slate-700 overflow-hidden">
+          <div className="bg-dh-surface/80 rounded-lg border border-dh-border overflow-hidden">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="text-left py-2 px-3 text-slate-500 font-semibold">Stat</th>
-                  <th className="text-right py-2 px-3 text-slate-500 font-semibold">Current</th>
+                <tr className="border-b border-dh-border">
+                  <th className="text-left py-2 px-3 text-dh-muted font-semibold">Stat</th>
+                  <th className="text-right py-2 px-3 text-dh-muted font-semibold">Current</th>
                   <th className="text-right py-2 px-3 text-amber-400/90 font-semibold">New</th>
                 </tr>
               </thead>
@@ -89,10 +89,10 @@ export function AdversaryStatChangeModal({
                   const a = after[key];
                   const changed = String(b) !== String(a);
                   return (
-                    <tr key={key} className={`border-b border-slate-700/70 last:border-0 ${changed ? 'bg-slate-800/50' : ''}`}>
-                      <td className="py-1.5 px-3 text-slate-300">{label}</td>
-                      <td className="py-1.5 px-3 text-right text-slate-400 font-mono">{b}</td>
-                      <td className={`py-1.5 px-3 text-right font-mono ${changed ? 'text-amber-300' : 'text-slate-500'}`}>
+                    <tr key={key} className={`border-b border-dh-border/70 last:border-0 ${changed ? 'bg-dh-raised/50' : ''}`}>
+                      <td className="py-1.5 px-3 text-dh">{label}</td>
+                      <td className="py-1.5 px-3 text-right text-dh-muted font-mono">{b}</td>
+                      <td className={`py-1.5 px-3 text-right font-mono ${changed ? 'text-amber-300' : 'text-dh-muted'}`}>
                         {a}
                       </td>
                     </tr>
@@ -112,7 +112,7 @@ export function AdversaryStatChangeModal({
           </button>
           <button
             onClick={onKeepCurrent}
-            className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg px-4 py-2.5 text-sm transition-colors"
+            className="w-full bg-dh-hover hover:bg-dh-hover text-dh rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
             Change {mode === 'scale' ? 'Tier' : 'Tier & Role'} Only (keep current stats)
           </button>

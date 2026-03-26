@@ -41,13 +41,15 @@ follow the latest version.
 
 **Shared persistence:** `loadCharacterFeatures` always supplies `_sourceScopeKey`; use **`table.source.get` / `table.source.set`** for shared option-level state — do not default to raw **`queueInternalMutation(..., 'setFeatureState', ...)`** unless the engine requires it.
 
+**V2 migration tracker:** Claim/update work on **GitHub Issues** (labels `v2-migration`, `v2-kind:feature`, workflow `v2-status:*`, JSON body for `agent` / notes). Use `npm run v2:queue` (requires token + repo) and `docs/v2-migration-tracker-snapshot.md` for tabular counts.
+
 ────────────────────────────────────────────────────────
 CROSS-COLLECTION PRIORITY (mandatory)
 ────────────────────────────────────────────────────────
 Claim and implement features in this **global** order. **Do not** claim rows
 from a **later** collection while **any** row in an **earlier** collection in
-this list is still `Unclaimed`. Grep `docs/v2-migration-tracker.md` for
-`| Unclaimed |` in these collections (ignore `subclasses/` for gating — see below).
+this list is still `Unclaimed`. Grep Issue bodies / use `npm run v2:queue -- --json` for
+`Unclaimed` in these collections (ignore `subclasses/` for gating — see below).
 
   1. **Abilities** (`abilities/`, domain spell cards) — subject to **Domain
      abilities — tier order** below
@@ -66,8 +68,7 @@ Apply the chain **only** to the four collections above:
   - Else claim **Consumables** rows.
 
 **Not part of this chain:** Row-level **Weapon Properties** and **Subclasses**
-in `docs/v2-migration-to-review.md` use that file for per-feature rows and do
-**not** block Abilities, Beastforms, Items, or Consumables. Claim **subclasses/**
+do **not** block Abilities, Beastforms, Items, or Consumables. Claim **subclasses/**
 batches only when you are implementing subclass work; **Unclaimed** subclass
 rows do **not** force you to work on subclasses before other collections.
 **Archived** collections (0 Unclaimed in the Summary table) do not block.
@@ -75,39 +76,31 @@ rows do **not** force you to work on subclasses before other collections.
 count as `Unclaimed` for this gating.
 
 ────────────────────────────────────────────────────────
-READING THE TRACKER EFFICIENTLY
+READING THE TRACKER EFFICIENTLY (GitHub Issues)
 ────────────────────────────────────────────────────────
-The tracker (docs/v2-migration-tracker.md) is large. Do NOT read the
-entire file. Instead:
+Do not load every Issue in the browser. Instead:
 
   0. Run `npm run v2:queue` — it prints the next **claimable** rows using **Cross-collection priority**,
-     **Domain abilities — tier order**, and Blade/Bone gating (same rules as below). You may also read the
-     **Implementation queue (generated)** section near the top of the tracker (between `<!-- v2-queue:start -->`
-     and `<!-- v2-queue:end -->`); refresh that block after tracker edits with `npm run v2:queue -- --write`.
-  1. Read lines 8–22 (the **Status Summary** table) to understand global progress.
+     **Domain abilities — tier order**, and Blade/Bone gating (same rules as below). For a machine-readable
+     view, `npm run v2:queue -- --json`. The **Implementation queue** block in `docs/v2-migration-queue.generated.md`
+     (between `<!-- v2-queue:start -->` and `<!-- v2-queue:end -->`) can be refreshed with `npm run v2:queue -- --write`.
+  1. Read `docs/v2-migration-tracker-snapshot.md` (or the Summary table in that file) for global progress.
   2. Apply **Cross-collection priority** above, then find Unclaimed features in
-     the **current** collection: use Grep to search `docs/v2-migration-to-review.md` (and the tracker for any rows still inline there) for
-     `| Unclaimed |` and scan the results to pick your batch (fallback if you cannot run the script).
+     the **current** collection via GitHub search / API / `v2:queue` output.
      **Domain abilities (`abilities/`):** Rows are grouped under **Tier 1**,
      **Tier 2**, and **Tier 3** (spell card tier). You may only consider
      Unclaimed rows in the **current tier** — see **Domain abilities — tier
      order** below. Within that tier, prefer Unclaimed rows in **priority
      domains** (Arcana, Codex, Grace, Midnight, Sage, Splendor, Valor) before
-     Blade or Bone — the tracker lists priority domains first in each tier block.
-     Do not grep or read Tier 2/3 tables
+     Blade or Bone.
+     Do not claim Tier 2/3 tables
      for new claims until Tier 1 has no `Unclaimed` or `In Progress` rows.
-  3. When you need to EDIT a row, read only the section header + the rows
-     around the feature you are modifying (use offset/limit).
-  4. After editing, re-read lines 8–22 to verify your Summary table update and run `npm run v2:queue -- --write` if you use the generated queue block.
+  3. When you need to EDIT an Issue, **PATCH** only that Issue (labels + JSON body) — do not bulk-edit unrelated Issues.
+  4. After editing, run `npm run v2:sync-tracker-md` locally if you need an updated snapshot file (optional).
 
-**Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 8–22 when those status counts change. **Not part of cross-collection gating** — see **CROSS-COLLECTION PRIORITY** above.
+**Subclasses / weapon properties / gated collections:** Rows live in **GitHub Issues**. **Subclasses** are **not** part of cross-collection gating — see **CROSS-COLLECTION PRIORITY** above.
 
-**Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 8–22 when those status counts change.
-
-**Abilities, Beastforms, Items, Consumables (gated collections):** Full per-feature tables (all tiers for abilities) live in `docs/v2-migration-to-review.md`. The main tracker has a pointer stub only; `npm run v2:queue` merges both files for queue logic. Grep `v2-migration-to-review.md` for `| Unclaimed |` (or run `npm run v2:queue`) when claiming; edit rows in `v2-migration-to-review.md`; update **Status Summary** counts in `docs/v2-migration-tracker.md` lines 9–24 when those status counts change.
-
-**Domain abilities — tier order (mandatory):** `v2-migration-to-review.md` lists all domain spell
-cards in three blocks: **Tier 1** (63 abilities), **Tier 2** (63), **Tier 3** (63).
+**Domain abilities — tier order (mandatory):** Domain spell cards are organized in three tiers: **Tier 1** (63 abilities), **Tier 2** (63), **Tier 3** (63).
 Implementation order is **all Tier 1 across every domain**, then **all Tier 2**,
 then **all Tier 3** — do **not** finish one domain’s full 21 cards before touching
 another domain’s Tier 1 cards.
@@ -127,19 +120,17 @@ another domain’s Tier 1 cards.
     accordingly within each tier block (priority domains first, then Blade, then
     Bone).
 
-NEVER read the full tracker file in one pass. Most of it is empty
-Unclaimed rows that waste your context window.
+NEVER enumerate every open Issue in one pass. Use `v2:queue` / targeted search.
 
 ────────────────────────────────────────────────────────
 TRACKER PROTOCOL (mandatory — this coordinates parallel agents)
 ────────────────────────────────────────────────────────
-The file docs/v2-migration-tracker.md is the single shared state store.
+**GitHub Issues** (`v2-migration` label) are the single shared state store.
 
 Status lifecycle for every feature row:
   Unclaimed → In Progress → Done
-  (If you cannot implement something: Blocked — add a row to the
-   **active** "Blocked / API Extension Requests" table in
-   `docs/v2-migration-tracker.md`. Completed API resolutions are archived in
+  (If you cannot implement something: Blocked — open/update the **Blocked / API** Issue on GitHub.
+   Completed API resolutions are archived in
    `docs/v2-blocked-resolutions-done.md`.)
 
 Claiming a batch:
@@ -164,15 +155,15 @@ Claiming a batch:
        Validated, or Needs Fix.
   2. Generate your unique agent ID NOW (e.g. `impl-<3–4 random chars>`).
      Pick it before writing — you will use the SAME ID for every row in the batch.
-  3. In a SINGLE edit to the tracker, change all claimed rows:
-       Status  →  In Progress
-       Agent   →  impl-<your ID>
-     Update the Summary table counts.
-  4. **VERIFY YOUR CLAIM** — immediately re-read each claimed row from the tracker.
-     • If ALL rows show YOUR agent ID → you own the batch. Proceed.
-     • If ANY row shows a DIFFERENT agent ID → another agent wrote after you.
-       Remove your claim from that row (set it back to Unclaimed) and replace
-       it with a different Unclaimed row. Re-verify the replacement.
+  3. In a SINGLE batch of Issue updates, change all claimed rows:
+       Status label  →  `v2-status:In Progress`
+       JSON body `agent`  →  impl-<your ID>
+     (Follow GitHub Issue update patterns in `scripts/lib/github-v2-tracker.mjs`.)
+  4. **VERIFY YOUR CLAIM** — immediately re-fetch each claimed Issue.
+     • If ALL Issues show YOUR agent ID → you own the batch. Proceed.
+     • If ANY Issue shows a DIFFERENT agent ID → another agent wrote after you.
+       Remove your claim from that Issue (set it back to Unclaimed) and replace
+       it with a different Unclaimed Issue. Re-verify the replacement.
   5. ANNOUNCE the batch to the user before doing any implementation work.
      List the features you have claimed and explain WHY they are grouped:
        "Batch claimed — implementing 4 passive stat mod weapon properties:
@@ -195,8 +186,8 @@ Examples of what to look for:
   - Implementing a chip-based ancestry feature? Read Clank.js (Validated)
   - Implementing a virtual weapon? Read Katari RetractingClaws (Reviewed)
 
-To find exemplars: use Grep to search the tracker for `| Validated |` or
-`| Reviewed |` in the same collection section.
+To find exemplars: search GitHub Issues / snapshot for `Validated` or `Reviewed`
+in the same collection.
 
 If you find a good exemplar:
   - Use its file structure, import style, and test patterns as a template
@@ -271,12 +262,10 @@ IMPLEMENTATION STEPS (per feature)
        npm run test:unit
      ALL tests must pass before marking a feature Done. Never skip a failure.
 
-6. Update the tracker.
-   - Feature row: Status → Done.
-   - Summary table: increment Done, decrement In Progress.
-   - Update the "Last updated" line at the bottom.
-   - You may write notes in the `Impl Notes` column. NEVER overwrite
-     the `Val Notes` or `Fix Notes` columns — those belong to other agents.
+6. Update the GitHub Issue.
+   - Set `v2-status:Done` label; update JSON body as needed.
+   - You may write notes in the Issue body. NEVER overwrite
+     validation/fix notes that belong to other agents.
 
 ────────────────────────────────────────────────────────
 BATCH SUMMARY (mandatory — output after every batch)
@@ -298,8 +287,8 @@ Do **not** add a “next steps,” “next claimable,” or “suggested next ba
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
 Re-read docs/agent-prompts/implementation-agent.md and
-docs/v2-code-conventions.md — then read the tracker Summary (lines 8–22),
-apply **Cross-collection priority**, then grep for Unclaimed rows in the allowed
+docs/v2-code-conventions.md — then read the snapshot Summary / run `npm run v2:queue`,
+apply **Cross-collection priority**, then find Unclaimed Issues in the allowed
 collection (**in the correct tier and domain priority for `abilities/`** when
 that collection is active), claim 3–5 more
 similar features → announce → implement → mark Done. Always re-read the instructions and conventions;
@@ -336,4 +325,4 @@ THINGS TO NEVER DO
   EFFICIENTLY protocol above.
 - Do NOT read engine source files (table.js, chip-system.js, etc.).
   The authoring guide is your API reference.
-- Do NOT tell the user what feature or batch is “next” in the pipeline after a batch — see **Agent output** in `docs/v2-migration-tracker.md`.
+- Do NOT tell the user what feature or batch is “next” in the pipeline after a batch — **Agent output** is batch summaries and mechanical status only (`docs/v2-migration-tracker-snapshot.md`, `npm run v2:queue`).

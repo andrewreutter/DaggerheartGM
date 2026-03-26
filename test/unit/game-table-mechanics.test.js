@@ -10,6 +10,8 @@ import {
   resolveVirtualWeaponBehavior,
   resolveWeaponTagDescriptor,
   getWeaponTagAutomatedForBanner,
+  buildWeaponTagBannerNarrationParts,
+  buildRollBaseBannerNarrationParts,
   wrapEntity,
 } from '../../src/client/lib/game-table-mechanics.js';
 
@@ -65,6 +67,43 @@ describe('game-table-mechanics (V2-only facade)', () => {
 
   it('getWeaponTagAutomatedForBanner is false without attacker context', () => {
     expect(getWeaponTagAutomatedForBanner('Reliable', null)).toBe(false);
+  });
+
+  it('buildWeaponTagBannerNarrationParts adds automated description lines for matching weapon tags', () => {
+    const attackerEl = {
+      activeFeatures: [
+        { name: 'Reliable', type: 'weapon', automated: true, description: '+1 to attack rolls with this weapon.' },
+      ],
+    };
+    expect(buildWeaponTagBannerNarrationParts(['Reliable'], attackerEl)).toEqual([
+      { text: '+1 to attack rolls with this weapon.', style: 'automated' },
+    ]);
+  });
+
+  it('buildWeaponTagBannerNarrationParts skips non-automated or missing description', () => {
+    const attackerEl = {
+      activeFeatures: [
+        { name: 'Showy', type: 'weapon', automated: false, description: 'x' },
+        { name: 'Quiet', type: 'weapon', automated: true },
+      ],
+    };
+    expect(buildWeaponTagBannerNarrationParts(['Showy', 'Quiet'], attackerEl)).toEqual([]);
+  });
+
+  it('buildRollBaseBannerNarrationParts merges roll._narration with automated weapon tag lines', () => {
+    const attackerEl = {
+      activeFeatures: [
+        { name: 'Reliable', type: 'weapon', automated: true, description: '+1 to attack rolls with this weapon.' },
+      ],
+    };
+    const roll = {
+      _narration: 'Aim carefully.',
+      tags: [{ name: 'Reliable' }],
+    };
+    expect(buildRollBaseBannerNarrationParts(roll, attackerEl)).toEqual([
+      { text: 'Aim carefully.' },
+      { text: '+1 to attack rolls with this weapon.', style: 'automated' },
+    ]);
   });
 
   it('resolveVirtualWeaponBehavior reads virtualWeapon from activeFeatures', () => {

@@ -29,13 +29,13 @@ export function GuideBadge({ guideValue, guideRange, currentValue, onApply, titl
       disabled={!canApply}
       className={`shrink-0 flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors ${
         !canApply
-          ? 'bg-slate-800/40 text-slate-500 border-slate-700 cursor-default'
+          ? 'bg-dh-raised/40 text-dh-muted border-dh-border cursor-default'
           : matches
-            ? 'bg-slate-800/60 text-slate-400 border-slate-700'
-            : 'bg-slate-800/80 text-slate-300 border-slate-600 hover:border-slate-500 hover:text-white'
+            ? 'bg-dh-raised/60 text-dh-muted border-dh-border'
+            : 'bg-dh-raised/80 text-dh border-dh-strong hover:border-dh-strong hover:text-dh'
       }`}
     >
-      <BookOpen size={12} className="text-slate-500" />
+      <BookOpen size={12} className="text-dh-muted" />
       <span>{display}</span>
     </button>
   );

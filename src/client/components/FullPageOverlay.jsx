@@ -53,7 +53,7 @@ export function FullPageOverlay({
     >
       <button type="button" className={`absolute inset-0 ${overlayClassName}`} aria-label="Close" onClick={onClose} />
       <div
-        className={`relative z-10 flex w-full ${heightClass} ${maxWidthClass} flex-col overflow-hidden rounded-xl border border-slate-600 bg-slate-900 shadow-2xl ${panelClassName}`}
+        className={`relative z-10 flex w-full ${heightClass} ${maxWidthClass} flex-col overflow-hidden rounded-xl border border-dh-strong bg-dh-surface shadow-2xl ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}
@@ -75,9 +75,9 @@ export function FullPageOverlayHeader({
   subtitle,
 }) {
   return (
-    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-700 px-4 py-3">
+    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-dh-strong px-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-white">
+        <div className="flex items-center gap-2 text-dh">
           {Icon && <Icon size={20} className="text-sky-400 shrink-0" aria-hidden />}
           <h2 id={titleId} className="text-lg font-semibold truncate">
             {title}
@@ -85,7 +85,7 @@ export function FullPageOverlayHeader({
           {rightSlot}
         </div>
         {subtitle != null && subtitle !== '' && (
-          <p className="mt-0.5 truncate font-mono text-xs text-slate-400" title={typeof subtitle === 'string' ? subtitle : undefined}>
+          <p className="mt-0.5 truncate font-mono text-xs text-dh-muted" title={typeof subtitle === 'string' ? subtitle : undefined}>
             {subtitle}
           </p>
         )}
@@ -93,7 +93,7 @@ export function FullPageOverlayHeader({
       <button
         type="button"
         onClick={onClose}
-        className="shrink-0 rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+        className="shrink-0 rounded-md p-2 text-dh-muted hover:bg-dh-raised hover:text-dh"
         aria-label="Close"
       >
         <X size={20} />

@@ -339,6 +339,12 @@ function buildActor(element, gameState, mutations) {
     experiences: element.experiences || [],
 
     /**
+     * Beastbound / persisted **animal companion** payload (`element.companion`). Exposed for sheet-only
+     * `when()` predicates and declarative `cards` — not Ranger-specific.
+     */
+    companion: isChar ? element.companion ?? null : null,
+
+    /**
      * **Runtime modifier tokens** (Phase 1 parity): `element.activeModifiers` is an array of
      * `{ id, name, dice?, value?, mode?, bonus?, trait?, type?, refreshOn? }` — the same shape the
      * Game Table persists ([`CHARACTER_RUNTIME_KEYS`](/src/client/lib/table-ops.js)). Use
@@ -963,7 +969,7 @@ function buildRollObject(rollData, mutations, rollKey) {
 // Feature-state store
 // ---------------------------------------------------------------------------
 
-function buildFeatureStore(featureKey, featureState, mutations) {
+function buildFeatureStore(featureKey, featureState, mutations, ownerInstanceId) {
   if (!featureState) {
     return {
       get() {
@@ -983,7 +989,11 @@ function buildFeatureStore(featureKey, featureState, mutations) {
     },
     set(key, value) {
       state[key] = value;
-      addMutation(mutations, 'setFeatureState', { featureKey, key, value });
+      const payload = { featureKey, key, value };
+      if (ownerInstanceId != null && ownerInstanceId !== '') {
+        payload.instanceId = String(ownerInstanceId);
+      }
+      addMutation(mutations, 'setFeatureState', payload);
     },
   };
 }
@@ -1233,7 +1243,11 @@ function buildSourceFacade(sourceObject, sourceScopeKey, gameState, store) {
     set(key, value) {
       if (!gameState.featureState[sourceScopeKey]) gameState.featureState[sourceScopeKey] = {};
       gameState.featureState[sourceScopeKey][key] = value;
-      addMutation(store, 'setFeatureState', { featureKey: sourceScopeKey, key, value });
+      const p = { featureKey: sourceScopeKey, key, value };
+      if (gameState._ownerInstanceId != null && gameState._ownerInstanceId !== '') {
+        p.instanceId = String(gameState._ownerInstanceId);
+      }
+      addMutation(store, 'setFeatureState', p);
     },
   };
 }
@@ -1306,7 +1320,7 @@ export function buildTableSnapshot(gameState = {}) {
 
   // Feature state store (keyed by feature name; set by engine before calling hooks)
   const featureKey = gameState._featureKey || '__unknown__';
-  const featureStore = buildFeatureStore(featureKey, gameState.featureState, store);
+  const featureStore = buildFeatureStore(featureKey, gameState.featureState, store, ownerKey);
 
   const activeFeature = gameState._activeFeature ?? null;
   const sourceObject =
@@ -1353,6 +1367,10 @@ export function buildTableSnapshot(gameState = {}) {
       map: gameState.mapConfig || null,
       shortRest: gameState.shortRest || null,
       longRest: gameState.longRest || null,
+      /** Persisted `table_state.top.sessionStarted`; omitted/undefined treated as active (legacy). */
+      sessionStarted: gameState.top?.sessionStarted !== false,
+      /** Persisted `table_state.top.sessionPaused` (idle timeout); when true, play is blocked like prep. */
+      sessionPaused: gameState.top?.sessionPaused === true,
       broadcast(message) {
         addMutation(store, 'broadcast', { message });
       },
@@ -1441,6 +1459,25 @@ export function buildTableSnapshot(gameState = {}) {
       }
       addMutation(store, 'rollDie', { notation, results, total });
       return total;
+    },
+
+    /**
+     * Declarative sheet / shape-anchored chip hook: queue a **client** dice roll (VTT `postRoll`),
+     * not an in-engine roll. Feature `onUse` calls this; the host strips **`sheetActionRoll`**
+     * mutations and invokes the table roll pipeline.
+     *
+     * @param {{ rollText: string, displayName?: string, rollMeta?: object }} opts
+     */
+    sheet: {
+      actionRoll(opts = {}) {
+        const rollText = typeof opts.rollText === 'string' ? opts.rollText.trim() : '';
+        if (!rollText) return;
+        addMutation(store, 'sheetActionRoll', {
+          rollText,
+          displayName: opts.displayName != null ? String(opts.displayName) : '',
+          rollMeta: opts.rollMeta && typeof opts.rollMeta === 'object' ? opts.rollMeta : {},
+        });
+      },
     },
 
     // Internal access for the engine

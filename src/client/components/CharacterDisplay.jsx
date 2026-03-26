@@ -1,10 +1,16 @@
 import {
   User, Shield, Heart, AlertCircle, AlertTriangle, Swords, Package,
-  ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind,
+  ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind, Sparkles,
 } from 'lucide-react';
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
 import { effectiveThresholds, parseBeastformBonus, getEvasionModifierTotal, formatEvasionModifierTooltip } from '../lib/helpers.js';
+import {
+  traitScoreNumberColorClass,
+  traitScoreNumberSizeClassTraitChip,
+  traitScoreNumberSizeClassReactionGrid,
+  traitScoreNumberSizeClassWeaponBadge,
+} from '../lib/trait-score-display.js';
 
 export { parseBeastformBonus, getEvasionModifierTotal, formatEvasionModifierTooltip } from '../lib/helpers.js';
 import { CheckboxTrack } from './DetailCardContent.jsx';
@@ -12,28 +18,55 @@ import { isCharacterComplete, recomputeCharacter, detectPairedWeapons, parsePair
 import { mergeV2DeclarativeSheetOverlay } from '../lib/v2-declarative-sheet.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { GuideFeatureCard, GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
-import { buildFeatureCardModelForCharacter } from '../lib/build-feature-card-model.js';
+import {
+  buildFeatureCardModelForCharacter,
+  buildGuideFeatureTableSnapshot,
+  collectSheetCardsForCharacter,
+  collectShapePlacementChipsForCharacter,
+} from '../lib/build-feature-card-model.js';
+import { getFeatureUsageKeyForGuideFeature } from '../lib/feature-usage-key.js';
+import { omitShapeId } from '../lib/json-schema-dh.js';
+import { DeclarativeSchemaSheetCard } from './DeclarativeSchemaCard.jsx';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { Tooltip } from './Tooltip.jsx';
+import { TierShieldBadge } from './TierShieldBadge.jsx';
+import { LevelBadge } from './LevelBadge.jsx';
+import {
+  CharacterStatBlockGraphic,
+  CharacterSheetEmphasisCard,
+  HopeHeroTrack,
+  HOPE_TRACK_FILL,
+} from './CharacterStatBlockGraphic.jsx';
+import {
+  resolveHopeFeatureName,
+  getOrderedGuideFeatureEntries,
+  getOrderedGuideLoadoutEntries,
+  resolveLoadoutAbilityFeatRow,
+} from '../lib/guide-feature-entries.js';
+import {
+  CharacterSheetSourceHighlightProvider,
+  CharacterSheetHighlightSurface,
+  useCharacterSheetSourceBadgeHover,
+  useCharacterSheetSourceHighlightState,
+} from './CharacterSheetSourceHighlight.jsx';
+import {
+  shouldDimGuideFeatRow,
+  shouldDimFeatOrAbilityRow,
+  SHEET_SOURCE_DIM_CLASS,
+} from '../lib/source-badge-sheet-highlight.js';
+import {
+  characterHasFeatureCardActions,
+  characterHasLoadoutCardActions,
+} from '../lib/character-sheet-card-actions.js';
 
-const FEATURES_PANEL_TAB_STORAGE = 'dh_featuresPanelTab';
-
-function readFeaturesPanelTab(storageKey) {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FEATURES_PANEL_TAB_STORAGE) ?? 'null') ?? {};
-    const v = raw[storageKey];
-    if (v === 'actions' || v === 'details') return v;
-  } catch {}
-  return 'actions';
-}
-
-function persistFeaturesPanelTab(storageKey, tab) {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FEATURES_PANEL_TAB_STORAGE) ?? 'null') ?? {};
-    raw[storageKey] = tab;
-    localStorage.setItem(FEATURES_PANEL_TAB_STORAGE, JSON.stringify(raw));
-  } catch {}
-}
+export {
+  resolveHopeFeatureName,
+  getOrderedGuideFeatureEntries,
+  getOrderedGuideLoadoutEntries,
+  resolveLoadoutAbilityFeatRow,
+  characterHasFeatureCardActions,
+  characterHasLoadoutCardActions,
+};
 
 // ─── Gold helpers ─────────────────────────────────────────────────────────────
 
@@ -49,10 +82,6 @@ export function formatGold(gold) {
   if (handfuls || !parts.length) parts.push(`${handfuls} handful${handfuls !== 1 ? 's' : ''}`);
   return parts.join(', ');
 }
-
-import { resolveHopeFeatureName, getOrderedGuideFeatureEntries } from '../lib/guide-feature-entries.js';
-
-export { resolveHopeFeatureName, getOrderedGuideFeatureEntries };
 
 // ─── Trait display ─────────────────────────────────────────────────────────────
 
@@ -76,6 +105,83 @@ export const TRAIT_VERBS = {
 };
 
 const TRAIT_ORDER = ['agility', 'strength', 'finesse', 'instinct', 'presence', 'knowledge'];
+/** First row of the 3×2 trait grid (spellcast above aligns across these three columns). */
+const TRAIT_GRID_TOP = TRAIT_ORDER.slice(0, 3);
+/** Second row of the trait grid. */
+const TRAIT_GRID_BOTTOM = TRAIT_ORDER.slice(3, 6);
+
+/** Effective trait score including weapon/armor/beastform modifiers (matches TraitChip display). */
+export function computeEffectiveTraitScore(el, t) {
+  const traits = el.traits || {};
+  const score = traits[t] ?? 0;
+  const wMod = el.weaponMods?.traits?.[t] ?? 0;
+  const aMod = el.armorMods?.traits?.[t] ?? 0;
+  const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+  const bfMod = beastformTraitBonus?.stat === t ? beastformTraitBonus.bonus : 0;
+  return score + wMod + aMod + bfMod;
+}
+
+/**
+ * 3×2 grid of trait + effective modifier for reaction-style rolls; lives at bottom of DEFENSE card.
+ */
+export function DefenseReactionRollGrid({ el, onTraitClick, compact }) {
+  const traits = el.traits || {};
+  if (!TRAIT_ORDER.some((x) => traits[x] != null)) return null;
+  const Cell = ({ t }) => {
+    const eff = computeEffectiveTraitScore(el, t);
+    const disp = eff > 0 ? `+${eff}` : String(eff);
+    const base =
+      'rounded-lg border border-dh-strong bg-dh-raised/50 px-1.5 py-1 text-center min-w-0 w-full transition-colors';
+    const lineCls = compact ? 'text-[9px]' : 'text-[10px]';
+    const nameSizeCls = compact ? 'text-[9px]' : 'text-[10px]';
+    const numSizeCls = traitScoreNumberSizeClassReactionGrid(eff, compact);
+    const name = TRAIT_FULL[t];
+    const inner = (
+      <span className={`flex items-center justify-center gap-1 w-full min-w-0 ${lineCls} font-semibold leading-tight`}>
+        <span
+          className={`min-w-0 flex-1 truncate text-center font-semibold uppercase tracking-wide text-dh-muted ${nameSizeCls}`}
+          title={name}
+        >
+          {name}
+        </span>
+        <span
+          className={`inline-flex min-h-[1.125rem] items-center justify-center tabular-nums shrink-0 ${traitScoreNumberColorClass(eff)} ${numSizeCls}`}
+        >
+          {disp}
+        </span>
+      </span>
+    );
+    if (onTraitClick) {
+      return (
+        <button
+          type="button"
+          title={`Roll ${TRAIT_FULL[t]}`}
+          className={`${base} dh-sheet-clickable-chip hover:bg-dh-hover/50 hover:border-sky-500/55 cursor-pointer`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onTraitClick(t, { isReaction: true });
+          }}
+        >
+          {inner}
+        </button>
+      );
+    }
+    return <div className={base}>{inner}</div>;
+  };
+  return (
+    <div className={`w-full min-w-0 ${compact ? 'pt-1.5' : 'pt-2'} border-t border-dh-border/50 mt-1`}>
+      <div className="text-[10px] font-semibold text-dh-muted uppercase tracking-wider mb-2">Reaction Rolls</div>
+      <div className="grid grid-cols-3 gap-2 w-full">
+        {TRAIT_GRID_TOP.map((t) => (
+          <Cell key={t} t={t} />
+        ))}
+        {TRAIT_GRID_BOTTOM.map((t) => (
+          <Cell key={t} t={t} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ─── Weapon tag descriptions (from SRD) ──────────────────────────────────────
 // Fallback lookup when w.feature.text is not present in Daggerstack sync data.
@@ -140,7 +246,7 @@ export const WEAPON_TAG_DESCRIPTIONS = {
 export function Section({ label, children, labelUppercase = true }) {
   return (
     <div className="space-y-1">
-      <p className={`text-[9px] tracking-widest text-slate-500 font-semibold ${labelUppercase ? 'uppercase' : ''}`}>{label}</p>
+      <p className={`text-[9px] tracking-widest text-dh-muted font-semibold ${labelUppercase ? 'uppercase' : ''}`}>{label}</p>
       {children}
     </div>
   );
@@ -151,7 +257,6 @@ export function Section({ label, children, labelUppercase = true }) {
 function TraitChip({ trait, label, score, onClick, mod, modSource }) {
   const [justRolled, setJustRolled] = useState(false);
   const positive = score > 0;
-  const negative = score < 0;
   const display = positive ? `+${score}` : String(score);
   const hasModifier = (mod != null && mod !== 0) || !!modSource;
   const showModLine = mod != null && mod !== 0;
@@ -167,6 +272,8 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
   const title = (hasModifier && modSource)
     ? modSource
     : clickable ? `Roll ${TRAIT_FULL[trait]}` : undefined;
+  const numSizeCls = traitScoreNumberSizeClassTraitChip(score);
+  const numColorCls = traitScoreNumberColorClass(score);
   return (
     <div
       role={clickable ? 'button' : undefined}
@@ -174,27 +281,31 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
       onClick={handleClick}
       onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e); } : undefined}
       title={title}
-      className={`flex flex-col items-center rounded px-1 py-1 border select-none
-        ${justRolled ? 'border-green-500/70 bg-green-900/40' :
+      className={`flex flex-col items-center justify-start gap-0 rounded px-1 py-0.5 border select-none
+        ${justRolled ? 'dh-tint-roll-flash' :
           hasModifier ? 'border-amber-600/70 bg-amber-950/30' :
-          positive ? 'border-sky-700/60 bg-sky-900/40' : negative ? 'border-slate-600 bg-slate-800/40' : 'border-slate-700 bg-slate-800/20'}
-        ${clickable ? 'cursor-pointer hover:brightness-125 hover:border-sky-500/70 group transition-all' : ''}`}
+          score !== 0 ? 'border-dh-strong bg-dh-raised/50' : 'border-dh-strong bg-dh-raised/30'}
+        ${clickable ? 'dh-sheet-clickable-chip cursor-pointer hover:brightness-125 hover:border-sky-500/70 group transition-all' : ''}`}
     >
-      <span className="text-[9px] uppercase tracking-widest text-slate-400 flex items-center gap-0.5">
+      <span className="text-[13px] font-semibold uppercase tracking-wide text-dh-muted text-center leading-none">
         {label}
-        {clickable && <Dices size={7} className={`transition-colors ${justRolled ? 'text-green-400' : 'text-slate-600 group-hover:text-sky-400'}`} />}
       </span>
-      <span className={`text-sm font-bold tabular-nums leading-tight ${hasModifier ? 'text-amber-200' : positive ? 'text-sky-300' : negative ? 'text-slate-400' : 'text-slate-200'}`}>{display}</span>
+      <div className="mt-0.5 flex min-h-[2rem] w-full items-center justify-center">
+        <span className={`font-bold tabular-nums leading-none tracking-tight ${numSizeCls} ${numColorCls}`}>{display}</span>
+      </div>
       {showModLine && (
-        <span className={`text-[9px] font-semibold tabular-nums leading-none ${mod > 0 ? 'text-amber-400' : 'text-amber-500'}`}>
+        <span className={`text-[9px] font-semibold tabular-nums leading-none ${mod > 0 ? 'text-sky-400 dh-light:text-sky-800' : 'text-sky-500/90 dh-light:text-sky-800'}`}>
           {mod > 0 ? `+${mod}` : String(mod)}
         </span>
       )}
       {!showModLine && verbs.length > 0 && (
-        <div className="flex flex-col items-center mt-0.5 gap-px">
-          {verbs.map(v => (
-            <span key={v} className="text-[8px] text-slate-500 leading-tight">{v}</span>
-          ))}
+        <div className="flex flex-col items-center mt-1 gap-px w-full">
+          <span className="text-[8px] text-dh-muted text-center leading-tight px-0.5">
+            {verbs.slice(0, 2).join(' · ')}
+          </span>
+          {verbs[2] != null && (
+            <span className="text-[8px] text-dh-muted text-center leading-tight px-0.5">{verbs[2]}</span>
+          )}
         </div>
       )}
     </div>
@@ -220,17 +331,19 @@ function SpellcastChip({ onClick }) {
       onClick={handleClick}
       onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') handleClick(e); } : undefined}
       title={interactive ? 'Roll Spellcast' : 'Spellcast trait'}
-      className={`inline-flex items-center justify-center rounded px-1 py-0.5 border whitespace-nowrap transition-all
+      className={`inline-flex items-center justify-center gap-2 rounded border px-2.5 py-0.5 transition-all
         ${interactive
-          ? `select-none cursor-pointer hover:brightness-125 hover:border-violet-500/70 group
-             ${justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-violet-700/50 bg-violet-950/30'}`
-          : 'border-violet-800/40 bg-violet-950/20 cursor-default'
+          ? `dh-sheet-clickable-chip select-none cursor-pointer hover:brightness-110
+             ${justRolled ? 'dh-tint-roll-flash' : 'dh-tint-spellcast-label'}`
+          : 'dh-tint-spellcast-label cursor-default opacity-95'
         }`}
     >
-      <span className="text-[9px] uppercase tracking-widest font-semibold flex items-center gap-0.5">
-        <span className={justRolled ? 'text-green-300' : interactive ? 'text-violet-300' : 'text-violet-400/70'}>Spellcast</span>
-        {interactive && <Dices size={7} className={`transition-colors ${justRolled ? 'text-green-400' : 'text-violet-600 group-hover:text-violet-400'}`} />}
-      </span>
+      <Sparkles
+        className={`w-4 h-4 shrink-0 ${justRolled ? 'text-emerald-300' : 'text-current'}`}
+        strokeWidth={2.25}
+        aria-hidden
+      />
+      <span className="text-[13px] font-semibold uppercase tracking-wide leading-tight">Spellcast</span>
     </div>
   );
 }
@@ -270,23 +383,30 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
 
   let baseBorder;
   if (purple) {
-    baseBorder = justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-purple-700/50 bg-purple-950/30';
+    baseBorder = justRolled ? 'dh-tint-roll-flash' : 'dh-tint-purple-row';
   } else if (isVirtual) {
-    baseBorder = justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-amber-700/50 bg-amber-950/30';
+    baseBorder = justRolled ? 'dh-tint-roll-flash' : 'dh-tint-amber-card';
   } else if (disableMsg) {
     baseBorder = 'border-amber-600/60 bg-amber-950/20 opacity-60';
   } else {
-    baseBorder = justRolled ? 'border-green-500/70 bg-green-900/40' : 'border-slate-700 bg-slate-800/60';
+    baseBorder = justRolled ? 'dh-tint-roll-flash' : 'border-dh-border bg-dh-raised/55';
   }
 
   const iconColor = justRolled ? 'text-green-400'
     : purple ? 'text-purple-500/70'
-    : isVirtual ? 'text-amber-500/70'
-    : clickable ? 'text-slate-500 group-hover:text-sky-400'
-    : 'text-slate-500';
-  const nameColor = purple ? 'text-purple-100' : isVirtual ? 'text-amber-100' : 'text-slate-200';
-  const featDescColor = purple ? 'text-purple-400/80' : isVirtual ? 'text-amber-400/80' : 'text-amber-400/70';
-  const damageTypeColor = purple ? 'text-purple-400/70' : 'text-slate-500';
+    : isVirtual ? 'text-dh-hope-soft'
+    : clickable ? 'text-dh-muted group-hover:text-sky-400'
+    : 'text-dh-muted';
+  const nameColor = purple ? 'text-purple-100' : isVirtual ? 'text-dh-hope-soft' : 'text-dh';
+  const featDescColor = purple ? 'text-purple-400/80' : isVirtual ? 'text-dh-hope opacity-90' : 'text-dh-muted';
+
+  const hasStatsRow =
+    !!(weapon.damage || (weapon.effectiveRange ?? weapon.range));
+  const damageTypeBadgeClass = purple
+    ? 'border-purple-700/40 bg-purple-950/30 text-purple-300'
+    : isVirtual
+      ? 'border-amber-800/35 bg-amber-950/25 text-dh-hope-soft'
+      : 'border-dh-border/60 bg-dh-raised/50 text-dh-muted';
 
   const card = (
     <div
@@ -297,33 +417,45 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
       title={!disableMsg && clickable && traitLabel ? `Roll ${weapon.name} (${TRAIT_FULL[traitKey]})` : undefined}
       className={`w-full min-w-0 rounded border px-2 py-1.5 select-none text-[11px] transition-all
         ${baseBorder}
-        ${clickable ? 'cursor-pointer hover:brightness-125 hover:border-sky-500/50 group' : ''}`}
+        ${clickable ? 'dh-sheet-clickable-chip cursor-pointer hover:brightness-125 hover:border-sky-500/50 group' : ''}`}
     >
-      <div className="flex items-center gap-2">
-        <Swords size={10} className={`shrink-0 transition-colors ${iconColor}`} />
-        <span className={`font-semibold flex-1 truncate ${nameColor}`}>{weapon.name}</span>
-        {weapon.damage && (
-          <span className="text-yellow-300 font-semibold tabular-nums shrink-0">
-            {devastating ? 'd20' + ((weapon.damage.match(/[+-]\d+/) || [''])[0]) : weapon.damage}
+      <div className="flex items-center gap-2 min-w-0">
+        <Swords size={11} className={`shrink-0 transition-colors ${iconColor}`} />
+        <span className={`text-sm font-semibold flex-1 min-w-0 truncate ${nameColor}`}>{weapon.name}</span>
+        {weapon.damageType && (
+          <span className={`text-[9px] rounded px-1 py-0.5 border shrink-0 ${damageTypeBadgeClass}`}>
+            {weapon.damageType}
           </span>
         )}
-        {weapon.damageType && (
-          <span className={`shrink-0 ${damageTypeColor}`}>{weapon.damageType}</span>
-        )}
-        {(weapon.effectiveRange ?? weapon.range) && (
-          <span className="text-slate-500 shrink-0">{weapon.effectiveRange ?? weapon.range}</span>
-        )}
         {traitLabel && (
-          <span className={`text-[9px] rounded px-1 py-0.5 border shrink-0 tabular-nums font-bold
-            ${traitScore_ > 0 ? 'bg-sky-900/50 border-sky-700/50 text-sky-300' : traitScore_ < 0 ? 'bg-slate-800 border-slate-600 text-slate-400' : 'bg-slate-800/60 border-slate-700 text-slate-400'}`}
+          <span
+            className={`text-[9px] rounded px-1 py-0.5 border shrink-0 tabular-nums font-bold
+            ${traitScore_ !== 0 ? 'bg-dh-raised border-dh-strong text-dh-muted' : 'bg-dh-raised/60 border-dh-strong text-dh-muted'}`}
           >
-            {traitLabel} {traitDisplay}
+            <span className="text-dh-muted">{traitLabel}</span>{' '}
+            <span
+              className={`inline-flex min-h-[0.875rem] items-center ${traitScoreNumberColorClass(traitScore_)} ${traitScoreNumberSizeClassWeaponBadge(traitScore_)}`}
+            >
+              {traitDisplay}
+            </span>
           </span>
         )}
         {clickable && (
-          <Dices size={9} className={`shrink-0 transition-colors ${justRolled ? 'text-green-400' : 'text-slate-600 group-hover:text-sky-400'}`} />
+          <Dices size={10} className={`shrink-0 transition-colors ${justRolled ? 'text-green-400' : 'text-dh-muted group-hover:text-sky-400'}`} />
         )}
       </div>
+      {hasStatsRow && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-5 mt-0.5 text-[11px]">
+          {weapon.damage && (
+            <span className="text-dh font-semibold tabular-nums">
+              {devastating ? 'd20' + ((weapon.damage.match(/[+-]\d+/) || [''])[0]) : weapon.damage}
+            </span>
+          )}
+          {(weapon.effectiveRange ?? weapon.range) && (
+            <span className="text-dh-muted">{weapon.effectiveRange ?? weapon.range}</span>
+          )}
+        </div>
+      )}
       {feat && featDesc && (
         <div className={`text-[10px] mt-0.5 pl-5 ${featDescColor}`}>
           {feat.name}: {featDesc}
@@ -332,10 +464,10 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
       {onDevastatingToggle && (
         <button
           onClick={(e) => { e.stopPropagation(); onDevastatingToggle(); }}
-          className={`text-[9px] mt-1 ml-5 px-1.5 py-0.5 rounded border transition-colors ${
+          className={`dh-sheet-clickable-chip text-[9px] mt-1 ml-5 px-1.5 py-0.5 rounded border transition-colors ${
             devastating
               ? 'bg-red-900/50 border-red-700/60 text-red-200'
-              : 'bg-slate-800/60 border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+              : 'bg-dh-raised/60 border-dh-border text-dh-muted hover:text-dh hover:border-dh-strong'
           }`}
         >
           {devastating ? 'd20 damage ON (1 Stress)' : 'd20 damage (1 Stress)'}
@@ -386,141 +518,205 @@ export function getNumericFeatureStateEntries(el) {
 
 // ─── Exported components ──────────────────────────────────────────────────────
 
-export function CharacterIdentityHeader({ el, showIncomplete = false, actions }) {
+/**
+ * Class, subclass, ancestry, community, domains, pronouns — “feature source” chips (plus optional incomplete).
+ * Used inside `CharacterIdentityTitleRow` and `GameTableCharacterSheetTitleBar`.
+ */
+export function CharacterIdentitySourceBadges({ el, showIncomplete = false, className = '', children }) {
   const charCheck = showIncomplete ? isCharacterComplete(el) : null;
+  const badgeHover = useCharacterSheetSourceBadgeHover();
   return (
-    <div className="px-3 py-2.5 bg-sky-950/40 border-b border-sky-900/30">
-      <div className="flex items-start gap-2">
-        <User size={14} className="text-sky-400 mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-bold text-sky-100 leading-tight">{el.name || 'Unnamed Character'}</span>
-            <span className="text-[10px] font-bold text-sky-400/70 bg-sky-900/50 border border-sky-800/50 rounded px-1.5">
-              T{el.tier ?? 1}
-            </span>
-            {charCheck && !charCheck.complete && (
-              <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 border border-amber-700/60" title={`Missing: ${charCheck.missing.join(', ')}`}>
-                <AlertTriangle size={9} />
-                Incomplete
-              </span>
-            )}
-            {el.level != null && (
-              <span className="text-[10px] text-slate-400">Lvl {el.level}</span>
-            )}
-          </div>
-          {(el.class || el.subclass) && (
-            <div className="text-[11px] text-sky-300/70 leading-tight mt-0.5">
-              {[el.class, el.subclass].filter(Boolean).join(' · ')}
-            </div>
-          )}
-          <div className="flex items-center gap-1 flex-wrap mt-0.5">
-            {el.pronouns && <span className="text-[10px] text-slate-500">{el.pronouns}</span>}
-            {(el.ancestry || []).map(a => (
-              <span key={a} className="text-[9px] bg-amber-900/40 border border-amber-800/40 text-amber-300 rounded px-1">{a}</span>
-            ))}
-            {el.community && (
-              <span className="text-[9px] bg-emerald-900/40 border border-emerald-800/40 text-emerald-300 rounded px-1">{el.community}</span>
-            )}
-            {(el.domains || []).map(d => (
-              <span key={d} className="text-[9px] bg-violet-900/40 border border-violet-800/40 text-violet-300 rounded px-1">{d}</span>
-            ))}
-          </div>
+    <div className={`flex items-center gap-1.5 flex-wrap min-w-0 ${className}`}>
+      {charCheck && !charCheck.complete && (
+        <span
+          className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-900/50 text-dh border border-amber-700/60 shrink-0"
+          title={`Missing: ${charCheck.missing.join(', ')}`}
+          {...badgeHover('incomplete')}
+        >
+          <AlertTriangle size={9} />
+          Incomplete
+        </span>
+      )}
+      {el?.class && (
+        <span
+          className="text-[9px] font-semibold px-1.5 py-0.5 rounded border shrink-0 bg-sky-950/55 border-sky-600/55 text-sky-100/95"
+          title="Highlight class features"
+          {...badgeHover('class')}
+        >
+          {el.class}
+        </span>
+      )}
+      {el?.subclass && (
+        <span
+          className="text-[9px] font-semibold px-1.5 py-0.5 rounded border shrink-0 bg-indigo-950/50 border-indigo-600/50 text-indigo-200"
+          title="Highlight subclass features"
+          {...badgeHover('subclass')}
+        >
+          {el.subclass}
+        </span>
+      )}
+      {el?.pronouns && (
+        <span
+          className="text-[10px] dh-text-spellcast-header-sub shrink-0 px-1.5 py-0.5 rounded bg-dh-hover/35 border border-dh-strong/25"
+          {...badgeHover('pronouns')}
+        >
+          {el.pronouns}
+        </span>
+      )}
+      {(el?.ancestry || []).map(a => (
+        <span
+          key={a}
+          className="text-[9px] bg-amber-900/40 border border-amber-800/40 text-dh rounded px-1.5 py-0.5 shrink-0"
+          title={`Highlight ${a} features`}
+          {...badgeHover('ancestry', { name: a })}
+        >
+          {a}
+        </span>
+      ))}
+      {el?.community && (
+        <span
+          className="text-[9px] bg-emerald-900/40 border border-emerald-800/40 text-emerald-300 rounded px-1.5 py-0.5 shrink-0"
+          title="Highlight community features"
+          {...badgeHover('community')}
+        >
+          {el.community}
+        </span>
+      )}
+      {(el?.domains || []).map(d => (
+        <span key={d} className="dh-magic-chip shrink-0" title={`Highlight ${d} domain cards`} {...badgeHover('domain', { name: d })}>
+          {d}
+        </span>
+      ))}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * One-row identity chrome: name, tier/level shields, class/subclass badges, pronouns, ancestry/community/domains.
+ * Shared by `CharacterIdentityHeader` and `ItemDetailModal` (Game Table character editor) so the sheet and editor align.
+ */
+export function CharacterIdentityTitleRow({ el, showIncomplete = false, className = '', children }) {
+  const nm = el?.name || 'Unnamed Character';
+  return (
+    <div className={`flex items-center gap-1.5 flex-wrap min-w-0 ${className}`}>
+      <span className="text-sm font-bold dh-text-spellcast-header leading-tight min-w-0 max-w-[min(100%,24rem)] truncate" title={nm}>
+        {nm}
+      </span>
+      <TierShieldBadge tier={el?.tier ?? 1} scaledFromTier={el?._scaledFromTier} />
+      {el?.level != null && <LevelBadge level={el.level} />}
+      <CharacterIdentitySourceBadges el={el} showIncomplete={showIncomplete}>
+        {children}
+      </CharacterIdentitySourceBadges>
+    </div>
+  );
+}
+
+export function CharacterIdentityHeader({ el, showIncomplete = false, actions }) {
+  return (
+    <div className="px-3 py-2.5 border-b dh-tint-spellcast-strip">
+      <div className="flex items-center gap-2 min-w-0">
+        <User size={14} className="dh-text-magic-icon shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <CharacterIdentityTitleRow el={el} showIncomplete={showIncomplete} />
         </div>
         {actions && (
-          <div className="flex items-center gap-1 shrink-0">{actions}</div>
+          <div className="flex items-center gap-1 shrink-0 self-center">{actions}</div>
         )}
       </div>
       {el.playerName && (
-        <div className="text-[10px] text-slate-500 mt-0.5 ml-6">Player: {el.playerName}</div>
+        <div className="text-[10px] text-dh-muted mt-1 ml-6">Player: {el.playerName}</div>
       )}
     </div>
   );
 }
 
 /**
- * 6-trait grid.
+ * Six traits in a 3×2 grid (full trait names).
  *
  * Props:
  *   onTraitClick(traitKey, opts?) — when provided, chips become clickable. opts may include { isReaction: true }.
  */
-export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll }) {
+export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, omitOuterSection, sheetEmphasisTitle, sheetEmphasisSubtitle }) {
   const traits = el.traits || {};
   if (!TRAIT_ORDER.some(t => traits[t] != null)) return null;
   const weaponMods = el.weaponMods || {};
   const armorMods = el.armorMods || {};
   const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
-  return (
-    <Section label={onTraitClick ? 'Traits — click to roll' : 'Traits'}>
-      <div className="grid grid-cols-6 gap-1">
-        {TRAIT_ORDER.map(t => {
-          const score = traits[t] ?? 0;
-          const wMod = weaponMods.traits?.[t] ?? 0;
-          const aMod = armorMods.traits?.[t] ?? 0;
-          const bfMod = beastformTraitBonus?.stat === t ? beastformTraitBonus.bonus : 0;
-          const mod = wMod + aMod + bfMod;
-          const sources = [];
-          if (wMod !== 0) {
-            sources.push(...(weaponMods.sources || [])
-              .filter(s => s.stat === t)
-              .map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to ${TRAIT_FULL[t]}`));
-          }
-          if (aMod !== 0) {
-            sources.push(...(armorMods.sources || [])
-              .filter(s => s.stat === t)
-              .map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to ${TRAIT_FULL[t]}`));
-          }
-          if (bfMod !== 0) {
-            sources.push(`Beastform (${el.activeBeastform.name}): ${bfMod > 0 ? '+' : ''}${bfMod} to ${TRAIT_FULL[t]}`);
-          }
-          const modSource = sources.length ? sources.join('; ') : null;
-          // Show effective trait (base + all mods) as the main number so e.g. beastform "+1" reads as the trait being +3, not "+2 with +1 under it"
-          const effectiveScore = score + mod;
-          return (
-            <TraitChip
-              key={t}
-              trait={t}
-              label={TRAIT_LABELS[t]}
-              score={effectiveScore}
-              onClick={onTraitClick ? () => onTraitClick(t) : undefined}
-              mod={undefined}
-              modSource={modSource || undefined}
-            />
-          );
-        })}
+  const spellcastKey = el.spellcastTrait ? el.spellcastTrait.toLowerCase() : null;
+  const spellcastInTopRow = !!(spellcastKey && TRAIT_GRID_TOP.includes(spellcastKey));
+  const spellcastInBottomRow = !!(spellcastKey && TRAIT_GRID_BOTTOM.includes(spellcastKey));
+
+  const renderTraitStack = (t) => {
+    const wMod = weaponMods.traits?.[t] ?? 0;
+    const aMod = armorMods.traits?.[t] ?? 0;
+    const bfMod = beastformTraitBonus?.stat === t ? beastformTraitBonus.bonus : 0;
+    const effectiveScore = computeEffectiveTraitScore(el, t);
+    const sources = [];
+    if (wMod !== 0) {
+      sources.push(...(weaponMods.sources || [])
+        .filter(s => s.stat === t)
+        .map(s => `${s.feature} (${s.weapon}): ${s.value > 0 ? '+' : ''}${s.value} to ${TRAIT_FULL[t]}`));
+    }
+    if (aMod !== 0) {
+      sources.push(...(armorMods.sources || [])
+        .filter(s => s.stat === t)
+        .map(s => `${s.feature} (${s.armor}): ${s.value > 0 ? '+' : ''}${s.value} to ${TRAIT_FULL[t]}`));
+    }
+    if (bfMod !== 0) {
+      sources.push(`Beastform (${el.activeBeastform.name}): ${bfMod > 0 ? '+' : ''}${bfMod} to ${TRAIT_FULL[t]}`);
+    }
+    const modSource = sources.length ? sources.join('; ') : null;
+    return (
+      <div key={t} className="flex flex-col items-stretch gap-1 min-w-0">
+        <TraitChip
+          trait={t}
+          label={TRAIT_FULL[t]}
+          score={effectiveScore}
+          onClick={onTraitClick ? () => onTraitClick(t) : undefined}
+          mod={undefined}
+          modSource={modSource || undefined}
+        />
       </div>
-      {onTraitClick && (
-        <div className="grid grid-cols-6 gap-1 mt-1">
-          {TRAIT_ORDER.map(t => (
-            <button
-              key={t}
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onTraitClick(t, { isReaction: true }); }}
-              title={`Roll ${TRAIT_FULL[t]} as a reaction`}
-              className="rounded px-1 py-0.5 border border-slate-600/60 bg-slate-800/40 text-[9px] font-medium text-slate-400 hover:bg-slate-700/50 hover:border-slate-500 hover:text-slate-300 transition-colors"
-            >
-              Reaction
-            </button>
-          ))}
-        </div>
-      )}
-      {el.spellcastTrait && (() => {
-        const traitKey = el.spellcastTrait.toLowerCase();
-        const colIndex = TRAIT_ORDER.indexOf(traitKey);
-        if (colIndex === -1) return null;
-        return (
-          <div className="relative mt-1" style={{ height: '22px' }}>
-            <div className="grid grid-cols-6 gap-1 h-full pointer-events-none absolute inset-0">
-              {TRAIT_ORDER.map((_, i) => (
-                <div key={i} className={`flex justify-center ${i === colIndex ? 'overflow-visible pointer-events-auto' : ''}`}>
-                  {i === colIndex && <SpellcastChip onClick={onSpellcastRoll || undefined} />}
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
+    );
+  };
+
+  const spellcastRowCells = (rowTraits) =>
+    rowTraits.map(t => (
+      <div key={`spell-${t}`} className="flex justify-center items-center min-h-0 py-0">
+        {spellcastKey === t ? <SpellcastChip onClick={onSpellcastRoll || undefined} /> : null}
+      </div>
+    ));
+
+  const gridInner = (
+    <div className="space-y-1.5">
+      <div className="grid grid-cols-3 gap-1.5">
+        {spellcastInTopRow ? spellcastRowCells(TRAIT_GRID_TOP) : null}
+        {TRAIT_GRID_TOP.map(t => renderTraitStack(t))}
+      </div>
+      <div className="grid grid-cols-3 gap-1.5">
+        {TRAIT_GRID_BOTTOM.map(t => renderTraitStack(t))}
+        {spellcastInBottomRow ? spellcastRowCells(TRAIT_GRID_BOTTOM) : null}
+      </div>
+    </div>
+  );
+
+  const labeled = omitOuterSection ? (
+    gridInner
+  ) : (
+    <Section label={onTraitClick ? 'Traits — click to roll' : 'Traits'}>
+      {gridInner}
     </Section>
   );
+
+  if (sheetEmphasisTitle) {
+    return (
+      <CharacterSheetEmphasisCard title={sheetEmphasisTitle} subtitle={sheetEmphasisSubtitle}>
+        {labeled}
+      </CharacterSheetEmphasisCard>
+    );
+  }
+  return labeled;
 }
 
 export function CharacterDefenseRow({ el }) {
@@ -562,53 +758,53 @@ export function CharacterDefenseRow({ el }) {
             className="inline-flex items-center gap-1"
             placement="bottom-right"
           >
-            <Shield size={11} className="text-cyan-500 shrink-0" />
-            <span className="text-slate-400">Evasion</span>
-            <span className={`font-bold tabular-nums ${totalEvasionMod ? 'text-amber-200' : 'text-cyan-200'}`}>{el.evasion}</span>
-            {totalEvasionMod ? <span className={`text-[10px] font-semibold tabular-nums ${totalEvasionMod > 0 ? 'text-amber-400' : 'text-amber-500'}`}>({totalEvasionMod > 0 ? '+' : ''}{totalEvasionMod})</span> : null}
+            <Shield size={11} className="text-cyan-400 shrink-0 dh-light:text-dh" />
+            <span className="text-dh-muted">Evasion</span>
+            <span className={`font-bold tabular-nums ${totalEvasionMod ? 'text-sky-300 dh-light:text-sky-900' : 'text-sky-200 dh-light:text-dh'}`}>{el.evasion}</span>
+            {totalEvasionMod ? <span className={`text-[10px] font-semibold tabular-nums text-sky-400 dh-light:text-sky-800`}>({totalEvasionMod > 0 ? '+' : ''}{totalEvasionMod})</span> : null}
           </Tooltip>
         )}
         {el.armorScore > 0 && (
           <div className="flex items-center gap-1" title={armorModTooltip || undefined}>
-            <span className="text-slate-400">Armor</span>
-            <span className={`font-bold tabular-nums ${wm.armorScore ? 'text-amber-200' : 'text-cyan-200'}`}>{el.armorScore}</span>
-            {wm.armorScore ? <span className={`text-[10px] font-semibold tabular-nums ${wm.armorScore > 0 ? 'text-amber-400' : 'text-amber-500'}`}>({wm.armorScore > 0 ? '+' : ''}{wm.armorScore})</span> : null}
-            {el.armorName && <span className="text-slate-500">({el.armorName})</span>}
+            <span className="text-dh-muted">Armor</span>
+            <span className={`font-bold tabular-nums ${wm.armorScore ? 'text-sky-300 dh-light:text-sky-900' : 'text-cyan-200 dh-light:text-dh'}`}>{el.armorScore}</span>
+            {wm.armorScore ? <span className={`text-[10px] font-semibold tabular-nums text-sky-400 dh-light:text-sky-800`}>({wm.armorScore > 0 ? '+' : ''}{wm.armorScore})</span> : null}
+            {el.armorName && <span className="text-dh-muted">({el.armorName})</span>}
             {armorFeature && (
               <span
                 title={armorFeature.description}
                 className={`text-[9px] rounded px-1 py-0.5 border ${
                   isStatModFeature
-                    ? 'bg-slate-800/60 border-slate-700 text-slate-400'
-                    : 'bg-teal-900/40 border-teal-700/50 text-teal-300'
+                    ? 'bg-dh-raised/60 border-dh-border text-dh-muted'
+                    : 'bg-teal-900/40 border-teal-700/50 text-teal-300 dh-light:bg-teal-100/80 dh-light:border-teal-600/50 dh-light:text-dh'
                 }`}
               >{armorFeature.name}</span>
             )}
           </div>
         )}
         {thresholds && (
-          <div className="text-slate-400" title={thresholdModTooltip || severeModTooltip || undefined}>
+          <div className="text-dh-muted" title={thresholdModTooltip || severeModTooltip || undefined}>
             Thresholds:{' '}
             {(earthBonus > 0 || ancestryMajorBonus > 0) ? (
               <>
-                <span className="text-yellow-300/50 font-semibold">{thresholds.major - earthBonus - ancestryMajorBonus}</span>
-                {ancestryMajorBonus > 0 && <span className="text-slate-500"> +{ancestryMajorBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
-                {earthBonus > 0 && <span className="text-slate-500"> +{earthBonus} (Earth)</span>}
-                <span className="text-slate-500"> = </span>
+                <span className="text-dh-muted font-semibold">{thresholds.major - earthBonus - ancestryMajorBonus}</span>
+                {ancestryMajorBonus > 0 && <span className="text-dh-muted"> +{ancestryMajorBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
+                {earthBonus > 0 && <span className="text-dh-muted"> +{earthBonus} (Earth)</span>}
+                <span className="text-dh-muted"> = </span>
               </>
             ) : null}
-            <span className="text-yellow-300 font-semibold">{thresholds.major}</span>
-            <span className="text-slate-500"> / </span>
-            <span className={`font-semibold ${wm.severeThreshold ? 'text-amber-300' : 'text-red-300'}`} title={severeModTooltip || undefined}>
+            <span className="text-dh font-semibold">{thresholds.major}</span>
+            <span className="text-dh-muted"> / </span>
+            <span className={`font-semibold ${wm.severeThreshold ? 'text-orange-400 dh-light:text-orange-900' : 'text-red-400 dh-light:text-red-900'}`} title={severeModTooltip || undefined}>
               {(earthBonus > 0 || ancestrySevereBonus > 0) ? (
                 <>
-                  <span className="opacity-50">{thresholds.severe - earthBonus - ancestrySevereBonus}</span>
-                  {ancestrySevereBonus > 0 && <span className="text-slate-500 font-normal"> +{ancestrySevereBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
-                  {earthBonus > 0 && <span className="text-slate-500 font-normal"> +{earthBonus} (Earth)</span>}
-                  <span className="text-slate-500 font-normal"> = </span>
+                  <span className="opacity-50 dh-light:opacity-100 dh-light:text-dh-muted">{thresholds.severe - earthBonus - ancestrySevereBonus}</span>
+                  {ancestrySevereBonus > 0 && <span className="text-dh-muted font-normal"> +{ancestrySevereBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
+                  {earthBonus > 0 && <span className="text-dh-muted font-normal"> +{earthBonus} (Earth)</span>}
+                  <span className="text-dh-muted font-normal"> = </span>
                 </>
               ) : null}
-              {thresholds.severe}{wm.severeThreshold ? <span className="text-[10px] text-amber-400"> ({wm.severeThreshold > 0 ? '+' : ''}{wm.severeThreshold})</span> : null}
+              {thresholds.severe}{wm.severeThreshold ? <span className="text-[10px] text-orange-400 dh-light:text-orange-900"> ({wm.severeThreshold > 0 ? '+' : ''}{wm.severeThreshold})</span> : null}
             </span>
           </div>
         )}
@@ -638,7 +834,7 @@ function CrossSheetChipButton({ c, onCrossSheetChipClick }) {
       className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors ${
         blocked
           ? 'opacity-40 cursor-not-allowed bg-violet-950/20 border-violet-800/40 text-violet-400/80'
-          : 'bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
+          : 'dh-sheet-clickable-chip bg-violet-950/40 border-violet-700/50 text-violet-200 hover:bg-violet-900/50 hover:border-violet-600'
       }`}
     >
       {c.name}
@@ -660,300 +856,86 @@ function CrossSheetChipButton({ c, onCrossSheetChipClick }) {
  * Props:
  *   selectedIndex             — currently selected experience index (interactive mode)
  *   onSelect(i)               — selection callback; when absent, renders static chips
- *   experiencesAsBadges     — when true, experiences are non-clickable badges (selection moves to intent panel); modifiers can still be interactive
+ *   experiencesAsBadges     — when true, experiences are non-clickable badges (selection moves to intent panel)
  *   hope / maxHope            — current Hope values for gating
- *   crossSheetChips           — optional V2 engine chips from `showOnOtherSheets` features (own or other PCs), rendered in Modifiers (host builds via `collectChipsForOtherCharacterSheets`)
- *   onCrossSheetChipClick     — when set, cross-sheet chips render as buttons (GM / V2 integration)
+ *
+ * Modifier chips (armor roll mods, active modifiers, beastform advantages, cross-sheet chips) render in
+ * the Actions column via `CharacterSheetModifierChips` inside `CharacterFeatureActionsEmphasisCard`.
  */
-export function CharacterExperiences({ el, selectedIndex, onSelect, experiencesAsBadges = false, hope, maxHope, rollModifiers, selectedRollModIndex, onSelectRollMod, selectedModId, onSelectMod, onUseMod, onUseMode, modifierEligibility, beastformAdvantages, selectedBeastformAdvantage, onSelectBeastformAdvantage, crossSheetChips, onCrossSheetChipClick }) {
+export function CharacterExperiences({ el, selectedIndex, onSelect, experiencesAsBadges = false, hope, maxHope, omitOuterSection, sheetEmphasisTitle }) {
   const experiences = el.experiences || [];
-  const hasRollMods = rollModifiers?.length > 0;
-  const activeModifiers = el.activeModifiers || [];
-  const hasBeastformAdvantages = beastformAdvantages?.length > 0;
-  const hasCrossSheet = (crossSheetChips?.length ?? 0) > 0;
-  const hasModifiers = hasRollMods || activeModifiers.length > 0 || hasBeastformAdvantages || hasCrossSheet;
-  if (!experiences.length && !hasModifiers) return null;
+  if (!experiences.length) return null;
 
-  const experienceButtons = onSelect && !experiencesAsBadges;
-  const hasInteractiveModifiers = !!(onSelectRollMod || onSelectMod || onSelectBeastformAdvantage || onCrossSheetChipClick
-    || (hasRollMods && rollModifiers.some(rm => !rm.autoApply)));
+  const wrapSheet = (node) =>
+    sheetEmphasisTitle ? (
+      <CharacterSheetEmphasisCard title={sheetEmphasisTitle}>{node}</CharacterSheetEmphasisCard>
+    ) : node;
 
-  if (!experienceButtons && !hasInteractiveModifiers) {
-    return (
-      <>
-        {experiences.length > 0 && (
-          <Section label="Experiences">
-            <div className="flex flex-wrap gap-1">
-              {experiences.map((exp, i) => (
-                <span
-                  key={i}
-                  className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
-                >
-                  {exp.name}
-                  {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
-                </span>
-              ))}
-            </div>
-          </Section>
-        )}
-        {hasModifiers && (
-          <Section label="Modifiers">
-            <div className="flex flex-wrap gap-1">
-              {hasRollMods && rollModifiers.map((rm, i) => (
-                <span
-                  key={`rm-${i}`}
-                  title={rm.autoApply ? `Always applied to ${rm.rollType} rolls` : rm.description}
-                  className={`text-[11px] rounded px-1.5 py-0.5 border ${
-                    rm.autoApply
-                      ? 'bg-teal-950/40 border-teal-700/50 text-teal-300'
-                      : 'bg-amber-950/30 border-amber-700/50 text-amber-300'
-                  }`}
-                >
-                  {rm.name}
-                  <span className={`font-bold ml-1 ${rm.autoApply ? 'text-teal-400' : 'text-amber-400'}`}>+{rm.score}</span>
-                </span>
-              ))}
-              {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
-                <ModifierChip key={mod.id || i} mod={mod} />
-              ))}
-              {hasBeastformAdvantages && beastformAdvantages.map((adv) => (
-                <span
-                  key={adv}
-                  title="Beastform advantage"
-                  className={`text-[11px] rounded px-1.5 py-0.5 border ${
-                    selectedBeastformAdvantage === adv
-                      ? 'bg-emerald-900/40 border-emerald-700 text-emerald-300'
-                      : 'bg-slate-800 border-slate-700 text-slate-400'
-                  }`}
-                >
-                  {adv}
-                  {selectedBeastformAdvantage === adv && <span className="ml-1 text-emerald-400">+d6</span>}
-                </span>
-              ))}
-              {hasCrossSheet &&
-                crossSheetChips.map((c) => (
-                  <CrossSheetChipButton
-                    key={c._chipKey || `${c._featureName}::${c.name}`}
-                    c={c}
-                    onCrossSheetChipClick={onCrossSheetChipClick}
-                  />
-                ))}
-            </div>
-          </Section>
-        )}
-      </>
-    );
+  function ExpBlock({ interactive, children }) {
+    if (omitOuterSection) return <>{children}</>;
+    if (interactive) {
+      return (
+        <Section label="EXPERIENCES (Spend a Hope to add to an action roll)" labelUppercase={false}>
+          {children}
+        </Section>
+      );
+    }
+    return <Section label="Experiences">{children}</Section>;
   }
 
-  if (!experienceButtons && hasInteractiveModifiers) {
-    return (
-      <>
-        {experiences.length > 0 && (
-          <Section label="Experiences">
-            <div className="flex flex-wrap gap-1">
-              {experiences.map((exp, i) => (
-                <span
-                  key={i}
-                  className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
-                >
-                  {exp.name}
-                  {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
-                </span>
-              ))}
-            </div>
-          </Section>
-        )}
-        {hasModifiers && (
-          <Section label="Modifiers">
-            <div className="flex flex-wrap gap-1">
-              {hasRollMods && rollModifiers.map((rm, i) => {
-                if (rm.autoApply) {
-                  return (
-                    <span
-                      key={`rm-${i}`}
-                      title={`Always applied to ${rm.rollType} rolls`}
-                      className="text-[11px] rounded px-1.5 py-0.5 border bg-teal-950/40 border-teal-700/50 text-teal-300"
-                    >
-                      {rm.name}
-                      <span className="font-bold ml-1 text-teal-400">+{rm.score}</span>
-                    </span>
-                  );
-                }
-                if (!onSelectRollMod) return null;
-                const selected = selectedRollModIndex === i;
-                return (
-                  <button
-                    key={`rm-${i}`}
-                    type="button"
-                    title={rm.description}
-                    onClick={() => onSelectRollMod(selected ? null : i)}
-                    className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
-                      ${selected
-                        ? 'bg-amber-900/60 border-amber-600 text-amber-200 ring-1 ring-amber-500/50'
-                        : 'bg-amber-950/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/40 hover:border-amber-600'}`}
-                  >
-                    <span>{rm.name}</span>
-                    <span className="font-bold ml-1 text-amber-400">+{rm.score}</span>
-                  </button>
-                );
-              })}
-              {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
-                <ModifierChip
-                  key={mod.id || i}
-                  mod={mod}
-                  selected={selectedModId === mod.id}
-                  onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
-                  onUse={onUseMod && mod.mode === 'clearStress' ? () => onUseMod(mod) : undefined}
-                  onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
-                  onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
-                  eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
-                />
-              ))}
-              {hasBeastformAdvantages && beastformAdvantages.map((adv) => {
-                const isSelected = selectedBeastformAdvantage === adv;
-                return (
-                  <button
-                    key={adv}
-                    type="button"
-                    title={isSelected ? 'Advantage active — +d6 to next beastform attack' : 'Click to activate this beastform advantage'}
-                    onClick={onSelectBeastformAdvantage ? () => onSelectBeastformAdvantage(isSelected ? null : adv) : undefined}
-                    className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'bg-emerald-800/70 border-emerald-500 text-emerald-100 ring-1 ring-emerald-500/50'
-                        : 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-600'
-                    }`}
-                  >
-                    {adv}{isSelected && <span className="ml-1 text-emerald-300">+d6</span>}
-                  </button>
-                );
-              })}
-              {hasCrossSheet &&
-                crossSheetChips.map((c) => (
-                  <CrossSheetChipButton
-                    key={c._chipKey || `${c._featureName}::${c.name}`}
-                    c={c}
-                    onCrossSheetChipClick={onCrossSheetChipClick}
-                  />
-                ))}
-            </div>
-          </Section>
-        )}
-      </>
+  const experienceButtons = onSelect && !experiencesAsBadges;
+
+  if (!experienceButtons) {
+    return wrapSheet(
+      <ExpBlock interactive={false}>
+        <div className="flex flex-wrap gap-1">
+          {experiences.map((exp, i) => (
+            <span
+              key={i}
+              className="text-[11px] rounded px-1.5 py-0.5 border bg-dh-raised border-dh-border text-dh"
+            >
+              {exp.name}
+              {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
+            </span>
+          ))}
+        </div>
+      </ExpBlock>,
     );
   }
 
   const currentHope = hope ?? (maxHope ?? 6);
-  return (
-    <>
-      {experiences.length > 0 && (
-        <Section label="EXPERIENCES (Spend a Hope to add to an action roll)" labelUppercase={false}>
-          <div className="flex flex-wrap gap-1">
-            {experiences.map((exp, i) => {
-              const selected = selectedIndex === i;
-              const noHope = currentHope === 0;
-              const disabled = noHope && !selected;
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onSelect(selected ? null : i)}
-                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors
-                    ${disabled
-                      ? 'opacity-35 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500'
-                      : selected
-                        ? 'bg-sky-900/60 border-sky-600 text-sky-200 ring-1 ring-sky-500/50 cursor-pointer'
-                        : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-slate-600 cursor-pointer'}`}
-                >
-                  <span>{exp.name}</span>
-                  {exp.score != null && (
-                    <span className={`font-bold ml-1 ${disabled ? 'text-slate-500' : 'text-sky-400'}`}>+{exp.score}</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          {currentHope === 0 && (
-            <p className="text-[9px] text-red-500/70 mt-0.5">No Hope — cannot use Experiences</p>
-          )}
-        </Section>
+  return wrapSheet(
+    <ExpBlock interactive>
+      <div className="flex flex-wrap gap-1">
+        {experiences.map((exp, i) => {
+          const selected = selectedIndex === i;
+          const noHope = currentHope === 0;
+          const disabled = noHope && !selected;
+          return (
+            <button
+              key={i}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(selected ? null : i)}
+              className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors
+                ${disabled
+                  ? 'opacity-35 cursor-not-allowed bg-dh-raised border-dh-border text-dh-muted'
+                  : selected
+                    ? 'dh-sheet-clickable-chip dh-tint-sky-row border ring-1 ring-sky-500/50 cursor-pointer'
+                    : 'dh-sheet-clickable-chip bg-dh-raised border-dh-border text-dh hover:bg-dh-hover/60 hover:border-dh-strong cursor-pointer'}`}
+            >
+              <span>{exp.name}</span>
+              {exp.score != null && (
+                <span className={`font-bold ml-1 ${disabled ? 'text-dh-muted' : 'text-sky-400'}`}>+{exp.score}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {currentHope === 0 && (
+        <p className="text-[9px] text-red-500/70 mt-0.5">No Hope — cannot use Experiences</p>
       )}
-      {hasModifiers && (
-        <Section label="Modifiers">
-          <div className="flex flex-wrap gap-1">
-            {hasRollMods && rollModifiers.map((rm, i) => {
-              if (rm.autoApply) {
-                return (
-                  <span
-                    key={`rm-${i}`}
-                    title={`Always applied to ${rm.rollType} rolls`}
-                    className="text-[11px] rounded px-1.5 py-0.5 border bg-teal-950/40 border-teal-700/50 text-teal-300"
-                  >
-                    {rm.name}
-                    <span className="font-bold ml-1 text-teal-400">+{rm.score}</span>
-                  </span>
-                );
-              }
-              if (!onSelectRollMod) return null;
-              const selected = selectedRollModIndex === i;
-              return (
-                <button
-                  key={`rm-${i}`}
-                  type="button"
-                  title={rm.description}
-                  onClick={() => onSelectRollMod(selected ? null : i)}
-                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
-                    ${selected
-                      ? 'bg-amber-900/60 border-amber-600 text-amber-200 ring-1 ring-amber-500/50'
-                      : 'bg-amber-950/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/40 hover:border-amber-600'}`}
-                >
-                  <span>{rm.name}</span>
-                  <span className="font-bold ml-1 text-amber-400">+{rm.score}</span>
-                </button>
-              );
-            })}
-            {activeModifiers.filter(mod => mod.name !== 'Prayer Die').map((mod, i) => (
-              <ModifierChip
-                key={mod.id || i}
-                mod={mod}
-                selected={selectedModId === mod.id}
-                onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
-                onUse={onUseMod && mod.mode === 'clearStress' ? () => onUseMod(mod) : undefined}
-                onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
-                onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
-                eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
-              />
-            ))}
-            {hasBeastformAdvantages && beastformAdvantages.map((adv) => {
-              const isSelected = selectedBeastformAdvantage === adv;
-              return (
-                <button
-                  key={adv}
-                  type="button"
-                  title={isSelected ? 'Advantage active — +d6 to next beastform attack' : 'Click to activate this beastform advantage'}
-                  onClick={onSelectBeastformAdvantage ? () => onSelectBeastformAdvantage(isSelected ? null : adv) : undefined}
-                  className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer ${
-                    isSelected
-                      ? 'bg-emerald-800/70 border-emerald-500 text-emerald-100 ring-1 ring-emerald-500/50'
-                      : 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-600'
-                  }`}
-                >
-                  {adv}{isSelected && <span className="ml-1 text-emerald-300">+d6</span>}
-                </button>
-              );
-            })}
-            {hasCrossSheet &&
-              crossSheetChips.map((c) => (
-                <CrossSheetChipButton
-                  key={c._chipKey || `${c._featureName}::${c.name}`}
-                  c={c}
-                  onCrossSheetChipClick={onCrossSheetChipClick}
-                />
-              ))}
-          </div>
-        </Section>
-      )}
-    </>
+    </ExpBlock>,
   );
 }
 
@@ -983,11 +965,11 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
   let colorCls;
   if (mod.name === 'Prayer Die') colorCls = selected ? 'bg-teal-800/70 border-teal-500 text-teal-100 ring-1 ring-teal-500/50' : 'bg-teal-950/40 border-teal-700/60 text-teal-300 hover:bg-teal-900/40';
   else if (mod.name === 'Sneak Attack') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
-  else if (mod.name === 'No Mercy') colorCls = selected ? 'bg-amber-800/70 border-amber-500 text-amber-100 ring-1 ring-amber-500/50' : 'bg-amber-950/40 border-amber-700/60 text-amber-300 hover:bg-amber-900/40';
+  else if (mod.name === 'No Mercy') colorCls = selected ? 'bg-amber-800/70 border-amber-500 text-dh ring-1 ring-amber-500/50' : 'bg-amber-950/40 border-amber-700/60 text-dh hover:bg-amber-900/40';
   else if (mod.name === "Rogue's Dodge") colorCls = selected ? 'bg-cyan-800/70 border-cyan-500 text-cyan-100 ring-1 ring-cyan-500/50' : 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/40';
   else if (mod.name === 'Evolution') colorCls = selected ? 'bg-violet-800/70 border-violet-500 text-violet-100 ring-1 ring-violet-500/50' : 'bg-violet-950/40 border-violet-700/60 text-violet-300 hover:bg-violet-900/40';
   else if (mod.name === 'Dread Visage') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
-  else colorCls = selected ? 'bg-sky-800/70 border-sky-500 text-sky-100 ring-1 ring-sky-500/50' : 'bg-sky-950/40 border-sky-700/60 text-sky-300 hover:bg-sky-900/40';
+  else colorCls = selected ? 'dh-tint-sky-row border ring-1 ring-sky-500/50' : 'dh-tint-trait-chip border hover:brightness-110';
 
   const ineligibleCls = !eligible ? 'opacity-40 cursor-not-allowed' : '';
   const clickable = !!(onSelect || onUse) && eligible;
@@ -1028,12 +1010,189 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
       type="button"
       title={title}
       onClick={clickable ? (onUse || onSelect) : undefined}
-      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${clickable ? 'cursor-pointer' : 'cursor-default'} ${colorCls} ${ineligibleCls}`}
+      className={`text-[11px] rounded px-1.5 py-0.5 border transition-colors flex items-center gap-1 ${clickable ? 'dh-sheet-clickable-chip cursor-pointer' : 'cursor-default'} ${colorCls} ${ineligibleCls}`}
     >
       <span>{baseLabel}</span>
       {isClearStress && <span className="text-[9px] opacity-70">→ clr Stress</span>}
       {isPersistent && <span className="text-[9px] opacity-60">●</span>}
     </button>
+  );
+}
+
+/**
+ * Armor roll modifiers, active modifier bin, beastform advantage toggles, and cross-sheet V2 chips.
+ * Rendered inside the Actions emphasis card below the V2 guide/loadout chip strip.
+ */
+export function CharacterSheetModifierChips({
+  el,
+  rollModifiers = [],
+  selectedRollModIndex,
+  onSelectRollMod,
+  selectedModId,
+  onSelectMod,
+  onUseMod,
+  onUseMode,
+  modifierEligibility,
+  beastformAdvantages,
+  selectedBeastformAdvantage,
+  onSelectBeastformAdvantage,
+  crossSheetChips,
+  onCrossSheetChipClick,
+}) {
+  const activeModifiers = el.activeModifiers || [];
+  const hasRollMods = rollModifiers?.length > 0;
+  const hasBeastformAdvantages = beastformAdvantages?.length > 0;
+  const hasCrossSheet = (crossSheetChips?.length ?? 0) > 0;
+  const nonPrayerMods = activeModifiers.filter((mod) => mod.name !== 'Prayer Die');
+  const hasModifiers =
+    hasRollMods || nonPrayerMods.length > 0 || hasBeastformAdvantages || hasCrossSheet;
+  if (!hasModifiers) return null;
+
+  const hasInteractiveModifiers = !!(
+    onSelectRollMod ||
+    onSelectMod ||
+    onSelectBeastformAdvantage ||
+    onCrossSheetChipClick ||
+    (hasRollMods && rollModifiers.some((rm) => !rm.autoApply))
+  );
+
+  return (
+    <Section label="Modifiers">
+      <div className="flex flex-wrap gap-1">
+        {!hasInteractiveModifiers ? (
+          <>
+            {hasRollMods &&
+              rollModifiers.map((rm, i) => (
+                <span
+                  key={`rm-${i}`}
+                  title={rm.autoApply ? `Always applied to ${rm.rollType} rolls` : rm.description}
+                  className={`text-[11px] rounded px-1.5 py-0.5 border ${
+                    rm.autoApply
+                      ? 'bg-teal-950/40 border-teal-700/50 text-teal-300'
+                      : 'bg-amber-950/30 border-amber-700/50 text-dh'
+                  }`}
+                >
+                  {rm.name}
+                  <span className={`font-bold ml-1 ${rm.autoApply ? 'text-teal-400' : 'text-dh-hope'}`}>
+                    +{rm.score}
+                  </span>
+                </span>
+              ))}
+            {nonPrayerMods.map((mod, i) => (
+              <ModifierChip key={mod.id || i} mod={mod} />
+            ))}
+            {hasBeastformAdvantages &&
+              beastformAdvantages.map((adv) => (
+                <span
+                  key={adv}
+                  title="Beastform advantage"
+                  className={`text-[11px] rounded px-1.5 py-0.5 border ${
+                    selectedBeastformAdvantage === adv
+                      ? 'bg-emerald-900/40 border-emerald-700 text-emerald-300'
+                      : 'bg-dh-raised border-dh-border text-dh-muted'
+                  }`}
+                >
+                  {adv}
+                  {selectedBeastformAdvantage === adv && <span className="ml-1 text-emerald-400">+d6</span>}
+                </span>
+              ))}
+            {hasCrossSheet &&
+              crossSheetChips.map((c) => (
+                <CrossSheetChipButton
+                  key={c._chipKey || `${c._featureName}::${c.name}`}
+                  c={c}
+                  onCrossSheetChipClick={onCrossSheetChipClick}
+                />
+              ))}
+          </>
+        ) : (
+          <>
+            {hasRollMods &&
+              rollModifiers.map((rm, i) => {
+                if (rm.autoApply) {
+                  return (
+                    <span
+                      key={`rm-${i}`}
+                      title={`Always applied to ${rm.rollType} rolls`}
+                      className="text-[11px] rounded px-1.5 py-0.5 border bg-teal-950/40 border-teal-700/50 text-teal-300"
+                    >
+                      {rm.name}
+                      <span className="font-bold ml-1 text-teal-400">+{rm.score}</span>
+                    </span>
+                  );
+                }
+                if (!onSelectRollMod) return null;
+                const selected = selectedRollModIndex === i;
+                return (
+                  <button
+                    key={`rm-${i}`}
+                    type="button"
+                    title={rm.description}
+                    onClick={() => onSelectRollMod(selected ? null : i)}
+                    className={`dh-sheet-clickable-chip text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer
+                      ${
+                        selected
+                          ? 'bg-amber-900/60 border-amber-600 text-dh ring-1 ring-amber-500/50'
+                          : 'bg-amber-950/30 border-amber-700/50 text-dh hover:bg-amber-900/40 hover:border-amber-600'
+                      }`}
+                  >
+                    <span>{rm.name}</span>
+                    <span className="font-bold ml-1 text-dh-hope">+{rm.score}</span>
+                  </button>
+                );
+              })}
+            {nonPrayerMods.map((mod, i) => (
+              <ModifierChip
+                key={mod.id || i}
+                mod={mod}
+                selected={selectedModId === mod.id}
+                onSelect={onSelectMod ? () => onSelectMod(selectedModId === mod.id ? null : mod.id) : undefined}
+                onUse={onUseMod && mod.mode === 'clearStress' ? () => onUseMod(mod) : undefined}
+                onUseMode={onUseMode && mod.usageModes?.length ? (mode) => onUseMode(mod, mode) : undefined}
+                onRemove={onSelectMod ? () => onSelectMod(null) : undefined}
+                eligible={modifierEligibility ? (modifierEligibility[mod.id] ?? true) : true}
+              />
+            ))}
+            {hasBeastformAdvantages &&
+              beastformAdvantages.map((adv) => {
+                const isSelected = selectedBeastformAdvantage === adv;
+                return (
+                  <button
+                    key={adv}
+                    type="button"
+                    title={
+                      isSelected
+                        ? 'Advantage active — +d6 to next beastform attack'
+                        : 'Click to activate this beastform advantage'
+                    }
+                    onClick={
+                      onSelectBeastformAdvantage
+                        ? () => onSelectBeastformAdvantage(isSelected ? null : adv)
+                        : undefined
+                    }
+                    className={`dh-sheet-clickable-chip text-[11px] rounded px-1.5 py-0.5 border transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-emerald-800/70 border-emerald-500 text-emerald-100 ring-1 ring-emerald-500/50'
+                        : 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/40 hover:border-emerald-600'
+                    }`}
+                  >
+                    {adv}
+                    {isSelected && <span className="ml-1 text-emerald-300">+d6</span>}
+                  </button>
+                );
+              })}
+            {hasCrossSheet &&
+              crossSheetChips.map((c) => (
+                <CrossSheetChipButton
+                  key={c._chipKey || `${c._featureName}::${c.name}`}
+                  c={c}
+                  onCrossSheetChipClick={onCrossSheetChipClick}
+                />
+              ))}
+          </>
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -1057,7 +1216,14 @@ export function CharacterWeaponList({
   onBeastformAttack,
   /** When set (Game Table), weapons with a map range are disabled if no adversaries are in range. */
   getValidTargets,
+  omitOuterSection,
+  sheetEmphasisTitle,
 }) {
+  const wrapSheetCard = (node) =>
+    sheetEmphasisTitle ? (
+      <CharacterSheetEmphasisCard title={sheetEmphasisTitle}>{node}</CharacterSheetEmphasisCard>
+    ) : node;
+
   const ancestryFeatures = el.ancestryFeatures || [];
   // Enrich weapons with effectiveRange at render time (Giant Reach: Melee → Very Close).
   // `recomputeCharacter` seeds `effectiveRange` from `range`, so we must not treat that
@@ -1092,7 +1258,11 @@ export function CharacterWeaponList({
 
   // Use pre-computed virtual weapons (from recomputeCharacter in builder mode)
   // or compute on-the-fly for Daggerstack-synced characters.
-  const ancestryVirtualWeapons = el._virtualWeapons || runCharacterRender(el).virtualWeapons;
+  // Those same VWs are already merged into `weapons` — do not list them again here or Offense shows duplicates.
+  const ancestryVirtualWeaponsRaw = el._virtualWeapons || runCharacterRender(el).virtualWeapons;
+  const ancestryVirtualWeapons = (ancestryVirtualWeaponsRaw || []).filter(
+    (vw) => vw?.name && !weapons.some((w) => w.name === vw.name)
+  );
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
@@ -1137,7 +1307,8 @@ export function CharacterWeaponList({
     const merged = { ...w, ...extraMeta };
     if (outOfRangeReasonForWeapon(merged)) return undefined;
     const rollMeta = { ...extraMeta };
-    if (w.feature?.name === 'Devastating' && devastatingActive) rollMeta.devastating = true;
+    const hideDevToggle = v2Hint?.hideDevastatingCardToggle === true;
+    if (!hideDevToggle && w.feature?.name === 'Devastating' && devastatingActive) rollMeta.devastating = true;
     if (w.feature?.name === 'Doubled Up' && secondaryDamageStr) rollMeta.secondaryDamage = secondaryDamageStr;
     return (e) => onWeaponClick(w, rollMeta, e);
   };
@@ -1180,40 +1351,45 @@ export function CharacterWeaponList({
       </div>
     );
 
-    return (
-      <Section label={onBeastformAttack ? 'Attacks — click to roll' : 'Attacks'}>
-        <div className="space-y-1.5">
-          {/* Beastform attack card */}
-          {beastformDisabledReason ? (
-            <Tooltip label={beastformDisabledReason} className="relative block w-full min-w-0">
-              {beastformCard}
-            </Tooltip>
-          ) : (
-            beastformCard
-          )}
+    const beastInner = (
+      <div className="space-y-1.5">
+        {/* Beastform attack card */}
+        {beastformDisabledReason ? (
+          <Tooltip label={beastformDisabledReason} className="relative block w-full min-w-0">
+            {beastformCard}
+          </Tooltip>
+        ) : (
+          beastformCard
+        )}
 
-          {/* Disabled normal weapons */}
-          {weapons.length > 0 && (
-            <div className="opacity-35 pointer-events-none select-none space-y-1">
-              <div className="text-[9px] text-slate-600 uppercase tracking-wide pl-0.5">Normal attacks (disabled)</div>
-              {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => (
-                <WeaponCard
-                  key={i}
-                  weapon={w}
-                  traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Disabled normal weapons */}
+        {weapons.length > 0 && (
+          <div className="opacity-35 pointer-events-none select-none space-y-1">
+            <div className="text-[9px] text-dh-muted uppercase tracking-wide pl-0.5">Normal attacks (disabled)</div>
+            {weapons.filter(w => !otherworldlyOriginals.has(w)).map((w, i) => (
+              <WeaponCard
+                key={i}
+                weapon={w}
+                traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+    const beastLabeled = omitOuterSection ? (
+      beastInner
+    ) : (
+      <Section label={onBeastformAttack ? 'Attacks — click to roll' : 'Attacks'}>
+        {beastInner}
       </Section>
     );
+    return wrapSheetCard(beastLabeled);
   }
 
   if (!weapons.length && !ancestryVirtualWeapons.length) return null;
 
-  return (
-    <Section label={onWeaponClick ? 'Weapons — click to roll' : 'Weapons'}>
+  const weaponsInner = (
       <div className="space-y-1">
         {/* Paired virtual weapon */}
         {virtualWeapon && (
@@ -1281,7 +1457,8 @@ export function CharacterWeaponList({
         })}
 
         {/* Charged variant cards */}
-        {chargedPairs.map(({ chargedVariant }, i) => {
+        {chargedPairs.map(({ original, chargedVariant }, i) => {
+          if (v2HintForWeapon(original)?.hideChargedVariantCard) return null;
           const chW = { ...chargedVariant, effectiveRange: getEffectiveWeaponRange(chargedVariant, el.ancestryFeatures) };
           return (
           <div key={`charged-${i}`}>
@@ -1293,7 +1470,7 @@ export function CharacterWeaponList({
               outOfRangeReason={outOfRangeReasonForWeapon(chW)}
             />
             {isStressMaxed && (
-              <div className="text-[9px] text-slate-500 pl-5 mt-0.5">Stress maxed — cannot use Charged</div>
+              <div className="text-[9px] text-dh-muted pl-5 mt-0.5">Stress maxed — cannot use Charged</div>
             )}
           </div>
           );
@@ -1306,14 +1483,15 @@ export function CharacterWeaponList({
             !v2Hint && w.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0;
           const v2DisableReason =
             v2Hint?.isDisabled === true ? (v2Hint.disabledReason || 'Cannot use this weapon') : undefined;
+          const hideDevToggle = v2Hint?.hideDevastatingCardToggle === true;
           return (
             <WeaponCard
               key={w.name ? `${w.name}-${i}` : i}
               weapon={w}
               traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
               onClick={makeClick(w)}
-              devastating={w.feature?.name === 'Devastating' ? devastatingActive : undefined}
-              onDevastatingToggle={w.feature?.name === 'Devastating' && onWeaponClick ? onDevastatingToggle : undefined}
+              devastating={!hideDevToggle && w.feature?.name === 'Devastating' ? devastatingActive : undefined}
+              onDevastatingToggle={!hideDevToggle && w.feature?.name === 'Devastating' && onWeaponClick ? onDevastatingToggle : undefined}
               pompousWarning={legacyPompous}
               v2DisableReason={v2DisableReason}
               outOfRangeReason={outOfRangeReasonForWeapon(w)}
@@ -1350,15 +1528,15 @@ export function CharacterWeaponList({
               title={disabled ? 'Stress maxed' : onActionNotification ? 'Mark 1 Stress to force adversaries back' : undefined}
               className={`rounded border px-2 py-1.5 text-[11px] select-none transition-all
                 ${disabled
-                  ? 'border-slate-700/50 bg-slate-800/30 opacity-40 cursor-not-allowed'
+                  ? 'border-dh-border/50 bg-dh-raised/30 opacity-40 cursor-not-allowed'
                   : onActionNotification
-                    ? 'border-amber-700/50 bg-amber-950/20 cursor-pointer hover:brightness-125 hover:border-amber-500/70 group'
+                    ? 'dh-sheet-clickable-chip border-amber-700/50 bg-amber-950/20 cursor-pointer hover:brightness-125 hover:border-amber-500/70 group'
                     : 'border-amber-700/30 bg-amber-950/10'
                 }`}
             >
               <div className="flex items-center gap-2">
                 <Swords size={10} className="text-amber-500/60 shrink-0" />
-                <span className="font-semibold text-amber-200/80">Startling: Force Back</span>
+                <span className="font-semibold text-dh-hope">Startling: Force Back</span>
                 <FeatureResourceCostIcons action={{ stressCost: 1 }} iconSize={9} className="ml-0.5" />
               </div>
               <div className="text-[10px] mt-0.5 pl-5 text-amber-400/60">
@@ -1368,14 +1546,23 @@ export function CharacterWeaponList({
           );
         })}
       </div>
+  );
+
+  const weaponsLabeled = omitOuterSection ? (
+    weaponsInner
+  ) : (
+    <Section label={onWeaponClick ? 'Weapons — click to roll' : 'Weapons'}>
+      {weaponsInner}
     </Section>
   );
+  return wrapSheetCard(weaponsLabeled);
 }
 
 /**
  * Feature list — guide-driven cards shared with Game Table hover + Library preview.
  *
  * @param {'interactive'|'preview'} [interactionMode] — defaults from presence of handlers
+ * @param {object|null} [sheetHighlightAbility] — `el.abilities` row for LOADOUT; enables domain source dimming
  */
 function CharacterFeatureActionsRow({
   entry,
@@ -1386,11 +1573,15 @@ function CharacterFeatureActionsRow({
   onShareFeature,
   activeChanneledElement,
   pendingBanners,
+  sheetHighlightAbility = null,
 }) {
   const { model, table: tableForChips } = useMemo(
     () => buildFeatureCardModelForCharacter(entry.row, el, v2TableContext),
     [entry.row, el, v2TableContext],
   );
+  const highlightCtx = useCharacterSheetSourceHighlightState();
+  const highlight = highlightCtx?.highlight ?? null;
+  const dimmed = shouldDimFeatOrAbilityRow(sheetHighlightAbility, entry.row, el, highlight);
   if (!model.cardChips?.length) return null;
   const stressMaxed =
     entry.row.name === 'Elemental Incarnation'
@@ -1398,7 +1589,7 @@ function CharacterFeatureActionsRow({
       : undefined;
   const channel = entry.row.name === 'Elemental Incarnation' ? activeChanneledElement : undefined;
 
-  return (
+  const chips = (
     <GuideFeatureCardChips
       model={model}
       tableForChips={tableForChips}
@@ -1415,17 +1606,8 @@ function CharacterFeatureActionsRow({
       pendingBanners={pendingBanners}
     />
   );
-}
-
-/** @returns {boolean} whether any guide feature exposes V2 card chips (Actions tab). */
-export function characterHasFeatureCardActions(el, onV2CardChip, v2TableContext) {
-  const orderedEntries = getOrderedGuideFeatureEntries(el, onV2CardChip);
-  for (const e of orderedEntries) {
-    if (e.kind !== 'guide') continue;
-    const { model } = buildFeatureCardModelForCharacter(e.row, el, v2TableContext);
-    if (model.cardChips?.length) return true;
-  }
-  return false;
+  if (!dimmed) return chips;
+  return <div className={SHEET_SOURCE_DIM_CLASS}>{chips}</div>;
 }
 
 function CharacterFeatureActionsBody({
@@ -1438,6 +1620,7 @@ function CharacterFeatureActionsBody({
   pendingBanners,
 }) {
   const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
+  const loadoutEntries = useMemo(() => getOrderedGuideLoadoutEntries(el), [el]);
   const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
 
   return (
@@ -1457,6 +1640,20 @@ function CharacterFeatureActionsBody({
             pendingBanners={pendingBanners}
           />
         ))}
+      {loadoutEntries.map((entry) => (
+        <CharacterFeatureActionsRow
+          key={entry.key}
+          entry={entry}
+          el={el}
+          v2TableContext={v2TableContext}
+          interactionMode={mode}
+          onV2CardChip={onV2CardChip}
+          onShareFeature={onShareFeature}
+          activeChanneledElement={activeChanneledElement}
+          pendingBanners={pendingBanners}
+          sheetHighlightAbility={entry.ability}
+        />
+      ))}
     </div>
   );
 }
@@ -1494,8 +1691,187 @@ export function CharacterFeatureActions({
   );
 }
 
+/** Same V2 chip strip as the split-sheet “Actions” card — use under Offense with `CharacterFeaturesPanel` `omitActions`. */
+export function CharacterFeatureActionsEmphasisCard({
+  el,
+  onV2CardChip,
+  onShareFeature,
+  v2TableContext,
+  interactionMode,
+  activeChanneledElement,
+  pendingBanners,
+  rollModifiers: rollModifiersProp,
+  selectedRollModIndex,
+  onSelectRollMod,
+  selectedModId,
+  onSelectMod,
+  onUseMod,
+  onUseMode,
+  modifierEligibility,
+  beastformAdvantages,
+  selectedBeastformAdvantage,
+  onSelectBeastformAdvantage,
+  crossSheetChips,
+  onCrossSheetChipClick,
+}) {
+  const rollModifiers = rollModifiersProp ?? el.armorMods?.rollModifiers ?? [];
+  const hasV2 = useMemo(
+    () => characterHasFeatureCardActions(el, onV2CardChip, v2TableContext),
+    [el, onV2CardChip, v2TableContext],
+  );
+  const hasModifierRow = useMemo(() => {
+    const rm = rollModifiers?.length > 0;
+    const nonPrayer = (el.activeModifiers || []).filter((m) => m.name !== 'Prayer Die').length > 0;
+    const bf = (beastformAdvantages?.length ?? 0) > 0;
+    const cs = (crossSheetChips?.length ?? 0) > 0;
+    return rm || nonPrayer || bf || cs;
+  }, [el.activeModifiers, rollModifiers, beastformAdvantages, crossSheetChips]);
+
+  if (!hasV2 && !hasModifierRow) return null;
+  const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
+  return (
+    <CharacterSheetEmphasisCard title="Actions">
+      <div className="space-y-3 min-w-0">
+        {hasV2 && (
+          <CharacterFeatureActionsBody
+            el={el}
+            onV2CardChip={onV2CardChip}
+            onShareFeature={onShareFeature}
+            v2TableContext={v2TableContext}
+            interactionMode={mode}
+            activeChanneledElement={activeChanneledElement}
+            pendingBanners={pendingBanners}
+          />
+        )}
+        <CharacterSheetModifierChips
+          el={el}
+          rollModifiers={rollModifiers}
+          selectedRollModIndex={selectedRollModIndex}
+          onSelectRollMod={onSelectRollMod}
+          selectedModId={selectedModId}
+          onSelectMod={onSelectMod}
+          onUseMod={onUseMod}
+          onUseMode={onUseMode}
+          modifierEligibility={modifierEligibility}
+          beastformAdvantages={beastformAdvantages}
+          selectedBeastformAdvantage={selectedBeastformAdvantage}
+          onSelectBeastformAdvantage={onSelectBeastformAdvantage}
+          crossSheetChips={crossSheetChips}
+          onCrossSheetChipClick={onCrossSheetChipClick}
+        />
+      </div>
+    </CharacterSheetEmphasisCard>
+  );
+}
+
 /**
- * Features region with optional Actions / Details tabs (when any feature has V2 card chips).
+ * V2 declarative `cards` (e.g. Beastbound companion) — after Actions (when inline) and before Features.
+ */
+/** Declarative `cards` (e.g. Beastbound companion) — use in column 2 after Actions when `CharacterFeaturesPanel` has `omitDeclarativeCards`. */
+export function CharacterSheetDeclarativeCards({
+  el,
+  v2TableContext,
+  queueManualTrackEdit,
+  updateFn,
+  onRoll,
+  interactionMode,
+  onV2CardChip,
+}) {
+  const entries = useMemo(() => collectSheetCardsForCharacter(el, v2TableContext), [el, v2TableContext]);
+  const preview = interactionMode === 'preview';
+  const companion = el.companion;
+
+  const companionHandlers = useMemo(() => {
+    if (!companion || preview) return null;
+    const spellcastKey = (el.spellcastTrait || 'presence').toLowerCase();
+    const spellcastScore = el.traits?.[spellcastKey] ?? 0;
+    const buildCompanionAttackRollText = () => {
+      const parts = [`${companion.name} ${companion.attackName} Hope [d12] Fear [d12]`];
+      if (spellcastScore !== 0) parts.push(`${spellcastKey} [${spellcastScore}]`);
+      parts.push('damage [d6] melee');
+      return parts.join(' ');
+    };
+    const buildCompanionRollMeta = () => ({
+      _attackerInstanceId: el.instanceId ?? el.id,
+      _traitKey: spellcastKey,
+      _intentPanelForActionRoll: true,
+      _deferExperienceToPreRoll: true,
+      _companionExperienceForRoll: true,
+    });
+    const onStress = queueManualTrackEdit
+      ? (filled) => queueManualTrackEdit(el, { companion: { ...companion, currentStress: filled } })
+      : updateFn
+        ? (filled) => updateFn(el.instanceId ?? el.id, { companion: { ...companion, currentStress: filled } })
+        : undefined;
+    return {
+      onStressChange: onStress,
+      onAttackRoll:
+        onRoll && companion.attackName?.trim()
+          ? () => onRoll(buildCompanionAttackRollText(), `${el.name} (${companion.name})`, buildCompanionRollMeta(), {
+              characterEl: el,
+            })
+          : undefined,
+    };
+  }, [el, companion, preview, queueManualTrackEdit, updateFn, onRoll]);
+
+  if (!entries.length) return null;
+
+  const highlightCtx = useCharacterSheetSourceHighlightState();
+  const sheetHighlight = highlightCtx?.highlight ?? null;
+
+  const nodes = [];
+  for (let i = 0; i < entries.length; i++) {
+    const { feature, card, shape } = entries[i];
+    if (!shape?.jsonSchema || !companion) continue;
+    const merged = { ...omitShapeId(card), ...companion };
+    const onFieldRoll = (fieldKey) => {
+      if (fieldKey === 'attackName') companionHandlers?.onAttackRoll?.();
+    };
+    const shapeChips = collectShapePlacementChipsForCharacter(el, shape, v2TableContext);
+    const tableForShapeChips = buildGuideFeatureTableSnapshot(el, feature, v2TableContext);
+    const featureKey = getFeatureUsageKeyForGuideFeature(el, feature.name) ?? feature.name;
+    const cardDim = shouldDimGuideFeatRow(feature, el, sheetHighlight);
+    nodes.push(
+      <div
+        key={`${feature.name}-${shape.id}-${i}`}
+        className={`min-w-0 space-y-0 ${cardDim ? SHEET_SOURCE_DIM_CLASS : ''}`}
+      >
+        <DeclarativeSchemaSheetCard
+          featureName={feature.name}
+          jsonSchema={shape.jsonSchema}
+          data={merged}
+          preview={preview}
+          onFieldRoll={companionHandlers ? onFieldRoll : undefined}
+          onTrackedSetFilled={companionHandlers?.onStressChange}
+        />
+        {shapeChips.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-dh-border/50 space-y-1.5">
+            <GuideFeatureCardChips
+              model={{ name: feature.name, displayName: feature.name, cardChips: shapeChips }}
+              tableForChips={tableForShapeChips}
+              featRow={feature}
+              el={el}
+              featureKey={featureKey}
+              v2TableContext={v2TableContext}
+              interactionMode={preview ? 'preview' : 'interactive'}
+              onV2CardChip={onV2CardChip}
+              placementShape={shape}
+              actionsStripLayout
+            />
+          </div>
+        )}
+      </div>,
+    );
+  }
+  if (!nodes.length) return null;
+  return <div className="space-y-3 min-w-0">{nodes}</div>;
+}
+
+/**
+ * Features region: when any feature exposes V2 card chips, Actions and Features are split into two emphasis cards
+ * (chips live only in Actions; Features cards omit duplicate chip rows). Declarative `cards` (e.g. companion) render between Actions and Features when inline.
+ * Pass `omitActions` when the Actions card is rendered elsewhere (e.g. directly under Offense in column 2).
+ * Pass `omitDeclarativeCards` when companion/declarative inserts render in column 2 after Actions.
  */
 export function CharacterFeaturesPanel({
   el,
@@ -1515,6 +1891,10 @@ export function CharacterFeaturesPanel({
   interactionMode,
   v2TableContext,
   pendingBanners,
+  queueManualTrackEdit,
+  onRoll,
+  omitActions = false,
+  omitDeclarativeCards = false,
 }) {
   const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
   const hopeFeature = el.hopeFeature || el.hopeAbility;
@@ -1523,98 +1903,69 @@ export function CharacterFeaturesPanel({
     () => characterHasFeatureCardActions(el, onV2CardChip, v2TableContext),
     [el, onV2CardChip, v2TableContext],
   );
-  const featuresTabStorageKey = el.instanceId ?? el.id ?? '__sheet';
-  const [featuresTab, setFeaturesTab] = useState(() => readFeaturesPanelTab(featuresTabStorageKey));
-  useEffect(() => {
-    setFeaturesTab(readFeaturesPanelTab(featuresTabStorageKey));
-  }, [featuresTabStorageKey]);
-  const setFeaturesTabPersist = useCallback(
-    (tab) => {
-      setFeaturesTab(tab);
-      persistFeaturesPanelTab(featuresTabStorageKey, tab);
-    },
-    [featuresTabStorageKey],
-  );
-  const willEarlyReturn = !orderedEntries.length && !hopeFeature;
+  const hasDeclarativeSheetCards = useMemo(() => {
+    const rows = collectSheetCardsForCharacter(el, v2TableContext);
+    return rows.some(({ card }) => card && typeof card === 'object');
+  }, [el, v2TableContext]);
+  const willEarlyReturn =
+    !orderedEntries.length &&
+    !hopeFeature &&
+    (!hasDeclarativeSheetCards || omitDeclarativeCards);
   if (willEarlyReturn) return null;
   const mode = interactionMode ?? (onV2CardChip || onShareFeature ? 'interactive' : 'preview');
 
-  const tabClass = (id) =>
-    `text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded transition-colors ${
-      featuresTab === id
-        ? 'text-sky-200 bg-sky-950/40 border border-sky-700/50'
-        : 'text-slate-500 hover:text-slate-300 border border-transparent'
-    }`;
+  const listContentProps = {
+    el,
+    expandedKeys,
+    onToggleFeature,
+    onSetFeatureExpandedKeys,
+    onUseHopeAbility,
+    onFeatureUse,
+    featureUsage,
+    currentHope,
+    updateFn,
+    activeChanneledElement,
+    prayerDice,
+    onPrayerDieGainHope,
+    onShareFeature,
+    onV2CardChip,
+    interactionMode,
+    v2TableContext,
+    pendingBanners,
+  };
 
-  if (!hasActions) {
-    return (
-      <Section label="Features">
-        <CharacterFeatureListContent
-          el={el}
-          expandedKeys={expandedKeys}
-          onToggleFeature={onToggleFeature}
-          onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
-          onUseHopeAbility={onUseHopeAbility}
-          onFeatureUse={onFeatureUse}
-          featureUsage={featureUsage}
-          currentHope={currentHope}
-          updateFn={updateFn}
-          activeChanneledElement={activeChanneledElement}
-          prayerDice={prayerDice}
-          onPrayerDieGainHope={onPrayerDieGainHope}
-          onShareFeature={onShareFeature}
-          onV2CardChip={onV2CardChip}
-          interactionMode={interactionMode}
-          v2TableContext={v2TableContext}
-          pendingBanners={pendingBanners}
-        />
-      </Section>
-    );
-  }
+  const declarativeProps = {
+    el,
+    v2TableContext,
+    queueManualTrackEdit,
+    updateFn,
+    onRoll,
+    onV2CardChip,
+    interactionMode: mode,
+  };
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2 min-w-0">
-        <p className="text-[9px] tracking-widest text-slate-500 font-semibold uppercase shrink-0">Features</p>
-        <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-          <button type="button" className={tabClass('actions')} onClick={() => setFeaturesTabPersist('actions')}>
-            Actions
-          </button>
-          <button type="button" className={tabClass('details')} onClick={() => setFeaturesTabPersist('details')}>
-            Details
-          </button>
-        </div>
-      </div>
-      {featuresTab === 'actions' ? (
-        <CharacterFeatureActionsBody
+    <div className="space-y-3 min-w-0">
+      {!omitActions && (
+        <CharacterFeatureActionsEmphasisCard
           el={el}
           onV2CardChip={onV2CardChip}
           onShareFeature={onShareFeature}
           v2TableContext={v2TableContext}
-          interactionMode={mode}
-          activeChanneledElement={activeChanneledElement}
-          pendingBanners={pendingBanners}
-        />
-      ) : (
-        <CharacterFeatureListContent
-          el={el}
-          expandedKeys={expandedKeys}
-          onToggleFeature={onToggleFeature}
-          onSetFeatureExpandedKeys={onSetFeatureExpandedKeys}
-          onUseHopeAbility={onUseHopeAbility}
-          onFeatureUse={onFeatureUse}
-          featureUsage={featureUsage}
-          currentHope={currentHope}
-          updateFn={updateFn}
-          activeChanneledElement={activeChanneledElement}
-          prayerDice={prayerDice}
-          onPrayerDieGainHope={onPrayerDieGainHope}
-          onShareFeature={onShareFeature}
-          onV2CardChip={onV2CardChip}
           interactionMode={interactionMode}
-          v2TableContext={v2TableContext}
+          activeChanneledElement={activeChanneledElement}
           pendingBanners={pendingBanners}
         />
+      )}
+      {!omitDeclarativeCards && <CharacterSheetDeclarativeCards {...declarativeProps} />}
+      {hasActions ? (
+        <CharacterSheetEmphasisCard title="Features">
+          <CharacterFeatureListContent {...listContentProps} hideV2CardChips />
+        </CharacterSheetEmphasisCard>
+      ) : (
+        <Section label="Features">
+          <CharacterFeatureListContent {...listContentProps} hideV2CardChips={false} />
+        </Section>
       )}
     </div>
   );
@@ -1638,6 +1989,8 @@ function CharacterFeatureListContent({
   interactionMode,
   v2TableContext,
   pendingBanners,
+  /** When true, V2 card chips are not rendered on each feature (shown in a separate Actions card). */
+  hideV2CardChips = false,
 }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
@@ -1653,6 +2006,13 @@ function CharacterFeatureListContent({
     const row = (el.activeFeatures || []).find((a) => a.name === hn);
     return !!(row && Array.isArray(row.chips) && row.chips.length > 0);
   })();
+
+  const hnForHopeSheet = resolveHopeFeatureName(el);
+  const hopeRowForSheet = useMemo(
+    () => (hnForHopeSheet ? (el.activeFeatures || []).find((a) => a.name === hnForHopeSheet) : null),
+    [el, hnForHopeSheet],
+  );
+  const highlightCtx = useCharacterSheetSourceHighlightState();
 
   const mode =
     interactionMode ??
@@ -1716,6 +2076,11 @@ function CharacterFeatureListContent({
           const hope = currentHope ?? (el.hope ?? (el.maxHope ?? 6));
           const canUse = hope >= 3;
           const hopeInteractive = !preview && !!onUseHopeAbility;
+          const hopeDimWrap = !!(
+            hopeRowForSheet &&
+            highlightCtx?.highlight &&
+            shouldDimGuideFeatRow(hopeRowForSheet, el, highlightCtx.highlight)
+          );
 
           if (hopeInteractive) {
             const hopeFeat = { name: name || 'Hope Ability', description: desc || '' };
@@ -1723,33 +2088,44 @@ function CharacterFeatureListContent({
               ? (e) => canUse && onFeatureUse(hopeFeat, null, e)
               : () => canUse && onUseHopeAbility(el.instanceId);
             return (
-              <button
-                key="hope-ability"
-                onClick={handleClick}
-                disabled={!canUse}
-                title={canUse ? 'Spend 3 Hope to use' : 'Not enough Hope (need 3)'}
-                className={`w-full rounded border text-left px-2 py-1.5 transition-colors ${
-                  canUse
-                    ? 'border-amber-700/60 bg-amber-950/40 hover:bg-amber-900/50 hover:border-amber-600/70 cursor-pointer'
-                    : 'border-slate-700/40 bg-slate-800/30 opacity-40 cursor-not-allowed'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                  {name && <span className="text-[11px] font-semibold text-amber-200 leading-tight">{name}</span>}
-                  <FeatureResourceCostIcons action={{ hopeCost: 3 }} iconSize={10} className="ml-0.5" />
-                </div>
-                {desc && <MarkdownText text={desc} className="text-[11px] text-slate-300 leading-relaxed dh-md" />}
-              </button>
+              <div key="hope-ability" className={hopeDimWrap ? SHEET_SOURCE_DIM_CLASS : undefined}>
+                <button
+                  onClick={handleClick}
+                  disabled={!canUse}
+                  title={canUse ? 'Spend 3 Hope to use' : 'Not enough Hope (need 3)'}
+                  className={`w-full rounded border text-left px-2 py-1.5 transition-colors ${
+                    canUse
+                      ? 'dh-sheet-clickable-chip border-amber-700/60 bg-amber-950/40 hover:bg-amber-900/50 hover:border-amber-600/70 cursor-pointer'
+                      : 'border-dh-border/40 bg-dh-raised/30 opacity-40 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="flex items-start gap-2 min-w-0 flex-wrap">
+                    {name && (
+                      <span className="text-sm font-semibold text-dh-hope leading-snug min-w-0 flex-1">{name}</span>
+                    )}
+                    <div className="flex flex-wrap items-center gap-1 shrink-0">
+                      <FeatureResourceCostIcons action={{ hopeCost: 3 }} iconSize={10} className="shrink-0" />
+                    </div>
+                  </div>
+                  {desc && <MarkdownText text={desc} className="text-[11px] text-dh leading-relaxed dh-md mt-0.5" />}
+                </button>
+              </div>
             );
           }
 
           return (
-            <div className="rounded border border-amber-700/60 bg-amber-950/40 px-2 py-1.5">
-              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                {name && <span className="text-[11px] font-semibold text-amber-200">{name}</span>}
-                <FeatureResourceCostIcons action={{ hopeCost: 3 }} iconSize={10} className="ml-0.5" />
+            <div key="hope-ability-readonly" className={hopeDimWrap ? SHEET_SOURCE_DIM_CLASS : undefined}>
+              <div className="rounded border border-amber-700/60 bg-amber-950/40 px-2 py-1.5">
+                <div className="flex items-start gap-2 min-w-0 flex-wrap mb-0.5">
+                  {name && (
+                    <span className="text-sm font-semibold text-dh-hope leading-snug min-w-0 flex-1">{name}</span>
+                  )}
+                  <div className="flex flex-wrap items-center gap-1 shrink-0">
+                    <FeatureResourceCostIcons action={{ hopeCost: 3 }} iconSize={10} className="shrink-0" />
+                  </div>
+                </div>
+                {desc && <MarkdownText text={desc} className="text-[11px] text-dh leading-relaxed dh-md" />}
               </div>
-              {desc && <MarkdownText text={desc} className="text-[11px] text-slate-300 leading-relaxed dh-md" />}
             </div>
           );
         })()}
@@ -1762,7 +2138,7 @@ function CharacterFeatureListContent({
             >
               Expand all
             </button>
-            <span className="text-[10px] text-slate-600 select-none" aria-hidden>
+            <span className="text-[10px] text-dh-muted select-none" aria-hidden>
               |
             </span>
             <button
@@ -1825,6 +2201,7 @@ function CharacterFeatureListContent({
               faerieWingsProps={faerieWingsProps}
               v2TableContext={v2TableContext}
               pendingBanners={pendingBanners}
+              hideV2CardChips={hideV2CardChips}
             />
           );
         })}
@@ -1880,7 +2257,7 @@ export function CharacterFeatureList({
 }
 
 /**
- * Domain cards — guide-driven (same card component as Features).
+ * LOADOUT — domain cards (same guide card + Actions split as Features).
  */
 export function CharacterAbilityList({
   el,
@@ -1896,6 +2273,11 @@ export function CharacterAbilityList({
   if (!abilities.length) return null;
   const inBeastform = !!el.activeBeastform;
 
+  const hasLoadoutActions = useMemo(
+    () => characterHasLoadoutCardActions(el, v2TableContext),
+    [el, v2TableContext],
+  );
+
   const isOpen = (key) => {
     if (expandedKeys !== undefined) return expandedKeys.includes(key);
     return localExpanded[key] ?? false;
@@ -1907,8 +2289,8 @@ export function CharacterAbilityList({
 
   const mode = onV2DomainChip || onFeatureUse ? 'interactive' : 'preview';
 
-  return (
-    <Section label="Domain Cards">
+  const inner = (
+    <>
       {inBeastform && (
         <div className="flex items-center gap-1 text-[10px] text-amber-500/80 bg-amber-950/30 border border-amber-700/40 rounded px-2 py-1 mb-1">
           <X size={9} className="shrink-0" />
@@ -1918,14 +2300,7 @@ export function CharacterAbilityList({
       <div className={`space-y-2 ${inBeastform ? 'opacity-30 pointer-events-none select-none' : ''}`}>
         {abilities.map((a, i) => {
           const key = `ability-${a.id ?? i}`;
-          const featRow =
-            el.activeFeatures?.find((f) => f.type === 'ability' && f.name === a.name) || {
-              name: a.name,
-              description: a.description || '',
-              type: 'ability',
-              sourceType: 'domain',
-              source: [a.domain, a.type, `Lvl ${a.level}`].filter(Boolean).join(' · '),
-            };
+          const featRow = resolveLoadoutAbilityFeatRow(el, a);
           return (
             <div
               key={a.id || key}
@@ -1943,13 +2318,24 @@ export function CharacterAbilityList({
                 onV2CardChip={onV2DomainChip}
                 v2TableContext={v2TableContext}
                 tone="domain"
+                sheetHighlightAbility={a}
+                hideV2CardChips={hasLoadoutActions}
               />
             </div>
           );
         })}
       </div>
-    </Section>
+    </>
   );
+
+  if (hasLoadoutActions) {
+    return (
+      <CharacterSheetEmphasisCard title="LOADOUT">
+        {inner}
+      </CharacterSheetEmphasisCard>
+    );
+  }
+  return <Section label="LOADOUT">{inner}</Section>;
 }
 
 export function CharacterInventory({ el }) {
@@ -1959,19 +2345,19 @@ export function CharacterInventory({ el }) {
     <Section label="Inventory">
       {el.gold != null && (
         <div className="flex items-center gap-1 text-[11px] mb-1">
-          <Package size={10} className="text-yellow-500 shrink-0" />
-          <span className="text-slate-400">Gold:</span>
-          <span className="text-yellow-300 font-semibold">{el.gold}</span>
-          <span className="text-slate-500">({formatGold(el.gold)})</span>
+          <Package size={10} className="text-dh-hope-soft shrink-0" />
+          <span className="text-dh-muted">Gold:</span>
+          <span className="text-dh font-semibold tabular-nums">{el.gold}</span>
+          <span className="text-dh-muted">({formatGold(el.gold)})</span>
         </div>
       )}
       {inventory.length > 0 && (
-        <p className="text-[11px] text-slate-400 leading-relaxed">
+        <p className="text-[11px] text-dh-muted leading-relaxed">
           {inventory.map((item, i) => (
             <span key={i}>
-              {item.quantity > 1 && <span className="text-slate-300 font-semibold">{item.quantity}× </span>}
-              <span className="text-slate-300">{item.name}</span>
-              {i < inventory.length - 1 && <span className="text-slate-600">, </span>}
+              {item.quantity > 1 && <span className="text-dh font-semibold">{item.quantity}× </span>}
+              <span className="text-dh">{item.name}</span>
+              {i < inventory.length - 1 && <span className="text-dh-muted">, </span>}
             </span>
           ))}
         </p>
@@ -1980,160 +2366,135 @@ export function CharacterInventory({ el }) {
   );
 }
 
-export function CharacterCompanion({ el }) {
-  if (!el.companion) return null;
-  return (
-    <Section label="Companion">
-      <div className="text-[11px] text-slate-300 space-y-0.5">
-        <div className="font-semibold">{el.companion.name}</div>
-        {el.companion.species && <div className="text-slate-500">{el.companion.species}</div>}
-        <div className="flex gap-2 text-slate-400">
-          <span>EVA {el.companion.evasion}</span>
-          <span>Stress {el.companion.currentStress}/{el.companion.maxStress}</span>
-        </div>
-      </div>
-    </Section>
-  );
-}
-
-/**
- * Card-style companion sheet for hover second card and stacked Library display.
- * Props: companion (object), onStressChange (optional), onAttackRoll (optional), onActRoll (optional — Spellcast roll, no damage),
- */
-export function CompanionSheet({ companion, onStressChange, onAttackRoll, onActRoll }) {
-  if (!companion) return null;
-  const maxStress = companion.maxStress ?? 3;
-  const currentStress = companion.currentStress ?? 0;
-  const experiences = companion.experiences || [];
-  const hasAttack = !!(companion.attackName?.trim());
-  return (
-    <div className="bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col min-w-[14rem]">
-      <div className="px-3 py-2 border-b border-sky-900/30 bg-sky-950/30 shrink-0">
-        <p className="text-[10px] uppercase tracking-widest text-sky-400/80 font-semibold">Companion</p>
-        <div className="font-semibold text-slate-200 truncate">{companion.name || '—'}</div>
-        {companion.species && <div className="text-[11px] text-slate-500">{companion.species}</div>}
-      </div>
-      <div className="p-3 space-y-2 flex-1 min-h-0">
-        <div className="flex gap-2 text-[11px] text-slate-400">
-          <span className="font-bold text-cyan-400/80">EVA {companion.evasion ?? 10}</span>
-        </div>
-        {(hasAttack || companion.attackName != null) && (
-          <Section label="Attack">
-            {onAttackRoll && hasAttack ? (
-              <button
-                type="button"
-                onClick={onAttackRoll}
-                className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-sky-600 cursor-pointer flex items-center gap-1 transition-colors"
-              >
-                <Swords size={10} className="text-sky-400 shrink-0" />
-                <span>{companion.attackName}</span>
-                <span className="text-slate-500">— d6 Melee</span>
-              </button>
-            ) : (
-              <div className="text-[11px] text-slate-300">
-                {hasAttack ? `${companion.attackName} — d6 Melee` : '—'}
-              </div>
-            )}
-          </Section>
-        )}
-        <Section label="Act">
-          {onActRoll ? (
-            <button
-              type="button"
-              onClick={onActRoll}
-              className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700/60 hover:border-sky-600 cursor-pointer flex items-center gap-1 transition-colors"
-            >
-              <Swords size={10} className="text-sky-400 shrink-0" />
-              Take an action
-            </button>
-          ) : (
-            <span className="text-[11px] text-slate-400">Take an action — Spellcast roll</span>
-          )}
-        </Section>
-        {experiences.length > 0 && (
-          <Section label="Experiences">
-            <div className="flex flex-wrap gap-1">
-              {experiences.map((exp, i) => (
-                <span
-                  key={exp.id || i}
-                  className="text-[11px] rounded px-1.5 py-0.5 border bg-slate-800 border-slate-700 text-slate-300"
-                >
-                  {exp.name}
-                  {exp.score != null && <span className="font-bold ml-1 text-sky-400">+{exp.score}</span>}
-                </span>
-              ))}
-            </div>
-          </Section>
-        )}
-        {maxStress > 0 && (
-          <div className="flex items-center gap-1">
-            <AlertCircle size={10} className="text-orange-500 shrink-0" />
-            {onStressChange ? (
-              <CheckboxTrack
-                total={maxStress}
-                filled={currentStress}
-                onSetFilled={onStressChange}
-                fillColor="bg-orange-500"
-                label="Stress"
-                verbs={['Mark', 'Clear']}
-              />
-            ) : (
-              <span className="text-[11px] text-slate-400">Stress {currentStress}/{maxStress}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /**
  * Full character detail pane for use in ItemDetailModal display side.
+ * @param {{ item: object, srdData: object, onCharacterRuntimeUpdate?: (patch: object) => void }} props
  */
-export function CharacterDetailPane({ item, srdData }) {
+export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate }) {
   const el = useMemo(() => {
     const raw = item || {};
     if (!srdData) return raw;
     const base = recomputeCharacter(raw, srdData);
     return mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
   }, [item, srdData]);
+
+  const defenseTrackInteraction = useMemo(() => {
+    if (!onCharacterRuntimeUpdate) return null;
+    const out = { stress: undefined, armor: undefined, hp: undefined };
+    if ((el.maxStress || 0) > 0) {
+      out.stress = {
+        onSetFilled: (s) => onCharacterRuntimeUpdate({ currentStress: s }),
+        label: 'Stress',
+        verbs: ['Mark', 'Clear'],
+      };
+    }
+    if ((el.maxArmor || 0) > 0) {
+      out.armor = {
+        onSetFilled: (v) => {
+          const upd = { currentArmor: v };
+          if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+          onCharacterRuntimeUpdate(upd);
+        },
+        label: 'Armor',
+        verbs: ['Mark', 'Clear'],
+      };
+    }
+    if ((el.maxHp || 0) > 0) {
+      out.hp = {
+        onSetFilled: (dmg) => onCharacterRuntimeUpdate({ currentHp: (el.maxHp || 0) - dmg }),
+        label: 'HP',
+        verbs: ['Mark', 'Clear'],
+      };
+    }
+    return out;
+  }, [el, onCharacterRuntimeUpdate]);
+
+  const hopeTrackInteraction = useMemo(() => {
+    if (!onCharacterRuntimeUpdate) return null;
+    const maxHope = el.maxHope ?? 6;
+    if (maxHope <= 0) return null;
+    return {
+      filled: el.hope ?? maxHope,
+      onSetFilled: (h) => onCharacterRuntimeUpdate({ hope: h }),
+      fillColor: HOPE_TRACK_FILL,
+      label: 'Hope',
+      verbs: ['Gain', 'Spend'],
+      pulseOnDecreaseOnly: true,
+    };
+  }, [el, onCharacterRuntimeUpdate]);
+
   const { complete, missing } = isCharacterComplete(el, srdData ? { srdData } : undefined);
   return (
-    <div className="flex flex-col gap-3">
-      <div className="bg-slate-900 border border-sky-900/50 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+    <div className="flex flex-col gap-3 min-h-0 w-full min-w-0 lg:min-w-[48rem]">
+      <CharacterSheetSourceHighlightProvider>
+      <CharacterSheetHighlightSurface className="bg-dh-raised border border-dh-border rounded-xl shadow-2xl overflow-hidden flex flex-col min-h-0 flex-1 max-h-full w-full min-w-0">
         <CharacterIdentityHeader el={el} />
+        {el.description && (
+          <div className="px-3 pt-2 pb-2 shrink-0 bg-dh-canvas/30 w-full">
+            <p className="text-[11px] text-dh-muted leading-relaxed italic">{el.description}</p>
+          </div>
+        )}
+        {(el.maxHope ?? 0) > 0 && (
+          <div className="px-3 py-2 shrink-0 bg-dh-canvas/30">
+            <HopeHeroTrack el={el} hopeTrackInteraction={hopeTrackInteraction} />
+          </div>
+        )}
         {!complete && (
-          <div className="mx-3 mt-2 flex items-center gap-2 px-2.5 py-1.5 rounded border border-amber-700/60 bg-amber-950/40 text-amber-300 text-[11px]">
+          <div className="mx-3 mt-2 flex items-center gap-2 px-2.5 py-1.5 rounded border border-amber-700/60 bg-amber-950/40 text-dh text-[11px] shrink-0">
             <AlertTriangle size={12} className="shrink-0" />
             <span>Incomplete — missing: {missing.join(', ')}</span>
           </div>
         )}
-        <div className="p-3 space-y-3 overflow-y-auto flex-1 min-h-0">
-          <CharacterDefenseRow el={el} />
-          <CharacterTraitGrid el={el} />
-          <CharacterExperiences el={el} />
-          <CharacterWeaponList el={el} />
-          <CharacterFeaturesPanel el={el} />
-          <CharacterAbilityList el={el} />
-          <CharacterInventory el={el} />
-          {el.background && (
-            <Section label="Background">
-              <p className="text-[11px] text-slate-400 leading-relaxed">{el.background}</p>
-            </Section>
-          )}
-          {el.connectionText && (
-            <Section label="Connections">
-              <p className="text-[11px] text-slate-400 leading-relaxed">{el.connectionText}</p>
-            </Section>
-          )}
-          {el.description && (
-            <Section label="Description">
-              <p className="text-[11px] text-slate-400 leading-relaxed italic">{el.description}</p>
-            </Section>
-          )}
+        <div className="p-3 overflow-y-auto flex-1 min-h-0">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4 gap-y-3 items-start">
+            <div className="space-y-3 min-w-0">
+              <div className="space-y-2 min-w-0">
+                <CharacterStatBlockGraphic
+                  el={el}
+                  variant="stack"
+                  srdData={srdData}
+                  hideHope
+                  defenseTrackInteraction={defenseTrackInteraction}
+                  defenseFooter={<DefenseReactionRollGrid el={el} />}
+                />
+                <CharacterStatBlockGraphic
+                  el={el}
+                  variant="rail"
+                  srdData={srdData}
+                  hideHope
+                  defenseTrackInteraction={defenseTrackInteraction}
+                />
+              </div>
+              <CharacterTraitGrid
+                el={el}
+                omitOuterSection
+                sheetEmphasisTitle="Traits"
+                sheetEmphasisSubtitle="Action Rolls"
+              />
+              <CharacterExperiences el={el} omitOuterSection sheetEmphasisTitle="Experiences" />
+              <CharacterFeaturesPanel el={el} omitActions omitDeclarativeCards />
+            </div>
+            <div className="space-y-3 min-w-0">
+              <CharacterWeaponList el={el} omitOuterSection sheetEmphasisTitle="Offense" />
+              <CharacterFeatureActionsEmphasisCard el={el} />
+              <CharacterSheetDeclarativeCards el={el} interactionMode="preview" />
+              <CharacterAbilityList el={el} />
+              <CharacterInventory el={el} />
+              {el.background && (
+                <Section label="Background">
+                  <p className="text-[11px] text-dh-muted leading-relaxed">{el.background}</p>
+                </Section>
+              )}
+              {el.connectionText && (
+                <Section label="Connections">
+                  <p className="text-[11px] text-dh-muted leading-relaxed">{el.connectionText}</p>
+                </Section>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
-      {el.companion && <CompanionSheet companion={el.companion} />}
+      </CharacterSheetHighlightSurface>
+      </CharacterSheetSourceHighlightProvider>
     </div>
   );
 }

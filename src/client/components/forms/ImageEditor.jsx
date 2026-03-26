@@ -82,8 +82,8 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
   };
 
   const panelClass = inline
-    ? 'p-3 border border-slate-800 rounded-lg bg-slate-900/50'
-    : 'mb-4 p-4 border border-slate-800 rounded-lg bg-slate-900/50';
+    ? 'p-3 border border-dh-border rounded-lg bg-dh-surface/50'
+    : 'mb-4 p-4 border border-dh-border rounded-lg bg-dh-surface/50';
 
   return (
     <div className={panelClass}>
@@ -91,7 +91,7 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
         <button
           type="button"
           onClick={() => setShowAddInput(s => !s)}
-          className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-sm rounded px-3 py-2 text-slate-300 hover:text-white outline-none transition-colors"
+          className="flex items-center gap-1.5 bg-dh-surface border border-dh-border hover:border-dh-strong text-sm rounded px-3 py-2 text-dh hover:text-dh outline-none transition-colors"
         >
           <Plus size={14} /> Add image
         </button>
@@ -111,13 +111,13 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
             value={addUrl}
             onChange={e => setAddUrl(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddUrl(); } }}
-            className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+            className="flex-1 min-w-0 bg-dh-inset border border-dh-border rounded px-2 py-1.5 text-sm text-dh placeholder-dh-muted focus:border-blue-500 focus:outline-none"
           />
           <button
             type="button"
             onClick={handleAddUrl}
             disabled={!addUrl?.trim()}
-            className="px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white"
+            className="px-3 py-1.5 text-sm rounded bg-dh-hover hover:bg-dh-hover disabled:opacity-50 disabled:cursor-not-allowed text-dh"
           >
             Add
           </button>
@@ -131,10 +131,10 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
             return (
               <div
                 key={url.slice(0, 80) + idx}
-                className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800"
+                className="flex justify-between items-center bg-dh-inset p-2 rounded border border-dh-border"
               >
                 <div className="flex items-center gap-2 min-w-0 shrink">
-                  <div className="w-10 h-10 rounded overflow-hidden bg-slate-800 shrink-0 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded overflow-hidden bg-dh-raised shrink-0 flex items-center justify-center">
                     <img
                       src={url}
                       alt=""
@@ -142,10 +142,10 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
                       onError={e => { e.target.onerror = null; e.target.style.display = 'none'; }}
                     />
                   </div>
-                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0">
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-dh-raised text-dh-muted shrink-0">
                     {isPrimary ? 'Primary' : 'Additional'}
                   </span>
-                  <span className="text-sm text-slate-300 truncate" title={url}>
+                  <span className="text-sm text-dh truncate" title={url}>
                     {truncateUrl(url)}
                   </span>
                 </div>
@@ -154,7 +154,7 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
                     <button
                       type="button"
                       onClick={() => handleSetPrimary(url)}
-                      className="p-1 text-slate-500 hover:text-amber-400"
+                      className="p-1 text-dh-muted hover:text-amber-400"
                       title="Set as primary"
                     >
                       <Star size={14} />
@@ -163,7 +163,7 @@ export function ImageEditor({ imageUrl, _additionalImages, onChange, onImageSave
                   <button
                     type="button"
                     onClick={() => handleRemove(url)}
-                    className="p-1 text-slate-500 hover:text-red-500"
+                    className="p-1 text-dh-muted hover:text-red-500"
                     title="Remove"
                   >
                     <Trash2 size={14} />

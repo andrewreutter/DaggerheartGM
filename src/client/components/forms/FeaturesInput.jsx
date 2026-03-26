@@ -18,10 +18,10 @@ export function FeaturesInput({ features, onChange, highlightedId }) {
   const removeFeature = (id) => onChange(features.filter(f => f.id !== id));
 
   return (
-    <div className="mt-6 border-t border-slate-800 pt-4">
+    <div className="mt-6 border-t border-dh-border pt-4">
       <div className="flex justify-between items-center mb-4">
-        <h4 className="font-medium text-slate-300 flex items-center gap-1">Features<MarkdownHelpTooltip /></h4>
-        <button type="button" onClick={addFeature} className="text-xs bg-slate-800 hover:bg-slate-700 text-white px-2 py-1 rounded flex items-center gap-1"><Plus size={12} /> Add</button>
+        <h4 className="font-medium text-dh flex items-center gap-1">Features<MarkdownHelpTooltip /></h4>
+        <button type="button" onClick={addFeature} className="text-xs bg-dh-raised hover:bg-dh-hover text-dh px-2 py-1 rounded flex items-center gap-1"><Plus size={12} /> Add</button>
       </div>
       <div className="space-y-4">
         {features.map(f => (
@@ -31,20 +31,20 @@ export function FeaturesInput({ features, onChange, highlightedId }) {
             className={`p-3 rounded flex flex-col gap-2 relative transition-all duration-300 ${
               f.id === highlightedId
                 ? 'bg-amber-900/30 border-2 border-amber-500/70 ring-2 ring-amber-400/40'
-                : 'bg-slate-950 border border-slate-800'
+                : 'bg-dh-inset border border-dh-border'
             }`}
           >
-            <button type="button" onClick={() => removeFeature(f.id)} className="absolute top-2 right-2 text-slate-500 hover:text-red-500"><Trash2 size={14} /></button>
+            <button type="button" onClick={() => removeFeature(f.id)} className="absolute top-2 right-2 text-dh-muted hover:text-red-500"><Trash2 size={14} /></button>
             <div className="grid grid-cols-2 gap-2 pr-6">
-              <input type="text" placeholder="Feature Name" value={f.name} onChange={e => updateFeature(f.id, 'name', e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white" />
-              <select value={f.type} onChange={e => updateFeature(f.id, 'type', e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white">
+              <input type="text" placeholder="Feature Name" value={f.name} onChange={e => updateFeature(f.id, 'name', e.target.value)} className="bg-dh-surface border border-dh-border rounded px-2 py-1 text-sm text-dh" />
+              <select value={f.type} onChange={e => updateFeature(f.id, 'type', e.target.value)} className="bg-dh-surface border border-dh-border rounded px-2 py-1 text-sm text-dh">
                 {FEATURE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-            <textarea placeholder="Description (e.g. 'Spend a Fear to...')" value={f.description} onChange={e => updateFeature(f.id, 'description', e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white h-16 resize-none w-full" />
+            <textarea placeholder="Description (e.g. 'Spend a Fear to...')" value={f.description} onChange={e => updateFeature(f.id, 'description', e.target.value)} className="bg-dh-surface border border-dh-border rounded px-2 py-1 text-sm text-dh h-16 resize-none w-full" />
           </div>
         ))}
-        {features.length === 0 && <p className="text-xs text-slate-500 italic">No features added.</p>}
+        {features.length === 0 && <p className="text-xs text-dh-muted italic">No features added.</p>}
       </div>
     </div>
   );

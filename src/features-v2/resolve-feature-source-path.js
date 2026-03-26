@@ -64,3 +64,33 @@ export function resolveV2FeatureSourcePath(featRow) {
       return null;
   }
 }
+
+/** Library tab / API collection name → generated id→path map (top-level SRD rows only). */
+const LIBRARY_ITEM_PATH_BY_COLLECTION = {
+  abilities: pathByAbilityId,
+  classes: pathByClassId,
+  subclasses: pathBySubclassId,
+  ancestries: pathByAncestryKey,
+  communities: pathByCommunityId,
+  beastforms: pathByBeastformId,
+  items: pathByItemId,
+  consumables: pathByConsumableId,
+};
+
+/**
+ * Resolves V2 implementation file for a **top-level** SRD library item (grid card / detail header).
+ * Weapon/armor **property** lines use {@link resolveV2FeatureSourcePath} on synthetic rows instead.
+ *
+ * @param {string} collection — Library tab name (e.g. `abilities`, `classes`)
+ * @param {{ _source?: string, id?: string }} item
+ * @returns {string|null} relative path under `src/features-v2/`
+ */
+export function resolveV2LibraryItemSourcePath(collection, item) {
+  if (!item || typeof item !== 'object') return null;
+  if (item._source !== 'srd') return null;
+  const id = item.id;
+  if (typeof id !== 'string') return null;
+  const map = LIBRARY_ITEM_PATH_BY_COLLECTION[collection];
+  if (!map) return null;
+  return map[id] ?? null;
+}

@@ -2,8 +2,7 @@
 
 You are the Unblocking Agent for DaggerheartGM's V2 feature system. Your
 job is to implement engine API extensions that unblock features listed in
-the **active** Blocked / API Extension Requests table in
-`docs/v2-migration-tracker.md`.
+**open** Blocked / API **GitHub Issues** (`v2-kind:blocked`, `v2-migration` label).
 
 **Completed resolutions** live in `docs/v2-blocked-resolutions-done.md`
 (append-only archive). Read it for context when a feature's history matters;
@@ -42,40 +41,20 @@ Read these before you do anything.
 **API extensions must stay generic:** Unblocking work touches the engine — follow **CONV-029** and `.cursor/rules/v2-framework-boundaries.mdc`. Add **reusable** APIs and declarative hooks, not one-off branches for a single SRD feature name or `srd-*` id.
 
 ────────────────────────────────────────────────────────
-READING THE TRACKER EFFICIENTLY
+FINDING BLOCKED WORK (GitHub)
 ────────────────────────────────────────────────────────
-The tracker (docs/v2-migration-tracker.md) is large. Do NOT read the
-entire file. Instead:
-
-  1. Read lines 1–20 (the Summary table) to understand global progress.
-  2. To find the Blocked / API Extension Requests table: use Grep to
-     search for `| Open |` or `| In Progress |` in the tracker.
-     Or read from the bottom of the file (the Blocked table is at the end).
-  3. When you need to EDIT a feature row, read only the section around
-     that feature (use offset/limit).
-  4. After editing, re-read lines 1–20 to verify your Summary table update.
-
-NEVER read the full tracker file in one pass.
+Use `npm run v2:human-queue -- --json` (design queue) or GitHub search for
+`label:v2-migration label:v2-kind:blocked` and status **Open** / **In Progress**.
+Use `docs/v2-migration-tracker-snapshot.md` for Summary counts. Do not assume a markdown tracker file exists.
 
 ────────────────────────────────────────────────────────
 STEP 1 — CLAIM A RESOLUTION
 ────────────────────────────────────────────────────────
-1. Find the **active** Blocked / API Extension Requests table in
-   `docs/v2-migration-tracker.md` (only `Open` or `In Progress` rows).
-2. Pick the first row with Status `Open` — or the specific resolution
-   the user named.
-3. Generate your unique agent ID NOW (e.g. `unblock-<3–4 random chars>`).
-   Pick it before writing — use the SAME ID for all rows in this resolution.
-4. In a single edit:
-   - Set that row's Status to `In Progress`.
-   - Set Agent to your ID.
-5. **VERIFY YOUR CLAIM** — immediately re-read that exact row from the tracker.
-   • If the `Agent` field shows YOUR ID → you own it. Proceed.
-   • If it shows a DIFFERENT ID → another agent wrote after you. Treat this
-     row as taken: revert your edit, skip it, and repeat from the top (find
-     the next `Open` row).
-6. ANNOUNCE the resolution and its Features to the user before
-   starting work. Quote the SRD Requirement and Notes from the table.
+1. Find the next **Open** Blocked Issue (or the specific resolution the user named).
+2. Generate your unique agent ID NOW (e.g. `unblock-<3–4 random chars>`).
+3. **PATCH** the Issue: set `v2-status:In Progress`, set `agent` in JSON body to your ID.
+4. **VERIFY YOUR CLAIM** — re-fetch the Issue; if another agent claimed it, abort and pick another.
+5. ANNOUNCE the resolution and affected features before starting work. Quote SRD Requirement and Notes from the Issue body.
 
 ────────────────────────────────────────────────────────
 CLASS / SUBCLASS RESOLUTIONS — V1 AS INSPIRATION (NOT A TEMPLATE)
@@ -98,7 +77,7 @@ declarative keys, documented hooks, and tests — old IoC patterns are a
 ────────────────────────────────────────────────────────
 STEP 2 — IMPLEMENT THE RESOLUTION
 ────────────────────────────────────────────────────────
-1. Read the Resolution, SRD Requirement, and Notes from the table row.
+1. Read the Resolution, SRD Requirement, and Notes from the Issue body.
 2. Implement the engine change in the relevant file(s):
    - `src/features-v2/engine/table.js` (new API methods / context fields)
    - `src/features-v2/engine/chip-system.js` (chip API extensions)
@@ -141,23 +120,15 @@ STEP 4 — STOP AND SHOW THE USER
 ────────────────────────────────────────────────────────
 STEP 5 — AFTER USER APPROVAL
 ────────────────────────────────────────────────────────
-1. **Move the row out of the active queue:**
-   a. **Append** the full row (same columns, Status `Done`) to the table in
-      `docs/v2-blocked-resolutions-done.md`.
-   b. **Remove** that row from the active Blocked table in
-      `docs/v2-migration-tracker.md`.
-   c. Update the "Last updated" line at the bottom of both files if present.
+1. **Archive and close the resolution Issue:**
+   a. **Append** a Done entry to `docs/v2-blocked-resolutions-done.md` (resolution id, features, engine change summary).
+   b. **PATCH** the Blocked Issue: set label **`v2-status:Done`** (or close with a closing comment linking the PR), clear `agent` if your workflow requires it.
+   c. Run `npm run v2:sync-tracker-md` so `docs/v2-migration-tracker-snapshot.md` reflects counts.
 
-2. **Promote features in the main tracker** (Feature Checklists in
-   `v2-migration-tracker.md`):
-   For each feature listed in the moved row's Features column:
-   a. Check whether **any row in the active Blocked table** still lists
-      that feature. (Done rows are only in the archive now.)
-   b. If **no** active row lists that feature:
-      - Set that feature's Status to `Done` (the unblocking agent implemented
-        the feature as part of the resolution).
-      - Update the Summary table: Blocked −1, Done +1 as appropriate.
-   c. If an active row still lists the feature, it stays `Blocked`.
+2. **Promote dependent feature Issues** (if the resolution unblocked specific features):
+   For each feature named in the resolution:
+   a. If **no other Open** Blocked Issue still lists that feature as blocked, **PATCH** that feature Issue to **`v2-status:Done`** (or whatever your team uses when the engine API landed).
+   b. If another Open Blocked Issue still covers it, leave that feature Issue unchanged.
 
 3. Apply DOCUMENTATION JUDGMENT:
    - Update `docs/feature-authoring-guide.md` if the new API is
@@ -165,7 +136,6 @@ STEP 5 — AFTER USER APPROVAL
      refinements).
    - Update `docs/v2-code-conventions.md` if there is an internal
      implementation rule.
-   - Update the "Last updated" line at the bottom of the migration tracker.
 
 4. Announce: what you changed, which features (if any) were fully
    unblocked, and what resolutions remain for partially-unblocked
@@ -191,19 +161,15 @@ After any resolution, decide which docs need updating:
 ────────────────────────────────────────────────────────
 THINGS TO NEVER DO
 ────────────────────────────────────────────────────────
-- Do NOT claim a row already marked `In Progress` — another agent owns it.
-- Do NOT skip the post-write re-read claim verification step.
-- Do NOT mark a resolution Done or move it to the archive without the user's explicit approval.
+- Do NOT claim an Issue already marked `In Progress` by another agent — re-fetch and verify.
+- Do NOT skip the post-PATCH re-read claim verification step.
+- Do NOT mark a resolution Done or archive it without the user's explicit approval.
 - Do NOT process more than one resolution before stopping for user
   verification.
 - Do NOT start working before announcing the resolution.
 - Do NOT skip re-reading the instruction and convention files.
-- Do NOT leave a feature's Status as `Blocked` if no **active** Blocked row
-  lists that feature — always promote it to `Done`.
-- Do NOT change a feature's Status to `Done` if any **active** row in
-  the Blocked table still lists that feature.
-- Do NOT add new resolution rows to the active Blocked table without user
-  instruction — only the Validation Agent or the user may do that.
+- Do NOT leave a feature Issue as `Blocked` if no **Open** Blocked Issue still
+  blocks that feature — promote per team rules.
+- Do NOT add new Blocked Issues without user or Validation Agent instruction.
 - Do NOT leave failing tests.
-- Do NOT read the entire tracker file. Use the READING THE TRACKER
-  EFFICIENTLY protocol above.
+- Do NOT scrape the whole repo for tracker state — use the GitHub queue / snapshot / targeted Issue fetches above.

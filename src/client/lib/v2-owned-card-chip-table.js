@@ -2,7 +2,8 @@
  * Shared Game Table path for V2 card chips (hover sheet + character panel).
  */
 
-import { postActionNotification, postLifeSupportSelect, postTableOp } from './api.js';
+import { postActionNotification, postCharacterUpdate, postLifeSupportSelect, postTableOp } from './api.js';
+import { mergeUpdatesForInstance } from './v2-merge-element-updates.js';
 import { buildActionForFeatureUse } from './feature-actions.js';
 import { activateV2OwnedCardChip } from './v2-cross-sheet-lifecycle.js';
 import { applyV2LifecycleMutations } from './table-ops.js';
@@ -10,8 +11,12 @@ import { getFeatureUsageCycleForV2Chip } from '../../features-v2/engine/chip-sys
 import { getFeatureUsageKeyForGuideFeature } from './feature-usage-key.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './v2-action-notification-dice.js';
 
+export { mergeUpdatesForInstance } from './v2-merge-element-updates.js';
+
 /**
  * Apply engine mutations from a successful {@link activateV2OwnedCardChip} result (post `postTableOp` + optional action-loop banners).
+ * @param {(p: { rollText: string, displayName: string, rollMeta: object }) => void} [onSheetActionRoll] — one callback per **`sheetActionRoll`** mutation from feature **`onUse`** calling **`table.sheet.actionRoll`** (`src/features-v2/engine/table.js`).
+ * @param {boolean} [isPlayer] — when true, apply only patches for `el.instanceId` via {@link postCharacterUpdate} (assigned player sheet).
  * @returns {boolean} — false if the result was an error path
  */
 export function applyV2OwnedCardChipEngineResultToTable({
@@ -22,6 +27,8 @@ export function applyV2OwnedCardChipEngineResultToTable({
   activeElementsForV2Snapshots,
   tableId,
   onActionLoopNotification,
+  onSheetActionRoll,
+  isPlayer = false,
 }) {
   const { mutations, error, engineChip } = result;
   if (
@@ -33,11 +40,16 @@ export function applyV2OwnedCardChipEngineResultToTable({
   ) {
     return false;
   }
-  const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+  const { updates, actionLoopNotifications, sheetActionRolls } = applyV2LifecycleMutations(
     activeElementsForV2Snapshots,
     mutations,
     el.instanceId
   );
+  if (Array.isArray(sheetActionRolls) && typeof onSheetActionRoll === 'function') {
+    for (const p of sheetActionRolls) {
+      onSheetActionRoll(p);
+    }
+  }
   const usageCycle = engineChip ? getFeatureUsageCycleForV2Chip(engineChip) : null;
   const usageKey = passedFeatureKey || featRow.name;
   if (usageCycle && usageKey) {
@@ -52,7 +64,14 @@ export function applyV2OwnedCardChipEngineResultToTable({
     }
   }
   if (updates.length > 0) {
-    postTableOp({ op: 'update-elements', updates }, tableId);
+    if (isPlayer && tableId) {
+      const patch = mergeUpdatesForInstance(updates, el.instanceId);
+      if (Object.keys(patch).length > 0) {
+        postCharacterUpdate(tableId, el.instanceId, patch).catch(() => {});
+      }
+    } else {
+      postTableOp({ op: 'update-elements', updates }, tableId);
+    }
   }
   for (const p of actionLoopNotifications) {
     const baseDesc = p.description || '';
@@ -136,6 +155,7 @@ export async function applyDeferredV2ToggleOnAckFromRoll({
     activeElementsForV2Snapshots,
     tableId,
     onActionLoopNotification,
+    isPlayer: false,
   });
 }
 
@@ -154,6 +174,9 @@ export async function applyDeferredV2ToggleOnAckFromRoll({
  * @param {object|null} [args.mapConfig]
  * @param {string} [args.tableId]
  * @param {(n: object) => void} [args.onActionLoopNotification] — e.g. GMTableView handleActionNotification
+ * @param {(rollText: string, displayName: string, rollMeta: object, ctx: { characterEl: object }) => void} [args.onRoll] — VTT dice; also receives **`sheetActionRoll`** payloads from **`table.sheet.actionRoll`**
+ * @param {object} [args.placementShape] — same **`shape`** object reference as **`cards[].shape`** when chips use **`placements: [shape]`** (`collectChipsForShapePlacement` in `chip-system.js`)
+ * @param {boolean} [args.isPlayer] — use {@link postCharacterUpdate} instead of {@link postTableOp}
  */
 export async function runV2OwnedCardChipTableAction({
   featRow,
@@ -169,14 +192,21 @@ export async function runV2OwnedCardChipTableAction({
   mapConfig,
   tableId,
   onActionLoopNotification,
+  onRoll,
+  placementShape,
+  isPlayer = false,
 }) {
   if (!v2Registry || !el?.instanceId || !Array.isArray(activeElementsForV2Snapshots)) return;
   if (!featRow?.name || !chip) return;
+  const usageStore =
+    el?.featureUsage && typeof el.featureUsage === 'object' ? el.featureUsage : {};
   const result = activateV2OwnedCardChip(displayEl, featRow.name, chip, activeElementsForV2Snapshots, v2Registry, {
     tableFeatureState,
     fearCount,
     mapConfig,
     selectOpts,
+    placementShape,
+    usageStore,
   });
   if (result.deferToBannerAck) {
     const action = buildActionForFeatureUse(displayEl, featRow, null);
@@ -231,6 +261,13 @@ export async function runV2OwnedCardChipTableAction({
     }
     return;
   }
+  const onSheetActionRoll =
+    typeof onRoll === 'function'
+      ? (p) =>
+          onRoll(p.rollText, p.displayName || featRow.name, p.rollMeta || {}, {
+            characterEl: el,
+          })
+      : undefined;
   applyV2OwnedCardChipEngineResultToTable({
     result,
     featRow,
@@ -239,5 +276,7 @@ export async function runV2OwnedCardChipTableAction({
     activeElementsForV2Snapshots,
     tableId,
     onActionLoopNotification,
+    onSheetActionRoll,
+    isPlayer,
   });
 }

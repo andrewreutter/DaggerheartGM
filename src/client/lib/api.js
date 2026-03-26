@@ -13,14 +13,28 @@ function apiHeaders(extra = {}) {
 let firebaseConfig;
 export let imageGenEnabled = false;
 export let supabaseStorageBase = null;
+export let devAgentQueueEnabled = false;
 try {
   const res = await fetch('/api/config', { headers: apiHeaders() });
   const json = await res.json();
   firebaseConfig = json.firebaseConfig;
   imageGenEnabled = !!json.imageGenEnabled;
   supabaseStorageBase = json.supabaseStorageBase || null;
+  devAgentQueueEnabled = !!json.devAgentQueueEnabled;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);
+}
+
+/** Re-fetch from server (e.g. after changing `.env` + restart) — module-level `devAgentQueueEnabled` only updates on full page load. */
+export async function fetchDevAgentQueueEnabled() {
+  try {
+    const res = await fetch('/api/config', { headers: apiHeaders() });
+    if (!res.ok) return false;
+    const json = await res.json();
+    return !!json.devAgentQueueEnabled;
+  } catch {
+    return false;
+  }
 }
 
 let app, auth;
@@ -54,11 +68,44 @@ export const fetchFeatureSource = async (relativePath) => {
   return res.json();
 };
 
+/** Dev agent queue (admin + DEV_AGENT_QUEUE_ENABLED). Returns `{ issues }` or `{ issues: [], disabled: true }` when API is off. */
+export const fetchDevAgentIssues = async (relativePath) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams();
+  if (relativePath) params.set('path', relativePath);
+  const res = await fetch(`/api/dev-agent/issues?${params}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (res.status === 404) return { issues: [], disabled: true };
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** Enqueue a dev-agent GitHub Issue for the given V2 feature path. */
+export const postDevAgentQueue = async ({ path, kind, message }) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/dev-agent/queue', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ path, kind, message }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /**
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, includeFcg = false, search = '', tier = null, tiers = [], type = null, types = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20 } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20 } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -66,7 +113,6 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (includeSrd) params.set('includeSrd', '1');
   if (includePublic) params.set('includePublic', '1');
   if (includeHod) params.set('includeHod', '1');
-  if (includeFcg) params.set('includeFcg', '1');
   if (search) params.set('search', search);
   if (Array.isArray(tiers) && tiers.length > 0) {
     tiers.forEach(t => params.append('tier', String(t)));
@@ -77,6 +123,9 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
     types.forEach(t => params.append('type', t));
   } else if (type) {
     params.set('type', type);
+  }
+  if (Array.isArray(extraTypes) && extraTypes.length > 0) {
+    extraTypes.forEach(t => params.append('type2', t));
   }
   if (includeScaledUp) params.set('includeScaledUp', '1');
   if (sort) params.set('sort', sort);
@@ -101,7 +150,6 @@ export const loadCollectionStream = async (collection, opts, { onBatch, onEnrich
   if (opts.includeSrd) params.set('includeSrd', '1');
   if (opts.includePublic) params.set('includePublic', '1');
   if (opts.includeHod) params.set('includeHod', '1');
-  if (opts.includeFcg) params.set('includeFcg', '1');
   if (opts.search) params.set('search', opts.search);
   if (Array.isArray(opts.tiers) && opts.tiers.length > 0) {
     opts.tiers.forEach(t => params.append('tier', String(t)));
@@ -276,23 +324,6 @@ export const recordPlay = async (collectionName, itemId) => {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 };
 
-/**
- * Search FCG for items (used by Feature Library independent toggle).
- * @returns {{ adversaries, environments }}
- */
-export const loadFcgSearch = async ({ search = '', tier } = {}) => {
-  const token = await getAuthToken();
-  if (!token) throw new Error('Not signed in');
-  const params = new URLSearchParams();
-  if (search) params.set('search', search);
-  if (tier) params.set('tier', String(tier));
-  const res = await fetch(`/api/fcg-search?${params}`, {
-    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-};
-
 const GZIP_THRESHOLD = 100 * 1024; // compress payloads > 100KB
 async function maybeCompressBody(bodyStr) {
   if (bodyStr.length < GZIP_THRESHOLD) return { body: bodyStr, encoding: null };
@@ -430,6 +461,7 @@ export const postRoll = async (rollText, displayName, tableId = null, rollMeta =
     ...rest,
     _attackerInstanceId: rest._attackerInstanceId ?? attackerId,
     _selectedTargetInstanceId: rest._selectedTargetInstanceId ?? targetId,
+    ...(tableId != null ? { tableId } : {}),
   };
   const res = await fetch(url, {
     method: 'POST',
@@ -438,7 +470,10 @@ export const postRoll = async (rollText, displayName, tableId = null, rollMeta =
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    const err = new Error(body.error || `HTTP ${res.status}`);
+    if (body.playBlocked) err.playBlocked = body.playBlocked;
+    err.status = res.status;
+    throw err;
   }
   return normalizeRoll(await res.json());
 };
@@ -453,7 +488,7 @@ export const postRollSilent = async (rollText, displayName = '', tableId = null)
   return { ...rollData, value };
 };
 
-/** Returns { isAdmin } for the currently signed-in user. */
+/** Returns `{ isAdmin, isQa }` for the currently signed-in user. */
 export const fetchMe = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -558,7 +593,12 @@ export const postCharacterUpdate = async (tableId, instanceId, updates) => {
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ instanceId, updates }),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error || `HTTP ${res.status}`);
+    if (body.playBlocked) err.playBlocked = body.playBlocked;
+    throw err;
+  }
   return res.json();
 };
 
@@ -644,15 +684,18 @@ export const clearPlayerIntent = async (tableId) => {
  * tableId: null = GM mode (POST /api/room/my/action), string = player mode (POST /api/room/:tableId/action).
  * Best-effort — errors are swallowed.
  */
-export const postActionNotification = async (notification, tableId = null) => {
+export const postActionNotification = async (notification, tableId = null, opts = {}) => {
   const token = await getAuthToken();
   if (!token) return null;
   const url = tableId ? `/api/room/${tableId}/action` : '/api/room/my/action';
   try {
+    const body = { ...notification, _clientId: CLIENT_ID };
+    if (tableId != null && url === '/api/room/my/action') body.tableId = tableId;
+    if (opts.bypassPrepGate) body.bypassPrepGate = true;
     const resp = await fetch(url, {
       method: 'POST',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ ...notification, _clientId: CLIENT_ID }),
+      body: JSON.stringify(body),
     });
     return resp.ok ? resp.json() : null;
   } catch { return null; }
@@ -679,6 +722,33 @@ export const postTableOp = async (op, tableId = null) => {
 };
 
 /**
+ * GM: apply a table op and await success. Throws on HTTP error; `err.playBlocked` may be set for prep/pause gates.
+ */
+export const postTableOpAwait = async (op, tableId = null) => {
+  const token = await getAuthToken();
+  if (!token) {
+    const err = new Error('Not signed in');
+    err.code = 'NO_AUTH';
+    throw err;
+  }
+  const body = { ...op, _clientId: CLIENT_ID };
+  if (tableId != null) body.tableId = tableId;
+  const res = await fetch('/api/room/my/op', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    if (data.playBlocked) err.playBlocked = data.playBlocked;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+};
+
+/**
  * GM: acknowledge or cancel a banner in the server-authoritative queue.
  * action: 'acknowledge' | 'cancel'
  * options: { wingsOfLightD8?: true } — when acknowledge and wingsOfLightD8, server deducts Hope, rolls d8, returns wingsOfLightD8Result.
@@ -701,7 +771,7 @@ export const postBannerAck = async (bannerId, action, options = {}) => {
  * GM: reroll only the Hope die (Feline Instincts). Sends current roll data; server returns new roll.
  * Cost (2 Hope) is applied by the client before calling this. Do not pass _felineInstinctsHopeCost.
  */
-export const postRerollHopeDie = async (roll) => {
+export const postRerollHopeDie = async (roll, tableId = null) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const preserved = {};
@@ -716,6 +786,7 @@ export const postRerollHopeDie = async (roll) => {
       displayName: roll.rollUser || roll.characterName || roll.displayName || '',
       previousSubItems: roll.subItems,
       ...preserved,
+      ...(tableId != null ? { tableId } : {}),
     }),
   });
   if (!res.ok) {
@@ -757,7 +828,7 @@ export const postBannerFeatureRequest = postBannerGenericRerollRequest;
 /**
  * GM: reroll Hope and Fear dice only (Ranger's Focus). Focus is cleared by the client before calling.
  */
-export const postRerollDualityDice = async (roll) => {
+export const postRerollDualityDice = async (roll, tableId = null) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const preserved = {};
@@ -772,6 +843,7 @@ export const postRerollDualityDice = async (roll) => {
       displayName: roll.rollUser || roll.characterName || roll.displayName || '',
       previousSubItems: roll.subItems,
       ...preserved,
+      ...(tableId != null ? { tableId } : {}),
     }),
   });
   if (!res.ok) {
@@ -806,11 +878,12 @@ export const postBannerChipResolve = async (tableId, { bannerId, stateKey, actio
  * When suppressAncestryFeature is set (e.g. 'Kick'), only that feature's chip is hidden on the new banner.
  * Returns { roll } with _rollDbId.
  */
-export const postBannerAddDamage = async (bannerId, { extraDamage, extraDamageLabel, narration, suppressAncestryFeature }) => {
+export const postBannerAddDamage = async (bannerId, { extraDamage, extraDamageLabel, narration, suppressAncestryFeature, tableId = null }) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const body = { bannerId, extraDamage, extraDamageLabel: extraDamageLabel || 'Kick', narration };
   if (suppressAncestryFeature != null) body.suppressAncestryFeature = suppressAncestryFeature;
+  if (tableId != null) body.tableId = tableId;
   const res = await fetch('/api/room/my/banner-add-damage', {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
@@ -868,11 +941,12 @@ export const postBannerActionAddStatic = async (bannerId, { value, name, tableId
  * Body: { bannerId, dieType: 'Hope'|'Fear', suppressAncestryFeature? }. New banner has that die rerolled, others preset; only that chip is hidden.
  * Returns { roll } with _rollDbId.
  */
-export const postBannerRerollDie = async (bannerId, { dieType, suppressAncestryFeature }) => {
+export const postBannerRerollDie = async (bannerId, { dieType, suppressAncestryFeature, tableId = null }) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const body = { bannerId, dieType };
   if (suppressAncestryFeature != null) body.suppressAncestryFeature = suppressAncestryFeature;
+  if (tableId != null) body.tableId = tableId;
   const res = await fetch('/api/room/my/banner-reroll-die', {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),

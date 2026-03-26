@@ -19,6 +19,7 @@ In **framework** and **bridge** code, do **not**:
 - Branch on **`srd-*` IDs** (e.g. `classId === 'srd-cls-bard'`, `abilityId === 'srd-abl-…'`) to special-case one feature.
 - Add `switch` / long `if` chains keyed by **known feature names** in `engine/`, `chip-system.js`, `table.js`, `when.js`, `action-loop.js`, or client `v2-*.js` bridges.
 - Encode **one feature’s** UI or table behavior in `GMTableView.jsx` / `DiceRoller.jsx` **by name** instead of by **generic roll meta**, **mutation shapes**, or **data on `activeFeatures` rows** (see authoring guide).
+- Add **dedicated** character-sheet or form **components** in shared UI (e.g. `CharacterDisplay.jsx`, `CharacterForm.jsx`) that only exist for **one** SRD feature, or branch on **`shapeId`** / feature name there. Use **declarative `cards`** with a **file-local** JSON Schema **`shape`** on the feature module and the **generic** `DeclarativeSchemaCard.jsx` pipeline instead (see **CONV-029** subsection *Declarative `cards` (sheet/editor) and JSON Schema* in `docs/v2-code-conventions.md`).
 
 ## Allowed
 

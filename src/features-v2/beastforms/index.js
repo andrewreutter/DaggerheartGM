@@ -37,7 +37,7 @@ import { features as mythicBeastFeatures } from './MythicBeast.js';
 import { features as mythicHybridFeatures } from './MythicHybrid.js';
 
 /** @type {Record<string, object[]>} */
-const BEASTFORM_FEATURE_LISTS = {
+export const BEASTFORM_FEATURE_LISTS = {
   'srd-bst-agile-scout': agileScoutFeatures,
   'srd-bst-household-friend': householdFriendFeatures,
   'srd-bst-nimble-grazer': nimbleGrazerFeatures,

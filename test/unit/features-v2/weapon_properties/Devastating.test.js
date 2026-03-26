@@ -6,6 +6,13 @@ import { buildTableSnapshot } from '../../../../src/features-v2/engine/table.js'
 import { mockGameState, mockRoll } from '../helpers.js';
 
 describe('Devastating', () => {
+  it('computeWeaponRenderHints hides duplicate card toggle for VTT intent surface', () => {
+    const hints = Devastating.computeWeaponRenderHints({
+      source: { id: 'w-mace' },
+    });
+    expect(hints['w-mace']).toEqual({ hideDevastatingCardToggle: true });
+  });
+
   it('offers an intent toggle chip when acting', () => {
     const { chips } = runIntent(Devastating, {
       action: mockAction({ type: 'attack' }),

@@ -11,6 +11,15 @@ import { useState, useRef, useEffect, useCallback } from 'react';
  *   // On the trigger element:
  *   <div {...overlay.triggerProps(myData)}>
  *
+ * mode: 'hover' (default) | 'click' — desktop uses click to open/close instead of hover.
+ * When mode is 'click', pass getClickToggleKey(data) to return an id so clicking the same
+ * trigger again closes the overlay; clicking a different trigger replaces it.
+ * Desktop click mode also dismisses on mousedown outside the overlay and outside the active trigger
+ * unless disableDesktopOutsideDismiss is true (e.g. Game Table character sheet: close via trigger
+ * toggle or explicit close(); play actions still call dismiss from parents).
+ * Optional suppressOutsideDismissRef: when `.current` is true, outside dismiss is skipped (e.g. while
+ * a portaled editor is active and targets may be outside the overlay subtree).
+ *
  *   // On the overlay element:
  *   {overlay.isOpen && <div ref={overlay.overlayRef} {...overlay.overlayHandlers}>...</div>}
  *
@@ -20,7 +29,14 @@ import { useState, useRef, useEffect, useCallback } from 'react';
  * overlay.close() — close immediately
  * overlay.triggerRef — ref to attach to the trigger element (used for outside-tap detection)
  */
-export function useHoverOverlay({ hideDelay = 120, isTouch = false } = {}) {
+export function useHoverOverlay({
+  hideDelay = 120,
+  isTouch = false,
+  mode = 'hover',
+  getClickToggleKey,
+  suppressOutsideDismissRef = null,
+  disableDesktopOutsideDismiss = false,
+} = {}) {
   const [data, setData] = useState(null);
   const timerRef = useRef(null);
   const overlayRef = useRef(null);
@@ -60,6 +76,7 @@ export function useHoverOverlay({ hideDelay = 120, isTouch = false } = {}) {
   useEffect(() => {
     if (!isTouch || !isOpen) return;
     const handler = (e) => {
+      if (suppressOutsideDismissRef?.current) return;
       const inOverlay  = overlayRef.current  && overlayRef.current.contains(e.target);
       // Use activeTouchTriggerRef (set in onClick) rather than triggerRef (which
       // React overwrites to the last-rendered element when many cards share the hook).
@@ -72,6 +89,21 @@ export function useHoverOverlay({ hideDelay = 120, isTouch = false } = {}) {
     return () => document.removeEventListener('touchstart', handler);
   }, [isTouch, isOpen]);
 
+  // Desktop mode === 'click': dismiss on mousedown outside overlay + active trigger
+  useEffect(() => {
+    if (isTouch || mode !== 'click' || !isOpen || disableDesktopOutsideDismiss) return;
+    const handler = (e) => {
+      if (suppressOutsideDismissRef?.current) return;
+      const inOverlay = overlayRef.current && overlayRef.current.contains(e.target);
+      const inTrigger = activeTouchTriggerRef.current && activeTouchTriggerRef.current.contains(e.target);
+      if (!inOverlay && !inTrigger) {
+        setData(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isTouch, mode, isOpen, disableDesktopOutsideDismiss]);
+
   // Clean up timer on unmount
   useEffect(() => () => clearTimer(), [clearTimer]);
 
@@ -80,6 +112,20 @@ export function useHoverOverlay({ hideDelay = 120, isTouch = false } = {}) {
    * dataOrFn: the overlay data value, or a function (e) => data for event-based data extraction.
    * If the resolved value is null or undefined the overlay will not open.
    */
+  const applyClickOverlayData = useCallback((e, resolve) => {
+    const next = resolve(e);
+    if (next === null || next === undefined) return;
+    setData((prev) => {
+      if (getClickToggleKey) {
+        const nk = getClickToggleKey(next);
+        const pk = prev != null ? getClickToggleKey(prev) : null;
+        if (pk != null && nk != null && pk === nk) return null;
+        return next;
+      }
+      return prev !== null ? null : next;
+    });
+  }, [getClickToggleKey]);
+
   const triggerProps = useCallback((dataOrFn) => {
     const resolve = (e) => typeof dataOrFn === 'function' ? dataOrFn(e) : dataOrFn;
     if (isTouch) {
@@ -89,10 +135,18 @@ export function useHoverOverlay({ hideDelay = 120, isTouch = false } = {}) {
           // correctly identify it as "in trigger" even when multiple cards
           // share the same hook instance.
           activeTouchTriggerRef.current = e.currentTarget;
-          // Toggle: if already showing, close; otherwise open with resolved data.
-          const next = resolve(e);
-          if (next === null || next === undefined) return;
-          setData(prev => prev !== null ? null : next);
+          applyClickOverlayData(e, resolve);
+        },
+      };
+    }
+    if (mode === 'click') {
+      return {
+        onMouseDown: (e) => {
+          // Same ref as touch: outside-dismiss must see which card is “active” before click completes.
+          activeTouchTriggerRef.current = e.currentTarget;
+        },
+        onClick: (e) => {
+          applyClickOverlayData(e, resolve);
         },
       };
     }
@@ -104,7 +158,7 @@ export function useHoverOverlay({ hideDelay = 120, isTouch = false } = {}) {
       },
       onMouseLeave: scheduleClose,
     };
-  }, [isTouch, show, scheduleClose]);
+  }, [isTouch, mode, show, scheduleClose, applyClickOverlayData]);
 
   /**
    * Props to spread on the overlay element (desktop only — keeps overlay open

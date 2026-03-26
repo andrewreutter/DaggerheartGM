@@ -61,7 +61,7 @@ export async function signOut() {}
  * Mocks:
  *   - Firebase CDN JS (app + auth) with in-memory stubs
  *   - /api/config  → minimal config, no image gen
- *   - /api/me      → { isAdmin: false }
+ *   - /api/me      → { isAdmin: false, isQa: false }
  *   - /api/my-rooms → { rooms: [] }
  *   - /api/data/table_state → empty table state
  */
@@ -86,7 +86,7 @@ export async function authenticate(page) {
   await page.route('/api/me', (route) => {
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ isAdmin: false }),
+      body: JSON.stringify({ isAdmin: false, isQa: false }),
     });
   });
 

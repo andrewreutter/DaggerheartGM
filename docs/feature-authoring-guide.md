@@ -283,6 +283,15 @@ The same `table` object is passed to every hook and conditional wrapper, providi
 
 While passive behaviors happen automatically, active behaviors require a player to make a decision. In DaggerheartGM, every interactive button, toggle, or action is defined as a **Chip**.
 
+**Declarative template cards (`cards` array):** Each entry is **`{ placement, shape?, resolve }`** (normalized; see **`normalizeCardEntry`**, **`buildCardsForFeature`** in `chip-system.js`).
+
+- **`placement: 'sheet'`** — Runtime character sheet: **`collectSheetCards`** / **`collectSheetCardsForCharacter`** evaluate **`resolve`** against **`buildTableSnapshot`**. Rendered by **`DeclarativeSchemaSheetCard`** / **`CharacterSheetDeclarativeCards`** (e.g. Beastbound companion panel).
+- **`placement: 'editor'`** — Character builder: **`collectEditorCards`** / **`collectEditorCardsForCharacter`** use **`buildEditorTableStub(formCharacter)`**. Rendered by **`DeclarativeSchemaEditorCard`**; optional **`anchors`** (e.g. `{ afterSelector: 'subclassId' }`) control form order.
+
+**`shape`** (optional) is a **file-local** bundle: **`id`**, **`version`**, **`bind`** (e.g. `{ kind: 'character', path: 'companion' }`), **`jsonSchema`** — an author fragment (`required`, `properties`, nested `items`; no root `type: 'object'` / `$id` in the source file). **`resolve`** uses the same **`when(...)`** rules as `chips`. Resolved leaves include **`shapeId`** (matching **`shape.id`**) plus payload fields. **DH-only JSON Schema types** (see **`docs/feature-cheatsheet.md`**): **`trackedState`**, **`attack`** — mapped to validator-friendly types at bootstrap. The **generic** renderers branch only on schema **`type`**, not on feature names.
+
+**Extra / shape-anchored chips (below the template):** To attach **interactive chips** under a specific declarative card (outside JSON Schema fields), add **`chips`** with **`placements: [sameShapeRef]`** where **`sameShapeRef`** is the **same object reference** as **`cards[].shape`**. The client collects them with **`collectChipsForShapePlacement`** and passes **`placementShape`** into activation so the engine resolves the correct chip. Implement **`onUse(table, chipState)`**; the framework does **not** assume sending a dice roll — only chips that choose to do so should call **`table.sheet.actionRoll({ rollText, displayName?, rollMeta? })`** (`src/features-v2/engine/table.js`); the host strips **`sheetActionRoll`** mutations and runs the normal VTT roll pipeline. Optional **`hideFromGuideFeatureList: true`** omits a registry-only row from guide ordering.
+
 As we learned in Section 1.2, you can define a single "Default Card Action" by putting properties at the root of your feature. But if your feature needs to offer multiple choices, or if it needs to interrupt a roll, you will define an explicit array of `chips`.
 
 ### 3.1 What is a Chip?
@@ -325,6 +334,7 @@ The `placements` array tells the engine where in the UI (and when in the Action 
 - `'intent'`': The chip appears during the **Intent** phase, *before* dice are rolled. 
 - `'reviewAction'`: The chip appears during the **Review Action** phase, *after* dice are rolled but *before* the engine applies damage thresholds to calculate HP/Stress loss. Use this for: rerolling dice (e.g. spending Hope to reroll the Hope Die), adding extra damage dice, modifying raw damage values (e.g. halving incoming physical damage before thresholds), temporary Evasion reactions, and movement/positioning reactions. In short: if your chip reacts to the roll *result* but changes something *before* HP boxes are marked, it is `reviewAction`.
 - `'reviewOutcome'`: The chip appears during the **Review Outcome** phase, *after* dice are rolled and *after* damage thresholds have already converted raw damage into HP/Stress loss effects. Use this **only** when the feature reduces (or otherwise modifies) the final number of HP or Stress *boxes* that will be marked — e.g., "mark 1 fewer Hit Point" or "mark 2 Stress instead of 1 HP". If you are not reading `e.stat === 'currentHP'` or `e.stat === 'currentStress'` effects, you almost certainly want `reviewAction` instead.
+- `'rest'`: The chip appears on the **Short Rest / Long Rest** banner (per character column) while the GM is resolving that rest — not on the dice roll review strip. The engine builds a synthetic `table` with `action.type === 'shortRest'` or `'longRest'` matching the rest kind. Use for consumables or features that should fire *during* rest resolution (e.g. drink a potion before picking downtime moves). **Extra downtime move slots** granted by a rest chip must still go through **CONV-011** (`passiveStatMods` with `numShortRestSlots` / `numLongRestSlots` / `numLongMovesInShortRest`, often behind `when()` plus `table.source` / scope-bag flags set in `onUse`) so slot counts update before the player fills move dropdowns. Example: **Sweet Moss** uses `when(isRestAction)` with `placement: ['rest']`. A broader **rest-adjacent** pattern summary (what belongs on the banner vs `hooks.onRest` on acknowledge) lives in **`docs/rest-adjacent-audit.md`**.
 
 ### 3.3 Costs, Frequencies, and Lifting
 
@@ -870,7 +880,7 @@ onRender(table) {
 - Wrap the handler in **`when(...)`** if it should only run under certain predicates.
 - After **`onRender`**, the engine copies **`isDisabled` / `disabledReason`** from that ephemeral **`table.source`** into **`weaponRenderHints[weaponId]`** for merge onto the character element (same pattern as `_rangeOverrides` / `substituteArmorForHope`).
 - **`table.me.primaryWeapon`**, **`secondaryWeapon`**, and **`weapons`** include **`isDisabled`** / **`disabledReason`** when hints are merged onto the element before **`buildTableSnapshot`**.
-- **Host UI** (Game Table / character sheet) must respect **`isDisabled`** on weapon views when V2 integration is enabled — see **V2 UI integration backlog** in `docs/v2-migration-tracker.md`.
+- **Host UI** (Game Table / character sheet) must respect **`isDisabled`** on weapon views when V2 integration is enabled — see **V2 UI integration backlog** in ``docs/v2-v1-cutover.md``.
 
 **Persisted feature state during declarative rendering:** For character sheet / stat recomputation, `applyDeclarativeFeatures` merges, in order: `tableBase.featureState` (from `buildTableSnapshot`, i.e. the live game-state bag), then `character.featureState` (character wins on overlapping keys). Values in that bag should come from runtime `table.feature.set(...)` (e.g. in hooks), not from ad hoc element fields. Export `mergeDeclarativeFeatureState(character, tableBase)` if you need the merged bag outside `applyDeclarativeFeatures`.
 
@@ -905,6 +915,7 @@ Chips are interactive UI elements (buttons or toggles) defined in the `chips` ar
   - `'intent'`: On the pre-roll banner during the Intent phase.
   - `'reviewAction'`: On the post-roll banner during the Review Action phase (before thresholds).
   - `'reviewOutcome'`: On the post-roll banner during the Review Outcome phase (after thresholds).
+  - `'rest'`: On the Short/Long Rest banner (`DiceRoller` `RestBanner`), per character, while that rest is open.
 - `onUse` *(function(table, chip))*: The function executed when the chip is clicked (or toggled). The `chip` argument provides access to local chip state (e.g., `chip.isOn`, `chip.set()`). If omitted, the chip will still deduct any specified resource costs or toggle its state, which is useful for chips that purely act as state flags for hooks.
 
 **Optional Properties:**
@@ -1058,7 +1069,7 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `removePrayerDieAt(index)` *(method)*: Queues **`removePrayerDieAt`** after spending a die from **reviewAction** chips.
 - `clearPrayerDicePool()` *(method)*: Queues an empty pool (session end).
 
-**Tag Team (co-op rolls)** — core session allowance is **`DEFAULT_TAG_TEAM_INITIATIONS_PER_SESSION`** (1) from `src/features-v2/engine/table.js`; initiator Hope cost before partner discounts is **`DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST`** (3). Features merge **`extraTagTeamInitiationsPerSession`** and **`tagTeamPartnerHopeDiscount`** from `applyDeclarativeFeatures` onto the element. *Example shape for a future full **Camaraderie** implementation:* +1 initiation; discount `1` so an ally pays 2 Hope instead of 3 when you are the partner — **Camaraderie** is narrative-only in V2 until Tech Debt “Implement **Camaraderie** fully” (`docs/v2-migration-tracker.md`).
+**Tag Team (co-op rolls)** — core session allowance is **`DEFAULT_TAG_TEAM_INITIATIONS_PER_SESSION`** (1) from `src/features-v2/engine/table.js`; initiator Hope cost before partner discounts is **`DEFAULT_TAG_TEAM_INITIATOR_HOPE_COST`** (3). Features merge **`extraTagTeamInitiationsPerSession`** and **`tagTeamPartnerHopeDiscount`** from `applyDeclarativeFeatures` onto the element. *Example shape for a future full **Camaraderie** implementation:* +1 initiation; discount `1` so an ally pays 2 Hope instead of 3 when you are the partner — **Camaraderie** is narrative-only in V2 until Tech Debt “Implement **Camaraderie** fully” (``docs/v2-v1-cutover.md``).
 
 - `extraTagTeamInitiationsPerSession` *(number)*: Added to the core allowance for **`tagTeamInitiationsBudget`** / **`tagTeamInitiationsRemaining`**.
 - `tagTeamPartnerHopeDiscount` *(number)*: Subtracted from the initiator’s cost when **`gameState.action.type === 'tagTeam'`** and **`tagTeamPartnerInstanceId`** points at this character.

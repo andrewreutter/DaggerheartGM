@@ -186,6 +186,20 @@ export function applyTableOp(op, state) {
       delete next[String(op._rollDbId)];
       return { restMovesSelections: next };
     }
+    case 'set-table-top':
+      return {
+        top: {
+          ...(state.top || {}),
+          ...(op.top || {}),
+        },
+      };
+    case 'touch-session-activity':
+      return {
+        top: {
+          ...(state.top || {}),
+          lastPlayActivityAt: Date.now(),
+        },
+      };
     default:
       return {};
   }
@@ -401,12 +415,16 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
 
     switch (type) {
       case 'setFeatureState': {
-        const { featureKey, key, value } = payload;
-        if (!ownerInstanceId || !featureKey) {
+        const { featureKey, key, value, instanceId: payloadInstanceId } = payload;
+        // Prefer outer owner (banner / chip activation) when set; else payload.instanceId from
+        // engine `table.feature.set` (e.g. lifecycle hooks when applyV2LifecycleMutations has no owner).
+        const targetOwner =
+          ownerInstanceId != null && ownerInstanceId !== '' ? ownerInstanceId : payloadInstanceId;
+        if (!targetOwner || !featureKey) {
           skip();
           break;
         }
-        const el = getBase(ownerInstanceId);
+        const el = getBase(targetOwner);
         if (!el || el.elementType !== 'character') {
           skip();
           break;
@@ -415,9 +433,9 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         const bag = { ...(fs[featureKey] || {}) };
         bag[key] = value;
         fs[featureKey] = bag;
-        merge(ownerInstanceId, { featureState: fs });
+        merge(targetOwner, { featureState: fs });
         if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
-          merge(ownerInstanceId, { activeBeastform: null, selectedBeastformAdvantage: null });
+          merge(targetOwner, { activeBeastform: null, selectedBeastformAdvantage: null });
         }
         break;
       }
@@ -693,6 +711,44 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         } else {
           skip();
         }
+        break;
+      }
+      case 'inventoryRemove': {
+        const { instanceId, itemName } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character') {
+          skip();
+          break;
+        }
+        const inv = Array.isArray(el.inventory) ? [...el.inventory] : [];
+        const needle = String(itemName || '').trim();
+        if (!needle) {
+          skip();
+          break;
+        }
+        const idx = inv.findIndex(
+          (it) =>
+            it &&
+            typeof it === 'object' &&
+            (it.name === needle || it.id === needle || String(it.name || '').trim() === needle)
+        );
+        if (idx < 0) {
+          skip();
+          break;
+        }
+        inv.splice(idx, 1);
+        merge(instanceId, { inventory: inv });
+        break;
+      }
+      case 'inventoryAdd': {
+        const { instanceId, item } = payload;
+        const el = getBase(instanceId);
+        if (!el || el.elementType !== 'character' || !item || typeof item !== 'object') {
+          skip();
+          break;
+        }
+        const inv = Array.isArray(el.inventory) ? [...el.inventory, item] : [item];
+        merge(instanceId, { inventory: inv });
         break;
       }
       default:
@@ -1004,14 +1060,33 @@ export function formatV2RollDieMutationLine(m) {
  * @param {object[]} activeElements
  * @param {object[]} mutations
  * @param {string|undefined} setFeatureStateOwnerId — `chip._ownerInstanceId` for `setFeatureState` rows (e.g. Bard for Rally); omit when none
- * @returns {{ updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[], skipped: object[] }}
+ * @returns {{ updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[], skipped: object[], sheetActionRolls: { rollText: string, displayName: string, rollMeta: object }[] }}
  */
 export function applyV2LifecycleMutations(activeElements, mutations, setFeatureStateOwnerId) {
+  /** @type {{ rollText: string, displayName: string, rollMeta: object }[]} */
+  const sheetActionRolls = [];
+  const mutationsForLifecycle = [];
+  for (const m of mutations || []) {
+    if (!m?.type) continue;
+    if (m.type === 'sheetActionRoll') {
+      const p = m.payload;
+      if (p && typeof p === 'object' && typeof p.rollText === 'string' && p.rollText.trim()) {
+        sheetActionRolls.push({
+          rollText: p.rollText.trim(),
+          displayName: p.displayName != null ? String(p.displayName) : '',
+          rollMeta: p.rollMeta && typeof p.rollMeta === 'object' ? p.rollMeta : {},
+        });
+      }
+      continue;
+    }
+    mutationsForLifecycle.push(m);
+  }
+
   const rollDieLines = [];
   /** @type {{ notation?: string, results?: number[], total?: number }[]} */
   const rollDiePayloads = [];
   const mutationsSansRollDie = [];
-  for (const m of mutations || []) {
+  for (const m of mutationsForLifecycle) {
     if (!m?.type) continue;
     if (m.type === 'rollDie') {
       const line = formatV2RollDieMutationLine(m);
@@ -1076,6 +1151,6 @@ export function applyV2LifecycleMutations(activeElements, mutations, setFeatureS
   }
 
   const updates = mergeElementUpdatesByInstance(conditionUpdates, bannerUpdates);
-  return { updates, actionLoopNotifications, skipped };
+  return { updates, actionLoopNotifications, skipped, sheetActionRolls };
 }
 

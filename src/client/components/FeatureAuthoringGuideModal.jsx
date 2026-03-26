@@ -51,9 +51,9 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
         onClose={onClose}
       />
       <div className="flex min-h-0 flex-1">
-        <nav className="w-56 shrink-0 overflow-y-auto border-r border-slate-700 bg-slate-950/80 py-3 text-sm">
+        <nav className="w-56 shrink-0 overflow-y-auto border-r border-dh-border bg-dh-inset/80 py-3 text-sm">
           {loading && (
-            <div className="flex items-center gap-2 px-3 text-slate-500">
+            <div className="flex items-center gap-2 px-3 text-dh-muted">
               <Loader2 size={16} className="animate-spin" /> Loading…
             </div>
           )}
@@ -65,7 +65,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                   <button
                     type="button"
                     onClick={() => scrollToId('guide-intro')}
-                    className="w-full px-3 py-1.5 text-left text-slate-300 hover:bg-slate-800 hover:text-white"
+                    className="w-full px-3 py-1.5 text-left text-dh hover:bg-dh-hover hover:text-dh"
                   >
                     Introduction
                   </button>
@@ -76,29 +76,29 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                   <button
                     type="button"
                     onClick={() => scrollToId(sec.id)}
-                    className="w-full px-3 py-1.5 text-left font-medium text-slate-200 hover:bg-slate-800 hover:text-white"
+                    className="w-full px-3 py-1.5 text-left font-medium text-dh hover:bg-dh-hover hover:text-dh"
                   >
                     {sec.title}
                   </button>
                   {sec.subs.length > 0 && (
-                    <ul className="ml-2 border-l border-slate-700 pl-2">
+                    <ul className="ml-2 border-l border-dh-border pl-2">
                       {sec.subs.map((sub) => (
                         <li key={sub.id}>
                           <button
                             type="button"
                             onClick={() => scrollToId(sub.id)}
-                            className="w-full py-1 text-left text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+                            className="w-full py-1 text-left text-xs text-dh-muted hover:bg-dh-hover hover:text-dh"
                           >
                             {sub.title}
                           </button>
                           {sub.subSubs && sub.subSubs.length > 0 && (
-                            <ul className="ml-2 border-l border-slate-700/50 pl-2">
+                            <ul className="ml-2 border-l border-dh-border/50 pl-2">
                               {sub.subSubs.map((subSub) => (
                                 <li key={subSub.id}>
                                   <button
                                     type="button"
                                     onClick={() => scrollToId(subSub.id)}
-                                    className="w-full py-0.5 text-left text-[10px] text-slate-500 hover:bg-slate-800 hover:text-slate-300"
+                                    className="w-full py-0.5 text-left text-[10px] text-dh-muted hover:bg-dh-hover hover:text-dh"
                                   >
                                     {subSub.title}
                                   </button>
@@ -118,7 +118,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-8 py-6">
           {parsed && !loading && !error && (
-            <div className="dh-md max-w-none text-slate-200 [&_pre]:text-xs flex flex-col gap-14 [&_p]:mb-4 [&_p:last-child]:mb-0 [&_li]:mb-1">
+            <div className="dh-md max-w-none text-dh [&_pre]:text-xs flex flex-col gap-14 [&_p]:mb-4 [&_p:last-child]:mb-0 [&_li]:mb-1">
               {parsed.preamble.trim() && (
                 <div id="guide-intro" className="scroll-mt-4">
                   <MarkdownText text={parsed.preamble} />
@@ -129,7 +129,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                   key={sec.id}
                   id={sec.id}
                   className={`scroll-mt-6 [&_h2]:mb-4 ${
-                    secIdx > 0 ? 'border-t border-slate-800 pt-12' : ''
+                    secIdx > 0 ? 'border-t border-dh-border pt-12' : ''
                   }`}
                 >
                   <MarkdownText text={`## ${sec.title}`} />

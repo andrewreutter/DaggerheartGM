@@ -42,13 +42,13 @@ export function GuideRangeDropdown({ guideRange, options: optionsProp, value, on
         type="button"
         onClick={() => setOpen(!open)}
         title={title}
-        className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800/80 transition-colors"
+        className="p-1 rounded text-dh-muted hover:text-dh hover:bg-dh-raised/80 transition-colors"
       >
         <BookOpen size={16} />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 right-0 min-w-[5rem] w-max bg-slate-900 border border-slate-700 rounded shadow-xl overflow-hidden">
-          <div className="px-3 py-2 text-xs font-medium text-slate-400 border-b border-slate-800 bg-slate-800/60 whitespace-nowrap">
+        <div className="absolute z-20 mt-1 right-0 min-w-[5rem] w-max bg-dh-surface border border-dh-border rounded shadow-xl overflow-hidden">
+          <div className="px-3 py-2 text-xs font-medium text-dh-muted border-b border-dh-border bg-dh-raised/60 whitespace-nowrap">
             {menuTitle}
           </div>
           <div className="max-h-48 overflow-y-auto">
@@ -62,7 +62,7 @@ export function GuideRangeDropdown({ guideRange, options: optionsProp, value, on
                     onChange(opt);
                     setOpen(false);
                   }}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-800 transition-colors ${isSelected ? 'bg-slate-800/80 text-white' : 'text-slate-200'}`}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-dh-hover transition-colors ${isSelected ? 'bg-dh-raised/80 text-dh' : 'text-dh'}`}
                 >
                   {opt}
                 </button>

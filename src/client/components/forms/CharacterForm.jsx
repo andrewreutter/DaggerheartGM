@@ -11,6 +11,8 @@ import {
 import { generateId } from '../../lib/helpers.js';
 import { getAncestryExperienceBonus } from '../../lib/ancestry-experience-bonus.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../../lib/v2-class-subclass-feature-descriptors.js';
+import { collectEditorCardsForCharacter } from '../../lib/build-feature-card-model.js';
+import { DeclarativeSchemaEditorCard } from '../DeclarativeSchemaCard.jsx';
 
 const TRAIT_LABELS = {
   agility: 'Agility', strength: 'Strength', finesse: 'Finesse',
@@ -48,15 +50,15 @@ function WeaponOption({ weapon, isRecommended, showBurden, ancestryFeatures }) {
       {isRecommended && <Star size={10} className="text-emerald-400 shrink-0 fill-emerald-400" />}
       <span className={`font-medium truncate ${isRecommended ? 'text-emerald-100' : ''}`}>{weapon.name}</span>
       <span className={`text-[10px] rounded px-1 py-0.5 border shrink-0 font-semibold ${
-        isRecommended ? 'bg-emerald-900/60 border-emerald-600/60 text-emerald-200' : 'bg-slate-800 border-slate-700 text-slate-400'
+        isRecommended ? 'bg-emerald-900/60 border-emerald-600/60 text-emerald-200' : 'bg-dh-raised border-dh-border text-dh-muted'
       }`}>{weapon.trait}</span>
-      <span className="text-[11px] text-yellow-300/80 tabular-nums shrink-0">{weapon.damage}</span>
-      {displayRange && <span className="text-[11px] text-slate-500 shrink-0">{displayRange}</span>}
+      <span className="text-[11px] text-dh font-semibold tabular-nums shrink-0">{weapon.damage}</span>
+      {displayRange && <span className="text-[11px] text-dh-muted shrink-0">{displayRange}</span>}
       {featureNames.length > 0 && featureNames.map(fn => (
         <span key={fn} className="text-[9px] rounded px-1 py-0.5 bg-violet-900/50 border border-violet-700/50 text-violet-300 shrink-0">{fn}</span>
       ))}
       {showBurden && (
-        <span className={`text-[9px] shrink-0 ${weapon.burden === 'Two-Handed' ? 'text-amber-400' : 'text-slate-600'}`}>
+        <span className={`text-[9px] shrink-0 ${weapon.burden === 'Two-Handed' ? 'text-amber-400' : 'text-dh-muted'}`}>
           {weapon.burden === 'Two-Handed' ? '2H' : '1H'}
         </span>
       )}
@@ -268,8 +270,8 @@ const PREVIEW_EL_STUB = { instanceId: null, elementType: 'character', name: '' }
 function SrdPreviewFeatureCards({ rows }) {
   if (!rows?.length) return null;
   return (
-    <div className="mt-2 space-y-1.5 border-t border-slate-700/80 pt-2">
-      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Features</div>
+    <div className="mt-2 space-y-1.5 border-t border-dh-border/80 pt-2">
+      <div className="text-[10px] font-semibold text-dh-muted uppercase tracking-wide">Features</div>
       <div className="space-y-1.5">
         {rows.map((row, i) => (
           <GuideFeatureCard
@@ -443,6 +445,13 @@ export function CharacterForm({ value, onChange }) {
     return (srdData.subclasses || []).filter(sc => subNames.includes(sc.name));
   }, [selectedClass, srdData]);
   const selectedSubclass = srdData?.subclassesById?.[formData.subclassId] || null;
+
+  const editorCardsAfterSubclass = useMemo(() => {
+    if (!srdData) return [];
+    return collectEditorCardsForCharacter(formData).filter(
+      ({ shape }) => shape?.anchors?.afterSelector === 'subclassId',
+    );
+  }, [formData, srdData]);
 
   // Beastbound companion always has at least two experience slots (two blank rows).
   useEffect(() => {
@@ -618,7 +627,7 @@ export function CharacterForm({ value, onChange }) {
   }, [classOptions, ancestryOptions, communityOptions, srdData, formData.companion, set]);
 
   if (srdLoading) {
-    return <div className="p-4 text-slate-400 text-sm">Loading SRD data...</div>;
+    return <div className="p-4 text-dh-muted text-sm">Loading SRD data...</div>;
   }
 
   return (
@@ -629,7 +638,7 @@ export function CharacterForm({ value, onChange }) {
           type="text"
           value={formData.name || ''}
           onChange={e => set({ name: e.target.value })}
-          className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
           placeholder="Character name"
         />
       </FormRow>
@@ -640,7 +649,7 @@ export function CharacterForm({ value, onChange }) {
             type="text"
             value={formData.pronouns || ''}
             onChange={e => set({ pronouns: e.target.value })}
-            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+            className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
             placeholder="they/them"
           />
         </FormRow>
@@ -664,7 +673,7 @@ export function CharacterForm({ value, onChange }) {
           value={formData.description || ''}
           onChange={e => set({ description: e.target.value })}
           rows={2}
-          className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none resize-y"
+          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
           placeholder="A brief description..."
         />
       </FormRow>
@@ -702,7 +711,7 @@ export function CharacterForm({ value, onChange }) {
           placeholder="Select a class..."
         />
         {selectedClass && (
-          <div className="mt-1 text-[11px] text-slate-400 space-y-0.5">
+          <div className="mt-1 text-[11px] text-dh-muted space-y-0.5">
             <div>
               Domains: <span className="text-violet-300">{(selectedClass.domains || []).join(', ')}</span>
               {' · '}
@@ -712,7 +721,7 @@ export function CharacterForm({ value, onChange }) {
               {selectedClass.hope_feature && (
                 <>
                   {' · '}
-                  Hope: <span className="text-amber-300">{selectedClass.hope_feature.name}</span>
+                  Hope: <span className="text-dh-hope">{selectedClass.hope_feature.name}</span>
                 </>
               )}
             </div>
@@ -722,97 +731,6 @@ export function CharacterForm({ value, onChange }) {
           </div>
         )}
       </FormRow>
-
-      {/* ── Companion (Beastbound only) ── */}
-      {selectedSubclass?.name === 'Beastbound' && (() => {
-        const comp = formData.companion ?? {
-          name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
-          experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-        };
-        const compExps = comp.experiences || [];
-        return (
-          <FormRow label="Companion">
-            <div className="space-y-2">
-              <div>
-                <label className="text-[10px] text-slate-500 block mb-0.5">Name</label>
-                <input
-                  type="text"
-                  value={comp.name || ''}
-                  onChange={e => set({ companion: { ...comp, name: e.target.value } })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
-                  placeholder="Companion name"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 block mb-0.5">Species</label>
-                <input
-                  type="text"
-                  value={comp.species || ''}
-                  onChange={e => set({ companion: { ...comp, species: e.target.value } })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
-                  placeholder="e.g. Wolf, Hawk"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 block mb-0.5">Attack name</label>
-                <input
-                  type="text"
-                  value={comp.attackName || ''}
-                  onChange={e => set({ companion: { ...comp, attackName: e.target.value } })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
-                  placeholder="e.g. Bite, Claw (default d6 Melee)"
-                />
-                <p className="text-[10px] text-slate-500 mt-0.5">Defaults to d6 Melee</p>
-              </div>
-              <div className="text-[11px] text-slate-400">
-                EVA {comp.evasion ?? 10} · Max Stress {comp.maxStress ?? 3}
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 block mb-1">Experiences (need 2)</label>
-                <div className="space-y-1.5">
-                  {compExps.map((exp, i) => (
-                    <div key={exp.id || i} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={exp.name || ''}
-                        onChange={e => {
-                          const exps = [...compExps];
-                          exps[i] = { ...exps[i], name: e.target.value };
-                          set({ companion: { ...comp, experiences: exps } });
-                        }}
-                        className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"
-                        placeholder="Experience name"
-                      />
-                      <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0">
-                        +{exp.score ?? 2}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const exps = compExps.filter((_, j) => j !== i);
-                          set({ companion: { ...comp, experiences: exps } });
-                        }}
-                        disabled={compExps.length <= 2}
-                        className="text-slate-500 hover:text-red-400 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      >×</button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => set({
-                      companion: {
-                        ...comp,
-                        experiences: [...compExps, { name: '', score: 2, id: generateId() }],
-                      },
-                    })}
-                    className="text-xs text-sky-400 hover:text-sky-300"
-                  >+ Add Experience</button>
-                </div>
-              </div>
-            </div>
-          </FormRow>
-        );
-      })()}
 
       {/* ── Subclass ── */}
       <FormRow label="Subclass">
@@ -842,11 +760,23 @@ export function CharacterForm({ value, onChange }) {
           disabled={!selectedClass}
         />
         {selectedSubclass?.spellcast_trait && (
-          <div className="mt-1 text-[11px] text-slate-400">
-            Spellcast trait: <span className="text-sky-300">{selectedSubclass.spellcast_trait}</span>
+          <div className="mt-1 text-[11px] text-dh-muted">
+            Spellcast trait: <span className="dh-text-spellcast-header-sub">{selectedSubclass.spellcast_trait}</span>
           </div>
         )}
       </FormRow>
+
+      {editorCardsAfterSubclass.map(({ feature, shape }) => (
+        <FormRow key={shape.id} label={feature.name}>
+          <DeclarativeSchemaEditorCard
+            featureName={feature.name}
+            jsonSchema={shape.jsonSchema}
+            bind={shape.bind}
+            formCharacter={formData}
+            setCharacter={(next) => update(next)}
+          />
+        </FormRow>
+      ))}
 
       {/* ── Ancestry ── */}
       <FormRow label="Ancestry">
@@ -909,7 +839,7 @@ export function CharacterForm({ value, onChange }) {
 
             return (
               <div key={trait} className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 w-20">{TRAIT_LABELS[trait]}</span>
+                <span className="text-xs text-dh-muted w-20">{TRAIT_LABELS[trait]}</span>
                 <CustomSelect
                   value={isAssigned ? currentVal : null}
                   onChange={v => {
@@ -964,22 +894,22 @@ export function CharacterForm({ value, onChange }) {
         return (
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span className="text-slate-400">Sort:</span>
+              <span className="text-dh-muted">Sort:</span>
               <select
                 value={weaponSortOrder}
                 onChange={e => setWeaponSortOrder(e.target.value)}
-                className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 text-xs focus:border-sky-500 focus:outline-none"
+                className="bg-dh-raised border border-dh-border rounded px-2 py-1 text-dh text-xs focus:border-sky-500 focus:outline-none"
               >
                 {WEAPON_SORT_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
-              <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+              <label className="flex items-center gap-1.5 text-dh cursor-pointer">
                 <input
                   type="checkbox"
                   checked={weaponGroupTraitOptimized}
                   onChange={e => setWeaponGroupTraitOptimized(e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-800 text-sky-500 focus:ring-sky-500"
+                  className="rounded border-dh-strong bg-dh-raised text-sky-500 focus:ring-sky-500"
                 />
                 <span className="text-xs">Trait-optimized first</span>
               </label>
@@ -1016,7 +946,7 @@ export function CharacterForm({ value, onChange }) {
                   groupTraitOptimized={weaponGroupTraitOptimized}
                 />
                 {isTwoHanded && (
-                  <div className="mt-1 text-[10px] text-slate-500">Two-handed primary uses both hands</div>
+                  <div className="mt-1 text-[10px] text-dh-muted">Two-handed primary uses both hands</div>
                 )}
               </FormRow>
             </div>
@@ -1047,7 +977,7 @@ export function CharacterForm({ value, onChange }) {
                         exps[i] = { ...exps[i], name: e.target.value };
                         set({ experiences: exps });
                       }}
-                      className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:border-sky-500 focus:outline-none"
+                      className="flex-1 bg-dh-raised border border-dh-border rounded px-2 py-1 text-sm text-dh focus:border-sky-500 focus:outline-none"
                       placeholder="Experience name"
                     />
                     <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0" title={isChosen ? `${ancestryName} bonus +${expBonus.amount}` : undefined}>
@@ -1058,7 +988,7 @@ export function CharacterForm({ value, onChange }) {
                         const exps = (formData.experiences || []).filter((_, j) => j !== i);
                         set({ experiences: exps });
                       }}
-                      className="text-slate-500 hover:text-red-400 text-sm"
+                      className="text-dh-muted hover:text-red-400 text-sm"
                     >×</button>
                   </div>
                 );
@@ -1133,7 +1063,7 @@ export function CharacterForm({ value, onChange }) {
                       className="flex-1"
                     />
                     {ability && (
-                      <span className="text-[10px] text-slate-500 shrink-0">{ability.type}</span>
+                      <span className="text-[10px] text-dh-muted shrink-0">{ability.type}</span>
                     )}
                     {displaySlots.length > MIN_DOMAIN_CARD_SLOTS && (
                       <button
@@ -1141,7 +1071,7 @@ export function CharacterForm({ value, onChange }) {
                           const ids = displaySlots.filter((_, j) => j !== i);
                           set({ abilityIds: ids });
                         }}
-                        className="text-slate-500 hover:text-red-400 text-sm"
+                        className="text-dh-muted hover:text-red-400 text-sm"
                       >×</button>
                     )}
                   </div>
@@ -1172,20 +1102,20 @@ export function CharacterForm({ value, onChange }) {
               const isOpen = openAdvancements[advKey] ?? false;
 
               return (
-                <div key={lvl} className="border border-slate-700 rounded bg-slate-800/40 overflow-hidden">
+                <div key={lvl} className="border border-dh-border rounded bg-dh-raised/40 overflow-hidden">
                   <button
                     onClick={() => setOpenAdvancements(prev => ({ ...prev, [advKey]: !isOpen }))}
-                    className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-slate-700/40 transition-colors text-left"
+                    className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-dh-hover/40 transition-colors text-left"
                   >
-                    {isOpen ? <ChevronDown size={11} className="text-slate-500" /> : <ChevronRight size={11} className="text-slate-500" />}
-                    <span className="text-xs font-semibold text-slate-300">Level {lvl}</span>
+                    {isOpen ? <ChevronDown size={11} className="text-dh-muted" /> : <ChevronRight size={11} className="text-dh-muted" />}
+                    <span className="text-xs font-semibold text-dh">Level {lvl}</span>
                     {isTierAchievement && (
                       <span className="text-[9px] bg-amber-900/50 text-amber-300 border border-amber-800/50 rounded px-1">Tier Achievement</span>
                     )}
-                    <span className="text-[10px] text-slate-500 ml-auto">{(adv.picks || []).length} pick{(adv.picks || []).length !== 1 ? 's' : ''}</span>
+                    <span className="text-[10px] text-dh-muted ml-auto">{(adv.picks || []).length} pick{(adv.picks || []).length !== 1 ? 's' : ''}</span>
                   </button>
                   {isOpen && (
-                    <div className="px-2 pb-2 space-y-2 border-t border-slate-700">
+                    <div className="px-2 pb-2 space-y-2 border-t border-dh-border">
                       {/* Pick 1 */}
                       <AdvancementPick
                         label="Pick 1"
@@ -1212,7 +1142,7 @@ export function CharacterForm({ value, onChange }) {
                       />
                       {/* Domain card for this level */}
                       <div className="mt-1">
-                        <label className="text-[10px] text-slate-500 block mb-0.5">Domain Card</label>
+                        <label className="text-[10px] text-dh-muted block mb-0.5">Domain Card</label>
                         <CustomSelect
                           value={adv.domainCardId || null}
                           onChange={id => {
@@ -1248,7 +1178,7 @@ export function CharacterForm({ value, onChange }) {
           value={formData.background || ''}
           onChange={e => set({ background: e.target.value })}
           rows={3}
-          className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none resize-y"
+          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
           placeholder="Character background..."
         />
       </FormRow>
@@ -1257,7 +1187,7 @@ export function CharacterForm({ value, onChange }) {
           value={formData.connectionText || ''}
           onChange={e => set({ connectionText: e.target.value })}
           rows={2}
-          className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none resize-y"
+          className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
           placeholder="Connection to other characters..."
         />
       </FormRow>
@@ -1272,7 +1202,7 @@ function AdvancementPick({ label, pick, onChange, tier }) {
 
   return (
     <div className="mt-1">
-      <label className="text-[10px] text-slate-500 block mb-0.5">{label}</label>
+      <label className="text-[10px] text-dh-muted block mb-0.5">{label}</label>
       <CustomSelect
         value={currentType}
         onChange={type => {
@@ -1309,8 +1239,8 @@ function AdvancementPick({ label, pick, onChange, tier }) {
                   selected
                     ? 'bg-sky-900/60 border-sky-600 text-sky-200'
                     : canSelect
-                      ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-sky-600'
-                      : 'bg-slate-800 border-slate-700 text-slate-600 cursor-not-allowed'
+                      ? 'bg-dh-raised border-dh-border text-dh-muted hover:border-sky-600'
+                      : 'bg-dh-raised border-dh-border text-dh-muted cursor-not-allowed'
                 }`}
               >
                 {TRAIT_LABELS[t]}

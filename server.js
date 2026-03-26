@@ -9,11 +9,11 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState } from './src/db.js';
-import { searchFCG } from './src/fcg-search.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
+import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
 import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
@@ -24,19 +24,21 @@ import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.j
 import compression from 'compression';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { CHARACTER_RUNTIME_KEYS, applyTableOp } from './src/client/lib/table-ops.js';
+import { gateTableOpForPrepMode, isTablePlayAllowed } from './src/client/lib/table-session-gate.js';
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
 import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
+import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
 const app = express();
 const PORT = process.env.PORT || 3456;
 const APP_ID = process.env.APP_ID || 'daggerheart-gm-tool';
-const COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'characters', 'table_state'];
+const COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures', 'characters', 'table_state'];
 
 /** Parse query param as array: tier=1&tier=2 → ['1','2'], tier=1,2 → ['1','2'] */
 function parseQueryArray(val) {
@@ -51,6 +53,16 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map(e => e.trim().toLowerCase())
   .filter(Boolean);
+
+// QA (e.g. dev agent footer on Feature Source modal): same format as ADMIN_EMAILS.
+const QA_EMAILS = (process.env.QA_EMAILS || '')
+  .split(',')
+  .map(e => e.trim().toLowerCase())
+  .filter(Boolean);
+
+function isQaEmail(email) {
+  return QA_EMAILS.includes(email?.toLowerCase());
+}
 
 // --- Supabase Storage client (optional — only when env vars are set) ---
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -87,6 +99,15 @@ async function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (!ADMIN_EMAILS.includes(req.email?.toLowerCase())) {
     return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
+/** Admin or QA — dev-agent queue APIs and Feature Source modal dev agent footer. */
+function requireAdminOrQa(req, res, next) {
+  const em = req.email?.toLowerCase();
+  if (!ADMIN_EMAILS.includes(em) && !QA_EMAILS.includes(em)) {
+    return res.status(403).json({ error: 'Access denied' });
   }
   next();
 }
@@ -135,13 +156,20 @@ app.get('/api/config', (req, res) => {
     supabaseStorageBase: process.env.SUPABASE_URL
       ? `${process.env.SUPABASE_URL}/storage/v1/object/public`
       : null,
+    devAgentQueueEnabled: process.env.DEV_AGENT_QUEUE_ENABLED === '1',
   });
 });
 
 // --- Current user info ---
 app.get('/api/me', requireAuth, (req, res) => {
-  res.json({ isAdmin: ADMIN_EMAILS.includes(req.email?.toLowerCase()) });
+  const em = req.email?.toLowerCase();
+  res.json({
+    isAdmin: ADMIN_EMAILS.includes(em),
+    isQa: isQaEmail(req.email),
+  });
 });
+
+registerDevAgentRoutes(app, { requireAuth, requireAdminOrQa });
 
 /** Feature authoring guide — reads `docs/feature-authoring-guide.md` on each request (always current on disk). */
 app.get('/api/docs/feature-authoring-guide', requireAuth, async (req, res) => {
@@ -687,6 +715,25 @@ async function resolveTableAccess(appId, tableId, req) {
   return { tableId, gmUid, tableState };
 }
 
+/** GM-only: table must exist, belong to reqUid, and session must be started (prep mode blocks play). */
+async function assertGmTableSessionActive(tableId, reqUid, res, opts = {}) {
+  const { bypassPrepGate = false } = opts;
+  const row = await getTableStateById(APP_ID, tableId);
+  if (!row || row.userId !== reqUid) {
+    res.status(403).json({ error: 'Not your table' });
+    return false;
+  }
+  if (!bypassPrepGate && !isTablePlayAllowed(row.data || {})) {
+    const paused = row.data?.top?.sessionPaused === true;
+    res.status(400).json({
+      error: paused ? 'Session paused' : 'Session not started',
+      playBlocked: paused ? 'paused' : 'prep',
+    });
+    return false;
+  }
+  return true;
+}
+
 
 // Fields persisted for character elements in table_state.
 // All other fields are resolved from the character library at read time.
@@ -725,6 +772,16 @@ async function applyOpToTableState(tableId, op) {
     if (!row) throw new Error(`Table not found: ${tableId}`);
     const { userId, data: rawState } = row;
     const state = rawState || {};
+    const bypassPrepGate = op?.bypassPrepGate === true;
+    const gated = gateTableOpForPrepMode(state, op);
+    if (!gated.ok) {
+      const err = new Error(gated.error);
+      err.statusCode = 400;
+      const top = state.top || {};
+      err.playBlocked = top.sessionPaused === true ? 'paused' : 'prep';
+      throw err;
+    }
+    op = gated.op;
     // applyTableOp uses 'activeElements' key; DB uses 'elements'
     const stateForOp = { ...state, activeElements: state.elements || [] };
     const changes = applyTableOp(op, stateForOp);
@@ -734,6 +791,14 @@ async function applyOpToTableState(tableId, op) {
       ...otherChanges,
       ...(newElements !== undefined ? { elements: stripCharacterElements(newElements) } : {}),
     };
+    const skipActivityStamp =
+      op.op === 'set-gm-display-name' || op.op === 'touch-session-activity' || bypassPrepGate;
+    if (!skipActivityStamp) {
+      newState.top = {
+        ...(newState.top || {}),
+        lastPlayActivityAt: Date.now(),
+      };
+    }
     await upsertItem(APP_ID, userId, 'table_state', tableId, newState, false);
     subscriptionManager.notifyChange('table_state', tableId);
     return newState;
@@ -779,26 +844,32 @@ app.get('/api/data', requireAuth, async (req, res) => {
   }
 });
 
-// --- FCG search route (Feature Library independent toggle) ---
-
-app.get('/api/fcg-search', requireAuth, async (req, res) => {
-  const { search, tier } = req.query;
-  try {
-    const result = await searchFCG({
-      search: search || '',
-      tier: tier ? parseInt(tier, 10) : undefined,
-    });
-    res.json({ adversaries: result.adversaries, environments: result.environments });
-  } catch (err) {
-    console.error('GET /api/fcg-search error:', err);
-    res.status(500).json({ error: `FCG search failed: ${err.message}` });
-  }
-});
-
 // --- Per-collection paginated route ---
 
-const PAGINATED_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures', 'characters'];
-const UNIFIED_COLLECTIONS = ['adversaries', 'environments'];
+/** SRD-backed unified list + app-only collections */
+const PAGINATED_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures', 'characters'];
+const UNIFIED_COLLECTIONS = SRD_COLLECTION_NAMES;
+
+/** Maps collection → getUnifiedItems JSON field / tier SQL (see docs/srd-implementation.md) */
+function unifiedListConfig(collection) {
+  const d = { typeField: null, extraTypeField: null, tierExprSql: `COALESCE((data->>'tier')::int, 1)` };
+  const map = {
+    adversaries: { typeField: 'role', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    environments: { typeField: 'type', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    abilities: { typeField: 'domain', tierExprSql: `COALESCE((data->>'level')::int, 1)` },
+    weapons: { typeField: 'primary_or_secondary', extraTypeField: 'physical_or_magical', tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    armor: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    beastforms: { tierExprSql: `COALESCE((data->>'tier')::int, 1)` },
+    ancestries: { tierExprSql: `1` },
+    classes: { tierExprSql: `1` },
+    communities: { tierExprSql: `1` },
+    consumables: { tierExprSql: `1` },
+    domains: { tierExprSql: `1` },
+    items: { tierExprSql: `1` },
+    subclasses: { tierExprSql: `1` },
+  };
+  return { ...d, ...map[collection] };
+}
 
 async function fetchDbCounts(appId, uid, collection, { includeMine = true, includePublic, includeMirrors = true, search, tier, tierMax, tiers = [], typeField, typeValue, typeValues = [] }) {
   const opts = tierMax != null
@@ -836,7 +907,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         // Auto-create the primary table row the first time a user accesses their own table
         // (e.g. fresh local DB or new account with no prior table state).
         if (!row && tableId === req.uid) {
-          const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0 };
+          const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0, top: { sessionStarted: false } };
           await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
           row = { userId: req.uid, data: emptyState };
         }
@@ -846,9 +917,12 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         if (!isOwner && !isPlayer) {
           return res.status(403).json({ error: 'Not your table' });
         }
-        const state = row.data || {};
-        const elements = await resolveCharacterElementsDb(APP_ID, state.elements || []);
-        const resolved = [{ ...state, elements, _source: 'own', id: tableId, ownerUid: row.userId }];
+        // Must match SSE `table_state` snapshots from `getResolvedTableState` (idle pause, activity seed).
+        const resolvedState = await getResolvedTableState(APP_ID, tableId);
+        if (!resolvedState) {
+          return res.status(404).json({ error: 'Table not found' });
+        }
+        const resolved = [{ ...resolvedState, _source: 'own', id: tableId, ownerUid: row.userId }];
         return res.json({ items: resolved, totalCount: 1, dbCount: 1 });
       }
       const rows = await listTableStates(APP_ID, req.uid);
@@ -871,30 +945,33 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
   const includeScaledUp = req.query.includeScaledUp === '1';
-  const typeField = collection === 'adversaries' ? 'role' : collection === 'environments' ? 'type' : null;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const sort = req.query.sort || 'popularity';
 
   const tiersRaw = parseQueryArray(req.query.tier);
+  const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
   const typeValuesRaw = parseQueryArray(req.query.type);
-  const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 4);
   const typeValues = typeValuesRaw.filter(Boolean);
-  const tierMax = (includeScaledUp && tiers.length === 1) ? tiers[0] : null;
+  const extraTypeValues = parseQueryArray(req.query.type2).filter(Boolean);
+  const tierMax = collection === 'adversaries' && includeScaledUp && tiers.length === 1 ? tiers[0] : null;
 
   try {
     if (UNIFIED_COLLECTIONS.includes(collection)) {
+      const cfg = unifiedListConfig(collection);
       const result = await getUnifiedItems(APP_ID, req.uid, collection, {
         includeMine,
         includePublic,
         includeSrd: req.query.includeSrd === '1',
         includeHod: req.query.includeHod === '1',
-        includeFcg: req.query.includeFcg === '1',
         search,
         tierMax,
         tiers: tierMax != null ? [] : tiers,
-        typeField,
+        typeField: cfg.typeField,
         typeValues,
+        extraTypeField: cfg.extraTypeField,
+        extraTypeValues,
+        tierExprSql: cfg.tierExprSql,
         sort,
         offset,
         limit,
@@ -914,6 +991,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
     }
 
     const includeMirrors = false;
+    const typeField = null;
     const dbOpts = { includeMine, includePublic, includeMirrors, search, tier: tiers[0] || null, tierMax, tiers: tierMax != null ? [] : tiers, typeField, typeValue: typeValues[0] || null, typeValues, offset, limit };
     const { ownCount, communityCount, dbCount } = await fetchDbCounts(APP_ID, req.uid, collection, dbOpts);
     const { items } = await fetchDbItems(APP_ID, req.uid, collection, dbOpts, { ownCount, communityCount, dbCount });
@@ -1023,7 +1101,7 @@ app.post('/api/data/resolve', requireAuth, async (req, res) => {
 
 // --- Clone endpoint (explicit clone + auto-clone-on-play) ---
 
-const CLONE_COLLECTIONS = ['adversaries', 'environments', 'scenes', 'adventures'];
+const CLONE_COLLECTIONS = [...SRD_COLLECTION_NAMES, 'scenes', 'adventures'];
 
 app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   const { collection } = req.params;
@@ -1036,7 +1114,7 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
   }
 
   const sourceId = source.id;
-  // SRD items are treated as external (creates a __MIRROR__ row) alongside FCG and other sources.
+  // SRD/HoD items are external (cache / fetch); migrated FCG catalog rows are public `items` with id `fcg-*`.
   const isExternal = source._source && !['own', 'public'].includes(source._source);
 
   try {
@@ -1044,8 +1122,22 @@ app.post('/api/data/:collection/clone', requireAuth, async (req, res) => {
     // Fetch full source from DB so the clone includes images.
     let effectiveSource = source;
     if (!isExternal && sourceId) {
-      const dbSource = await getItem(APP_ID, req.uid, collection, sourceId);
+      let dbSource = await getItem(APP_ID, req.uid, collection, sourceId);
+      if (!dbSource && source._source === 'public') {
+        const rows = await getItemsByIds(APP_ID, collection, [sourceId]);
+        dbSource = rows[0] || null;
+      }
       if (dbSource) effectiveSource = dbSource;
+    }
+    if (isExternal && sourceId && String(sourceId).startsWith('fcg-')) {
+      const rows = await getItemsByIds(APP_ID, collection, [sourceId]);
+      if (rows.length) effectiveSource = rows[0];
+    }
+    if (source._source === 'srd' && sourceId) {
+      const cachedRows = await getExternalCacheByIds(APP_ID, collection, [sourceId]);
+      if (cachedRows.length > 0) {
+        effectiveSource = cachedRows[0];
+      }
     }
     if (source._source === 'hod' && source._hodPostId) {
       try {
@@ -1107,7 +1199,7 @@ app.post('/api/data/:collection/play', requireAuth, async (req, res) => {
 
 app.post('/api/data/:collection/enrich', requireAuth, async (req, res) => {
   const { collection } = req.params;
-  if (!CLONE_COLLECTIONS.includes(collection)) {
+  if (collection !== 'adversaries' && collection !== 'environments') {
     return res.status(400).json({ error: 'Unknown collection for enrich' });
   }
   const { items } = req.body;
@@ -1402,7 +1494,7 @@ app.post('/api/data/:collection/mirror', requireAuth, async (req, res) => {
   }
   try {
     const { id, _source, _owner, clone_count, play_count, popularity, ...data } = item;
-    await upsertMirror(APP_ID, collection, id, { ...data, _source: _source || 'fcg' });
+    await upsertMirror(APP_ID, collection, id, { ...data, _source: _source || 'mirror' });
     res.json({ ok: true });
   } catch (err) {
     console.error(`POST /api/data/${collection}/mirror error:`, err);
@@ -1515,7 +1607,7 @@ app.post('/api/my-tables', requireAuth, async (req, res) => {
     const name = (req.body?.name && String(req.body.name).trim()) || 'New Table';
     const { randomUUID } = await import('crypto');
     const tableId = randomUUID();
-    const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', tableName: name };
+    const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', tableName: name, top: { sessionStarted: false } };
     await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
     res.status(201).json({ id: tableId, name });
   } catch (err) {
@@ -1635,20 +1727,43 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
 // POST /api/room/my/roll — GM rolls dice server-side; persists to DB, returns result.
 // When silent is true: build and return roll data only (no DB write, no banner notification).
 app.post('/api/room/my/roll', requireAuth, async (req, res) => {
-  const { rollText, displayName, _clientId, silent, ...extraMeta } = req.body;
+  const { rollText, displayName, _clientId, silent, tableId: bodyTableId, bypassPrepGate, ...extraMeta } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   const rollData = buildRollData(rollText, displayName, _clientId, extraMeta);
   if (!rollData) {
     return res.status(400).json({ error: 'No dice expressions found in rollText' });
   }
-  if (!silent) await appendRollLog(req.uid, rollData);
+  if (!silent) {
+    const tid = bodyTableId || req.uid;
+    if (!(await assertGmTableSessionActive(tid, req.uid, res, { bypassPrepGate: bypassPrepGate === true }))) return;
+    await appendRollLog(req.uid, rollData);
+    if (process.env.DATABASE_URL && bypassPrepGate !== true) {
+      try {
+        await applyOpToTableState(tid, { op: 'touch-session-activity' });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   res.json(rollData);
 });
 
 // POST /api/room/my/action — GM persists an action notification; clients learn of it via the banners subscription.
 // (no dice rolling; used for feature announcements, session cycle notifications, etc.)
 app.post('/api/room/my/action', requireAuth, async (req, res) => {
-  const { _clientId, ...notification } = req.body;
+  const { _clientId, tableId: bodyTableId, bypassPrepGate, ...notification } = req.body;
+  const tid = bodyTableId || req.uid;
+  const row = await getTableStateById(APP_ID, tid);
+  if (!row || row.userId !== req.uid) {
+    return res.status(403).json({ error: 'Not your table' });
+  }
+  if (!isTablePlayAllowed(row.data || {}) && !notification._sessionStart && bypassPrepGate !== true) {
+    const paused = row.data?.top?.sessionPaused === true;
+    return res.status(400).json({
+      error: paused ? 'Session paused' : 'Session not started',
+      playBlocked: paused ? 'paused' : 'prep',
+    });
+  }
   if (!notification._action) notification._action = true;
   const payload = { ...notification, _clientId: _clientId || null };
   await appendRollLog(req.uid, payload);
@@ -1660,8 +1775,15 @@ app.post('/api/room/:tableId/action', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   const { gmUid } = ctx;
-  const { _clientId, ...notification } = req.body;
+  const { _clientId, bypassPrepGate: _playerBypassIgnored, ...notification } = req.body;
   try {
+    if (!isTablePlayAllowed(ctx.tableState) && !notification._sessionStart) {
+      const paused = ctx.tableState?.top?.sessionPaused === true;
+      return res.status(400).json({
+        error: paused ? 'Session paused' : 'Session not started',
+        playBlocked: paused ? 'paused' : 'prep',
+      });
+    }
     if (!notification._action) notification._action = true;
     const payload = { ...notification, _clientId: _clientId || null, _initiatorUid: req.uid };
     await appendRollLog(gmUid, payload);
@@ -1738,7 +1860,9 @@ app.post('/api/room/my/banner-ack', requireAuth, async (req, res) => {
 
 // POST /api/room/my/reroll-hope-die — GM: Feline Instincts — reroll only the Hope die; cost already applied by client.
 app.post('/api/room/my/reroll-hope-die', requireAuth, async (req, res) => {
-  const { rollText, displayName, previousSubItems, ...extraMeta } = req.body;
+  const { rollText, displayName, previousSubItems, tableId: bodyTableId, ...extraMeta } = req.body;
+  const tid = bodyTableId || req.uid;
+  if (!(await assertGmTableSessionActive(tid, req.uid, res))) return;
   if (!rollText || !previousSubItems || !Array.isArray(previousSubItems)) {
     return res.status(400).json({ error: 'rollText and previousSubItems required' });
   }
@@ -1769,7 +1893,9 @@ app.post('/api/room/my/reroll-hope-die', requireAuth, async (req, res) => {
 
 // POST /api/room/my/reroll-duality-dice — GM: Ranger's Focus — reroll Hope and Fear dice only; Focus cleared by client before calling.
 app.post('/api/room/my/reroll-duality-dice', requireAuth, async (req, res) => {
-  const { rollText, displayName, previousSubItems, ...extraMeta } = req.body;
+  const { rollText, displayName, previousSubItems, tableId: bodyTableId, ...extraMeta } = req.body;
+  const tid = bodyTableId || req.uid;
+  if (!(await assertGmTableSessionActive(tid, req.uid, res))) return;
   if (!rollText || !previousSubItems || !Array.isArray(previousSubItems)) {
     return res.status(400).json({ error: 'rollText and previousSubItems required' });
   }
@@ -2027,6 +2153,13 @@ app.post('/api/room/my/banner-action-add-die', requireAuth, async (req, res) => 
     if (!tableRow || tableRow.userId !== req.uid) {
       return res.status(403).json({ error: 'Not your table' });
     }
+    if (!isTablePlayAllowed(tableRow.data || {})) {
+      const paused = tableRow.data?.top?.sessionPaused === true;
+      return res.status(400).json({
+        error: paused ? 'Session paused' : 'Session not started',
+        playBlocked: paused ? 'paused' : 'prep',
+      });
+    }
     const row = await getDiceRollById(APP_ID, req.uid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -2101,6 +2234,13 @@ app.post('/api/room/my/banner-action-add-static', requireAuth, async (req, res) 
     const tableRow = await getTableStateById(APP_ID, tableId);
     if (!tableRow || tableRow.userId !== req.uid) {
       return res.status(403).json({ error: 'Not your table' });
+    }
+    if (!isTablePlayAllowed(tableRow.data || {})) {
+      const paused = tableRow.data?.top?.sessionPaused === true;
+      return res.status(400).json({
+        error: paused ? 'Session paused' : 'Session not started',
+        playBlocked: paused ? 'paused' : 'prep',
+      });
     }
     const row = await getDiceRollById(APP_ID, req.uid, bannerId);
     if (!row || row.status !== 'pending') {
@@ -2236,6 +2376,8 @@ app.post('/api/room/my/banner-add-damage', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
+    const tid = req.body?.tableId || req.uid;
+    if (!(await assertGmTableSessionActive(tid, req.uid, res))) return;
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -2273,6 +2415,8 @@ app.post('/api/room/my/banner-reroll-die', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'Requires database' });
   }
   try {
+    const tid = req.body?.tableId || req.uid;
+    if (!(await assertGmTableSessionActive(tid, req.uid, res))) return;
     const row = await getDiceRollById(APP_ID, gmUid, bannerId);
     if (!row || row.status !== 'pending') {
       return res.status(404).json({ error: 'Banner not found or already resolved' });
@@ -2309,6 +2453,9 @@ app.post('/api/room/:tableId/life-support-select', requireAuth, async (req, res)
     });
     res.json({ ok: true });
   } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({ error: err.message || 'Bad request' });
+    }
     console.error('POST /api/room/:tableId/life-support-select error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -2347,6 +2494,9 @@ app.post('/api/room/:tableId/rest-move-select', requireAuth, async (req, res) =>
     await applyOpToTableState(tableId, op);
     res.json({ ok: true });
   } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({ error: err.message || 'Bad request' });
+    }
     console.error('POST /api/room/:tableId/rest-move-select error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -2366,7 +2516,7 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
     let row = await getTableStateById(APP_ID, tableId);
     // Auto-create the primary table row if it doesn't exist yet (e.g. fresh local DB).
     if (!row && tableId === req.uid) {
-      const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0 };
+      const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0, top: { sessionStarted: false } };
       await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
       row = { userId: req.uid, data: emptyState };
     }
@@ -2377,6 +2527,12 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
     await applyOpToTableState(tableId, opData);
     res.json({ ok: true });
   } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({
+        error: err.message || 'Bad request',
+        ...(err.playBlocked ? { playBlocked: err.playBlocked } : {}),
+      });
+    }
     console.error('POST /api/room/my/op error:', err);
     res.status(500).json({ error: 'Failed to apply op' });
   }
@@ -2423,6 +2579,12 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
     await applyOpToTableState(tableId, { op: 'update-element', instanceId, updates });
     res.json({ ok: true });
   } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({
+        error: err.message || 'Bad request',
+        ...(err.playBlocked ? { playBlocked: err.playBlocked } : {}),
+      });
+    }
     console.error('POST /api/room/:tableId/character-update error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -2488,6 +2650,9 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
     }
     res.json({ ok: true });
   } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({ error: err.message || 'Bad request' });
+    }
     console.error('POST /api/room/:tableId/v2-cross-sheet-chip error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -2737,6 +2902,9 @@ app.post('/api/room/:tableId/v2-review-chip', requireAuth, async (req, res) => {
       hopeConvertedRollDbId,
     });
   } catch (err) {
+    if (err?.statusCode === 400) {
+      return res.status(400).json({ error: err.message || 'Bad request' });
+    }
     console.error('POST /api/room/:tableId/v2-review-chip error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -2802,14 +2970,28 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   const { gmUid } = ctx;
-  const { rollText, displayName, _clientId, silent, ...rest } = req.body;
+  const { rollText, displayName, _clientId, silent, bypassPrepGate: _playerRollBypassIgnored, ...rest } = req.body;
   if (!rollText) return res.status(400).json({ error: 'rollText is required' });
   const extraMeta = Object.fromEntries(Object.entries(rest).filter(([k]) => k.startsWith('_')));
   try {
+    if (!silent && !isTablePlayAllowed(ctx.tableState)) {
+      const paused = ctx.tableState?.top?.sessionPaused === true;
+      return res.status(400).json({
+        error: paused ? 'Session paused' : 'Session not started',
+        playBlocked: paused ? 'paused' : 'prep',
+      });
+    }
     const rollData = buildRollData(rollText, displayName, _clientId, { _playerInitiated: true, _initiatorUid: req.uid, ...extraMeta });
     if (!rollData) return res.status(400).json({ error: 'No dice expressions found in rollText' });
     if (!silent) {
       await appendRollLog(gmUid, rollData);
+      if (process.env.DATABASE_URL) {
+        try {
+          await applyOpToTableState(req.params.tableId, { op: 'touch-session-activity' });
+        } catch {
+          /* ignore */
+        }
+      }
       if (process.env.NODE_ENV !== 'production') console.log('[roll] POST /api/room/:tableId/roll', rollData._rollDbId != null ? 'persisted' : 'in-memory', 'targetId:', extraMeta._selectedTargetInstanceId ?? null);
     }
     res.json(rollData);
@@ -2841,6 +3023,7 @@ async function startServer() {
     await runMigrations();
     await loadSrdIntoDb(APP_ID);
     await subscriptionManager.init(APP_ID);
+    setTableStateNotifyHook((tableId) => subscriptionManager.notifyChange('table_state', tableId));
     cron.schedule('0 3 * * *', async () => {
       if (isSyncInProgress()) return;
       try {

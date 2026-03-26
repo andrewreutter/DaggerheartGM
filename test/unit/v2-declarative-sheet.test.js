@@ -278,6 +278,48 @@ describe('v2-declarative-sheet', () => {
     expect(evo.type).toBe('class');
   });
 
+  it('mergeV2DeclarativeSheetOverlay does not duplicate Katari Retracting Claws in weapons', () => {
+    const srdData = {
+      ancestriesById: {
+        'srd-anc-katari': {
+          id: 'srd-anc-katari',
+          name: 'Katari',
+          features: [
+            { name: 'Feline Instincts', description: 'x' },
+            { name: 'Retracting Claws', description: 'y' },
+          ],
+        },
+      },
+      weaponsById: {},
+      armorById: {},
+      classesById: {
+        'srd-cls-warrior': {
+          id: 'srd-cls-warrior',
+          name: 'Warrior',
+          hope_feature: { name: 'Attack of Opportunity', description: 'x' },
+          domains: [],
+          class_features: [],
+        },
+      },
+      subclassesById: {},
+      communitiesById: {},
+    };
+
+    const raw = {
+      instanceId: 'kat-1',
+      classId: 'srd-cls-warrior',
+      ancestryIds: ['srd-anc-katari'],
+      level: 1,
+      baseTraits: { agility: 1, strength: 0, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+      advancements: {},
+    };
+
+    const base = recomputeCharacter(raw, srdData);
+    const merged = mergeV2DeclarativeSheetOverlay(base, raw, srdData, {});
+    const claws = merged.weapons.filter((w) => w.name === 'Retracting Claws');
+    expect(claws).toHaveLength(1);
+  });
+
   it('mergeV2DeclarativeSheetOverlay appends Beastform virtual weapon with damage, Physical, Melee, trait', () => {
     const srdData = {
       ancestriesById: {},

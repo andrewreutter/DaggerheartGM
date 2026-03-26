@@ -44,26 +44,16 @@ latest version.
 **Framework boundaries:** When reviewing implementations or related PRs, flag violations of **CONV-029** and `.cursor/rules/v2-framework-boundaries.mdc` (feature-specific logic in `engine/` or `v2-*.js` bridge code).
 
 ────────────────────────────────────────────────────────
-READING THE TRACKER EFFICIENTLY
+READING THE TRACKER EFFICIENTLY (GitHub Issues)
 ────────────────────────────────────────────────────────
-The tracker (docs/v2-migration-tracker.md) is large. Do NOT read the
-entire file. Instead:
+Update the feature **Issue** (workflow label `v2-status:*` + JSON body). Use `docs/v2-migration-tracker-snapshot.md` and `npm run v2:queue -- --json` for counts and claimable rows — do not assume a local markdown tracker exists.
 
-  1. Read lines 1–20 (the Summary table) to understand global progress.
-  2. To find Done/Fixed features to claim: use Grep to search the tracker
-     for `| Done |` or `| Fixed |` and scan the results.
-  3. When you need to EDIT a row, read only the section around that
-     feature (use offset/limit).
-  4. After editing, re-read lines 1–20 to verify your Summary table update.
+  1. Read the snapshot Summary (or run `npm run v2:sync-tracker-md`) for global progress.
+  2. To find **Done** features to validate: search Issues / API / queue output for `v2-status:Done` (validation claim).
+  3. **PATCH** only the Issues you claim.
+  4. Optionally refresh the snapshot after bulk updates.
 
-**Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
-
-**Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to claim or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
-
-**Abilities, Beastforms, Items, Consumables:** Full gated-collection tables live in `docs/v2-migration-to-review.md` (main tracker has a pointer); edit rows there when validating those features. Update **Status Summary** in the tracker when counts change.
-
-NEVER read the full tracker file in one pass. Most of it is empty
-Unclaimed rows that waste your context window.
+NEVER enumerate every open Issue without filtering by status.
 
 ────────────────────────────────────────────────────────
 TRACKER PROTOCOL (mandatory — this coordinates parallel agents)
@@ -177,11 +167,9 @@ VALIDATION STEPS (per feature)
    - Needs Fix: write concise `Val Notes` citing CONV-NNN for convention
      issues or quoting the SRD for correctness issues. Do NOT fix — annotate only.
    - Blocked: feature cannot be fully implemented with the current V2 engine API.
-     In ADDITION to updating the feature row, you MUST add one or more rows to
-     the **active** "Blocked / API Extension Requests" table at the bottom of
-     `docs/v2-migration-tracker.md` (only `Open` / `In Progress`; never append
-     new work to `docs/v2-blocked-resolutions-done.md` — that file is for
-     completed resolutions moved there by the Unblocking Agent).
+     In ADDITION to updating the feature Issue, you MUST open/update **Blocked / API**
+     **GitHub Issues** (`v2-kind:blocked`, `v2-migration`; only `Open` / `In Progress`; never append
+     new work to `docs/v2-blocked-resolutions-done.md` except via the Unblocking Agent archive step).
      **Table key is Resolution** (the engine change needed), not feature name.
      Rules:
        - One row per distinct API extension needed.
@@ -220,8 +208,7 @@ VALIDATION STEPS (per feature)
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
 Re-read docs/agent-prompts/validation-agent.md and docs/v2-code-conventions.md.
-Read the tracker Summary (lines 1–20), then grep for `| Done |` or
-`| Fixed |` rows to claim. Do NOT re-read the full tracker.
+Read the snapshot Summary / run `npm run v2:queue`, then find **Done** Issues to claim.
 Claim up to 5 rows → announce → validate → mark Validated or Needs Fix.
   (Same as step 1 batch size; orchestrator `--val-batch-size` defaults to 5.)
 
@@ -237,6 +224,5 @@ THINGS TO NEVER DO
 - Do NOT start working before announcing the batch.
 - Do NOT skip re-reading docs/v2-code-conventions.md at the start of
   each batch.
-- Do NOT read the entire tracker file. Use the READING THE TRACKER
-  EFFICIENTLY protocol above.
-- Do NOT tell the user what to validate or implement next — see **Agent output** in `docs/v2-migration-tracker.md`.
+- Do NOT enumerate every Issue. Use the READING THE TRACKER EFFICIENTLY protocol above.
+- Do NOT tell the user what to validate or implement next — **Agent output** is batch summaries only (`docs/v2-migration-tracker-snapshot.md`, `npm run v2:queue`).

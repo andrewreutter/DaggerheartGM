@@ -198,7 +198,9 @@ hooks: {
 passiveStatMods: { numShortRestSlots: 1, numLongRestSlots: 1 }
 ```
 
-Implementation: `applyDeclarativeFeatures` in `src/features-v2/engine/feature-loader.js` accumulates `numShortRestSlots`, `numLongRestSlots`, and `numLongMovesInShortRest` into the returned `stats` object. The Rest banner uses `getRestMovesForCharacter` in `src/client/lib/rest-moves.js`, which applies the same modifiers by reading the V2 ancestry feature registry (so slot counts and Efficient’s long-move options stay in sync with CONV-011).
+Implementation: `applyDeclarativeFeatures` in `src/features-v2/engine/feature-loader.js` accumulates `numShortRestSlots`, `numLongRestSlots`, and `numLongMovesInShortRest` into the returned `stats` object. The client exposes merged totals on the character as `_v2RestSlotStats` (`mergeV2DeclarativeSheetOverlay` in `src/client/lib/v2-declarative-sheet.js`). The Rest banner calls `getRestMovesForCharacter` in `src/client/lib/rest-moves.js` with optional `{ mergedRestStats }` so dropdown slot counts match merged declarative stats (ancestry/ability registry paths still apply when merged stats are omitted). **Conditional** extra slots (e.g. after using a consumable during the same rest) must still be expressed via `passiveStatMods`, typically wrapped in `when((table) => …, { numShortRestSlots: … })`, with any one-rest state in `table.source` / `featureState` — not a late `onRest` mutation.
+
+**`placement: 'rest'`:** Chips with `placements: ['rest']` are collected with `collectChips(features, 'rest', table, usageStore)` when `table.action.type` is `'shortRest'` or `'longRest'` (see `buildRestBannerTableForCharacter` / `collectV2RestPlacementChipsForCharacter` in `src/client/lib/v2-action-loop-bridge.js`). They render on the Rest banner in `DiceRoller.jsx` (`RestBanner`), not on the dice review banner.
 
 ---
 
@@ -636,7 +638,7 @@ When the SRD says **adversaries** must succeed on a **reaction roll** against a 
 
 **Applies to:**
 
-- **Engine / framework:** `src/features-v2/engine/**` (`table.js`, `chip-system.js`, `action-loop.js`, `when.js`, `feature-loader.js`, merge helpers, etc.) — anything that builds snapshots, runs hooks, or loads rows for **all** characters.
+- **Engine / framework:** `src/features-v2/engine/**` (`table.js`, `chip-system.js`, `action-loop.js`, `when.js`, `feature-loader.js`, merge helpers, etc.) — anything that builds snapshots, runs hooks, or loads rows for **all** characters. **`collectSheetCards`**, **`collectEditorCards`**, **`buildCardsForFeature`**, **`normalizeCardEntry`** are generic (like chips): they unwrap `when()` and resolve leaves; they must not branch on Ranger/Beastbound names. Exposing **`table.me.companion`** for predicates is allowed (character payload, not a named feature).
 - **Shared client integration:** `src/client/lib/v2-*.js`, `applyV2BannerMutations` / `applyV2LifecycleMutations` / related paths in `table-ops.js`, `game-table-mechanics.js`, and **generic** normalization in `normalize-persisted-character-element.js` (migrating **legacy** keys is OK; adding **new** one-off branches for a single current feature is not).
 
 **Does not apply to:** Individual feature modules under `src/features-v2/classes/`, `subclasses/`, `abilities/`, etc. — those files **should** name their own `name` and SRD-specific logic.
@@ -664,6 +666,15 @@ if (classId === 'srd-cls-bard') { ... } // in engine/ or v2-action-loop-bridge.j
 **Cursor rule:** `.cursor/rules/v2-framework-boundaries.mdc` (always applied).
 
 **Related:** Authoring guide documents merged fields (e.g. `substituteArmorForHope` on the element from `applyDeclarativeFeatures`).
+
+### Declarative `cards` (sheet/editor) and JSON Schema (same boundary as above)
+
+- **`cards[]` entries** are normalized to **`{ placement: 'sheet' | 'editor', shape?, resolve }`**. Legacy bare **`when()`** / objects default to **`placement: 'sheet'`** and **`resolve`** = that node (`chip-system.js` **`normalizeCardEntry`**).
+- **Shape bundles** (when present) live **only** on **`feature.cards[].shape`** (file-local `const` in the feature module). Do **not** add a public **`src/features-v2/shapes/`** barrel for authors to import; discovery walks merged **`activeFeatures[*].cards[*].shape`**.
+- **Sheet** vs **editor** use **`collectSheetCards`** vs **`collectEditorCards`**; the character form uses **`buildEditorTableStub`** so **`when()`** predicates see **`table.me`** fields needed for editor cards.
+- **Shared client** (`CharacterDisplay.jsx`, `CharacterForm.jsx`) renders declarative cards via **JSON Schema** + **generic** widgets (`DeclarativeSchemaCard.jsx`) keyed by schema **`type`** (`string`, `integer`, `array`, and DH **`trackedState`**, **`attack`**). Do **not** add **feature-specific** React components (e.g. a one-off companion-only sheet component) or **`shapeId === '…'`** branches in shared UI. Extra actions beside a template use **shape-anchored chips** (`collectChipsForShapePlacement`); feature code uses **`onUse`** + **`table.sheet.actionRoll`** when a VTT roll is needed, not a schema type.
+
+**Related:** `docs/feature-authoring-guide.md` (sheet display cards), `src/client/lib/json-schema-dh.js` (validator bootstrap for DH types).
 
 ---
 

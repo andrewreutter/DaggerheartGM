@@ -172,7 +172,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
       onClick={openPanel}
       className={`flex items-center justify-center gap-1.5 text-xs transition-colors shrink-0 cursor-pointer ${
         inline
-          ? 'h-full min-h-[2.5rem] min-w-[7.5rem] px-3 rounded-none border-l border-slate-700 text-purple-300 hover:text-purple-100 bg-slate-900/80 hover:bg-slate-800/80'
+          ? 'h-full min-h-[2.5rem] min-w-[7.5rem] px-3 rounded-none border-l border-dh-border text-purple-300 hover:text-purple-100 bg-dh-surface/80 hover:bg-dh-raised/80'
           : 'px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40'
       }`}
     >
@@ -182,7 +182,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
   );
 
   const panelEl = open && (
-    <div className={`p-3 bg-slate-900 border border-purple-800/60 rounded-lg space-y-3 ${inline ? 'mt-2 w-full basis-full' : 'mt-2'}`}>
+    <div className={`p-3 bg-dh-surface border border-purple-800/60 rounded-lg space-y-3 ${inline ? 'mt-2 w-full basis-full' : 'mt-2'}`}>
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-purple-300 flex items-center gap-1.5">
               <Sparkles size={12} />
@@ -191,7 +191,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
             <button
               type="button"
               onClick={rebuildPrompt}
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+              className="flex items-center gap-1 text-xs text-dh-muted hover:text-dh transition-colors"
               title="Rebuild prompt from current item data"
             >
               <RotateCcw size={11} />
@@ -204,7 +204,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
             onChange={e => setEditedPrompt(e.target.value)}
             disabled={generating}
             rows={8}
-            className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm text-white resize-y disabled:opacity-50 focus:border-purple-600 focus:outline-none"
+            className="w-full bg-dh-inset border border-dh-border rounded p-2 text-sm text-dh resize-y disabled:opacity-50 focus:border-purple-600 focus:outline-none"
             placeholder="Describe the image you want to generate..."
           />
 
@@ -220,7 +220,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
                   src={currentPreview}
                   alt="Generated preview"
                   onClick={() => setLightboxOpen(true)}
-                  className="w-full rounded border border-slate-700 max-h-64 object-contain bg-slate-950 cursor-zoom-in"
+                  className="w-full rounded border border-dh-border max-h-64 object-contain bg-dh-inset cursor-zoom-in"
                 />
                 {imageHistory.length > 1 && (
                   <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-2">
@@ -278,7 +278,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
                   type="button"
                   onClick={() => setEditOpen(o => !o)}
                   disabled={generating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-dh-hover hover:bg-dh-hover disabled:opacity-50 disabled:cursor-not-allowed text-dh transition-colors"
                 >
                   <Wand2 size={12} />
                   Edit this image
@@ -294,7 +294,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
                     onKeyDown={e => { if (e.key === 'Enter' && !generating && editInstruction.trim()) handleEdit(); }}
                     disabled={generating}
                     placeholder="e.g. make the background darker, add a sword…"
-                    className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white placeholder-slate-500 disabled:opacity-50 focus:border-purple-600 focus:outline-none"
+                    className="flex-1 bg-dh-inset border border-dh-border rounded px-2 py-1.5 text-xs text-dh placeholder-dh-muted disabled:opacity-50 focus:border-purple-600 focus:outline-none"
                   />
                   <button
                     type="button"

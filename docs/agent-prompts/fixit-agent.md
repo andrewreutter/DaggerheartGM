@@ -44,25 +44,16 @@ latest version.
 **Framework boundaries:** Fixes must not reintroduce feature-specific branches into `src/features-v2/engine/` or shared V2 bridges — see **CONV-029** and `.cursor/rules/v2-framework-boundaries.mdc`.
 
 ────────────────────────────────────────────────────────
-READING THE TRACKER EFFICIENTLY
+READING THE TRACKER EFFICIENTLY (GitHub Issues)
 ────────────────────────────────────────────────────────
-The tracker (docs/v2-migration-tracker.md) is large. Do NOT read the
-entire file. Instead:
+Update the feature **Issue** (labels `v2-migration`, `v2-status:*`, JSON body). Use `docs/v2-migration-tracker-snapshot.md` and `npm run v2:queue -- --json` for Summary counts and queue — there is no markdown tracker file.
 
-  1. Read lines 1–20 (the Summary table) to understand global progress.
-  2. To find Needs Fix features: use Grep to search the tracker for
-     `| Needs Fix |` and scan the results.
-  3. When you need to EDIT a row, read only the section around that
-     feature (use offset/limit).
-  4. After editing, re-read lines 1–20 to verify your Summary table update.
+  1. Read the snapshot Summary for global progress.
+  2. Find **Needs Fix** features via GitHub search / API / queue output.
+  3. **PATCH** only the Issues you touch.
+  4. Optionally run `npm run v2:sync-tracker-md` to refresh the snapshot after updates.
 
-**Subclasses:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to find or edit `subclasses/` rows; update the **Subclasses** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
-
-**Weapon Properties:** Per-feature rows live in `docs/v2-migration-to-review.md` (not in the main tracker). Grep or read that file to find or edit `weapon_properties/` rows; update the **Weapon Properties** counts in `docs/v2-migration-tracker.md` lines 1–20 when those status counts change.
-
-**Abilities, Beastforms, Items, Consumables:** Full gated-collection tables live in `docs/v2-migration-to-review.md` (main tracker has a pointer); edit rows there when fixing those features. Update **Status Summary** in the tracker when counts change.
-
-NEVER read the full tracker file in one pass.
+NEVER enumerate every open Issue without filtering by status.
 
 ────────────────────────────────────────────────────────
 DOCUMENTATION JUDGMENT: GUIDE vs CONVENTIONS
@@ -181,9 +172,9 @@ When the user gives you a new convention, architectural pattern, or fix:
    - Fix all violations without asking first.
    - Update the affected implementation files and their tests.
    - Run `npm run test:unit` to ensure nothing broke.
-5. Update the Tracker:
+5. Update GitHub Issues:
    - For EVERY feature you modified during back-application, find its
-     row in `docs/v2-migration-tracker.md`.
+     matching **Issue** (`v2-migration`, `v2-kind:feature`).
    - If its Status was `Validated`, downgrade it to `Done`.
    - If its Status was `Needs Fix`, change it to `Done` and clear `Val Notes`.
    - You may write in `Fix Notes` if useful. NEVER overwrite `Impl Notes`.
@@ -228,8 +219,8 @@ When triggered:
 1. Read `docs/agent-prompts/unblocking-agent.md`.
 2. Follow those instructions exactly.
 
-The Unblocking Agent protocol covers: claiming one resolution row from
-the **active** Blocked table in `v2-migration-tracker.md`, implementing
+The Unblocking Agent protocol covers: claiming one resolution from
+the **active** Blocked **Issues** on GitHub, implementing
 the engine change, appending the Done row to `v2-blocked-resolutions-done.md`,
 updating affected feature files, and promoting features to `Reviewed` when
 no active row lists them.
@@ -238,7 +229,7 @@ no active row lists them.
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
 Re-read docs/agent-prompts/fixit-agent.md and docs/v2-code-conventions.md.
-Read the tracker Summary (lines 1–20), then grep for `| Needs Fix |` — then:
+Read the snapshot Summary / run `npm run v2:queue`, then find **Needs Fix** Issues — then:
   - If there are `Needs Fix` rows: run Mode 1 (one at a time).
   - If the user said to work on a Blocked issue: run Mode 4
     (read unblocking-agent.md and follow those instructions).
@@ -261,6 +252,5 @@ THINGS TO NEVER DO
 - Do NOT auto-select a Blocked issue. Only work on Blocked items when
   the user explicitly says to. For Blocked work, always use Mode 4
   (read and follow unblocking-agent.md).
-- Do NOT read the entire tracker file. Use the READING THE TRACKER
-  EFFICIENTLY protocol above.
-- Do NOT suggest what to fix or implement next — see **Agent output** in `docs/v2-migration-tracker.md`.
+- Do NOT enumerate every Issue. Use the READING THE TRACKER EFFICIENTLY protocol above.
+- Do NOT suggest what to fix or implement next — **Agent output** is batch summaries only (`docs/v2-migration-tracker-snapshot.md`, `npm run v2:queue`).

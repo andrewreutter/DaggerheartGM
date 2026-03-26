@@ -1,14 +1,29 @@
-import { Search } from 'lucide-react';
-import { ROLES, ENV_TYPES } from '../lib/constants.js';
+import { Search, ArrowLeftRight, ArrowUpDown } from 'lucide-react';
+import { TIERS } from '../lib/constants.js';
 import { TierSelector } from './TierSelector.jsx';
+import { ABILITY_LEVELS, getLibraryFilterConfig } from '../lib/library-filter-config.js';
+
+/** Shared search field for Library filter bar (`CollectionFilters` bar variant). */
+export function LibrarySearchField({ collection, value, onChange, className = '' }) {
+  return (
+    <div className={`relative min-w-0 flex-1 ${className}`}>
+      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dh-muted pointer-events-none" />
+      <input
+        type="text"
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder={`Search ${collection}…`}
+        className="w-full bg-dh-raised border border-dh-strong rounded pl-7 pr-3 py-1.5 text-xs text-dh placeholder-dh-muted focus:outline-none focus:border-dh-strong transition-colors"
+      />
+    </div>
+  );
+}
 
 const SOURCE_OPTIONS = [
-  { val: 'own',     label: 'Mine' },
-  { val: null,      label: 'All' },
-  { val: 'srd',     label: 'SRD' },
-  { val: 'public',  label: 'Public' },
-  { val: 'hod',     label: 'HoD' },
-  { val: 'fcg',     label: 'FCG' },
+  { val: 'own', label: 'Mine' },
+  { val: null, label: 'All' },
+  { val: 'srd', label: 'SRD' },
+  { val: 'public', label: 'Public' },
 ];
 
 const SORT_OPTIONS = [
@@ -20,14 +35,18 @@ const SORT_OPTIONS = [
 ];
 
 /**
- * Shared filter bar/panel for adversary and environment collections.
+ * Shared filter bar/panel for library collections (unified API).
  *
  * Props:
- *   collection      - 'adversaries' | 'environments'
- *   filters         - { includes, tiers, types, search, includeScaledUp } from useCollectionSearch
+ *   collection      - collection id (e.g. adversaries, abilities, weapons)
+ *   filters         - { includes, tiers, types, extraTypes, search, includeScaledUp } from useCollectionSearch
  *   onFilterChange  - (key, value) => void
  *   variant         - 'bar' (LibraryView horizontal) | 'panel' (modal / FeatureLibrary stacked)
  *   autoFocusSearch - boolean, default false
+ *   viewSlider      - optional library card sizing (bar variant):
+ *                     pixel width: { value, onChange, min?, max?, step? }
+ *                     snap width: { snapValues, snapIndex, onSnapChange } (one column per step)
+ *                     optional height: { height: { value, onChange, min?, max?, step? } } — ↕ slider beside width
  */
 export function CollectionFilters({
   collection,
@@ -36,127 +55,259 @@ export function CollectionFilters({
   variant = 'bar',
   autoFocusSearch = false,
   showSort = false,
+  viewSlider = null,
 }) {
-  const typeOptions = collection === 'adversaries' ? ROLES : ENV_TYPES;
-  const typeLabel = collection === 'adversaries' ? 'Role' : 'Type';
+  const cfg = getLibraryFilterConfig(collection);
+  const typeOptions = Array.isArray(cfg.typeOptions) ? cfg.typeOptions : null;
+  const typeLabel = cfg.typeLabel || 'Type';
+  const extraOpts = Array.isArray(cfg.extraTypeOptions) ? cfg.extraTypeOptions : null;
+  const extraLabel = cfg.extraTypeLabel || '';
 
   if (variant === 'panel') {
-    return <PanelFilters
+    return (
+      <PanelFilters
+        filters={filters}
+        onFilterChange={onFilterChange}
+        typeOptions={typeOptions}
+        typeLabel={typeLabel}
+        extraOpts={extraOpts}
+        extraLabel={extraLabel}
+        cfg={cfg}
+        collection={collection}
+        autoFocusSearch={autoFocusSearch}
+        showSort={showSort}
+      />
+    );
+  }
+
+  return (
+    <BarFilters
       filters={filters}
       onFilterChange={onFilterChange}
       typeOptions={typeOptions}
       typeLabel={typeLabel}
+      extraOpts={extraOpts}
+      extraLabel={extraLabel}
+      cfg={cfg}
       collection={collection}
-      autoFocusSearch={autoFocusSearch}
       showSort={showSort}
-    />;
-  }
+      viewSlider={viewSlider}
+    />
+  );
+}
 
-  return <BarFilters
-    filters={filters}
-    onFilterChange={onFilterChange}
-    typeOptions={typeOptions}
-    typeLabel={typeLabel}
-    collection={collection}
-    showSort={showSort}
-  />;
+function rankNumbers(cfg) {
+  if (cfg.rankMode === 'level') return ABILITY_LEVELS;
+  if (cfg.rankMode === 'none') return null;
+  return TIERS;
 }
 
 // ---------------------------------------------------------------------------
 // Bar variant — horizontal inline style used in LibraryView
 // ---------------------------------------------------------------------------
 
-function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collection, showSort }) {
-  const { includes = [], tiers = [], types = [], search, includeScaledUp, sort = 'popularity' } = filters;
+function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOpts, extraLabel, cfg, collection, showSort, viewSlider }) {
+  const { includes = [], tiers = [], types = [], extraTypes = [], search, includeScaledUp, sort = 'popularity' } = filters;
+  const rankNums = rankNumbers(cfg);
 
   const baseBtn = 'px-2 py-0.5 rounded font-medium border transition-colors';
-  const inactive = 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300';
+  const inactive = 'bg-dh-raised border-dh-strong text-dh-muted hover:border-dh-strong hover:text-dh';
+  const headingCls = 'text-dh-muted font-medium uppercase tracking-wider shrink-0 whitespace-nowrap';
+
+  const hasMiddleFilters =
+    !!rankNums
+    || (typeOptions && typeOptions.length > 0)
+    || (extraOpts && extraOpts.length > 0);
+
+  const hasSortOrView = showSort || viewSlider;
 
   return (
     <div className="mb-5 space-y-2">
-      {/* Search */}
-      <div className="relative">
-        <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-        <input
-          type="text"
+      {/* Row 1 — search + source (all collection types) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <LibrarySearchField
+          collection={collection}
           value={search}
-          onChange={e => onFilterChange('search', e.target.value)}
-          placeholder={`Search ${collection}…`}
-          className="w-full bg-slate-800 border border-slate-700 rounded pl-7 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500 transition-colors"
+          onChange={v => onFilterChange('search', v)}
+          className="min-w-[10rem]"
         />
+        <div className="inline-flex max-w-full items-center gap-2 flex-nowrap text-xs text-dh-muted">
+          <span className={headingCls}>Include</span>
+          {SOURCE_OPTIONS.map(({ val, label }) => (
+            <button
+              key={String(val)}
+              type="button"
+              onClick={() => onFilterChange('include', val === null ? null : val)}
+              className={`${baseBtn} shrink-0 ${(val === null ? includes.length === 0 : includes.includes(val)) ? 'bg-cyan-800 border-cyan-500 text-cyan-100' : inactive}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Source + Tier + Type + Sort */}
-      <div className="flex items-start gap-3 text-xs text-slate-400 flex-wrap">
-        <span className="text-slate-500 font-medium uppercase tracking-wider">Include</span>
-        {SOURCE_OPTIONS.map(({ val, label }) => (
-          <button
-            key={String(val)}
-            onClick={() => onFilterChange('include', val === null ? null : val)}
-            className={`${baseBtn} ${(val === null ? includes.length === 0 : includes.includes(val)) ? 'bg-cyan-800 border-cyan-500 text-cyan-100' : inactive}`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* Row 2 — tier / type / extra (varies by collection) */}
+      {hasMiddleFilters && (
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2 text-xs text-dh-muted">
+          {rankNums && (
+            <div className="inline-flex max-w-full items-start gap-2 flex-nowrap">
+              <span className={`${headingCls} pt-0.5`}>
+                {cfg.rankMode === 'level' ? 'Level' : 'Tier'}
+              </span>
+              <div className="flex shrink-0 flex-col gap-1">
+                <TierSelector
+                  value={tiers}
+                  onChange={t => onFilterChange('tier', t)}
+                  multi
+                  showAll
+                  numbers={rankNums}
+                  activeClass="bg-amber-700 border-amber-500 text-amber-100"
+                  inactiveClass={inactive}
+                  btnClass={baseBtn}
+                />
+                {cfg.showIncludeScaled && collection === 'adversaries' && tiers.length === 1 && (
+                  <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={!!includeScaledUp}
+                      onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
+                      className="rounded border-dh-strong bg-dh-raised text-amber-500 focus:ring-amber-500/50"
+                    />
+                    <span className="text-dh-muted">Include Scaled</span>
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
 
-        <span className="text-slate-700 select-none">|</span>
-        <span className="text-slate-500 font-medium uppercase tracking-wider">Tier</span>
-        <div className="flex flex-col gap-1">
-          <TierSelector
-            value={tiers}
-            onChange={t => onFilterChange('tier', t)}
-            multi
-            showAll
-            activeClass="bg-amber-700 border-amber-500 text-amber-100"
-            inactiveClass={inactive}
-            btnClass={baseBtn}
-          />
-          {collection === 'adversaries' && tiers.length === 1 && (
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!includeScaledUp}
-                onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
-                className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50"
-              />
-              <span className="text-slate-400">Include Scaled</span>
-            </label>
+          {typeOptions && typeOptions.length > 0 && (
+            <>
+              {rankNums && <span className="text-dh-muted select-none shrink-0 pt-0.5" aria-hidden>|</span>}
+              <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
+                <span className={headingCls}>{typeLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => onFilterChange('type', null)}
+                  className={`${baseBtn} shrink-0 ${types.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                >
+                  All
+                </button>
+                {typeOptions.map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => onFilterChange('type', val)}
+                    className={`${baseBtn} shrink-0 ${collection === 'adversaries' ? 'capitalize' : ''} ${types.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {extraOpts && extraOpts.length > 0 && (
+            <>
+              {(rankNums || (typeOptions && typeOptions.length > 0)) && (
+                <span className="text-dh-muted select-none shrink-0 pt-0.5" aria-hidden>|</span>
+              )}
+              <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
+                <span className={headingCls}>{extraLabel}</span>
+                <button
+                  type="button"
+                  onClick={() => onFilterChange('extraType', null)}
+                  className={`${baseBtn} shrink-0 ${extraTypes.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                >
+                  All
+                </button>
+                {extraOpts.map(val => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => onFilterChange('extraType', val)}
+                    className={`${baseBtn} shrink-0 ${extraTypes.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
+                  >
+                    {val}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
         </div>
+      )}
 
-        <span className="text-slate-700 select-none">|</span>
-        <span className="text-slate-500 font-medium uppercase tracking-wider">{typeLabel}</span>
-        <button
-          onClick={() => onFilterChange('type', null)}
-          className={`${baseBtn} ${types.length === 0 ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
-        >
-          All
-        </button>
-        {typeOptions.map(val => (
-          <button
-            key={val}
-            onClick={() => onFilterChange('type', val)}
-            className={`${baseBtn} capitalize ${types.includes(val) ? 'bg-red-800 border-red-500 text-red-100' : inactive}`}
-          >
-            {val}
-          </button>
-        ))}
-        {showSort && (
-          <>
-            <span className="text-slate-700 select-none">|</span>
-            <span className="text-slate-500 font-medium uppercase tracking-wider">Sort</span>
-            <select
-              value={sort}
-              onChange={e => onFilterChange('sort', e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-300 text-xs"
-            >
-              {SORT_OPTIONS.map(({ val, label }) => (
-                <option key={val} value={val}>{label}</option>
-              ))}
-            </select>
-          </>
-        )}
-      </div>
+      {/* Last row — sort + view (library) */}
+      {hasSortOrView && (
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-dh-border/60 pt-2 text-xs text-dh-muted">
+          {showSort && (
+            <div className="inline-flex max-w-full items-center gap-2 flex-nowrap">
+              <span className={headingCls}>Sort</span>
+              <select
+                value={sort}
+                onChange={e => onFilterChange('sort', e.target.value)}
+                className="shrink-0 rounded border border-dh-strong bg-dh-raised px-2 py-0.5 text-xs text-dh"
+              >
+                {SORT_OPTIONS.map(({ val: v, label }) => (
+                  <option key={v} value={v}>{label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {viewSlider && (
+            <>
+              {showSort && <span className="text-dh-muted select-none shrink-0" aria-hidden>|</span>}
+              <span className={headingCls}>View</span>
+              <span className="inline-flex min-w-[10rem] max-w-[14rem] flex-1 items-center gap-1.5 sm:min-w-[12rem]">
+                <ArrowLeftRight size={14} className="shrink-0 text-dh-muted" aria-hidden />
+                <span className="shrink-0 text-dh-muted">Width</span>
+                <label className="flex min-w-0 flex-1 items-center">
+                  {Array.isArray(viewSlider.snapValues) && viewSlider.snapValues.length > 0 ? (
+                    <input
+                      type="range"
+                      aria-label="Cards per row"
+                      min={0}
+                      max={Math.max(0, viewSlider.snapValues.length - 1)}
+                      step={1}
+                      value={Math.min(viewSlider.snapIndex ?? 0, viewSlider.snapValues.length - 1)}
+                      onChange={e => viewSlider.onSnapChange?.(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                    />
+                  ) : (
+                    <input
+                      type="range"
+                      aria-label="Card width"
+                      min={viewSlider.min ?? 220}
+                      max={viewSlider.max ?? 520}
+                      step={viewSlider.step ?? 10}
+                      value={viewSlider.value}
+                      onChange={e => viewSlider.onChange(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                    />
+                  )}
+                </label>
+              </span>
+              {viewSlider.height && (
+                <span className="inline-flex min-w-[10rem] max-w-[14rem] flex-1 items-center gap-1.5 sm:min-w-[12rem]">
+                  <ArrowUpDown size={14} className="shrink-0 text-dh-muted" aria-hidden />
+                  <span className="shrink-0 text-dh-muted">Height</span>
+                  <label className="flex min-w-0 flex-1 items-center">
+                    <input
+                      type="range"
+                      aria-label="Card height"
+                      min={viewSlider.height.min ?? 120}
+                      max={viewSlider.height.max ?? 480}
+                      step={viewSlider.height.step ?? 1}
+                      value={viewSlider.height.value}
+                      onChange={e => viewSlider.height.onChange(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                    />
+                  </label>
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -165,83 +316,102 @@ function BarFilters({ filters, onFilterChange, typeOptions, typeLabel, collectio
 // Panel variant — stacked sections with headers, used in modals / FeatureLibrary
 // ---------------------------------------------------------------------------
 
-function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collection, autoFocusSearch, showSort }) {
-  const { includes = [], tiers = [], types = [], search, includeScaledUp, sort = 'popularity' } = filters;
+function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, extraOpts, extraLabel, cfg, collection, autoFocusSearch, showSort }) {
+  const { includes = [], tiers = [], types = [], extraTypes = [], search, includeScaledUp, sort = 'popularity' } = filters;
+  const rankNums = rankNumbers(cfg);
 
   const btnBase = 'px-2.5 py-1 rounded-md text-xs font-medium transition-colors border';
   const btnActive = 'bg-red-700 border-red-600 text-white';
-  const btnInactive = 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600 hover:text-white';
+  const btnInactive = 'bg-dh-raised border-dh-strong text-dh hover:border-dh-strong hover:text-white';
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Search */}
-      <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
-        <Search size={14} className="text-slate-400 shrink-0" />
-        <input
-          autoFocus={autoFocusSearch}
-          className="flex-1 bg-transparent text-sm text-white outline-none placeholder-slate-500"
-          placeholder="Search by name..."
-          value={search}
-          onChange={e => onFilterChange('search', e.target.value)}
-        />
-      </div>
-
-      {/* Source */}
-      <div>
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Source</div>
-        <div className="flex flex-wrap gap-1.5">
-          {SOURCE_OPTIONS.map(({ val, label }) => (
-            <button
-              key={String(val)}
-              onClick={() => onFilterChange('include', val === null ? null : val)}
-              className={`${btnBase} ${(val === null ? includes.length === 0 : includes.includes(val)) ? btnActive : btnInactive}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Tier */}
-      <div>
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Tier</div>
-        <div className="flex flex-col gap-1.5">
-          <TierSelector
-            value={tiers}
-            onChange={t => onFilterChange('tier', t)}
-            multi
-            showAll
-            activeClass={btnActive}
-            inactiveClass={btnInactive}
-            btnClass={btnBase}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border border-dh-strong bg-dh-raised px-3 py-2 transition-colors focus-within:border-blue-500">
+          <Search size={14} className="shrink-0 text-dh-muted" />
+          <input
+            autoFocus={autoFocusSearch}
+            className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder-dh-muted"
+            placeholder="Search by name..."
+            value={search}
+            onChange={e => onFilterChange('search', e.target.value)}
           />
-          {collection === 'adversaries' && tiers.length === 1 && (
-            <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-              <input
-                type="checkbox"
-                checked={!!includeScaledUp}
-                onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
-                className="rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50"
-              />
-              <span>Include Scaled</span>
-            </label>
-          )}
+        </div>
+        <div className="min-w-0">
+          <div className="mb-1.5 text-xs font-medium uppercase tracking-wider text-dh-muted">Source</div>
+          <div className="flex flex-wrap gap-1.5">
+            {SOURCE_OPTIONS.map(({ val, label }) => (
+              <button
+                key={String(val)}
+                type="button"
+                onClick={() => onFilterChange('include', val === null ? null : val)}
+                className={`${btnBase} ${(val === null ? includes.length === 0 : includes.includes(val)) ? btnActive : btnInactive}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Role / Type — button group matching Source/Tier */}
-      <div>
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">{typeLabel}</div>
-        <div className="flex flex-wrap gap-1.5">
-          <button onClick={() => onFilterChange('type', null)} className={`${btnBase} ${types.length === 0 ? btnActive : btnInactive}`}>All</button>
-          {typeOptions.map(val => (
-            <button key={val} onClick={() => onFilterChange('type', val)} className={`${btnBase} capitalize ${types.includes(val) ? btnActive : btnInactive}`}>{val}</button>
-          ))}
+      {rankNums && (
+        <div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">
+            {cfg.rankMode === 'level' ? 'Level' : 'Tier'}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <TierSelector
+              value={tiers}
+              onChange={t => onFilterChange('tier', t)}
+              multi
+              showAll
+              numbers={rankNums}
+              activeClass={btnActive}
+              inactiveClass={btnInactive}
+              btnClass={btnBase}
+            />
+            {cfg.showIncludeScaled && collection === 'adversaries' && tiers.length === 1 && (
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+                <input
+                  type="checkbox"
+                  checked={!!includeScaledUp}
+                  onChange={e => onFilterChange('includeScaledUp', e.target.checked)}
+                  className="rounded border-dh-strong bg-dh-raised text-amber-500 focus:ring-amber-500/50"
+                />
+                <span>Include Scaled</span>
+              </label>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {typeOptions && typeOptions.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">{typeLabel}</div>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => onFilterChange('type', null)} className={`${btnBase} ${types.length === 0 ? btnActive : btnInactive}`}>All</button>
+            {typeOptions.map(val => (
+              <button key={val} type="button" onClick={() => onFilterChange('type', val)} className={`${btnBase} ${collection === 'adversaries' ? 'capitalize' : ''} ${types.includes(val) ? btnActive : btnInactive}`}>{val}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {extraOpts && extraOpts.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">{extraLabel}</div>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => onFilterChange('extraType', null)} className={`${btnBase} ${extraTypes.length === 0 ? btnActive : btnInactive}`}>All</button>
+            {extraOpts.map(val => (
+              <button key={val} type="button" onClick={() => onFilterChange('extraType', val)} className={`${btnBase} ${extraTypes.includes(val) ? btnActive : btnInactive}`}>{val}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {showSort && (
         <div>
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Sort</div>
+          <div className="text-xs font-medium text-dh-muted uppercase tracking-wider mb-2">Sort</div>
           <select value={sort} onChange={e => onFilterChange('sort', e.target.value)} className={`${btnBase} w-full`}>
             {SORT_OPTIONS.map(({ val, label }) => (
               <option key={val} value={val}>{label}</option>
@@ -252,3 +422,4 @@ function PanelFilters({ filters, onFilterChange, typeOptions, typeLabel, collect
     </div>
   );
 }
+

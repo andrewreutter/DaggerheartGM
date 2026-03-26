@@ -393,6 +393,34 @@ export function computeArmorModifiers(armorItem, sheetCtx) {
 }
 
 /**
+ * True when an armor sub-feature's only resolved passive stat automation is evasion — already covered by evasion tooltips on the sheet.
+ * Unknown or non-V2 feature names return false (caller should still show a card when description matters).
+ *
+ * @param {string} featName
+ * @param {{ computed?: object, raw?: object }} [sheetCtx]
+ */
+export function isArmorFeatureEvasionOnlyTooltipRedundant(featName, sheetCtx) {
+  const v2d = v2ArmorProperties[featName];
+  if (!v2d) return false;
+  const mods = resolveGearPassiveStatMods(v2d, featName, sheetCtx);
+  if (!mods) return false;
+  let hasNonEvasion = false;
+  if (mods.traits && typeof mods.traits === 'object') {
+    for (const [k, v] of Object.entries(mods.traits)) {
+      if (TRAIT_KEYS.includes(k) && v) hasNonEvasion = true;
+    }
+  }
+  for (const key of TRAIT_KEYS) {
+    if (mods[key] != null && typeof mods[key] === 'number' && !(mods.traits && key in mods.traits)) {
+      hasNonEvasion = true;
+    }
+  }
+  if (Array.isArray(mods.rollModifiers) && mods.rollModifiers.length) hasNonEvasion = true;
+  const ev = mods.evasion != null && typeof mods.evasion === 'number' && mods.evasion !== 0;
+  return ev && !hasNonEvasion;
+}
+
+/**
  * Resolve a weapon from SRD data into the app's weapon format.
  */
 export function resolveWeapon(weaponItem) {

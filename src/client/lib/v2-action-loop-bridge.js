@@ -4,6 +4,10 @@
  * Builds `gameState` for the V2 engine, hydrates `rolls` + pending `action.effects` from banner
  * payloads (damage type, armor commitment, HP-loss-shaped effects), and collects **intent**,
  * **reviewAction**, and **reviewOutcome** chips for weapon/armor tags without running phase hooks.
+ *
+ * **Damage commit (Phase C):** {@link runV2DamageApplyReviewOutcomePhase} runs a single hydrated
+ * `reviewOutcome` pass for features with `runOnVttDamageApplyReviewOutcome: true` when the GM
+ * applies attack damage to a character (before HP is written).
  */
 
 import { applyDeclarativeFeatures, loadCharacterFeatures } from '../../features-v2/engine/feature-loader.js';
@@ -11,6 +15,7 @@ import { collectPhaseChipsOnly, createActionLoop } from '../../features-v2/engin
 import { buildTableSnapshot } from '../../features-v2/engine/table.js';
 import {
   activateChip,
+  collectChips,
   collectChipsForOtherCharacterSheets,
   deductChipCosts,
   makeChipState,
@@ -25,6 +30,17 @@ import {
 import { buildV2RegistryWithSrdItems, expandSrdAncestryIdsToV2Keys } from './v2-declarative-sheet.js';
 import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.js';
 import { applyV2LifecycleMutations } from './table-ops.js';
+import { PENDING_EVASION_BONUS_STATE_KEY } from '../../game-constants.js';
+
+/** Display names for synthetic trait sub-items (matches CharacterDisplay TRAIT_FULL). */
+const TRAIT_FULL_PRETTY = {
+  agility: 'Agility',
+  strength: 'Strength',
+  finesse: 'Finesse',
+  instinct: 'Instinct',
+  presence: 'Presence',
+  knowledge: 'Knowledge',
+};
 
 /**
  * Map SRD `ancestryIds` on table character elements to V2 registry keys (`Infernis.Fearless`, …)
@@ -58,6 +74,45 @@ export function expandTableCharactersAncestryForV2Loader(activeElements, srdData
  * @param {object[]} activeElements
  * @param {object} [srdData] — pass so PC defense uses resolved beastform evasion (same as banners).
  */
+export { PENDING_EVASION_BONUS_STATE_KEY };
+
+/**
+ * Sum {@link PENDING_EVASION_BONUS_STATE_KEY} across all `featureState` scope bags (declarative one-shot evasion vs pending attack).
+ * @param {object|null|undefined} el
+ * @returns {number}
+ */
+export function sumPendingEvasionBonusFromFeatureState(el) {
+  if (!el?.featureState) return 0;
+  let sum = 0;
+  for (const bag of Object.values(el.featureState)) {
+    if (bag && typeof bag[PENDING_EVASION_BONUS_STATE_KEY] === 'number' && bag[PENDING_EVASION_BONUS_STATE_KEY] > 0) {
+      sum += bag[PENDING_EVASION_BONUS_STATE_KEY];
+    }
+  }
+  return sum;
+}
+
+/**
+ * When the GM acknowledges an attack banner, clear pending evasion bonuses on the selected target (engine may also clear on outcome).
+ * @param {object} el — character element
+ * @param {string|null|undefined} selectedTargetInstanceId
+ * @returns {object|null} partial updates for `updateActiveElement` / `update-elements`
+ */
+export function buildPendingEvasionBonusAckCleanupUpdates(el, selectedTargetInstanceId) {
+  if (!el || el.elementType !== 'character') return null;
+  if (el.instanceId !== selectedTargetInstanceId) return null;
+  const fs = el.featureState || {};
+  let changed = false;
+  const next = { ...fs };
+  for (const [scopeKey, bag] of Object.entries(fs)) {
+    if (bag && typeof bag[PENDING_EVASION_BONUS_STATE_KEY] === 'number' && bag[PENDING_EVASION_BONUS_STATE_KEY] > 0) {
+      next[scopeKey] = { ...bag, [PENDING_EVASION_BONUS_STATE_KEY]: 0 };
+      changed = true;
+    }
+  }
+  return changed ? { featureState: next } : null;
+}
+
 export function enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData) {
   if (!roll?._selectedTargetInstanceId) return;
   const target = activeElements?.find((e) => e.instanceId === roll._selectedTargetInstanceId);
@@ -66,8 +121,9 @@ export function enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData) {
   let defense = isAdversary
     ? target.difficulty
     : (effectiveEvasion(target, srdData) ?? target.evasion ?? null);
-  if (!isAdversary && roll._rollDbId != null && target._iSeeItComingRollBonus?.[roll._rollDbId] != null) {
-    defense = (defense ?? 0) + target._iSeeItComingRollBonus[roll._rollDbId];
+  if (!isAdversary) {
+    const pending = sumPendingEvasionBonusFromFeatureState(target);
+    if (pending > 0) defense = (defense ?? 0) + pending;
   }
   if (defense == null) return;
   let effectiveTotal = roll.total ?? 0;
@@ -193,6 +249,178 @@ export function buildV2SyntheticActionEffects(roll, activeElements) {
 }
 
 /**
+ * Pending `table.action.effects` at damage commit: final post-pipeline damage total and HP loss
+ * for the struck character (engine shape). Used by {@link runV2DamageApplyReviewOutcomePhase}.
+ *
+ * @param {{
+ *   roll: object,
+ *   targetInstanceId: string,
+ *   damageAmount: number,
+ *   hpLossAmount: number,
+ * }} opts
+ * @returns {object[]}
+ */
+export function buildV2DamageCommitEffects(opts) {
+  const { roll, targetInstanceId, damageAmount, hpLossAmount } = opts || {};
+  if (!targetInstanceId) return [];
+  const targetStub = { instanceId: targetInstanceId };
+  const damageSubs = Array.isArray(roll?.subItems)
+    ? roll.subItems.filter((s) => /damage/i.test(s.pre || '') && s.input)
+    : [];
+  const firstSub = damageSubs[0];
+  const postRaw = String(firstSub?.post || '').trim().split(/\s+/)[0];
+  const damageType = postTagToEngineDamageType(postRaw) ?? 'physical';
+  const useArmor = roll?._useArmorByTargetId?.[targetInstanceId] === true;
+  return [
+    {
+      type: 'damage',
+      target: targetStub,
+      amount: Math.max(0, Number(damageAmount) || 0),
+      damageType,
+      ...(useArmor ? { useArmor: true } : {}),
+    },
+    {
+      stat: 'currentHP',
+      target: targetStub,
+      amount: Math.max(0, Number(hpLossAmount) || 0),
+    },
+  ];
+}
+
+/**
+ * Read pending `{ stat: 'currentHP' }` amount for a target after `onReviewOutcome` hooks mutate
+ * `action.effects` in place (e.g. Elemental Dominion Earth).
+ *
+ * @param {object[]|undefined} effects
+ * @param {string} targetInstanceId
+ * @returns {number|undefined}
+ */
+export function readV2DamageCommitHpLossFromEffects(effects, targetInstanceId) {
+  if (!targetInstanceId || !Array.isArray(effects)) return undefined;
+  const line = effects.find(
+    (e) =>
+      e &&
+      e.stat === 'currentHP' &&
+      e.target?.instanceId === targetInstanceId &&
+      typeof e.amount === 'number'
+  );
+  if (!line) return undefined;
+  return Math.max(0, Math.floor(line.amount));
+}
+
+/**
+ * At GM damage application, run `reviewOutcome` for opt-in features against one hydrated
+ * `gameState` (see `buildV2BannerGameState` + {@link buildV2DamageCommitEffects}).
+ *
+ * Features must set **`runOnVttDamageApplyReviewOutcome: true`** on the registry row so unrelated
+ * `onReviewOutcome` hooks (e.g. armor flows already handled elsewhere) do not run twice.
+ *
+ * **`setFeatureState` owner:** for a struck **character**, `setFeatureStateOwnerId` =
+ * **`targetElement.instanceId`**; for a struck **adversary**, **`undefined`** (victim has no
+ * character `featureState` — hooks rely on mutations with explicit `instanceId`s).
+ *
+ * @param {{
+ *   roll: object,
+ *   targetElement: object,
+ *   activeElements: object[],
+ *   srdData: object,
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ *   damageAmount: number,
+ *   hpLossAmount: number,
+ *   rng?: () => number,
+ * }} ctx — `targetElement` may be the struck **character** or **adversary** (e.g. Warden fire aura runs when the victim is an adversary). **`rng`:** optional `gameState._rng` override (tests).
+ * @returns {{
+ *   elementUpdates: { instanceId: string, updates: object }[],
+ *   actionLoopNotifications: object[],
+ *   skipped: object[],
+ *   adjustedHpLoss?: number,
+ * }}
+ */
+export function runV2DamageApplyReviewOutcomePhase(ctx) {
+  const empty = { elementUpdates: [], actionLoopNotifications: [], skipped: [] };
+  const {
+    roll,
+    targetElement,
+    activeElements,
+    srdData,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+    damageAmount,
+    hpLossAmount,
+    rng,
+  } = ctx || {};
+  const elType =
+    targetElement?.elementType ??
+    (targetElement?.type === 'character'
+      ? 'character'
+      : targetElement?.type === 'adversary'
+        ? 'adversary'
+        : null);
+  const isChar = elType === 'character';
+  const isAdv = elType === 'adversary';
+  if (!roll || !targetElement || (!isChar && !isAdv) || !Array.isArray(activeElements) || !srdData) {
+    return empty;
+  }
+  if (!roll._attackerInstanceId) return empty;
+  const hasDamageRoll = (roll.subItems || []).some((s) => /damage/i.test(s.pre || '') && s.input);
+  if (!hasDamageRoll) return empty;
+  if (!(Number(hpLossAmount) > 0)) return empty;
+
+  enrichV2RollIsSuccessFromTarget(roll, activeElements, srdData);
+  const registry = buildV2RegistryWithSrdItems(srdData);
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, {
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  const outcomeFeatures = features.filter((f) => f.runOnVttDamageApplyReviewOutcome === true);
+  if (!outcomeFeatures.length) return empty;
+
+  const actionConfig = buildActionConfigFromRoll(roll, activeForLoader);
+  if (!actionConfig) return empty;
+
+  const gameState = buildV2BannerGameState({
+    roll,
+    activeElements: activeForLoader,
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  if (typeof rng === 'function') {
+    gameState._rng = rng;
+  }
+  const targetId = targetElement.instanceId;
+  gameState.action.effects = buildV2DamageCommitEffects({
+    roll,
+    targetInstanceId: targetId,
+    damageAmount,
+    hpLossAmount,
+  });
+
+  const loop = createActionLoop(gameState, actionConfig, outcomeFeatures, {});
+  const { mutations } = loop.runPhase('reviewOutcome');
+  const adjustedHpLoss = readV2DamageCommitHpLossFromEffects(loop.gameState?.action?.effects, targetId);
+  // `setFeatureState` rows need an owner id in `applyV2BannerMutations` (same as V2 chip apply).
+  // Struck **character**: victim id. Struck **adversary** (e.g. PC dealt damage): omit owner so
+  // `setFeatureState` is skipped — attacker-side hooks use `markStress` payloads with explicit ids.
+  const { updates, actionLoopNotifications, skipped } = applyV2LifecycleMutations(
+    activeForLoader,
+    mutations || [],
+    isChar ? targetId : undefined
+  );
+  return {
+    elementUpdates: updates || [],
+    actionLoopNotifications: actionLoopNotifications || [],
+    skipped: skipped || [],
+    adjustedHpLoss,
+  };
+}
+
+/**
  * Merge table + per-character `featureState` bags for V2 action-loop snapshots.
  * (Same limitation as tests: feature keys are global by name; multiple PCs with the same
  * feature name share one bucket — engine design.)
@@ -311,8 +539,14 @@ export function buildActionConfigFromRoll(roll, activeElements) {
     traitKey = t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : 'Agility';
   }
 
+  const hasWeaponMeta = roll._weaponRangeFt != null || roll._weaponId != null;
+  const hasDamageSubItem =
+    Array.isArray(roll.subItems) && roll.subItems.some((s) => /damage/i.test(s.pre || ''));
+  /** Weapon meta from VTT, or hydrated banner roll that already includes a damage line. */
+  const isAttackRoll = hasWeaponMeta || hasDamageSubItem;
+
   return {
-    type: 'attack',
+    type: isAttackRoll ? 'attack' : 'trait',
     actorInstanceId,
     targetInstanceIds,
     traitKey,
@@ -341,6 +575,156 @@ export function loadV2FeaturesForCharacterElement(el, registry, opts = {}) {
   };
   const decl = applyDeclarativeFeatures(base, el, tableBase, registry);
   return decl.mergedFeatures;
+}
+
+/**
+ * `table` snapshot for **`placement: 'rest'`** chips (short vs long rest action).
+ *
+ * @param {{
+ *   characterInstanceId: string,
+ *   activeElements: object[],
+ *   restDuration: 'short' | 'long',
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ * }} opts
+ */
+export function buildRestBannerTableForCharacter(opts) {
+  const {
+    characterInstanceId,
+    activeElements,
+    restDuration,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+  } = opts || {};
+  if (!characterInstanceId || !Array.isArray(activeElements)) return null;
+  const merged = mergeV2TableFeatureState(tableFeatureState, activeElements);
+  const actionType = restDuration === 'long' ? 'longRest' : 'shortRest';
+  const gameState = {
+    fear: fearCount ?? 0,
+    mapConfig: mapConfig ?? null,
+    activeElements,
+    featureState: merged,
+    rolls: {
+      action: {
+        dice: [],
+        statics: [],
+        hopeDie: null,
+        fearDie: null,
+        gmDie: null,
+        isSuccess: null,
+        isCritical: null,
+      },
+      damage: { dice: [], statics: [] },
+      other: {},
+    },
+    action: {
+      type: actionType,
+      actorInstanceId: characterInstanceId,
+      targetInstanceIds: [],
+      trait: 'Agility',
+      range: 'melee',
+      effects: [],
+      appliedEffects: [],
+    },
+  };
+  return buildTableSnapshot(gameState);
+}
+
+/**
+ * Collect declarative chips with **`placements: ['rest']`** for one merged character row.
+ *
+ * @param {{
+ *   mergedCharacterEl: object,
+ *   activeElements: object[],
+ *   registry: object,
+ *   restDuration: 'short' | 'long',
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ * }} opts
+ * @returns {object[]}
+ */
+export function collectV2RestPlacementChipsForCharacter(opts) {
+  const {
+    mergedCharacterEl,
+    activeElements,
+    registry,
+    restDuration,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+  } = opts || {};
+  if (!mergedCharacterEl?.instanceId || !registry || !Array.isArray(activeElements)) return [];
+  const features = loadV2FeaturesForCharacterElement(mergedCharacterEl, registry, {
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  if (!features.length) return [];
+  const table = buildRestBannerTableForCharacter({
+    characterInstanceId: mergedCharacterEl.instanceId,
+    activeElements,
+    restDuration,
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  if (!table) return [];
+  return collectChips(features, 'rest', table, {});
+}
+
+/**
+ * Activate one rest-banner chip (same chip object reference as returned from {@link collectV2RestPlacementChipsForCharacter}).
+ *
+ * @returns {{ mutations: object[], engineChip?: object|null, error?: string }}
+ */
+export function activateV2RestPlacementChip(opts) {
+  const {
+    mergedCharacterEl,
+    rawChip,
+    activeElements,
+    registry,
+    restDuration,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+  } = opts || {};
+  if (!mergedCharacterEl?.instanceId || !rawChip || !registry || !Array.isArray(activeElements)) {
+    return { mutations: [], error: 'no-matching-chip' };
+  }
+  const features = loadV2FeaturesForCharacterElement(mergedCharacterEl, registry, {
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  const table = buildRestBannerTableForCharacter({
+    characterInstanceId: mergedCharacterEl.instanceId,
+    activeElements,
+    restDuration,
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  if (!table) return { mutations: [], error: 'no-matching-chip' };
+  const collected = collectChips(features, 'rest', table, {});
+  const engineChip =
+    (rawChip._chipKey != null && collected.find((c) => c._chipKey === rawChip._chipKey)) ||
+    collected.find((c) => c.name === rawChip.name);
+  if (!engineChip) {
+    return { mutations: [], error: 'no-matching-chip' };
+  }
+  if (engineChip.disabled) {
+    return { mutations: [], engineChip, error: 'disabled' };
+  }
+  if (!canPayChipCosts(engineChip, table)) {
+    return { mutations: [], engineChip, error: 'unaffordable' };
+  }
+  deductChipCosts(engineChip, table);
+  const chipState = makeChipState();
+  const mutations = activateChip(engineChip, table, chipState, {});
+  return { mutations, engineChip };
 }
 
 /**
@@ -385,11 +769,12 @@ export function buildV2BannerGameState(opts) {
     /** Binds `actor.move()` mutations to the pending banner (client + table). */
     _rollDbId: roll?._rollDbId ?? null,
     action: {
-      type: 'attack',
+      type: actionConfig?.type ?? 'attack',
       actorInstanceId: actionConfig?.actorInstanceId,
       targetInstanceIds: actionConfig?.targetInstanceIds ?? [],
       trait: actionConfig?.traitKey,
       range: actionConfig?.range,
+      weaponId: actionConfig?.weaponId ?? null,
       effects,
       appliedEffects: [],
       useArmorByTargetId: roll._useArmorByTargetId,
@@ -410,7 +795,9 @@ export function buildV2BannerGameState(opts) {
  * }} opts
  * When `viewer` is omitted, pass-1 chips are unfiltered (legacy tests) and cross-sheet runs for PC targets plus PC actor.
  * When `viewer.role === 'gm'`, cross-sheet is skipped (pass-1 lists all unwrapped chips for the GM).
- * When `viewer.role === 'player'`, pass-1 is owner-scoped; cross-sheet runs once for `viewerCharacterInstanceId`.
+ * When `viewer.role === 'player'`, pass-1 is owner-scoped; cross-sheet runs for `viewerCharacterInstanceId`
+ * **and** for the pending roll’s PC `actorInstanceId` when that differs (e.g. preview-as-player vs ally actor)
+ * so `showOnOtherSheets` **`reviewAction`** chips (Rally, Rune Ward, …) see the correct `table.me` context.
  * @returns {object[]} chips from **intent**, **reviewAction**, and **reviewOutcome** (tagged with `_v2Phase`)
  */
 export function collectV2ReviewActionChips(opts) {
@@ -484,7 +871,10 @@ export function collectV2ReviewActionChips(opts) {
   if (viewer?.role === 'gm') {
     crossSheetViewerIds = [];
   } else if (viewer?.role === 'player' && viewer.viewerCharacterInstanceId) {
-    crossSheetViewerIds = [viewer.viewerCharacterInstanceId];
+    const idSet = new Set([viewer.viewerCharacterInstanceId]);
+    const aid = actionConfig.actorInstanceId;
+    if (aid && party.some((p) => p.instanceId === aid)) idSet.add(aid);
+    crossSheetViewerIds = [...idSet];
   } else {
     const legacy = new Set(targetIds);
     const aid = actionConfig.actorInstanceId;
@@ -795,6 +1185,151 @@ function capitalizeTraitKey(traitKey) {
  * }} opts
  * @returns {object[]}
  */
+/**
+ * Synthetic client roll used only for V2 **intent** chip collection before the server roll exists.
+ * Includes placeholder Hope/Fear/damage sub-items so {@link hydrateV2RollsFromClientRoll} + damage dice exist.
+ *
+ * @param {{
+ *   pendingMeta: object,
+ *   pendingRollText: string,
+ *   characterEl: object,
+ * }} opts
+ * @returns {object|null}
+ */
+export function buildV2PreRollWeaponAttackRollSkeleton(opts) {
+  const { pendingMeta, pendingRollText, characterEl } = opts || {};
+  if (!pendingMeta?._attackerInstanceId || !characterEl) return null;
+  const weaponId = pendingMeta._weaponId;
+  const weapons = characterEl.weapons || [];
+  const weapon =
+    (weaponId != null ? weapons.find((w) => w.id === weaponId) : null) || weapons[0] || null;
+  const damageSource = weapon?.damage || 'd8';
+  const dm = String(damageSource).trim().match(/^(\d*d\d+)/i);
+  const damageInput = dm ? dm[1] : 'd8';
+
+  return {
+    rollText: pendingRollText,
+    _attackerInstanceId: pendingMeta._attackerInstanceId,
+    _weaponId: weaponId ?? weapon?.id ?? null,
+    _traitKey: pendingMeta._traitKey,
+    _weaponRangeFt: pendingMeta._weaponRangeFt,
+    _selectedTargetInstanceId: pendingMeta._selectedTargetInstanceId,
+    subItems: [
+      { pre: 'Hope ', input: 'd12', result: '1', post: '' },
+      { pre: 'Fear ', input: 'd12', result: '1', post: '' },
+      { pre: 'damage ', input: damageInput, result: '1', post: ' phy' },
+    ],
+  };
+}
+
+/**
+ * Synthetic roll for V2 **trait** / spellcast intent chips (no weapon sub-items).
+ *
+ * @param {{
+ *   pendingMeta: object,
+ *   pendingRollText: string,
+ *   characterEl: object,
+ * }} opts
+ * @returns {object|null}
+ */
+export function buildV2PreRollTraitRollSkeleton(opts) {
+  const { pendingMeta, pendingRollText, characterEl } = opts || {};
+  if (!pendingMeta?._attackerInstanceId || !characterEl) return null;
+  if (pendingMeta._weaponRangeFt != null || pendingMeta._weaponId != null) return null;
+
+  const rawTk = (pendingMeta._traitKey || 'agility').toLowerCase();
+  const traits = characterEl.traits || {};
+  const traitScore = Number(traits[rawTk] ?? 0);
+  const traitLabel = TRAIT_FULL_PRETTY[rawTk] || rawTk.charAt(0).toUpperCase() + rawTk.slice(1);
+
+  return {
+    rollText: pendingRollText,
+    _attackerInstanceId: pendingMeta._attackerInstanceId,
+    _traitKey: rawTk,
+    _selectedTargetInstanceId: pendingMeta._selectedTargetInstanceId,
+    subItems: [
+      { pre: 'Hope ', input: 'd12', result: '1', post: '' },
+      { pre: 'Fear ', input: 'd12', result: '1', post: '' },
+      { pre: `${traitLabel} `, input: String(traitScore), result: String(traitScore), post: '' },
+    ],
+  };
+}
+
+/**
+ * Intent-phase chips for a pending weapon attack (e.g. Devastating), using the same hydrated snapshot shape as post-roll review.
+ *
+ * @param {{
+ *   pendingMeta: object,
+ *   pendingRollText: string,
+ *   characterEl: object,
+ *   activeElements: object[],
+ *   srdData: object,
+ *   fearCount?: number,
+ *   mapConfig?: object|null,
+ *   tableFeatureState?: object,
+ *   viewer?: { role: 'gm'|'player', viewerCharacterInstanceId?: string|null },
+ * }} opts
+ * @returns {object[]}
+ */
+export function collectV2WeaponIntentChips(opts) {
+  const {
+    pendingMeta,
+    pendingRollText,
+    characterEl,
+    activeElements,
+    srdData,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+    viewer,
+  } = opts || {};
+  if (!pendingMeta || !characterEl || !Array.isArray(activeElements) || !srdData) return [];
+  if (pendingMeta._intentPanelForActionRoll !== true) return [];
+
+  const isWeaponIntent =
+    pendingMeta._weaponRangeFt != null || pendingMeta._weaponId != null;
+  const isTraitIntent =
+    !isWeaponIntent &&
+    pendingMeta._traitKey != null &&
+    pendingMeta._weaponRangeFt == null &&
+    pendingMeta._weaponId == null;
+  if (!isWeaponIntent && !isTraitIntent) return [];
+
+  const roll = isWeaponIntent
+    ? buildV2PreRollWeaponAttackRollSkeleton({
+        pendingMeta,
+        pendingRollText,
+        characterEl,
+      })
+    : buildV2PreRollTraitRollSkeleton({
+        pendingMeta,
+        pendingRollText,
+        characterEl,
+      });
+  if (!roll) return [];
+
+  const registry = buildV2RegistryWithSrdItems(srdData);
+  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const features = loadAllV2FeaturesForTable(activeForLoader, registry, {
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+  const actionConfig = buildActionConfigFromRoll(roll, activeForLoader);
+  if (!actionConfig) return [];
+
+  const gameState = buildV2BannerGameState({
+    roll,
+    activeElements: activeForLoader,
+    fearCount,
+    mapConfig,
+    tableFeatureState,
+  });
+
+  const raw = collectPhaseChipsOnly(gameState, actionConfig, features, 'intent', {}, viewer);
+  return raw.map((c) => ({ ...c, _v2IntentChip: true }));
+}
+
 export function runV2IntentPhaseForTraitRoll(opts) {
   const {
     traitKey,
@@ -847,7 +1382,9 @@ export function runV2IntentPhaseForTraitRoll(opts) {
 }
 
 /**
- * Run `onRest` on short-rest for all characters (table-level `featureState` merge).
+ * Run `hooks.onRest` for every loaded V2 feature (per owner), using a synthetic rest action.
+ * Must match the **actual** rest being acknowledged: Short Rest → `shortRest`, Long Rest → `longRest`
+ * so registry code that gates on `table.action?.type` (e.g. long-rest-only token refresh) runs correctly.
  *
  * @param {{
  *   activeElements: object[],
@@ -855,14 +1392,23 @@ export function runV2IntentPhaseForTraitRoll(opts) {
  *   fearCount?: number,
  *   mapConfig?: object|null,
  *   tableFeatureState?: object,
+ *   restDuration?: 'short' | 'long',
  * }} opts
  * @returns {{ updates: { instanceId: string, updates: object }[], skipped: object[] }}
  */
 export function runV2RestHooksForTable(opts) {
-  const { activeElements, srdData, fearCount = 0, mapConfig = null, tableFeatureState } = opts || {};
+  const {
+    activeElements,
+    srdData,
+    fearCount = 0,
+    mapConfig = null,
+    tableFeatureState,
+    restDuration = 'short',
+  } = opts || {};
   if (!Array.isArray(activeElements) || !srdData) {
     return { updates: [], skipped: [] };
   }
+  const actionType = restDuration === 'long' ? 'longRest' : 'shortRest';
   const registry = buildV2RegistryWithSrdItems(srdData);
   const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
   const features = loadAllV2FeaturesForTable(activeForLoader, registry, {
@@ -883,7 +1429,7 @@ export function runV2RestHooksForTable(opts) {
       other: {},
     },
     action: {
-      type: 'shortRest',
+      type: actionType,
       actorInstanceId: actorId,
       targetInstanceIds: [],
       trait: 'Agility',
@@ -893,7 +1439,7 @@ export function runV2RestHooksForTable(opts) {
     },
   };
   const actionConfig = {
-    type: 'shortRest',
+    type: actionType,
     actorInstanceId: actorId,
     targetInstanceIds: [],
     traitKey: 'Agility',

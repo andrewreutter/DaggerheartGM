@@ -14,7 +14,7 @@
     "generate:beastforms": "node scripts/generate-beastform-srd-data.mjs",
     "generate:feature-source-paths": "node scripts/gen-feature-source-paths.mjs",
     "predev": "node --env-file=.env scripts/kill-port.mjs",
-    "dev": "node --env-file=.env --watch server.js & npm run dev:css & npm run dev:js",
+    "dev": "node --env-file=.env --watch server.js & npm run dev:css & npm run dev:js & node --env-file=.env scripts/dev-agent-queue-worker.mjs &",
     "build": "npm run build:css && npm run build:js",
     "build:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --minify",
     "dev:css": "tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
@@ -29,8 +29,9 @@
     "test:unit": "vitest run",
     "test:browser": "npx playwright test",
     "agents": "node --env-file=.env scripts/orchestrate.js",
-    "cursor:v2-ticket": "node scripts/cursor-v2-ticket.mjs",
-    "cursor:v2-pool": "node scripts/cursor-v2-pool.mjs",
+    "setup:dev-agent-labels": "node --env-file=.env scripts/setup-dev-agent-labels.mjs",
+    "setup:v2-migration-labels": "node --env-file=.env scripts/setup-v2-migration-labels.mjs",
+    "v2:sync-tracker-md": "node --env-file=.env scripts/v2-sync-tracker-snapshot.mjs",
     "seed:v2-browser-chars": "node --env-file=.env scripts/seed-v2-browser-test-characters.mjs"
   },
   "dependencies": {
@@ -52,7 +53,10 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@tailwindcss/cli": "^4.2.1",
+    "ajv": "^8.18.0",
     "esbuild": "^0.27.3",
+    "jsdom": "^29.0.1",
+    "lucide-react": "^1.6.0",
     "supabase": "^2.81.3",
     "tailwindcss": "^4.2.1",
     "vitest": "^4.0.18"

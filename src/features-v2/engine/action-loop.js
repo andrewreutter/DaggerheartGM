@@ -349,6 +349,48 @@ export function dispatchSceneEndHooks(gameState, features = []) {
   return { mutations: allMutations, narrations: allNarrations };
 }
 
+/**
+ * Run `hooks.onSessionEnd` for every feature when the **table session** ends (GM End Session).
+ * Queues a synthetic `sessionEnd` entry on `table.mutationBatch` for predicates.
+ *
+ * @param {object} gameState
+ * @param {object[]} [features]
+ * @returns {{ mutations: object[], narrations: string[] }}
+ */
+export function dispatchSessionEndHooks(gameState, features = []) {
+  const batch = [{ type: 'sessionEnd', payload: {} }];
+  const allMutations = [];
+  const allNarrations = [];
+
+  for (const feature of features) {
+    const featureState = {
+      ...gameState,
+      _ownerInstanceId: feature._ownerInstanceId,
+      _featureKey: feature.name,
+      _activeFeature: feature,
+      featureState: gameState.featureState,
+      _mutationBatch: batch,
+    };
+
+    const table = buildTableSnapshot(featureState);
+    const hookFnRaw = feature.hooks?.onSessionEnd;
+    if (hookFnRaw) {
+      const hookFn = unwrap(hookFnRaw, table);
+      if (typeof hookFn === 'function') {
+        hookFn(table);
+      }
+    }
+
+    const mutations = applyMutations(table);
+    allMutations.push(...mutations);
+    for (const m of mutations) {
+      if (m.type === 'addNarration') allNarrations.push(m.payload.text);
+    }
+  }
+
+  return { mutations: allMutations, narrations: allNarrations };
+}
+
 export function dispatchTokenMoveHooks(gameState, features = [], tokenMove = {}) {
   const moverInstanceId = tokenMove?.moverInstanceId;
   if (!moverInstanceId) {

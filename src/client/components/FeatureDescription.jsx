@@ -71,7 +71,7 @@ const BOLD_PATTERNS_RE = /(\bspend\b[^.!?<]*?\bfear\b|\bmark\b[^.!?<]*?\bfear\b|
 function applyBoldingToHtml(html) {
   return html.replace(/(<[^>]+>)|([^<]+)/g, (match, tag, text) => {
     if (tag) return tag;
-    return text.replace(BOLD_PATTERNS_RE, '<strong class="text-slate-200">$1</strong>');
+    return text.replace(BOLD_PATTERNS_RE, '<strong class="text-dh">$1</strong>');
   });
 }
 
@@ -112,7 +112,7 @@ function applyBolding(text) {
   let match;
   while ((match = re.exec(text)) !== null) {
     if (match.index > lastIdx) parts.push(text.slice(lastIdx, match.index));
-    parts.push(<strong key={match.index} className="text-slate-200">{match[0]}</strong>);
+    parts.push(<strong key={match.index} className="text-dh">{match[0]}</strong>);
     lastIdx = match.index + match[0].length;
   }
   if (lastIdx < text.length) parts.push(text.slice(lastIdx));
@@ -128,12 +128,12 @@ export function CountdownCounter({ value, onChange }) {
     <span className="inline-flex items-center gap-1 mx-1 align-middle" onClick={e => e.stopPropagation()}>
       <button
         onClick={() => onChange(Math.max(0, value - 1))}
-        className="w-5 h-5 rounded bg-slate-700 hover:bg-red-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+        className="w-5 h-5 rounded bg-dh-hover hover:bg-red-800 text-dh flex items-center justify-center text-xs font-bold transition-colors leading-none"
       >−</button>
-      <span className="min-w-[1.5rem] text-center font-bold text-yellow-400 text-sm tabular-nums">{value}</span>
+      <span className="min-w-[1.5rem] text-center font-bold text-dh text-sm tabular-nums">{value}</span>
       <button
         onClick={() => onChange(value + 1)}
-        className="w-5 h-5 rounded bg-slate-700 hover:bg-green-800 text-slate-200 flex items-center justify-center text-xs font-bold transition-colors leading-none"
+        className="w-5 h-5 rounded bg-dh-hover hover:bg-green-800 text-dh flex items-center justify-center text-xs font-bold transition-colors leading-none"
       >+</button>
     </span>
   );

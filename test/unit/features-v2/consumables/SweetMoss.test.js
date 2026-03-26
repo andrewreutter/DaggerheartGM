@@ -42,7 +42,7 @@ describe('Consumables — Sweet Moss', () => {
     );
   });
 
-  it('intent chips are available during short rest, not during a normal action', () => {
+  it('rest placement chips are available during short rest, not on intent or a normal action', () => {
     const feat = { ...SweetMoss, _ownerInstanceId: 'char-1' };
 
     const shortRestTable = buildTableSnapshot(
@@ -52,8 +52,10 @@ describe('Consumables — Sweet Moss', () => {
         _featureKey: 'Sweet Moss',
       })
     );
-    const duringRest = collectChips([feat], 'intent', shortRestTable);
+    const duringRest = collectChips([feat], 'rest', shortRestTable);
     expect(duringRest.map((c) => c.name)).toEqual(['Sweet Moss']);
+
+    expect(collectChips([feat], 'intent', shortRestTable)).toHaveLength(0);
 
     const attackTable = buildTableSnapshot(
       mockGameState({
@@ -61,7 +63,7 @@ describe('Consumables — Sweet Moss', () => {
         _featureKey: 'Sweet Moss',
       })
     );
-    expect(collectChips([feat], 'intent', attackTable)).toHaveLength(0);
+    expect(collectChips([feat], 'rest', attackTable)).toHaveLength(0);
   });
 
   it('clear HP option rolls d10 and queues clearHP', () => {

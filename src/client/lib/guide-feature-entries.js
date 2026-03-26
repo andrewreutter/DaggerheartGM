@@ -22,14 +22,32 @@ export function resolveHopeFeatureName(el) {
  */
 export function getOrderedGuideFeatureEntries(el, onV2CardChip) {
   const af = el.activeFeatures || [];
-  const findRow = (f, type) =>
-    af.find((a) => a.name === f.name && a.type === type) || {
-      ...f,
-      type,
-      description: f.description || '',
-      source: f.source,
-      sourceType: f.sourceType,
-    };
+  /**
+   * Merge SRD list rows with V2 `activeFeatures` when names match.
+   * Registry-only rows marked `hideFromGuideFeatureList` stay out of the guide list body:
+   * use the SRD `f` row so sheet `cards` / engine metadata do not duplicate guide copy.
+   */
+  const findRow = (f, type) => {
+    const afRow = af.find((a) => a.name === f.name && a.type === type);
+    if (afRow?.hideFromGuideFeatureList) {
+      return {
+        ...f,
+        type,
+        description: f.description || '',
+        source: f.source,
+        sourceType: f.sourceType,
+      };
+    }
+    return (
+      afRow || {
+        ...f,
+        type,
+        description: f.description || '',
+        source: f.source,
+        sourceType: f.sourceType,
+      }
+    );
+  };
   const out = [];
   let idx = 0;
   for (const f of el.classFeatures || []) {
@@ -65,12 +83,53 @@ export function getOrderedGuideFeatureEntries(el, onV2CardChip) {
   const hopeRow = hn && af.find((a) => a.name === hn);
   if (
     hopeRow &&
+    !hopeRow.hideFromGuideFeatureList &&
     onV2CardChip &&
     Array.isArray(hopeRow.chips) &&
     hopeRow.chips.length > 0 &&
     !(el.classFeatures || []).some((f) => f.name === hn)
   ) {
     out.unshift({ kind: 'guide', row: hopeRow, key: `hope-${hn}` });
+  }
+  return out;
+}
+
+/**
+ * Merge one `el.abilities` entry with V2 `activeFeatures` (`type: 'ability'`) for sheet / Actions / LOADOUT.
+ * Single source of truth with {@link getOrderedGuideLoadoutEntries}.
+ *
+ * @param {object} el
+ * @param {object} ability — entry from `el.abilities`
+ */
+export function resolveLoadoutAbilityFeatRow(el, ability) {
+  return (
+    el.activeFeatures?.find((f) => f.type === 'ability' && f.name === ability.name) || {
+      name: ability.name,
+      description: ability.description || '',
+      type: 'ability',
+      sourceType: 'domain',
+      source: [ability.domain, ability.type, `Lvl ${ability.level}`].filter(Boolean).join(' · '),
+    }
+  );
+}
+
+/**
+ * Ordered LOADOUT guide entries — domain cards only (`el.abilities`).
+ * Each item includes `ability` (list row) for source-badge dimming on the Actions strip.
+ *
+ * @returns {{ kind: 'loadout', row: object, key: string, ability: object }[]}
+ */
+export function getOrderedGuideLoadoutEntries(el) {
+  const out = [];
+  let idx = 0;
+  for (const a of el.abilities || []) {
+    out.push({
+      kind: 'loadout',
+      row: resolveLoadoutAbilityFeatRow(el, a),
+      key: `ability-${a.id ?? idx}`,
+      ability: a,
+    });
+    idx += 1;
   }
   return out;
 }

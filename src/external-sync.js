@@ -1,13 +1,13 @@
 /**
- * Background sync of FCG and HoD into external_item_cache.
- * Runs full-dataset loops: paginate all FCG pages, list all HoD IDs, fetch all HoD details.
+ * Background sync: FCG → public `items` rows (synthetic catalog user); HoD → external_item_cache.
  */
 
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { searchFCG } from './fcg-search.js';
 import { searchHoD, fetchHoDFoundryDetail } from './hod-search.js';
-import { upsertExternalCache, getCachedExternalIds, getSyncState, setSyncState } from './db.js';
+import { upsertExternalCache, getCachedExternalIds, getSyncState, setSyncState, upsertItem } from './db.js';
+import { FCG_PUBLIC_USER_ID } from './game-constants.js';
 import { createHash } from 'crypto';
 
 const FCG_PAGE_SIZE = 100;
@@ -23,7 +23,7 @@ function hashContent(obj) {
 }
 
 /**
- * Sync all FCG adversaries and environments into external_item_cache.
+ * Sync all FCG adversaries and environments into public library items (see FCG_PUBLIC_USER_ID).
  * Paginates the full catalog (no category filter); fetches 3 pages in parallel.
  */
 async function syncFCG(appId, onProgress) {
@@ -48,16 +48,14 @@ async function syncFCG(appId, onProgress) {
       fcgTotal = result.fcgTotal || 0;
 
       for (const item of advItems) {
-        const rawHash = hashContent(item);
         const { id, _source, ...data } = item;
-        await upsertExternalCache(appId, 'fcg', 'adversaries', id, { ...data, _source: 'fcg' }, rawHash);
+        await upsertItem(appId, FCG_PUBLIC_USER_ID, 'adversaries', id, data, true);
         totalProcessed++;
         advCount++;
       }
       for (const item of envItems) {
-        const rawHash = hashContent(item);
         const { id, _source, ...data } = item;
-        await upsertExternalCache(appId, 'fcg', 'environments', id, { ...data, _source: 'fcg' }, rawHash);
+        await upsertItem(appId, FCG_PUBLIC_USER_ID, 'environments', id, data, true);
         totalProcessed++;
         envCount++;
       }

@@ -26,6 +26,8 @@ fetch('/api/debug-log', {
   }),
 }).catch(() => {});
 
+// Optional helper: `import { postDebugLog } from './lib/debug-log.js'` — same contract, default ingest URL.
+
 // ❌ WRONG — blocked by browser security policy
 fetch('http://127.0.0.1:7456/ingest/...', { ... });
 ```

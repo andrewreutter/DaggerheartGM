@@ -9,6 +9,7 @@
 import { applyDeclarativeFeatures, loadCharacterFeatures } from '../../features-v2/engine/feature-loader.js';
 import {
   collectChips,
+  collectChipsForShapePlacement,
   collectChipsForOtherCharacterSheets,
   activateChip,
   commitToggleChipToState,
@@ -157,7 +158,8 @@ export function activateV2CrossSheetChip(chip, viewerInstanceId, activeElements,
 
 /**
  * Activate a card-phase chip on the owning character's sheet (e.g. domain cards).
- * `rawChip` must correspond to a chip returned by `collectChips` for that feature (match on `name`).
+ * `rawChip` must correspond to a chip returned by `collectChips` (phase **`card`**) or
+ * {@link collectChipsForShapePlacement} when **`opts.placementShape`** is set (match on `name`).
  * On success, appends a synthetic **`actionLoop`** mutation when `activateChip` did not already
  * queue one via `table.me.actionLoop` (see `applyV2LifecycleMutations` + `CharacterHoverCard` action banner).
  *
@@ -201,7 +203,9 @@ export function activateV2OwnedCardChip(characterEl, featureName, rawChip, activ
 
   const table = buildTableSnapshot(gameState);
   const usageStore = opts.usageStore ?? {};
-  const collected = collectChips([feature], 'card', table, usageStore);
+  const collected = opts.placementShape
+    ? collectChipsForShapePlacement([feature], opts.placementShape, table, usageStore)
+    : collectChips([feature], 'card', table, usageStore);
 
   const chipName = rawChip.name;
   const engineChip =
@@ -257,8 +261,11 @@ export function activateV2OwnedCardChip(characterEl, featureName, rawChip, activ
   } else {
     mutations = activateChip(engineChip, table, chipState, selectOpts);
   }
-  /** Skip synthetic banner when `onUse` already queued `table.me.actionLoop` (avoids duplicate TABLE + character banners). */
-  if (!mutations.some((m) => m?.type === 'actionLoop')) {
+  /** Skip synthetic banner when `onUse` already queued `actionLoop`, or only **`sheetActionRoll`** (client dice). */
+  const nonSynthetic = mutations.filter((m) => m?.type !== 'sheetActionRoll');
+  const onlySheetRolls =
+    mutations.length > 0 && mutations.every((m) => m?.type === 'sheetActionRoll');
+  if (!onlySheetRolls && !nonSynthetic.some((m) => m?.type === 'actionLoop')) {
     const chipLabel =
       typeof engineChip.name === 'string' && engineChip.name ? engineChip.name : feature.name;
     const { otherPartyIds, otherPartyNames, affectedSummary } = inferAffectedPartiesFromV2Mutations(

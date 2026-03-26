@@ -31,6 +31,42 @@ export function getWeaponTagAutomatedForBanner(name, attackerEl) {
   return false;
 }
 
+/**
+ * Automated-style narration lines for weapon tags on a roll banner (merged activeFeatures rows).
+ * @param {string[]} tagNames Names from roll.tags (weapon property names on the attack).
+ * @param {object|null|undefined} attackerEl Character element with activeFeatures.
+ * @returns {{ text: string, style: 'automated' }[]}
+ */
+export function buildWeaponTagBannerNarrationParts(tagNames, attackerEl) {
+  const parts = [];
+  if (!attackerEl?.activeFeatures?.length || !tagNames?.length) return parts;
+  for (const name of tagNames) {
+    const f = attackerEl.activeFeatures.find(
+      (row) => row.type === 'weapon' && row.name === name
+    );
+    if (!f || f.automated !== true || !f.description) continue;
+    parts.push({ text: f.description, style: 'automated' });
+  }
+  return parts;
+}
+
+/**
+ * Narration lines shown on a pending dice banner before ancestry chip narrations are merged:
+ * optional `roll._narration`, then automated weapon-tag descriptions from merged `activeFeatures`.
+ * @param {object} roll
+ * @param {object|null|undefined} attackerEl — character element for PC attacks (`roll._attackerInstanceId`)
+ * @returns {{ text: string, style?: string }[]}
+ */
+export function buildRollBaseBannerNarrationParts(roll, attackerEl) {
+  const parts = [];
+  if (roll?._narration) parts.push({ text: roll._narration });
+  const tagNames = (roll?.tags || [])
+    .map((t) => (typeof t === 'string' ? t : t?.name))
+    .filter(Boolean);
+  parts.push(...buildWeaponTagBannerNarrationParts(tagNames, attackerEl));
+  return parts.filter((p) => p?.text);
+}
+
 export function getConditionalWeaponTagStatus(tag, roll, attackerEl) {
   const d = resolveWeaponTagDescriptor(tag.name, attackerEl);
   if (d?.bannerStatus) return d.bannerStatus(tag, wrapRoll(roll));

@@ -20,7 +20,11 @@ export function Tooltip({ children, label, content, placement = 'bottom-right', 
   const [tooltipStyle, setTooltipStyle] = useState(null);
   const isTouch = useTouchDevice();
   const wrapperRef = useRef(null);
-  const hasContent = (label != null && label !== '') || content != null;
+  const contentEmpty =
+    content == null
+    || content === ''
+    || (typeof content === 'string' && content.trim() === '');
+  const hasContent = (label != null && label !== '') || !contentEmpty;
 
   const show = () => {
     if (!wrapperRef.current || !hasContent) return;
@@ -56,7 +60,7 @@ export function Tooltip({ children, label, content, placement = 'bottom-right', 
   const tooltip = tooltipStyle && hasContent && createPortal(
     <span
       style={tooltipStyle}
-      className={`px-2 py-1.5 bg-slate-800 text-slate-200 text-xs rounded pointer-events-none border border-slate-700 shadow-xl ${
+      className={`px-2 py-1.5 bg-dh-raised text-dh text-xs rounded pointer-events-none border border-dh-border shadow-xl ${
         content ? 'max-w-[280px] whitespace-normal text-left' : labelHasNewlines ? 'max-w-[280px] whitespace-pre-line text-left' : 'whitespace-nowrap'
       }`}
     >

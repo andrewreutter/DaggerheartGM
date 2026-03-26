@@ -28,8 +28,9 @@ first line of your FIRST message:
 ────────────────────────────────────────────────────────
 STEP 1 — READ THE TRACKER SUMMARY
 ────────────────────────────────────────────────────────
-Read lines 8–22 of docs/v2-migration-tracker.md (the **Status Summary** table only).
-Use the **column headers** in that table — they are the source of truth (not legacy labels below).
+Run `npm run v2:sync-tracker-md` (optional) and read **`docs/v2-migration-tracker-snapshot.md`** for Summary-equivalent counts, or use `npm run v2:queue -- --json`. Requires `GITHUB_TOKEN` + GitHub repo for those scripts.
+
+Use the **column headers** in the snapshot Summary table — they are the source of truth (not legacy labels below).
 
 Count (per relevant collection row or **TOTAL** as appropriate):
 
@@ -80,7 +81,7 @@ STEP 3 — ANNOUNCE THE DECISION
 Tell the user:
   - Which mode you are entering and why (cite the counts from the summary).
   - Then say: "Now following <mode> agent protocol."
-  Do **not** enumerate upcoming features, claimable rows, or “next in queue” — that duplicates `docs/v2-migration-tracker.md`.
+  Do **not** enumerate upcoming features, claimable rows, or “next in queue” — that duplicates the snapshot / queue scripts.
 
 ────────────────────────────────────────────────────────
 STEP 4 — BECOME THAT AGENT
@@ -101,8 +102,8 @@ RESOLUTION protocol exactly. Do NOT skip any steps in that prompt.
 ────────────────────────────────────────────────────────
 ON "CONTINUE"
 ────────────────────────────────────────────────────────
-Re-read docs/agent-prompts/work-agent.md, then re-read the tracker Summary
-(lines 8–22). Re-apply the priority rule. If the same mode still applies,
+Re-read docs/agent-prompts/work-agent.md, then re-read the snapshot Summary
+(or `npm run v2:queue -- --json`). Re-apply the priority rule. If the same mode still applies,
 continue in that mode (re-read its prompt and do the next unit of work).
 If a higher-priority mode now applies, switch to it and announce the switch.
 
@@ -113,5 +114,5 @@ THINGS TO NEVER DO
 - Do NOT skip announcing the chosen mode before doing any work.
 - Do NOT skip reading the chosen agent's prompt file in full.
 - Do NOT invent a hybrid mode — pick one agent and follow it completely.
-- Do NOT read the entire tracker file. Lines 8–22 (Status Summary) are enough for the decision.
-- Do NOT narrate the pipeline roadmap to the user (see **Agent output** in `docs/v2-migration-tracker.md`).
+- Do NOT enumerate every Issue. The snapshot Summary (or queue JSON) is enough for the decision.
+- Do NOT narrate the pipeline roadmap to the user — **Agent output** is mode + counts only.

@@ -14,12 +14,12 @@ const MOD_LABELS = {
 
 function ActiveModList({ mods, emptyLabel }) {
   const active = Object.entries(MOD_LABELS).filter(([key]) => mods?.[key]);
-  if (active.length === 0) return <p className="text-slate-500 text-xs italic">{emptyLabel}</p>;
+  if (active.length === 0) return <p className="text-dh-muted text-xs italic">{emptyLabel}</p>;
   return (
     <ul className="space-y-0.5">
       {active.map(([key, { label, value }]) => (
         <li key={key} className="flex items-center justify-between gap-4 text-sm">
-          <span className="text-slate-300">{label}</span>
+          <span className="text-dh">{label}</span>
           <span className={`font-mono text-xs font-semibold ${value < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
             {value > 0 ? `+${value}` : value}
           </span>
@@ -29,15 +29,15 @@ function ActiveModList({ mods, emptyLabel }) {
   );
 }
 
-export function SceneAdoptDialog({ scene, currentTableMods, onApply, onKeep, onCancel }) {
+export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onApply, onKeep, onCancel }) {
   const tableHasActive = currentTableMods && Object.keys(MOD_LABELS).some(k => currentTableMods[k]);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70">
-      <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
+      <div className="bg-dh-raised border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
         <div>
           <h2 className="text-lg font-bold text-white mb-1">Apply Budget Factors?</h2>
-          <p className="text-slate-400 text-sm">
+          <p className="text-dh-muted text-sm">
             <span className="text-amber-300 font-medium">{scene?.name || 'This scene'}</span> has battle budget factors set.
             Apply them to the table?
           </p>
@@ -45,13 +45,13 @@ export function SceneAdoptDialog({ scene, currentTableMods, onApply, onKeep, onC
 
         <div className="space-y-3">
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Scene factors</p>
+            <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Scene factors</p>
             <ActiveModList mods={scene?.battleMods} emptyLabel="None" />
           </div>
 
           {tableHasActive && (
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Current table factors (will be replaced)</p>
+              <p className="text-xs font-semibold text-dh-muted uppercase tracking-wide mb-1.5">Current table factors (will be replaced)</p>
               <ActiveModList mods={currentTableMods} emptyLabel="None" />
             </div>
           )}
@@ -66,16 +66,28 @@ export function SceneAdoptDialog({ scene, currentTableMods, onApply, onKeep, onC
           </button>
           <button
             onClick={onKeep}
-            className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg px-4 py-2.5 text-sm transition-colors"
+            className="w-full bg-dh-hover hover:bg-dh-hover text-dh rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
             Keep Current Table Factors
           </button>
           <button
             onClick={onCancel}
-            className="text-slate-500 hover:text-slate-300 text-xs py-1 transition-colors"
+            className="text-dh-muted hover:text-dh text-xs py-1 transition-colors"
           >
             Cancel (don't add scene)
           </button>
+          {tableHref && (
+            <p className="text-center pt-1">
+              <a
+                href={tableHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-sky-400/90 hover:text-sky-300 hover:underline"
+              >
+                Open table in new tab
+              </a>
+            </p>
+          )}
         </div>
       </div>
     </div>

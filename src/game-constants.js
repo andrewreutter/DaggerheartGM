@@ -53,3 +53,15 @@ export const ROLE_BP_COST = {
 
 export const ENV_TYPES = ['traversal', 'exploration', 'social', 'event'];
 export const TIERS = [1, 2, 3, 4];
+
+/**
+ * V2 `featureState[scope][key]` — one-time Evasion bonus vs a pending attack (declarative features).
+ * Engine mutations and Game Table banner math use this key; feature modules own the scope bag.
+ */
+export const PENDING_EVASION_BONUS_STATE_KEY = 'pendingEvasionBonus';
+
+/**
+ * Synthetic `items.user_id` for Fresh Cut Grass catalog content (no Firebase Auth).
+ * Rows are `is_public: true` and appear in the Library like any other public item.
+ */
+export const FCG_PUBLIC_USER_ID = '__FCG_PUBLIC__';

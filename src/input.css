@@ -1,6 +1,363 @@
-@import "tailwindcss";
+/* source(none) disables Tailwind v4's auto-detection entirely — without it, Tailwind watches every
+   git-tracked directory in the project and rebuilds on any FS event (Cursor indexing, lock files,
+   etc.), producing an endless stream of "Done in Xms" in --watch mode. */
+@import "tailwindcss" source(none);
 @source "../src/client/**/*.{jsx,js}";
-@source "../public/index.html";
+/* Body classes used directly in public/index.html <body> tag */
+@source inline("min-h-screen bg-dh-canvas text-dh");
+
+/* Character sheet: title-row source badge hover dims non-matching feature cards */
+.dh-sheet-source-dim {
+  @apply transition-opacity duration-150 ease-out opacity-[0.12] saturate-50 pointer-events-none;
+}
+
+/* Descendants of html[data-theme="light"] — paired hues (e.g. amber-200) need dark text on light surfaces */
+@custom-variant dh-light (&:where([data-theme="light"] *));
+
+/* ── Theme chrome (neutral surfaces): RGB triplets for Tailwind alpha + markdown ──
+   Dark palette lives only under [data-theme="dark"]; html gets data-theme from the inline script in public/index.html before paint. */
+[data-theme="dark"] {
+  --dh-canvas: 2 6 23;
+  --dh-surface: 15 23 42;
+  --dh-raised: 30 41 59;
+  --dh-hover: 51 65 85;
+  --dh-border: 30 41 59;
+  --dh-border-strong: 51 65 85;
+  --dh-text: 226 232 240;
+  --dh-text-muted: 148 163 184;
+  --dh-link: 56 189 248;
+  --dh-link-hover: 125 211 252;
+  --dh-md-blockquote-border: 71 85 105;
+  --dh-md-blockquote-text: 148 163 184;
+  --dh-md-code-bg: 30 41 59;
+  --dh-md-table-border: 51 65 85;
+  --dh-md-table-head: 30 41 59;
+  --dh-map-blank: 15 23 42;
+  --dh-inset: 15 23 42;
+  --dh-chip-bg: 30 41 59;
+  --dh-chip-border: 51 65 85;
+  --dh-badge-mine-bg: 51 65 85;
+  --dh-badge-mine-text: 226 232 240;
+  --dh-badge-mine-border: 71 85 105;
+  --dh-badge-srd-bg: 88 28 135;
+  --dh-badge-srd-text: 250 245 255;
+  --dh-badge-srd-border: 167 139 250;
+  --dh-badge-public-bg: 30 58 138;
+  --dh-badge-public-text: 191 219 254;
+  --dh-badge-public-border: 37 99 235;
+  --dh-badge-hod-bg: 136 19 55;
+  --dh-badge-hod-text: 254 205 211;
+  --dh-badge-hod-border: 225 29 72;
+  --dh-badge-fcg-bg: 20 83 45;
+  --dh-badge-fcg-text: 187 247 208;
+  --dh-badge-fcg-border: 22 163 74;
+  --dh-tier-shield-fill: 30 41 59;
+  --dh-tier-shield-stroke: 100 116 139;
+  --dh-tier-shield-text: 226 232 240;
+  --dh-level-badge-bg: 88 28 135;
+  --dh-level-badge-text: 250 245 255;
+  --dh-level-badge-border: 167 139 250;
+  --dh-tint-trait-pos-bg: 12 74 110;
+  --dh-tint-trait-pos-border: 56 189 248;
+  --dh-tint-trait-pos-text: 186 230 253;
+  --dh-tint-roll-flash-bg: 20 83 45;
+  --dh-tint-roll-flash-border: 34 197 94;
+  /* Magic (spellcast, domain cards, domain identity chips) — violet family; distinct from Fear purple */
+  --dh-tint-magic-card-bg: 49 46 129;
+  --dh-tint-magic-card-border: 109 40 217;
+  --dh-tint-magic-strip-bg: 76 29 149;
+  --dh-tint-magic-strip-border: 109 40 217;
+  --dh-tint-magic-label-bg: 76 29 149;
+  --dh-tint-magic-label-border: 139 92 246;
+  --dh-tint-magic-label-text: 221 214 254;
+  --dh-magic-header-text: 237 233 254;
+  --dh-magic-header-text-sub: 196 181 253;
+  --dh-magic-icon-accent: 167 139 250;
+  --dh-tint-violet-card-bg: 49 46 129;
+  --dh-tint-violet-card-border: 109 40 217;
+  --dh-tint-amber-card-bg: 120 53 15;
+  --dh-tint-amber-card-border: 217 119 6;
+  --dh-tint-purple-row-bg: 88 28 135;
+  --dh-tint-purple-row-border: 147 51 234;
+  --dh-tint-sky-row-bg: 30 58 138;
+  --dh-tint-sky-row-border: 37 99 235;
+  --dh-tint-sky-row-text: 191 219 254;
+  --dh-tint-trait-chip-bg: 12 74 110;
+  --dh-tint-trait-chip-border: 3 105 161;
+  --dh-tint-trait-chip-text: 186 230 253;
+  --dh-tint-attack-trait-bg: 12 74 110;
+  --dh-tint-attack-trait-border: 3 105 161;
+  --dh-tint-attack-trait-text: 125 211 252;
+  /* Hope / warm semantic — saturated but not pale yellow on dark surfaces */
+  --dh-semantic-hope: 245 158 11;
+  --dh-semantic-hope-soft: 217 119 6;
+}
+
+[data-theme="light"] {
+  --dh-canvas: 255 255 255;
+  --dh-surface: 248 250 252;
+  --dh-raised: 241 245 249;
+  --dh-hover: 226 232 240;
+  --dh-border: 226 232 240;
+  --dh-border-strong: 203 213 225;
+  --dh-text: 15 23 42;
+  --dh-text-muted: 100 116 139;
+  --dh-link: 2 132 199;
+  --dh-link-hover: 3 105 161;
+  --dh-md-blockquote-border: 203 213 225;
+  --dh-md-blockquote-text: 100 116 139;
+  --dh-md-code-bg: 241 245 249;
+  --dh-md-table-border: 203 213 225;
+  --dh-md-table-head: 241 245 249;
+  --dh-map-blank: 243 244 246;
+  --dh-inset: 226 232 240;
+  --dh-chip-bg: 241 245 249;
+  --dh-chip-border: 203 213 225;
+  --dh-badge-mine-bg: 226 232 240;
+  --dh-badge-mine-text: 51 65 85;
+  --dh-badge-mine-border: 203 213 225;
+  --dh-badge-srd-bg: 245 243 255;
+  --dh-badge-srd-text: 76 29 149;
+  --dh-badge-srd-border: 167 139 250;
+  --dh-badge-public-bg: 219 234 254;
+  --dh-badge-public-text: 30 64 175;
+  --dh-badge-public-border: 96 165 250;
+  --dh-badge-hod-bg: 255 228 230;
+  --dh-badge-hod-text: 159 18 57;
+  --dh-badge-hod-border: 251 113 133;
+  --dh-badge-fcg-bg: 220 252 231;
+  --dh-badge-fcg-text: 22 101 52;
+  --dh-badge-fcg-border: 74 222 128;
+  --dh-tier-shield-fill: 226 232 240;
+  --dh-tier-shield-stroke: 148 163 184;
+  --dh-tier-shield-text: 15 23 42;
+  --dh-level-badge-bg: 245 243 255;
+  --dh-level-badge-text: 76 29 149;
+  --dh-level-badge-border: 167 139 250;
+  --dh-tint-trait-pos-bg: 224 242 254;
+  --dh-tint-trait-pos-border: 56 189 248;
+  --dh-tint-trait-pos-text: 30 64 175;
+  --dh-tint-roll-flash-bg: 220 252 231;
+  --dh-tint-roll-flash-border: 34 197 94;
+  --dh-tint-magic-card-bg: 237 233 254;
+  --dh-tint-magic-card-border: 167 139 250;
+  --dh-tint-magic-strip-bg: 245 243 255;
+  --dh-tint-magic-strip-border: 167 139 250;
+  --dh-tint-magic-label-bg: 245 243 255;
+  --dh-tint-magic-label-border: 167 139 250;
+  --dh-tint-magic-label-text: 76 29 149;
+  --dh-magic-header-text: 76 29 149;
+  --dh-magic-header-text-sub: 91 33 182;
+  --dh-magic-icon-accent: 124 58 237;
+  --dh-tint-violet-card-bg: 237 233 254;
+  --dh-tint-violet-card-border: 167 139 250;
+  --dh-tint-amber-card-bg: 254 243 199;
+  --dh-tint-amber-card-border: 217 119 6;
+  --dh-tint-purple-row-bg: 243 232 255;
+  --dh-tint-purple-row-border: 192 132 252;
+  --dh-tint-sky-row-bg: 219 234 254;
+  --dh-tint-sky-row-border: 96 165 250;
+  --dh-tint-sky-row-text: 30 64 175;
+  --dh-tint-trait-chip-bg: 224 242 254;
+  --dh-tint-trait-chip-border: 56 189 248;
+  --dh-tint-trait-chip-text: 30 64 175;
+  --dh-tint-attack-trait-bg: 224 242 254;
+  --dh-tint-attack-trait-border: 56 189 248;
+  --dh-tint-attack-trait-text: 30 64 175;
+  --dh-semantic-hope: 120 53 15;
+  --dh-semantic-hope-soft: 146 64 14;
+}
+
+/* Use fixed alpha so compiled CSS is valid (literal <alpha-value> is not substituted in tw v4.2.1 output). */
+@theme {
+  --color-dh-canvas: rgb(var(--dh-canvas) / 1);
+  --color-dh-surface: rgb(var(--dh-surface) / 1);
+  --color-dh-raised: rgb(var(--dh-raised) / 1);
+  --color-dh-hover: rgb(var(--dh-hover) / 1);
+  --color-dh-border: rgb(var(--dh-border) / 1);
+  --color-dh-strong: rgb(var(--dh-border-strong) / 1);
+  /* Primary foreground — utility name `text-dh` */
+  --color-dh: rgb(var(--dh-text) / 1);
+  --color-dh-muted: rgb(var(--dh-text-muted) / 1);
+  --color-dh-link: rgb(var(--dh-link) / 1);
+  --color-dh-link-hover: rgb(var(--dh-link-hover) / 1);
+  --color-dh-map-blank: rgb(var(--dh-map-blank) / 1);
+  --color-dh-inset: rgb(var(--dh-inset) / 1);
+  --color-dh-chip-bg: rgb(var(--dh-chip-bg) / 1);
+  --color-dh-chip-border: rgb(var(--dh-chip-border) / 1);
+  --color-dh-level-badge-bg: rgb(var(--dh-level-badge-bg) / 1);
+  --color-dh-level-badge-text: rgb(var(--dh-level-badge-text) / 1);
+  --color-dh-level-badge-border: rgb(var(--dh-level-badge-border) / 1);
+  --color-dh-tier-shield: rgb(var(--dh-tier-shield-fill) / 1);
+  --color-dh-tier-shield-stroke: rgb(var(--dh-tier-shield-stroke) / 1);
+  --color-dh-tier-shield-text: rgb(var(--dh-tier-shield-text) / 1);
+  --color-dh-hope: rgb(var(--dh-semantic-hope) / 1);
+  --color-dh-hope-soft: rgb(var(--dh-semantic-hope-soft) / 1);
+}
+
+/* Library source badges (theme-aware; see SOURCE_BADGE in constants.js) */
+.dh-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1;
+  border-width: 1px;
+  border-style: solid;
+}
+.dh-badge-mine {
+  background: rgb(var(--dh-badge-mine-bg) / 0.92);
+  color: rgb(var(--dh-badge-mine-text) / 1);
+  border-color: rgb(var(--dh-badge-mine-border) / 1);
+}
+.dh-badge-srd {
+  background: rgb(var(--dh-badge-srd-bg) / 0.92);
+  color: rgb(var(--dh-badge-srd-text) / 1);
+  border-color: rgb(var(--dh-badge-srd-border) / 1);
+}
+.dh-badge-public {
+  background: rgb(var(--dh-badge-public-bg) / 0.92);
+  color: rgb(var(--dh-badge-public-text) / 1);
+  border-color: rgb(var(--dh-badge-public-border) / 1);
+}
+.dh-badge-hod {
+  background: rgb(var(--dh-badge-hod-bg) / 0.92);
+  color: rgb(var(--dh-badge-hod-text) / 1);
+  border-color: rgb(var(--dh-badge-hod-border) / 1);
+}
+.dh-badge-fcg {
+  background: rgb(var(--dh-badge-fcg-bg) / 0.92);
+  color: rgb(var(--dh-badge-fcg-text) / 1);
+  border-color: rgb(var(--dh-badge-fcg-border) / 1);
+}
+
+/* Character sheet: trait + roll state (semantic sky / green / violet / amber tints) */
+.dh-tint-trait-score-positive {
+  background: rgb(var(--dh-tint-trait-pos-bg) / 0.45);
+  border-color: rgb(var(--dh-tint-trait-pos-border) / 0.55);
+  color: rgb(var(--dh-tint-trait-pos-text) / 1);
+}
+.dh-tint-roll-flash {
+  border-color: rgb(var(--dh-tint-roll-flash-border) / 0.7);
+  background: rgb(var(--dh-tint-roll-flash-bg) / 0.4);
+}
+.dh-tint-violet-card {
+  border-color: rgb(var(--dh-tint-magic-card-border) / 0.5);
+  background: rgb(var(--dh-tint-magic-card-bg) / 0.35);
+}
+.dh-tint-amber-card {
+  border-color: rgb(var(--dh-tint-amber-card-border) / 0.5);
+  background: rgb(var(--dh-tint-amber-card-bg) / 0.35);
+}
+.dh-tint-purple-row {
+  border-color: rgb(var(--dh-tint-purple-row-border) / 0.5);
+  background: rgb(var(--dh-tint-purple-row-bg) / 0.35);
+}
+/* Magic: spellcast strip/label, identity header under-sheet; aliases keep .dh-tint-spellcast-* for existing markup */
+.dh-tint-magic-strip,
+.dh-tint-spellcast-strip {
+  background: rgb(var(--dh-tint-magic-strip-bg) / 0.4);
+  border-color: rgb(var(--dh-tint-magic-strip-border) / 0.35);
+}
+.dh-tint-magic-label,
+.dh-tint-spellcast-label {
+  border-color: rgb(var(--dh-tint-magic-label-border) / 0.5);
+  background: rgb(var(--dh-tint-magic-label-bg) / 0.45);
+  color: rgb(var(--dh-tint-magic-label-text) / 1);
+}
+/** Domain / spell feature cards (GuideFeatureCard tone=domain) */
+.dh-tint-magic-feature-card {
+  border-color: rgb(var(--dh-tint-magic-card-border) / 0.45);
+  background: rgb(var(--dh-tint-magic-card-bg) / 0.35);
+}
+/** Small domain name chips in CharacterIdentitySourceBadges */
+.dh-magic-chip {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  border-width: 1px;
+  border-style: solid;
+  line-height: 1.2;
+  border-color: rgb(var(--dh-tint-magic-label-border) / 0.45);
+  background: rgb(var(--dh-tint-magic-label-bg) / 0.4);
+  color: rgb(var(--dh-tint-magic-label-text) / 1);
+}
+.dh-magic-source-badge {
+  font-size: 0.65rem;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  border-width: 1px;
+  border-style: solid;
+  flex-shrink: 0;
+  border-color: rgb(var(--dh-tint-magic-label-border) / 0.4);
+  background: rgb(var(--dh-tint-magic-label-bg) / 0.5);
+  color: rgb(var(--dh-tint-magic-label-text) / 1);
+}
+.dh-text-magic-icon {
+  color: rgb(var(--dh-magic-icon-accent) / 1);
+}
+.dh-tint-sky-row {
+  border-color: rgb(var(--dh-tint-sky-row-border) / 0.45);
+  background: rgb(var(--dh-tint-sky-row-bg) / 0.35);
+  color: rgb(var(--dh-tint-sky-row-text) / 1);
+}
+.dh-tint-trait-chip {
+  border-color: rgb(var(--dh-tint-trait-chip-border) / 0.5);
+  background: rgb(var(--dh-tint-trait-chip-bg) / 0.5);
+  color: rgb(var(--dh-tint-trait-chip-text) / 1);
+}
+
+/* Character sheet: clickable chips (roll traits, weapons, feature actions) vs passive bordered panels (tracks, thresholds). */
+.dh-sheet-clickable-chip {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 1px 2px rgb(0 0 0 / 0.28);
+  transition: transform 0.08s ease, box-shadow 0.15s ease, filter 0.15s ease, border-color 0.15s ease;
+}
+.dh-sheet-clickable-chip:active:not(:disabled) {
+  transform: scale(0.985);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 0 1px rgb(0 0 0 / 0.2);
+}
+.dh-sheet-clickable-chip:focus-visible {
+  outline: 2px solid rgb(56 189 248 / 0.45);
+  outline-offset: 2px;
+}
+[data-theme="light"] .dh-sheet-clickable-chip {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.65),
+    0 1px 2px rgb(0 0 0 / 0.1);
+}
+[data-theme="light"] .dh-sheet-clickable-chip:active:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.45),
+    0 0 0 rgb(0 0 0 / 0.06);
+}
+[data-theme="light"] .dh-sheet-clickable-chip:focus-visible {
+  outline-color: rgb(2 132 199 / 0.55);
+}
+
+.dh-tint-attack-trait {
+  border-color: rgb(var(--dh-tint-attack-trait-border) / 0.5);
+  background: rgb(var(--dh-tint-attack-trait-bg) / 0.5);
+  color: rgb(var(--dh-tint-attack-trait-text) / 1);
+}
+.dh-text-magic-header {
+  color: rgb(var(--dh-magic-header-text) / 1);
+}
+.dh-text-magic-header-sub {
+  color: rgb(var(--dh-magic-header-text-sub) / 0.88);
+}
+.dh-text-spellcast-header {
+  color: rgb(var(--dh-magic-header-text) / 1);
+}
+.dh-text-spellcast-header-sub {
+  color: rgb(var(--dh-magic-header-text-sub) / 0.85);
+}
 
 /* Clickable elements use pointer cursor */
 a, button, input[type="submit"], input[type="button"], input[type="checkbox"], input[type="radio"], select, [role="button"], label { cursor: pointer; }
@@ -13,12 +370,12 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   margin-bottom: 0;
 }
 .dh-md a {
-  color: #38bdf8; /* sky-400 */
+  color: rgb(var(--dh-link));
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .dh-md a:hover {
-  color: #7dd3fc; /* sky-300 */
+  color: rgb(var(--dh-link-hover));
 }
 .dh-md strong {
   font-weight: 700;
@@ -40,21 +397,21 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   margin-bottom: 0.15em;
 }
 .dh-md blockquote {
-  border-left: 3px solid #475569; /* slate-600 */
+  border-left: 3px solid rgb(var(--dh-md-blockquote-border));
   padding-left: 0.75em;
-  color: #94a3b8; /* slate-400 */
+  color: rgb(var(--dh-md-blockquote-text));
   margin: 0.4em 0;
   font-style: italic;
 }
 .dh-md code {
-  background: #1e293b; /* slate-800 */
+  background: rgb(var(--dh-md-code-bg));
   border-radius: 3px;
   padding: 0.1em 0.35em;
   font-size: 0.85em;
   font-family: monospace;
 }
 .dh-md pre {
-  background: #1e293b; /* slate-800 */
+  background: rgb(var(--dh-md-code-bg));
   border-radius: 5px;
   padding: 0.6em 0.9em;
   overflow-x: auto;
@@ -88,12 +445,12 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   margin-bottom: 0;
 }
 .reddit-md a {
-  color: #38bdf8; /* sky-400 */
+  color: rgb(var(--dh-link));
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .reddit-md a:hover {
-  color: #7dd3fc; /* sky-300 */
+  color: rgb(var(--dh-link-hover));
 }
 .reddit-md strong {
   font-weight: 700;
@@ -124,21 +481,21 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   margin-bottom: 0.2em;
 }
 .reddit-md blockquote {
-  border-left: 3px solid #475569; /* slate-600 */
+  border-left: 3px solid rgb(var(--dh-md-blockquote-border));
   padding-left: 0.75em;
-  color: #94a3b8; /* slate-400 */
+  color: rgb(var(--dh-md-blockquote-text));
   margin: 0.5em 0;
   font-style: italic;
 }
 .reddit-md code {
-  background: #1e293b; /* slate-800 */
+  background: rgb(var(--dh-md-code-bg));
   border-radius: 3px;
   padding: 0.1em 0.35em;
   font-size: 0.85em;
   font-family: monospace;
 }
 .reddit-md pre {
-  background: #1e293b;
+  background: rgb(var(--dh-md-code-bg));
   border-radius: 5px;
   padding: 0.6em 0.9em;
   overflow-x: auto;
@@ -160,11 +517,11 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
   font-size: 0.9em;
 }
 .reddit-md th, .reddit-md td {
-  border: 1px solid #334155; /* slate-700 */
+  border: 1px solid rgb(var(--dh-md-table-border));
   padding: 0.3em 0.6em;
 }
 .reddit-md th {
-  background: #1e293b;
+  background: rgb(var(--dh-md-table-head));
   font-weight: 600;
 }
 .reddit-md del {
@@ -173,7 +530,7 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
 }
 .reddit-md hr {
   border: none;
-  border-top: 1px solid #334155;
+  border-top: 1px solid rgb(var(--dh-md-table-border));
   margin: 0.6em 0;
 }
 
@@ -186,6 +543,11 @@ a, button, input[type="submit"], input[type="button"], input[type="checkbox"], i
 }
 .stat-pulse-anim {
   animation: stat-pulse 350ms ease-out 3;
+}
+
+/* Library paginated grid: reserve vertical scrollbar track + avoid overlay scrollbars (e.g. macOS) drawing on top of cards */
+.dh-library-grid-scroll {
+  scrollbar-gutter: stable;
 }
 
 /* Pending dice roll pulse */

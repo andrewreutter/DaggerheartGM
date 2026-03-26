@@ -44,7 +44,7 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
 
   return (
     <div className="space-y-4">
-      <FormRow label="Adventure Name"><input type="text" value={formData.name} onChange={e => updateField('name', e.target.value)} className="bg-slate-950 border border-slate-700 rounded p-2 text-white w-full text-lg font-bold" /></FormRow>
+      <FormRow label="Adventure Name"><input type="text" value={formData.name} onChange={e => updateField('name', e.target.value)} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full text-lg font-bold" /></FormRow>
       <FormRow label="Images (optional)">
         <ImageEditor
           imageUrl={formData.imageUrl}
@@ -67,8 +67,8 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
       />
 
       {!isControlled && (
-        <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-800">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+        <div className="flex justify-between items-center mt-6 pt-6 border-t border-dh-border">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
             <input
               type="checkbox"
               checked={!!formData.is_public}
@@ -78,15 +78,15 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
             Make Public
           </label>
           <div className="flex gap-3">
-            <button onClick={onCancel} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+            <button onClick={onCancel} className="px-4 py-2 text-dh-muted hover:text-white">Cancel</button>
             <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adventure</button>
           </div>
         </div>
       )}
 
       {isControlled && (
-        <div className="mt-6 pt-4 border-t border-slate-800">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-slate-400">
+        <div className="mt-6 pt-4 border-t border-dh-border">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
             <input
               type="checkbox"
               checked={!!formData.is_public}

@@ -2,15 +2,45 @@
  * Generates `src/features-v2/generated/feature-source-paths.js` — maps registry ids / feature names
  * to paths under `src/features-v2/` for the feature source viewer. Run after adding modules:
  *   node scripts/gen-feature-source-paths.mjs
+ *
+ * After resolving paths from registry keys, `mergeSrdListSlugAliases` duplicates entries under
+ * `makeSrdListId(collection, row.name)` so unified library / `/api/srd` ids (from `src/srd/srd-list-ids.js`)
+ * match even when hand-authored registry keys differ.
  */
 
 import { readdirSync, mkdirSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { makeSrdListId } from '../src/srd/srd-list-ids.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '../src/features-v2');
 const OUT = join(ROOT, 'generated/feature-source-paths.js');
+
+/**
+ * Unified library / `/api/srd` use `makeSrdListId(collection, name)` from row names.
+ * Registry keys are hand-authored and can differ from that slug (e.g. apostrophes). Duplicate
+ * path entries under the API id so source lookup works for both.
+ */
+function mergeSrdListSlugAliases(pathById, registrySlice, collection) {
+  if (!registrySlice || typeof registrySlice !== 'object') return;
+  const additions = {};
+  for (const [registryId, filePath] of Object.entries(pathById)) {
+    const row = registrySlice[registryId];
+    if (!row || typeof row.name !== 'string' || !row.name.trim()) continue;
+    const apiId = makeSrdListId(collection, row.name);
+    if (apiId === registryId) continue;
+    const existing = pathById[apiId] ?? additions[apiId];
+    if (existing != null && existing !== filePath) {
+      console.warn(
+        `[gen-feature-source-paths] SRD list id alias collision (${collection}): "${apiId}" → ${existing} vs ${filePath} (registry ${registryId})`,
+      );
+      continue;
+    }
+    additions[apiId] = filePath;
+  }
+  Object.assign(pathById, additions);
+}
 
 function relFeaturesPath(absFile) {
   return relative(ROOT, absFile).replace(/\\/g, '/');
@@ -53,6 +83,7 @@ async function main() {
       if (id) pathByAbilityId[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathByAbilityId, registry.abilities, 'abilities');
 
   const pathByClassId = {};
   const classFiles = (await walkJsFiles(join(ROOT, 'classes'))).filter(
@@ -69,6 +100,7 @@ async function main() {
       if (id) pathByClassId[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathByClassId, registry.classes, 'classes');
 
   const pathBySubclassId = {};
   const subFiles = (await walkJsFiles(join(ROOT, 'subclasses'))).filter(
@@ -85,6 +117,7 @@ async function main() {
       if (id) pathBySubclassId[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathBySubclassId, registry.subclasses, 'subclasses');
 
   const pathByAncestryKey = {};
   const anFiles = (await walkJsFiles(join(ROOT, 'ancestries'))).filter(
@@ -98,6 +131,7 @@ async function main() {
       if (id) pathByAncestryKey[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathByAncestryKey, registry.ancestries, 'ancestries');
 
   const pathByCommunityId = {};
   const comFiles = (await walkJsFiles(join(ROOT, 'communities'))).filter(
@@ -114,7 +148,10 @@ async function main() {
       if (id) pathByCommunityId[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathByCommunityId, registry.communities, 'communities');
 
+  /** Same array references as in `beastforms/index.js` — avoids ambiguous name matches (e.g. shared "Aquatic"). */
+  const { BEASTFORM_FEATURE_LISTS } = await import(toImportUrl(join(ROOT, 'beastforms/index.js')));
   const pathByBeastformId = {};
   const bstFiles = (await walkJsFiles(join(ROOT, 'beastforms'))).filter(
     (p) =>
@@ -124,20 +161,11 @@ async function main() {
   );
   for (const file of bstFiles) {
     const mod = await importModule(file);
-    const feats = mod.features;
-    if (!Array.isArray(feats)) continue;
-    for (const v of feats) {
-      if (!v || typeof v !== 'object') continue;
-      const id = Object.keys(registry.beastforms || {}).find((k) => {
-        const row = registry.beastforms[k];
-        if (!row?.features) return false;
-        if (row.features.includes(v)) return true;
-        const vn = typeof v.name === 'string' ? v.name : '';
-        return vn && row.features.some((f) => f && typeof f.name === 'string' && f.name === vn);
-      });
-      if (id) pathByBeastformId[id] = relFeaturesPath(file);
-    }
+    if (!Array.isArray(mod.features)) continue;
+    const hit = Object.entries(BEASTFORM_FEATURE_LISTS).find(([, list]) => list === mod.features);
+    if (hit) pathByBeastformId[hit[0]] = relFeaturesPath(file);
   }
+  mergeSrdListSlugAliases(pathByBeastformId, registry.beastforms, 'beastforms');
 
   const pathByItemId = {};
   const itemFiles = (await walkJsFiles(join(ROOT, 'items'))).filter((p) => !p.endsWith('items/index.js'));
@@ -153,6 +181,7 @@ async function main() {
       if (id) pathByItemId[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathByItemId, registry.items, 'items');
 
   const pathByConsumableId = {};
   const consFiles = (await walkJsFiles(join(ROOT, 'consumables'))).filter(
@@ -170,6 +199,7 @@ async function main() {
       if (id) pathByConsumableId[id] = relFeaturesPath(file);
     }
   }
+  mergeSrdListSlugAliases(pathByConsumableId, registry.consumables, 'consumables');
 
   const pathByWeaponPropertyName = {};
   const wpFiles = (await walkJsFiles(join(ROOT, 'weapon_properties'))).filter(

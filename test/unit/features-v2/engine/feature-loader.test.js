@@ -285,6 +285,7 @@ describe('applyDeclarativeFeatures — beastform virtualSources (married SRD + V
     expect(bf.map((f) => f.name)).toEqual(['Agile', 'Fragile']);
     const fragile = bf.find((f) => f.name === 'Fragile');
     expect(fragile?.id).toBe('srd-bst-agile-scout-feat-fragile');
+    expect(fragile?.dropBeastformOnMajorOrGreaterDamage).toBe(true);
     expect(fragile?._beastformId).toBe('srd-bst-agile-scout');
     expect(fragile?._sourceObject?.id).toBe('srd-bst-agile-scout');
     expect(decl.virtualFeaturesExpanded.filter((f) => f._source === 'beastform').map((f) => f.name)).toEqual([

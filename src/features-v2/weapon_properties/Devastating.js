@@ -4,6 +4,14 @@ export const Devastating = {
   name: 'Devastating',
   description:
     'Before you make an attack roll, you can mark a Stress to use a d20 as your damage die.',
+  /**
+   * Prefer the VTT intent surface (unified pre-roll banner) for Devastating; hide the duplicate card toggle.
+   */
+  computeWeaponRenderHints(table) {
+    const wid = table.source?.id;
+    if (!wid) return {};
+    return { [wid]: { hideDevastatingCardToggle: true } };
+  },
   chips: [
     when(
       isActing,

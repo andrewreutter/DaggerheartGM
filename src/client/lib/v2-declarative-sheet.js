@@ -306,7 +306,19 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     return true;
   });
   if (Array.isArray(decl.virtualWeapons) && decl.virtualWeapons.length) {
-    weapons = [...weapons, ...decl.virtualWeapons.map((vw) => ({ ...vw }))];
+    // `recomputeCharacter` → `runCharacterRender` already merges registry `virtualWeapons`
+    // into `recomputed.weapons` and `recomputed._virtualWeapons`. Appending `decl.virtualWeapons`
+    // again duplicates cards (e.g. Katari Retracting Claws).
+    const seen = new Set(weapons.map((w) => w?.name).filter(Boolean));
+    const extra = [];
+    for (const vw of decl.virtualWeapons) {
+      if (!vw || typeof vw !== 'object') continue;
+      const n = vw.name;
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      extra.push({ ...vw });
+    }
+    if (extra.length) weapons = [...weapons, ...extra];
   }
   if (weapons.length && Object.keys(traitOv).length) {
     weapons = weapons.map((w) => {
@@ -346,6 +358,12 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
 
   return {
     ...recomputed,
+    /** CONV-011 rest slot totals from merged declarative features (Rest banner + Potion of Stability, etc.). */
+    _v2RestSlotStats: {
+      numShortRestSlots: decl.stats?.numShortRestSlots ?? 0,
+      numLongRestSlots: decl.stats?.numLongRestSlots ?? 0,
+      numLongMovesInShortRest: decl.stats?.numLongMovesInShortRest ?? 0,
+    },
     // Table/runtime fields must win over recomputed so Game Table patches (e.g. activeModifiers) are visible on the sheet.
     activeModifiers: rawCharacter.activeModifiers ?? recomputed.activeModifiers ?? [],
     featureState: rawCharacter.featureState ?? recomputed.featureState,
