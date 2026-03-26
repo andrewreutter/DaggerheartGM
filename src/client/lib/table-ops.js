@@ -1,5 +1,11 @@
 import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 import { normalizeConditionsToList, serializeConditionsList } from './conditions-utils.js';
+import {
+  DEFAULT_LEGACY_MAP_ID,
+  deriveMapConfigFromState,
+  newMapId,
+  normalizeMapState,
+} from './map-table-state.js';
 
 // Runtime fields that are local to the Game Table and NOT overwritten by library data.
 // Used when resolving characters by reference: library base data is merged in, but
@@ -10,6 +16,8 @@ export const CHARACTER_RUNTIME_KEYS = [
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
   'tokenX', 'tokenY',
+  /** Which parallel map this token is on when placed (`null` = tray / unassigned). */
+  'mapId',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive',
   'selectedExperienceIndex',  // which experience is selected for the next roll (+2)
@@ -60,6 +68,7 @@ export const RUNTIME_KEYS = [
   'classFeatures', 'subclassFeatures', 'ancestryFeatures', 'communityFeatures',
   'experiences', 'spellcastTrait', 'hopeAbility', 'hopeAbilityName', 'companion', 'tier',
   'tokenX', 'tokenY',
+  'mapId',
   'classId', 'subclassId', 'ancestryIds', 'communityId',
   'armorId', 'primaryWeaponId', 'secondaryWeaponId',
   'abilityIds', 'abilities', 'baseTraits', 'advancements', 'proficiency',
@@ -133,20 +142,137 @@ export function applyTableOp(op, state) {
         }),
       };
     }
-    case 'set-map':
+    case 'set-map': {
+      const base = normalizeMapState(state);
+      const targetMapId = op.mapId ?? base.activeMapId;
+      const maps = base.maps.map(m => {
+        if (m.id !== targetMapId) return m;
+        const merged = { ...m };
+        if (op.mapImageUrl !== undefined) merged.mapImageUrl = op.mapImageUrl;
+        if (op.mapDimension !== undefined) merged.mapDimension = op.mapDimension;
+        if (op.mapSizeFt !== undefined) merged.mapSizeFt = op.mapSizeFt;
+        if (op.mapImageNaturalWidth !== undefined) merged.mapImageNaturalWidth = op.mapImageNaturalWidth;
+        if (op.mapImageNaturalHeight !== undefined) merged.mapImageNaturalHeight = op.mapImageNaturalHeight;
+        return merged;
+      });
+      let gmMapView = { ...base.gmMapView };
+      if (op.resetTokenPositions) {
+        gmMapView = { mapId: targetMapId, mapViewZoomRatio: null, mapViewPanNorm: null };
+      }
+      const nextState = { ...base, maps, gmMapView };
+      const mapConfig = deriveMapConfigFromState(nextState);
+      let nextEls = activeElements;
+      if (op.resetTokenPositions) {
+        nextEls = activeElements.map(el => {
+          if (el.tokenX == null || el.tokenY == null) return el;
+          const mid = el.mapId ?? DEFAULT_LEGACY_MAP_ID;
+          if (mid !== targetMapId) return el;
+          return { ...el, tokenX: null, tokenY: null, mapId: null };
+        });
+      }
       return {
-        mapConfig: {
-          mapImageUrl: op.mapImageUrl ?? null,
-          mapDimension: op.mapDimension ?? 'width',
-          mapSizeFt: op.mapSizeFt ?? 100,
-          mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
-          mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
-        },
-        // When image changes, reset all token positions
-        ...(op.resetTokenPositions ? {
-          activeElements: activeElements.map(el => ({ ...el, tokenX: null, tokenY: null })),
-        } : {}),
+        maps,
+        activeMapId: nextState.activeMapId,
+        gmMapView,
+        mapConfig,
+        ...(nextEls !== activeElements ? { activeElements: nextEls } : {}),
       };
+    }
+    case 'set-map-view': {
+      const base = normalizeMapState(state);
+      const mapId = op.mapId ?? base.activeMapId;
+      const gmMapView = {
+        ...base.gmMapView,
+        mapId,
+        ...(op.mapViewZoomRatio !== undefined ? { mapViewZoomRatio: op.mapViewZoomRatio } : {}),
+        ...(op.mapViewPanNorm !== undefined ? { mapViewPanNorm: op.mapViewPanNorm } : {}),
+      };
+      const nextState = { ...base, gmMapView };
+      return {
+        maps: nextState.maps,
+        activeMapId: nextState.activeMapId,
+        gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'set-active-map': {
+      const base = normalizeMapState(state);
+      const targetId = op.activeMapId;
+      if (!targetId || !base.maps.some(m => m.id === targetId)) return {};
+      const gmMapView = {
+        mapId: targetId,
+        mapViewZoomRatio: null,
+        mapViewPanNorm: null,
+      };
+      const nextState = { ...base, activeMapId: targetId, gmMapView };
+      return {
+        activeMapId: targetId,
+        gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'add-map': {
+      const base = normalizeMapState(state);
+      const id = newMapId();
+      const name =
+        op.name && String(op.name).trim()
+          ? String(op.name).trim()
+          : `Map ${base.maps.length + 1}`;
+      const newMap = {
+        id,
+        name,
+        mapImageUrl: op.mapImageUrl ?? null,
+        mapDimension: op.mapDimension ?? 'width',
+        mapSizeFt: op.mapSizeFt ?? 100,
+        mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
+        mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
+      };
+      const maps = [...base.maps, newMap];
+      const gmMapView = { mapId: id, mapViewZoomRatio: null, mapViewPanNorm: null };
+      const nextState = { ...base, maps, activeMapId: id, gmMapView };
+      return {
+        maps,
+        activeMapId: id,
+        gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'remove-map': {
+      const base = normalizeMapState(state);
+      const targetId = op.mapId;
+      if (!targetId || base.maps.length <= 1) return {};
+      if (!base.maps.some(m => m.id === targetId)) return {};
+      const maps = base.maps.filter(m => m.id !== targetId);
+      let activeMapId = base.activeMapId;
+      if (activeMapId === targetId) activeMapId = maps[0].id;
+      let gmMapView = { ...base.gmMapView };
+      if (gmMapView.mapId === targetId) {
+        gmMapView = { mapId: activeMapId, mapViewZoomRatio: null, mapViewPanNorm: null };
+      }
+      const nextEls = activeElements.map(el => {
+        if (el.tokenX == null || el.tokenY == null) return el;
+        const mid = el.mapId ?? DEFAULT_LEGACY_MAP_ID;
+        if (mid !== targetId) return el;
+        return { ...el, tokenX: null, tokenY: null, mapId: null };
+      });
+      const nextState = { ...base, maps, activeMapId, gmMapView };
+      return {
+        maps,
+        activeMapId,
+        gmMapView,
+        activeElements: nextEls,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'rename-map': {
+      const base = normalizeMapState(state);
+      const targetId = op.mapId;
+      const name = op.name != null ? String(op.name).trim() : '';
+      if (!targetId || !name) return {};
+      const maps = base.maps.map(m => (m.id === targetId ? { ...m, name } : m));
+      const nextState = { ...base, maps };
+      return { maps, mapConfig: deriveMapConfigFromState(nextState) };
+    }
     case 'set-gm-display-name':
       return { gmDisplayName: op.gmDisplayName };
     case 'set-table-feature-state':

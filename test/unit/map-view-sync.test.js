@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { encodeMapViewState, decodeMapViewState } from '../../src/client/lib/map-view-sync.js';
+import { encodeMapViewState, decodeMapViewState, shouldPersistMapViewToTable } from '../../src/client/lib/map-view-sync.js';
 
 describe('map-view-sync', () => {
   const base = {
@@ -83,5 +83,32 @@ describe('map-view-sync', () => {
       flat
     );
     expect(d.mapZoom).toBe(1);
+  });
+
+  describe('shouldPersistMapViewToTable', () => {
+    it('allows only the table owner when not previewing as player', () => {
+      expect(shouldPersistMapViewToTable({
+        userUid: 'gm-uid',
+        tableOwnerUid: 'gm-uid',
+        effectiveIsPlayer: false,
+      })).toBe(true);
+      expect(shouldPersistMapViewToTable({
+        userUid: 'player-uid',
+        tableOwnerUid: 'gm-uid',
+        effectiveIsPlayer: false,
+      })).toBe(false);
+    });
+    it('denies when previewing as player or owner uid unknown', () => {
+      expect(shouldPersistMapViewToTable({
+        userUid: 'gm-uid',
+        tableOwnerUid: 'gm-uid',
+        effectiveIsPlayer: true,
+      })).toBe(false);
+      expect(shouldPersistMapViewToTable({
+        userUid: 'gm-uid',
+        tableOwnerUid: undefined,
+        effectiveIsPlayer: false,
+      })).toBe(false);
+    });
   });
 });

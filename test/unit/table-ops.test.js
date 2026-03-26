@@ -255,6 +255,146 @@ describe('applyTableOp', () => {
     expect(result.activeElements[0]).toBe(state.activeElements[0]);
   });
 
+  it('set-map merges into existing mapConfig and preserves map view when op omits it', () => {
+    const state = {
+      mapConfig: {
+        mapImageUrl: 'https://x/map.png',
+        mapDimension: 'width',
+        mapSizeFt: 100,
+        mapImageNaturalWidth: 800,
+        mapImageNaturalHeight: 600,
+        mapViewZoomRatio: 0.75,
+        mapViewPanNorm: { x: 0.2, y: 0.3 },
+      },
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'set-map', mapSizeFt: 80 }, state);
+    expect(result.mapConfig.mapSizeFt).toBe(80);
+    expect(result.mapConfig.mapViewZoomRatio).toBe(0.75);
+    expect(result.mapConfig.mapViewPanNorm).toEqual({ x: 0.2, y: 0.3 });
+  });
+
+  it('set-map with resetTokenPositions clears map view and resets tokens', () => {
+    const state = {
+      mapConfig: {
+        mapImageUrl: 'u',
+        mapDimension: 'width',
+        mapSizeFt: 100,
+        mapImageNaturalWidth: null,
+        mapImageNaturalHeight: null,
+        mapViewZoomRatio: 0.5,
+        mapViewPanNorm: { x: 1, y: 0 },
+      },
+      activeElements: [mkElement({ tokenX: 10, tokenY: 20 })],
+    };
+    const result = applyTableOp(
+      { op: 'set-map', mapImageUrl: 'v', resetTokenPositions: true },
+      state
+    );
+    expect(result.mapConfig.mapViewZoomRatio).toBeNull();
+    expect(result.mapConfig.mapViewPanNorm).toBeNull();
+    expect(result.activeElements[0].tokenX).toBeNull();
+    expect(result.activeElements[0].tokenY).toBeNull();
+  });
+
+  it('set-map-view merges view fields into mapConfig', () => {
+    const state = {
+      mapConfig: {
+        mapImageUrl: 'u',
+        mapDimension: 'width',
+        mapSizeFt: 100,
+        mapImageNaturalWidth: null,
+        mapImageNaturalHeight: null,
+      },
+    };
+    const result = applyTableOp(
+      {
+        op: 'set-map-view',
+        mapViewZoomRatio: 0.4,
+        mapViewPanNorm: { x: 0.5, y: 0.6 },
+      },
+      state
+    );
+    expect(result.mapConfig.mapImageUrl).toBe('u');
+    expect(result.mapConfig.mapViewZoomRatio).toBe(0.4);
+    expect(result.mapConfig.mapViewPanNorm).toEqual({ x: 0.5, y: 0.6 });
+  });
+
+  it('add-map appends a parallel map and focuses it', () => {
+    const state = {
+      mapConfig: {
+        mapImageUrl: 'a',
+        mapDimension: 'width',
+        mapSizeFt: 100,
+        mapImageNaturalWidth: null,
+        mapImageNaturalHeight: null,
+      },
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'add-map', name: 'B' }, state);
+    expect(result.maps.length).toBe(2);
+    expect(result.maps[1].name).toBe('B');
+    expect(result.activeMapId).toBe(result.maps[1].id);
+    expect(result.gmMapView).toEqual({ mapId: result.activeMapId, mapViewZoomRatio: null, mapViewPanNorm: null });
+  });
+
+  it('set-active-map switches focus and clears broadcast framing', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+        {
+          id: 'b',
+          name: 'B',
+          mapImageUrl: 'y',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      activeMapId: 'a',
+      gmMapView: { mapId: 'a', mapViewZoomRatio: 0.5, mapViewPanNorm: { x: 0.1, y: 0.2 } },
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'set-active-map', activeMapId: 'b' }, state);
+    expect(result.activeMapId).toBe('b');
+    expect(result.gmMapView).toEqual({ mapId: 'b', mapViewZoomRatio: null, mapViewPanNorm: null });
+  });
+
+  it('remove-map clears tokens on that map and cannot remove last map', () => {
+    const mkMap = (id, url) => ({
+      id,
+      name: id,
+      mapImageUrl: url,
+      mapDimension: 'width',
+      mapSizeFt: 100,
+      mapImageNaturalWidth: null,
+      mapImageNaturalHeight: null,
+    });
+    const state = {
+      maps: [mkMap('a', 'x'), mkMap('b', 'y')],
+      activeMapId: 'b',
+      gmMapView: { mapId: 'b', mapViewZoomRatio: null, mapViewPanNorm: null },
+      activeElements: [mkElement({ instanceId: 't1', tokenX: 1, tokenY: 2, mapId: 'b' })],
+    };
+    const removed = applyTableOp({ op: 'remove-map', mapId: 'b' }, state);
+    expect(removed.maps.length).toBe(1);
+    expect(removed.activeMapId).toBe('a');
+    expect(removed.activeElements[0].tokenX).toBeNull();
+    expect(removed.activeElements[0].mapId).toBeNull();
+
+    const single = applyTableOp({ op: 'remove-map', mapId: 'a' }, { ...state, maps: [mkMap('a', 'x')], activeMapId: 'a', activeElements: [] });
+    expect(single).toEqual({});
+  });
+
   it('unknown op returns empty object', () => {
     const result = applyTableOp({ op: 'nonexistent' }, {});
     expect(result).toEqual({});
@@ -273,6 +413,7 @@ describe('RUNTIME_KEYS', () => {
     expect(RUNTIME_KEYS).toContain('currentHp');
     expect(RUNTIME_KEYS).toContain('name');
     expect(RUNTIME_KEYS).toContain('tier');
+    expect(RUNTIME_KEYS).toContain('mapId');
   });
 });
 
@@ -291,6 +432,7 @@ describe('CHARACTER_RUNTIME_KEYS', () => {
     expect(CHARACTER_RUNTIME_KEYS).toContain('conditions');
     expect(CHARACTER_RUNTIME_KEYS).toContain('tokenX');
     expect(CHARACTER_RUNTIME_KEYS).toContain('tokenY');
+    expect(CHARACTER_RUNTIME_KEYS).toContain('mapId');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerEmail');
     expect(CHARACTER_RUNTIME_KEYS).toContain('assignedPlayerUid');
     expect(CHARACTER_RUNTIME_KEYS).toContain('playerName');

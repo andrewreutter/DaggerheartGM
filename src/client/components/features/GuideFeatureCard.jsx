@@ -112,6 +112,7 @@ function getSelectOptions(chip, featRow, el, v2TableContext) {
 /** Segmented `selectTargets` row — portaled option tooltips (same as inline isSelect). */
 function GuideFeatureSegmentedSelectTargetsRow({
   actionsStripLayout,
+  titleTooltipPlacement = 'bottom',
   closedName,
   chipForEngine,
   chip,
@@ -150,7 +151,7 @@ function GuideFeatureSegmentedSelectTargetsRow({
       className={actionsStripLayout ? 'w-full min-w-0 basis-full' : 'w-full min-w-0'}
     >
       <div className={sourcePalette.groupOuter} role="group" aria-label={`${closedName} targets`}>
-        <Tooltip content={targetsChipTipContent} placement="bottom" className="relative block w-full min-w-0">
+        <Tooltip content={targetsChipTipContent} placement={titleTooltipPlacement} className="relative block w-full min-w-0">
           <div className={V2_INLINE_GROUP_TITLE_ROW}>
             <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{closedName}</span>
             <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
@@ -233,6 +234,7 @@ function GuideFeatureSegmentedSelectTargetsRow({
 /** Single-select isSelect: title + icons + wrapping option buttons inside the chip shell. */
 function GuideFeatureIsSelectInline({
   actionsStripLayout,
+  titleTooltipPlacement = 'bottom',
   closedName,
   chipForEngine,
   chip,
@@ -271,7 +273,7 @@ function GuideFeatureIsSelectInline({
   return (
     <div className={actionsStripLayout ? 'w-full min-w-0 basis-full' : 'w-full min-w-0'}>
       <div className={groupOuterClass} role="group" aria-label={String(closedName)}>
-        <Tooltip content={chipTipContent} placement="bottom" className="relative block w-full min-w-0">
+        <Tooltip content={chipTipContent} placement={titleTooltipPlacement} className="relative block w-full min-w-0">
           <div className={V2_INLINE_GROUP_TITLE_ROW}>
             <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{closedName}</span>
             <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
@@ -374,6 +376,8 @@ export function GuideFeatureCardChips({
   onlyIsToggle = false,
   /** Pending action banners — tentative on/off for deferred toggles (`gameTableDeferUntilBannerAck`) until GM ack. */
   pendingBanners,
+  /** When `'right'`, chip tooltips open to the right of the trigger (e.g. Game Table Characters panel). */
+  chipTooltipPlacement,
   /** When set (e.g. below a declarative template), passed through to `onV2CardChip` → `runV2OwnedCardChipTableAction` / `activateV2OwnedCardChip` (`placementShape` for `collectChipsForShapePlacement`). */
   placementShape,
   /** `full` — inline active + unusable (default). `activeOnly` / `unusableOnly` — sheet Actions splits globally (see `CharacterFeatureActionsBody`). */
@@ -387,6 +391,8 @@ export function GuideFeatureCardChips({
   };
 
   const chipPayloadExtras = placementShape != null ? { placementShape } : {};
+  const chipTipPlacement = chipTooltipPlacement;
+  const titleRowTipPlacement = chipTipPlacement ?? 'bottom';
 
   const preview = interactionMode === 'preview';
   const canInteract = !preview && typeof onV2CardChip === 'function';
@@ -495,7 +501,7 @@ export function GuideFeatureCardChips({
                         optMarkdown
                       ) : undefined
                     }
-                    placement="bottom"
+                    placement={chipTipPlacement ?? 'bottom'}
                   >
                     {chipBtn}
                   </Tooltip>
@@ -525,6 +531,7 @@ export function GuideFeatureCardChips({
               <GuideFeatureIsSelectInline
                 key={`${ci}-isseg-${n}`}
                 actionsStripLayout={actionsStripLayout}
+                titleTooltipPlacement={titleRowTipPlacement}
                 closedName={closedName}
                 chipForEngine={chipForEngine}
                 chip={chip}
@@ -627,6 +634,7 @@ export function GuideFeatureCardChips({
             <GuideFeatureSegmentedSelectTargetsRow
               key={`${ci}-stseg-${n}`}
               actionsStripLayout={actionsStripLayout}
+              titleTooltipPlacement={titleRowTipPlacement}
               closedName={closedName}
               chipForEngine={chipForEngine}
               chip={chip}
@@ -687,7 +695,7 @@ export function GuideFeatureCardChips({
                   )
                 ) : undefined
               }
-              placement="top"
+              placement={chipTipPlacement ?? 'top'}
             >
               <button
                 type="button"
@@ -749,7 +757,7 @@ export function GuideFeatureCardChips({
                 tipContent
               ) : undefined
             }
-            placement="top"
+            placement={chipTipPlacement ?? 'top'}
           >
             <button
               type="button"

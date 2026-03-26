@@ -3,14 +3,26 @@ import {
   clampMapZoom,
   clampPanScroll,
   computeMapZoomBounds,
+  computePanToCenterInnerPointPx,
+  computeZoomAndPanToFitInnerBounds,
+  normalizeWheelDeltaPixels,
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX } from 'lucide-react';
+import { decodeMapViewState, encodeMapViewState } from '../lib/map-view-sync.js';
+import { shouldApplyRemotePlayerMapView } from '../lib/map-view-player-sync.js';
+import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX, Focus, RefreshCw, Camera } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { HOPE_TRACK_FILL } from './CharacterStatBlockGraphic.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
-import { getAuthToken } from '../lib/api.js';
+import {
+  getAuthToken,
+  fetchPersonalCameras,
+  postPersonalCamera,
+  patchPersonalCameraName,
+  deletePersonalCamera,
+} from '../lib/api.js';
+import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import {
   findPendingManualTrackBanner,
@@ -653,6 +665,110 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
   );
 }
 
+// ─── MapViewControls (pan/zoom — no native map scrolling) ─────────────────────
+
+function MapViewControls({
+  minZoom,
+  maxZoom,
+  mapZoom,
+  onZoomChange,
+  panLeft,
+  panTop,
+  maxPanLeft,
+  maxPanTop,
+  onPanLeftChange,
+  onPanTopChange,
+  onZoomToActors,
+  zoomToActorsDisabled,
+  localViewOverride = false,
+  onClearLocalViewOverride,
+}) {
+  const xMax = Math.max(0, maxPanLeft);
+  const yMax = Math.max(0, maxPanTop);
+  const zRange = maxZoom > minZoom;
+  const xStep = xMax > 0 ? Math.min(0.25, Math.max(0.01, xMax / 200)) : 1;
+  const yStep = yMax > 0 ? Math.min(0.25, Math.max(0.01, yMax / 200)) : 1;
+  const xAccent = localViewOverride ? 'accent-red-500' : 'accent-sky-600';
+  const yAccent = localViewOverride ? 'accent-red-500' : 'accent-sky-600';
+  const zAccent = localViewOverride ? 'accent-red-500' : 'accent-amber-600/90';
+  const barClass = localViewOverride
+    ? 'border-b border-red-800/70 bg-red-950/25'
+    : 'border-b border-dh-border bg-dh-surface/80';
+  return (
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 py-1.5 shrink-0 text-[11px] ${barClass}`}>
+      <label className="flex items-center gap-1.5 min-w-0">
+        <span className={`font-medium w-4 shrink-0 ${localViewOverride ? 'text-red-300/90' : 'text-dh-muted'}`}>X</span>
+        <input
+          type="range"
+          aria-label="Pan horizontal"
+          min={0}
+          max={xMax > 0 ? xMax : 1}
+          step={xStep}
+          value={xMax > 0 ? Math.min(panLeft, xMax) : 0}
+          disabled={xMax <= 0}
+          onChange={(e) => onPanLeftChange(Number(e.target.value))}
+          className={`w-20 sm:w-28 disabled:opacity-40 ${xAccent}`}
+        />
+      </label>
+      <label className="flex items-center gap-1.5 min-w-0">
+        <span className={`font-medium w-4 shrink-0 ${localViewOverride ? 'text-red-300/90' : 'text-dh-muted'}`}>Y</span>
+        <input
+          type="range"
+          aria-label="Pan vertical"
+          min={0}
+          max={yMax > 0 ? yMax : 1}
+          step={yStep}
+          value={yMax > 0 ? Math.min(panTop, yMax) : 0}
+          disabled={yMax <= 0}
+          onChange={(e) => onPanTopChange(Number(e.target.value))}
+          className={`w-20 sm:w-28 disabled:opacity-40 ${yAccent}`}
+        />
+      </label>
+      <label className="flex items-center gap-1.5 min-w-0 flex-1 sm:flex-initial">
+        <span className={`font-medium shrink-0 ${localViewOverride ? 'text-red-300/90' : 'text-dh-muted'}`}>Zoom</span>
+        <input
+          type="range"
+          aria-label="Map zoom"
+          min={minZoom}
+          max={maxZoom}
+          step={zRange ? Math.max(0.0001, (maxZoom - minZoom) / 500) : minZoom}
+          value={mapZoom}
+          disabled={!zRange}
+          onChange={(e) => onZoomChange(Number(e.target.value))}
+          className={`min-w-[5rem] flex-1 sm:w-32 disabled:opacity-40 ${zAccent}`}
+        />
+        <span className={`tabular-nums w-12 shrink-0 text-right ${localViewOverride ? 'text-red-200/90' : 'text-dh-muted'}`}>{mapZoom.toFixed(2)}×</span>
+      </label>
+      {localViewOverride && onClearLocalViewOverride && (
+        <Tooltip label="Discard local pan/zoom and follow the GM view">
+          <button
+            type="button"
+            aria-label="Follow GM map view"
+            onClick={onClearLocalViewOverride}
+            className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded border border-red-700/80 bg-red-950/40 hover:bg-red-900/50 text-red-200 text-[10px] font-medium"
+          >
+            <RefreshCw size={12} className="shrink-0" />
+            Follow GM
+          </button>
+        </Tooltip>
+      )}
+      {onZoomToActors && (
+        <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">
+          <button
+            type="button"
+            aria-label="Zoom to actors"
+            onClick={onZoomToActors}
+            disabled={zoomToActorsDisabled}
+            className="shrink-0 p-1 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh-muted hover:text-dh disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <Focus size={14} />
+          </button>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
 export function BattleMap({
@@ -663,6 +779,8 @@ export function BattleMap({
   updateActiveElement,
   mapConfig,
   onMapConfigChange,
+  /** GM only: debounced persist of normalized zoom/pan (`set-map-view`) */
+  onMapViewSync,
   tableName = '',
   tableStateReady = false,
   onTableNameChange,
@@ -681,9 +799,18 @@ export function BattleMap({
   pendingBanners,
   pendingResourceCosts = {},
   lifeSupportSelections = {},
+  maps = [],
+  activeMapId = null,
+  onSetActiveMap,
+  onAddMap,
+  onRemoveMap,
+  onRenameMap,
+  tableId,
 }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
+  /** GM right-drag map pan: { pointerId, startX, startY, startPanLeft, startPanTop } */
+  const panRightDragRef = useRef(null);
   const leftTrayRef = useRef(null);
   const rightTrayRef = useRef(null);
   const dragRef = useRef(null);
@@ -695,6 +822,7 @@ export function BattleMap({
   const [dragGhost, setDragGhost] = useState(null); // { element, clientX, clientY, instanceNum, isMyCharacter }
   const [highlightLeftTray, setHighlightLeftTray] = useState(false);
   const [highlightRightTray, setHighlightRightTray] = useState(false);
+  const [rightPanDragging, setRightPanDragging] = useState(false);
   const [pinnedToken, setPinnedToken] = useState(null); // { element, anchorX, anchorY }
   const [isUploading, setIsUploading] = useState(false);
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y } in feet, null when off-map
@@ -762,6 +890,11 @@ export function BattleMap({
   const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
   const trayTokenSizePx = CHARACTER_TRAY_WIDTH_PX - 16; // 36; fixed size for tray tokens
 
+  const activeMapIdResolved = useMemo(
+    () => activeMapId ?? maps[0]?.id ?? DEFAULT_LEGACY_MAP_ID,
+    [activeMapId, maps],
+  );
+
   const { minZoom, maxZoom } = useMemo(
     () =>
       computeMapZoomBounds({
@@ -774,77 +907,585 @@ export function BattleMap({
     [containerWidth, containerHeight, renderedWidthPx, renderedHeightPx, tokenSizePx],
   );
 
+  const minZoomRef = useRef(minZoom);
+  const maxZoomRef = useRef(maxZoom);
+  const renderedWRef = useRef(renderedWidthPx);
+  const renderedHRef = useRef(renderedHeightPx);
+  minZoomRef.current = minZoom;
+  maxZoomRef.current = maxZoom;
+  renderedWRef.current = renderedWidthPx;
+  renderedHRef.current = renderedHeightPx;
+
   const [mapZoom, setMapZoom] = useState(1);
   const mapZoomRef = useRef(1);
   mapZoomRef.current = mapZoom;
-  const wheelZoomScrollRef = useRef(null);
+  const [mapPanLeft, setMapPanLeft] = useState(0);
+  const [mapPanTop, setMapPanTop] = useState(0);
+  const mapPanLeftRef = useRef(0);
+  const mapPanTopRef = useRef(0);
+  mapPanLeftRef.current = mapPanLeft;
+  mapPanTopRef.current = mapPanTop;
+  const gmViewHydratedRef = useRef(false);
+  const mapViewPersistTimerRef = useRef(null);
+  /** Player-only: manual pan/zoom blocks remote GM view until cleared */
+  const [playerLocalOverride, setPlayerLocalOverride] = useState(false);
+  /** Per-user saved cameras (private API; not in SSE). */
+  const [personalCameras, setPersonalCameras] = useState([]);
+  /** Remount camera `<select>` after pick so it returns to "My cameras…". */
+  const [cameraSelectKey, setCameraSelectKey] = useState(0);
+  /** Camera id for Rename / Delete actions (separate from one-shot load dropdown). */
+  const [manageCameraId, setManageCameraId] = useState('');
+  const [cameraHint, setCameraHint] = useState('');
+  const cameraHintTimerRef = useRef(null);
+  const canControlMapView = isPlayer || !!onMapViewSync;
+
+  const mapViewSig = useMemo(
+    () => `${mapConfig?.mapViewZoomRatio ?? ''}|${JSON.stringify(mapConfig?.mapViewPanNorm ?? null)}`,
+    [mapConfig?.mapViewZoomRatio, mapConfig?.mapViewPanNorm],
+  );
+
+  const schedulePersistView = useCallback(() => {
+    if (!onMapViewSync) return;
+    if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
+    mapViewPersistTimerRef.current = setTimeout(() => {
+      mapViewPersistTimerRef.current = null;
+      const wrap = scrollWrapperRef.current;
+      const vw = wrap?.clientWidth ?? 0;
+      const vh = wrap?.clientHeight ?? 0;
+      if (vw <= 0 || vh <= 0) return;
+      const encoded = encodeMapViewState({
+        mapZoom: mapZoomRef.current,
+        scrollLeft: mapPanLeftRef.current,
+        scrollTop: mapPanTopRef.current,
+        minZoom: minZoomRef.current,
+        maxZoom: maxZoomRef.current,
+        renderedWidthPx: renderedWRef.current,
+        renderedHeightPx: renderedHRef.current,
+        viewportW: vw,
+        viewportH: vh,
+      });
+      onMapViewSync(encoded.mapViewZoomRatio, encoded.mapViewPanNorm);
+    }, 120);
+  }, [onMapViewSync]);
+
+  useEffect(() => {
+    gmViewHydratedRef.current = false;
+  }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved]);
+
+  useEffect(() => {
+    if (!isPlayer) return;
+    setPlayerLocalOverride(false);
+  }, [isPlayer, mapConfig?.mapImageUrl]);
+
+  const clearPlayerLocalViewOverride = useCallback(() => {
+    if (!isPlayer) return;
+    setPlayerLocalOverride(false);
+  }, [isPlayer]);
+
+  useEffect(() => {
+    if (!tableId) {
+      setPersonalCameras([]);
+      return;
+    }
+    let cancelled = false;
+    fetchPersonalCameras(tableId)
+      .then((r) => {
+        if (!cancelled) setPersonalCameras(r.cameras || []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tableId]);
+
+  useEffect(() => () => {
+    if (cameraHintTimerRef.current != null) window.clearTimeout(cameraHintTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!manageCameraId) return;
+    if (!personalCameras.some(c => c.id === manageCameraId)) setManageCameraId('');
+  }, [manageCameraId, personalCameras]);
+
+  const applyPersonalCamera = useCallback(
+    (camera) => {
+      if (!camera) return;
+      if (camera.mapId !== activeMapIdResolved) {
+        if (onSetActiveMap) onSetActiveMap(camera.mapId);
+        else {
+          const msg =
+            maps.length > 1
+              ? 'This camera is for another map. Follow the GM until that map is shown, then load it again.'
+              : 'This camera does not match the current map.';
+          setCameraHint(msg);
+          if (cameraHintTimerRef.current != null) window.clearTimeout(cameraHintTimerRef.current);
+          cameraHintTimerRef.current = window.setTimeout(() => setCameraHint(''), 7000);
+        }
+        return;
+      }
+      const stored = { mapViewZoomRatio: camera.mapViewZoomRatio, mapViewPanNorm: camera.mapViewPanNorm };
+      const d = decodeMapViewState(stored, {
+        minZoom,
+        maxZoom,
+        renderedWidthPx,
+        renderedHeightPx,
+        viewportW: containerWidth,
+        viewportH: containerHeight,
+      });
+      if (!d) return;
+      mapZoomRef.current = d.mapZoom;
+      setMapZoom(d.mapZoom);
+      mapPanLeftRef.current = d.scrollLeft;
+      mapPanTopRef.current = d.scrollTop;
+      setMapPanLeft(d.scrollLeft);
+      setMapPanTop(d.scrollTop);
+      if (isPlayer) setPlayerLocalOverride(true);
+    },
+    [
+      activeMapIdResolved,
+      minZoom,
+      maxZoom,
+      renderedWidthPx,
+      renderedHeightPx,
+      containerWidth,
+      containerHeight,
+      onSetActiveMap,
+      isPlayer,
+      maps,
+    ],
+  );
+
+  const handleSplitCamera = useCallback(async () => {
+    if (!tableId) return;
+    const wrap = scrollWrapperRef.current;
+    const vw = wrap?.clientWidth ?? 0;
+    const vh = wrap?.clientHeight ?? 0;
+    if (vw <= 0 || vh <= 0) return;
+    const encoded = encodeMapViewState({
+      mapZoom: mapZoomRef.current,
+      scrollLeft: mapPanLeftRef.current,
+      scrollTop: mapPanTopRef.current,
+      minZoom: minZoomRef.current,
+      maxZoom: maxZoomRef.current,
+      renderedWidthPx: renderedWRef.current,
+      renderedHeightPx: renderedHRef.current,
+      viewportW: vw,
+      viewportH: vh,
+    });
+    const name = window.prompt('Name this camera', 'Split camera');
+    if (name === null) return;
+    try {
+      const { camera } = await postPersonalCamera(tableId, {
+        name: (name || 'Camera').trim() || 'Camera',
+        mapId: activeMapIdResolved,
+        mapViewZoomRatio: encoded.mapViewZoomRatio,
+        mapViewPanNorm: encoded.mapViewPanNorm,
+      });
+      setPersonalCameras((prev) => [...prev, camera]);
+    } catch (err) {
+      console.error('[BattleMap] split camera failed:', err);
+    }
+  }, [tableId, activeMapIdResolved]);
+
+  const handleRenameManagedCamera = useCallback(async () => {
+    if (!tableId || !manageCameraId) return;
+    const cam = personalCameras.find(c => c.id === manageCameraId);
+    if (!cam) return;
+    const name = window.prompt('Camera name', cam.name || 'Camera');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      await patchPersonalCameraName(tableId, manageCameraId, trimmed);
+      setPersonalCameras((prev) =>
+        prev.map((c) => (c.id === manageCameraId ? { ...c, name: trimmed } : c)),
+      );
+    } catch (err) {
+      console.error('[BattleMap] rename camera failed:', err);
+    }
+  }, [tableId, manageCameraId, personalCameras]);
+
+  const handleDeleteManagedCamera = useCallback(async () => {
+    if (!tableId || !manageCameraId) return;
+    const cam = personalCameras.find(c => c.id === manageCameraId);
+    if (!cam) return;
+    if (!window.confirm(`Delete saved camera “${cam.name || 'Camera'}”?`)) return;
+    try {
+      await deletePersonalCamera(tableId, manageCameraId);
+      setPersonalCameras((prev) => prev.filter((c) => c.id !== manageCameraId));
+      setManageCameraId('');
+    } catch (err) {
+      console.error('[BattleMap] delete camera failed:', err);
+    }
+  }, [tableId, manageCameraId, personalCameras]);
+
+  // GM: broadcast portable mapViewZoomRatio/mapViewPanNorm (same encoding as the X/Y/Zoom sliders) whenever the
+  // map viewport or zoom bounds change, so players receive updates after layout and when the GM resizes or edits map size.
+  useEffect(() => {
+    if (!onMapViewSync) return;
+    if (containerWidth <= 0 || containerHeight <= 0) return;
+    schedulePersistView();
+  }, [
+    onMapViewSync,
+    containerWidth,
+    containerHeight,
+    renderedWidthPx,
+    renderedHeightPx,
+    minZoom,
+    maxZoom,
+    schedulePersistView,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!onMapViewSync) return;
+    if (!tableStateReady) return;
+    if (containerWidth <= 0 || containerHeight <= 0) return;
+    if (gmViewHydratedRef.current) return;
+    if (mapConfig?.mapViewZoomRatio == null && mapConfig?.mapViewPanNorm == null) {
+      gmViewHydratedRef.current = true;
+      return;
+    }
+    const d = decodeMapViewState(mapConfig, {
+      minZoom,
+      maxZoom,
+      renderedWidthPx,
+      renderedHeightPx,
+      viewportW: containerWidth,
+      viewportH: containerHeight,
+    });
+    if (!d) {
+      gmViewHydratedRef.current = true;
+      return;
+    }
+    gmViewHydratedRef.current = true;
+    mapZoomRef.current = d.mapZoom;
+    setMapZoom(d.mapZoom);
+    mapPanLeftRef.current = d.scrollLeft;
+    mapPanTopRef.current = d.scrollTop;
+    setMapPanLeft(d.scrollLeft);
+    setMapPanTop(d.scrollTop);
+  }, [
+    onMapViewSync,
+    tableStateReady,
+    mapConfig?.mapImageUrl,
+    mapConfig?.mapViewZoomRatio,
+    mapConfig?.mapViewPanNorm,
+    minZoom,
+    maxZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+    containerWidth,
+    containerHeight,
+  ]);
+
+  useLayoutEffect(() => {
+    if (onMapViewSync || !tableStateReady) return;
+    if (!shouldApplyRemotePlayerMapView(isPlayer, playerLocalOverride)) return;
+    if (containerWidth <= 0 || containerHeight <= 0) return;
+    const d = decodeMapViewState(mapConfig, {
+      minZoom,
+      maxZoom,
+      renderedWidthPx,
+      renderedHeightPx,
+      viewportW: containerWidth,
+      viewportH: containerHeight,
+    });
+    if (!d) return;
+    mapZoomRef.current = d.mapZoom;
+    setMapZoom(d.mapZoom);
+    mapPanLeftRef.current = d.scrollLeft;
+    mapPanTopRef.current = d.scrollTop;
+    setMapPanLeft(d.scrollLeft);
+    setMapPanTop(d.scrollTop);
+  }, [
+    onMapViewSync,
+    tableStateReady,
+    isPlayer,
+    playerLocalOverride,
+    mapViewSig,
+    minZoom,
+    maxZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+    containerWidth,
+    containerHeight,
+  ]);
+
+  useEffect(() => () => {
+    if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
+  }, []);
 
   useLayoutEffect(() => {
     setMapZoom((z) => clampMapZoom(z, minZoom, maxZoom));
   }, [minZoom, maxZoom]);
 
   useLayoutEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const vw = el.clientWidth;
-    const vh = el.clientHeight;
+    if (containerWidth <= 0 || containerHeight <= 0) return;
     const panParams = {
       mapZoom,
       renderedWidthPx,
       renderedHeightPx,
-      viewportW: vw,
-      viewportH: vh,
+      viewportW: containerWidth,
+      viewportH: containerHeight,
     };
-
-    const wheel = wheelZoomScrollRef.current;
-    if (wheel) {
-      wheelZoomScrollRef.current = null;
-      const c = clampPanScroll(wheel.scrollLeft, wheel.scrollTop, panParams);
-      el.scrollLeft = c.scrollLeft;
-      el.scrollTop = c.scrollTop;
-      return;
-    }
-
-    const clamped = clampPanScroll(el.scrollLeft, el.scrollTop, panParams);
-    if (clamped.scrollLeft !== el.scrollLeft || clamped.scrollTop !== el.scrollTop) {
-      el.scrollLeft = clamped.scrollLeft;
-      el.scrollTop = clamped.scrollTop;
+    const c = clampPanScroll(mapPanLeftRef.current, mapPanTopRef.current, panParams);
+    if (c.scrollLeft !== mapPanLeftRef.current || c.scrollTop !== mapPanTopRef.current) {
+      mapPanLeftRef.current = c.scrollLeft;
+      mapPanTopRef.current = c.scrollTop;
+      setMapPanLeft(c.scrollLeft);
+      setMapPanTop(c.scrollTop);
     }
   }, [mapZoom, containerWidth, containerHeight, renderedWidthPx, renderedHeightPx]);
 
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const wheel = (e) => {
-      if (!e.metaKey && !e.ctrlKey) return;
-      e.preventDefault();
-      e.stopPropagation();
+  const maxPanLeft = Math.max(0, renderedWidthPx * mapZoom - containerWidth);
+  const maxPanTop = Math.max(0, renderedHeightPx * mapZoom - containerHeight);
+  const canPanMap = maxPanLeft > 0 || maxPanTop > 0;
+
+  const applyZoomFromControl = useCallback(
+    (newZ) => {
+      if (!canControlMapView) return;
+      const z = clampMapZoom(newZ, minZoom, maxZoom);
       const oldZ = mapZoomRef.current;
-      const factor = Math.exp(-e.deltaY * 0.002);
-      const newZ = clampMapZoom(oldZ * factor, minZoom, maxZoom);
-      if (newZ === oldZ) return;
-      const rect = el.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const { scrollLeft, scrollTop } = scrollAfterZoomTowardPoint({
-        scrollLeft: el.scrollLeft,
-        scrollTop: el.scrollTop,
-        viewportX,
-        viewportY,
+      if (z === oldZ) return;
+      const pan = scrollAfterZoomTowardPoint({
+        scrollLeft: mapPanLeftRef.current,
+        scrollTop: mapPanTopRef.current,
+        viewportX: containerWidth / 2,
+        viewportY: containerHeight / 2,
         oldZoom: oldZ,
-        newZoom: newZ,
+        newZoom: z,
         innerWidthPx: renderedWidthPx,
         innerHeightPx: renderedHeightPx,
-        viewportW: rect.width,
-        viewportH: rect.height,
+        viewportW: containerWidth,
+        viewportH: containerHeight,
       });
-      wheelZoomScrollRef.current = { scrollLeft, scrollTop };
-      mapZoomRef.current = newZ;
-      setMapZoom(newZ);
+      mapZoomRef.current = z;
+      mapPanLeftRef.current = pan.scrollLeft;
+      mapPanTopRef.current = pan.scrollTop;
+      setMapZoom(z);
+      setMapPanLeft(pan.scrollLeft);
+      setMapPanTop(pan.scrollTop);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) setPlayerLocalOverride(true);
+    },
+    [
+      canControlMapView,
+      minZoom,
+      maxZoom,
+      containerWidth,
+      containerHeight,
+      renderedWidthPx,
+      renderedHeightPx,
+      onMapViewSync,
+      schedulePersistView,
+      isPlayer,
+    ],
+  );
+
+  const centerMapOnPlacedActor = useCallback(
+    (element) => {
+      if (!canControlMapView) return;
+      const wrap = scrollContainerRef.current;
+      if (!wrap) return;
+      const vw = wrap.clientWidth;
+      const vh = wrap.clientHeight;
+      if (vw <= 0 || vh <= 0) return;
+      if (element.tokenX == null || element.tokenY == null) return;
+      if (effectiveTokenMapId(element.mapId) !== activeMapIdResolved) return;
+      const z = mapZoomRef.current;
+      const rw = renderedWRef.current;
+      const rh = renderedHRef.current;
+      const innerCx = (element.tokenX + 2.5) * pxPerFt;
+      const innerCy = (element.tokenY + 2.5) * pxPerFt;
+      const next = computePanToCenterInnerPointPx({
+        innerCenterXPx: innerCx,
+        innerCenterYPx: innerCy,
+        mapZoom: z,
+        renderedWidthPx: rw,
+        renderedHeightPx: rh,
+        viewportW: vw,
+        viewportH: vh,
+      });
+      mapPanLeftRef.current = next.scrollLeft;
+      mapPanTopRef.current = next.scrollTop;
+      setMapPanLeft(next.scrollLeft);
+      setMapPanTop(next.scrollTop);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) setPlayerLocalOverride(true);
+    },
+    [canControlMapView, onMapViewSync, pxPerFt, schedulePersistView, isPlayer, activeMapIdResolved],
+  );
+
+  const applyZoomToFitActors = useCallback(() => {
+    if (!canControlMapView) return;
+    const wrap = scrollContainerRef.current;
+    if (!wrap) return;
+    const vw = wrap.clientWidth;
+    const vh = wrap.clientHeight;
+    if (vw <= 0 || vh <= 0) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const el of activeElements) {
+      if (el.elementType !== 'character' && el.elementType !== 'adversary') continue;
+      if (el.tokenX == null || el.tokenY == null) continue;
+      if (effectiveTokenMapId(el.mapId) !== activeMapIdResolved) continue;
+      const left = el.tokenX * pxPerFt;
+      const top = el.tokenY * pxPerFt;
+      const right = left + tokenSizePx;
+      const bottom = top + tokenSizePx;
+      minX = Math.min(minX, left);
+      minY = Math.min(minY, top);
+      maxX = Math.max(maxX, right);
+      maxY = Math.max(maxY, bottom);
+    }
+    if (!Number.isFinite(minX)) return;
+    const result = computeZoomAndPanToFitInnerBounds({
+      minInnerX: minX,
+      minInnerY: minY,
+      maxInnerX: maxX,
+      maxInnerY: maxY,
+      paddingPx: 12,
+      minZoom: minZoomRef.current,
+      maxZoom: maxZoomRef.current,
+      renderedWidthPx: renderedWRef.current,
+      renderedHeightPx: renderedHRef.current,
+      viewportW: vw,
+      viewportH: vh,
+    });
+    mapZoomRef.current = result.mapZoom;
+    mapPanLeftRef.current = result.scrollLeft;
+    mapPanTopRef.current = result.scrollTop;
+    setMapZoom(result.mapZoom);
+    setMapPanLeft(result.scrollLeft);
+    setMapPanTop(result.scrollTop);
+    if (onMapViewSync) schedulePersistView();
+    if (isPlayer) setPlayerLocalOverride(true);
+  }, [canControlMapView, onMapViewSync, activeElements, pxPerFt, tokenSizePx, schedulePersistView, isPlayer, activeMapIdResolved]);
+
+  // Map viewport: wheel = pan Y, Shift+wheel = pan X, ⌘/Ctrl+wheel = zoom toward cursor (GM persists; player local only)
+  useEffect(() => {
+    if (!canControlMapView) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const onWheel = (e) => {
+      const vw = el.clientWidth;
+      const vh = el.clientHeight;
+      if (vw <= 0 || vh <= 0) return;
+
+      const { dx, dy } = normalizeWheelDeltaPixels(e, vw, vh);
+      const z = mapZoomRef.current;
+      const rw = renderedWRef.current;
+      const rh = renderedHRef.current;
+      const minZ = minZoomRef.current;
+      const maxZ = maxZoomRef.current;
+
+      const maxL = Math.max(0, rw * z - vw);
+      const maxT = Math.max(0, rh * z - vh);
+
+      const zoomChord = e.metaKey || e.ctrlKey;
+
+      if (zoomChord) {
+        if (maxZ <= minZ) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (dy === 0 || !Number.isFinite(dy)) return;
+        const factor = Math.exp(-dy * 0.0015);
+        const oldZ = mapZoomRef.current;
+        const newZ = clampMapZoom(oldZ * factor, minZ, maxZ);
+        if (newZ === oldZ) return;
+        const rect = el.getBoundingClientRect();
+        const viewportX = e.clientX - rect.left;
+        const viewportY = e.clientY - rect.top;
+        const pan = scrollAfterZoomTowardPoint({
+          scrollLeft: mapPanLeftRef.current,
+          scrollTop: mapPanTopRef.current,
+          viewportX,
+          viewportY,
+          oldZoom: oldZ,
+          newZoom: newZ,
+          innerWidthPx: rw,
+          innerHeightPx: rh,
+          viewportW: vw,
+          viewportH: vh,
+        });
+        mapZoomRef.current = newZ;
+        mapPanLeftRef.current = pan.scrollLeft;
+        mapPanTopRef.current = pan.scrollTop;
+        setMapZoom(newZ);
+        setMapPanLeft(pan.scrollLeft);
+        setMapPanTop(pan.scrollTop);
+        if (onMapViewSync) schedulePersistView();
+        if (isPlayer) setPlayerLocalOverride(true);
+        return;
+      }
+
+      if (e.shiftKey) {
+        if (maxL <= 0) return;
+        const horizDelta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+        if (horizDelta === 0 || !Number.isFinite(horizDelta)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const next = clampPanScroll(
+          mapPanLeftRef.current + horizDelta,
+          mapPanTopRef.current,
+          { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW: vw, viewportH: vh },
+        );
+        if (next.scrollLeft === mapPanLeftRef.current && next.scrollTop === mapPanTopRef.current) return;
+        mapPanLeftRef.current = next.scrollLeft;
+        mapPanTopRef.current = next.scrollTop;
+        setMapPanLeft(next.scrollLeft);
+        setMapPanTop(next.scrollTop);
+        if (onMapViewSync) schedulePersistView();
+        if (isPlayer) setPlayerLocalOverride(true);
+        return;
+      }
+
+      if (maxT <= 0) return;
+      if (dy === 0 || !Number.isFinite(dy)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const next = clampPanScroll(
+        mapPanLeftRef.current,
+        mapPanTopRef.current + dy,
+        { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW: vw, viewportH: vh },
+      );
+      if (next.scrollLeft === mapPanLeftRef.current && next.scrollTop === mapPanTopRef.current) return;
+      mapPanLeftRef.current = next.scrollLeft;
+      mapPanTopRef.current = next.scrollTop;
+      setMapPanLeft(next.scrollLeft);
+      setMapPanTop(next.scrollTop);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) setPlayerLocalOverride(true);
     };
-    el.addEventListener('wheel', wheel, { passive: false });
-    return () => el.removeEventListener('wheel', wheel);
-  }, [minZoom, maxZoom, renderedWidthPx, renderedHeightPx]);
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [canControlMapView, onMapViewSync, schedulePersistView, containerWidth, containerHeight, isPlayer]);
+
+  const onPanLeftChange = useCallback(
+    (v) => {
+      if (!canControlMapView) return;
+      mapPanLeftRef.current = v;
+      setMapPanLeft(v);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) setPlayerLocalOverride(true);
+    },
+    [canControlMapView, onMapViewSync, schedulePersistView, isPlayer],
+  );
+
+  const onPanTopChange = useCallback(
+    (v) => {
+      if (!canControlMapView) return;
+      mapPanTopRef.current = v;
+      setMapPanTop(v);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) setPlayerLocalOverride(true);
+    },
+    [canControlMapView, onMapViewSync, schedulePersistView, isPlayer],
+  );
 
   // Categorize elements
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
@@ -881,33 +1522,35 @@ export function BattleMap({
     return isMyCharacter(el);
   }, [isPlayer, isMyCharacter]);
 
-  // Tray: all characters — in-tray first, then dim proxies for those on map
+  // Tray: all characters — in-tray first, then dim proxies for those on the active map
   const charTrayTokens = useMemo(() => {
+    const onActive = (el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved;
     const inTray = characters.filter(el => el.tokenX == null).map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el), isProxy: false }));
-    const onMap = characters.filter(el => el.tokenX != null).map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el), isProxy: true }));
+    const onMap = characters.filter(onActive).map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el), isProxy: true }));
     return [...inTray, ...onMap];
-  }, [characters, isMyCharacter]);
+  }, [characters, isMyCharacter, activeMapIdResolved]);
 
-  // Players don't see adversary tray. All adversaries — in-tray first, then dim proxies for those on map.
+  // Players don't see adversary tray. All adversaries — in-tray first, then dim proxies for those on the active map.
   const advTrayTokens = useMemo(() => {
     if (isPlayer) return [];
+    const onActive = (el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved;
     const inTray = adversaries.filter(el => el.tokenX == null).map(el => ({ element: el, instanceNum: instanceNumbers[el.instanceId], isMyCharacter: false, isProxy: false }));
-    const onMap = adversaries.filter(el => el.tokenX != null).map(el => ({ element: el, instanceNum: instanceNumbers[el.instanceId], isMyCharacter: false, isProxy: true }));
+    const onMap = adversaries.filter(onActive).map(el => ({ element: el, instanceNum: instanceNumbers[el.instanceId], isMyCharacter: false, isProxy: true }));
     return [...inTray, ...onMap];
-  }, [isPlayer, adversaries, instanceNumbers]);
+  }, [isPlayer, adversaries, instanceNumbers, activeMapIdResolved]);
 
-  // Map tokens (placed)
+  // Map tokens (placed on active map)
   const charMapTokens = useMemo(() =>
     characters
-      .filter(el => el.tokenX != null)
+      .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
       .map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el) })),
-    [characters, isMyCharacter]);
+    [characters, isMyCharacter, activeMapIdResolved]);
 
   const advMapTokens = useMemo(() =>
     adversaries
-      .filter(el => el.tokenX != null)
+      .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
       .map(el => ({ element: el, instanceNum: instanceNumbers[el.instanceId], isMyCharacter: false })),
-    [adversaries, instanceNumbers]);
+    [adversaries, instanceNumbers, activeMapIdResolved]);
 
   // All placed tokens for snap detection and range band computation
   const allMapTokens = useMemo(() => [
@@ -915,23 +1558,35 @@ export function BattleMap({
     ...advMapTokens,
   ], [charMapTokens, advMapTokens]);
 
-  // Convert client coordinates to map feet, accounting for scroll and display zoom
+  const hasPlacedActorsOnMap = useMemo(
+    () =>
+      activeElements.some(
+        el =>
+          (el.elementType === 'character' || el.elementType === 'adversary') &&
+          el.tokenX != null &&
+          el.tokenY != null &&
+          effectiveTokenMapId(el.mapId) === activeMapIdResolved,
+      ),
+    [activeElements, activeMapIdResolved],
+  );
+
+  // Convert client coordinates to map feet, accounting for pan offset and display zoom
   const clientToFt = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
     const rect = container.getBoundingClientRect();
-    const mapX = (clientX - rect.left + container.scrollLeft) / mapZoom;
-    const mapY = (clientY - rect.top + container.scrollTop) / mapZoom;
+    const mapX = (clientX - rect.left + mapPanLeft) / mapZoom;
+    const mapY = (clientY - rect.top + mapPanTop) / mapZoom;
     return { x: mapX / pxPerFt, y: mapY / pxPerFt };
-  }, [pxPerFt, mapZoom]);
+  }, [pxPerFt, mapZoom, mapPanLeft, mapPanTop]);
 
   // Find a placed token whose bounding box contains the given client point
   const findTokenAtClient = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
     const rect = container.getBoundingClientRect();
-    const mapX = (clientX - rect.left + container.scrollLeft) / mapZoom;
-    const mapY = (clientY - rect.top + container.scrollTop) / mapZoom;
+    const mapX = (clientX - rect.left + mapPanLeft) / mapZoom;
+    const mapY = (clientY - rect.top + mapPanTop) / mapZoom;
     const halfToken = tokenSizePx / 2;
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
@@ -942,10 +1597,11 @@ export function BattleMap({
       }
     }
     return null;
-  }, [allMapTokens, pxPerFt, tokenSizePx, mapZoom]);
+  }, [allMapTokens, pxPerFt, tokenSizePx, mapZoom, mapPanLeft, mapPanTop]);
 
   // Handle pointer move over the map canvas area (not trays)
   const handleMapPointerMove = useCallback((e) => {
+    if (panRightDragRef.current) return;
     // During an active drag, the bullseye is frozen at the drag origin — don't update
     if (frozenBullseyeRef.current) {
       setBullseyeFt(frozenBullseyeRef.current);
@@ -997,6 +1653,7 @@ export function BattleMap({
   // ─── Drag handlers ──────────────────────────────────────────────────────
 
   const handlePointerDown = useCallback((e, element, fromTray) => {
+    if (e.button !== 0) return;
     if (!canDrag(element)) {
       e.preventDefault();
       e.stopPropagation();
@@ -1016,8 +1673,8 @@ export function BattleMap({
       const container = scrollContainerRef.current;
       if (container) {
         const rect = container.getBoundingClientRect();
-        const tokenClientX = element.tokenX * pxPerFt * mapZoom - container.scrollLeft + rect.left;
-        const tokenClientY = element.tokenY * pxPerFt * mapZoom - container.scrollTop + rect.top;
+        const tokenClientX = element.tokenX * pxPerFt * mapZoom - mapPanLeft + rect.left;
+        const tokenClientY = element.tokenY * pxPerFt * mapZoom - mapPanTop + rect.top;
         grabOffsetX = Math.max(0, Math.min(tokenSize, e.clientX - tokenClientX));
         grabOffsetY = Math.max(0, Math.min(tokenSize, e.clientY - tokenClientY));
       }
@@ -1041,7 +1698,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, mapZoom]);
+  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, mapZoom, mapPanLeft, mapPanTop]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -1101,6 +1758,9 @@ export function BattleMap({
     if (!ds) return;
 
     if (!ds.isDragging) {
+      if (canControlMapView && ds.fromTray && ds.element.tokenX != null && ds.element.tokenY != null) {
+        centerMapOnPlacedActor(ds.element);
+      }
       // Click: toggle pin
       setPinnedToken(prev => {
         if (prev?.element.instanceId === ds.element.instanceId) return null;
@@ -1115,10 +1775,10 @@ export function BattleMap({
 
     if (inLeftTray || inRightTray) {
       if (!ds.fromTray) {
-        updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null });
+        updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null, mapId: null });
         if (pinnedToken?.element.instanceId === ds.instanceId) setPinnedToken(null);
         const postMove = activeElements.map((el) =>
-          el.instanceId === ds.instanceId ? { ...el, tokenX: null, tokenY: null } : el
+          el.instanceId === ds.instanceId ? { ...el, tokenX: null, tokenY: null, mapId: null } : el
         );
         onTokenDragEnd?.({
           instanceId: ds.instanceId,
@@ -1138,18 +1798,18 @@ export function BattleMap({
       // Subtract grab offset so the token's top-left lands where the ghost was,
       // not where the raw cursor was.
       const mapX =
-        (e.clientX - rect.left + container.scrollLeft) / mapZoom - (ds.grabOffsetX ?? ds.tokenSize / 2);
+        (e.clientX - rect.left + mapPanLeft) / mapZoom - (ds.grabOffsetX ?? ds.tokenSize / 2);
       const mapY =
-        (e.clientY - rect.top + container.scrollTop) / mapZoom - (ds.grabOffsetY ?? ds.tokenSize / 2);
+        (e.clientY - rect.top + mapPanTop) / mapZoom - (ds.grabOffsetY ?? ds.tokenSize / 2);
       const ftX = mapX / pxPerFt;
       const ftY = mapY / pxPerFt;
 
       if (ftX >= 0 && ftX <= mapWidthFt && ftY >= 0 && ftY <= mapHeightFt) {
         const clampedX = Math.max(0, Math.min(mapWidthFt - 5, ftX));
         const clampedY = Math.max(0, Math.min(mapHeightFt - 5, ftY));
-        updateActiveElement(ds.instanceId, { tokenX: clampedX, tokenY: clampedY });
+        updateActiveElement(ds.instanceId, { tokenX: clampedX, tokenY: clampedY, mapId: activeMapIdResolved });
         const postMove = activeElements.map((el) =>
-          el.instanceId === ds.instanceId ? { ...el, tokenX: clampedX, tokenY: clampedY } : el
+          el.instanceId === ds.instanceId ? { ...el, tokenX: clampedX, tokenY: clampedY, mapId: activeMapIdResolved } : el
         );
         onTokenDragEnd?.({
           instanceId: ds.instanceId,
@@ -1160,7 +1820,7 @@ export function BattleMap({
         });
       } else if (!ds.fromTray) {
         // Dropped outside map and trays while dragging from map: return to tray
-        updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null });
+        updateActiveElement(ds.instanceId, { tokenX: null, tokenY: null, mapId: null });
         if (pinnedToken?.element.instanceId === ds.instanceId) setPinnedToken(null);
         onTokenDragEnd?.({
           instanceId: ds.instanceId,
@@ -1170,15 +1830,92 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, mapZoom, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, mapZoom, mapPanLeft, mapPanTop, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved]);
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {
+    if (e.button !== 0) return;
     // Only dismiss if clicking directly on the map/scroll container (not a token)
     if (e.target === scrollContainerRef.current || e.target === e.currentTarget) {
       setPinnedToken(null);
     }
   }, []);
+
+  const handleRightPanPointerDown = useCallback(
+    (e) => {
+      if (!canControlMapView) return;
+      if (!canPanMap) return;
+      if (e.button !== 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+      panRightDragRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        startPanLeft: mapPanLeftRef.current,
+        startPanTop: mapPanTopRef.current,
+      };
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      setRightPanDragging(true);
+    },
+    [canControlMapView, canPanMap],
+  );
+
+  const handleRightPanPointerMove = useCallback(
+    (e) => {
+      const d = panRightDragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      e.preventDefault();
+      const el = scrollContainerRef.current;
+      const vw = el?.clientWidth ?? 0;
+      const vh = el?.clientHeight ?? 0;
+      if (vw <= 0 || vh <= 0) return;
+      const z = mapZoomRef.current;
+      const rw = renderedWRef.current;
+      const rh = renderedHRef.current;
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      // Grab semantics: drag right → map moves right with the pointer (invert scroll delta)
+      const next = clampPanScroll(
+        d.startPanLeft - dx,
+        d.startPanTop - dy,
+        { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW: vw, viewportH: vh },
+      );
+      mapPanLeftRef.current = next.scrollLeft;
+      mapPanTopRef.current = next.scrollTop;
+      setMapPanLeft(next.scrollLeft);
+      setMapPanTop(next.scrollTop);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) setPlayerLocalOverride(true);
+    },
+    [schedulePersistView, onMapViewSync, isPlayer],
+  );
+
+  const handleRightPanPointerUp = useCallback(
+    (e) => {
+      const d = panRightDragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      panRightDragRef.current = null;
+      setRightPanDragging(false);
+      if (onMapViewSync) schedulePersistView();
+    },
+    [schedulePersistView, onMapViewSync],
+  );
+
+  const handleRightPanLostCapture = useCallback(
+    (e) => {
+      const d = panRightDragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      panRightDragRef.current = null;
+      setRightPanDragging(false);
+      if (onMapViewSync) schedulePersistView();
+    },
+    [schedulePersistView, onMapViewSync],
+  );
 
   // Keep pinned token data fresh
   useEffect(() => {
@@ -1192,14 +1929,14 @@ export function BattleMap({
 
   const handleMapConfigChange = useCallback((patch, resetTokenPositions = false, scale = null) => {
     if (scale != null && scale !== 1) {
-      // Rescale all placed tokens proportionally
+      // Rescale placed tokens on the active map proportionally
       const scaledElements = activeElements
-        .filter(el => el.tokenX != null)
+        .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
         .map(el => ({ instanceId: el.instanceId, tokenX: el.tokenX * scale, tokenY: el.tokenY * scale }));
       scaledElements.forEach(({ instanceId, tokenX, tokenY }) => updateActiveElement(instanceId, { tokenX, tokenY }));
     }
     onMapConfigChange(patch, resetTokenPositions);
-  }, [activeElements, updateActiveElement, onMapConfigChange]);
+  }, [activeElements, updateActiveElement, onMapConfigChange, activeMapIdResolved]);
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
@@ -1225,6 +1962,125 @@ export function BattleMap({
           onTableNameChange={onTableNameChange}
           onDeleteTable={onDeleteTable}
         />
+      )}
+      {!isPlayer && maps.length > 0 && onSetActiveMap && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
+          <span className="text-dh-muted shrink-0">Maps</span>
+          <select
+            className="max-w-[min(200px,40vw)] px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh text-xs"
+            value={activeMapIdResolved}
+            onChange={(e) => onSetActiveMap(e.target.value)}
+            aria-label="Active map"
+          >
+            {maps.map(m => (
+              <option key={m.id} value={m.id}>{m.name || m.id}</option>
+            ))}
+          </select>
+          {onAddMap && (
+            <button type="button" onClick={onAddMap} className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px]">
+              + Map
+            </button>
+          )}
+          {onRemoveMap && maps.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm('Remove this map? Tokens on it return to the tray.')) return;
+                onRemoveMap(activeMapIdResolved);
+              }}
+              className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-red-900/40 text-dh text-[11px]"
+            >
+              Remove
+            </button>
+          )}
+          {onRenameMap && (
+            <button
+              type="button"
+              onClick={() => {
+                const cur = maps.find(m => m.id === activeMapIdResolved)?.name ?? '';
+                const name = window.prompt('Map name', cur);
+                if (name != null && name.trim()) onRenameMap(activeMapIdResolved, name.trim());
+              }}
+              className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px]"
+            >
+              Rename
+            </button>
+          )}
+        </div>
+      )}
+      {isPlayer && maps.length > 1 && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0">
+          <span className="text-dh-muted">Map</span>
+          <span className="text-dh font-medium truncate">{maps.find(m => m.id === activeMapIdResolved)?.name ?? 'Map'}</span>
+        </div>
+      )}
+      {tableId && (
+        <div className="bg-dh-surface/90 border-b border-dh-border text-[11px] shrink-0">
+          <div className="flex items-center gap-2 px-3 py-1 flex-wrap">
+            <Camera size={14} className="text-dh-muted shrink-0" aria-hidden />
+            <span className="text-dh-muted shrink-0">Cameras</span>
+            <select
+              key={cameraSelectKey}
+              className="max-w-[min(180px,36vw)] px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh text-[11px]"
+              defaultValue=""
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) return;
+                const cam = personalCameras.find(c => c.id === id);
+                if (cam) applyPersonalCamera(cam);
+                setCameraSelectKey(k => k + 1);
+              }}
+              aria-label="Load saved camera"
+            >
+              <option value="">My cameras…</option>
+              {personalCameras.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button type="button" onClick={handleSplitCamera} className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px]">
+              Split camera…
+            </button>
+          </div>
+          {personalCameras.length > 0 && (
+            <div className="flex items-center gap-2 px-3 pb-1.5 pt-0 flex-wrap">
+              <span className="text-dh-muted shrink-0">Manage</span>
+              <select
+                className="max-w-[min(180px,36vw)] px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh text-[11px]"
+                value={manageCameraId}
+                onChange={(e) => setManageCameraId(e.target.value)}
+                aria-label="Select camera to rename or delete"
+              >
+                <option value="">(select camera)</option>
+                {personalCameras.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!manageCameraId}
+                onClick={handleRenameManagedCamera}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Pencil size={12} className="shrink-0" aria-hidden />
+                Rename
+              </button>
+              <button
+                type="button"
+                disabled={!manageCameraId}
+                onClick={handleDeleteManagedCamera}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-red-900/35 text-dh text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Trash2 size={12} className="shrink-0" aria-hidden />
+                Delete
+              </button>
+            </div>
+          )}
+          {cameraHint ? (
+            <div className="px-3 pb-1.5 text-[11px] text-amber-200/90 leading-snug" role="status">
+              {cameraHint}
+            </div>
+          ) : null}
+        </div>
       )}
 
       {/* Map area */}
@@ -1300,18 +2156,47 @@ export function BattleMap({
           <div ref={leftTrayRef} className="hidden" />
         )}
 
-        {/* Scroll container wrapper (we measure its width) */}
-        <div ref={scrollWrapperRef} className="flex-1 min-w-0 min-h-0 overflow-hidden">
-          {/* Scrollable map container */}
+        {/* Map column: view controls + viewport (we measure viewport via scrollWrapperRef) */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative">
+          {canControlMapView && (
+            <MapViewControls
+              minZoom={minZoom}
+              maxZoom={maxZoom}
+              mapZoom={mapZoom}
+              onZoomChange={applyZoomFromControl}
+              panLeft={mapPanLeft}
+              panTop={mapPanTop}
+              maxPanLeft={maxPanLeft}
+              maxPanTop={maxPanTop}
+              onPanLeftChange={onPanLeftChange}
+              onPanTopChange={onPanTopChange}
+              onZoomToActors={applyZoomToFitActors}
+              zoomToActorsDisabled={!hasPlacedActorsOnMap}
+              localViewOverride={isPlayer && playerLocalOverride}
+              onClearLocalViewOverride={isPlayer ? clearPlayerLocalViewOverride : undefined}
+            />
+          )}
+          <div ref={scrollWrapperRef} className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
+          {/* Viewport: pan via translate (no native scrolling) */}
           <div
             ref={scrollContainerRef}
-            className="w-full h-full overflow-auto"
+            className={`w-full h-full overflow-hidden relative touch-none ${
+              canControlMapView && (canPanMap || rightPanDragging)
+                ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
+                : ''
+            }`}
             onClick={handleMapClick}
+            onPointerDown={handleRightPanPointerDown}
+            onPointerMove={handleRightPanPointerMove}
+            onPointerUp={handleRightPanPointerUp}
+            onPointerCancel={handleRightPanPointerUp}
+            onLostPointerCapture={handleRightPanLostCapture}
+            onContextMenu={canControlMapView && canPanMap ? (ev) => { ev.preventDefault(); } : undefined}
           >
-            {/* Outer establishes scroll size; inner is game px with CSS scale (display-only zoom). */}
             <div
-              className="relative shrink-0"
+              className="relative shrink-0 will-change-transform"
               style={{
+                transform: `translate(${-mapPanLeft}px, ${-mapPanTop}px)`,
                 width: renderedWidthPx * mapZoom,
                 height: renderedHeightPx * mapZoom,
               }}
@@ -1538,6 +2423,7 @@ export function BattleMap({
               })}
               </div>
             </div>
+          </div>
           </div>
         </div>
 

@@ -86,6 +86,11 @@ export function gateTableOpForPrepMode(state, op) {
     case 'add-elements':
     case 'remove-element':
     case 'set-map':
+    case 'set-map-view':
+    case 'set-active-map':
+    case 'add-map':
+    case 'remove-map':
+    case 'rename-map':
     case 'clear-table':
     case 'set-player-emails':
     case 'set-gm-display-name':

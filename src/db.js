@@ -9,6 +9,7 @@ import {
 import { countFeatureCatalog, filterFeatureCatalog } from './v2-feature-catalog.js';
 import { FCG_PUBLIC_USER_ID } from './game-constants.js';
 import { normalizePersistedCharacterElement } from './client/lib/normalize-persisted-character-element.js';
+import { attachDerivedMapConfig } from './client/lib/map-table-state.js';
 import { readdir, readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -1017,6 +1018,7 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'instanceId', 'elementType',
   'currentHp', 'currentStress', 'hope', 'currentArmor', 'conditions',
   'tokenX', 'tokenY',
+  'mapId',
   'assignedPlayerEmail', 'assignedPlayerUid', 'playerName',
   'reinforcedActive', 'selectedExperienceIndex',
   'featureUsage', 'activeModifiers', 'focusTargetId', 'focusTargetInstanceId', 'rangerFocusOnNextAttack', 'companion',
@@ -1134,7 +1136,7 @@ export async function getResolvedTableState(appId, tableId) {
 
   const elements = stateData.elements || [];
   const resolved = await resolveCharacterElements(appId, elements);
-  return { ...stateData, elements: resolved };
+  return attachDerivedMapConfig({ ...stateData, elements: resolved });
 }
 
 export async function appendDiceRoll(appId, gmUid, rollData) {
@@ -1209,4 +1211,55 @@ export async function updateDiceRollData(appId, gmUid, id, dataPatch) {
     [JSON.stringify(merged), id, appId, gmUid]
   );
   return true;
+}
+
+/** Private saved map cameras for one user at one table (not in table_state). */
+export async function listPersonalMapCameras(appId, tableId, userId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
+            map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"
+     FROM personal_map_cameras
+     WHERE app_id = $1 AND table_id = $2 AND user_id = $3
+     ORDER BY created_at ASC`,
+    [appId, tableId, userId]
+  );
+  return rows;
+}
+
+export async function insertPersonalMapCamera(appId, tableId, userId, row) {
+  const db = getPool();
+  const name = row.name && String(row.name).trim() ? String(row.name).trim() : 'Camera';
+  const { rows } = await db.query(
+    `INSERT INTO personal_map_cameras (app_id, table_id, user_id, name, map_id, map_view_zoom_ratio, map_view_pan_norm)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
+               map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"`,
+    [appId, tableId, userId, name, row.mapId, row.mapViewZoomRatio ?? null, row.mapViewPanNorm ?? null]
+  );
+  return rows[0];
+}
+
+export async function updatePersonalMapCameraName(appId, tableId, userId, cameraId, name) {
+  const db = getPool();
+  const n = name != null ? String(name).trim() : '';
+  if (!n) return null;
+  const { rows } = await db.query(
+    `UPDATE personal_map_cameras SET name = $5
+     WHERE app_id = $1 AND table_id = $2 AND user_id = $3 AND id = $4
+     RETURNING id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
+               map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"`,
+    [appId, tableId, userId, cameraId, n]
+  );
+  return rows[0] ?? null;
+}
+
+export async function deletePersonalMapCamera(appId, tableId, userId, cameraId) {
+  const db = getPool();
+  const { rowCount } = await db.query(
+    `DELETE FROM personal_map_cameras
+     WHERE app_id = $1 AND table_id = $2 AND user_id = $3 AND id = $4`,
+    [appId, tableId, userId, cameraId]
+  );
+  return rowCount > 0;
 }

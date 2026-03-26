@@ -11,6 +11,8 @@ import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-st
 import { isOwnItem } from './lib/constants.js';
 import { RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
+import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
+import { DEFAULT_LEGACY_MAP_ID } from './lib/map-table-state.js';
 import { postDebugLog } from './lib/debug-log.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
@@ -60,6 +62,9 @@ function App() {
   const [tableName, setTableName] = useState('');
   const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
+  /** Parallel battle maps + shared active map id (from `table_state`; derived `mapConfig` matches active map). */
+  const [maps, setMaps] = useState([]);
+  const [activeMapId, setActiveMapId] = useState(null);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
   const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
   /** V2 shared table bags (e.g. Bard Rally) — persisted in `table_state.featureState` */
@@ -399,7 +404,7 @@ function App() {
   // Player mode: invited guest on another GM's table (derived from ownerUid and myRooms while loading).
   const isPlayer = route.view === 'table' && !!user && !!route.tableId && (
     (tableOwnerUid != null && tableOwnerUid !== user.uid) ||
-    (tableOwnerUid === undefined && isInvitedPlayerHeuristic)
+    (tableOwnerUid == null && isInvitedPlayerHeuristic)
   );
 
   // Redirect to library when user has no tables and is on game-table view (e.g. after deleting last table)
@@ -446,6 +451,8 @@ function App() {
       setTableBattleMods({});
       setPlayerEmails([]);
       setTableName('');
+      setMaps([]);
+      setActiveMapId(null);
       setLifeSupportSelections({});
       setRestMovesSelections({});
       setTableFeatureState({});
@@ -470,6 +477,8 @@ function App() {
         setPlayerEmails([]);
         setTableName('');
         setMapConfig(DEFAULT_MAP_CONFIG);
+        setMaps([]);
+        setActiveMapId(null);
         setLifeSupportSelections({});
         setRestMovesSelections({});
         setTableFeatureState({});
@@ -486,6 +495,10 @@ function App() {
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
       if (tableState.tableName != null) setTableName(tableState.tableName);
       if (tableState.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
+      if (Array.isArray(tableState.maps)) setMaps(tableState.maps);
+      else setMaps([]);
+      if (tableState.activeMapId != null) setActiveMapId(tableState.activeMapId);
+      else setActiveMapId(null);
       if (tableState.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
       if (tableState.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
       if (tableState.featureState != null && typeof tableState.featureState === 'object') {
@@ -530,6 +543,10 @@ function App() {
           setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
         }
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
+        if (Array.isArray(state.maps)) setMaps(state.maps);
+        else setMaps([]);
+        if (state.activeMapId != null) setActiveMapId(state.activeMapId);
+        else setActiveMapId(null);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         if (state.featureState != null && typeof state.featureState === 'object') {
@@ -587,6 +604,10 @@ function App() {
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.tableName != null) setTableName(state.tableName);
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
+        if (Array.isArray(state.maps)) setMaps(state.maps);
+        else setMaps([]);
+        if (state.activeMapId != null) setActiveMapId(state.activeMapId);
+        else setActiveMapId(null);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         if (state.featureState != null && typeof state.featureState === 'object') {
@@ -1029,8 +1050,30 @@ function App() {
 
   const sendSetMapConfig = (newConfig, resetTokenPositions = false) => {
     const merged = { ...mapConfig, ...newConfig };
-    postTableOp({ op: 'set-map', ...merged, resetTokenPositions }, tableId);
+    const mid = activeMapId || maps[0]?.id || DEFAULT_LEGACY_MAP_ID;
+    postTableOp({ op: 'set-map', ...merged, resetTokenPositions, mapId: mid }, tableId);
   };
+
+  const sendMapViewSync = useCallback((mapViewZoomRatio, mapViewPanNorm) => {
+    const mid = activeMapId || maps[0]?.id;
+    postTableOp({ op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, ...(mid ? { mapId: mid } : {}) }, tableId);
+  }, [tableId, activeMapId, maps]);
+
+  const sendSetActiveMap = useCallback((id) => {
+    postTableOp({ op: 'set-active-map', activeMapId: id }, tableId);
+  }, [tableId]);
+
+  const sendAddMap = useCallback(() => {
+    postTableOp({ op: 'add-map' }, tableId);
+  }, [tableId]);
+
+  const sendRemoveMap = useCallback((mapId) => {
+    postTableOp({ op: 'remove-map', mapId }, tableId);
+  }, [tableId]);
+
+  const sendRenameMap = useCallback((mapId, name) => {
+    postTableOp({ op: 'rename-map', mapId, name }, tableId);
+  }, [tableId]);
 
   const sendLifeSupportSelect = (rollDbId, instanceId) => {
     const key = String(rollDbId);
@@ -1395,7 +1438,18 @@ function App() {
                 actionLog={actionLog}
                 setActionLog={setActionLog}
                 mapConfig={mapConfig}
+                maps={maps}
+                activeMapId={activeMapId ?? maps[0]?.id ?? null}
+                onSetActiveMap={effectiveIsPlayer ? undefined : sendSetActiveMap}
+                onAddMap={effectiveIsPlayer ? undefined : sendAddMap}
+                onRemoveMap={effectiveIsPlayer ? undefined : sendRemoveMap}
+                onRenameMap={effectiveIsPlayer ? undefined : sendRenameMap}
                 onMapConfigChange={effectiveIsPlayer ? () => {} : sendSetMapConfig}
+                onMapViewSync={
+                  shouldPersistMapViewToTable({ userUid: user?.uid, tableOwnerUid, effectiveIsPlayer })
+                    ? sendMapViewSync
+                    : undefined
+                }
                 lifeSupportSelections={lifeSupportSelections}
                 onLifeSupportSelect={sendLifeSupportSelect}
                 onLifeSupportClear={effectiveIsPlayer ? () => {} : sendLifeSupportClear}

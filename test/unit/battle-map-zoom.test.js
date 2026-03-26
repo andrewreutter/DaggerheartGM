@@ -3,6 +3,9 @@ import {
   computeMapZoomBounds,
   clampMapZoom,
   clampPanScroll,
+  normalizeWheelDeltaPixels,
+  computePanToCenterInnerPointPx,
+  computeZoomAndPanToFitInnerBounds,
   scrollAfterZoomTowardPoint,
 } from '../../src/client/lib/battle-map-zoom.js';
 
@@ -57,6 +60,51 @@ describe('battle-map-zoom', () => {
       viewportH: 600,
     };
     expect(clampPanScroll(5000, 5000, p)).toEqual({ scrollLeft: 200, scrollTop: 200 });
+  });
+
+  it('normalizeWheelDeltaPixels scales LINE and PAGE modes', () => {
+    expect(
+      normalizeWheelDeltaPixels({ deltaX: 0, deltaY: 3, deltaMode: 1 }, 800, 600),
+    ).toEqual({ dx: 0, dy: 48 });
+    expect(
+      normalizeWheelDeltaPixels({ deltaX: 0, deltaY: 1, deltaMode: 2 }, 800, 600),
+    ).toEqual({ dx: 0, dy: 600 });
+  });
+
+  it('computePanToCenterInnerPointPx centers a point and clamps', () => {
+    const p = {
+      mapZoom: 1,
+      renderedWidthPx: 1000,
+      renderedHeightPx: 800,
+      viewportW: 400,
+      viewportH: 300,
+    };
+    const c = computePanToCenterInnerPointPx({
+      innerCenterXPx: 500,
+      innerCenterYPx: 400,
+      ...p,
+    });
+    expect(c.scrollLeft).toBe(300);
+    expect(c.scrollTop).toBe(250);
+  });
+
+  it('computeZoomAndPanToFitInnerBounds picks max zoom that fits bbox', () => {
+    const r = computeZoomAndPanToFitInnerBounds({
+      minInnerX: 0,
+      minInnerY: 0,
+      maxInnerX: 100,
+      maxInnerY: 100,
+      paddingPx: 0,
+      minZoom: 0.5,
+      maxZoom: 4,
+      renderedWidthPx: 1000,
+      renderedHeightPx: 800,
+      viewportW: 400,
+      viewportH: 300,
+    });
+    expect(r.mapZoom).toBe(3);
+    expect(r.scrollLeft).toBeGreaterThanOrEqual(0);
+    expect(r.scrollTop).toBeGreaterThanOrEqual(0);
   });
 
   it('scrollAfterZoomTowardPoint keeps point under cursor', () => {

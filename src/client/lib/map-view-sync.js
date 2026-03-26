@@ -110,3 +110,13 @@ export function decodeMapViewState(stored, ctx) {
   });
   return { mapZoom, scrollLeft: c.scrollLeft, scrollTop: c.scrollTop };
 }
+
+/**
+ * Only the table owner (GM) may persist normalized map view (`set-map-view`).
+ * Players receive updates via `table_state` and may pan/zoom locally without persisting (see `BattleMap.jsx`).
+ */
+export function shouldPersistMapViewToTable({ userUid, tableOwnerUid, effectiveIsPlayer }) {
+  if (effectiveIsPlayer) return false;
+  if (userUid == null || tableOwnerUid == null) return false;
+  return userUid === tableOwnerUid;
+}

@@ -20,3 +20,17 @@ describe('GET /api/data/table_state single-table', () => {
     expect(block).not.toMatch(/const state = row\.data \|\| \{\};\s*\n\s*const elements = await resolveCharacterElementsDb/);
   });
 });
+
+describe('GET /api/data/table_state list (no tableId)', () => {
+  it('applies attachDerivedMapConfig after character resolution for each owned table', () => {
+    const serverPath = join(dirname(fileURLToPath(import.meta.url)), '../../server.js');
+    const src = readFileSync(serverPath, 'utf8');
+    const start = src.indexOf("if (collection === 'table_state')");
+    expect(start).toBeGreaterThan(-1);
+    const listBlockStart = src.indexOf('const rows = await listTableStates', start);
+    expect(listBlockStart).toBeGreaterThan(-1);
+    const block = src.slice(listBlockStart, listBlockStart + 1200);
+    expect(block).toMatch(/attachDerivedMapConfig\s*\(/);
+    expect(block).toMatch(/resolveCharacterElementsDb/);
+  });
+});

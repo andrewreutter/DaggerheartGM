@@ -637,6 +637,68 @@ export const postCharacterUpdate = async (tableId, instanceId, updates) => {
   return res.json();
 };
 
+/** Per-user saved map cameras for this table (private; not in SSE). */
+export const fetchPersonalCameras = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/personal-cameras`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Body: { name?, mapId, mapViewZoomRatio, mapViewPanNorm } */
+export const postPersonalCamera = async (tableId, body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/personal-cameras`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+export const patchPersonalCameraName = async (tableId, cameraId, name) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(
+    `/api/room/${encodeURIComponent(tableId)}/personal-cameras/${encodeURIComponent(cameraId)}`,
+    {
+      method: 'PATCH',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify({ name }),
+    }
+  );
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+export const deletePersonalCamera = async (tableId, cameraId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(
+    `/api/room/${encodeURIComponent(tableId)}/personal-cameras/${encodeURIComponent(cameraId)}`,
+    {
+      method: 'DELETE',
+      headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    }
+  );
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /**
  * Player: activate a V2 cross-sheet card chip (e.g. Bard Rally clear stress on this character’s sheet).
  * Server recomputes mutations from chipKey — same effect as GM `postTableOp` + action banners.

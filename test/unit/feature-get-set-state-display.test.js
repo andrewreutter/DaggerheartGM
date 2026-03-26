@@ -1,0 +1,55 @@
+import { describe, it, expect } from 'vitest';
+import { getFeatureGetSetStateLines } from '../../src/client/lib/feature-get-set-state-display.js';
+
+describe('getFeatureGetSetStateLines', () => {
+  it('returns empty for missing element', () => {
+    expect(getFeatureGetSetStateLines(undefined)).toEqual([]);
+    expect(getFeatureGetSetStateLines({})).toEqual([]);
+  });
+
+  it('flattens V2 featureState (table.source) and legacy _originFeatureState', () => {
+    const el = {
+      featureState: {
+        WardenOfTheElements: { channeledElement: 'srd-bf-wolf', auraActive: true },
+        Rally: { partyDice: [1, 2] },
+      },
+      _originFeatureState: {
+        Seaborne: { tideTokens: 2 },
+      },
+    };
+    const lines = getFeatureGetSetStateLines(el);
+    expect(lines.find((l) => l.lineKey === 'WardenOfTheElements.channeledElement')).toEqual({
+      lineKey: 'WardenOfTheElements.channeledElement',
+      value: 'srd-bf-wolf',
+    });
+    expect(lines.find((l) => l.lineKey === 'WardenOfTheElements.auraActive')).toEqual({
+      lineKey: 'WardenOfTheElements.auraActive',
+      value: 'true',
+    });
+    expect(lines.find((l) => l.lineKey === 'Rally.partyDice')).toEqual({
+      lineKey: 'Rally.partyDice',
+      value: '[1,2]',
+    });
+    expect(lines.find((l) => l.lineKey === 'Seaborne.tideTokens')).toEqual({
+      lineKey: 'Seaborne.tideTokens',
+      value: '2',
+    });
+  });
+
+  it('prefers V2 featureState when the same scope.key exists in both', () => {
+    const el = {
+      featureState: { Foo: { x: 1 } },
+      _originFeatureState: { Foo: { x: 99 } },
+    };
+    const lines = getFeatureGetSetStateLines(el);
+    expect(lines.filter((l) => l.lineKey === 'Foo.x')).toEqual([{ lineKey: 'Foo.x', value: '1' }]);
+  });
+
+  it('merges distinct keys from both bags', () => {
+    const el = {
+      featureState: { A: { a: 1 } },
+      _originFeatureState: { B: { b: 2 } },
+    };
+    expect(getFeatureGetSetStateLines(el).map((l) => l.lineKey).sort()).toEqual(['A.a', 'B.b']);
+  });
+});
