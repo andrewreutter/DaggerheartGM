@@ -21,6 +21,10 @@ import {
   countPlayerMapStripTiles,
 } from '../lib/map-view-player-sync.js';
 import {
+  gmMapStripFullMapTileActive,
+  playerMapStripFullMapTileActive,
+} from '../lib/map-view-strip-active.js';
+import {
   Upload,
   X,
   Map as MapIcon,
@@ -38,6 +42,7 @@ import {
   PencilLine,
   Square,
   Circle,
+  Pipette,
   Plus,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
@@ -106,6 +111,12 @@ const MAP_SIZE_FT_MAX = 3000;
 function mapConfigHasImage(mc) {
   const u = mc?.mapImageUrl;
   return typeof u === 'string' && u.trim().length > 0;
+}
+
+function rgbBytesToHex(r, g, b) {
+  return `#${[r, g, b]
+    .map((x) => Math.max(0, Math.min(255, x | 0)).toString(16).padStart(2, '0'))
+    .join('')}`;
 }
 
 /** PNG overlay on the map (legacy persisted key `fogPng`). */
@@ -1575,6 +1586,11 @@ export function BattleMap({
   const [mapDrawCaptureActive, setMapDrawCaptureActive] = useState(false);
   /** True while interacting with brush radius or opacity — shows live viewport preview dot (not color). */
   const [brushPreviewControlsActive, setBrushPreviewControlsActive] = useState(false);
+  /** When true, next click on the map samples a color into the brush color + opacity. */
+  const [drawEyedropperActive, setDrawEyedropperActive] = useState(false);
+  const mapImageRef = useRef(null);
+  const mapOverlayImgRef = useRef(null);
+  const cameraOverlayImgRef = useRef(null);
   const drawPaintRef = useRef(null);
   const drawSizeRef = useRef({ w: 0, h: 0 });
   const drawBrushActiveRef = useRef(false);
@@ -1600,6 +1616,19 @@ export function BattleMap({
   useEffect(() => {
     if (isPlayer) setDrawTool('scribble');
   }, [isPlayer]);
+
+  useEffect(() => {
+    setDrawEyedropperActive(false);
+  }, [drawTool]);
+
+  useEffect(() => {
+    if (!drawEyedropperActive) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setDrawEyedropperActive(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawEyedropperActive]);
   const [cameraHint, setCameraHint] = useState('');
   const cameraHintTimerRef = useRef(null);
   const mapAllowsPlayerCameras = maps.find(m => m.id === activeMapIdResolved)?.shareWithPlayers !== false;
@@ -2707,6 +2736,55 @@ export function BattleMap({
     };
   }, []);
 
+  const applyEyedropperAtClient = useCallback(
+    (clientX, clientY) => {
+      const p = clientToDrawPx(clientX, clientY);
+      if (!p) return false;
+      const size =
+        drawSizeRef.current.w > 0 ? drawSizeRef.current : computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+      const { w, h } = size;
+      const px = Math.floor(p.x);
+      const py = Math.floor(p.y);
+      if (px < 0 || py < 0 || px >= w || py >= h) return false;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return false;
+
+      const fillBlank = () => {
+        const v = getComputedStyle(document.documentElement).getPropertyValue('--color-dh-map-blank').trim();
+        ctx.fillStyle = v || 'rgb(15, 23, 42)';
+        ctx.fillRect(0, 0, w, h);
+      };
+
+      /** Map image only — no fog overlay, draw layer, or scribbles. */
+      try {
+        const mapImg = mapImageRef.current;
+        if (mapImg?.complete && mapImg.naturalWidth > 0) {
+          ctx.drawImage(mapImg, 0, 0, w, h);
+        } else {
+          fillBlank();
+        }
+      } catch {
+        fillBlank();
+      }
+
+      let data;
+      try {
+        data = ctx.getImageData(px, py, 1, 1).data;
+      } catch {
+        return false;
+      }
+      const a = data[3] / 255;
+      setDrawColorHex(rgbBytesToHex(data[0], data[1], data[2]));
+      setDrawOpacity(Math.min(1, Math.max(0.05, a)));
+      return true;
+    },
+    [clientToDrawPx, mapWidthFt, mapHeightFt],
+  );
+
   const commitOverlayPng = useCallback(
     async (png) => {
       if (!drawEditContext || isPlayer) return;
@@ -2775,6 +2853,14 @@ export function BattleMap({
   const handleDrawPointerDown = useCallback(
     (e) => {
       if (e.button !== 0) return;
+      if (drawEyedropperActive) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (applyEyedropperAtClient(e.clientX, e.clientY)) {
+          setDrawEyedropperActive(false);
+        }
+        return;
+      }
       if (drawTool === 'scribble' || isPlayer) {
         e.preventDefault();
         e.stopPropagation();
@@ -2906,6 +2992,8 @@ export function BattleMap({
       scheduleScribblePaint,
       tableId,
       activeMapIdResolved,
+      drawEyedropperActive,
+      applyEyedropperAtClient,
     ],
   );
 
@@ -3320,6 +3408,14 @@ export function BattleMap({
 
   const handleMapPingPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
+    if (drawEyedropperActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (applyEyedropperAtClient(e.clientX, e.clientY)) {
+        setDrawEyedropperActive(false);
+      }
+      return;
+    }
     if (!tableId) return;
     if (panRightDragRef.current) return;
     if (
@@ -3350,7 +3446,18 @@ export function BattleMap({
     };
     mapPingPointerUpRef.current = onUp;
     window.addEventListener('pointerup', onUp);
-  }, [tableId, clientToFt, mapWidthFt, mapHeightFt, activeMapIdResolved, isPlayer, appendMapPing, drawTool]);
+  }, [
+    tableId,
+    clientToFt,
+    mapWidthFt,
+    mapHeightFt,
+    activeMapIdResolved,
+    isPlayer,
+    appendMapPing,
+    drawTool,
+    drawEyedropperActive,
+    applyEyedropperAtClient,
+  ]);
 
   useEffect(() => () => {
     if (mapPingPointerUpRef.current) {
@@ -3803,10 +3910,11 @@ export function BattleMap({
                   activeElements={activeElements}
                   stripMapId={map.id}
                   label={map.name || 'Map'}
-                  isActive={
-                    (gmActiveViewId === null && map.id === activeMapIdResolved) ||
-                    views.some((v) => v.id === gmActiveViewId)
-                  }
+                  isActive={gmMapStripFullMapTileActive({
+                    gmActiveViewId,
+                    mapId: map.id,
+                    activeMapIdResolved,
+                  })}
                   onClick={() => {
                     if (handleGmMapFreeExplore) handleGmMapFreeExplore(map.id);
                   }}
@@ -4375,6 +4483,23 @@ export function BattleMap({
                       className="h-6 w-8 cursor-pointer rounded border border-dh-strong bg-dh-raised p-0"
                     />
                   </label>
+                  {!isPlayer && (
+                    <Tooltip label="Sample color from the map image only (not drawings or fog). Click, then click the map. Esc cancels.">
+                      <button
+                        type="button"
+                        onClick={() => setDrawEyedropperActive((v) => !v)}
+                        className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                          drawEyedropperActive
+                            ? 'border-cyan-500/60 bg-cyan-950/35 text-cyan-100'
+                            : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                        }`}
+                        aria-label="Eyedropper: sample color from map image"
+                        aria-pressed={drawEyedropperActive}
+                      >
+                        <Pipette size={15} aria-hidden />
+                      </button>
+                    </Tooltip>
+                  )}
                   <label
                     className={`inline-flex items-center gap-1.5 ${drawTool === 'eraser' && !isPlayer ? 'text-dh-muted/50' : 'text-dh-muted'}`}
                     title={
@@ -4449,11 +4574,13 @@ export function BattleMap({
           <div
             ref={scrollContainerRef}
             className={`w-full h-full overflow-hidden relative touch-none bg-dh-canvas ${
-              !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
+              drawEyedropperActive
                 ? 'cursor-crosshair'
-                : canControlMapView && (canPanMap || rightPanDragging)
-                  ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
-                  : ''
+                : !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
+                  ? 'cursor-crosshair'
+                  : canControlMapView && (canPanMap || rightPanDragging)
+                    ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
+                    : ''
             }`}
             style={
               mapLetterboxClipPx &&
@@ -4498,6 +4625,8 @@ export function BattleMap({
               {/* Map image or blank white canvas (tokens and drag/drop work either way) */}
               {mapConfig?.mapImageUrl ? (
                 <img
+                  ref={mapImageRef}
+                  crossOrigin="anonymous"
                   src={mapConfig.mapImageUrl}
                   alt="Battle map"
                   className="absolute inset-0 w-full h-full object-fill pointer-events-none select-none"
@@ -4509,6 +4638,8 @@ export function BattleMap({
 
               {mapOverlayPngSrc && !(showDrawPaintCanvas && drawEditContext?.kind === 'map') ? (
                 <img
+                  ref={mapOverlayImgRef}
+                  crossOrigin="anonymous"
                   src={mapOverlayPngSrc}
                   alt=""
                   className="absolute inset-0 w-full h-full object-fill pointer-events-none select-none"
@@ -4526,8 +4657,9 @@ export function BattleMap({
                     zIndex: 20,
                     pointerEvents: drawLayerBlockedByTokenHover ? 'none' : 'auto',
                     touchAction: 'none',
-                    cursor:
-                      drawTool === 'rect' || drawTool === 'oval'
+                    cursor: drawEyedropperActive
+                      ? 'crosshair'
+                      : drawTool === 'rect' || drawTool === 'oval'
                         ? 'crosshair'
                         : 'default',
                   }}
@@ -4539,6 +4671,8 @@ export function BattleMap({
               ) : null}
               {cameraOverlayPngSrc && !(showDrawPaintCanvas && drawEditContext && drawEditContext.kind !== 'map') ? (
                 <img
+                  ref={cameraOverlayImgRef}
+                  crossOrigin="anonymous"
                   src={cameraOverlayPngSrc}
                   alt=""
                   className="absolute inset-0 w-full h-full object-fill pointer-events-none select-none"
@@ -4556,8 +4690,9 @@ export function BattleMap({
                     zIndex: 20,
                     pointerEvents: drawLayerBlockedByTokenHover ? 'none' : 'auto',
                     touchAction: 'none',
-                    cursor:
-                      drawTool === 'rect' || drawTool === 'oval'
+                    cursor: drawEyedropperActive
+                      ? 'crosshair'
+                      : drawTool === 'rect' || drawTool === 'oval'
                         ? 'crosshair'
                         : 'default',
                   }}
