@@ -7,6 +7,7 @@ import {
   newViewId,
   normalizeMapState,
 } from './map-table-state.js';
+import { playerCanAccessMapViewSelection } from './map-view-player-sync.js';
 
 /** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
 function syncGmMapViewFromActiveView(state) {
@@ -284,6 +285,36 @@ export function applyTableOp(op, state) {
         gmMapView: nextState.gmMapView,
         mapConfig: deriveMapConfigFromState(nextState),
       };
+    }
+    case 'force-player-map-view': {
+      const base = normalizeMapState(state);
+      const viewId = op.viewId ?? null;
+      const freeMapExploreMapId = op.freeMapExploreMapId ?? null;
+      if (viewId) {
+        const focus = { viewId, freeMapExploreMapId: null };
+        if (!playerCanAccessMapViewSelection({ maps: base.maps, mapViews: base.mapViews }, focus)) return {};
+        const prevSeq = state.playerMapViewFocus?.seq ?? 0;
+        return {
+          playerMapViewFocus: {
+            seq: prevSeq + 1,
+            viewId,
+            freeMapExploreMapId: null,
+          },
+        };
+      }
+      if (freeMapExploreMapId) {
+        const focus = { viewId: null, freeMapExploreMapId };
+        if (!playerCanAccessMapViewSelection({ maps: base.maps, mapViews: base.mapViews }, focus)) return {};
+        const prevSeq = state.playerMapViewFocus?.seq ?? 0;
+        return {
+          playerMapViewFocus: {
+            seq: prevSeq + 1,
+            viewId: null,
+            freeMapExploreMapId,
+          },
+        };
+      }
+      return {};
     }
     case 'set-active-map': {
       const base = normalizeMapState(state);

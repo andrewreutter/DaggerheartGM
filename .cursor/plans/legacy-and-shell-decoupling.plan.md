@@ -67,12 +67,12 @@ File: `[src/client/lib/normalize-persisted-character-element.js](../../src/clien
 
 - Remove `**normalizeDruidFeatureState`** (merges `Beastform` / `Evolution` into druid scope).
 - Remove `**normalizeConsumableFlatKeys`** and `**LEGACY_CONSUMABLE_FLAT_KEYS`** (`Hopehold Flare`, `Blinding Orb` title keys).
-- Remove `**applyLegacyCharacterRuntimeMigrations**` and `[src/features-v2/legacy-character-runtime-migrations.js](../../src/features-v2/legacy-character-runtime-migrations.js)` + registry export (`legacyCharacterRuntimeMigrations`).
+- Remove `**applyLegacyCharacterRuntimeMigrations`** and `[src/features-v2/legacy-character-runtime-migrations.js](../../src/features-v2/legacy-character-runtime-migrations.js)` + registry export (`legacyCharacterRuntimeMigrations`).
 - Update `[test/unit/normalize-persisted-character-element.test.js](../../test/unit/normalize-persisted-character-element.test.js)` — delete legacy migration tests.
 
 ### 2. Engine: beastform resolution
 
-- `[src/features-v2/engine/beastform-parse.js](../../src/features-v2/engine/beastform-parse.js)` — `**pickActiveBeastformRef**`: remove `mergedFeatureState.Beastform` / `Evolution` branches.
+- `[src/features-v2/engine/beastform-parse.js](../../src/features-v2/engine/beastform-parse.js)` — `**pickActiveBeastformRef`**: remove `mergedFeatureState.Beastform` / `Evolution` branches.
 - `[src/features-v2/engine/table.js](../../src/features-v2/engine/table.js)` — `**inBeastform` / active id** (~254–279): remove all `Beastform` / `Evolution` fallbacks.
 - `[src/features-v2/engine/feature-loader.js](../../src/features-v2/engine/feature-loader.js)` — `**applyBeastformDeclarativeOverlay`**: remove `mergedFeatureState?.Evolution?.evolutionTraitKey` and align `character.evolutionTraitKey` with § decisions.
 - `[test/unit/features-v2/engine/table.test.js](../../test/unit/features-v2/engine/table.test.js)` — remove/update tests that use `gameState.featureState.Beastform`.

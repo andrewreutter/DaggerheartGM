@@ -348,6 +348,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onPlayerEnterMapFreeExplore,
   onPlayerExitMapFreeExplore,
   onMapFreeExplore,
+  onForcePlayersToMapView,
 }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
@@ -5503,6 +5504,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onPlayerEnterMapFreeExplore={onPlayerEnterMapFreeExplore}
             onPlayerExitMapFreeExplore={onPlayerExitMapFreeExplore}
             onMapFreeExplore={onMapFreeExplore}
+            onForcePlayersToMapView={onForcePlayersToMapView}
             onSetActiveMap={onSetActiveMap}
             onAddMap={onAddMap}
             onAddMapWithImage={onAddMapWithImage}

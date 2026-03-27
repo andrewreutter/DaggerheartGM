@@ -1,30 +1,34 @@
 /**
  * Gating for applying GM-synced map view (`decodeMapViewState`) on the player client.
- * When the player is viewing a personal camera (non-null id), remote GM framing is not applied.
  * When the player chose the map tile (free pan/zoom, not a broadcast view), remote GM framing is not applied.
  *
  * @param {boolean} isPlayer
- * @param {string|null|undefined} activePersonalCameraId — set when the player is editing a personal camera
  * @param {boolean} [playerFreeMapExplore]
  * @returns {boolean}
  */
-export function shouldApplyRemotePlayerMapView(isPlayer, activePersonalCameraId, playerFreeMapExplore = false) {
-  return !isPlayer || (!activePersonalCameraId && !playerFreeMapExplore);
+export function shouldApplyRemotePlayerMapView(isPlayer, playerFreeMapExplore = false) {
+  return !isPlayer || !playerFreeMapExplore;
 }
 
 /**
- * When a map is un-shared (`shareWithPlayers: false`), players must not keep personal framing for that map.
- *
- * @param {string|null|undefined} activeCameraId
- * @param {Array<{ id: string, mapId: string }>} personalCameras
- * @param {Array<{ id: string, shareWithPlayers?: boolean }>} maps
+ * Whether a player may use a GM "forced" map selection (same rules as strip tiles).
+ * Named views: only the view's broadcast flag matters (parent map share is irrelevant).
+ * Free-map tile: map must be shared with players (`shareWithPlayers`).
+ * @param {{ maps: Array<{ id: string, shareWithPlayers?: boolean }>, mapViews: Array<{ id: string, mapId: string, broadcastToPlayers?: boolean }> }} tableLike
+ * @param {{ viewId?: string | null, freeMapExploreMapId?: string | null }} focus
  */
-export function personalCameraTargetsUnsharedMap(activeCameraId, personalCameras, maps) {
-  if (!activeCameraId || !maps?.length) return false;
-  const cam = personalCameras.find((c) => c.id === activeCameraId);
-  if (!cam) return false;
-  const map = maps.find((m) => m.id === cam.mapId);
-  return !!(map && map.shareWithPlayers === false);
+export function playerCanAccessMapViewSelection(tableLike, focus) {
+  const { maps = [], mapViews = [] } = tableLike || {};
+  if (focus?.viewId) {
+    const v = mapViews.find((x) => x.id === focus.viewId);
+    if (!v || !v.broadcastToPlayers) return false;
+    return maps.some((x) => x.id === v.mapId);
+  }
+  if (focus?.freeMapExploreMapId) {
+    const m = maps.find((x) => x.id === focus.freeMapExploreMapId);
+    return !!(m && m.shareWithPlayers !== false);
+  }
+  return false;
 }
 
 /**
@@ -39,19 +43,16 @@ export function freeMapExploreTargetsUnsharedMap(freeExploreMapId, playerFreeMap
 }
 
 /**
- * Selectable tiles on the player map strip: optional free-map tile per batch, GM views, personal cameras, orphans.
- * Used to hide the strip when there is only one thing to show (nothing to switch between).
+ * Selectable tiles on the player map strip: optional free-map tile per batch, GM views.
+ * BattleMap shows the strip when this count is ≥ 1 so map/view names stay visible (including a single shared map).
  *
- * @param {Array<{ map: { shareWithPlayers?: boolean }, gmViews: unknown[], cams: unknown[] }>} playerViewBatches
- * @param {unknown[]} [orphanCameras]
+ * @param {Array<{ map: { shareWithPlayers?: boolean }, gmViews: unknown[] }>} playerViewBatches
  */
-export function countPlayerMapStripTiles(playerViewBatches, orphanCameras = []) {
+export function countPlayerMapStripTiles(playerViewBatches) {
   let n = 0;
-  for (const { map: m, gmViews, cams } of playerViewBatches) {
+  for (const { map: m, gmViews } of playerViewBatches) {
     if (m.shareWithPlayers !== false) n += 1;
     n += gmViews.length;
-    n += cams.length;
   }
-  n += orphanCameras.length;
   return n;
 }

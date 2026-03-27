@@ -4,12 +4,12 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
 import { randomInt, randomUUID } from 'crypto';
-import { watchFile } from 'fs';
+import { watchFile, readFileSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, listPersonalMapCameras, insertPersonalMapCamera, updatePersonalMapCameraPatch, deletePersonalMapCamera } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -848,6 +848,7 @@ async function applyOpToTableState(tableId, op) {
       op.op === 'set-map-free-explore' ||
       op.op === 'set-active-map' ||
       op.op === 'set-active-view' ||
+      op.op === 'force-player-map-view' ||
       op.op === 'add-map' ||
       op.op === 'add-map-view' ||
       op.op === 'remove-map' ||
@@ -2887,86 +2888,6 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
   }
 });
 
-// --- Private map cameras (per user; not in table_state) ---
-
-app.get('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  if (!process.env.DATABASE_URL) return res.json({ cameras: [] });
-  try {
-    const cameras = await listPersonalMapCameras(APP_ID, req.params.tableId, req.uid);
-    res.json({ cameras });
-  } catch (err) {
-    console.error('GET personal-cameras error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.post('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  if (req.uid !== ctx.gmUid) {
-    return res.status(403).json({ error: 'Only the GM can create personal map cameras' });
-  }
-  if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
-  const { name, mapId, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm } = req.body || {};
-  if (!mapId || typeof mapId !== 'string') {
-    return res.status(400).json({ error: 'mapId required' });
-  }
-  try {
-    const camera = await insertPersonalMapCamera(APP_ID, req.params.tableId, req.uid, {
-      name,
-      mapId,
-      mapViewZoomRatio,
-      mapViewPanNorm,
-      mapViewVisibleNorm,
-    });
-    res.json({ camera });
-  } catch (err) {
-    console.error('POST personal-cameras error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.patch('/api/room/:tableId/personal-cameras/:cameraId', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
-  const { name, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, overlayPng, fogPng } = req.body || {};
-  const patch = {};
-  if (name !== undefined) patch.name = name;
-  if (mapViewZoomRatio !== undefined) patch.mapViewZoomRatio = mapViewZoomRatio;
-  if (mapViewPanNorm !== undefined) patch.mapViewPanNorm = mapViewPanNorm;
-  if (mapViewVisibleNorm !== undefined) patch.mapViewVisibleNorm = mapViewVisibleNorm;
-  if (overlayPng !== undefined) patch.overlayPng = overlayPng;
-  else if (fogPng !== undefined) patch.overlayPng = fogPng;
-  if (Object.keys(patch).length === 0) {
-    return res.status(400).json({ error: 'No fields to update' });
-  }
-  try {
-    const camera = await updatePersonalMapCameraPatch(APP_ID, req.params.tableId, req.uid, req.params.cameraId, patch);
-    if (!camera) return res.status(404).json({ error: 'Not found' });
-    res.json({ camera });
-  } catch (err) {
-    console.error('PATCH personal-cameras error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.delete('/api/room/:tableId/personal-cameras/:cameraId', requireAuth, async (req, res) => {
-  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
-  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
-  if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
-  try {
-    const ok = await deletePersonalMapCamera(APP_ID, req.params.tableId, req.uid, req.params.cameraId);
-    if (!ok) return res.status(404).json({ error: 'Not found' });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('DELETE personal-cameras error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
 // POST /api/room/:tableId/v2-cross-sheet-chip — Player activates a V2 cross-sheet card chip (e.g. Rally clear stress). Server recomputes engine mutations from chipKey (same as GM postTableOp).
 app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
@@ -3380,7 +3301,50 @@ app.post('/api/room/:tableId/roll', requireAuth, async (req, res) => {
 
 app.use('/api/srd', srdRouter);
 
-app.use(express.static(join(__dirname, 'public')));
+/** Dev hot-reload: inject only when not production/test, or when ENABLE_LIVERELOAD=1 (e.g. staging). */
+function shouldInjectLiveReloadClient() {
+  if (process.env.ENABLE_LIVERELOAD === '1') return true;
+  const n = process.env.NODE_ENV;
+  if (n === 'production' || n === 'test') return false;
+  return true;
+}
+
+const LIVERELOAD_CLIENT_SNIPPET = `
+  <script>
+    (function() {
+      var src = new EventSource('/livereload');
+      var wasConnected = false;
+      src.onopen = function() { if (wasConnected) location.reload(); };
+      src.onmessage = function(e) {
+        if (e.data === 'reload') {
+          wasConnected = true;
+          location.reload();
+        }
+      };
+    })();
+  </script>`;
+
+let spaHtmlCache = null;
+function getSpaHtml() {
+  if (spaHtmlCache == null) {
+    const raw = readFileSync(join(__dirname, 'public', 'index.html'), 'utf8');
+    spaHtmlCache = shouldInjectLiveReloadClient()
+      ? raw.replace('</body>', `${LIVERELOAD_CLIENT_SNIPPET}\n</body>`)
+      : raw;
+  }
+  return spaHtmlCache;
+}
+
+function sendSpaHtml(res) {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(getSpaHtml());
+}
+
+app.get('/index.html', (req, res) => {
+  sendSpaHtml(res);
+});
+
+app.use(express.static(join(__dirname, 'public'), { index: false }));
 
 // SPA fallback — serve index.html for any unmatched route (except asset paths)
 // Don't send HTML for .js/.css/etc. or the browser throws "invalid MIME type"
@@ -3390,7 +3354,7 @@ app.get('*', (req, res) => {
     res.status(404).end();
     return;
   }
-  res.sendFile(join(__dirname, 'public', 'index.html'));
+  sendSpaHtml(res);
 });
 
 // --- Startup ---

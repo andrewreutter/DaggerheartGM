@@ -8,14 +8,9 @@ export function gmMapStripFullMapTileActive({ gmActiveViewId, mapId, activeMapId
 }
 
 export function playerMapStripFullMapTileActive({
-  playerActivePersonalCameraId,
   playerFreeMapExplore,
   playerFreeExploreMapId,
   mapId,
 }) {
-  return (
-    !playerActivePersonalCameraId &&
-    playerFreeMapExplore &&
-    playerFreeExploreMapId === mapId
-  );
+  return playerFreeMapExplore && playerFreeExploreMapId === mapId;
 }

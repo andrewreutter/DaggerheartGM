@@ -13,6 +13,7 @@ import { RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
+import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
 import { postDebugLog } from './lib/debug-log.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
@@ -75,6 +76,9 @@ function App() {
   /** Player: map-tile free pan/zoom (not a broadcast view or personal camera). */
   const [playerFreeMapExplore, setPlayerFreeMapExplore] = useState(false);
   const [playerFreeExploreMapId, setPlayerFreeExploreMapId] = useState(null);
+  /** GM-broadcast hint: incrementing seq so invited players align to the same map view (when allowed). */
+  const [playerMapViewFocus, setPlayerMapViewFocus] = useState(null);
+  const playerMapViewFocusSeqAppliedRef = useRef(0);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
   const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
   /** V2 shared table bags (e.g. Bard Rally) — persisted in `table_state.featureState` */
@@ -444,7 +448,7 @@ function App() {
       if (!v.broadcastToPlayers) return false;
       return maps.some(x => x.id === v.mapId);
     });
-    return candidates[0]?.id ?? mapViews[0]?.id ?? null;
+    return candidates[0]?.id ?? null;
   }, [mapViews, maps]);
 
   const battleMapConfig = useMemo(() => {
@@ -484,6 +488,29 @@ function App() {
     } catch { /* ignore */ }
   }, [playerViewStorageKey, playerSelectedViewId]);
 
+  /** When no views are broadcast to players, use free map explore on a shared map (not a silent named view). */
+  useEffect(() => {
+    if (!effectiveIsPlayer) return;
+    const hasBroadcastView = mapViews.some((v) => v.broadcastToPlayers);
+    if (!hasBroadcastView) {
+      if (playerSelectedViewId) setPlayerSelectedViewId(null);
+      if (playerFreeMapExplore) return;
+      const shared = maps.filter((m) => m.shareWithPlayers !== false);
+      if (shared.length === 0) return;
+      const prefer =
+        activeMapId && shared.some((m) => m.id === activeMapId)
+          ? activeMapId
+          : shared[0].id;
+      setPlayerFreeMapExplore(true);
+      setPlayerFreeExploreMapId(prefer);
+      return;
+    }
+    if (playerSelectedViewId) {
+      const sel = mapViews.find((x) => x.id === playerSelectedViewId);
+      if (sel && !sel.broadcastToPlayers) setPlayerSelectedViewId(null);
+    }
+  }, [effectiveIsPlayer, mapViews, maps, activeMapId, playerSelectedViewId, playerFreeMapExplore]);
+
   useEffect(() => {
     if (!effectiveIsPlayer || !mapViews.length) return;
     if (!playerSelectedViewId && defaultPlayerViewId && !playerFreeMapExplore) {
@@ -511,6 +538,24 @@ function App() {
     setPlayerFreeMapExplore(false);
     setPlayerFreeExploreMapId(null);
   }, []);
+
+  useEffect(() => {
+    if (!effectiveIsPlayer) return;
+    const focus = playerMapViewFocus;
+    if (!focus || typeof focus.seq !== 'number') return;
+    if (focus.seq <= playerMapViewFocusSeqAppliedRef.current) return;
+    if (!playerCanAccessMapViewSelection({ maps, mapViews }, focus)) return;
+    playerMapViewFocusSeqAppliedRef.current = focus.seq;
+    if (focus.viewId) {
+      setPlayerFreeMapExplore(false);
+      setPlayerFreeExploreMapId(null);
+      setPlayerSelectedViewId(focus.viewId);
+    } else if (focus.freeMapExploreMapId) {
+      setPlayerFreeMapExplore(true);
+      setPlayerFreeExploreMapId(focus.freeMapExploreMapId);
+      setPlayerSelectedViewId(null);
+    }
+  }, [effectiveIsPlayer, playerMapViewFocus, maps, mapViews]);
 
   // Helper used by BattleMap for immediate local visual feedback (before SSE snapshot arrives).
   // In Phase 1 this is only used when DATABASE_URL is not set (no-DB dev mode).
@@ -550,6 +595,10 @@ function App() {
   }, [route.tableId]);
 
   useEffect(() => {
+    playerMapViewFocusSeqAppliedRef.current = 0;
+  }, [route.tableId]);
+
+  useEffect(() => {
     if (route.view !== 'table' || !route.tableId) return;
     if (prevTableIdRef.current !== null && prevTableIdRef.current !== route.tableId) {
       setActiveElements([]);
@@ -566,6 +615,7 @@ function App() {
       setPlayerSelectedViewId(null);
       setPlayerFreeMapExplore(false);
       setPlayerFreeExploreMapId(null);
+      setPlayerMapViewFocus(null);
       setLifeSupportSelections({});
       setRestMovesSelections({});
       setTableFeatureState({});
@@ -598,6 +648,7 @@ function App() {
         setMapViews([]);
         setGmActiveViewId(null);
         setPlayerSelectedViewId(null);
+        setPlayerMapViewFocus(null);
         setLifeSupportSelections({});
         setRestMovesSelections({});
         setTableFeatureState({});
@@ -627,6 +678,11 @@ function App() {
       else setMapViews([]);
       if (tableState.gmActiveViewId != null) setGmActiveViewId(tableState.gmActiveViewId);
       else setGmActiveViewId(null);
+      if (tableState.playerMapViewFocus != null && typeof tableState.playerMapViewFocus === 'object') {
+        setPlayerMapViewFocus(tableState.playerMapViewFocus);
+      } else {
+        setPlayerMapViewFocus(null);
+      }
       if (tableState.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
       if (tableState.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
       if (tableState.featureState != null && typeof tableState.featureState === 'object') {
@@ -684,6 +740,11 @@ function App() {
         else setMapViews([]);
         if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
         else setGmActiveViewId(null);
+        if (state.playerMapViewFocus != null && typeof state.playerMapViewFocus === 'object') {
+          setPlayerMapViewFocus(state.playerMapViewFocus);
+        } else {
+          setPlayerMapViewFocus(null);
+        }
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         if (state.featureState != null && typeof state.featureState === 'object') {
@@ -768,6 +829,11 @@ function App() {
         else setMapViews([]);
         if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
         else setGmActiveViewId(null);
+        if (state.playerMapViewFocus != null && typeof state.playerMapViewFocus === 'object') {
+          setPlayerMapViewFocus(state.playerMapViewFocus);
+        } else {
+          setPlayerMapViewFocus(null);
+        }
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         if (state.featureState != null && typeof state.featureState === 'object') {
@@ -1265,6 +1331,13 @@ function App() {
     [tableId],
   );
 
+  const sendForcePlayersToMapView = useCallback(
+    (payload) => {
+      postTableOp({ op: 'force-player-map-view', ...payload }, tableId);
+    },
+    [tableId],
+  );
+
   const sendSetActiveMap = useCallback((id) => {
     postTableOp({ op: 'set-active-map', activeMapId: id }, tableId);
   }, [tableId]);
@@ -1721,6 +1794,7 @@ function App() {
                 onPlayerEnterMapFreeExplore={effectiveIsPlayer ? handlePlayerEnterMapFreeExplore : undefined}
                 onPlayerExitMapFreeExplore={effectiveIsPlayer ? handlePlayerExitMapFreeExplore : undefined}
                 onMapFreeExplore={!effectiveIsPlayer ? sendMapFreeExplore : undefined}
+                onForcePlayersToMapView={!effectiveIsPlayer ? sendForcePlayersToMapView : undefined}
                 onSetActiveMap={effectiveIsPlayer ? undefined : sendSetActiveMap}
                 onAddMap={effectiveIsPlayer ? undefined : sendAddMap}
                 onAddMapWithImage={effectiveIsPlayer ? undefined : sendAddMapWithImage}

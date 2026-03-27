@@ -90,6 +90,7 @@ export function gateTableOpForPrepMode(state, op) {
     case 'set-map-free-explore':
     case 'set-active-map':
     case 'set-active-view':
+    case 'force-player-map-view':
     case 'add-map':
     case 'add-map-view':
     case 'remove-map':

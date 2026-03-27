@@ -16,7 +16,6 @@ import {
 } from '../lib/map-view-sync.js';
 import {
   shouldApplyRemotePlayerMapView,
-  personalCameraTargetsUnsharedMap,
   freeMapExploreTargetsUnsharedMap,
   countPlayerMapStripTiles,
 } from '../lib/map-view-player-sync.js';
@@ -49,17 +48,7 @@ import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { HOPE_TRACK_FILL } from './CharacterStatBlockGraphic.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
-import {
-  getAuthToken,
-  fetchPersonalCameras,
-  postPersonalCamera,
-  patchPersonalCamera,
-  patchPersonalCameraName,
-  deletePersonalCamera,
-  postMapPing,
-  postMapScribble,
-  CLIENT_ID,
-} from '../lib/api.js';
+import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID } from '../lib/api.js';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -501,17 +490,23 @@ function MapViewStripTile({
   viewState,
   /** Draw-layer PNG (data URL) aligned to the map image; shown under camera overlay in the thumb. */
   mapOverlayPng,
-  /** Named-view or personal-camera draw PNG; overlaid on map layer in the thumb. */
+  /** Named-view draw PNG; overlaid on map layer in the thumb. */
   cameraOverlayPng,
   label,
   isActive,
   onClick,
+  onDoubleClick,
   variant = 'map',
   actions,
   interactive = true,
+  /** Full-map strip tiles: small map icon (bottom-right, same corner as camera on view tiles). */
+  showMapBadge = false,
+  /** Named views: small camera icon (bottom-right). */
   showCameraBadge = false,
-  /** Hide the caption under the thumb (e.g. player full-map tile — map name only for GM). */
+  /** Hide the caption (rare; most tiles show `label`). */
   hideCaption = false,
+  /** When true, label is above the thumbnail (view/camera tiles); map tiles keep label below. */
+  captionAbove = false,
   /** Optional `title` on the thumb control (defaults to `label`). */
   tooltipTitle,
   /** When set with `stripMapId`, shows small token chips for actors visible in this thumb's viewport. */
@@ -529,7 +524,7 @@ function MapViewStripTile({
       : interactive
         ? 'border-dh-strong bg-dh-canvas/25 hover:bg-dh-hover/70'
         : 'border-dh-border/50 bg-dh-canvas/25 cursor-default'
-  } ${variant === 'camera' ? 'border-violet-500/30' : ''}`;
+  }`;
 
   const thumbInner = (
     <div className="relative">
@@ -540,22 +535,42 @@ function MapViewStripTile({
         cameraOverlayPng={cameraOverlayPng}
       />
       <ThumbViewportTokenProxies tokens={thumbTokenProxies} />
+      {showMapBadge ? (
+        <div className="absolute bottom-0.5 right-0.5 z-[5] rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
+          <MapIcon size={10} className="text-white/90" aria-hidden />
+        </div>
+      ) : null}
       {showCameraBadge ? (
         <div className="absolute bottom-0.5 right-0.5 z-[5] rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
-          <Camera size={10} className="text-violet-300/90" aria-hidden />
+          <Camera size={10} className="text-white/90" aria-hidden />
         </div>
       ) : null}
     </div>
   );
 
+  const captionSpan = !hideCaption ? (
+    <span
+      className={`block truncate text-center text-[10px] leading-tight ${
+        isActive ? 'font-medium text-dh' : 'text-dh-muted'
+      }`}
+      title={label}
+    >
+      {label}
+    </span>
+  ) : null;
+
   return (
     <div className="flex w-[4.75rem] shrink-0 flex-col gap-0.5">
+      {captionAbove && captionSpan ? (
+        <div className="min-h-[1rem] flex items-end justify-center px-0.5">{captionSpan}</div>
+      ) : null}
       {interactive ? (
         <button
           type="button"
           role={variant === 'map' ? 'tab' : undefined}
           aria-selected={variant === 'map' ? isActive : undefined}
           onClick={onClick}
+          onDoubleClick={onDoubleClick}
           className={thumbClass}
           title={titleAttr}
         >
@@ -566,20 +581,13 @@ function MapViewStripTile({
           {thumbInner}
         </div>
       )}
-      {!hideCaption || actions ? (
+      {!captionAbove && (!hideCaption || actions) ? (
         <div className="flex min-w-0 flex-col gap-0.5">
-          {!hideCaption ? (
-            <span
-              className={`truncate text-center text-[10px] leading-tight ${
-                variant === 'map' && isActive ? 'font-medium text-dh' : 'text-dh-muted'
-              }`}
-              title={label}
-            >
-              {label}
-            </span>
-          ) : null}
+          {!hideCaption ? captionSpan : null}
           {actions}
         </div>
+      ) : captionAbove && actions ? (
+        <div className="flex min-w-0 flex-col gap-0.5">{actions}</div>
       ) : null}
     </div>
   );
@@ -1180,6 +1188,8 @@ export function BattleMap({
   gmActiveViewId = null,
   /** GM: enter map-only framing (no named view); persists as `set-map-free-explore` + `set-map-view` with `viewId: null`. */
   onMapFreeExplore,
+  /** GM: double-click map/view strip tile to align invited players on that view (server op + SSE). */
+  onForcePlayersToMapView,
   playerFreeMapExplore = false,
   playerFreeExploreMapId = null,
   onPlayerEnterMapFreeExplore,
@@ -1548,17 +1558,8 @@ export function BattleMap({
 
   const gmViewHydratedRef = useRef(false);
   const mapViewPersistTimerRef = useRef(null);
-  /** Player-only: when set, the player is framing a personal camera (pan/zoom allowed); otherwise they follow the GM view. */
-  const [playerActivePersonalCameraId, setPlayerActivePersonalCameraId] = useState(null);
-  const playerActivePersonalCameraIdRef = useRef(null);
-  playerActivePersonalCameraIdRef.current = playerActivePersonalCameraId;
-  const playerCameraPersistTimerRef = useRef(null);
   const playerFreeMapPersistTimerRef = useRef(null);
   const playerFreeMapHydratedKeyRef = useRef('');
-  /** Per-user saved cameras (private API; not in SSE). */
-  const [personalCameras, setPersonalCameras] = useState([]);
-  /** GM: selected personal camera (saved view) for framing + map draw overlay — independent of table_state views. */
-  const [gmActivePersonalCameraId, setGmActivePersonalCameraId] = useState(null);
   const [drawTool, setDrawTool] = useState('scribble');
   const [rectShapeFilled, setRectShapeFilled] = useState(true);
   const [ovalShapeFilled, setOvalShapeFilled] = useState(true);
@@ -1629,16 +1630,12 @@ export function BattleMap({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [drawEyedropperActive]);
-  const [cameraHint, setCameraHint] = useState('');
-  const cameraHintTimerRef = useRef(null);
   const mapAllowsPlayerCameras = maps.find(m => m.id === activeMapIdResolved)?.shareWithPlayers !== false;
-  /** GM: can persist a new named view / camera (table op or personal camera API). */
-  const gmCanCreateCameraView = !isPlayer && Boolean(onAddMapViewOp || tableId);
+  /** GM: can persist a new named view (table op). */
+  const gmCanCreateCameraView = !isPlayer && Boolean(onAddMapViewOp);
   const canControlMapView =
     (!isPlayer && !!onMapViewSync) ||
-    (isPlayer &&
-      mapAllowsPlayerCameras &&
-      (!!playerActivePersonalCameraId || playerFreeMapExplore));
+    (isPlayer && mapAllowsPlayerCameras && playerFreeMapExplore);
 
   const mapViewSig = useMemo(
     () =>
@@ -1678,43 +1675,6 @@ export function BattleMap({
     }, 120);
   }, [onMapViewSync]);
 
-  const schedulePersistPlayerCamera = useCallback(() => {
-    if (!isPlayer || !tableId) return;
-    const camId = playerActivePersonalCameraIdRef.current;
-    if (!camId) return;
-    if (playerCameraPersistTimerRef.current) clearTimeout(playerCameraPersistTimerRef.current);
-    playerCameraPersistTimerRef.current = setTimeout(async () => {
-      playerCameraPersistTimerRef.current = null;
-      const wrap = scrollWrapperRef.current;
-      const vw = wrap?.clientWidth ?? 0;
-      const vh = wrap?.clientHeight ?? 0;
-      if (vw <= 0 || vh <= 0) return;
-      const id = playerActivePersonalCameraIdRef.current;
-      if (!id) return;
-      const encoded = encodeMapViewState({
-        mapZoom: mapZoomRef.current,
-        scrollLeft: mapPanLeftRef.current,
-        scrollTop: mapPanTopRef.current,
-        minZoom: minZoomRef.current,
-        maxZoom: maxZoomRef.current,
-        renderedWidthPx: renderedWRef.current,
-        renderedHeightPx: renderedHRef.current,
-        viewportW: vw,
-        viewportH: vh,
-      });
-      try {
-        const { camera } = await patchPersonalCamera(tableId, id, {
-          mapViewZoomRatio: encoded.mapViewZoomRatio,
-          mapViewPanNorm: encoded.mapViewPanNorm,
-          mapViewVisibleNorm: encoded.mapViewVisibleNorm,
-        });
-        setPersonalCameras((prev) => prev.map((c) => (c.id === camera.id ? { ...c, ...camera } : c)));
-      } catch (err) {
-        console.error('[BattleMap] patch personal camera failed:', err);
-      }
-    }, 120);
-  }, [isPlayer, tableId]);
-
   const schedulePersistPlayerFreeMap = useCallback(() => {
     if (!isPlayer || !tableId || !playerFreeExploreMapId) return;
     if (playerFreeMapPersistTimerRef.current) clearTimeout(playerFreeMapPersistTimerRef.current);
@@ -1752,104 +1712,12 @@ export function BattleMap({
 
   const schedulePersistPlayerViewport = useCallback(() => {
     if (playerFreeMapExplore) schedulePersistPlayerFreeMap();
-    else schedulePersistPlayerCamera();
-  }, [playerFreeMapExplore, schedulePersistPlayerFreeMap, schedulePersistPlayerCamera]);
+  }, [playerFreeMapExplore, schedulePersistPlayerFreeMap]);
 
   /** Must be useLayoutEffect (not useEffect) so this runs before the GM hydrate effect below — otherwise hydration sees gmViewHydratedRef still true and skips applying mapConfig when switching named views. */
   useLayoutEffect(() => {
     gmViewHydratedRef.current = false;
   }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved, gmActiveViewId]);
-
-  useEffect(() => {
-    if (!isPlayer) return;
-    setPlayerActivePersonalCameraId(null);
-  }, [isPlayer, mapConfig?.mapImageUrl]);
-
-  useEffect(() => {
-    if (!tableId) {
-      setPersonalCameras([]);
-      return;
-    }
-    let cancelled = false;
-    fetchPersonalCameras(tableId)
-      .then((r) => {
-        if (!cancelled) setPersonalCameras(r.cameras || []);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [tableId]);
-
-  useEffect(() => () => {
-    if (cameraHintTimerRef.current != null) window.clearTimeout(cameraHintTimerRef.current);
-  }, []);
-
-  const applyPersonalCamera = useCallback(
-    (camera) => {
-      if (!camera) return;
-      if (isPlayer) onPlayerExitMapFreeExplore?.();
-      if (camera.mapId !== activeMapIdResolved) {
-        const viewOnMap = mapViews.find(v => v.mapId === camera.mapId);
-        if (onSetActiveMap) {
-          setGmActivePersonalCameraId(null);
-          onSetActiveMap(camera.mapId);
-          if (viewOnMap && onPlayerSelectView) onPlayerSelectView(viewOnMap.id);
-        } else if (viewOnMap && onPlayerSelectView) {
-          onPlayerSelectView(viewOnMap.id);
-        } else {
-          const msg =
-            maps.length > 1
-              ? 'This camera is for another map. Follow the GM until that map is shown, then load it again.'
-              : 'This camera does not match the current map.';
-          setCameraHint(msg);
-          if (cameraHintTimerRef.current != null) window.clearTimeout(cameraHintTimerRef.current);
-          cameraHintTimerRef.current = window.setTimeout(() => setCameraHint(''), 7000);
-        }
-        return;
-      }
-      const stored = {
-        mapViewZoomRatio: camera.mapViewZoomRatio,
-        mapViewPanNorm: camera.mapViewPanNorm,
-        mapViewVisibleNorm: camera.mapViewVisibleNorm,
-      };
-      const d = decodeMapViewState(stored, {
-        minZoom,
-        maxZoom,
-        renderedWidthPx,
-        renderedHeightPx,
-        viewportW: containerWidth,
-        viewportH: containerHeight,
-      });
-      if (!d) return;
-      mapZoomRef.current = d.mapZoom;
-      setMapZoom(d.mapZoom);
-      mapPanLeftRef.current = d.scrollLeft;
-      mapPanTopRef.current = d.scrollTop;
-      setMapPanLeft(d.scrollLeft);
-      setMapPanTop(d.scrollTop);
-      setMapLetterboxClipPx(
-        isValidMapViewVisibleNorm(camera.mapViewVisibleNorm) && d.letterboxClipPx ? d.letterboxClipPx : null,
-      );
-      if (isPlayer) setPlayerActivePersonalCameraId(camera.id);
-      else setGmActivePersonalCameraId(camera.id);
-    },
-    [
-      activeMapIdResolved,
-      minZoom,
-      maxZoom,
-      renderedWidthPx,
-      renderedHeightPx,
-      containerWidth,
-      containerHeight,
-      onSetActiveMap,
-      onPlayerSelectView,
-      isPlayer,
-      maps,
-      mapViews,
-      onPlayerExitMapFreeExplore,
-    ],
-  );
 
   const handleSplitCamera = useCallback(async () => {
     const wrap = scrollWrapperRef.current;
@@ -1877,50 +1745,8 @@ export function BattleMap({
         mapViewPanNorm: encoded.mapViewPanNorm,
         mapViewVisibleNorm: encoded.mapViewVisibleNorm,
       });
-      return;
     }
-    if (!tableId) return;
-    try {
-      const { camera } = await postPersonalCamera(tableId, {
-        name: trimmed,
-        mapId: activeMapIdResolved,
-        mapViewZoomRatio: encoded.mapViewZoomRatio,
-        mapViewPanNorm: encoded.mapViewPanNorm,
-        mapViewVisibleNorm: encoded.mapViewVisibleNorm,
-      });
-      setPersonalCameras((prev) => [...prev, camera]);
-    } catch (err) {
-      console.error('[BattleMap] split camera failed:', err);
-    }
-  }, [tableId, activeMapIdResolved, onAddMapViewOp]);
-
-  const handleRenameCamera = useCallback(async (cam) => {
-    if (!tableId || !cam?.id) return;
-    const name = window.prompt('View name', cam.name || 'Saved view');
-    if (name === null) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    try {
-      await patchPersonalCameraName(tableId, cam.id, trimmed);
-      setPersonalCameras((prev) =>
-        prev.map((c) => (c.id === cam.id ? { ...c, name: trimmed } : c)),
-      );
-    } catch (err) {
-      console.error('[BattleMap] rename camera failed:', err);
-    }
-  }, [tableId]);
-
-  const handleDeleteCamera = useCallback(async (cam) => {
-    if (!tableId || !cam?.id) return;
-    if (!window.confirm(`Delete saved view “${cam.name || 'Saved view'}”?`)) return;
-    try {
-      await deletePersonalCamera(tableId, cam.id);
-      setPersonalCameras((prev) => prev.filter((c) => c.id !== cam.id));
-      setPlayerActivePersonalCameraId((id) => (id === cam.id ? null : id));
-    } catch (err) {
-      console.error('[BattleMap] delete camera failed:', err);
-    }
-  }, [tableId]);
+  }, [onAddMapViewOp]);
 
   // GM: broadcast portable mapViewZoomRatio/mapViewPanNorm (same encoding as wheel/keyboard pan and zoom) whenever the
   // map viewport or zoom bounds change, so players receive updates after layout and when the GM resizes or edits map size.
@@ -1991,7 +1817,7 @@ export function BattleMap({
 
   useLayoutEffect(() => {
     if (onMapViewSync || !tableStateReady) return;
-    if (!shouldApplyRemotePlayerMapView(isPlayer, playerActivePersonalCameraId, playerFreeMapExplore)) return;
+    if (!shouldApplyRemotePlayerMapView(isPlayer, playerFreeMapExplore)) return;
     if (containerWidth <= 0 || containerHeight <= 0) return;
     const d = decodeMapViewState(mapConfig, {
       minZoom,
@@ -2015,7 +1841,6 @@ export function BattleMap({
     onMapViewSync,
     tableStateReady,
     isPlayer,
-    playerActivePersonalCameraId,
     playerFreeMapExplore,
     mapViewSig,
     shouldApplyPlayerFollowClip,
@@ -2176,52 +2001,31 @@ export function BattleMap({
     [isPlayer, gmActiveViewId, liveStripView, maps],
   );
 
-  const camerasByMapId = useMemo(() => {
-    const out = new Map();
-    for (const cam of personalCameras) {
-      const list = out.get(cam.mapId) || [];
-      list.push(cam);
-      out.set(cam.mapId, list);
-    }
-    return out;
-  }, [personalCameras]);
-
-  const orphanCameras = useMemo(
-    () => personalCameras.filter((c) => !maps.some((m) => m.id === c.mapId)),
-    [personalCameras, maps],
-  );
-
-  /** Player strip: one scroll batch per map that has GM views and/or personal cameras. */
+  /** Player strip: one scroll batch per map — include shared maps (free-map tile) even when no broadcast views. */
   const playerViewBatches = useMemo(() => {
     const out = [];
     for (const m of maps) {
       const gmViews = playerStripViews.filter((v) => v.mapId === m.id);
-      const cams =
-        m.shareWithPlayers !== false ? (camerasByMapId.get(m.id) || []) : [];
-      if (!gmViews.length && !cams.length) continue;
-      out.push({ map: m, gmViews, cams });
+      const showSharedMapTile = m.shareWithPlayers !== false;
+      if (!gmViews.length && !showSharedMapTile) continue;
+      out.push({ map: m, gmViews });
     }
     return out;
-  }, [maps, playerStripViews, camerasByMapId]);
+  }, [maps, playerStripViews]);
 
   const playerStripTileCount = useMemo(
-    () => countPlayerMapStripTiles(playerViewBatches, orphanCameras),
-    [playerViewBatches, orphanCameras],
+    () => countPlayerMapStripTiles(playerViewBatches),
+    [playerViewBatches],
   );
 
   useEffect(() => {
     if (!isPlayer) return;
-    if (personalCameraTargetsUnsharedMap(playerActivePersonalCameraId, personalCameras, maps)) {
-      setPlayerActivePersonalCameraId(null);
-    }
     if (freeMapExploreTargetsUnsharedMap(playerFreeExploreMapId, playerFreeMapExplore, maps)) {
       onPlayerExitMapFreeExplore?.();
     }
   }, [
     isPlayer,
     maps,
-    personalCameras,
-    playerActivePersonalCameraId,
     playerFreeMapExplore,
     playerFreeExploreMapId,
     onPlayerExitMapFreeExplore,
@@ -2505,7 +2309,6 @@ export function BattleMap({
 
   const handleGmSetActiveView = useCallback(
     (viewId) => {
-      setGmActivePersonalCameraId(null);
       setMapLetterboxClipPx(null);
       onSetActiveView?.(viewId);
     },
@@ -2514,7 +2317,6 @@ export function BattleMap({
 
   const handleGmMapFreeExplore = useCallback(
     (mapId) => {
-      setGmActivePersonalCameraId(null);
       setMapLetterboxClipPx(null);
       onMapFreeExplore?.(mapId);
     },
@@ -2523,7 +2325,6 @@ export function BattleMap({
 
   const handleGmSetActiveMap = useCallback(
     (mapId) => {
-      setGmActivePersonalCameraId(null);
       setMapLetterboxClipPx(null);
       onSetActiveMap?.(mapId);
     },
@@ -2533,10 +2334,9 @@ export function BattleMap({
   const drawEditContext = useMemo(() => {
     if (isPlayer) return null;
     if (!mapConfigHasImage(mapConfig)) return null;
-    if (gmActivePersonalCameraId) return { kind: 'personal', id: gmActivePersonalCameraId };
     if (gmActiveViewId) return { kind: 'view', id: gmActiveViewId };
     return { kind: 'map', mapId: activeMapIdResolved };
-  }, [isPlayer, mapConfig, gmActivePersonalCameraId, gmActiveViewId, activeMapIdResolved]);
+  }, [isPlayer, mapConfig, gmActiveViewId, activeMapIdResolved]);
 
   const brushRgba = useMemo(() => hexToRgba(drawColorHex, drawOpacity), [drawColorHex, drawOpacity]);
 
@@ -2680,38 +2480,20 @@ export function BattleMap({
 
   const cameraOverlayPngSrc = useMemo(() => {
     if (isPlayer) {
-      if (playerActivePersonalCameraId) {
-        return getRowOverlayPng(personalCameras.find((c) => c.id === playerActivePersonalCameraId));
-      }
       if (playerFreeMapExplore) return null;
       return getRowOverlayPng(mapViews.find((v) => v.id === playerSelectedViewId));
-    }
-    if (gmActivePersonalCameraId) {
-      return getRowOverlayPng(personalCameras.find((c) => c.id === gmActivePersonalCameraId));
     }
     if (gmActiveViewId) {
       return getRowOverlayPng(mapViews.find((v) => v.id === gmActiveViewId));
     }
     return null;
-  }, [
-    isPlayer,
-    gmActivePersonalCameraId,
-    gmActiveViewId,
-    playerActivePersonalCameraId,
-    playerFreeMapExplore,
-    playerSelectedViewId,
-    mapViews,
-    personalCameras,
-  ]);
+  }, [isPlayer, gmActiveViewId, playerFreeMapExplore, playerSelectedViewId, mapViews]);
 
   const editableDrawSourceUrl = useMemo(() => {
     if (!drawEditContext) return null;
     if (drawEditContext.kind === 'map') return mapOverlayPngSrc;
-    if (drawEditContext.kind === 'view') {
-      return getRowOverlayPng(mapViews.find((v) => v.id === drawEditContext.id));
-    }
-    return getRowOverlayPng(personalCameras.find((c) => c.id === drawEditContext.id));
-  }, [drawEditContext, mapOverlayPngSrc, mapViews, personalCameras]);
+    return getRowOverlayPng(mapViews.find((v) => v.id === drawEditContext.id));
+  }, [drawEditContext, mapOverlayPngSrc, mapViews]);
 
   const clientToDrawPx = useCallback(
     (clientX, clientY) => {
@@ -2791,17 +2573,14 @@ export function BattleMap({
       try {
         if (drawEditContext.kind === 'map') {
           onSetMapOverlay?.(drawEditContext.mapId, png);
-        } else if (drawEditContext.kind === 'view') {
+        } else {
           onSetMapViewOverlay?.(drawEditContext.id, png);
-        } else if (tableId) {
-          const { camera } = await patchPersonalCamera(tableId, drawEditContext.id, { overlayPng: png });
-          setPersonalCameras((prev) => prev.map((c) => (c.id === camera.id ? { ...c, ...camera } : c)));
         }
       } catch (err) {
         console.error('[BattleMap] map draw save failed:', err);
       }
     },
-    [drawEditContext, isPlayer, onSetMapOverlay, onSetMapViewOverlay, tableId],
+    [drawEditContext, isPlayer, onSetMapOverlay, onSetMapViewOverlay],
   );
 
   useEffect(() => {
@@ -3900,6 +3679,7 @@ export function BattleMap({
                 <div className="flex shrink-0 items-start gap-1 rounded-md border border-dh-border/50 bg-dh-canvas/15 p-1">
                 <MapViewStripTile
                   variant="map"
+                  showMapBadge
                   mapRow={map}
                   mapOverlayPng={getRowOverlayPng(map)}
                   viewState={
@@ -3910,6 +3690,11 @@ export function BattleMap({
                   activeElements={activeElements}
                   stripMapId={map.id}
                   label={map.name || 'Map'}
+                  tooltipTitle={
+                    onForcePlayersToMapView && map.shareWithPlayers !== false
+                      ? `${map.name || 'Map'}: double-click to bring players`
+                      : undefined
+                  }
                   isActive={gmMapStripFullMapTileActive({
                     gmActiveViewId,
                     mapId: map.id,
@@ -3918,6 +3703,14 @@ export function BattleMap({
                   onClick={() => {
                     if (handleGmMapFreeExplore) handleGmMapFreeExplore(map.id);
                   }}
+                  onDoubleClick={
+                    onForcePlayersToMapView && map.shareWithPlayers !== false
+                      ? (e) => {
+                          e.preventDefault();
+                          onForcePlayersToMapView({ freeMapExploreMapId: map.id });
+                        }
+                      : undefined
+                  }
                   actions={
                     onSetMapShare || onRenameMap || (onRemoveMap && maps.length > 1) ? (
                       <div className="flex items-center justify-center gap-0.5">
@@ -3995,6 +3788,8 @@ export function BattleMap({
                     <MapViewStripTile
                       key={view.id}
                       variant="map"
+                      captionAbove
+                      showCameraBadge
                       mapRow={map}
                       mapOverlayPng={getRowOverlayPng(map)}
                       cameraOverlayPng={getRowOverlayPng(view)}
@@ -4002,8 +3797,21 @@ export function BattleMap({
                       activeElements={activeElements}
                       stripMapId={map.id}
                       label={label}
+                      tooltipTitle={
+                        onForcePlayersToMapView && view.broadcastToPlayers
+                          ? `${label}: double-click to bring players`
+                          : undefined
+                      }
                       isActive={view.id === gmActiveViewId}
                       onClick={() => handleGmSetActiveView(view.id)}
+                      onDoubleClick={
+                        onForcePlayersToMapView && view.broadcastToPlayers
+                          ? (e) => {
+                              e.preventDefault();
+                              onForcePlayersToMapView({ viewId: view.id });
+                            }
+                          : undefined
+                      }
                       actions={
                         <div className="flex items-center justify-center gap-0.5">
                           {onSetViewBroadcast ? (
@@ -4062,65 +3870,6 @@ export function BattleMap({
                 </div>
               </Fragment>
             ))}
-            {tableId && orphanCameras.length > 0 ? (
-              <div className="flex shrink-0 items-start gap-1 rounded-md border border-amber-800/35 bg-amber-950/20 p-1">
-                {orphanCameras.map((cam) => (
-                  <MapViewStripTile
-                    key={cam.id}
-                    variant="camera"
-                    mapRow={{
-                      mapSizeFt: 100,
-                      mapDimension: 'width',
-                      mapImageUrl: null,
-                      mapImageNaturalWidth: null,
-                      mapImageNaturalHeight: null,
-                    }}
-                    cameraOverlayPng={getRowOverlayPng(cam)}
-                    viewState={{
-                      mapViewZoomRatio: cam.mapViewZoomRatio,
-                      mapViewPanNorm: cam.mapViewPanNorm,
-                      mapViewVisibleNorm: cam.mapViewVisibleNorm,
-                    }}
-                    activeElements={activeElements}
-                    stripMapId={cam.mapId}
-                    label={cam.name || 'View'}
-                    isActive={cam.id === gmActivePersonalCameraId}
-                    showCameraBadge
-                    onClick={() => applyPersonalCamera(cam)}
-                    actions={
-                      <div className="flex items-center justify-center gap-0.5">
-                        <Tooltip label="Rename">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleRenameCamera(cam);
-                            }}
-                            className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
-                            aria-label={`Rename ${cam.name || 'saved view'}`}
-                          >
-                            <Pencil size={11} aria-hidden />
-                          </button>
-                        </Tooltip>
-                        <Tooltip label="Delete">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleDeleteCamera(cam);
-                            }}
-                            className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
-                            aria-label={`Delete ${cam.name || 'saved view'}`}
-                          >
-                            <Trash2 size={11} aria-hidden />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
           </div>
           {canControlMapView ? (
             <div
@@ -4143,13 +3892,13 @@ export function BattleMap({
           ) : null}
         </div>
       )}
-      {isPlayer && tableId && playerStripTileCount > 1 && (
+      {isPlayer && tableId && playerStripTileCount >= 1 && (
           <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
             <div
               className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
-              aria-label="GM broadcast views and your saved views"
+              aria-label="GM broadcast views"
             >
-              {playerViewBatches.map(({ map: m, gmViews, cams }, idx) => (
+              {playerViewBatches.map(({ map: m, gmViews }, idx) => (
                 <Fragment key={m.id}>
                   {idx > 0 ? (
                     <div
@@ -4161,25 +3910,20 @@ export function BattleMap({
                     {m.shareWithPlayers !== false ? (
                     <MapViewStripTile
                       variant="map"
+                      showMapBadge
                       mapRow={m}
                       mapOverlayPng={getRowOverlayPng(m)}
                       viewState={null}
                       activeElements={activeElements}
                       stripMapId={m.id}
                       label={m.name || 'Map'}
-                      hideCaption
-                      tooltipTitle="Pan and zoom freely (not a saved view)"
-                      isActive={
-                        !!(
-                          !playerActivePersonalCameraId &&
-                          (playerFreeMapExplore && playerFreeExploreMapId === m.id
-                            ? true
-                            : gmViews.length > 0 &&
-                              gmViews.some((v) => v.id === playerSelectedViewId))
-                        )
-                      }
+                      tooltipTitle={`${m.name || 'Map'} — Pan and zoom freely (not a saved view)`}
+                      isActive={playerMapStripFullMapTileActive({
+                        playerFreeMapExplore,
+                        playerFreeExploreMapId,
+                        mapId: m.id,
+                      })}
                       onClick={() => {
-                        setPlayerActivePersonalCameraId(null);
                         onPlayerEnterMapFreeExplore?.(m.id);
                       }}
                     />
@@ -4188,6 +3932,8 @@ export function BattleMap({
                       <MapViewStripTile
                         key={view.id}
                         variant="map"
+                        captionAbove
+                        showCameraBadge
                         mapRow={m}
                         mapOverlayPng={getRowOverlayPng(m)}
                         cameraOverlayPng={getRowOverlayPng(view)}
@@ -4197,75 +3943,16 @@ export function BattleMap({
                         label={view.name || 'View'}
                         isActive={
                           view.id === playerSelectedViewId &&
-                          !playerActivePersonalCameraId &&
                           !playerFreeMapExplore
                         }
                         onClick={() => {
-                          setPlayerActivePersonalCameraId(null);
                           onPlayerSelectView?.(view.id);
                         }}
-                      />
-                    ))}
-                    {cams.map((cam) => (
-                      <MapViewStripTile
-                        key={cam.id}
-                        variant="camera"
-                        mapRow={m}
-                        mapOverlayPng={getRowOverlayPng(m)}
-                        cameraOverlayPng={getRowOverlayPng(cam)}
-                        viewState={{
-                          mapViewZoomRatio: cam.mapViewZoomRatio,
-                          mapViewPanNorm: cam.mapViewPanNorm,
-                          mapViewVisibleNorm: cam.mapViewVisibleNorm,
-                        }}
-                        activeElements={activeElements}
-                        stripMapId={m.id}
-                        label={cam.name || 'View'}
-                        isActive={cam.id === playerActivePersonalCameraId}
-                        showCameraBadge
-                        onClick={() => applyPersonalCamera(cam)}
                       />
                     ))}
                   </div>
                 </Fragment>
               ))}
-              {orphanCameras.length > 0 ? (
-                <>
-                  {playerViewBatches.length > 0 ? (
-                    <div
-                      className="w-px shrink-0 self-stretch min-h-[4.75rem] bg-dh-border/60"
-                      aria-hidden
-                    />
-                  ) : null}
-                  <div className="flex shrink-0 items-start gap-1 rounded-md border border-amber-800/35 bg-amber-950/20 p-1">
-                    {orphanCameras.map((cam) => (
-                      <MapViewStripTile
-                        key={cam.id}
-                        variant="camera"
-                        mapRow={{
-                          mapSizeFt: 100,
-                          mapDimension: 'width',
-                          mapImageUrl: null,
-                          mapImageNaturalWidth: null,
-                          mapImageNaturalHeight: null,
-                        }}
-                        cameraOverlayPng={getRowOverlayPng(cam)}
-                        viewState={{
-                          mapViewZoomRatio: cam.mapViewZoomRatio,
-                          mapViewPanNorm: cam.mapViewPanNorm,
-                          mapViewVisibleNorm: cam.mapViewVisibleNorm,
-                        }}
-                        activeElements={activeElements}
-                        stripMapId={cam.mapId}
-                        label={cam.name || 'View'}
-                        isActive={cam.id === playerActivePersonalCameraId}
-                        showCameraBadge
-                        onClick={() => applyPersonalCamera(cam)}
-                      />
-                    ))}
-                  </div>
-                </>
-              ) : null}
             </div>
             {canControlMapView ? (
               <div
@@ -4288,12 +3975,6 @@ export function BattleMap({
             ) : null}
           </div>
         )}
-      {tableId && cameraHint ? (
-        <div className="px-3 py-1 bg-dh-surface border-b border-dh-border text-[11px] text-amber-200/90 leading-snug" role="status">
-          {cameraHint}
-        </div>
-      ) : null}
-
       {/* Map area */}
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {/* Left tray — character tokens shelf */}
@@ -4483,23 +4164,21 @@ export function BattleMap({
                       className="h-6 w-8 cursor-pointer rounded border border-dh-strong bg-dh-raised p-0"
                     />
                   </label>
-                  {!isPlayer && (
-                    <Tooltip label="Sample color from the map image only (not drawings or fog). Click, then click the map. Esc cancels.">
-                      <button
-                        type="button"
-                        onClick={() => setDrawEyedropperActive((v) => !v)}
-                        className={`inline-flex items-center justify-center rounded border p-1.5 ${
-                          drawEyedropperActive
-                            ? 'border-cyan-500/60 bg-cyan-950/35 text-cyan-100'
-                            : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
-                        }`}
-                        aria-label="Eyedropper: sample color from map image"
-                        aria-pressed={drawEyedropperActive}
-                      >
-                        <Pipette size={15} aria-hidden />
-                      </button>
-                    </Tooltip>
-                  )}
+                  <Tooltip label="Sample color from the map image only (not drawings or fog). Click, then click the map. Esc cancels.">
+                    <button
+                      type="button"
+                      onClick={() => setDrawEyedropperActive((v) => !v)}
+                      className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                        drawEyedropperActive
+                          ? 'border-cyan-500/60 bg-cyan-950/35 text-cyan-100'
+                          : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                      }`}
+                      aria-label="Eyedropper: sample color from map image"
+                      aria-pressed={drawEyedropperActive}
+                    >
+                      <Pipette size={15} aria-hidden />
+                    </button>
+                  </Tooltip>
                   <label
                     className={`inline-flex items-center gap-1.5 ${drawTool === 'eraser' && !isPlayer ? 'text-dh-muted/50' : 'text-dh-muted'}`}
                     title={
@@ -4976,7 +4655,7 @@ export function BattleMap({
           {canControlMapView &&
             !(
               (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
-              (isPlayer && tableId && playerStripTileCount > 1)
+              (isPlayer && tableId && playerStripTileCount >= 1)
             ) && (
             <div className="pointer-events-none absolute right-2 bottom-2 z-20">
               <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">

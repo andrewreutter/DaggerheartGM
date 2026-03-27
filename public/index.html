@@ -56,16 +56,6 @@
 
   <!-- Bump ?v= when shipping client bundle changes so browsers don’t keep a stale cached app.js -->
   <script type="module" src="/app.js?v=library-preview-3"></script>
-  <script>
-    (function() {
-      var src = new EventSource('/livereload');
-      var wasConnected = false;
-      src.onopen = function() { if (wasConnected) location.reload(); };
-      src.onmessage = function(e) {
-        wasConnected = true;
-        if (e.data === 'reload') location.reload();
-      };
-    })();
-  </script>
+  <!-- Dev-only /livereload client is injected by server.js (omitted when NODE_ENV=production) -->
 </body>
 </html>

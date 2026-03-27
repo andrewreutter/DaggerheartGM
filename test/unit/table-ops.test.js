@@ -422,6 +422,139 @@ describe('applyTableOp', () => {
     expect(result.mapConfig.mapViewPanNorm).toEqual({ x: 0.1, y: 0.1 });
   });
 
+  it('force-player-map-view increments playerMapViewFocus for a broadcast view', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: 0.2,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const r = applyTableOp({ op: 'force-player-map-view', viewId: 'v1' }, state);
+    expect(r.playerMapViewFocus.seq).toBe(1);
+    expect(r.playerMapViewFocus.viewId).toBe('v1');
+    expect(r.playerMapViewFocus.freeMapExploreMapId).toBeNull();
+  });
+
+  it('force-player-map-view succeeds for a broadcast view even when the map is not shared with players', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: false,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: 0.2,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const r = applyTableOp({ op: 'force-player-map-view', viewId: 'v1' }, state);
+    expect(r.playerMapViewFocus.seq).toBe(1);
+    expect(r.playerMapViewFocus.viewId).toBe('v1');
+  });
+
+  it('force-player-map-view is a no-op for a non-broadcast view', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v2',
+          mapId: 'a',
+          name: 'Secret',
+          mapViewZoomRatio: 0.9,
+          mapViewPanNorm: null,
+          broadcastToPlayers: false,
+        },
+      ],
+      gmActiveViewId: 'v2',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const r = applyTableOp({ op: 'force-player-map-view', viewId: 'v2' }, state);
+    expect(r).toEqual({});
+  });
+
+  it('force-player-map-view allows free-map tile when map is shared with players', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const r = applyTableOp({ op: 'force-player-map-view', freeMapExploreMapId: 'a' }, state);
+    expect(r.playerMapViewFocus.seq).toBe(1);
+    expect(r.playerMapViewFocus.viewId).toBeNull();
+    expect(r.playerMapViewFocus.freeMapExploreMapId).toBe('a');
+  });
+
   it('set-map-share toggles map shareWithPlayers', () => {
     const state = {
       maps: [
