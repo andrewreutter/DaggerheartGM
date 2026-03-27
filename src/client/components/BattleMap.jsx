@@ -82,7 +82,6 @@ import {
   strokeOutlineEllipse,
   floodEraseConnectedComponent,
   ERASER_DESTINATION_OUT,
-  eraseSourceRgba,
   rgbStringFromRgba,
   alphaFromRgbaString,
   multiplyRgbaAlpha,
@@ -1570,7 +1569,12 @@ export function BattleMap({
   }, [mapHeightFt, containerHeight, pxPerFt, mapZoom]);
   const [drawColorHex, setDrawColorHex] = useState('#000000');
   const [drawOpacity, setDrawOpacity] = useState(1);
-  const [drawCursorClient, setDrawCursorClient] = useState(null);
+  /** True when cursor is over a placed token — draw layers ignore pointer so tokens stay draggable. */
+  const [hoveringTokenBlocksDraw, setHoveringTokenBlocksDraw] = useState(false);
+  /** True after pointer-down on map draw/scribble until pointer-up/cancel — keeps draw canvas receiving events over tokens mid-stroke. */
+  const [mapDrawCaptureActive, setMapDrawCaptureActive] = useState(false);
+  /** True while interacting with brush radius or opacity — shows live viewport preview dot (not color). */
+  const [brushPreviewControlsActive, setBrushPreviewControlsActive] = useState(false);
   const drawPaintRef = useRef(null);
   const drawSizeRef = useRef({ w: 0, h: 0 });
   const drawBrushActiveRef = useRef(false);
@@ -2745,6 +2749,17 @@ export function BattleMap({
     return () => window.removeEventListener('keydown', onKey);
   }, [isPlayer]);
 
+  useEffect(() => {
+    if (!brushPreviewControlsActive) return;
+    const end = () => setBrushPreviewControlsActive(false);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    return () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+  }, [brushPreviewControlsActive]);
+
   const handleScribbleClear = useCallback(() => {
     if (!mapConfigHasImage(mapConfig)) return;
     if (!window.confirm(isPlayer ? 'Clear your scribbles?' : 'Clear all scribbles on your screen?')) return;
@@ -2786,6 +2801,7 @@ export function BattleMap({
         scribbleStrokeIdRef.current = strokeId;
         scribbleStrokesRef.current.push({ type: 'dot', x: p.x, y: p.y, r, rgba: brushRgba, t0 });
         scribbleBrushActiveRef.current = true;
+        setMapDrawCaptureActive(true);
         scribbleLastPxRef.current = p;
         scheduleScribblePaint();
         if (tableId) {
@@ -2837,6 +2853,7 @@ export function BattleMap({
             tool: drawTool,
             filled: drawTool === 'rect' ? rectShapeFilled : ovalShapeFilled,
           };
+          setMapDrawCaptureActive(true);
           e.currentTarget.setPointerCapture(e.pointerId);
         } catch {
           /* ignore */
@@ -2855,8 +2872,10 @@ export function BattleMap({
           startClientY: e.clientY,
           startPx: { x: p.x, y: p.y },
         };
+        setMapDrawCaptureActive(true);
       } else {
         drawBrushActiveRef.current = true;
+        setMapDrawCaptureActive(true);
         drawLastPxRef.current = { x: p.x, y: p.y };
         ctx.save();
         ctx.globalCompositeOperation = 'source-over';
@@ -3052,6 +3071,7 @@ export function BattleMap({
 
   const handleDrawPointerUp = useCallback(
     async (e) => {
+      try {
       if (drawTool === 'scribble' || isPlayer) {
         if (!scribbleBrushActiveRef.current) return;
         flushScribbleTailToPeers();
@@ -3149,6 +3169,9 @@ export function BattleMap({
         const png = c.toDataURL('image/png');
         await commitOverlayPng(png);
       }
+      } finally {
+        setMapDrawCaptureActive(false);
+      }
     },
     [
       clientToDrawPx,
@@ -3165,6 +3188,7 @@ export function BattleMap({
 
   const handleDrawPointerCancel = useCallback(
     async (e) => {
+      try {
       if (drawTool === 'scribble' || isPlayer) {
         if (scribbleBrushActiveRef.current) {
           flushScribbleTailToPeers();
@@ -3211,6 +3235,9 @@ export function BattleMap({
         return;
       }
       await handleDrawPointerUp(e);
+      } finally {
+        setMapDrawCaptureActive(false);
+      }
     },
     [handleDrawPointerUp, drawTool, isPlayer, flushScribbleTailToPeers],
   );
@@ -3235,11 +3262,17 @@ export function BattleMap({
     (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'rect' || drawTool === 'oval') &&
     drawEditContext;
   const showScribbleCanvas = mapConfigHasImage(mapConfig);
+  const drawLayerBlockedByTokenHover = hoveringTokenBlocksDraw && !mapDrawCaptureActive;
   const scribbleCanvasPointerEvents =
-    drawTool === 'scribble' || isPlayer ? 'auto' : 'none';
+    drawTool === 'scribble' || isPlayer
+      ? drawLayerBlockedByTokenHover
+        ? 'none'
+        : 'auto'
+      : 'none';
   const scribbleCanvasZ =
     showDrawPaintCanvas && drawTool !== 'scribble' ? 19 : 21;
-  const drawCursorRadiusScreenPx = drawBrushRadiusClampedFt * pxPerFt * mapZoom;
+  /** Brush radius in screen pixels (matches stroke width at current zoom). */
+  const brushRadiusPreviewScreenPx = drawBrushRadiusClampedFt * pxPerFt * mapZoom;
 
   // Find a placed token whose bounding box contains the given client point
   const findTokenAtClient = useCallback((clientX, clientY) => {
@@ -3263,9 +3296,8 @@ export function BattleMap({
   // Handle pointer move over the map canvas area (not trays)
   const handleMapPointerMove = useCallback((e) => {
     if (panRightDragRef.current) return;
-    if (!isPlayer && (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble')) {
-      setDrawCursorClient({ x: e.clientX, y: e.clientY });
-    }
+    const overToken = findTokenAtClient(e.clientX, e.clientY);
+    setHoveringTokenBlocksDraw(!!overToken);
     // During an active drag, the bullseye is frozen at the drag origin — don't update
     if (frozenBullseyeRef.current) {
       setBullseyeFt(frozenBullseyeRef.current);
@@ -3279,13 +3311,12 @@ export function BattleMap({
       const ft = clientToFt(e.clientX, e.clientY);
       if (ft) setBullseyeFt(ft);
     }
-  }, [findTokenAtClient, clientToFt, isPlayer, drawTool]);
+  }, [findTokenAtClient, clientToFt, drawTool]);
 
   const handleMapPointerLeave = useCallback(() => {
+    setHoveringTokenBlocksDraw(false);
     if (!frozenBullseyeRef.current) setBullseyeFt(null);
-    if (!isPlayer && (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble'))
-      setDrawCursorClient(null);
-  }, [isPlayer, drawTool]);
+  }, []);
 
   const handleMapPingPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
@@ -4339,6 +4370,7 @@ export function BattleMap({
                     <input
                       type="color"
                       value={drawColorHex}
+                      onInput={(e) => setDrawColorHex(e.target.value)}
                       onChange={(e) => setDrawColorHex(e.target.value)}
                       className="h-6 w-8 cursor-pointer rounded border border-dh-strong bg-dh-raised p-0"
                     />
@@ -4358,6 +4390,8 @@ export function BattleMap({
                       max={1}
                       step={0.05}
                       value={drawOpacity}
+                      onPointerDown={() => setBrushPreviewControlsActive(true)}
+                      onInput={(e) => setDrawOpacity(Number(e.target.value))}
                       onChange={(e) => setDrawOpacity(Number(e.target.value))}
                       className="relative top-0.5 h-1.5 w-20 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500 disabled:opacity-40"
                       disabled={drawTool === 'eraser' && !isPlayer}
@@ -4374,6 +4408,7 @@ export function BattleMap({
                       max={drawBrushRadiusMaxFt}
                       step={0.5}
                       value={drawBrushRadiusClampedFt}
+                      onPointerDown={() => setBrushPreviewControlsActive(true)}
                       onChange={(e) => setDrawBrushRadiusFt(Number(e.target.value))}
                       className="relative top-0.5 h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
                       disabled={drawTool === 'rect' || drawTool === 'oval'}
@@ -4414,13 +4449,11 @@ export function BattleMap({
           <div
             ref={scrollContainerRef}
             className={`w-full h-full overflow-hidden relative touch-none bg-dh-canvas ${
-              !isPlayer && (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble')
-                ? 'cursor-none'
-                : !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
-                  ? 'cursor-crosshair'
-                  : canControlMapView && (canPanMap || rightPanDragging)
-                    ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
-                    : ''
+              !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
+                ? 'cursor-crosshair'
+                : canControlMapView && (canPanMap || rightPanDragging)
+                  ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
+                  : ''
             }`}
             style={
               mapLetterboxClipPx &&
@@ -4491,13 +4524,12 @@ export function BattleMap({
                     width: renderedWidthPx,
                     height: renderedHeightPx,
                     zIndex: 20,
+                    pointerEvents: drawLayerBlockedByTokenHover ? 'none' : 'auto',
                     touchAction: 'none',
                     cursor:
                       drawTool === 'rect' || drawTool === 'oval'
                         ? 'crosshair'
-                        : drawTool === 'brush' || drawTool === 'eraser'
-                          ? 'none'
-                          : 'default',
+                        : 'default',
                   }}
                   onPointerDown={handleDrawPointerDown}
                   onPointerMove={handleDrawPointerMove}
@@ -4522,13 +4554,12 @@ export function BattleMap({
                     width: renderedWidthPx,
                     height: renderedHeightPx,
                     zIndex: 20,
+                    pointerEvents: drawLayerBlockedByTokenHover ? 'none' : 'auto',
                     touchAction: 'none',
                     cursor:
                       drawTool === 'rect' || drawTool === 'oval'
                         ? 'crosshair'
-                        : drawTool === 'brush' || drawTool === 'eraser'
-                          ? 'none'
-                          : 'default',
+                        : 'default',
                   }}
                   onPointerDown={handleDrawPointerDown}
                   onPointerMove={handleDrawPointerMove}
@@ -4546,7 +4577,7 @@ export function BattleMap({
                     zIndex: scribbleCanvasZ,
                     touchAction: 'none',
                     pointerEvents: scribbleCanvasPointerEvents,
-                    cursor: drawTool === 'scribble' || isPlayer ? 'none' : 'default',
+                    cursor: 'default',
                   }}
                   onPointerDown={handleDrawPointerDown}
                   onPointerMove={handleDrawPointerMove}
@@ -4762,6 +4793,30 @@ export function BattleMap({
               ))}
               </div>
             </div>
+            {brushPreviewControlsActive &&
+            mapConfigHasImage(mapConfig) &&
+            (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble') ? (
+              <div
+                className="absolute inset-0 z-[28] flex items-center justify-center pointer-events-none"
+                aria-hidden
+              >
+                <div
+                  className="rounded-full shrink-0"
+                  style={{
+                    width: brushRadiusPreviewScreenPx * 2,
+                    height: brushRadiusPreviewScreenPx * 2,
+                    backgroundColor:
+                      drawTool === 'eraser' && !isPlayer ? 'transparent' : brushRgba,
+                    border:
+                      drawTool === 'eraser' && !isPlayer
+                        ? '2px dashed rgba(255,255,255,0.85)'
+                        : 'none',
+                    boxShadow:
+                      drawTool === 'eraser' && !isPlayer ? 'inset 0 0 0 1px rgba(0,0,0,0.35)' : undefined,
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
           {!mapConfigHasImage(mapConfig) && (gmEmptyMapHint || playerEmptyMapHint) ? (
             <div
@@ -4896,30 +4951,6 @@ export function BattleMap({
         />,
         document.body,
       )}
-      {typeof document !== 'undefined' &&
-        drawCursorClient &&
-        (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble') &&
-        !isPlayer &&
-        mapConfigHasImage(mapConfig) &&
-        createPortal(
-          <div
-            className="pointer-events-none fixed rounded-full shadow-[0_0_8px_rgba(0,0,0,0.9)]"
-            style={{
-              left: drawCursorClient.x - drawCursorRadiusScreenPx,
-              top: drawCursorClient.y - drawCursorRadiusScreenPx,
-              width: drawCursorRadiusScreenPx * 2,
-              height: drawCursorRadiusScreenPx * 2,
-              zIndex: 60,
-              border:
-                drawTool === 'eraser'
-                  ? '2px dashed rgba(255,255,255,0.75)'
-                  : `2px dashed ${brushRgba}`,
-              ...(drawTool === 'eraser' ? { '--map-draw-erase-paint': eraseSourceRgba(brushRgba) } : {}),
-            }}
-            aria-hidden
-          />,
-          document.body,
-        )}
     </div>
   );
 }
