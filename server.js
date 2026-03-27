@@ -711,6 +711,23 @@ function broadcastMapPingToTable(tableId, payload) {
   }
 }
 
+/** Ephemeral map scribble segment — same delivery as map_ping (no DB). */
+function broadcastMapScribbleToTable(tableId, payload) {
+  const room = rooms.get(tableId);
+  if (!room) return;
+  const msg = `event: map_scribble\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const clientRes of room.gmClients) {
+    try {
+      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
+    } catch { /* ignore */ }
+  }
+  for (const [, p] of room.players) {
+    try {
+      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
+    } catch { /* ignore */ }
+  }
+}
+
 async function resolveDisplayNameForMapPing(req) {
   try {
     const u = await getAuth().getUser(req.uid);
@@ -839,6 +856,10 @@ async function applyOpToTableState(tableId, op) {
       op.op === 'rename-map-view' ||
       op.op === 'set-view-broadcast' ||
       op.op === 'set-map-share' ||
+      op.op === 'set-map-overlay' ||
+      op.op === 'set-map-fog' ||
+      op.op === 'set-map-view-overlay' ||
+      op.op === 'set-map-view-fog' ||
       bypassPrepGate;
     if (!skipActivityStamp) {
       newState.top = {
@@ -1945,6 +1966,61 @@ app.post('/api/room/:tableId/map-ping', requireAuth, async (req, res) => {
   res.json({ ok: true, ping: payload });
 });
 
+function validateMapScribbleBody(body) {
+  if (!body || typeof body !== 'object') return null;
+  const id = typeof body.id === 'string' && body.id.length <= 80 ? body.id : null;
+  const _clientId = typeof body._clientId === 'string' && body._clientId.length <= 80 ? body._clientId : null;
+  const strokeId = typeof body.strokeId === 'string' && body.strokeId.length <= 80 ? body.strokeId : null;
+  const mapId = body.mapId != null && body.mapId !== '' ? String(body.mapId) : null;
+  const t0 = Number(body.t0);
+  const kind = body.kind === 'dot' || body.kind === 'segment' ? body.kind : null;
+  const rgba = typeof body.rgba === 'string' && body.rgba.length <= 80 ? body.rgba : null;
+  const rFt = Number(body.rFt);
+  if (!id || !_clientId || !strokeId || !kind || !rgba || !Number.isFinite(t0) || !Number.isFinite(rFt) || rFt <= 0 || rFt > 5000) {
+    return null;
+  }
+  if (kind === 'dot') {
+    const xFt = Number(body.xFt);
+    const yFt = Number(body.yFt);
+    if (!Number.isFinite(xFt) || !Number.isFinite(yFt)) return null;
+    return { id, _clientId, strokeId, mapId, t0, kind, rgba, rFt, xFt, yFt };
+  }
+  const x0Ft = Number(body.x0Ft);
+  const y0Ft = Number(body.y0Ft);
+  const x1Ft = Number(body.x1Ft);
+  const y1Ft = Number(body.y1Ft);
+  if (![x0Ft, y0Ft, x1Ft, y1Ft].every(Number.isFinite)) return null;
+  return { id, _clientId, strokeId, mapId, t0, kind, rgba, rFt, x0Ft, y0Ft, x1Ft, y1Ft };
+}
+
+// POST /api/room/my/map-scribble — GM broadcast ephemeral scribble stroke (SSE `map_scribble`).
+app.post('/api/room/my/map-scribble', requireAuth, async (req, res) => {
+  const { tableId: bodyTableId, ...rest } = req.body || {};
+  const tid = bodyTableId || req.uid;
+  const row = await getTableStateById(APP_ID, tid);
+  if (!row || row.userId !== req.uid) {
+    return res.status(403).json({ error: 'Not your table' });
+  }
+  const payload = validateMapScribbleBody(rest);
+  if (!payload) {
+    return res.status(400).json({ error: 'Invalid scribble payload' });
+  }
+  broadcastMapScribbleToTable(tid, payload);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/map-scribble — player broadcast (same as GM).
+app.post('/api/room/:tableId/map-scribble', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const payload = validateMapScribbleBody(req.body || {});
+  if (!payload) {
+    return res.status(400).json({ error: 'Invalid scribble payload' });
+  }
+  broadcastMapScribbleToTable(ctx.tableId, payload);
+  res.json({ ok: true });
+});
+
 // POST /api/room/my/roll — GM rolls dice server-side; persists to DB, returns result.
 // When silent is true: build and return roll data only (no DB write, no banner notification).
 app.post('/api/room/my/roll', requireAuth, async (req, res) => {
@@ -2829,8 +2905,11 @@ app.get('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) => 
 app.post('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) => {
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (req.uid !== ctx.gmUid) {
+    return res.status(403).json({ error: 'Only the GM can create personal map cameras' });
+  }
   if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
-  const { name, mapId, mapViewZoomRatio, mapViewPanNorm } = req.body || {};
+  const { name, mapId, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm } = req.body || {};
   if (!mapId || typeof mapId !== 'string') {
     return res.status(400).json({ error: 'mapId required' });
   }
@@ -2840,6 +2919,7 @@ app.post('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) =>
       mapId,
       mapViewZoomRatio,
       mapViewPanNorm,
+      mapViewVisibleNorm,
     });
     res.json({ camera });
   } catch (err) {
@@ -2852,11 +2932,14 @@ app.patch('/api/room/:tableId/personal-cameras/:cameraId', requireAuth, async (r
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
-  const { name, mapViewZoomRatio, mapViewPanNorm } = req.body || {};
+  const { name, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, overlayPng, fogPng } = req.body || {};
   const patch = {};
   if (name !== undefined) patch.name = name;
   if (mapViewZoomRatio !== undefined) patch.mapViewZoomRatio = mapViewZoomRatio;
   if (mapViewPanNorm !== undefined) patch.mapViewPanNorm = mapViewPanNorm;
+  if (mapViewVisibleNorm !== undefined) patch.mapViewVisibleNorm = mapViewVisibleNorm;
+  if (overlayPng !== undefined) patch.overlayPng = overlayPng;
+  else if (fogPng !== undefined) patch.overlayPng = fogPng;
   if (Object.keys(patch).length === 0) {
     return res.status(400).json({ error: 'No fields to update' });
   }
