@@ -18,6 +18,7 @@ function syncGmMapViewFromActiveView(state) {
     mapId: v.mapId,
     mapViewZoomRatio: v.mapViewZoomRatio ?? null,
     mapViewPanNorm: v.mapViewPanNorm ?? null,
+    mapViewVisibleNorm: v.mapViewVisibleNorm ?? null,
   };
 }
 
@@ -173,7 +174,9 @@ export function applyTableOp(op, state) {
       let mapViews = base.mapViews.map(v => ({ ...v }));
       if (op.resetTokenPositions) {
         mapViews = mapViews.map(v =>
-          v.mapId === targetMapId ? { ...v, mapViewZoomRatio: null, mapViewPanNorm: null } : v
+          v.mapId === targetMapId
+            ? { ...v, mapViewZoomRatio: null, mapViewPanNorm: null, mapViewVisibleNorm: null }
+            : v
         );
       }
       const nextState = { ...base, maps, mapViews };
@@ -208,6 +211,8 @@ export function applyTableOp(op, state) {
           mapId: mid,
           mapViewZoomRatio: op.mapViewZoomRatio !== undefined ? op.mapViewZoomRatio : base.gmMapView?.mapViewZoomRatio ?? null,
           mapViewPanNorm: op.mapViewPanNorm !== undefined ? op.mapViewPanNorm : base.gmMapView?.mapViewPanNorm ?? null,
+          mapViewVisibleNorm:
+            op.mapViewVisibleNorm !== undefined ? op.mapViewVisibleNorm : base.gmMapView?.mapViewVisibleNorm ?? null,
         };
         const nextState = { ...base, gmMapView: nextGm, activeMapId: mid, gmActiveViewId: null };
         return {
@@ -226,6 +231,7 @@ export function applyTableOp(op, state) {
           ...v,
           ...(op.mapViewZoomRatio !== undefined ? { mapViewZoomRatio: op.mapViewZoomRatio } : {}),
           ...(op.mapViewPanNorm !== undefined ? { mapViewPanNorm: op.mapViewPanNorm } : {}),
+          ...(op.mapViewVisibleNorm !== undefined ? { mapViewVisibleNorm: op.mapViewVisibleNorm } : {}),
         };
       });
       const nextState = { ...base, mapViews };
@@ -251,6 +257,7 @@ export function applyTableOp(op, state) {
           mapId,
           mapViewZoomRatio: op.mapViewZoomRatio ?? null,
           mapViewPanNorm: op.mapViewPanNorm ?? null,
+          mapViewVisibleNorm: op.mapViewVisibleNorm ?? null,
         },
       };
       return {
@@ -317,6 +324,10 @@ export function applyTableOp(op, state) {
           null,
         mapViewPanNorm:
           op.mapViewPanNorm ?? (fromFreeExplore ? base.gmMapView?.mapViewPanNorm : cur.mapViewPanNorm) ?? null,
+        mapViewVisibleNorm:
+          op.mapViewVisibleNorm ??
+          (fromFreeExplore ? base.gmMapView?.mapViewVisibleNorm : cur.mapViewVisibleNorm) ??
+          null,
         broadcastToPlayers: false,
       };
       const mapViews = [...base.mapViews, newView];
@@ -385,6 +396,56 @@ export function applyTableOp(op, state) {
       const nextState = { ...base, maps };
       return { maps, mapConfig: deriveMapConfigFromState(nextState) };
     }
+    case 'set-map-overlay':
+    case 'set-map-fog': {
+      const base = normalizeMapState(state);
+      const mapId = op.mapId;
+      if (!mapId || !base.maps.some(m => m.id === mapId)) return {};
+      const nextPng = op.overlayPng ?? op.fogPng;
+      if (nextPng !== null && nextPng !== undefined && typeof nextPng !== 'string') return {};
+      const maps = base.maps.map((m) => {
+        if (m.id !== mapId) return m;
+        if (nextPng === null || nextPng === undefined) {
+          const next = { ...m };
+          delete next.overlayPng;
+          delete next.fogPng;
+          return next;
+        }
+        const next = { ...m, overlayPng: nextPng };
+        delete next.fogPng;
+        return next;
+      });
+      const nextState = { ...base, maps };
+      return {
+        maps,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'set-map-view-overlay':
+    case 'set-map-view-fog': {
+      const base = normalizeMapState(state);
+      const viewId = op.viewId;
+      if (!viewId || !base.mapViews.some(v => v.id === viewId)) return {};
+      const nextPng = op.overlayPng ?? op.fogPng;
+      if (nextPng !== null && nextPng !== undefined && typeof nextPng !== 'string') return {};
+      const mapViews = base.mapViews.map((v) => {
+        if (v.id !== viewId) return v;
+        if (nextPng === null || nextPng === undefined) {
+          const next = { ...v };
+          delete next.overlayPng;
+          delete next.fogPng;
+          return next;
+        }
+        const next = { ...v, overlayPng: nextPng };
+        delete next.fogPng;
+        return next;
+      });
+      const nextState = { ...base, mapViews };
+      return {
+        mapViews,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
     case 'add-map': {
       const base = normalizeMapState(state);
       const id = newMapId();
@@ -408,6 +469,7 @@ export function applyTableOp(op, state) {
         name: 'Main',
         mapViewZoomRatio: null,
         mapViewPanNorm: null,
+        mapViewVisibleNorm: null,
         broadcastToPlayers: false,
       };
       const maps = [...base.maps, newMap];

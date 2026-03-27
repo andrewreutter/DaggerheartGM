@@ -98,6 +98,10 @@ export function gateTableOpForPrepMode(state, op) {
     case 'rename-map-view':
     case 'set-view-broadcast':
     case 'set-map-share':
+    case 'set-map-overlay':
+    case 'set-map-fog':
+    case 'set-map-view-overlay':
+    case 'set-map-view-fog':
     case 'clear-table':
     case 'set-player-emails':
     case 'set-gm-display-name':

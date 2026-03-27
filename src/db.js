@@ -1218,7 +1218,9 @@ export async function listPersonalMapCameras(appId, tableId, userId) {
   const db = getPool();
   const { rows } = await db.query(
     `SELECT id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
-            map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"
+            map_view_pan_norm AS "mapViewPanNorm",
+            map_view_visible_norm AS "mapViewVisibleNorm",
+            fog_png AS "overlayPng", created_at AS "createdAt"
      FROM personal_map_cameras
      WHERE app_id = $1 AND table_id = $2 AND user_id = $3
      ORDER BY created_at ASC`,
@@ -1231,11 +1233,22 @@ export async function insertPersonalMapCamera(appId, tableId, userId, row) {
   const db = getPool();
   const name = row.name && String(row.name).trim() ? String(row.name).trim() : 'Camera';
   const { rows } = await db.query(
-    `INSERT INTO personal_map_cameras (app_id, table_id, user_id, name, map_id, map_view_zoom_ratio, map_view_pan_norm)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO personal_map_cameras (app_id, table_id, user_id, name, map_id, map_view_zoom_ratio, map_view_pan_norm, map_view_visible_norm)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
      RETURNING id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
-               map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"`,
-    [appId, tableId, userId, name, row.mapId, row.mapViewZoomRatio ?? null, row.mapViewPanNorm ?? null]
+               map_view_pan_norm AS "mapViewPanNorm",
+               map_view_visible_norm AS "mapViewVisibleNorm",
+               fog_png AS "overlayPng", created_at AS "createdAt"`,
+    [
+      appId,
+      tableId,
+      userId,
+      name,
+      row.mapId,
+      row.mapViewZoomRatio ?? null,
+      row.mapViewPanNorm ?? null,
+      row.mapViewVisibleNorm != null ? JSON.stringify(row.mapViewVisibleNorm) : null,
+    ]
   );
   return rows[0];
 }
@@ -1248,7 +1261,9 @@ export async function updatePersonalMapCameraName(appId, tableId, userId, camera
     `UPDATE personal_map_cameras SET name = $5
      WHERE app_id = $1 AND table_id = $2 AND user_id = $3 AND id = $4
      RETURNING id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
-               map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"`,
+               map_view_pan_norm AS "mapViewPanNorm",
+               map_view_visible_norm AS "mapViewVisibleNorm",
+               fog_png AS "overlayPng", created_at AS "createdAt"`,
     [appId, tableId, userId, cameraId, n]
   );
   return rows[0] ?? null;
@@ -1256,7 +1271,8 @@ export async function updatePersonalMapCameraName(appId, tableId, userId, camera
 
 /** Patch name and/or framing fields for a personal camera. */
 export async function updatePersonalMapCameraPatch(appId, tableId, userId, cameraId, patch) {
-  const { name, mapViewZoomRatio, mapViewPanNorm } = patch || {};
+  const { name, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, overlayPng, fogPng } = patch || {};
+  const pngPatch = overlayPng !== undefined ? overlayPng : fogPng;
   const sets = [];
   const vals = [appId, tableId, userId, cameraId];
   let i = 5;
@@ -1277,13 +1293,25 @@ export async function updatePersonalMapCameraPatch(appId, tableId, userId, camer
     vals.push(JSON.stringify(mapViewPanNorm));
     i++;
   }
+  if (mapViewVisibleNorm !== undefined) {
+    sets.push(`map_view_visible_norm = $${i}::jsonb`);
+    vals.push(mapViewVisibleNorm == null ? null : JSON.stringify(mapViewVisibleNorm));
+    i++;
+  }
+  if (pngPatch !== undefined) {
+    sets.push(`fog_png = $${i}`);
+    vals.push(pngPatch === null ? null : String(pngPatch));
+    i++;
+  }
   if (sets.length === 0) return null;
   const db = getPool();
   const { rows } = await db.query(
     `UPDATE personal_map_cameras SET ${sets.join(', ')}
      WHERE app_id = $1 AND table_id = $2 AND user_id = $3 AND id = $4
      RETURNING id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
-               map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"`,
+               map_view_pan_norm AS "mapViewPanNorm",
+               map_view_visible_norm AS "mapViewVisibleNorm",
+               fog_png AS "overlayPng", created_at AS "createdAt"`,
     vals
   );
   return rows[0] ?? null;

@@ -62,6 +62,7 @@ export function normalizeMapState(state) {
       mapId: out.activeMapId,
       mapViewZoomRatio: mc.mapViewZoomRatio ?? null,
       mapViewPanNorm: mc.mapViewPanNorm ?? null,
+      mapViewVisibleNorm: mc.mapViewVisibleNorm ?? null,
     };
   } else {
     out.maps = out.maps.map(m => ({
@@ -72,7 +73,12 @@ export function normalizeMapState(state) {
       out.activeMapId = out.maps[0].id;
     }
     if (!out.gmMapView || typeof out.gmMapView !== 'object') {
-      out.gmMapView = { mapId: out.activeMapId, mapViewZoomRatio: null, mapViewPanNorm: null };
+      out.gmMapView = {
+        mapId: out.activeMapId,
+        mapViewZoomRatio: null,
+        mapViewPanNorm: null,
+        mapViewVisibleNorm: null,
+      };
     } else {
       out.gmMapView = { ...out.gmMapView };
       if (!out.maps.some(m => m.id === out.gmMapView.mapId)) {
@@ -97,12 +103,15 @@ export function normalizeMapState(state) {
       const isFirstMap = i === 0;
       let mapViewZoomRatio = null;
       let mapViewPanNorm = null;
+      let mapViewVisibleNorm = null;
       if (gm.mapId === m.id) {
         mapViewZoomRatio = gm.mapViewZoomRatio ?? null;
         mapViewPanNorm = gm.mapViewPanNorm ?? null;
+        mapViewVisibleNorm = gm.mapViewVisibleNorm ?? null;
       } else if (maps.length === 1 && (!gm.mapId || gm.mapId === m.id)) {
         mapViewZoomRatio = mc.mapViewZoomRatio ?? null;
         mapViewPanNorm = mc.mapViewPanNorm ?? null;
+        mapViewVisibleNorm = mc.mapViewVisibleNorm ?? null;
       }
       mapViews.push({
         id: newViewId(),
@@ -110,6 +119,7 @@ export function normalizeMapState(state) {
         name: 'Main',
         mapViewZoomRatio,
         mapViewPanNorm,
+        mapViewVisibleNorm,
         broadcastToPlayers: isFirstMap,
       });
     }
@@ -140,6 +150,7 @@ export function normalizeMapState(state) {
       mapId: out.gmMapView.mapId,
       mapViewZoomRatio: out.gmMapView.mapViewZoomRatio ?? null,
       mapViewPanNorm: out.gmMapView.mapViewPanNorm ?? null,
+      mapViewVisibleNorm: out.gmMapView.mapViewVisibleNorm ?? null,
     };
   } else {
     const activeView = out.mapViews.find(v => v.id === out.gmActiveViewId) || out.mapViews[0];
@@ -148,6 +159,7 @@ export function normalizeMapState(state) {
       mapId: out.activeMapId,
       mapViewZoomRatio: activeView?.mapViewZoomRatio ?? null,
       mapViewPanNorm: activeView?.mapViewPanNorm ?? null,
+      mapViewVisibleNorm: activeView?.mapViewVisibleNorm ?? null,
     };
   }
 
@@ -171,6 +183,7 @@ export function deriveMapConfigFromState(state) {
         mapImageNaturalHeight: null,
         mapViewZoomRatio: null,
         mapViewPanNorm: null,
+        mapViewVisibleNorm: null,
       };
     }
     return {
@@ -181,6 +194,7 @@ export function deriveMapConfigFromState(state) {
       mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
       mapViewZoomRatio: s.gmMapView.mapViewZoomRatio ?? null,
       mapViewPanNorm: s.gmMapView.mapViewPanNorm ?? null,
+      mapViewVisibleNorm: s.gmMapView.mapViewVisibleNorm ?? null,
     };
   }
   const view = s.mapViews?.find(v => v.id === s.gmActiveViewId) || s.mapViews?.[0];
@@ -194,6 +208,7 @@ export function deriveMapConfigFromState(state) {
       mapImageNaturalHeight: null,
       mapViewZoomRatio: null,
       mapViewPanNorm: null,
+      mapViewVisibleNorm: null,
     };
   }
   return {
@@ -204,6 +219,7 @@ export function deriveMapConfigFromState(state) {
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
     mapViewZoomRatio: view?.mapViewZoomRatio ?? null,
     mapViewPanNorm: view?.mapViewPanNorm ?? null,
+    mapViewVisibleNorm: view?.mapViewVisibleNorm ?? null,
   };
 }
 
@@ -224,6 +240,7 @@ export function deriveMapConfigForMapId(state, mapId) {
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
     mapViewZoomRatio: null,
     mapViewPanNorm: null,
+    mapViewVisibleNorm: null,
   };
 }
 
@@ -246,6 +263,7 @@ export function deriveMapConfigForViewId(state, viewId) {
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
     mapViewZoomRatio: view.mapViewZoomRatio ?? null,
     mapViewPanNorm: view.mapViewPanNorm ?? null,
+    mapViewVisibleNorm: view.mapViewVisibleNorm ?? null,
   };
 }
 

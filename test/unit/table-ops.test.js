@@ -335,7 +335,12 @@ describe('applyTableOp', () => {
     expect(result.maps.length).toBe(2);
     expect(result.maps[1].name).toBe('B');
     expect(result.activeMapId).toBe(result.maps[1].id);
-    expect(result.gmMapView).toEqual({ mapId: result.activeMapId, mapViewZoomRatio: null, mapViewPanNorm: null });
+    expect(result.gmMapView).toEqual({
+      mapId: result.activeMapId,
+      mapViewZoomRatio: null,
+      mapViewPanNorm: null,
+      mapViewVisibleNorm: null,
+    });
   });
 
   it('set-active-map switches focus and clears broadcast framing', () => {
@@ -366,7 +371,12 @@ describe('applyTableOp', () => {
     };
     const result = applyTableOp({ op: 'set-active-map', activeMapId: 'b' }, state);
     expect(result.activeMapId).toBe('b');
-    expect(result.gmMapView).toEqual({ mapId: 'b', mapViewZoomRatio: null, mapViewPanNorm: null });
+    expect(result.gmMapView).toEqual({
+      mapId: 'b',
+      mapViewZoomRatio: null,
+      mapViewPanNorm: null,
+      mapViewVisibleNorm: null,
+    });
   });
 
   it('set-active-view selects a view and syncs activeMapId', () => {
@@ -408,6 +418,8 @@ describe('applyTableOp', () => {
     expect(result.gmActiveViewId).toBe('v2');
     expect(result.activeMapId).toBe('a');
     expect(result.mapConfig.mapViewZoomRatio).toBe(0.9);
+    // Snapshot mapConfig must carry the selected view’s framing (BattleMap GM hydrate decodes this after switching views).
+    expect(result.mapConfig.mapViewPanNorm).toEqual({ x: 0.1, y: 0.1 });
   });
 
   it('set-map-share toggles map shareWithPlayers', () => {
@@ -541,6 +553,103 @@ describe('applyTableOp', () => {
 
     const single = applyTableOp({ op: 'remove-map', mapId: 'a' }, { ...state, maps: [mkMap('a', 'x')], activeMapId: 'a', activeElements: [] });
     expect(single).toEqual({});
+  });
+
+  it('set-map-overlay stores overlayPng on the map row', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const png = 'data:image/png;base64,AAAA';
+    const result = applyTableOp({ op: 'set-map-overlay', mapId: 'a', overlayPng: png }, state);
+    expect(result.maps[0].overlayPng).toBe(png);
+  });
+
+  it('set-map-fog legacy op still applies overlayPng', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const png = 'data:image/png;base64,LEGACY';
+    const result = applyTableOp({ op: 'set-map-fog', mapId: 'a', fogPng: png }, state);
+    expect(result.maps[0].overlayPng).toBe(png);
+    expect(result.maps[0].fogPng).toBeUndefined();
+  });
+
+  it('set-map-view-overlay stores overlayPng on the map view row', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const png = 'data:image/png;base64,BBBB';
+    const result = applyTableOp({ op: 'set-map-view-overlay', viewId: 'v1', overlayPng: png }, state);
+    expect(result.mapViews[0].overlayPng).toBe(png);
   });
 
   it('unknown op returns empty object', () => {

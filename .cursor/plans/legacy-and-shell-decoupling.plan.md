@@ -66,7 +66,7 @@ isProject: true
 File: `[src/client/lib/normalize-persisted-character-element.js](../../src/client/lib/normalize-persisted-character-element.js)`
 
 - Remove `**normalizeDruidFeatureState`** (merges `Beastform` / `Evolution` into druid scope).
-- Remove `**normalizeConsumableFlatKeys`** and `**LEGACY_CONSUMABLE_FLAT_KEYS**` (`Hopehold Flare`, `Blinding Orb` title keys).
+- Remove `**normalizeConsumableFlatKeys`** and `**LEGACY_CONSUMABLE_FLAT_KEYS`** (`Hopehold Flare`, `Blinding Orb` title keys).
 - Remove `**applyLegacyCharacterRuntimeMigrations**` and `[src/features-v2/legacy-character-runtime-migrations.js](../../src/features-v2/legacy-character-runtime-migrations.js)` + registry export (`legacyCharacterRuntimeMigrations`).
 - Update `[test/unit/normalize-persisted-character-element.test.js](../../test/unit/normalize-persisted-character-element.test.js)` — delete legacy migration tests.
 

@@ -9,13 +9,37 @@ import {
   normalizeWheelDeltaPixels,
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
-import { decodeMapViewState, encodeMapViewState } from '../lib/map-view-sync.js';
+import {
+  decodeMapViewState,
+  encodeMapViewState,
+  isValidMapViewVisibleNorm,
+} from '../lib/map-view-sync.js';
 import {
   shouldApplyRemotePlayerMapView,
   personalCameraTargetsUnsharedMap,
   freeMapExploreTargetsUnsharedMap,
+  countPlayerMapStripTiles,
 } from '../lib/map-view-player-sync.js';
-import { Upload, X, Map as MapIcon, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX, Focus, Camera, Radio, Plus } from 'lucide-react';
+import {
+  Upload,
+  X,
+  Map as MapIcon,
+  ArrowLeftToLine,
+  Pencil,
+  Eraser,
+  Eye,
+  EyeOff,
+  Trash2,
+  CircleX,
+  Focus,
+  Camera,
+  Radio,
+  Paintbrush,
+  PencilLine,
+  Square,
+  Circle,
+  Plus,
+} from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { HOPE_TRACK_FILL } from './CharacterStatBlockGraphic.jsx';
@@ -28,6 +52,8 @@ import {
   patchPersonalCameraName,
   deletePersonalCamera,
   postMapPing,
+  postMapScribble,
+  CLIENT_ID,
 } from '../lib/api.js';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
@@ -39,6 +65,35 @@ import {
   getLifeSupportPendingHealSlots,
 } from '../lib/manual-track-action-loop.js';
 import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
+import {
+  computeMapDrawCanvasSize,
+  DEFAULT_MAP_DRAW_BRUSH_RADIUS_FT,
+  MAP_DRAW_BRUSH_RADIUS_FT_MIN,
+  ftToDrawPixel,
+  drawPixelToFt,
+  scribbleCanvasLayoutKey,
+  hexToRgba,
+  loadDrawDataUrlOntoCanvas,
+  clearDrawCanvas,
+  strokeDrawSegment,
+  fillDrawRect,
+  fillDrawEllipse,
+  strokeOutlineRect,
+  strokeOutlineEllipse,
+  floodEraseConnectedComponent,
+  ERASER_DESTINATION_OUT,
+  eraseSourceRgba,
+  rgbStringFromRgba,
+  alphaFromRgbaString,
+  multiplyRgbaAlpha,
+  fillBrushDot,
+  SCRIBBLE_FADE_MS,
+  isNonDegenerateScribbleSegmentPx,
+} from '../lib/map-draw-layer.js';
+import {
+  dataTransferHasFileDrag,
+  pickFirstImageFileFromDataTransfer,
+} from '../lib/map-image-drop.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
@@ -52,6 +107,12 @@ const MAP_SIZE_FT_MAX = 3000;
 function mapConfigHasImage(mc) {
   const u = mc?.mapImageUrl;
   return typeof u === 'string' && u.trim().length > 0;
+}
+
+/** PNG overlay on the map (legacy persisted key `fogPng`). */
+function getRowOverlayPng(row) {
+  if (!row || typeof row !== 'object') return null;
+  return row.overlayPng ?? row.fogPng ?? null;
 }
 /** Padding around map token wrappers for easier drag grabs; visual token size unchanged. */
 const MAP_TOKEN_HIT_PADDING_PX = 12;
@@ -181,6 +242,7 @@ const THUMB_STRIP_H_PX = (THUMB_STRIP_W_PX * 3) / 4;
 
 function hasDecodableView(viewState) {
   if (!viewState || typeof viewState !== 'object') return false;
+  if (isValidMapViewVisibleNorm(viewState.mapViewVisibleNorm)) return true;
   const r = viewState.mapViewZoomRatio;
   const pan = viewState.mapViewPanNorm;
   const hasRatio = r != null && Number.isFinite(r);
@@ -227,12 +289,112 @@ function computeThumbViewRender(mapRow, viewState, viewportW, viewportH) {
   const mapZoom = dec?.mapZoom ?? minZoom;
   const scrollLeft = dec?.scrollLeft ?? 0;
   const scrollTop = dec?.scrollTop ?? 0;
-  return { renderedWidthPx, renderedHeightPx, mapZoom, scrollLeft, scrollTop };
+  return {
+    renderedWidthPx,
+    renderedHeightPx,
+    mapZoom,
+    scrollLeft,
+    scrollTop,
+    letterboxClipPx: dec?.letterboxClipPx ?? null,
+  };
 }
 
-function MapViewThumbInterior({ mapRow, viewState }) {
+const MAX_THUMB_TOKEN_PROXIES = 8;
+
+/**
+ * Characters + adversaries whose token footprint intersects the strip thumbnail viewport (same math as the thumb preview).
+ */
+function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId) {
+  if (!mapConfigHasImage({ mapImageUrl: mapRow?.mapImageUrl }) || stripMapId == null) return [];
+  const vw = THUMB_STRIP_W_PX;
+  const vh = THUMB_STRIP_H_PX;
+  const mc = {
+    mapSizeFt: mapRow?.mapSizeFt ?? 100,
+    mapDimension: mapRow?.mapDimension ?? 'width',
+    mapImageNaturalWidth: mapRow?.mapImageNaturalWidth,
+    mapImageNaturalHeight: mapRow?.mapImageNaturalHeight,
+  };
+  const { mapWidthFt, mapHeightFt } = getMapDimensions(mc);
+  const pxPerFt = Math.max(vw / mapWidthFt, MIN_PX_PER_FT);
+  const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
+  const { mapZoom, scrollLeft, scrollTop } = computeThumbViewRender(mapRow, viewState, vw, vh);
+
+  const visL = scrollLeft;
+  const visT = scrollTop;
+  const visR = scrollLeft + vw;
+  const visB = scrollTop + vh;
+
+  const out = [];
+  for (const el of activeElements || []) {
+    if (el.elementType !== 'character' && el.elementType !== 'adversary') continue;
+    if (el.tokenX == null || el.tokenY == null) continue;
+    if (effectiveTokenMapId(el.mapId) !== stripMapId) continue;
+
+    const innerL = el.tokenX * pxPerFt;
+    const innerT = el.tokenY * pxPerFt;
+    const innerR = innerL + tokenSizePx;
+    const innerB = innerT + tokenSizePx;
+    const sL = innerL * mapZoom;
+    const sT = innerT * mapZoom;
+    const sR = innerR * mapZoom;
+    const sB = innerB * mapZoom;
+    if (sR < visL || sL > visR || sB < visT || sT > visB) continue;
+
+    const isAdv = el.elementType === 'adversary';
+    const defeated = isAdv && isAdversaryDefeated(el);
+    out.push({
+      key: el.instanceId,
+      abbrev: tokenAbbrev(el.name),
+      name: el.name || '',
+      kind: isAdv ? 'adversary' : 'character',
+      defeated,
+    });
+  }
+
+  out.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'character' ? -1 : 1;
+    return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+  });
+  return out;
+}
+
+/** Legible stacked token chips over the map thumb (not positioned like on-map tokens). */
+function ThumbViewportTokenProxies({ tokens }) {
+  if (!tokens?.length) return null;
+  const shown = tokens.slice(0, MAX_THUMB_TOKEN_PROXIES);
+  const rest = tokens.length - shown.length;
+  return (
+    <div
+      className="absolute inset-x-0 bottom-0 z-[4] flex max-h-[52%] flex-wrap content-end justify-center gap-0.5 overflow-hidden px-0.5 pb-0.5 pt-4 pointer-events-none bg-gradient-to-t from-black/55 to-transparent"
+      aria-hidden
+    >
+      {shown.map((t) => (
+        <div
+          key={t.key}
+          title={t.name || undefined}
+          className={`flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full border border-black/70 px-0.5 text-[7px] font-bold leading-none text-white shadow-sm ${
+            t.kind === 'character'
+              ? 'bg-sky-700'
+              : t.defeated
+                ? 'bg-black'
+                : 'bg-amber-800'
+          }`}
+        >
+          {t.abbrev}
+        </div>
+      ))}
+      {rest > 0 ? (
+        <div className="flex h-3.5 shrink-0 items-center rounded-full border border-dh-border/90 bg-dh-raised/95 px-1 text-[7px] font-semibold leading-none text-dh-muted">
+          +{rest}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MapViewThumbInterior({ mapRow, viewState, mapOverlayPng, cameraOverlayPng }) {
   const hasArt = mapConfigHasImage({ mapImageUrl: mapRow?.mapImageUrl });
-  const { renderedWidthPx, renderedHeightPx, mapZoom, scrollLeft, scrollTop } = useMemo(
+  const { renderedWidthPx, renderedHeightPx, mapZoom, scrollLeft, scrollTop, letterboxClipPx } = useMemo(
     () => computeThumbViewRender(mapRow, viewState, THUMB_STRIP_W_PX, THUMB_STRIP_H_PX),
     [mapRow, viewState],
   );
@@ -240,17 +402,44 @@ function MapViewThumbInterior({ mapRow, viewState }) {
   if (!hasArt) {
     return (
       <div
-        className="flex w-full items-center justify-center bg-dh-canvas/40 text-dh-muted"
-        style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX }}
+        className="relative flex w-full items-center justify-center overflow-hidden bg-dh-canvas/40 text-dh-muted"
+        style={{
+          width: THUMB_STRIP_W_PX,
+          height: THUMB_STRIP_H_PX,
+          ...(cameraOverlayPng
+            ? {
+                backgroundImage: `url(${cameraOverlayPng})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+              }
+            : {}),
+        }}
       >
-        <MapIcon size={18} strokeWidth={1.5} aria-hidden />
+        {cameraOverlayPng ? (
+          <div className="absolute inset-0 bg-dh-canvas/55" aria-hidden />
+        ) : null}
+        <MapIcon size={18} strokeWidth={1.5} className="relative z-[1]" aria-hidden />
       </div>
     );
   }
 
+  const clipStyle =
+    letterboxClipPx &&
+    (letterboxClipPx.top > 0 ||
+      letterboxClipPx.right > 0 ||
+      letterboxClipPx.bottom > 0 ||
+      letterboxClipPx.left > 0)
+      ? {
+          clipPath: `inset(${letterboxClipPx.top}px ${letterboxClipPx.right}px ${letterboxClipPx.bottom}px ${letterboxClipPx.left}px)`,
+        }
+      : undefined;
+
   return (
     <div className="relative overflow-hidden bg-dh-canvas/40" style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX }}>
-      <div className="absolute left-0 top-0 overflow-hidden" style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX }}>
+      <div
+        className="absolute left-0 top-0 overflow-hidden"
+        style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX, ...clipStyle }}
+      >
         <div
           className="relative shrink-0 will-change-transform"
           style={{
@@ -271,8 +460,24 @@ function MapViewThumbInterior({ mapRow, viewState }) {
               src={mapRow.mapImageUrl}
               alt=""
               draggable={false}
-              className="absolute inset-0 h-full w-full select-none object-fill pointer-events-none"
+              className="absolute inset-0 z-0 h-full w-full select-none object-fill pointer-events-none"
             />
+            {mapOverlayPng ? (
+              <img
+                src={mapOverlayPng}
+                alt=""
+                draggable={false}
+                className="absolute inset-0 z-[1] h-full w-full object-fill pointer-events-none opacity-95"
+              />
+            ) : null}
+            {cameraOverlayPng ? (
+              <img
+                src={cameraOverlayPng}
+                alt=""
+                draggable={false}
+                className="absolute inset-0 z-[2] h-full w-full object-fill pointer-events-none opacity-95"
+              />
+            ) : null}
           </div>
         </div>
       </div>
@@ -284,6 +489,10 @@ function MapViewThumbInterior({ mapRow, viewState }) {
 function MapViewStripTile({
   mapRow,
   viewState,
+  /** Draw-layer PNG (data URL) aligned to the map image; shown under camera overlay in the thumb. */
+  mapOverlayPng,
+  /** Named-view or personal-camera draw PNG; overlaid on map layer in the thumb. */
+  cameraOverlayPng,
   label,
   isActive,
   onClick,
@@ -295,8 +504,15 @@ function MapViewStripTile({
   hideCaption = false,
   /** Optional `title` on the thumb control (defaults to `label`). */
   tooltipTitle,
+  /** When set with `stripMapId`, shows small token chips for actors visible in this thumb's viewport. */
+  activeElements,
+  stripMapId,
 }) {
   const titleAttr = tooltipTitle !== undefined ? tooltipTitle : label;
+  const thumbTokenProxies = useMemo(
+    () => getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMapId),
+    [mapRow, viewState, activeElements, stripMapId],
+  );
   const thumbClass = `group relative overflow-hidden rounded-md border text-left transition-colors ${
     variant === 'map' && isActive
       ? 'border-amber-500/55 bg-amber-950/35 ring-1 ring-amber-500/40'
@@ -307,9 +523,15 @@ function MapViewStripTile({
 
   const thumbInner = (
     <div className="relative">
-      <MapViewThumbInterior mapRow={mapRow} viewState={viewState} />
+      <MapViewThumbInterior
+        mapRow={mapRow}
+        viewState={viewState}
+        mapOverlayPng={mapOverlayPng}
+        cameraOverlayPng={cameraOverlayPng}
+      />
+      <ThumbViewportTokenProxies tokens={thumbTokenProxies} />
       {showCameraBadge ? (
-        <div className="absolute bottom-0.5 right-0.5 rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
+        <div className="absolute bottom-0.5 right-0.5 z-[5] rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
           <Camera size={10} className="text-violet-300/90" aria-hidden />
         </div>
       ) : null}
@@ -910,89 +1132,6 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
   );
 }
 
-// ─── MapViewControls (pan/zoom — no native map scrolling) ─────────────────────
-
-function MapViewControls({
-  minZoom,
-  maxZoom,
-  mapZoom,
-  onZoomChange,
-  panLeft,
-  panTop,
-  maxPanLeft,
-  maxPanTop,
-  onPanLeftChange,
-  onPanTopChange,
-  onZoomToActors,
-  zoomToActorsDisabled,
-}) {
-  const xMax = Math.max(0, maxPanLeft);
-  const yMax = Math.max(0, maxPanTop);
-  const zRange = maxZoom > minZoom;
-  const xStep = xMax > 0 ? Math.min(0.25, Math.max(0.01, xMax / 200)) : 1;
-  const yStep = yMax > 0 ? Math.min(0.25, Math.max(0.01, yMax / 200)) : 1;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 py-1.5 shrink-0 text-[11px] border-b border-dh-border bg-dh-surface/80">
-      <label className="flex items-center gap-1.5 min-w-0">
-        <span className="font-medium w-4 shrink-0 text-dh-muted">X</span>
-        <input
-          type="range"
-          aria-label="Pan horizontal"
-          min={0}
-          max={xMax > 0 ? xMax : 1}
-          step={xStep}
-          value={xMax > 0 ? Math.min(panLeft, xMax) : 0}
-          disabled={xMax <= 0}
-          onChange={(e) => onPanLeftChange(Number(e.target.value))}
-          className="w-20 sm:w-28 disabled:opacity-40 accent-sky-600"
-        />
-      </label>
-      <label className="flex items-center gap-1.5 min-w-0">
-        <span className="font-medium w-4 shrink-0 text-dh-muted">Y</span>
-        <input
-          type="range"
-          aria-label="Pan vertical"
-          min={0}
-          max={yMax > 0 ? yMax : 1}
-          step={yStep}
-          value={yMax > 0 ? Math.min(panTop, yMax) : 0}
-          disabled={yMax <= 0}
-          onChange={(e) => onPanTopChange(Number(e.target.value))}
-          className="w-20 sm:w-28 disabled:opacity-40 accent-sky-600"
-        />
-      </label>
-      <label className="flex items-center gap-1.5 min-w-0 flex-1 sm:flex-initial">
-        <span className="font-medium shrink-0 text-dh-muted">Zoom</span>
-        <input
-          type="range"
-          aria-label="Map zoom"
-          min={minZoom}
-          max={maxZoom}
-          step={zRange ? Math.max(0.0001, (maxZoom - minZoom) / 500) : minZoom}
-          value={mapZoom}
-          disabled={!zRange}
-          onChange={(e) => onZoomChange(Number(e.target.value))}
-          className="min-w-[5rem] flex-1 sm:w-32 disabled:opacity-40 accent-amber-600/90"
-        />
-        <span className="tabular-nums w-12 shrink-0 text-right text-dh-muted">{mapZoom.toFixed(2)}×</span>
-      </label>
-      {onZoomToActors && (
-        <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">
-          <button
-            type="button"
-            aria-label="Zoom to actors"
-            onClick={onZoomToActors}
-            disabled={zoomToActorsDisabled}
-            className="shrink-0 p-1 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh-muted hover:text-dh disabled:opacity-40 disabled:pointer-events-none"
-          >
-            <Focus size={14} />
-          </button>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
 // ─── BattleMap ───────────────────────────────────────────────────────────────
 
 export function BattleMap({
@@ -1057,6 +1196,12 @@ export function BattleMap({
   onDismissMapPing = () => {},
   /** Optimistic add when `postMapPing` returns authoritative `ping` (deduped in app). */
   appendMapPing = () => {},
+  /** Ephemeral scribble segments from SSE (`map_scribble`); deduped in BattleMap */
+  mapScribbles = [],
+  /** GM: persist map-level draw overlay PNG (data URL) or null to clear. */
+  onSetMapOverlay,
+  /** GM: persist named view draw overlay PNG (data URL) or null to clear. */
+  onSetMapViewOverlay,
 }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -1072,7 +1217,6 @@ export function BattleMap({
   const fireworksPortalMountRef = useRef(null);
   const fireworksInstanceRef = useRef(null);
   const mapPingSeenIdsRef = useRef(new Set());
-  const fileInputRef = useRef(null);
 
   /** Start at 0 so zoom bounds + renderedWidth match the flex layout before hydrating from localStorage (avoids stale 600×400 vs real wrapper size). */
   const [containerWidth, setContainerWidth] = useState(0);
@@ -1132,6 +1276,26 @@ export function BattleMap({
     }
   }, [mapConfig, onMapConfigChange, onAddMapWithImage]);
 
+  const handleMapPanelDragOver = useCallback(
+    (e) => {
+      if (isPlayer || isUploading) return;
+      if (!dataTransferHasFileDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    },
+    [isPlayer, isUploading],
+  );
+
+  const handleMapPanelDrop = useCallback(
+    (e) => {
+      if (isPlayer || isUploading) return;
+      e.preventDefault();
+      const file = pickFirstImageFileFromDataTransfer(e.dataTransfer);
+      if (file) void handleImageFile(file);
+    },
+    [isPlayer, isUploading, handleImageFile],
+  );
+
   // Paste map image (after handleImageFile)
   useEffect(() => {
     if (isPlayer) return;
@@ -1148,6 +1312,10 @@ export function BattleMap({
 
   // Derived map dimensions
   const { mapWidthFt, mapHeightFt } = useMemo(() => getMapDimensions(mapConfig), [mapConfig]);
+  const scribbleLayoutKey = useMemo(
+    () => scribbleCanvasLayoutKey(mapWidthFt, mapHeightFt, mapConfig?.mapImageUrl ?? ''),
+    [mapWidthFt, mapHeightFt, mapConfig?.mapImageUrl],
+  );
   const pxPerFt = useMemo(
     () => Math.max(containerWidth / mapWidthFt, MIN_PX_PER_FT),
     [containerWidth, mapWidthFt],
@@ -1224,6 +1392,10 @@ export function BattleMap({
     mapPingSeenIdsRef.current = new Set();
   }, [tableId]);
 
+  useEffect(() => {
+    mapScribbleSeenIdsRef.current = new Set();
+  }, [tableId]);
+
   const { minZoom, maxZoom } = useMemo(
     () =>
       computeMapZoomBounds({
@@ -1254,6 +1426,18 @@ export function BattleMap({
   const mapPanTopRef = useRef(0);
   mapPanLeftRef.current = mapPanLeft;
   mapPanTopRef.current = mapPanTop;
+
+  /** Clips map to shared `mapViewVisibleNorm` rect (players / saved cameras); null for GM live view. */
+  const [mapLetterboxClipPx, setMapLetterboxClipPx] = useState(null);
+
+  /** Max brush/eraser radius: 20% of visible map height (feet), at least 1′. */
+  const drawBrushRadiusMaxFt = useMemo(() => {
+    const viewHeightFt =
+      containerHeight > 0 && pxPerFt > 0 && mapZoom > 0
+        ? Math.min(mapHeightFt, containerHeight / (pxPerFt * mapZoom))
+        : mapHeightFt;
+    return Math.max(MAP_DRAW_BRUSH_RADIUS_FT_MIN, viewHeightFt * 0.2);
+  }, [mapHeightFt, containerHeight, pxPerFt, mapZoom]);
 
   /** Sync in-map anchor rect → fixed layer in document.body (above DiceRoller z-15 WebGL). */
   const syncFireworksViewport = useCallback(() => {
@@ -1363,9 +1547,60 @@ export function BattleMap({
   const playerFreeMapHydratedKeyRef = useRef('');
   /** Per-user saved cameras (private API; not in SSE). */
   const [personalCameras, setPersonalCameras] = useState([]);
+  /** GM: selected personal camera (saved view) for framing + map draw overlay — independent of table_state views. */
+  const [gmActivePersonalCameraId, setGmActivePersonalCameraId] = useState(null);
+  const [drawTool, setDrawTool] = useState('scribble');
+  const [rectShapeFilled, setRectShapeFilled] = useState(true);
+  const [ovalShapeFilled, setOvalShapeFilled] = useState(true);
+  const [drawBrushRadiusFt, setDrawBrushRadiusFt] = useState(DEFAULT_MAP_DRAW_BRUSH_RADIUS_FT);
+  const drawBrushRadiusClampedFt = Math.min(
+    Math.max(drawBrushRadiusFt, MAP_DRAW_BRUSH_RADIUS_FT_MIN),
+    drawBrushRadiusMaxFt,
+  );
+  useEffect(() => {
+    setDrawBrushRadiusFt((prev) => {
+      const viewHeightFt =
+        containerHeight > 0 && pxPerFt > 0 && mapZoom > 0
+          ? Math.min(mapHeightFt, containerHeight / (pxPerFt * mapZoom))
+          : mapHeightFt;
+      const maxR = Math.max(MAP_DRAW_BRUSH_RADIUS_FT_MIN, viewHeightFt * 0.2);
+      const next = Math.min(Math.max(prev, MAP_DRAW_BRUSH_RADIUS_FT_MIN), maxR);
+      return next === prev ? prev : next;
+    });
+  }, [mapHeightFt, containerHeight, pxPerFt, mapZoom]);
+  const [drawColorHex, setDrawColorHex] = useState('#000000');
+  const [drawOpacity, setDrawOpacity] = useState(1);
+  const [drawCursorClient, setDrawCursorClient] = useState(null);
+  const drawPaintRef = useRef(null);
+  const drawSizeRef = useRef({ w: 0, h: 0 });
+  const drawBrushActiveRef = useRef(false);
+  const drawLastPxRef = useRef(null);
+  const drawShapeDragRef = useRef(null);
+  /** Eraser: click-to-flood vs drag — set on pointer down, cleared when drag starts or up/cancel */
+  const drawEraserPendingRef = useRef(null);
+  const scribbleCanvasRef = useRef(null);
+  const scribbleStrokesRef = useRef([]);
+  const scribbleRafRef = useRef(null);
+  const scribbleSizeRef = useRef({ w: 0, h: 0 });
+  const scribbleBrushActiveRef = useRef(false);
+  const scribbleLastPxRef = useRef(null);
+  /** Shared start time for all segments in one scribble gesture (whole stroke fades together). */
+  const scribbleStrokeT0Ref = useRef(0);
+  const scribbleStrokeIdRef = useRef(null);
+  /** Last `performance.now()` when we sent a scribble segment (throttle network). */
+  const scribbleBroadcastLastSentRef = useRef(0);
+  /** Last draw-canvas position included in a broadcast (dot or segment); bridges throttle gaps for peers. */
+  const scribbleBroadcastLastPxRef = useRef(null);
+  const mapScribbleSeenIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    if (isPlayer) setDrawTool('scribble');
+  }, [isPlayer]);
   const [cameraHint, setCameraHint] = useState('');
   const cameraHintTimerRef = useRef(null);
   const mapAllowsPlayerCameras = maps.find(m => m.id === activeMapIdResolved)?.shareWithPlayers !== false;
+  /** GM: can persist a new named view / camera (table op or personal camera API). */
+  const gmCanCreateCameraView = !isPlayer && Boolean(onAddMapViewOp || tableId);
   const canControlMapView =
     (!isPlayer && !!onMapViewSync) ||
     (isPlayer &&
@@ -1373,8 +1608,17 @@ export function BattleMap({
       (!!playerActivePersonalCameraId || playerFreeMapExplore));
 
   const mapViewSig = useMemo(
-    () => `${mapConfig?.mapViewZoomRatio ?? ''}|${JSON.stringify(mapConfig?.mapViewPanNorm ?? null)}`,
-    [mapConfig?.mapViewZoomRatio, mapConfig?.mapViewPanNorm],
+    () =>
+      `${mapConfig?.mapViewZoomRatio ?? ''}|${JSON.stringify(mapConfig?.mapViewPanNorm ?? null)}|${JSON.stringify(mapConfig?.mapViewVisibleNorm ?? null)}`,
+    [mapConfig?.mapViewZoomRatio, mapConfig?.mapViewPanNorm, mapConfig?.mapViewVisibleNorm],
+  );
+
+  const shouldApplyPlayerFollowClip = useMemo(
+    () =>
+      isPlayer &&
+      !playerFreeMapExplore &&
+      isValidMapViewVisibleNorm(mapConfig?.mapViewVisibleNorm),
+    [isPlayer, playerFreeMapExplore, mapConfig?.mapViewVisibleNorm],
   );
 
   const schedulePersistView = useCallback(() => {
@@ -1397,7 +1641,7 @@ export function BattleMap({
         viewportW: vw,
         viewportH: vh,
       });
-      onMapViewSync(encoded.mapViewZoomRatio, encoded.mapViewPanNorm);
+      onMapViewSync(encoded.mapViewZoomRatio, encoded.mapViewPanNorm, encoded.mapViewVisibleNorm);
     }, 120);
   }, [onMapViewSync]);
 
@@ -1429,6 +1673,7 @@ export function BattleMap({
         const { camera } = await patchPersonalCamera(tableId, id, {
           mapViewZoomRatio: encoded.mapViewZoomRatio,
           mapViewPanNorm: encoded.mapViewPanNorm,
+          mapViewVisibleNorm: encoded.mapViewVisibleNorm,
         });
         setPersonalCameras((prev) => prev.map((c) => (c.id === camera.id ? { ...c, ...camera } : c)));
       } catch (err) {
@@ -1463,6 +1708,7 @@ export function BattleMap({
           JSON.stringify({
             mapViewZoomRatio: encoded.mapViewZoomRatio,
             mapViewPanNorm: encoded.mapViewPanNorm,
+            mapViewVisibleNorm: encoded.mapViewVisibleNorm,
           }),
         );
       } catch {
@@ -1476,7 +1722,8 @@ export function BattleMap({
     else schedulePersistPlayerCamera();
   }, [playerFreeMapExplore, schedulePersistPlayerFreeMap, schedulePersistPlayerCamera]);
 
-  useEffect(() => {
+  /** Must be useLayoutEffect (not useEffect) so this runs before the GM hydrate effect below — otherwise hydration sees gmViewHydratedRef still true and skips applying mapConfig when switching named views. */
+  useLayoutEffect(() => {
     gmViewHydratedRef.current = false;
   }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved, gmActiveViewId]);
 
@@ -1512,6 +1759,7 @@ export function BattleMap({
       if (camera.mapId !== activeMapIdResolved) {
         const viewOnMap = mapViews.find(v => v.mapId === camera.mapId);
         if (onSetActiveMap) {
+          setGmActivePersonalCameraId(null);
           onSetActiveMap(camera.mapId);
           if (viewOnMap && onPlayerSelectView) onPlayerSelectView(viewOnMap.id);
         } else if (viewOnMap && onPlayerSelectView) {
@@ -1527,7 +1775,11 @@ export function BattleMap({
         }
         return;
       }
-      const stored = { mapViewZoomRatio: camera.mapViewZoomRatio, mapViewPanNorm: camera.mapViewPanNorm };
+      const stored = {
+        mapViewZoomRatio: camera.mapViewZoomRatio,
+        mapViewPanNorm: camera.mapViewPanNorm,
+        mapViewVisibleNorm: camera.mapViewVisibleNorm,
+      };
       const d = decodeMapViewState(stored, {
         minZoom,
         maxZoom,
@@ -1543,7 +1795,11 @@ export function BattleMap({
       mapPanTopRef.current = d.scrollTop;
       setMapPanLeft(d.scrollLeft);
       setMapPanTop(d.scrollTop);
+      setMapLetterboxClipPx(
+        isValidMapViewVisibleNorm(camera.mapViewVisibleNorm) && d.letterboxClipPx ? d.letterboxClipPx : null,
+      );
       if (isPlayer) setPlayerActivePersonalCameraId(camera.id);
+      else setGmActivePersonalCameraId(camera.id);
     },
     [
       activeMapIdResolved,
@@ -1586,6 +1842,7 @@ export function BattleMap({
         name: trimmed,
         mapViewZoomRatio: encoded.mapViewZoomRatio,
         mapViewPanNorm: encoded.mapViewPanNorm,
+        mapViewVisibleNorm: encoded.mapViewVisibleNorm,
       });
       return;
     }
@@ -1596,46 +1853,13 @@ export function BattleMap({
         mapId: activeMapIdResolved,
         mapViewZoomRatio: encoded.mapViewZoomRatio,
         mapViewPanNorm: encoded.mapViewPanNorm,
+        mapViewVisibleNorm: encoded.mapViewVisibleNorm,
       });
       setPersonalCameras((prev) => [...prev, camera]);
     } catch (err) {
       console.error('[BattleMap] split camera failed:', err);
     }
   }, [tableId, activeMapIdResolved, onAddMapViewOp]);
-
-  const handlePlayerCreateCamera = useCallback(async () => {
-    if (!isPlayer || !tableId || !mapAllowsPlayerCameras) return;
-    const wrap = scrollWrapperRef.current;
-    const vw = wrap?.clientWidth ?? 0;
-    const vh = wrap?.clientHeight ?? 0;
-    if (vw <= 0 || vh <= 0) return;
-    const encoded = encodeMapViewState({
-      mapZoom: mapZoomRef.current,
-      scrollLeft: mapPanLeftRef.current,
-      scrollTop: mapPanTopRef.current,
-      minZoom: minZoomRef.current,
-      maxZoom: maxZoomRef.current,
-      renderedWidthPx: renderedWRef.current,
-      renderedHeightPx: renderedHRef.current,
-      viewportW: vw,
-      viewportH: vh,
-    });
-    const name = window.prompt('Name this camera', 'Camera');
-    if (name === null) return;
-    const trimmed = (name || 'Camera').trim() || 'Camera';
-    try {
-      const { camera } = await postPersonalCamera(tableId, {
-        name: trimmed,
-        mapId: activeMapIdResolved,
-        mapViewZoomRatio: encoded.mapViewZoomRatio,
-        mapViewPanNorm: encoded.mapViewPanNorm,
-      });
-      setPersonalCameras((prev) => [...prev, camera]);
-      setPlayerActivePersonalCameraId(camera.id);
-    } catch (err) {
-      console.error('[BattleMap] player create camera failed:', err);
-    }
-  }, [isPlayer, tableId, mapAllowsPlayerCameras, activeMapIdResolved]);
 
   const handleRenameCamera = useCallback(async (cam) => {
     if (!tableId || !cam?.id) return;
@@ -1665,7 +1889,7 @@ export function BattleMap({
     }
   }, [tableId]);
 
-  // GM: broadcast portable mapViewZoomRatio/mapViewPanNorm (same encoding as the X/Y/Zoom sliders) whenever the
+  // GM: broadcast portable mapViewZoomRatio/mapViewPanNorm (same encoding as wheel/keyboard pan and zoom) whenever the
   // map viewport or zoom bounds change, so players receive updates after layout and when the GM resizes or edits map size.
   useEffect(() => {
     if (!onMapViewSync) return;
@@ -1687,8 +1911,13 @@ export function BattleMap({
     if (!tableStateReady) return;
     if (containerWidth <= 0 || containerHeight <= 0) return;
     if (gmViewHydratedRef.current) return;
-    if (mapConfig?.mapViewZoomRatio == null && mapConfig?.mapViewPanNorm == null) {
+    if (
+      mapConfig?.mapViewZoomRatio == null &&
+      mapConfig?.mapViewPanNorm == null &&
+      !isValidMapViewVisibleNorm(mapConfig?.mapViewVisibleNorm)
+    ) {
       gmViewHydratedRef.current = true;
+      setMapLetterboxClipPx(null);
       return;
     }
     const d = decodeMapViewState(mapConfig, {
@@ -1701,6 +1930,7 @@ export function BattleMap({
     });
     if (!d) {
       gmViewHydratedRef.current = true;
+      setMapLetterboxClipPx(null);
       return;
     }
     gmViewHydratedRef.current = true;
@@ -1710,12 +1940,14 @@ export function BattleMap({
     mapPanTopRef.current = d.scrollTop;
     setMapPanLeft(d.scrollLeft);
     setMapPanTop(d.scrollTop);
+    setMapLetterboxClipPx(null);
   }, [
     onMapViewSync,
     tableStateReady,
     mapConfig?.mapImageUrl,
     mapConfig?.mapViewZoomRatio,
     mapConfig?.mapViewPanNorm,
+    mapConfig?.mapViewVisibleNorm,
     minZoom,
     maxZoom,
     renderedWidthPx,
@@ -1743,6 +1975,9 @@ export function BattleMap({
     mapPanTopRef.current = d.scrollTop;
     setMapPanLeft(d.scrollLeft);
     setMapPanTop(d.scrollTop);
+    setMapLetterboxClipPx(
+      shouldApplyPlayerFollowClip && d.letterboxClipPx ? d.letterboxClipPx : null,
+    );
   }, [
     onMapViewSync,
     tableStateReady,
@@ -1750,6 +1985,7 @@ export function BattleMap({
     playerActivePersonalCameraId,
     playerFreeMapExplore,
     mapViewSig,
+    shouldApplyPlayerFollowClip,
     minZoom,
     maxZoom,
     renderedWidthPx,
@@ -1767,9 +2003,9 @@ export function BattleMap({
     try {
       const raw = localStorage.getItem(`dh_player_free_map:${tableId}:${playerFreeExploreMapId}`);
       if (raw) {
-        const { mapViewZoomRatio, mapViewPanNorm } = JSON.parse(raw);
+        const { mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm } = JSON.parse(raw);
         d = decodeMapViewState(
-          { mapViewZoomRatio, mapViewPanNorm },
+          { mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm },
           {
             minZoom,
             maxZoom,
@@ -1788,6 +2024,7 @@ export function BattleMap({
         {
           mapViewZoomRatio: mapConfig?.mapViewZoomRatio ?? null,
           mapViewPanNorm: mapConfig?.mapViewPanNorm ?? null,
+          mapViewVisibleNorm: mapConfig?.mapViewVisibleNorm ?? null,
         },
         {
           minZoom,
@@ -1807,6 +2044,7 @@ export function BattleMap({
       setMapPanLeft(d.scrollLeft);
       setMapPanTop(d.scrollTop);
     }
+    setMapLetterboxClipPx(null);
     playerFreeMapHydratedKeyRef.current = key;
   }, [
     isPlayer,
@@ -1816,6 +2054,7 @@ export function BattleMap({
     mapConfig?.mapImageUrl,
     mapConfig?.mapViewZoomRatio,
     mapConfig?.mapViewPanNorm,
+    mapConfig?.mapViewVisibleNorm,
     containerWidth,
     containerHeight,
     minZoom,
@@ -1898,6 +2137,7 @@ export function BattleMap({
       return {
         mapViewZoomRatio: view.mapViewZoomRatio,
         mapViewPanNorm: view.mapViewPanNorm,
+        mapViewVisibleNorm: view.mapViewVisibleNorm,
       };
     },
     [isPlayer, gmActiveViewId, liveStripView, maps],
@@ -1931,6 +2171,11 @@ export function BattleMap({
     return out;
   }, [maps, playerStripViews, camerasByMapId]);
 
+  const playerStripTileCount = useMemo(
+    () => countPlayerMapStripTiles(playerViewBatches, orphanCameras),
+    [playerViewBatches, orphanCameras],
+  );
+
   useEffect(() => {
     if (!isPlayer) return;
     if (personalCameraTargetsUnsharedMap(playerActivePersonalCameraId, personalCameras, maps)) {
@@ -1948,48 +2193,6 @@ export function BattleMap({
     playerFreeExploreMapId,
     onPlayerExitMapFreeExplore,
   ]);
-
-  const applyZoomFromControl = useCallback(
-    (newZ) => {
-      if (!canControlMapView) return;
-      const z = clampMapZoom(newZ, minZoom, maxZoom);
-      const oldZ = mapZoomRef.current;
-      if (z === oldZ) return;
-      const pan = scrollAfterZoomTowardPoint({
-        scrollLeft: mapPanLeftRef.current,
-        scrollTop: mapPanTopRef.current,
-        viewportX: containerWidth / 2,
-        viewportY: containerHeight / 2,
-        oldZoom: oldZ,
-        newZoom: z,
-        innerWidthPx: renderedWidthPx,
-        innerHeightPx: renderedHeightPx,
-        viewportW: containerWidth,
-        viewportH: containerHeight,
-      });
-      mapZoomRef.current = z;
-      mapPanLeftRef.current = pan.scrollLeft;
-      mapPanTopRef.current = pan.scrollTop;
-      setMapZoom(z);
-      setMapPanLeft(pan.scrollLeft);
-      setMapPanTop(pan.scrollTop);
-      if (onMapViewSync) schedulePersistView();
-      if (isPlayer) schedulePersistPlayerViewport();
-    },
-    [
-      canControlMapView,
-      minZoom,
-      maxZoom,
-      containerWidth,
-      containerHeight,
-      renderedWidthPx,
-      renderedHeightPx,
-      onMapViewSync,
-      schedulePersistView,
-      schedulePersistPlayerViewport,
-      isPlayer,
-    ],
-  );
 
   const centerMapOnPlacedActor = useCallback(
     (element) => {
@@ -2174,28 +2377,6 @@ export function BattleMap({
     return () => el.removeEventListener('wheel', onWheel);
   }, [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, containerWidth, containerHeight, isPlayer]);
 
-  const onPanLeftChange = useCallback(
-    (v) => {
-      if (!canControlMapView) return;
-      mapPanLeftRef.current = v;
-      setMapPanLeft(v);
-      if (onMapViewSync) schedulePersistView();
-      if (isPlayer) schedulePersistPlayerViewport();
-    },
-    [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, isPlayer],
-  );
-
-  const onPanTopChange = useCallback(
-    (v) => {
-      if (!canControlMapView) return;
-      mapPanTopRef.current = v;
-      setMapPanTop(v);
-      if (onMapViewSync) schedulePersistView();
-      if (isPlayer) schedulePersistPlayerViewport();
-    },
-    [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, isPlayer],
-  );
-
   // Categorize elements
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
   const adversaries = useMemo(() => activeElements.filter(el => el.elementType === 'adversary'), [activeElements]);
@@ -2289,6 +2470,777 @@ export function BattleMap({
     return { x: mapX / pxPerFt, y: mapY / pxPerFt };
   }, [pxPerFt, mapZoom, mapPanLeft, mapPanTop]);
 
+  const handleGmSetActiveView = useCallback(
+    (viewId) => {
+      setGmActivePersonalCameraId(null);
+      setMapLetterboxClipPx(null);
+      onSetActiveView?.(viewId);
+    },
+    [onSetActiveView],
+  );
+
+  const handleGmMapFreeExplore = useCallback(
+    (mapId) => {
+      setGmActivePersonalCameraId(null);
+      setMapLetterboxClipPx(null);
+      onMapFreeExplore?.(mapId);
+    },
+    [onMapFreeExplore],
+  );
+
+  const handleGmSetActiveMap = useCallback(
+    (mapId) => {
+      setGmActivePersonalCameraId(null);
+      setMapLetterboxClipPx(null);
+      onSetActiveMap?.(mapId);
+    },
+    [onSetActiveMap],
+  );
+
+  const drawEditContext = useMemo(() => {
+    if (isPlayer) return null;
+    if (!mapConfigHasImage(mapConfig)) return null;
+    if (gmActivePersonalCameraId) return { kind: 'personal', id: gmActivePersonalCameraId };
+    if (gmActiveViewId) return { kind: 'view', id: gmActiveViewId };
+    return { kind: 'map', mapId: activeMapIdResolved };
+  }, [isPlayer, mapConfig, gmActivePersonalCameraId, gmActiveViewId, activeMapIdResolved]);
+
+  const brushRgba = useMemo(() => hexToRgba(drawColorHex, drawOpacity), [drawColorHex, drawOpacity]);
+
+  const paintScribbleCanvas = useCallback((nowMs) => {
+    const canvas = scribbleCanvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return true;
+    const { w, h } = scribbleSizeRef.current;
+    if (!w || !h) return true;
+    ctx.clearRect(0, 0, w, h);
+    const strokes = scribbleStrokesRef.current;
+    const keep = [];
+    for (const seg of strokes) {
+      const age = nowMs - seg.t0;
+      if (age >= SCRIBBLE_FADE_MS) continue;
+      const fade = 1 - age / SCRIBBLE_FADE_MS;
+      const faded = multiplyRgbaAlpha(seg.rgba, fade);
+      if (seg.type === 'dot') {
+        fillBrushDot(ctx, seg.x, seg.y, seg.r, faded);
+      } else {
+        strokeDrawSegment(ctx, seg.x0, seg.y0, seg.x1, seg.y1, seg.r, 'brush', faded);
+      }
+      keep.push(seg);
+    }
+    scribbleStrokesRef.current = keep;
+    return keep.length === 0;
+  }, []);
+
+  const scribbleLoop = useCallback(() => {
+    scribbleRafRef.current = null;
+    const empty = paintScribbleCanvas(Date.now());
+    if (!empty) {
+      scribbleRafRef.current = requestAnimationFrame(scribbleLoop);
+    }
+  }, [paintScribbleCanvas]);
+
+  const scheduleScribblePaint = useCallback(() => {
+    const empty = paintScribbleCanvas(Date.now());
+    if (!empty && scribbleRafRef.current == null) {
+      scribbleRafRef.current = requestAnimationFrame(scribbleLoop);
+    }
+  }, [paintScribbleCanvas, scribbleLoop]);
+
+  /** Send any ink from last broadcast position to current pointer (pointer up / cancel). */
+  const flushScribbleTailToPeers = useCallback(() => {
+    const endPx = scribbleLastPxRef.current;
+    const sid = scribbleStrokeIdRef.current;
+    const t0 = scribbleStrokeT0Ref.current;
+    const fromPx = scribbleBroadcastLastPxRef.current;
+    const sz = scribbleSizeRef.current;
+    if (!tableId || !sid || !endPx || !fromPx || !sz?.w) return;
+    if (!isNonDegenerateScribbleSegmentPx(fromPx, endPx)) return;
+    const f0 = drawPixelToFt(fromPx.x, fromPx.y, mapWidthFt, mapHeightFt, sz);
+    const f1 = drawPixelToFt(endPx.x, endPx.y, mapWidthFt, mapHeightFt, sz);
+    void postMapScribble(
+      tableId,
+      {
+        id: crypto.randomUUID(),
+        _clientId: CLIENT_ID,
+        mapId: activeMapIdResolved,
+        strokeId: sid,
+        t0,
+        kind: 'segment',
+        x0Ft: f0.x,
+        y0Ft: f0.y,
+        x1Ft: f1.x,
+        y1Ft: f1.y,
+        rFt: drawBrushRadiusClampedFt,
+        rgba: brushRgba,
+      },
+      !isPlayer,
+    );
+  }, [
+    tableId,
+    activeMapIdResolved,
+    mapWidthFt,
+    mapHeightFt,
+    drawBrushRadiusClampedFt,
+    brushRgba,
+    isPlayer,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (scribbleRafRef.current != null) cancelAnimationFrame(scribbleRafRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mapConfigHasImage(mapConfig)) {
+      scribbleStrokesRef.current = [];
+      return;
+    }
+    const { w, h } = computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+    scribbleSizeRef.current = { w, h };
+    scribbleStrokesRef.current = [];
+    const c = scribbleCanvasRef.current;
+    if (c) {
+      c.width = w;
+      c.height = h;
+    }
+    // Deps: `scribbleLayoutKey` only — `mapConfig` reference churn from SSE must not reset the overlay.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mapConfig read from latest render when key changes
+  }, [scribbleLayoutKey]);
+
+  useEffect(() => {
+    if (!mapScribbles?.length) return;
+    const size = computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+    scribbleSizeRef.current = size;
+    for (const evt of mapScribbles) {
+      if (mapScribbleSeenIdsRef.current.has(evt.id)) continue;
+      mapScribbleSeenIdsRef.current.add(evt.id);
+      if (effectiveTokenMapId(evt.mapId) !== effectiveTokenMapId(activeMapIdResolved)) continue;
+      if (evt.kind === 'dot') {
+        const p = ftToDrawPixel(evt.xFt, evt.yFt, mapWidthFt, mapHeightFt, size);
+        const r = Math.max(1, (evt.rFt / mapWidthFt) * size.w);
+        scribbleStrokesRef.current.push({ type: 'dot', x: p.x, y: p.y, r, rgba: evt.rgba, t0: evt.t0 });
+      } else if (evt.kind === 'segment') {
+        const p0 = ftToDrawPixel(evt.x0Ft, evt.y0Ft, mapWidthFt, mapHeightFt, size);
+        const p1 = ftToDrawPixel(evt.x1Ft, evt.y1Ft, mapWidthFt, mapHeightFt, size);
+        const r = Math.max(1, (evt.rFt / mapWidthFt) * size.w);
+        scribbleStrokesRef.current.push({
+          type: 'segment',
+          x0: p0.x,
+          y0: p0.y,
+          x1: p1.x,
+          y1: p1.y,
+          r,
+          rgba: evt.rgba,
+          t0: evt.t0,
+        });
+      }
+    }
+    scheduleScribblePaint();
+  }, [mapScribbles, mapWidthFt, mapHeightFt, activeMapIdResolved, scheduleScribblePaint]);
+
+  const mapOverlayPngSrc = useMemo(
+    () => getRowOverlayPng(maps.find((m) => m.id === activeMapIdResolved)),
+    [maps, activeMapIdResolved],
+  );
+
+  const cameraOverlayPngSrc = useMemo(() => {
+    if (isPlayer) {
+      if (playerActivePersonalCameraId) {
+        return getRowOverlayPng(personalCameras.find((c) => c.id === playerActivePersonalCameraId));
+      }
+      if (playerFreeMapExplore) return null;
+      return getRowOverlayPng(mapViews.find((v) => v.id === playerSelectedViewId));
+    }
+    if (gmActivePersonalCameraId) {
+      return getRowOverlayPng(personalCameras.find((c) => c.id === gmActivePersonalCameraId));
+    }
+    if (gmActiveViewId) {
+      return getRowOverlayPng(mapViews.find((v) => v.id === gmActiveViewId));
+    }
+    return null;
+  }, [
+    isPlayer,
+    gmActivePersonalCameraId,
+    gmActiveViewId,
+    playerActivePersonalCameraId,
+    playerFreeMapExplore,
+    playerSelectedViewId,
+    mapViews,
+    personalCameras,
+  ]);
+
+  const editableDrawSourceUrl = useMemo(() => {
+    if (!drawEditContext) return null;
+    if (drawEditContext.kind === 'map') return mapOverlayPngSrc;
+    if (drawEditContext.kind === 'view') {
+      return getRowOverlayPng(mapViews.find((v) => v.id === drawEditContext.id));
+    }
+    return getRowOverlayPng(personalCameras.find((c) => c.id === drawEditContext.id));
+  }, [drawEditContext, mapOverlayPngSrc, mapViews, personalCameras]);
+
+  const clientToDrawPx = useCallback(
+    (clientX, clientY) => {
+      const ft = clientToFt(clientX, clientY);
+      if (!ft) return null;
+      if (ft.x < 0 || ft.x > mapWidthFt || ft.y < 0 || ft.y > mapHeightFt) return null;
+      const fs = drawSizeRef.current;
+      const { w, h } =
+        fs && fs.w > 0 && fs.h > 0
+          ? fs
+          : computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+      return ftToDrawPixel(ft.x, ft.y, mapWidthFt, mapHeightFt, { w, h });
+    },
+    [clientToFt, mapWidthFt, mapHeightFt],
+  );
+
+  const clampDrawPx = useCallback((p, w, h) => {
+    if (!p) return null;
+    return {
+      x: Math.max(0, Math.min(w, p.x)),
+      y: Math.max(0, Math.min(h, p.y)),
+    };
+  }, []);
+
+  const commitOverlayPng = useCallback(
+    async (png) => {
+      if (!drawEditContext || isPlayer) return;
+      try {
+        if (drawEditContext.kind === 'map') {
+          onSetMapOverlay?.(drawEditContext.mapId, png);
+        } else if (drawEditContext.kind === 'view') {
+          onSetMapViewOverlay?.(drawEditContext.id, png);
+        } else if (tableId) {
+          const { camera } = await patchPersonalCamera(tableId, drawEditContext.id, { overlayPng: png });
+          setPersonalCameras((prev) => prev.map((c) => (c.id === camera.id ? { ...c, ...camera } : c)));
+        }
+      } catch (err) {
+        console.error('[BattleMap] map draw save failed:', err);
+      }
+    },
+    [drawEditContext, isPlayer, onSetMapOverlay, onSetMapViewOverlay, tableId],
+  );
+
+  useEffect(() => {
+    if (isPlayer) return;
+    if (drawTool !== 'brush' && drawTool !== 'eraser' && drawTool !== 'rect' && drawTool !== 'oval') return;
+    const c = drawPaintRef.current;
+    if (!c) return;
+    const { w, h } = computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+    drawSizeRef.current = { w, h };
+    if (drawBrushActiveRef.current || drawShapeDragRef.current) return;
+    void loadDrawDataUrlOntoCanvas(editableDrawSourceUrl, c, { w, h });
+  }, [isPlayer, drawTool, mapWidthFt, mapHeightFt, editableDrawSourceUrl]);
+
+  useEffect(() => {
+    if (isPlayer) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        drawEraserPendingRef.current = null;
+        setDrawTool('scribble');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPlayer]);
+
+  const handleScribbleClear = useCallback(() => {
+    if (!mapConfigHasImage(mapConfig)) return;
+    if (!window.confirm(isPlayer ? 'Clear your scribbles?' : 'Clear all scribbles on your screen?')) return;
+    scribbleStrokesRef.current = [];
+    const c = scribbleCanvasRef.current;
+    const { w, h } = scribbleSizeRef.current;
+    if (c && w && h) {
+      const ctx = c.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, w, h);
+    }
+  }, [mapConfig, isPlayer]);
+
+  const handleDrawPointerDown = useCallback(
+    (e) => {
+      if (e.button !== 0) return;
+      if (drawTool === 'scribble' || isPlayer) {
+        e.preventDefault();
+        e.stopPropagation();
+        const c = scribbleCanvasRef.current;
+        if (!c) return;
+        const size = computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+        if (c.width !== size.w || c.height !== size.h) {
+          c.width = size.w;
+          c.height = size.h;
+          scribbleStrokesRef.current = [];
+        }
+        scribbleSizeRef.current = size;
+        const ctx = c.getContext('2d');
+        if (!ctx) return;
+        const { w, h } = size;
+        const p0 = clientToDrawPx(e.clientX, e.clientY);
+        if (!p0) return;
+        const p = clampDrawPx(p0, w, h);
+        const rw = w;
+        const r = Math.max(1, (drawBrushRadiusClampedFt / mapWidthFt) * rw);
+        const t0 = Date.now();
+        scribbleStrokeT0Ref.current = t0;
+        const strokeId = crypto.randomUUID();
+        scribbleStrokeIdRef.current = strokeId;
+        scribbleStrokesRef.current.push({ type: 'dot', x: p.x, y: p.y, r, rgba: brushRgba, t0 });
+        scribbleBrushActiveRef.current = true;
+        scribbleLastPxRef.current = p;
+        scheduleScribblePaint();
+        if (tableId) {
+          const ft = drawPixelToFt(p.x, p.y, mapWidthFt, mapHeightFt, size);
+          void postMapScribble(
+            tableId,
+            {
+              id: crypto.randomUUID(),
+              _clientId: CLIENT_ID,
+              mapId: activeMapIdResolved,
+              strokeId,
+              t0,
+              kind: 'dot',
+              xFt: ft.x,
+              yFt: ft.y,
+              rFt: drawBrushRadiusClampedFt,
+              rgba: brushRgba,
+            },
+            !isPlayer,
+          );
+        }
+        scribbleBroadcastLastPxRef.current = p;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      if (isPlayer) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const c = drawPaintRef.current;
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      const { w, h } = drawSizeRef.current;
+
+      if (drawTool === 'rect' || drawTool === 'oval') {
+        const p0 = clientToDrawPx(e.clientX, e.clientY);
+        if (!p0) return;
+        const p = clampDrawPx(p0, w, h);
+        try {
+          const snapshot = ctx.getImageData(0, 0, w, h);
+          drawShapeDragRef.current = {
+            snapshot,
+            startX: p.x,
+            startY: p.y,
+            tool: drawTool,
+            filled: drawTool === 'rect' ? rectShapeFilled : ovalShapeFilled,
+          };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+
+      if (drawTool !== 'brush' && drawTool !== 'eraser') return;
+      const p = clientToDrawPx(e.clientX, e.clientY);
+      if (!p) return;
+      const { w: rw } = drawSizeRef.current;
+      const r = Math.max(1, (drawBrushRadiusClampedFt / mapWidthFt) * rw);
+      if (drawTool === 'eraser') {
+        drawEraserPendingRef.current = {
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startPx: { x: p.x, y: p.y },
+        };
+      } else {
+        drawBrushActiveRef.current = true;
+        drawLastPxRef.current = { x: p.x, y: p.y };
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = alphaFromRgbaString(brushRgba);
+        ctx.fillStyle = rgbStringFromRgba(brushRgba);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    },
+    [
+      isPlayer,
+      drawTool,
+      clientToDrawPx,
+      clampDrawPx,
+      drawBrushRadiusClampedFt,
+      mapWidthFt,
+      mapHeightFt,
+      brushRgba,
+      rectShapeFilled,
+      ovalShapeFilled,
+      scheduleScribblePaint,
+      tableId,
+      activeMapIdResolved,
+    ],
+  );
+
+  const handleDrawPointerMove = useCallback(
+    (e) => {
+      if (drawTool === 'scribble' || isPlayer) {
+        if (!scribbleBrushActiveRef.current) return;
+        const p = clientToDrawPx(e.clientX, e.clientY);
+        if (!p) return;
+        const { w, h } = scribbleSizeRef.current;
+        if (!w || !h) return;
+        const cur = clampDrawPx(p, w, h);
+        const last = scribbleLastPxRef.current;
+        const rw = w;
+        const rad = Math.max(1, (drawBrushRadiusClampedFt / mapWidthFt) * rw);
+        const t0 = scribbleStrokeT0Ref.current;
+        if (last) {
+          scribbleStrokesRef.current.push({
+            type: 'segment',
+            x0: last.x,
+            y0: last.y,
+            x1: cur.x,
+            y1: cur.y,
+            r: rad,
+            rgba: brushRgba,
+            t0,
+          });
+        }
+        scribbleLastPxRef.current = cur;
+        scheduleScribblePaint();
+        if (tableId && scribbleStrokeIdRef.current) {
+          const tPerf = performance.now();
+          if (tPerf - scribbleBroadcastLastSentRef.current >= 40) {
+            const fromPx = scribbleBroadcastLastPxRef.current;
+            if (fromPx && isNonDegenerateScribbleSegmentPx(fromPx, cur)) {
+              scribbleBroadcastLastSentRef.current = tPerf;
+              const sz = scribbleSizeRef.current;
+              const f0 = drawPixelToFt(fromPx.x, fromPx.y, mapWidthFt, mapHeightFt, sz);
+              const f1 = drawPixelToFt(cur.x, cur.y, mapWidthFt, mapHeightFt, sz);
+              void postMapScribble(
+                tableId,
+                {
+                  id: crypto.randomUUID(),
+                  _clientId: CLIENT_ID,
+                  mapId: activeMapIdResolved,
+                  strokeId: scribbleStrokeIdRef.current,
+                  t0,
+                  kind: 'segment',
+                  x0Ft: f0.x,
+                  y0Ft: f0.y,
+                  x1Ft: f1.x,
+                  y1Ft: f1.y,
+                  rFt: drawBrushRadiusClampedFt,
+                  rgba: brushRgba,
+                },
+                !isPlayer,
+              );
+              scribbleBroadcastLastPxRef.current = cur;
+            }
+          }
+        }
+        return;
+      }
+      if (isPlayer) return;
+      const c = drawPaintRef.current;
+      const ctx = c?.getContext('2d');
+      if (!c || !ctx) return;
+      const { w, h } = drawSizeRef.current;
+
+      const shape = drawShapeDragRef.current;
+      if (shape) {
+        const p0 = clientToDrawPx(e.clientX, e.clientY);
+        if (!p0) return;
+        const cur = clampDrawPx(p0, w, h);
+        try {
+          ctx.putImageData(shape.snapshot, 0, 0);
+        } catch {
+          return;
+        }
+        const x0 = Math.min(shape.startX, cur.x);
+        const x1 = Math.max(shape.startX, cur.x);
+        const y0 = Math.min(shape.startY, cur.y);
+        const y1 = Math.max(shape.startY, cur.y);
+        ctx.save();
+        ctx.strokeStyle = brushRgba;
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        if (shape.tool === 'rect') {
+          ctx.strokeRect(x0, y0, Math.max(x1 - x0, 0.5), Math.max(y1 - y0, 0.5));
+        } else {
+          const cx = (x0 + x1) / 2;
+          const cy = (y0 + y1) / 2;
+          const rx = Math.max((x1 - x0) / 2, 0.5);
+          const ry = Math.max((y1 - y0) / 2, 0.5);
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        return;
+      }
+
+      const eraserPending = drawEraserPendingRef.current;
+      if (eraserPending && drawTool === 'eraser' && !drawBrushActiveRef.current) {
+        const dx = e.clientX - eraserPending.startClientX;
+        const dy = e.clientY - eraserPending.startClientY;
+        if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+          drawEraserPendingRef.current = null;
+          const p = clientToDrawPx(e.clientX, e.clientY);
+          if (!p) return;
+          const { w: rw } = drawSizeRef.current;
+          const rad = Math.max(1, (drawBrushRadiusClampedFt / mapWidthFt) * rw);
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fillStyle = ERASER_DESTINATION_OUT;
+          ctx.beginPath();
+          ctx.arc(eraserPending.startPx.x, eraserPending.startPx.y, rad, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          drawBrushActiveRef.current = true;
+          drawLastPxRef.current = eraserPending.startPx;
+          const cur = clampDrawPx(p, w, h);
+          strokeDrawSegment(
+            ctx,
+            eraserPending.startPx.x,
+            eraserPending.startPx.y,
+            cur.x,
+            cur.y,
+            rad,
+            'eraser',
+            brushRgba,
+          );
+          drawLastPxRef.current = cur;
+        }
+        return;
+      }
+
+      if (!drawBrushActiveRef.current) return;
+      if (drawTool !== 'brush' && drawTool !== 'eraser') return;
+      const p = clientToDrawPx(e.clientX, e.clientY);
+      if (!p) return;
+      const last = drawLastPxRef.current;
+      const { w: rw } = drawSizeRef.current;
+      const rad = Math.max(1, (drawBrushRadiusClampedFt / mapWidthFt) * rw);
+      if (last) {
+        strokeDrawSegment(ctx, last.x, last.y, p.x, p.y, rad, drawTool, brushRgba);
+      }
+      drawLastPxRef.current = { x: p.x, y: p.y };
+    },
+    [
+      isPlayer,
+      drawTool,
+      clientToDrawPx,
+      clampDrawPx,
+      drawBrushRadiusClampedFt,
+      mapWidthFt,
+      brushRgba,
+      scheduleScribblePaint,
+      tableId,
+      activeMapIdResolved,
+    ],
+  );
+
+  const handleDrawPointerUp = useCallback(
+    async (e) => {
+      if (drawTool === 'scribble' || isPlayer) {
+        if (!scribbleBrushActiveRef.current) return;
+        flushScribbleTailToPeers();
+        scribbleBrushActiveRef.current = false;
+        scribbleLastPxRef.current = null;
+        scribbleStrokeIdRef.current = null;
+        scribbleBroadcastLastPxRef.current = null;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      const eraserPending = drawEraserPendingRef.current;
+      if (eraserPending && drawTool === 'eraser') {
+        drawEraserPendingRef.current = null;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        if (!drawBrushActiveRef.current) {
+          const c = drawPaintRef.current;
+          const ctx = c?.getContext('2d');
+          if (c && ctx) {
+            const { w, h } = drawSizeRef.current;
+            const changed = floodEraseConnectedComponent(
+              ctx,
+              w,
+              h,
+              eraserPending.startPx.x,
+              eraserPending.startPx.y,
+            );
+            if (changed) {
+              const png = c.toDataURL('image/png');
+              await commitOverlayPng(png);
+            }
+          }
+          return;
+        }
+      }
+
+      const shape = drawShapeDragRef.current;
+      if (shape) {
+        drawShapeDragRef.current = null;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        const c = drawPaintRef.current;
+        const ctx = c?.getContext('2d');
+        if (!c || !ctx) return;
+        const { w, h } = drawSizeRef.current;
+        const p0 = clientToDrawPx(e.clientX, e.clientY);
+        if (!p0) return;
+        const cur = clampDrawPx(p0, w, h);
+        try {
+          ctx.putImageData(shape.snapshot, 0, 0);
+        } catch {
+          return;
+        }
+        const x0 = Math.min(shape.startX, cur.x);
+        const x1 = Math.max(shape.startX, cur.x);
+        const y0 = Math.min(shape.startY, cur.y);
+        const y1 = Math.max(shape.startY, cur.y);
+        const lineW = Math.max(1, 2 * (drawBrushRadiusClampedFt / mapWidthFt) * w);
+        if (shape.filled) {
+          if (shape.tool === 'rect') {
+            fillDrawRect(ctx, x0, y0, x1, y1, 'brush', brushRgba);
+          } else {
+            fillDrawEllipse(ctx, x0, y0, x1, y1, 'brush', brushRgba);
+          }
+        } else if (shape.tool === 'rect') {
+          strokeOutlineRect(ctx, x0, y0, x1, y1, lineW, brushRgba);
+        } else {
+          strokeOutlineEllipse(ctx, x0, y0, x1, y1, lineW, brushRgba);
+        }
+        const png = c.toDataURL('image/png');
+        await commitOverlayPng(png);
+        return;
+      }
+
+      if (!drawBrushActiveRef.current) return;
+      drawBrushActiveRef.current = false;
+      drawLastPxRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const c = drawPaintRef.current;
+      if (c) {
+        const png = c.toDataURL('image/png');
+        await commitOverlayPng(png);
+      }
+    },
+    [
+      clientToDrawPx,
+      clampDrawPx,
+      brushRgba,
+      commitOverlayPng,
+      drawTool,
+      drawBrushRadiusClampedFt,
+      mapWidthFt,
+      isPlayer,
+      flushScribbleTailToPeers,
+    ],
+  );
+
+  const handleDrawPointerCancel = useCallback(
+    async (e) => {
+      if (drawTool === 'scribble' || isPlayer) {
+        if (scribbleBrushActiveRef.current) {
+          flushScribbleTailToPeers();
+        }
+        scribbleBrushActiveRef.current = false;
+        scribbleLastPxRef.current = null;
+        scribbleStrokeIdRef.current = null;
+        scribbleBroadcastLastPxRef.current = null;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      if (drawShapeDragRef.current) {
+        const shape = drawShapeDragRef.current;
+        drawShapeDragRef.current = null;
+        const c = drawPaintRef.current;
+        const ctx = c?.getContext('2d');
+        if (ctx && c) {
+          try {
+            ctx.putImageData(shape.snapshot, 0, 0);
+          } catch {
+            /* ignore */
+          }
+        }
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      if (drawEraserPendingRef.current) {
+        drawEraserPendingRef.current = null;
+        drawBrushActiveRef.current = false;
+        drawLastPxRef.current = null;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      await handleDrawPointerUp(e);
+    },
+    [handleDrawPointerUp, drawTool, isPlayer, flushScribbleTailToPeers],
+  );
+
+  const handleDrawClearAll = useCallback(() => {
+    if (!drawEditContext || isPlayer) return;
+    if (!window.confirm('Clear all drawings on this layer?')) return;
+    const { w, h } = computeMapDrawCanvasSize(mapWidthFt, mapHeightFt);
+    const c = drawPaintRef.current;
+    if (c) clearDrawCanvas(c, { w, h });
+    void commitOverlayPng(null);
+    if (
+      (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'rect' || drawTool === 'oval') &&
+      drawPaintRef.current
+    ) {
+      void loadDrawDataUrlOntoCanvas(null, drawPaintRef.current, { w, h });
+    }
+  }, [drawEditContext, isPlayer, mapWidthFt, mapHeightFt, commitOverlayPng, drawTool]);
+
+  const showDrawPaintCanvas =
+    !isPlayer &&
+    (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'rect' || drawTool === 'oval') &&
+    drawEditContext;
+  const showScribbleCanvas = mapConfigHasImage(mapConfig);
+  const scribbleCanvasPointerEvents =
+    drawTool === 'scribble' || isPlayer ? 'auto' : 'none';
+  const scribbleCanvasZ =
+    showDrawPaintCanvas && drawTool !== 'scribble' ? 19 : 21;
+  const drawCursorRadiusScreenPx = drawBrushRadiusClampedFt * pxPerFt * mapZoom;
+
   // Find a placed token whose bounding box contains the given client point
   const findTokenAtClient = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
@@ -2311,6 +3263,9 @@ export function BattleMap({
   // Handle pointer move over the map canvas area (not trays)
   const handleMapPointerMove = useCallback((e) => {
     if (panRightDragRef.current) return;
+    if (!isPlayer && (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble')) {
+      setDrawCursorClient({ x: e.clientX, y: e.clientY });
+    }
     // During an active drag, the bullseye is frozen at the drag origin — don't update
     if (frozenBullseyeRef.current) {
       setBullseyeFt(frozenBullseyeRef.current);
@@ -2324,16 +3279,27 @@ export function BattleMap({
       const ft = clientToFt(e.clientX, e.clientY);
       if (ft) setBullseyeFt(ft);
     }
-  }, [findTokenAtClient, clientToFt]);
+  }, [findTokenAtClient, clientToFt, isPlayer, drawTool]);
 
   const handleMapPointerLeave = useCallback(() => {
     if (!frozenBullseyeRef.current) setBullseyeFt(null);
-  }, []);
+    if (!isPlayer && (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble'))
+      setDrawCursorClient(null);
+  }, [isPlayer, drawTool]);
 
   const handleMapPingPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
     if (!tableId) return;
     if (panRightDragRef.current) return;
+    if (
+      !isPlayer &&
+      (drawTool === 'brush' ||
+        drawTool === 'eraser' ||
+        drawTool === 'rect' ||
+        drawTool === 'oval' ||
+        drawTool === 'scribble')
+    )
+      return;
     mapPingTapRef.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
     const onUp = async (e2) => {
       if (e2.pointerId !== mapPingTapRef.current?.pointerId) return;
@@ -2353,7 +3319,7 @@ export function BattleMap({
     };
     mapPingPointerUpRef.current = onUp;
     window.addEventListener('pointerup', onUp);
-  }, [tableId, clientToFt, mapWidthFt, mapHeightFt, activeMapIdResolved, isPlayer, appendMapPing]);
+  }, [tableId, clientToFt, mapWidthFt, mapHeightFt, activeMapIdResolved, isPlayer, appendMapPing, drawTool]);
 
   useEffect(() => () => {
     if (mapPingPointerUpRef.current) {
@@ -2689,6 +3655,19 @@ export function BattleMap({
     onToggleDiceVisibility ||
     (typeof onCancelAllBanners === 'function' && pendingBannerCount > 0);
 
+  const gmEmptyMapHint =
+    !isPlayer &&
+    !mapConfigHasImage(mapConfig) &&
+    charTrayTokens.length === 0 &&
+    advTrayTokens.length === 0 &&
+    charMapTokens.length === 0 &&
+    advMapTokens.length === 0;
+  const playerEmptyMapHint =
+    isPlayer &&
+    !mapConfigHasImage(mapConfig) &&
+    charMapTokens.length === 0 &&
+    advMapTokens.length === 0;
+
   return (
     <div className={`flex flex-col ${className}`}>
       {/* Toolbar — GM only */}
@@ -2706,11 +3685,67 @@ export function BattleMap({
       )}
       {!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore && (
         <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
-          <Tooltip label="Camera views">
-            <span className="shrink-0 flex items-center justify-center" role="img" aria-label="Camera views">
-              <Camera size={trayTokenSizePx} className="text-dh-muted" strokeWidth={1.25} aria-hidden />
-            </span>
-          </Tooltip>
+          <div
+            className="flex shrink-0 flex-col gap-1 items-stretch pt-0.5 box-border overflow-hidden"
+            style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+          >
+            {onAddMap ? (
+              <Tooltip label="Add map" placement="right" className="relative block w-full min-w-0">
+                <button
+                  type="button"
+                  onClick={onAddMap}
+                  className="w-full max-w-full min-w-0 flex justify-center items-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
+                  aria-label="Add map"
+                >
+                  <span className="relative inline-flex shrink-0">
+                    <MapIcon size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
+                    <Plus
+                      className="absolute -bottom-0.5 -right-0.5 text-violet-100"
+                      size={16}
+                      strokeWidth={3.5}
+                      aria-hidden
+                    />
+                  </span>
+                </button>
+              </Tooltip>
+            ) : null}
+            <Tooltip
+              label={
+                gmCanCreateCameraView
+                  ? 'Add camera at the current zoom and pan'
+                  : 'Cameras'
+              }
+              placement="right"
+              className="relative block w-full min-w-0"
+            >
+              {gmCanCreateCameraView ? (
+                <button
+                  type="button"
+                  onClick={() => void handleSplitCamera()}
+                  className="w-full max-w-full min-w-0 flex justify-center items-center rounded px-0.5 py-0.5 text-violet-300/90 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 hover:underline box-border"
+                  aria-label="Add camera at the current zoom and pan"
+                >
+                  <span className="relative inline-flex shrink-0">
+                    <Camera size={trayTokenSizePx - 6} strokeWidth={1.25} aria-hidden />
+                    <Plus
+                      className="absolute -bottom-0.5 -right-0.5 text-violet-100"
+                      size={16}
+                      strokeWidth={3.5}
+                      aria-hidden
+                    />
+                  </span>
+                </button>
+              ) : (
+                <span
+                  className="shrink-0 flex flex-col items-center justify-center text-dh-muted w-full"
+                  role="img"
+                  aria-label="Camera views"
+                >
+                  <Camera size={trayTokenSizePx} strokeWidth={1.25} aria-hidden />
+                </span>
+              )}
+            </Tooltip>
+          </div>
           <div
             className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
             role="tablist"
@@ -2728,18 +3763,21 @@ export function BattleMap({
                 <MapViewStripTile
                   variant="map"
                   mapRow={map}
+                  mapOverlayPng={getRowOverlayPng(map)}
                   viewState={
                     gmActiveViewId === null && map.id === activeMapIdResolved && liveStripView
                       ? liveStripView
                       : null
                   }
+                  activeElements={activeElements}
+                  stripMapId={map.id}
                   label={map.name || 'Map'}
                   isActive={
                     (gmActiveViewId === null && map.id === activeMapIdResolved) ||
                     views.some((v) => v.id === gmActiveViewId)
                   }
                   onClick={() => {
-                    if (onMapFreeExplore) onMapFreeExplore(map.id);
+                    if (handleGmMapFreeExplore) handleGmMapFreeExplore(map.id);
                   }}
                   actions={
                     onSetMapShare || onRenameMap || (onRemoveMap && maps.length > 1) ? (
@@ -2748,8 +3786,8 @@ export function BattleMap({
                           <Tooltip
                             label={
                               map.shareWithPlayers !== false
-                                ? 'Players see the map tile and can pan/zoom and save personal cameras'
-                                : 'Players only see broadcast views (no map tile or personal cameras)'
+                                ? 'Players see the map tile and can pan/zoom freely (not locked to the GM)'
+                                : 'Players only see broadcast views (no map tile or free pan/zoom)'
                             }
                           >
                             <button
@@ -2766,8 +3804,8 @@ export function BattleMap({
                               }`}
                               aria-label={
                                 map.shareWithPlayers !== false
-                                  ? 'Player map views and cameras on'
-                                  : 'Player map views and cameras off'
+                                  ? 'Player map tile and free pan/zoom on'
+                                  : 'Player map tile and free pan/zoom off'
                               }
                             >
                               <Radio size={11} aria-hidden />
@@ -2819,10 +3857,14 @@ export function BattleMap({
                       key={view.id}
                       variant="map"
                       mapRow={map}
+                      mapOverlayPng={getRowOverlayPng(map)}
+                      cameraOverlayPng={getRowOverlayPng(view)}
                       viewState={viewStateForStripTile(view)}
+                      activeElements={activeElements}
+                      stripMapId={map.id}
                       label={label}
                       isActive={view.id === gmActiveViewId}
-                      onClick={() => onSetActiveView(view.id)}
+                      onClick={() => handleGmSetActiveView(view.id)}
                       actions={
                         <div className="flex items-center justify-center gap-0.5">
                           {onSetViewBroadcast ? (
@@ -2894,12 +3936,16 @@ export function BattleMap({
                       mapImageNaturalWidth: null,
                       mapImageNaturalHeight: null,
                     }}
+                    cameraOverlayPng={getRowOverlayPng(cam)}
                     viewState={{
                       mapViewZoomRatio: cam.mapViewZoomRatio,
                       mapViewPanNorm: cam.mapViewPanNorm,
+                      mapViewVisibleNorm: cam.mapViewVisibleNorm,
                     }}
+                    activeElements={activeElements}
+                    stripMapId={cam.mapId}
                     label={cam.name || 'View'}
-                    isActive={false}
+                    isActive={cam.id === gmActivePersonalCameraId}
                     showCameraBadge
                     onClick={() => applyPersonalCamera(cam)}
                     actions={
@@ -2937,56 +3983,29 @@ export function BattleMap({
               </div>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-col gap-1 items-end pt-0.5">
-            <div className="flex flex-wrap items-center justify-end gap-1">
-              <Tooltip label="Save the current zoom and pan as a new view on this map">
+          {canControlMapView ? (
+            <div
+              className="flex shrink-0 flex-col items-stretch pt-0.5 box-border overflow-hidden self-start"
+              style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+            >
+              <Tooltip label="Fit everyone on the map at the closest zoom" placement="left" className="relative block w-full min-w-0">
                 <button
                   type="button"
-                  onClick={handleSplitCamera}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 text-dh text-[11px] shrink-0"
+                  onClick={applyZoomToFitActors}
+                  disabled={!hasPlacedActorsOnMap}
+                  className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
+                  aria-label="Zoom to Actors"
                 >
-                  <Camera size={12} className="text-violet-300/90 shrink-0" aria-hidden />
-                  New view
+                  <Focus size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
+                  <span className="px-0.5 font-medium">Zoom to Actors</span>
                 </button>
               </Tooltip>
-              {onAddMap && (
-                <button type="button" onClick={onAddMap} className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px] shrink-0">
-                  + Map
-                </button>
-              )}
             </div>
-          </div>
+          ) : null}
         </div>
       )}
-      {isPlayer &&
-        tableId &&
-        (playerStripViews.length > 0 || personalCameras.length > 0 || mapAllowsPlayerCameras) && (
+      {isPlayer && tableId && playerStripTileCount > 1 && (
           <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
-            <Tooltip label="Camera views">
-              <span className="shrink-0 flex items-center justify-center" role="img" aria-label="Camera views">
-                <Camera size={trayTokenSizePx} className="text-dh-muted" strokeWidth={1.25} aria-hidden />
-              </span>
-            </Tooltip>
-            {mapAllowsPlayerCameras ? (
-              <Tooltip label="Save current zoom and pan as your personal camera">
-                <button
-                  type="button"
-                  onClick={() => void handlePlayerCreateCamera()}
-                  className="mt-0.5 shrink-0 rounded-md border border-violet-500/40 bg-violet-950/30 p-1 text-violet-200 hover:bg-violet-900/40"
-                  aria-label="Add personal camera"
-                >
-                  <span className="relative inline-flex items-center justify-center">
-                    <Camera size={20} className="text-violet-300/95" aria-hidden />
-                    <Plus
-                      size={11}
-                      strokeWidth={3}
-                      className="absolute -bottom-0.5 -right-0.5 rounded-full bg-dh-canvas text-violet-200"
-                      aria-hidden
-                    />
-                  </span>
-                </button>
-              </Tooltip>
-            ) : null}
             <div
               className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
               aria-label="GM broadcast views and your saved views"
@@ -3004,7 +4023,10 @@ export function BattleMap({
                     <MapViewStripTile
                       variant="map"
                       mapRow={m}
+                      mapOverlayPng={getRowOverlayPng(m)}
                       viewState={null}
+                      activeElements={activeElements}
+                      stripMapId={m.id}
                       label={m.name || 'Map'}
                       hideCaption
                       tooltipTitle="Pan and zoom freely (not a saved view)"
@@ -3028,7 +4050,11 @@ export function BattleMap({
                         key={view.id}
                         variant="map"
                         mapRow={m}
+                        mapOverlayPng={getRowOverlayPng(m)}
+                        cameraOverlayPng={getRowOverlayPng(view)}
                         viewState={viewStateForStripTile(view)}
+                        activeElements={activeElements}
+                        stripMapId={m.id}
                         label={view.name || 'View'}
                         isActive={
                           view.id === playerSelectedViewId &&
@@ -3046,10 +4072,15 @@ export function BattleMap({
                         key={cam.id}
                         variant="camera"
                         mapRow={m}
+                        mapOverlayPng={getRowOverlayPng(m)}
+                        cameraOverlayPng={getRowOverlayPng(cam)}
                         viewState={{
                           mapViewZoomRatio: cam.mapViewZoomRatio,
                           mapViewPanNorm: cam.mapViewPanNorm,
+                          mapViewVisibleNorm: cam.mapViewVisibleNorm,
                         }}
+                        activeElements={activeElements}
+                        stripMapId={m.id}
                         label={cam.name || 'View'}
                         isActive={cam.id === playerActivePersonalCameraId}
                         showCameraBadge
@@ -3079,10 +4110,14 @@ export function BattleMap({
                           mapImageNaturalWidth: null,
                           mapImageNaturalHeight: null,
                         }}
+                        cameraOverlayPng={getRowOverlayPng(cam)}
                         viewState={{
                           mapViewZoomRatio: cam.mapViewZoomRatio,
                           mapViewPanNorm: cam.mapViewPanNorm,
+                          mapViewVisibleNorm: cam.mapViewVisibleNorm,
                         }}
+                        activeElements={activeElements}
+                        stripMapId={cam.mapId}
                         label={cam.name || 'View'}
                         isActive={cam.id === playerActivePersonalCameraId}
                         showCameraBadge
@@ -3093,6 +4128,25 @@ export function BattleMap({
                 </>
               ) : null}
             </div>
+            {canControlMapView ? (
+              <div
+                className="flex shrink-0 flex-col items-stretch pt-0.5 box-border overflow-hidden self-start"
+                style={{ width: CHARACTER_TRAY_WIDTH_PX, maxWidth: CHARACTER_TRAY_WIDTH_PX }}
+              >
+                <Tooltip label="Fit everyone on the map at the closest zoom" placement="left" className="relative block w-full min-w-0">
+                  <button
+                    type="button"
+                    onClick={applyZoomToFitActors}
+                    disabled={!hasPlacedActorsOnMap}
+                    className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
+                    aria-label="Zoom to Actors"
+                  >
+                    <Focus size={Math.max(12, trayTokenSizePx - 8)} strokeWidth={1.25} aria-hidden />
+                    <span className="px-0.5 font-medium">Zoom to Actors</span>
+                  </button>
+                </Tooltip>
+              </div>
+            ) : null}
           </div>
         )}
       {tableId && cameraHint ? (
@@ -3174,33 +4228,211 @@ export function BattleMap({
           <div ref={leftTrayRef} className="hidden" />
         )}
 
-        {/* Map column: view controls + viewport (we measure viewport via scrollWrapperRef) */}
+        {/* Map column: draw toolbar (optional) + viewport (measured via scrollWrapperRef) */}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative">
-          {canControlMapView && (
-            <MapViewControls
-              minZoom={minZoom}
-              maxZoom={maxZoom}
-              mapZoom={mapZoom}
-              onZoomChange={applyZoomFromControl}
-              panLeft={mapPanLeft}
-              panTop={mapPanTop}
-              maxPanLeft={maxPanLeft}
-              maxPanTop={maxPanTop}
-              onPanLeftChange={onPanLeftChange}
-              onPanTopChange={onPanTopChange}
-              onZoomToActors={applyZoomToFitActors}
-              zoomToActorsDisabled={!hasPlacedActorsOnMap}
-            />
-          )}
+          {mapConfigHasImage(mapConfig) &&
+            ((!isPlayer && (onSetMapOverlay || onSetMapViewOverlay)) || isPlayer) && (
+              <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-dh-border bg-dh-canvas/40 text-[11px] shrink-0">
+                <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
+                  {!isPlayer ? (
+                    <>
+                      <span className="text-dh-muted font-semibold tracking-wide">Map draw</span>
+                      <span className="text-dh-muted/80 hidden sm:inline">
+                        {drawEditContext?.kind === 'map' ? 'Map layer' : 'Camera layer'}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-dh-muted font-semibold tracking-wide">Scribble</span>
+                  )}
+                  {!isPlayer && (
+                    <>
+                      <Tooltip label="Scribble: fades over 10 seconds (not saved). Click and drag.">
+                        <button
+                          type="button"
+                          onClick={() => setDrawTool('scribble')}
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            drawTool === 'scribble'
+                              ? 'border-fuchsia-500/60 bg-fuchsia-950/35 text-fuchsia-100'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                          aria-label="Scribble: temporary strokes"
+                        >
+                          <PencilLine size={15} aria-hidden />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Paint on the map (click and drag)">
+                        <button
+                          type="button"
+                          onClick={() => setDrawTool('brush')}
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            drawTool === 'brush'
+                              ? 'border-violet-500/60 bg-violet-950/40 text-violet-100'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                          aria-label="Brush"
+                        >
+                          <Paintbrush size={15} aria-hidden />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Click a drawn region to remove it, or drag to erase freehand (full strength; opacity does not apply)">
+                        <button
+                          type="button"
+                          onClick={() => setDrawTool('eraser')}
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            drawTool === 'eraser'
+                              ? 'border-sky-500/60 bg-sky-950/35 text-sky-100'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                          aria-label="Eraser"
+                        >
+                          <Eraser size={15} aria-hidden />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Rectangle: drag on the map. Click again while selected to toggle filled vs outline.">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDrawTool((prev) => {
+                              if (prev === 'rect') {
+                                setRectShapeFilled((f) => !f);
+                                return 'rect';
+                              }
+                              return 'rect';
+                            })
+                          }
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            drawTool === 'rect'
+                              ? 'border-amber-500/55 bg-amber-950/35 text-amber-100'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                          aria-label="Rectangle"
+                        >
+                          <Square size={15} aria-hidden fill={rectShapeFilled ? 'currentColor' : 'none'} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label="Oval: drag on the map. Click again while selected to toggle filled vs outline.">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDrawTool((prev) => {
+                              if (prev === 'oval') {
+                                setOvalShapeFilled((f) => !f);
+                                return 'oval';
+                              }
+                              return 'oval';
+                            })
+                          }
+                          className={`inline-flex items-center justify-center rounded border p-1.5 ${
+                            drawTool === 'oval'
+                              ? 'border-emerald-500/50 bg-emerald-950/30 text-emerald-100'
+                              : 'border-dh-strong bg-dh-raised/70 text-dh-muted hover:text-dh'
+                          }`}
+                          aria-label="Oval"
+                        >
+                          <Circle size={15} aria-hidden fill={ovalShapeFilled ? 'currentColor' : 'none'} />
+                        </button>
+                      </Tooltip>
+                    </>
+                  )}
+                  <label className="inline-flex items-center gap-1 text-dh-muted" title="Brush color">
+                    <span className="whitespace-nowrap hidden sm:inline">Color</span>
+                    <input
+                      type="color"
+                      value={drawColorHex}
+                      onChange={(e) => setDrawColorHex(e.target.value)}
+                      className="h-6 w-8 cursor-pointer rounded border border-dh-strong bg-dh-raised p-0"
+                    />
+                  </label>
+                  <label
+                    className={`inline-flex items-center gap-1.5 ${drawTool === 'eraser' && !isPlayer ? 'text-dh-muted/50' : 'text-dh-muted'}`}
+                    title={
+                      drawTool === 'eraser' && !isPlayer
+                        ? 'Opacity applies to brush and shapes, not the eraser'
+                        : undefined
+                    }
+                  >
+                    <span className="whitespace-nowrap">Opacity</span>
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      value={drawOpacity}
+                      onChange={(e) => setDrawOpacity(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-20 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500 disabled:opacity-40"
+                      disabled={drawTool === 'eraser' && !isPlayer}
+                    />
+                    <span className="inline-block min-w-[5ch] text-end tabular-nums text-dh">
+                      {Math.round(drawOpacity * 100)}%
+                    </span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 text-dh-muted">
+                    <span className="whitespace-nowrap">Radius</span>
+                    <input
+                      type="range"
+                      min={MAP_DRAW_BRUSH_RADIUS_FT_MIN}
+                      max={drawBrushRadiusMaxFt}
+                      step={0.5}
+                      value={drawBrushRadiusClampedFt}
+                      onChange={(e) => setDrawBrushRadiusFt(Number(e.target.value))}
+                      className="relative top-0.5 h-1.5 w-24 cursor-pointer appearance-none rounded-full bg-dh-hover accent-cyan-500"
+                      disabled={drawTool === 'rect' || drawTool === 'oval'}
+                      title={`${MAP_DRAW_BRUSH_RADIUS_FT_MIN}′–${Math.round(drawBrushRadiusMaxFt * 10) / 10}′ (max 20% of visible map height)`}
+                    />
+                    <span className="tabular-nums text-dh">{drawBrushRadiusClampedFt.toFixed(1)}′</span>
+                  </label>
+                </div>
+                <div className="ml-auto flex shrink-0 items-center gap-2">
+                  {!isPlayer ? (
+                    <Tooltip label="Clear this layer only">
+                      <button
+                        type="button"
+                        onClick={() => void handleDrawClearAll()}
+                        className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-dh-muted hover:text-amber-200 hover:border-amber-800/60"
+                        aria-label="Clear layer"
+                      >
+                        <Trash2 size={15} aria-hidden />
+                      </button>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip label="Clear your scribbles on this map">
+                      <button
+                        type="button"
+                        onClick={() => void handleScribbleClear()}
+                        className="inline-flex items-center justify-center rounded border border-dh-strong bg-dh-raised/70 p-1.5 text-dh-muted hover:text-amber-200 hover:border-amber-800/60"
+                        aria-label="Clear scribbles"
+                      >
+                        <Trash2 size={15} aria-hidden />
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
+              </div>
+            )}
           <div ref={scrollWrapperRef} className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
           {/* Viewport: pan via translate (no native scrolling) */}
           <div
             ref={scrollContainerRef}
-            className={`w-full h-full overflow-hidden relative touch-none ${
-              canControlMapView && (canPanMap || rightPanDragging)
-                ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
-                : ''
+            className={`w-full h-full overflow-hidden relative touch-none bg-dh-canvas ${
+              !isPlayer && (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble')
+                ? 'cursor-none'
+                : !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
+                  ? 'cursor-crosshair'
+                  : canControlMapView && (canPanMap || rightPanDragging)
+                    ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
+                    : ''
             }`}
+            style={
+              mapLetterboxClipPx &&
+              (mapLetterboxClipPx.top > 0 ||
+                mapLetterboxClipPx.right > 0 ||
+                mapLetterboxClipPx.bottom > 0 ||
+                mapLetterboxClipPx.left > 0)
+                ? {
+                    clipPath: `inset(${mapLetterboxClipPx.top}px ${mapLetterboxClipPx.right}px ${mapLetterboxClipPx.bottom}px ${mapLetterboxClipPx.left}px)`,
+                  }
+                : undefined
+            }
             onClick={handleMapClick}
             onPointerDown={handleRightPanPointerDown}
             onPointerMove={handleRightPanPointerMove}
@@ -3208,6 +4440,8 @@ export function BattleMap({
             onPointerCancel={handleRightPanPointerUp}
             onLostPointerCapture={handleRightPanLostCapture}
             onContextMenu={canControlMapView && canPanMap ? (ev) => { ev.preventDefault(); } : undefined}
+            onDragOver={!isPlayer ? handleMapPanelDragOver : undefined}
+            onDrop={!isPlayer ? handleMapPanelDrop : undefined}
           >
             <div
               className="relative shrink-0 will-change-transform"
@@ -3237,21 +4471,89 @@ export function BattleMap({
                   draggable={false}
                 />
               ) : (
-                <div className="absolute inset-0 bg-dh-map-blank flex items-center justify-center">
-                  {!isPlayer && charTrayTokens.length === 0 && advTrayTokens.length === 0 && charMapTokens.length === 0 && advMapTokens.length === 0 && (
-                    <div className="text-dh-muted text-sm text-center pointer-events-none">
-                      <MapIcon size={32} className="mx-auto mb-2 opacity-50" />
-                      <div>Upload a map image or drag tokens here</div>
-                    </div>
-                  )}
-                  {isPlayer && charMapTokens.length === 0 && advMapTokens.length === 0 && (
-                    <div className="text-dh-muted text-sm text-center pointer-events-none">
-                      <MapIcon size={32} className="mx-auto mb-2 opacity-50" />
-                      <div>No map loaded</div>
-                    </div>
-                  )}
-                </div>
+                <div className="absolute inset-0 bg-dh-map-blank" />
               )}
+
+              {mapOverlayPngSrc && !(showDrawPaintCanvas && drawEditContext?.kind === 'map') ? (
+                <img
+                  src={mapOverlayPngSrc}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-fill pointer-events-none select-none"
+                  style={{ zIndex: 3 }}
+                  draggable={false}
+                />
+              ) : null}
+              {showDrawPaintCanvas && drawEditContext?.kind === 'map' ? (
+                <canvas
+                  ref={drawPaintRef}
+                  className="absolute left-0 top-0"
+                  style={{
+                    width: renderedWidthPx,
+                    height: renderedHeightPx,
+                    zIndex: 20,
+                    touchAction: 'none',
+                    cursor:
+                      drawTool === 'rect' || drawTool === 'oval'
+                        ? 'crosshair'
+                        : drawTool === 'brush' || drawTool === 'eraser'
+                          ? 'none'
+                          : 'default',
+                  }}
+                  onPointerDown={handleDrawPointerDown}
+                  onPointerMove={handleDrawPointerMove}
+                  onPointerUp={handleDrawPointerUp}
+                  onPointerCancel={handleDrawPointerCancel}
+                />
+              ) : null}
+              {cameraOverlayPngSrc && !(showDrawPaintCanvas && drawEditContext && drawEditContext.kind !== 'map') ? (
+                <img
+                  src={cameraOverlayPngSrc}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-fill pointer-events-none select-none"
+                  style={{ zIndex: 4 }}
+                  draggable={false}
+                />
+              ) : null}
+              {showDrawPaintCanvas && drawEditContext && drawEditContext.kind !== 'map' ? (
+                <canvas
+                  ref={drawPaintRef}
+                  className="absolute left-0 top-0"
+                  style={{
+                    width: renderedWidthPx,
+                    height: renderedHeightPx,
+                    zIndex: 20,
+                    touchAction: 'none',
+                    cursor:
+                      drawTool === 'rect' || drawTool === 'oval'
+                        ? 'crosshair'
+                        : drawTool === 'brush' || drawTool === 'eraser'
+                          ? 'none'
+                          : 'default',
+                  }}
+                  onPointerDown={handleDrawPointerDown}
+                  onPointerMove={handleDrawPointerMove}
+                  onPointerUp={handleDrawPointerUp}
+                  onPointerCancel={handleDrawPointerCancel}
+                />
+              ) : null}
+              {showScribbleCanvas ? (
+                <canvas
+                  ref={scribbleCanvasRef}
+                  className="absolute left-0 top-0"
+                  style={{
+                    width: renderedWidthPx,
+                    height: renderedHeightPx,
+                    zIndex: scribbleCanvasZ,
+                    touchAction: 'none',
+                    pointerEvents: scribbleCanvasPointerEvents,
+                    cursor: drawTool === 'scribble' || isPlayer ? 'none' : 'default',
+                  }}
+                  onPointerDown={handleDrawPointerDown}
+                  onPointerMove={handleDrawPointerMove}
+                  onPointerUp={handleDrawPointerUp}
+                  onPointerCancel={handleDrawPointerCancel}
+                />
+              ) : null}
 
               {/* Measure rect for portaled fireworks (above DiceRoller z-15); bursts render in document.body */}
               <div
@@ -3261,11 +4563,11 @@ export function BattleMap({
                 aria-hidden
               />
 
-              {/* Range band bullseye overlay */}
+              {/* Range band bullseye overlay (above draw canvas z-20) */}
               {bullseyeFt && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 5 }}
+                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 25 }}
                   overflow="visible"
                 >
                   {/* Draw largest ring first so inner bands paint on top */}
@@ -3322,7 +4624,7 @@ export function BattleMap({
               {followBullseyeFt && (
                 <svg
                   className="absolute inset-0 pointer-events-none"
-                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 6 }}
+                  style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 26 }}
                   overflow="visible"
                 >
                   {[...RANGE_BANDS].reverse().map((band) => {
@@ -3461,6 +4763,45 @@ export function BattleMap({
               </div>
             </div>
           </div>
+          {!mapConfigHasImage(mapConfig) && (gmEmptyMapHint || playerEmptyMapHint) ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4"
+              role="status"
+            >
+              <div className="text-dh-muted text-sm text-center max-w-sm space-y-2">
+                <MapIcon size={32} className="mx-auto mb-1 opacity-50" aria-hidden />
+                {gmEmptyMapHint ? (
+                  <>
+                    <div className="text-dh font-semibold tracking-wide text-base">Theatre of the Mind</div>
+                    <p className="leading-snug">Drag tokens here and use relative positioning</p>
+                    <div className="text-dh-muted/90 text-xs font-medium py-0.5">OR</div>
+                    <p className="leading-snug">Drag / paste an image here and use a map</p>
+                  </>
+                ) : (
+                  <p className="leading-snug">No map loaded</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+          {canControlMapView &&
+            !(
+              (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
+              (isPlayer && tableId && playerStripTileCount > 1)
+            ) && (
+            <div className="pointer-events-none absolute right-2 bottom-2 z-20">
+              <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">
+                <button
+                  type="button"
+                  aria-label="Zoom to Actors"
+                  onClick={applyZoomToFitActors}
+                  disabled={!hasPlacedActorsOnMap}
+                  className="pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover text-dh-muted hover:text-dh disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  <Focus size={14} />
+                </button>
+              </Tooltip>
+            </div>
+          )}
           </div>
         </div>
 
@@ -3555,6 +4896,30 @@ export function BattleMap({
         />,
         document.body,
       )}
+      {typeof document !== 'undefined' &&
+        drawCursorClient &&
+        (drawTool === 'brush' || drawTool === 'eraser' || drawTool === 'scribble') &&
+        !isPlayer &&
+        mapConfigHasImage(mapConfig) &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed rounded-full shadow-[0_0_8px_rgba(0,0,0,0.9)]"
+            style={{
+              left: drawCursorClient.x - drawCursorRadiusScreenPx,
+              top: drawCursorClient.y - drawCursorRadiusScreenPx,
+              width: drawCursorRadiusScreenPx * 2,
+              height: drawCursorRadiusScreenPx * 2,
+              zIndex: 60,
+              border:
+                drawTool === 'eraser'
+                  ? '2px dashed rgba(255,255,255,0.75)'
+                  : `2px dashed ${brushRgba}`,
+              ...(drawTool === 'eraser' ? { '--map-draw-erase-paint': eraseSourceRgba(brushRgba) } : {}),
+            }}
+            aria-hidden
+          />,
+          document.body,
+        )}
     </div>
   );
 }

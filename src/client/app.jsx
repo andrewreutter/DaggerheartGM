@@ -104,6 +104,8 @@ function App() {
   const [pendingBanners, setPendingBanners] = useState([]);
   /** Ephemeral map click pings (SSE `map_ping`); not persisted */
   const [mapPings, setMapPings] = useState([]);
+  /** Ephemeral scribble segments (SSE `map_scribble`); not persisted */
+  const [mapScribbles, setMapScribbles] = useState([]);
   // pendingPlayerIntent: pre-roll intent broadcast by a player before dice are rolled (GM sees this)
   const [pendingPlayerIntent, setPendingPlayerIntent] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
@@ -525,6 +527,12 @@ function App() {
     setMapPings(prev => (prev.some(x => x.id === p.id) ? prev : [...prev.slice(-30), p]));
   }, []);
 
+  const appendMapScribble = useCallback((evt) => {
+    if (!evt?.id) return;
+    if (evt._clientId === CLIENT_ID) return;
+    setMapScribbles((prev) => (prev.some((x) => x.id === evt.id) ? prev : [...prev.slice(-400), evt]));
+  }, []);
+
   // Canonicalize legacy /gm-table/... URLs (needs user uid for bare /gm-table and /gm-table/:collection/:id)
   useEffect(() => {
     if (!user) return;
@@ -564,6 +572,7 @@ function App() {
       setTableTop(null);
       setTableStateReady(false);
       setMapPings([]);
+      setMapScribbles([]);
     }
     prevTableIdRef.current = route.tableId;
   }, [route.view, route.tableId]);
@@ -712,12 +721,19 @@ function App() {
           appendMapPing(p);
         } catch { /* ignore */ }
       });
+      es.addEventListener('map_scribble', (e) => {
+        try {
+          const s = JSON.parse(e.data);
+          if (!s?.id) return;
+          appendMapScribble(s);
+        } catch { /* ignore */ }
+      });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
     postTableOp({ op: 'set-gm-display-name', gmDisplayName: user?.displayName || '' }, tableId);
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [user?.uid, route.view, route.tableId, isPlayer, appendMapPing]);
+  }, [user?.uid, route.view, route.tableId, isPlayer, appendMapPing, appendMapScribble]);
 
   // Player SSE: receive table state snapshots, banners, and dice roll events for the invited table
   useEffect(() => {
@@ -793,11 +809,18 @@ function App() {
           appendMapPing(p);
         } catch { /* ignore */ }
       });
+      es.addEventListener('map_scribble', (e) => {
+        try {
+          const s = JSON.parse(e.data);
+          if (!s?.id) return;
+          appendMapScribble(s);
+        } catch { /* ignore */ }
+      });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, user?.uid, route.tableId, tableOwnerUid, appendMapPing]);
+  }, [isPlayer, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble]);
 
   // Drive Action Log live updates from the pendingBanners subscription channel.
   // roll-history seeds seenLogDbIdsRef on connect; here we append any newly-arriving
@@ -1207,17 +1230,23 @@ function App() {
   };
 
   const sendMapViewSync = useCallback(
-    (mapViewZoomRatio, mapViewPanNorm) => {
+    (mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm) => {
       const mapId =
         mapViews.find(v => v.id === gmActiveViewId)?.mapId ??
         activeMapId ??
         maps[0]?.id ??
         DEFAULT_LEGACY_MAP_ID;
       if (gmActiveViewId == null) {
-        postTableOp({ op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, viewId: null, mapId }, tableId);
+        postTableOp(
+          { op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, viewId: null, mapId },
+          tableId,
+        );
         return;
       }
-      postTableOp({ op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, viewId: gmActiveViewId }, tableId);
+      postTableOp(
+        { op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, viewId: gmActiveViewId },
+        tableId,
+      );
     },
     [tableId, gmActiveViewId, activeMapId, maps, mapViews],
   );
@@ -1268,6 +1297,20 @@ function App() {
   const sendSetMapShare = useCallback(
     (mapId, shareWithPlayers) => {
       postTableOp({ op: 'set-map-share', mapId, shareWithPlayers }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetMapOverlay = useCallback(
+    (mapId, overlayPng) => {
+      postTableOp({ op: 'set-map-overlay', mapId, overlayPng: overlayPng ?? null }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetMapViewOverlay = useCallback(
+    (viewId, overlayPng) => {
+      postTableOp({ op: 'set-map-view-overlay', viewId, overlayPng: overlayPng ?? null }, tableId);
     },
     [tableId],
   );
@@ -1702,6 +1745,9 @@ function App() {
                 mapPings={mapPings}
                 onDismissMapPing={dismissMapPing}
                 appendMapPing={appendMapPing}
+                mapScribbles={mapScribbles}
+                onSetMapOverlay={!effectiveIsPlayer ? sendSetMapOverlay : undefined}
+                onSetMapViewOverlay={!effectiveIsPlayer ? sendSetMapViewOverlay : undefined}
               />
             </div>
           </>

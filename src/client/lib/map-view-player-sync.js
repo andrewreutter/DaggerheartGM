@@ -37,3 +37,21 @@ export function freeMapExploreTargetsUnsharedMap(freeExploreMapId, playerFreeMap
   const map = maps.find((m) => m.id === freeExploreMapId);
   return !!(map && map.shareWithPlayers === false);
 }
+
+/**
+ * Selectable tiles on the player map strip: optional free-map tile per batch, GM views, personal cameras, orphans.
+ * Used to hide the strip when there is only one thing to show (nothing to switch between).
+ *
+ * @param {Array<{ map: { shareWithPlayers?: boolean }, gmViews: unknown[], cams: unknown[] }>} playerViewBatches
+ * @param {unknown[]} [orphanCameras]
+ */
+export function countPlayerMapStripTiles(playerViewBatches, orphanCameras = []) {
+  let n = 0;
+  for (const { map: m, gmViews, cams } of playerViewBatches) {
+    if (m.shareWithPlayers !== false) n += 1;
+    n += gmViews.length;
+    n += cams.length;
+  }
+  n += orphanCameras.length;
+  return n;
+}

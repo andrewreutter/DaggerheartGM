@@ -3,6 +3,7 @@ import {
   shouldApplyRemotePlayerMapView,
   personalCameraTargetsUnsharedMap,
   freeMapExploreTargetsUnsharedMap,
+  countPlayerMapStripTiles,
 } from '../../src/client/lib/map-view-player-sync.js';
 
 describe('map-view-player-sync', () => {
@@ -36,5 +37,20 @@ describe('map-view-player-sync', () => {
     expect(freeMapExploreTargetsUnsharedMap('m1', true, maps)).toBe(true);
     expect(freeMapExploreTargetsUnsharedMap('m1', false, maps)).toBe(false);
     expect(freeMapExploreTargetsUnsharedMap(null, true, maps)).toBe(false);
+  });
+
+  it('countPlayerMapStripTiles — hide strip when ≤1 tile', () => {
+    const mapShared = { id: 'm1', shareWithPlayers: true };
+    const mapNotShared = { id: 'm2', shareWithPlayers: false };
+    expect(countPlayerMapStripTiles([], [])).toBe(0);
+    expect(countPlayerMapStripTiles([{ map: mapShared, gmViews: [], cams: [] }], [])).toBe(1);
+    expect(
+      countPlayerMapStripTiles([{ map: mapShared, gmViews: [{ id: 'v1' }], cams: [] }], []),
+    ).toBe(2);
+    expect(
+      countPlayerMapStripTiles([{ map: mapNotShared, gmViews: [{ id: 'v1' }], cams: [] }], []),
+    ).toBe(1);
+    expect(countPlayerMapStripTiles([], [{ id: 'o1' }])).toBe(1);
+    expect(countPlayerMapStripTiles([], [{ id: 'o1' }, { id: 'o2' }])).toBe(2);
   });
 });

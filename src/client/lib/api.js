@@ -648,7 +648,7 @@ export const fetchPersonalCameras = async (tableId) => {
   return res.json();
 };
 
-/** Body: { name?, mapId, mapViewZoomRatio, mapViewPanNorm } */
+/** Body: { name?, mapId, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm }. GM only (403 for invited players). */
 export const postPersonalCamera = async (tableId, body) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -664,7 +664,7 @@ export const postPersonalCamera = async (tableId, body) => {
   return res.json();
 };
 
-/** Body: { name?, mapViewZoomRatio?, mapViewPanNorm? } */
+/** Body: { name?, mapViewZoomRatio?, mapViewPanNorm?, mapViewVisibleNorm?, overlayPng? } (PNG data URL or null to clear; `fogPng` accepted as legacy alias) */
 export const patchPersonalCamera = async (tableId, cameraId, body) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -796,6 +796,24 @@ export const postMapPing = async (tableId, { xFt, yFt, mapId }, isGm) => {
   if (!token || tableId == null) return null;
   const url = isGm ? '/api/room/my/map-ping' : `/api/room/${encodeURIComponent(tableId)}/map-ping`;
   const body = isGm ? { tableId, xFt, yFt, mapId } : { xFt, yFt, mapId };
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify(body),
+    });
+    return resp.ok ? resp.json() : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Ephemeral scribble stroke segment — SSE `map_scribble` to all room clients (not persisted). */
+export const postMapScribble = async (tableId, payload, isGm) => {
+  const token = await getAuthToken();
+  if (!token || tableId == null) return null;
+  const url = isGm ? '/api/room/my/map-scribble' : `/api/room/${encodeURIComponent(tableId)}/map-scribble`;
+  const body = isGm ? { tableId, ...payload } : payload;
   try {
     const resp = await fetch(url, {
       method: 'POST',
