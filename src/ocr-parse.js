@@ -23,6 +23,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { parseStatBlock, detectCollection, mergeResults } from './text-parse.js';
+import {
+  clusterLinesToTextBlocks,
+  getArtworkMarginRects,
+  addNormalizedRect,
+  LAYOUT_LINE_CONFIDENCE_ARTWORK,
+  ocrDetectionsIndicateText,
+} from './page-layout-ocr.js';
+
+/** @typedef {'adversary' | 'environment' | 'note'} EncounterDropKind */
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const STATS_PATH = join(__dirname, '../data/ocr-engine-stats.json');
@@ -35,21 +44,9 @@ const STATS_PATH = join(__dirname, '../data/ocr-engine-stats.json');
 const STAT_KEYWORDS = /\b(HP|Hit Points?|Stress|Difficulty|Tier|Attack|ATK|Features?|Experiences?|Thresholds?|Melee|Close|Far|Passive|Action|Reaction|Damage|d\d+)\b/i;
 const MIN_KEYWORD_HITS = 3;
 
-// Minimum fraction of total image area a margin must occupy to qualify as artwork.
-// 0.10 (10%) rejects thin decorative borders (typically 3-6%) while admitting
-// genuine artwork banners (e.g. Sporenado top banner is ~33%).
-const MIN_AREA_FRACTION = 0.10;
-// Minimum size (in pixels) of the shorter dimension of a cropped region.
-// 100px rejects narrow padding/borders (30-80px) while admitting real banners (~400px+).
-const MIN_SHORT_SIDE_PX = 100;
-// Maximum aspect ratio (longer / shorter side) for a region to qualify.
-// 5:1 rejects tall/thin side margins that are likely decorative borders.
-const MAX_ASPECT_RATIO = 5;
-// Inward margin applied to each crop to avoid clipping partial glyphs (fraction).
-const CROP_INSET_FRACTION = 0.02;
 // Minimum confidence for a detection line to be included in the text bounding box.
 // 85 excludes OCR noise from artwork regions (54-74) while keeping stat block text (95+).
-const MIN_LINE_CONFIDENCE = 85;
+const MIN_LINE_CONFIDENCE = LAYOUT_LINE_CONFIDENCE_ARTWORK;
 
 // ---------------------------------------------------------------------------
 // Retirement thresholds
@@ -198,69 +195,19 @@ async function extractArtworkRegions(buf, detections) {
     const { width: W, height: H } = await sharp(buf).metadata();
     if (!W || !H) return [];
 
-    // Filter to high-confidence lines with meaningful text
     const lines = detections.filter(
       d => d.confidence > MIN_LINE_CONFIDENCE && d.text.trim().length > 2
     );
     if (lines.length === 0) return [];
 
-    // Compute tight bounding box around all qualifying text
-    let textMinX = Infinity, textMinY = Infinity, textMaxX = -Infinity, textMaxY = -Infinity;
-    for (const { bbox: { x0, y0, x1, y1 } } of lines) {
-      if (x0 < textMinX) textMinX = x0;
-      if (y0 < textMinY) textMinY = y0;
-      if (x1 > textMaxX) textMaxX = x1;
-      if (y1 > textMaxY) textMaxY = y1;
-    }
-
-    const totalArea = W * H;
-
-    // Four candidate margins in priority order
-    const candidates = [
-      { name: 'top',    region: { left: 0,        top: 0,        width: W,             height: textMinY      } },
-      { name: 'left',   region: { left: 0,        top: 0,        width: textMinX,       height: H             } },
-      { name: 'bottom', region: { left: 0,        top: textMaxY, width: W,             height: H - textMaxY  } },
-      { name: 'right',  region: { left: textMaxX, top: 0,        width: W - textMaxX,  height: H             } },
-    ];
-
+    const rects = getArtworkMarginRects(W, H, lines);
     const dataUrls = [];
 
-    for (const { name, region } of candidates) {
-      const { left, top, width, height } = region;
-
-      if (width <= 0 || height <= 0) continue;
-
-      const area = width * height;
-      const shortSide = Math.min(width, height);
-      const longSide = Math.max(width, height);
-
-      if (area / totalArea < MIN_AREA_FRACTION) continue;
-      if (shortSide < MIN_SHORT_SIDE_PX) continue;
-      if (longSide / shortSide > MAX_ASPECT_RATIO) continue;
-
-      // Apply inward inset to avoid clipping partial glyphs at the boundary
-      let cropLeft = left, cropTop = top, cropWidth = width, cropHeight = height;
-      const insetX = Math.floor(width * CROP_INSET_FRACTION);
-      const insetY = Math.floor(height * CROP_INSET_FRACTION);
-
-      if (name === 'top') {
-        cropHeight = Math.max(1, height - insetY);
-      } else if (name === 'bottom') {
-        cropTop = top + insetY;
-        cropHeight = Math.max(1, height - insetY);
-      } else if (name === 'left') {
-        cropWidth = Math.max(1, width - insetX);
-      } else if (name === 'right') {
-        cropLeft = left + insetX;
-        cropWidth = Math.max(1, width - insetX);
-      }
-
-      // Clamp to image bounds
-      cropLeft = Math.max(0, Math.min(cropLeft, W - 1));
-      cropTop = Math.max(0, Math.min(cropTop, H - 1));
-      cropWidth = Math.max(1, Math.min(cropWidth, W - cropLeft));
-      cropHeight = Math.max(1, Math.min(cropHeight, H - cropTop));
-
+    for (const r of rects) {
+      const cropLeft = r.x0;
+      const cropTop = r.y0;
+      const cropWidth = r.x1 - r.x0;
+      const cropHeight = r.y1 - r.y0;
       try {
         const cropped = await sharp(buf)
           .extract({ left: cropLeft, top: cropTop, width: cropWidth, height: cropHeight })
@@ -268,7 +215,7 @@ async function extractArtworkRegions(buf, detections) {
           .toBuffer();
         dataUrls.push(`data:image/jpeg;base64,${cropped.toString('base64')}`);
       } catch (cropErr) {
-        console.warn(`[ocr] Failed to crop ${name} region:`, cropErr.message);
+        console.warn('[ocr] Failed to crop artwork region:', cropErr.message);
       }
     }
 
@@ -277,6 +224,70 @@ async function extractArtworkRegions(buf, detections) {
     console.warn('[ocr] extractArtworkRegions error:', err.message);
     return [];
   }
+}
+
+/**
+ * Full-page layout for GM preview: paragraph text blocks + margin image blocks.
+ * Image regions use the same margin heuristic as stat-block artwork extraction;
+ * inline art inside the text column is not segmented in v1.
+ *
+ * @param {Buffer} buf
+ * @returns {Promise<{
+ *   width: number,
+ *   height: number,
+ *   mime: string,
+ *   dataUrl: string,
+ *   text: string,
+ *   textBlocks: Array<{ x0, y0, x1, y1, text, nx0?, ny0?, nx1?, ny1? }>,
+ *   imageBlocks: Array<{ x0, y0, x1, y1, nx0?, ny0?, nx1?, ny1? }>
+ * }>}
+ */
+export async function analyzePageLayout(buf) {
+  const engines = await loadEngines();
+  const engine = engines[0];
+  let result;
+  try {
+    result = await engine.recognize(buf);
+  } catch (err) {
+    console.warn(`[ocr] analyzePageLayout recognize failed:`, err.message);
+    throw err;
+  }
+
+  const meta = await sharp(buf).metadata();
+  const W = meta.width || 0;
+  const H = meta.height || 0;
+  if (!W || !H) {
+    throw new Error('Could not read image dimensions');
+  }
+
+  const fmt = meta.format || 'jpeg';
+  const mime = fmt === 'png' ? 'image/png'
+    : fmt === 'webp' ? 'image/webp'
+      : fmt === 'gif' ? 'image/gif'
+        : 'image/jpeg';
+  const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+
+  const textBlocksRaw = clusterLinesToTextBlocks(result.detections);
+  const textBlocks = textBlocksRaw.map((b) => addNormalizedRect(
+    { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, text: b.text },
+    W,
+    H
+  ));
+
+  const lines = result.detections.filter(
+    d => d.confidence > MIN_LINE_CONFIDENCE && d.text.trim().length > 2
+  );
+  const imageBlocks = getArtworkMarginRects(W, H, lines).map((r) => addNormalizedRect(r, W, H));
+
+  return {
+    width: W,
+    height: H,
+    mime,
+    dataUrl,
+    text: result.text || '',
+    textBlocks,
+    imageBlocks,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +311,47 @@ async function extractArtworkRegions(buf, detections) {
  *   parsedResult: object|null
  * }>}
  */
+/**
+ * Run OCR on a small image buffer (e.g. a user-drawn region) and return whether it contains readable text.
+ * Uses the same line clustering thresholds as page layout text blocks.
+ *
+ * @param {Buffer} buf
+ * @returns {Promise<boolean>}
+ */
+export async function ocrCropHasText(buf) {
+  const engines = await loadEngines();
+  const engine = engines[0];
+  let result;
+  try {
+    result = await engine.recognize(buf);
+  } catch (err) {
+    console.warn('[ocr] ocrCropHasText recognize failed:', err?.message || err);
+    return false;
+  }
+  return ocrDetectionsIndicateText(result.detections || []);
+}
+
+/**
+ * OCR a cropped region; returns raw text plus whether detections indicate readable text.
+ *
+ * @param {Buffer} buf
+ * @returns {Promise<{ text: string, hasText: boolean }>}
+ */
+export async function ocrCropRegionText(buf) {
+  const engines = await loadEngines();
+  const engine = engines[0];
+  let result;
+  try {
+    result = await engine.recognize(buf);
+  } catch (err) {
+    console.warn('[ocr] ocrCropRegionText recognize failed:', err?.message || err);
+    return { text: '', hasText: false };
+  }
+  const text = result.text || '';
+  const hasText = ocrDetectionsIndicateText(result.detections || []);
+  return { text, hasText };
+}
+
 export async function ocrBuffer(buf, { collection = null } = {}) {
   const engines = await loadEngines();
 
@@ -397,6 +449,62 @@ export async function ocrBuffer(buf, { collection = null } = {}) {
     artworkRegions,
     parsedResult: mergedParseResult,
   };
+}
+
+/**
+ * Parse OCR text for Game Table encounter import (no stat-block keyword gate;
+ * adversary/environment always run regex parser for the chosen kind).
+ *
+ * @param {string} text
+ * @param {EncounterDropKind} kind
+ * @returns {{ kind: EncounterDropKind, text: string, item: object, confidence?: number, missing?: string[] }}
+ */
+export function parseEncounterDropText(text, kind) {
+  const raw = (text || '').trim();
+  if (kind === 'note') {
+    const firstLine = raw.split(/\n/).find(l => l.trim()) || 'Note';
+    return {
+      kind: 'note',
+      text: raw,
+      item: { body: raw, name: firstLine.trim().slice(0, 120) },
+    };
+  }
+  const collection = kind === 'adversary' ? 'adversaries' : 'environments';
+  const { item, confidence, missing } = parseStatBlock(raw, collection);
+  return {
+    kind,
+    text: raw,
+    item,
+    confidence,
+    missing,
+  };
+}
+
+/**
+ * OCR an image for encounter-panel drop targets (adversary / environment / note).
+ *
+ * @param {Buffer} buf
+ * @param {EncounterDropKind} kind
+ * @returns {Promise<{ kind: EncounterDropKind, text: string, item: object, confidence?: number, missing?: string[] }>}
+ */
+export async function parseEncounterDropBuffer(buf, kind) {
+  if (!buf || !Buffer.isBuffer(buf)) {
+    throw new Error('Image buffer is required');
+  }
+  if (!['adversary', 'environment', 'note'].includes(kind)) {
+    throw new Error('kind must be adversary, environment, or note');
+  }
+  const engines = await loadEngines();
+  const engine = engines[0];
+  let result;
+  try {
+    result = await engine.recognize(buf);
+  } catch (err) {
+    console.warn(`[ocr] parseEncounterDropBuffer recognize failed:`, err?.message || err);
+    return parseEncounterDropText('', kind);
+  }
+  const text = result.text || '';
+  return parseEncounterDropText(text, kind);
 }
 
 /**

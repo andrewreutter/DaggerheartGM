@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeMapZoomBounds,
+  computeImageViewportZoomBounds,
+  applyViewportWheelPanZoom,
   clampMapZoom,
   clampPanScroll,
   normalizeWheelDeltaPixels,
@@ -105,6 +107,44 @@ describe('battle-map-zoom', () => {
     expect(r.mapZoom).toBe(3);
     expect(r.scrollLeft).toBeGreaterThanOrEqual(0);
     expect(r.scrollTop).toBeGreaterThanOrEqual(0);
+  });
+
+  it('computeImageViewportZoomBounds fits image and allows zoom-in headroom', () => {
+    const { minZoom, maxZoom } = computeImageViewportZoomBounds({
+      containerW: 400,
+      containerH: 300,
+      imageWidthPx: 800,
+      imageHeightPx: 600,
+    });
+    expect(minZoom).toBeCloseTo(Math.min(400 / 800, 300 / 600), 5);
+    expect(maxZoom).toBeGreaterThan(minZoom);
+  });
+
+  it('applyViewportWheelPanZoom zooms with metaKey', () => {
+    const e = {
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      deltaX: 0,
+      deltaY: 100,
+      deltaMode: 0,
+    };
+    const next = applyViewportWheelPanZoom(e, {
+      viewportW: 400,
+      viewportH: 300,
+      viewportX: 200,
+      viewportY: 150,
+      scrollLeft: 0,
+      scrollTop: 0,
+      mapZoom: 0.5,
+      minZoom: 0.4,
+      maxZoom: 2,
+      renderedWidthPx: 800,
+      renderedHeightPx: 600,
+    });
+    expect(next).not.toBeNull();
+    expect(next.mapZoom).not.toBe(0.5);
+    expect(Number.isFinite(next.scrollLeft)).toBe(true);
   });
 
   it('scrollAfterZoomTowardPoint keeps point under cursor', () => {

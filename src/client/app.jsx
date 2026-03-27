@@ -25,6 +25,15 @@ import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
 import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 import { AppRoot } from './components/AppRoot.jsx';
+import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
+
+function NavImportBtn() {
+  const { openImport, enabled } = useUnifiedImport();
+  if (!enabled) return null;
+  return (
+    <NavBtn icon={<Upload size={16} />} label="Import" active={false} onClick={() => openImport()} />
+  );
+}
 
 function App() {
   const [user, setUser] = useState(null);
@@ -41,6 +50,8 @@ function App() {
 
   // Incremented to force LibraryView to remount (e.g. after bulk delete).
   const [libraryKey, setLibraryKey] = useState(0);
+  /** Battle map viewport width/height — fed from BattleMap for unified import map camera rectangles. */
+  const [battleMapViewportAspect, setBattleMapViewportAspect] = useState(16 / 9);
 
   const [activeElements, setActiveElements] = useState([]);
   const [playerEmails, setPlayerEmails] = useState([]); // GM's invited player emails
@@ -1113,6 +1124,16 @@ function App() {
       const adversariesById = Object.fromEntries(resolved.adversaries.map(a => [a.id, a]));
       const environmentsById = Object.fromEntries(resolved.environments.map(e => [e.id, e]));
       newElements.push(...expandSceneWithResolved(item, scenesById, adversariesById, environmentsById));
+    } else if (collectionName === 'notes') {
+      const id = item.id || generateId();
+      newElements.push({
+        instanceId: generateId(),
+        elementType: 'note',
+        id,
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : 'Note',
+        body: typeof item.body === 'string' ? item.body : '',
+        ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
+      });
     } else if (collectionName === 'characters') {
       const { is_public, _source, ...charData } = item;
       newElements.push({ ...charData, instanceId: generateId(), elementType: 'character' });
@@ -1400,6 +1421,9 @@ function App() {
         mapImageUrl: img.mapImageUrl,
         mapImageNaturalWidth: img.mapImageNaturalWidth,
         mapImageNaturalHeight: img.mapImageNaturalHeight,
+        ...(Array.isArray(img.extraCameraVisibleNorms) && img.extraCameraVisibleNorms.length
+          ? { extraCameraVisibleNorms: img.extraCameraVisibleNorms }
+          : {}),
       },
       tableId,
     );
@@ -1499,6 +1523,21 @@ function App() {
   if (loading) return <div className="min-h-screen bg-dh-surface flex items-center justify-center text-dh">Loading...</div>;
 
   return (
+    <UnifiedImportProvider
+      enabled={!!user && !effectiveIsPlayer}
+      saveItem={saveItem}
+      addToTable={sendAddToTable}
+      onAddMapWithImage={route.view === 'table' && !effectiveIsPlayer ? sendAddMapWithImage : undefined}
+      navigate={navigate}
+      tableId={tableId}
+      isGameTableGm={route.view === 'table' && !effectiveIsPlayer}
+      importLibraryData={{ adversaries: data.adversaries, environments: data.environments }}
+      onImportComplete={() => setLibraryKey((k) => k + 1)}
+      libraryBrowseData={data}
+      partySize={partySize}
+      partyTier={partyTier}
+      mapViewportAspect={battleMapViewportAspect}
+    >
     <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
       {typeof document !== 'undefined' && route.view === 'table' && user && !sessionPlayAllowed && createPortal(
         <SessionBlockedBanner isPlayer={effectiveIsPlayer} sessionStarted={sessionStarted} />,
@@ -1511,6 +1550,7 @@ function App() {
               <Swords size={24} /> DAGGERTOP
             </h1>
             <div className="flex items-center gap-2">
+              <NavImportBtn />
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
               {myTables.map((t) => (
                 <NavBtn
@@ -1822,6 +1862,7 @@ function App() {
                 mapScribbles={mapScribbles}
                 onSetMapOverlay={!effectiveIsPlayer ? sendSetMapOverlay : undefined}
                 onSetMapViewOverlay={!effectiveIsPlayer ? sendSetMapViewOverlay : undefined}
+                onBattleMapViewportAspectChange={setBattleMapViewportAspect}
               />
             </div>
           </>
@@ -1916,6 +1957,7 @@ function App() {
         document.body
       )}
     </div>
+    </UnifiedImportProvider>
   );
 }
 

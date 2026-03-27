@@ -14,7 +14,7 @@ const ADVENTURE_COLLECTIONS = [
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function AdventureForm({ initial, value, onChange, data, onSave, onCancel, onImageSaved, onMergeAdversary }) {
+export function AdventureForm({ initial, value, onChange, data, onSave, onCancel, onImageSaved, onMergeAdversary, omitPublicCheckbox = false }) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
@@ -67,16 +67,18 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
       />
 
       {!isControlled && (
-        <div className="flex justify-between items-center mt-6 pt-6 border-t border-dh-border">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
-            <input
-              type="checkbox"
-              checked={!!formData.is_public}
-              onChange={e => updateField('is_public', e.target.checked)}
-              className="accent-blue-500"
-            />
-            Make Public
-          </label>
+        <div className={`flex items-center mt-6 pt-6 border-t border-dh-border ${omitPublicCheckbox ? 'justify-end' : 'justify-between'}`}>
+          {!omitPublicCheckbox && (
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
+              <input
+                type="checkbox"
+                checked={!!formData.is_public}
+                onChange={e => updateField('is_public', e.target.checked)}
+                className="accent-blue-500"
+              />
+              Make Public
+            </label>
+          )}
           <div className="flex gap-3">
             <button onClick={onCancel} className="px-4 py-2 text-dh-muted hover:text-white">Cancel</button>
             <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Adventure</button>
@@ -84,7 +86,7 @@ export function AdventureForm({ initial, value, onChange, data, onSave, onCancel
         </div>
       )}
 
-      {isControlled && (
+      {isControlled && !omitPublicCheckbox && (
         <div className="mt-6 pt-4 border-t border-dh-border">
           <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
             <input

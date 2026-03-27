@@ -13,6 +13,7 @@
 
 import crypto from 'crypto';
 import { ROLES } from './game-constants.js';
+import { scoreAdversaryVsEnvironmentSignals } from './import-type-hotwords.js';
 
 // ---------------------------------------------------------------------------
 // Constants (shared via src/game-constants.js)
@@ -774,15 +775,7 @@ export function detectCollection(text, title = '') {
   const advResult = parseStatBlock(text, 'adversaries', title);
   const envResult = parseStatBlock(text, 'environments', title);
 
-  // Strong keyword signals override confidence scores
-  const hasHP        = /\b(HP|Hit Points?|Stress)\b/i.test(text);
-  const hasAttack    = /\b(ATK|Attack)\b/i.test(text);
-  const hasThresh    = /\bThresholds?\b/i.test(text);
-  const hasImpulses  = /\bImpulses?\b/i.test(text);
-  const hasPotAdv    = /\bPotential\s+Adversar/i.test(text);
-
-  const advSignals = (hasHP ? 1 : 0) + (hasAttack ? 1 : 0) + (hasThresh ? 1 : 0);
-  const envSignals = (hasImpulses ? 1 : 0) + (hasPotAdv ? 1 : 0);
+  const { advSignals, envSignals } = scoreAdversaryVsEnvironmentSignals(text);
 
   if (envSignals > advSignals) return { collection: 'environments', ...envResult };
   if (advSignals > envSignals) return { collection: 'adversaries', ...advResult };

@@ -343,6 +343,33 @@ describe('applyTableOp', () => {
     });
   });
 
+  it('add-map with extraCameraVisibleNorms adds additional views with mapViewVisibleNorm', () => {
+    const state = {
+      mapConfig: {
+        mapImageUrl: 'a',
+        mapDimension: 'width',
+        mapSizeFt: 100,
+        mapImageNaturalWidth: null,
+        mapImageNaturalHeight: null,
+      },
+      activeElements: [],
+    };
+    const result = applyTableOp(
+      {
+        op: 'add-map',
+        name: 'Imported',
+        extraCameraVisibleNorms: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.25 }],
+      },
+      state,
+    );
+    const newMapId = result.maps[result.maps.length - 1].id;
+    const onMap = result.mapViews.filter((v) => v.mapId === newMapId);
+    expect(onMap.length).toBe(2);
+    expect(onMap[0].name).toBe('Main');
+    expect(onMap[1].name).toBe('Camera 2');
+    expect(onMap[1].mapViewVisibleNorm).toEqual({ x: 0.1, y: 0.2, w: 0.3, h: 0.25 });
+  });
+
   it('set-active-map switches focus and clears broadcast framing', () => {
     const state = {
       maps: [

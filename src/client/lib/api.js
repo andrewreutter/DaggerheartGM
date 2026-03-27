@@ -103,6 +103,76 @@ export const postDevAgentQueue = async ({ path, kind, message }) => {
 };
 
 /**
+ * OCR a cropped page region; returns readable-text flag and raw OCR string.
+ * @param {Blob} imageBlob
+ * @param {{ signal?: AbortSignal }} [options] — pass `signal` to cancel in-flight requests (e.g. superseded crop OCR).
+ */
+export const postPageLayoutRegionOcr = async (imageBlob, options = {}) => {
+  const { signal } = options;
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const fd = new FormData();
+  fd.append('image', imageBlob, 'region.png');
+  const res = await fetch('/api/import/page-layout-region-ocr', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    body: fd,
+    signal,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** @deprecated Use {@link postPageLayoutRegionOcr} */
+export const postPageLayoutRegionHasText = async (imageBlob) => postPageLayoutRegionOcr(imageBlob);
+
+/**
+ * Parse plaintext for encounter import (same result shape as encounter-drop, without image OCR).
+ * @param {string} text
+ * @param {'adversary'|'environment'|'note'} kind
+ */
+export const postEncounterParseText = async (text, kind) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/import/encounter-parse-text', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ text, kind }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * Encounter panel image drop: OCR + regex parse for adversary/environment, or raw OCR text for notes.
+ * @param {File|Blob} file
+ * @param {'adversary'|'environment'|'note'} kind
+ */
+export const postEncounterDropImport = async (file, kind) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const fd = new FormData();
+  fd.append('image', file);
+  fd.append('kind', kind);
+  const res = await fetch('/api/import/encounter-drop', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    body: fd,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */

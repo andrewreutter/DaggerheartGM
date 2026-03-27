@@ -504,7 +504,36 @@ export function applyTableOp(op, state) {
         broadcastToPlayers: false,
       };
       const maps = [...base.maps, newMap];
-      const mapViews = [...base.mapViews, newView];
+      let mapViews = [...base.mapViews, newView];
+      const extras = op.extraCameraVisibleNorms;
+      if (Array.isArray(extras) && extras.length > 0) {
+        for (let i = 0; i < extras.length; i++) {
+          const vn = extras[i];
+          if (!vn || typeof vn !== 'object') continue;
+          const nx = Number(vn.x);
+          const ny = Number(vn.y);
+          const nw = Number(vn.w);
+          const nh = Number(vn.h);
+          if (![nx, ny, nw, nh].every(Number.isFinite)) continue;
+          mapViews = [
+            ...mapViews,
+            {
+              id: newViewId(),
+              mapId: id,
+              name: `Camera ${i + 2}`,
+              mapViewZoomRatio: null,
+              mapViewPanNorm: null,
+              mapViewVisibleNorm: {
+                x: Math.max(0, Math.min(1, nx)),
+                y: Math.max(0, Math.min(1, ny)),
+                w: Math.max(0, Math.min(1, nw)),
+                h: Math.max(0, Math.min(1, nh)),
+              },
+              broadcastToPlayers: false,
+            },
+          ];
+        }
+      }
       const nextState = { ...base, maps, mapViews, activeMapId: id, gmActiveViewId: newView.id };
       syncGmMapViewFromActiveView(nextState);
       return {

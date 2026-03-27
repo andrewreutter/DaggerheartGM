@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  applyViewportWheelPanZoom,
   clampMapZoom,
   clampPanScroll,
   computeMapZoomBounds,
   computePanToCenterInnerPointPx,
   computeZoomAndPanToFitInnerBounds,
-  normalizeWheelDeltaPixels,
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
 import {
@@ -87,6 +87,7 @@ import {
   dataTransferHasFileDrag,
   pickFirstImageFileFromDataTransfer,
 } from '../lib/map-image-drop.js';
+import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
@@ -148,33 +149,6 @@ function getMapDimensions(mapConfig) {
       : { mapHeightFt: sizeFt, mapWidthFt: Math.round(sizeFt * aspect * 10) / 10 };
   }
   return { mapWidthFt: sizeFt, mapHeightFt: sizeFt };
-}
-
-async function uploadMapImageFile(file) {
-  const token = await getAuthToken();
-  const fd = new FormData();
-  fd.append('file', file);
-  const resp = await fetch('/api/room/my/map-image', {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: fd,
-  });
-  if (!resp.ok) throw new Error(await resp.text().catch(() => resp.statusText));
-  return (await resp.json()).url;
-}
-
-async function processImageFile(file) {
-  const [url, [naturalWidth, naturalHeight]] = await Promise.all([
-    uploadMapImageFile(file),
-    new Promise(resolve => {
-      const src = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(src); resolve([img.naturalWidth, img.naturalHeight]); };
-      img.onerror = () => { URL.revokeObjectURL(src); resolve([null, null]); };
-      img.src = src;
-    }),
-  ]);
-  return { url, naturalWidth, naturalHeight };
 }
 
 function isInsideRect(clientX, clientY, rect) {
@@ -1228,6 +1202,8 @@ export function BattleMap({
   onSetMapOverlay,
   /** GM: persist named view draw overlay PNG (data URL) or null to clear. */
   onSetMapViewOverlay,
+  /** Live map viewport width/height ratio (scroll wrapper) — for import map camera rectangles matching the table. */
+  onViewportAspectChange,
 }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -1254,8 +1230,8 @@ export function BattleMap({
   const [highlightRightTray, setHighlightRightTray] = useState(false);
   const [rightPanDragging, setRightPanDragging] = useState(false);
   const [pinnedToken, setPinnedToken] = useState(null); // { element, anchorX, anchorY }
-  const [isUploading, setIsUploading] = useState(false);
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y } in feet, null when off-map
+  const { openImport, enabled: unifiedImportEnabled } = useUnifiedImport();
   // Frozen bullseye position during drag (feet coords of dragged token's origin)
   const frozenBullseyeRef = useRef(null);
   // Second bullseye that follows the dragged token during drag (only when frozen bullseye is set)
@@ -1280,61 +1256,31 @@ export function BattleMap({
     return () => ro.disconnect();
   }, []);
 
-  const handleImageFile = useCallback(async (file) => {
-    setIsUploading(true);
-    try {
-      const { url, naturalWidth, naturalHeight } = await processImageFile(file);
-      if (!url) return;
-      const img = {
-        mapImageUrl: url,
-        mapImageNaturalWidth: naturalWidth,
-        mapImageNaturalHeight: naturalHeight,
-      };
-      if (mapConfigHasImage(mapConfig) && typeof onAddMapWithImage === 'function') {
-        onAddMapWithImage(img);
-      } else {
-        onMapConfigChange(img, true);
-      }
-    } catch (err) {
-      console.error('[BattleMap] image processing failed:', err);
-    } finally {
-      setIsUploading(false);
-    }
-  }, [mapConfig, onMapConfigChange, onAddMapWithImage]);
+  useEffect(() => {
+    if (!onViewportAspectChange) return;
+    if (containerWidth <= 0 || containerHeight <= 0) return;
+    onViewportAspectChange(containerWidth / containerHeight);
+  }, [containerWidth, containerHeight, onViewportAspectChange]);
 
   const handleMapPanelDragOver = useCallback(
     (e) => {
-      if (isPlayer || isUploading) return;
+      if (isPlayer) return;
       if (!dataTransferHasFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     },
-    [isPlayer, isUploading],
+    [isPlayer],
   );
 
   const handleMapPanelDrop = useCallback(
     (e) => {
-      if (isPlayer || isUploading) return;
+      if (isPlayer) return;
       e.preventDefault();
       const file = pickFirstImageFileFromDataTransfer(e.dataTransfer);
-      if (file) void handleImageFile(file);
+      if (file && unifiedImportEnabled) openImport([file]);
     },
-    [isPlayer, isUploading, handleImageFile],
+    [isPlayer, unifiedImportEnabled, openImport],
   );
-
-  // Paste map image (after handleImageFile)
-  useEffect(() => {
-    if (isPlayer) return;
-    const handler = async (e) => {
-      const items = Array.from(e.clipboardData?.items || []);
-      const imgItem = items.find(i => i.type.startsWith('image/'));
-      if (!imgItem) return;
-      const file = imgItem.getAsFile();
-      if (file) await handleImageFile(file);
-    };
-    document.addEventListener('paste', handler);
-    return () => document.removeEventListener('paste', handler);
-  }, [isPlayer, handleImageFile]);
 
   // Derived map dimensions
   const { mapWidthFt, mapHeightFt } = useMemo(() => getMapDimensions(mapConfig), [mapConfig]);
@@ -1933,7 +1879,6 @@ export function BattleMap({
 
   useEffect(() => () => {
     if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
-    if (playerCameraPersistTimerRef.current) clearTimeout(playerCameraPersistTimerRef.current);
     if (playerFreeMapPersistTimerRef.current) clearTimeout(playerFreeMapPersistTimerRef.current);
   }, []);
 
@@ -2130,86 +2075,32 @@ export function BattleMap({
       const vh = el.clientHeight;
       if (vw <= 0 || vh <= 0) return;
 
-      const { dx, dy } = normalizeWheelDeltaPixels(e, vw, vh);
-      const z = mapZoomRef.current;
+      const rect = el.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
       const rw = renderedWRef.current;
       const rh = renderedHRef.current;
-      const minZ = minZoomRef.current;
-      const maxZ = maxZoomRef.current;
 
-      const maxL = Math.max(0, rw * z - vw);
-      const maxT = Math.max(0, rh * z - vh);
-
-      const zoomChord = e.metaKey || e.ctrlKey;
-
-      if (zoomChord) {
-        if (maxZ <= minZ) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (dy === 0 || !Number.isFinite(dy)) return;
-        const factor = Math.exp(-dy * 0.0015);
-        const oldZ = mapZoomRef.current;
-        const newZ = clampMapZoom(oldZ * factor, minZ, maxZ);
-        if (newZ === oldZ) return;
-        const rect = el.getBoundingClientRect();
-        const viewportX = e.clientX - rect.left;
-        const viewportY = e.clientY - rect.top;
-        const pan = scrollAfterZoomTowardPoint({
-          scrollLeft: mapPanLeftRef.current,
-          scrollTop: mapPanTopRef.current,
-          viewportX,
-          viewportY,
-          oldZoom: oldZ,
-          newZoom: newZ,
-          innerWidthPx: rw,
-          innerHeightPx: rh,
-          viewportW: vw,
-          viewportH: vh,
-        });
-        mapZoomRef.current = newZ;
-        mapPanLeftRef.current = pan.scrollLeft;
-        mapPanTopRef.current = pan.scrollTop;
-        setMapZoom(newZ);
-        setMapPanLeft(pan.scrollLeft);
-        setMapPanTop(pan.scrollTop);
-        if (onMapViewSync) schedulePersistView();
-        if (isPlayer) schedulePersistPlayerViewport();
-        return;
-      }
-
-      if (e.shiftKey) {
-        if (maxL <= 0) return;
-        const horizDelta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
-        if (horizDelta === 0 || !Number.isFinite(horizDelta)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const next = clampPanScroll(
-          mapPanLeftRef.current + horizDelta,
-          mapPanTopRef.current,
-          { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW: vw, viewportH: vh },
-        );
-        if (next.scrollLeft === mapPanLeftRef.current && next.scrollTop === mapPanTopRef.current) return;
-        mapPanLeftRef.current = next.scrollLeft;
-        mapPanTopRef.current = next.scrollTop;
-        setMapPanLeft(next.scrollLeft);
-        setMapPanTop(next.scrollTop);
-        if (onMapViewSync) schedulePersistView();
-        if (isPlayer) schedulePersistPlayerViewport();
-        return;
-      }
-
-      if (maxT <= 0) return;
-      if (dy === 0 || !Number.isFinite(dy)) return;
+      const next = applyViewportWheelPanZoom(e, {
+        viewportW: vw,
+        viewportH: vh,
+        viewportX,
+        viewportY,
+        scrollLeft: mapPanLeftRef.current,
+        scrollTop: mapPanTopRef.current,
+        mapZoom: mapZoomRef.current,
+        minZoom: minZoomRef.current,
+        maxZoom: maxZoomRef.current,
+        renderedWidthPx: rw,
+        renderedHeightPx: rh,
+      });
+      if (!next) return;
       e.preventDefault();
       e.stopPropagation();
-      const next = clampPanScroll(
-        mapPanLeftRef.current,
-        mapPanTopRef.current + dy,
-        { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW: vw, viewportH: vh },
-      );
-      if (next.scrollLeft === mapPanLeftRef.current && next.scrollTop === mapPanTopRef.current) return;
+      mapZoomRef.current = next.mapZoom;
       mapPanLeftRef.current = next.scrollLeft;
       mapPanTopRef.current = next.scrollTop;
+      setMapZoom(next.mapZoom);
       setMapPanLeft(next.scrollLeft);
       setMapPanTop(next.scrollTop);
       if (onMapViewSync) schedulePersistView();
@@ -3598,8 +3489,8 @@ export function BattleMap({
         <MapConfigToolbar
           mapConfig={mapConfig}
           onMapConfigChange={handleMapConfigChange}
-          isUploading={isUploading}
-          onFileSelect={handleImageFile}
+          isUploading={false}
+          onFileSelect={(f) => unifiedImportEnabled && openImport([f])}
           tableName={tableName}
           tableStateReady={tableStateReady}
           onTableNameChange={onTableNameChange}

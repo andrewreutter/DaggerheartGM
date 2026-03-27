@@ -71,7 +71,7 @@ function buildSceneForBP(fd, ownedAdvs, ownedEnvs, isControlled, pickerValues) {
  * partyTier   — highest tier among player characters, used for the lower-tier adversary BP modifier.
  * characters  — array of { name, tier } for display in lower-tier adversary detail.
  */
-export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 1, partyTier = 1, characters = [], onImageSaved, onMergeAdversary }) {
+export function SceneForm({ initial, value, onChange, data, onSave, onCancel, partySize = 1, partyTier = 1, characters = [], onImageSaved, onMergeAdversary, omitPublicCheckbox = false }) {
   const isControlled = value !== undefined;
 
   // --- Uncontrolled state (legacy path) ---
@@ -337,16 +337,18 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
       </div>
 
       {!isControlled && (
-        <div className="flex justify-between items-center mt-6 pt-6 border-t border-dh-border">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
-            <input
-              type="checkbox"
-              checked={!!fd.is_public}
-              onChange={e => updateField('is_public', e.target.checked)}
-              className="accent-blue-500"
-            />
-            Make Public
-          </label>
+        <div className={`flex items-center mt-6 pt-6 border-t border-dh-border ${omitPublicCheckbox ? 'justify-end' : 'justify-between'}`}>
+          {!omitPublicCheckbox && (
+            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
+              <input
+                type="checkbox"
+                checked={!!fd.is_public}
+                onChange={e => updateField('is_public', e.target.checked)}
+                className="accent-blue-500"
+              />
+              Make Public
+            </label>
+          )}
           <div className="flex gap-3">
             <button onClick={onCancel} className="px-4 py-2 text-dh-muted hover:text-white">Cancel</button>
             <button onClick={handleSave} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Scene</button>
@@ -354,7 +356,7 @@ export function SceneForm({ initial, value, onChange, data, onSave, onCancel, pa
         </div>
       )}
 
-      {isControlled && (
+      {isControlled && !omitPublicCheckbox && (
         <div className="mt-6 pt-4 border-t border-dh-border">
           <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
             <input

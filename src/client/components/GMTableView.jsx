@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying } from '../lib/helpers.js';
@@ -12,6 +12,8 @@ import { HOPE_TRACK_FILL, HOPE_TRACK_ICON_CLASS } from './CharacterStatBlockGrap
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
+import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
+import { MarkdownText } from '../lib/markdown.js';
 import { buildSystemContext } from '../lib/feature-context.js';
 import { postRoll as postRollToServer, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerGenericRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerMakeASceneTarget, postBannerChipResolve, postBannerAddDamage, postBannerActionAddDie, postBannerActionAddStatic, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, postPlayerV2ReviewChip, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
 import {
@@ -304,7 +306,7 @@ function getItemData(element) {
   return rest;
 }
 
-const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment', characters: 'character' };
+const COLLECTION_TO_ELEMENT_TYPE = { adversaries: 'adversary', environments: 'environment', characters: 'character', notes: 'note' };
 
 /** Get damage total and type from a roll. Sums all damage sub-items. Returns null if no damage sub. */
 function getDamageFromRoll(roll) {
@@ -349,6 +351,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onPlayerExitMapFreeExplore,
   onMapFreeExplore,
   onForcePlayersToMapView,
+  onBattleMapViewportAspectChange,
 }) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
@@ -551,6 +554,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [diceCanvasHidden, setDiceCanvasHidden] = useState(false);
   const addMenuRef = useRef(null);
+
   // Action banners with adversary target: { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
   const [actionAdversarySelections, setActionAdversarySelections] = useState({});
   // Character dialog removed — characters are now managed through the Library picker
@@ -2713,6 +2717,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const gameTableBasePath = tableId ? `/table/${tableId}` : '/table';
 
+  const handleAddEmptyNote = useCallback(() => {
+    setAddMenuOpen(false);
+    const id = generateId();
+    void (async () => {
+      const newEls = await addToTable({ id, name: 'Note', body: '' }, 'notes');
+      const el = newEls?.[0];
+      if (!el) return;
+      navigate(`${gameTableBasePath}/notes/${id}`);
+      setEditState({
+        step: 'note',
+        item: { id, name: 'Note', body: '' },
+        baseElement: el,
+      });
+    })();
+  }, [addToTable, navigate, gameTableBasePath]);
+
   const getAddCharacterAnchorRect = useCallback(() => {
     const el = addCharacterAnchorRef.current;
     if (!el) return { top: 140, bottom: 280 };
@@ -2724,6 +2744,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const { modalCollection, modalItemId } = route || {};
   useEffect(() => {
     if (!modalCollection || !modalItemId) return;
+    if (modalCollection === 'notes') {
+      if (editState?.step === 'note' && editState?.baseElement?.id === modalItemId) return;
+      const baseElement = activeElements.find(e => e.elementType === 'note' && e.id === modalItemId);
+      if (!baseElement) {
+        navigate(gameTableBasePath, { replace: true });
+        return;
+      }
+      setEditState({
+        step: 'note',
+        item: {
+          id: baseElement.id,
+          name: baseElement.name || 'Note',
+          body: baseElement.body || '',
+          imageUrl: baseElement.imageUrl || '',
+        },
+        baseElement,
+      });
+      return;
+    }
     // Don't overwrite if user already opened via handleEditClick (choice or form)
     if (editState?.collection === modalCollection && editState?.baseElement?.id === modalItemId) return;
     const elType = COLLECTION_TO_ELEMENT_TYPE[modalCollection];
@@ -2762,7 +2801,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       characterOverlay.show({ element: baseElement, top: 100, bottom: 220 });
     }
     // characterOverlay.show is stable; including characterOverlay in deps would re-run every render if the hook returns a new object reference.
-  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, navigate, gameTableBasePath]);
+  }, [modalCollection, modalItemId, activeElements, data, editState?.collection, editState?.baseElement?.id, editState?.step, navigate, gameTableBasePath]);
 
   // Close modal when URL no longer has item (e.g. user pressed back).
   useEffect(() => {
@@ -3521,9 +3560,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     activeElements.forEach(el => {
       if (el.elementType === 'character') {
         result.push({ kind: 'character', element: el });
-      } else if (el.elementType !== 'adversary') {
+      } else if (el.elementType === 'note') {
+        result.push({ kind: 'note', element: el });
+      } else if (el.elementType === 'environment') {
         result.push({ kind: 'environment', element: el });
-      } else {
+      } else if (el.elementType === 'adversary') {
         const key = el.id;
         if (seenAdvKeys[key] === undefined) {
           seenAdvKeys[key] = result.length;
@@ -4375,7 +4416,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>
         );
       })()}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* Characters Panel */}
       <div className="w-56 bg-dh-canvas border-r border-dh-border flex flex-col overflow-y-auto shrink-0">
         <div className="p-3 bg-dh-canvas border-b border-dh-border sticky top-0 z-10">
@@ -5529,6 +5570,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             mapScribbles={mapScribbles}
             onSetMapOverlay={onSetMapOverlay}
             onSetMapViewOverlay={onSetMapViewOverlay}
+            onViewportAspectChange={onBattleMapViewportAspectChange}
             className="flex-1 min-h-0"
           />
         </div>
@@ -5540,7 +5582,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       </div>
 
       {/* Encounter Panel — hidden for players */}
-      {!isPlayer && <div className="w-56 bg-dh-canvas border-l border-dh-border flex flex-col overflow-y-auto shrink-0">
+      {!isPlayer && <div className="w-56 bg-dh-canvas border-l border-dh-border flex min-h-0 shrink-0 flex-col overflow-hidden">
         <div className="px-2 py-2 bg-dh-canvas border-b border-dh-border sticky top-0 z-10 space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
@@ -5555,7 +5597,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               ><Camera size={13} /></button>
               <button
                 onClick={() => {
-                  if (!window.confirm('Clear all adversaries and environments from the table? This cannot be undone.')) return;
+                  if (!window.confirm('Clear all adversaries, environments, and notes from the table? This cannot be undone.')) return;
                   clearTable?.();
                 }}
                 disabled={activeElements.length === 0}
@@ -5564,7 +5606,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               ><Trash2 size={13} /></button>
             </div>
           </div>
-          {/* + Add menu (Adversary, Environment, Scene) */}
+          {/* + Add menu (Adversary, Environment, Scene, Note) */}
           <div
             className="relative"
             ref={addMenuRef}
@@ -5583,10 +5625,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   { col: 'adversaries', label: 'Adversary' },
                   { col: 'environments', label: 'Environment' },
                   { col: 'scenes', label: 'Scene' },
+                  { col: '__note', label: 'Note' },
                 ].map(({ col, label }) => (
                   <button
                     key={col}
-                    onClick={() => { setModalOpen(col); setAddMenuOpen(false); }}
+                    onClick={() => {
+                      if (col === '__note') handleAddEmptyNote();
+                      else { setModalOpen(col); setAddMenuOpen(false); }
+                    }}
                     className="w-full text-left px-3 py-2 text-xs text-dh hover:bg-dh-hover hover:text-dh transition-colors"
                   >
                     {label}
@@ -5790,7 +5836,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>
         </div>
 
-        <div className="p-2 space-y-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
           {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
             const el = item.element;
             return (
@@ -5807,6 +5853,53 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     title="Remove from table"
                   ><X size={12} /></button>
                 </div>
+              </div>
+            );
+          })}
+          {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
+            const el = item.element;
+            return (
+              <div
+                key={el.instanceId}
+                className="flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 py-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(`${gameTableBasePath}/notes/${el.id}`);
+                    setEditState({
+                      step: 'note',
+                      item: {
+                        id: el.id,
+                        name: el.name || 'Note',
+                        body: el.body || '',
+                        imageUrl: el.imageUrl || '',
+                      },
+                      baseElement: el,
+                    });
+                  }}
+                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                >
+                  {el.imageUrl ? (
+                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
+                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
+                    </span>
+                  ) : (
+                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-amber-100/90 truncate">{el.name || 'Note'}</div>
+                    <div className="mt-1 max-h-24 overflow-hidden text-left">
+                      <MarkdownText text={el.body || '—'} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeActiveElement(el.instanceId)}
+                  className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
+                  title="Remove note"
+                ><X size={12} /></button>
               </div>
             );
           })}
@@ -6039,6 +6132,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               )}
             </div>
           </div>
+
+          {consolidatedElements.some(item => item.kind === 'note') && (
+            <div className="space-y-2 border-b border-dh-border px-2 pb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
+              {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
+                const el = item.element;
+                return (
+                  <div key={el.instanceId} className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-2.5 py-2">
+                    <div className="text-xs font-semibold text-amber-100/90 truncate">{el.name || 'Note'}</div>
+                    <MarkdownText text={el.body || '—'} className="dh-md mt-1 text-[11px] leading-snug text-dh-muted" />
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Adversaries with damage or conditions (read-only for players) */}
           <div className="p-2 space-y-2">
@@ -6329,6 +6437,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
       );
     })()}
+
+    {editState?.step === 'note' && editState.baseElement && (
+      <EncounterNoteEditorModal
+        open
+        name={editState.item.name}
+        body={editState.item.body}
+        imageUrl={editState.item.imageUrl || editState.baseElement.imageUrl}
+        onClose={closeEditModal}
+        onSave={({ name, body }) => {
+          const img = editState.item.imageUrl ?? editState.baseElement.imageUrl;
+          updateActiveElement(editState.baseElement.instanceId, {
+            name,
+            body,
+            ...(img ? { imageUrl: img } : {}),
+          });
+          closeEditModal();
+        }}
+      />
+    )}
 
     {editState?.step === 'choice' && (
       <EditChoiceDialog
