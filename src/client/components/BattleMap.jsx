@@ -494,6 +494,8 @@ function MapViewStripTile({
   cameraOverlayPng,
   label,
   isActive,
+  /** GM only: sky tint when this tile is “on air” (shared map / broadcast view); overridden when `isActive` (amber). */
+  broadcastHighlight = false,
   onClick,
   onDoubleClick,
   variant = 'map',
@@ -521,9 +523,13 @@ function MapViewStripTile({
   const thumbClass = `group relative overflow-hidden rounded-md border text-left transition-colors ${
     variant === 'map' && isActive
       ? 'border-amber-500/55 bg-amber-950/35 ring-1 ring-amber-500/40'
-      : interactive
-        ? 'border-dh-strong bg-dh-canvas/25 hover:bg-dh-hover/70'
-        : 'border-dh-border/50 bg-dh-canvas/25 cursor-default'
+      : variant === 'map' && broadcastHighlight
+        ? interactive
+          ? 'border-sky-400/50 bg-sky-950/30 ring-1 ring-sky-400/40 hover:bg-sky-950/45'
+          : 'border-sky-400/50 bg-sky-950/30 ring-1 ring-sky-400/40 cursor-default'
+        : interactive
+          ? 'border-dh-strong bg-dh-canvas/25 hover:bg-dh-hover/70'
+          : 'border-dh-border/50 bg-dh-canvas/25 cursor-default'
   }`;
 
   const thumbInner = (
@@ -551,7 +557,7 @@ function MapViewStripTile({
   const captionSpan = !hideCaption ? (
     <span
       className={`block truncate text-center text-[10px] leading-tight ${
-        isActive ? 'font-medium text-dh' : 'text-dh-muted'
+        isActive ? 'font-medium text-dh' : broadcastHighlight ? 'font-medium text-sky-400' : 'text-dh-muted'
       }`}
       title={label}
     >
@@ -3700,6 +3706,7 @@ export function BattleMap({
                     mapId: map.id,
                     activeMapIdResolved,
                   })}
+                  broadcastHighlight={map.shareWithPlayers !== false}
                   onClick={() => {
                     if (handleGmMapFreeExplore) handleGmMapFreeExplore(map.id);
                   }}
@@ -3803,6 +3810,7 @@ export function BattleMap({
                           : undefined
                       }
                       isActive={view.id === gmActiveViewId}
+                      broadcastHighlight={view.broadcastToPlayers}
                       onClick={() => handleGmSetActiveView(view.id)}
                       onDoubleClick={
                         onForcePlayersToMapView && view.broadcastToPlayers
