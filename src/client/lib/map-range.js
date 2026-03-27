@@ -1,3 +1,12 @@
+import { effectiveTokenMapId } from './map-table-state.js';
+
+/**
+ * Parallel maps: tokens on different `mapId` planes do not measure range to each other.
+ */
+function sameTokenMapPlane(a, b) {
+  return effectiveTokenMapId(a?.mapId) === effectiveTokenMapId(b?.mapId);
+}
+
 /**
  * Map range utilities for game mechanics that depend on token positions.
  *
@@ -169,6 +178,7 @@ export function getCharactersWithinFarRange(activeElements, sourceInstanceId) {
     .filter(e =>
       e.elementType === 'character' &&
       e.instanceId !== sourceInstanceId &&
+      sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
       tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= FAR_RANGE_FT
@@ -194,6 +204,7 @@ export function getAdversariesWithinMeleeRange(activeElements, sourceInstanceId)
   return activeElements
     .filter(e =>
       e.elementType === 'adversary' &&
+      sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
       tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= RANGE_BANDS_FT.MELEE
@@ -218,6 +229,7 @@ export function getAdversariesWithinRangeFt(activeElements, sourceInstanceId, ma
   return activeElements
     .filter(e =>
       e.elementType === 'adversary' &&
+      sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
       tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= maxFt
@@ -245,6 +257,7 @@ export function getCharactersWithinRangeFt(activeElements, sourceInstanceId, max
     .filter(e =>
       e.elementType === 'character' &&
       e.instanceId !== sourceInstanceId &&
+      sameTokenMapPlane(source, e) &&
       e.tokenX != null &&
       e.tokenY != null &&
       tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY) <= maxFt
@@ -299,6 +312,7 @@ export function getCharactersWithinCloseRangeWithMarkedHp(activeElements, source
   return activeElements
     .filter(e => {
       if (e.elementType !== 'character' || e.instanceId === sourceInstanceId) return false;
+      if (!sameTokenMapPlane(source, e)) return false;
       if (e.tokenX == null || e.tokenY == null) return false;
       const dist = tokenDistanceFt(source.tokenX, source.tokenY, e.tokenX, e.tokenY);
       if (dist > CLOSE_RANGE_FT) return false;

@@ -496,30 +496,6 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
   return card;
 }
 
-// ─── Feature state display ────────────────────────────────────────────────────
-
-/**
- * Collect numeric feature state from el._originFeatureState for stat-block display.
- * Returns [{ featureName, key, label, value }] where label is the key capitalized.
- */
-export function getNumericFeatureStateEntries(el) {
-  const bag = el?._originFeatureState;
-  if (!bag || typeof bag !== 'object') return [];
-  const entries = [];
-  for (const featureName of Object.keys(bag)) {
-    const state = bag[featureName];
-    if (!state || typeof state !== 'object') continue;
-    for (const key of Object.keys(state)) {
-      const value = state[key];
-      if (typeof value === 'number' && !Number.isNaN(value)) {
-        const label = key.length ? key.charAt(0).toUpperCase() + key.slice(1).toLowerCase() : key;
-        entries.push({ featureName, key, label, value });
-      }
-    }
-  }
-  return entries;
-}
-
 // ─── Exported components ──────────────────────────────────────────────────────
 
 /**

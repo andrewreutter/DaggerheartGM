@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { encodeMapViewState, decodeMapViewState } from '../../src/client/lib/map-view-sync.js';
+import {
+  encodeMapViewState,
+  encodeMapViewVisibleNorm,
+  decodeMapViewState,
+  shouldPersistMapViewToTable,
+} from '../../src/client/lib/map-view-sync.js';
 
 describe('map-view-sync', () => {
   const base = {
@@ -22,7 +27,11 @@ describe('map-view-sync', () => {
       ...base,
     });
     const decoded = decodeMapViewState(
-      { mapViewZoomRatio: encoded.mapViewZoomRatio, mapViewPanNorm: encoded.mapViewPanNorm },
+      {
+        mapViewZoomRatio: encoded.mapViewZoomRatio,
+        mapViewPanNorm: encoded.mapViewPanNorm,
+        mapViewVisibleNorm: encoded.mapViewVisibleNorm,
+      },
       base
     );
     expect(decoded).not.toBeNull();
@@ -42,6 +51,56 @@ describe('map-view-sync', () => {
     expect(d.mapZoom).toBeCloseTo(2, 5);
     expect(d.scrollLeft).toBe(0);
     expect(d.scrollTop).toBe(0);
+  });
+
+  it('mapViewVisibleNorm round-trips on the same viewport (preferred decode path)', () => {
+    const encoded = encodeMapViewState({
+      mapZoom: 1,
+      scrollLeft: 100,
+      scrollTop: 50,
+      ...base,
+    });
+    const decoded = decodeMapViewState({ mapViewVisibleNorm: encoded.mapViewVisibleNorm }, base);
+    expect(decoded).not.toBeNull();
+    const reNorm = encodeMapViewVisibleNorm({
+      mapZoom: decoded.mapZoom,
+      scrollLeft: decoded.scrollLeft,
+      scrollTop: decoded.scrollTop,
+      renderedWidthPx: base.renderedWidthPx,
+      renderedHeightPx: base.renderedHeightPx,
+      viewportW: base.viewportW,
+      viewportH: base.viewportH,
+    });
+    expect(reNorm.x).toBeCloseTo(encoded.mapViewVisibleNorm.x, 5);
+    expect(reNorm.y).toBeCloseTo(encoded.mapViewVisibleNorm.y, 5);
+    expect(reNorm.w).toBeCloseTo(encoded.mapViewVisibleNorm.w, 5);
+    expect(reNorm.h).toBeCloseTo(encoded.mapViewVisibleNorm.h, 5);
+  });
+
+  it('mapViewVisibleNorm decode uses same aspect viewport so inner rect matches across sizes', () => {
+    const narrow = { ...base, viewportW: 200, viewportH: 150 };
+    const encoded = encodeMapViewState({
+      mapZoom: 1,
+      scrollLeft: 40,
+      scrollTop: 30,
+      ...narrow,
+    });
+    const wide = { ...base, viewportW: 400, viewportH: 300 };
+    const decoded = decodeMapViewState({ mapViewVisibleNorm: encoded.mapViewVisibleNorm }, wide);
+    expect(decoded).not.toBeNull();
+    const reNorm = encodeMapViewVisibleNorm({
+      mapZoom: decoded.mapZoom,
+      scrollLeft: decoded.scrollLeft,
+      scrollTop: decoded.scrollTop,
+      renderedWidthPx: wide.renderedWidthPx,
+      renderedHeightPx: wide.renderedHeightPx,
+      viewportW: wide.viewportW,
+      viewportH: wide.viewportH,
+    });
+    expect(reNorm.x).toBeCloseTo(encoded.mapViewVisibleNorm.x, 5);
+    expect(reNorm.y).toBeCloseTo(encoded.mapViewVisibleNorm.y, 5);
+    expect(reNorm.w).toBeCloseTo(encoded.mapViewVisibleNorm.w, 5);
+    expect(reNorm.h).toBeCloseTo(encoded.mapViewVisibleNorm.h, 5);
   });
 
   it('cross-viewport decode preserves pan fractions approximately', () => {
@@ -83,5 +142,32 @@ describe('map-view-sync', () => {
       flat
     );
     expect(d.mapZoom).toBe(1);
+  });
+
+  describe('shouldPersistMapViewToTable', () => {
+    it('allows only the table owner when not previewing as player', () => {
+      expect(shouldPersistMapViewToTable({
+        userUid: 'gm-uid',
+        tableOwnerUid: 'gm-uid',
+        effectiveIsPlayer: false,
+      })).toBe(true);
+      expect(shouldPersistMapViewToTable({
+        userUid: 'player-uid',
+        tableOwnerUid: 'gm-uid',
+        effectiveIsPlayer: false,
+      })).toBe(false);
+    });
+    it('denies when previewing as player or owner uid unknown', () => {
+      expect(shouldPersistMapViewToTable({
+        userUid: 'gm-uid',
+        tableOwnerUid: 'gm-uid',
+        effectiveIsPlayer: true,
+      })).toBe(false);
+      expect(shouldPersistMapViewToTable({
+        userUid: 'gm-uid',
+        tableOwnerUid: undefined,
+        effectiveIsPlayer: false,
+      })).toBe(false);
+    });
   });
 });

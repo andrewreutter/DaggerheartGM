@@ -3,13 +3,13 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
-import { randomInt } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { watchFile } from 'fs';
 import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, listPersonalMapCameras, insertPersonalMapCamera, updatePersonalMapCameraPatch, deletePersonalMapCamera } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -31,6 +31,7 @@ import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
+import { attachDerivedMapConfig } from './src/client/lib/map-table-state.js';
 import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
@@ -693,6 +694,50 @@ function broadcastPresenceToTable(tableId) {
   for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
 }
 
+/** Ephemeral map click ping — all GM + player SSE connections for this table (no DB). */
+function broadcastMapPingToTable(tableId, payload) {
+  const room = rooms.get(tableId);
+  if (!room) return;
+  const msg = `event: map_ping\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const clientRes of room.gmClients) {
+    try {
+      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
+    } catch { /* ignore */ }
+  }
+  for (const [, p] of room.players) {
+    try {
+      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
+    } catch { /* ignore */ }
+  }
+}
+
+/** Ephemeral map scribble segment — same delivery as map_ping (no DB). */
+function broadcastMapScribbleToTable(tableId, payload) {
+  const room = rooms.get(tableId);
+  if (!room) return;
+  const msg = `event: map_scribble\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const clientRes of room.gmClients) {
+    try {
+      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
+    } catch { /* ignore */ }
+  }
+  for (const [, p] of room.players) {
+    try {
+      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
+    } catch { /* ignore */ }
+  }
+}
+
+async function resolveDisplayNameForMapPing(req) {
+  try {
+    const u = await getAuth().getUser(req.uid);
+    const n = (u.displayName && String(u.displayName).trim()) || (u.email && u.email.split('@')[0]);
+    return n || 'Player';
+  } catch {
+    return req.email?.split('@')[0] || 'Player';
+  }
+}
+
 // In-memory pending player intents (pre-roll banner state): tableId → intent object
 // Intent shape: { characterName, characterInstanceId, rollText, chips, timestamp }
 // chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
@@ -793,8 +838,29 @@ async function applyOpToTableState(tableId, op) {
       ...otherChanges,
       ...(newElements !== undefined ? { elements: stripCharacterElements(newElements) } : {}),
     };
+    if (newState.maps?.length) {
+      delete newState.mapConfig;
+    }
     const skipActivityStamp =
-      op.op === 'set-gm-display-name' || op.op === 'touch-session-activity' || bypassPrepGate;
+      op.op === 'set-gm-display-name' ||
+      op.op === 'touch-session-activity' ||
+      op.op === 'set-map-view' ||
+      op.op === 'set-map-free-explore' ||
+      op.op === 'set-active-map' ||
+      op.op === 'set-active-view' ||
+      op.op === 'add-map' ||
+      op.op === 'add-map-view' ||
+      op.op === 'remove-map' ||
+      op.op === 'remove-map-view' ||
+      op.op === 'rename-map' ||
+      op.op === 'rename-map-view' ||
+      op.op === 'set-view-broadcast' ||
+      op.op === 'set-map-share' ||
+      op.op === 'set-map-overlay' ||
+      op.op === 'set-map-fog' ||
+      op.op === 'set-map-view-overlay' ||
+      op.op === 'set-map-view-fog' ||
+      bypassPrepGate;
     if (!skipActivityStamp) {
       newState.top = {
         ...(newState.top || {}),
@@ -1022,7 +1088,8 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
       const rows = await listTableStates(APP_ID, req.uid);
       const resolved = await Promise.all(rows.map(async r => {
         const elements = await resolveCharacterElementsDb(APP_ID, (r.data?.elements) || []);
-        return { ...(r.data || {}), id: r.id, elements, _source: 'own' };
+        const merged = { ...(r.data || {}), id: r.id, elements, _source: 'own' };
+        return attachDerivedMapConfig(merged);
       }));
       return res.json({ items: resolved, totalCount: resolved.length, dbCount: resolved.length });
     } catch (err) {
@@ -1848,6 +1915,110 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
     console.error(`GET /api/room/${tableId}/stream error:`, err);
     if (!res.headersSent) res.status(500).json({ error: 'Server error' });
   }
+});
+
+// POST /api/room/my/map-ping — GM broadcast map click ripple (SSE `map_ping` to all; not persisted).
+app.post('/api/room/my/map-ping', requireAuth, async (req, res) => {
+  const { tableId: bodyTableId, xFt, yFt, mapId } = req.body || {};
+  const tid = bodyTableId || req.uid;
+  const row = await getTableStateById(APP_ID, tid);
+  if (!row || row.userId !== req.uid) {
+    return res.status(403).json({ error: 'Not your table' });
+  }
+  const x = Number(xFt);
+  const y = Number(yFt);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+  const displayName = await resolveDisplayNameForMapPing(req);
+  const payload = {
+    id: randomUUID(),
+    xFt: x,
+    yFt: y,
+    displayName,
+    mapId: mapId != null && mapId !== '' ? String(mapId) : null,
+    tsMs: Date.now(),
+  };
+  broadcastMapPingToTable(tid, payload);
+  res.json({ ok: true, ping: payload });
+});
+
+// POST /api/room/:tableId/map-ping — invited player broadcast map click ripple (same as GM).
+app.post('/api/room/:tableId/map-ping', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { xFt, yFt, mapId } = req.body || {};
+  const x = Number(xFt);
+  const y = Number(yFt);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+  const displayName = await resolveDisplayNameForMapPing(req);
+  const payload = {
+    id: randomUUID(),
+    xFt: x,
+    yFt: y,
+    displayName,
+    mapId: mapId != null && mapId !== '' ? String(mapId) : null,
+    tsMs: Date.now(),
+  };
+  broadcastMapPingToTable(ctx.tableId, payload);
+  res.json({ ok: true, ping: payload });
+});
+
+function validateMapScribbleBody(body) {
+  if (!body || typeof body !== 'object') return null;
+  const id = typeof body.id === 'string' && body.id.length <= 80 ? body.id : null;
+  const _clientId = typeof body._clientId === 'string' && body._clientId.length <= 80 ? body._clientId : null;
+  const strokeId = typeof body.strokeId === 'string' && body.strokeId.length <= 80 ? body.strokeId : null;
+  const mapId = body.mapId != null && body.mapId !== '' ? String(body.mapId) : null;
+  const t0 = Number(body.t0);
+  const kind = body.kind === 'dot' || body.kind === 'segment' ? body.kind : null;
+  const rgba = typeof body.rgba === 'string' && body.rgba.length <= 80 ? body.rgba : null;
+  const rFt = Number(body.rFt);
+  if (!id || !_clientId || !strokeId || !kind || !rgba || !Number.isFinite(t0) || !Number.isFinite(rFt) || rFt <= 0 || rFt > 5000) {
+    return null;
+  }
+  if (kind === 'dot') {
+    const xFt = Number(body.xFt);
+    const yFt = Number(body.yFt);
+    if (!Number.isFinite(xFt) || !Number.isFinite(yFt)) return null;
+    return { id, _clientId, strokeId, mapId, t0, kind, rgba, rFt, xFt, yFt };
+  }
+  const x0Ft = Number(body.x0Ft);
+  const y0Ft = Number(body.y0Ft);
+  const x1Ft = Number(body.x1Ft);
+  const y1Ft = Number(body.y1Ft);
+  if (![x0Ft, y0Ft, x1Ft, y1Ft].every(Number.isFinite)) return null;
+  return { id, _clientId, strokeId, mapId, t0, kind, rgba, rFt, x0Ft, y0Ft, x1Ft, y1Ft };
+}
+
+// POST /api/room/my/map-scribble — GM broadcast ephemeral scribble stroke (SSE `map_scribble`).
+app.post('/api/room/my/map-scribble', requireAuth, async (req, res) => {
+  const { tableId: bodyTableId, ...rest } = req.body || {};
+  const tid = bodyTableId || req.uid;
+  const row = await getTableStateById(APP_ID, tid);
+  if (!row || row.userId !== req.uid) {
+    return res.status(403).json({ error: 'Not your table' });
+  }
+  const payload = validateMapScribbleBody(rest);
+  if (!payload) {
+    return res.status(400).json({ error: 'Invalid scribble payload' });
+  }
+  broadcastMapScribbleToTable(tid, payload);
+  res.json({ ok: true });
+});
+
+// POST /api/room/:tableId/map-scribble — player broadcast (same as GM).
+app.post('/api/room/:tableId/map-scribble', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const payload = validateMapScribbleBody(req.body || {});
+  if (!payload) {
+    return res.status(400).json({ error: 'Invalid scribble payload' });
+  }
+  broadcastMapScribbleToTable(ctx.tableId, payload);
+  res.json({ ok: true });
 });
 
 // POST /api/room/my/roll — GM rolls dice server-side; persists to DB, returns result.
@@ -2712,6 +2883,86 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
       });
     }
     console.error('POST /api/room/:tableId/character-update error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- Private map cameras (per user; not in table_state) ---
+
+app.get('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (!process.env.DATABASE_URL) return res.json({ cameras: [] });
+  try {
+    const cameras = await listPersonalMapCameras(APP_ID, req.params.tableId, req.uid);
+    res.json({ cameras });
+  } catch (err) {
+    console.error('GET personal-cameras error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/room/:tableId/personal-cameras', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (req.uid !== ctx.gmUid) {
+    return res.status(403).json({ error: 'Only the GM can create personal map cameras' });
+  }
+  if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
+  const { name, mapId, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm } = req.body || {};
+  if (!mapId || typeof mapId !== 'string') {
+    return res.status(400).json({ error: 'mapId required' });
+  }
+  try {
+    const camera = await insertPersonalMapCamera(APP_ID, req.params.tableId, req.uid, {
+      name,
+      mapId,
+      mapViewZoomRatio,
+      mapViewPanNorm,
+      mapViewVisibleNorm,
+    });
+    res.json({ camera });
+  } catch (err) {
+    console.error('POST personal-cameras error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.patch('/api/room/:tableId/personal-cameras/:cameraId', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
+  const { name, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, overlayPng, fogPng } = req.body || {};
+  const patch = {};
+  if (name !== undefined) patch.name = name;
+  if (mapViewZoomRatio !== undefined) patch.mapViewZoomRatio = mapViewZoomRatio;
+  if (mapViewPanNorm !== undefined) patch.mapViewPanNorm = mapViewPanNorm;
+  if (mapViewVisibleNorm !== undefined) patch.mapViewVisibleNorm = mapViewVisibleNorm;
+  if (overlayPng !== undefined) patch.overlayPng = overlayPng;
+  else if (fogPng !== undefined) patch.overlayPng = fogPng;
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'No fields to update' });
+  }
+  try {
+    const camera = await updatePersonalMapCameraPatch(APP_ID, req.params.tableId, req.uid, req.params.cameraId, patch);
+    if (!camera) return res.status(404).json({ error: 'Not found' });
+    res.json({ camera });
+  } catch (err) {
+    console.error('PATCH personal-cameras error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/room/:tableId/personal-cameras/:cameraId', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const ok = await deletePersonalMapCamera(APP_ID, req.params.tableId, req.uid, req.params.cameraId);
+    if (!ok) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE personal-cameras error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

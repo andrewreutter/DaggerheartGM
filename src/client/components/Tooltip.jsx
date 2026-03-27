@@ -13,7 +13,7 @@ import { useTouchDevice } from '../lib/useTouchDevice.js';
  * @param {React.ReactNode} props.children
  * @param {string} [props.label] - Tooltip text (also use as aria-label on icon-only buttons)
  * @param {React.ReactNode} [props.content] - Rich content (e.g. Markdown); when set, tooltip is wider and wraps
- * @param {'top'|'bottom'|'bottom-right'|'bottom-left'} [props.placement='bottom-right']
+ * @param {'top'|'bottom'|'bottom-right'|'bottom-left'|'right'} [props.placement='bottom-right']
  * @param {string} [props.className] - Wrapper around children (default `relative inline-flex`). Use `relative block w-full min-w-0` for full-width controls so width matches the non-tooltip state.
  */
 export function Tooltip({ children, label, content, placement = 'bottom-right', className = 'relative inline-flex' }) {
@@ -37,6 +37,13 @@ export function Tooltip({ children, label, content, placement = 'bottom-right', 
       style = { ...style, top: rect.bottom + GAP, left: rect.left + rect.width / 2, transform: 'translateX(-50%)' };
     } else if (placement === 'bottom-left') {
       style = { ...style, top: rect.bottom + GAP, left: rect.left };
+    } else if (placement === 'right') {
+      style = {
+        ...style,
+        left: rect.right + GAP,
+        top: rect.top + rect.height / 2,
+        transform: 'translateY(-50%)',
+      };
     } else {
       // bottom-right: align right edge with trigger
       style = { ...style, top: rect.bottom + GAP, right: window.innerWidth - rect.right };

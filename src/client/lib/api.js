@@ -637,6 +637,73 @@ export const postCharacterUpdate = async (tableId, instanceId, updates) => {
   return res.json();
 };
 
+/** Per-user saved map cameras for this table (private; not in SSE). */
+export const fetchPersonalCameras = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/personal-cameras`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+/** Body: { name?, mapId, mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm }. GM only (403 for invited players). */
+export const postPersonalCamera = async (tableId, body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/room/${encodeURIComponent(tableId)}/personal-cameras`, {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/** Body: { name?, mapViewZoomRatio?, mapViewPanNorm?, mapViewVisibleNorm?, overlayPng? } (PNG data URL or null to clear; `fogPng` accepted as legacy alias) */
+export const patchPersonalCamera = async (tableId, cameraId, body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(
+    `/api/room/${encodeURIComponent(tableId)}/personal-cameras/${encodeURIComponent(cameraId)}`,
+    {
+      method: 'PATCH',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+export const patchPersonalCameraName = async (tableId, cameraId, name) => {
+  return patchPersonalCamera(tableId, cameraId, { name });
+};
+
+export const deletePersonalCamera = async (tableId, cameraId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(
+    `/api/room/${encodeURIComponent(tableId)}/personal-cameras/${encodeURIComponent(cameraId)}`,
+    {
+      method: 'DELETE',
+      headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    }
+  );
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
 /**
  * Player: activate a V2 cross-sheet card chip (e.g. Bard Rally clear stress on this character’s sheet).
  * Server recomputes mutations from chipKey — same effect as GM `postTableOp` + action banners.
@@ -719,6 +786,46 @@ export const clearPlayerIntent = async (tableId) => {
  * tableId: null = GM mode (POST /api/room/my/action), string = player mode (POST /api/room/:tableId/action).
  * Best-effort — errors are swallowed.
  */
+/**
+ * Broadcast a map click “ping” (ripple + name) to all GM and player clients via SSE (`map_ping`).
+ * Coordinates are in map feet on the active map. Not persisted.
+ */
+/** @returns {Promise<{ ok?: boolean, ping?: object }|null>} */
+export const postMapPing = async (tableId, { xFt, yFt, mapId }, isGm) => {
+  const token = await getAuthToken();
+  if (!token || tableId == null) return null;
+  const url = isGm ? '/api/room/my/map-ping' : `/api/room/${encodeURIComponent(tableId)}/map-ping`;
+  const body = isGm ? { tableId, xFt, yFt, mapId } : { xFt, yFt, mapId };
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify(body),
+    });
+    return resp.ok ? resp.json() : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Ephemeral scribble stroke segment — SSE `map_scribble` to all room clients (not persisted). */
+export const postMapScribble = async (tableId, payload, isGm) => {
+  const token = await getAuthToken();
+  if (!token || tableId == null) return null;
+  const url = isGm ? '/api/room/my/map-scribble' : `/api/room/${encodeURIComponent(tableId)}/map-scribble`;
+  const body = isGm ? { tableId, ...payload } : payload;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify(body),
+    });
+    return resp.ok ? resp.json() : null;
+  } catch {
+    return null;
+  }
+};
+
 export const postActionNotification = async (notification, tableId = null, opts = {}) => {
   const token = await getAuthToken();
   if (!token) return null;

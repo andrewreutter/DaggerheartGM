@@ -11,6 +11,8 @@ import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-st
 import { isOwnItem } from './lib/constants.js';
 import { RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
+import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
+import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { postDebugLog } from './lib/debug-log.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
@@ -60,6 +62,19 @@ function App() {
   const [tableName, setTableName] = useState('');
   const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
+  /** Parallel battle maps + shared active map id (from `table_state`; derived `mapConfig` matches active map). */
+  const [maps, setMaps] = useState([]);
+  const [activeMapId, setActiveMapId] = useState(null);
+  /** GM broadcast map framing — `table_state.gmMapView` (per-map zoom/pan normalized). */
+  const [gmMapView, setGmMapView] = useState(null);
+  /** Named cameras — `table_state.mapViews`; GM's selection `gmActiveViewId`. */
+  const [mapViews, setMapViews] = useState([]);
+  const [gmActiveViewId, setGmActiveViewId] = useState(null);
+  /** Player: which broadcast/personal view row is driving the map area (localStorage per table). */
+  const [playerSelectedViewId, setPlayerSelectedViewId] = useState(null);
+  /** Player: map-tile free pan/zoom (not a broadcast view or personal camera). */
+  const [playerFreeMapExplore, setPlayerFreeMapExplore] = useState(false);
+  const [playerFreeExploreMapId, setPlayerFreeExploreMapId] = useState(null);
   const [lifeSupportSelections, setLifeSupportSelections] = useState({}); // { [rollDbId]: instanceId } — shared across GM/player windows
   const [restMovesSelections, setRestMovesSelections] = useState({}); // { [rollDbId]: { [instanceId]: { move1, move2, ... } } }
   /** V2 shared table bags (e.g. Bard Rally) — persisted in `table_state.featureState` */
@@ -87,6 +102,10 @@ function App() {
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
   // pendingBanners: authoritative list from the 'banners' subscription channel
   const [pendingBanners, setPendingBanners] = useState([]);
+  /** Ephemeral map click pings (SSE `map_ping`); not persisted */
+  const [mapPings, setMapPings] = useState([]);
+  /** Ephemeral scribble segments (SSE `map_scribble`); not persisted */
+  const [mapScribbles, setMapScribbles] = useState([]);
   // pendingPlayerIntent: pre-roll intent broadcast by a player before dice are rolled (GM sees this)
   const [pendingPlayerIntent, setPendingPlayerIntent] = useState(null);
   // Player-only: banner IDs for which a feature reroll was requested, keyed by reaction stateKey (optimistic feedback)
@@ -152,6 +171,7 @@ function App() {
     setMyTables([]);
     setConnectedPlayers([]);
     setPendingBanners([]);
+    setMapPings([]);
     tableStateReadyRef.current = false;
     scenesLoadedRef.current = false;
     adventuresLoadedRef.current = false;
@@ -399,7 +419,7 @@ function App() {
   // Player mode: invited guest on another GM's table (derived from ownerUid and myRooms while loading).
   const isPlayer = route.view === 'table' && !!user && !!route.tableId && (
     (tableOwnerUid != null && tableOwnerUid !== user.uid) ||
-    (tableOwnerUid === undefined && isInvitedPlayerHeuristic)
+    (tableOwnerUid == null && isInvitedPlayerHeuristic)
   );
 
   // Redirect to library when user has no tables and is on game-table view (e.g. after deleting last table)
@@ -415,10 +435,102 @@ function App() {
   // Characters are assigned by email, so use email as the player identity for both real and preview mode
   const effectivePlayerEmail = isPlayer ? user?.email : (isPreviewMode ? previewAsPlayerEmail : undefined);
 
+  const playerViewStorageKey =
+    route.view === 'table' && route.tableId && effectiveIsPlayer ? `dh_player_map_view:${route.tableId}` : null;
+
+  const defaultPlayerViewId = useMemo(() => {
+    if (!mapViews.length) return null;
+    const candidates = mapViews.filter(v => {
+      if (!v.broadcastToPlayers) return false;
+      return maps.some(x => x.id === v.mapId);
+    });
+    return candidates[0]?.id ?? mapViews[0]?.id ?? null;
+  }, [mapViews, maps]);
+
+  const battleMapConfig = useMemo(() => {
+    if (!effectiveIsPlayer) return mapConfig;
+    if (playerFreeMapExplore && playerFreeExploreMapId) {
+      return deriveMapConfigForMapId({ maps, mapViews }, playerFreeExploreMapId);
+    }
+    const vid = playerSelectedViewId ?? defaultPlayerViewId;
+    if (!vid || !mapViews.length) return mapConfig;
+    return deriveMapConfigForViewId({ maps, mapViews }, vid);
+  }, [
+    effectiveIsPlayer,
+    mapConfig,
+    playerSelectedViewId,
+    defaultPlayerViewId,
+    maps,
+    mapViews,
+    playerFreeMapExplore,
+    playerFreeExploreMapId,
+  ]);
+
+  useEffect(() => {
+    if (!playerViewStorageKey) return;
+    try {
+      const raw = localStorage.getItem(playerViewStorageKey);
+      if (raw) {
+        const id = JSON.parse(raw);
+        if (typeof id === 'string') setPlayerSelectedViewId(id);
+      }
+    } catch { /* ignore */ }
+  }, [playerViewStorageKey]);
+
+  useEffect(() => {
+    if (!playerViewStorageKey || !playerSelectedViewId) return;
+    try {
+      localStorage.setItem(playerViewStorageKey, JSON.stringify(playerSelectedViewId));
+    } catch { /* ignore */ }
+  }, [playerViewStorageKey, playerSelectedViewId]);
+
+  useEffect(() => {
+    if (!effectiveIsPlayer || !mapViews.length) return;
+    if (!playerSelectedViewId && defaultPlayerViewId && !playerFreeMapExplore) {
+      setPlayerSelectedViewId(defaultPlayerViewId);
+      return;
+    }
+    if (playerSelectedViewId && !mapViews.some(v => v.id === playerSelectedViewId)) {
+      setPlayerSelectedViewId(defaultPlayerViewId);
+    }
+  }, [effectiveIsPlayer, mapViews, playerSelectedViewId, defaultPlayerViewId, playerFreeMapExplore]);
+
+  const handlePlayerSelectMapView = useCallback((viewId) => {
+    setPlayerFreeMapExplore(false);
+    setPlayerFreeExploreMapId(null);
+    setPlayerSelectedViewId(viewId);
+  }, []);
+
+  const handlePlayerEnterMapFreeExplore = useCallback((mapId) => {
+    setPlayerFreeMapExplore(true);
+    setPlayerFreeExploreMapId(mapId);
+    setPlayerSelectedViewId(null);
+  }, []);
+
+  const handlePlayerExitMapFreeExplore = useCallback(() => {
+    setPlayerFreeMapExplore(false);
+    setPlayerFreeExploreMapId(null);
+  }, []);
+
   // Helper used by BattleMap for immediate local visual feedback (before SSE snapshot arrives).
   // In Phase 1 this is only used when DATABASE_URL is not set (no-DB dev mode).
   const updateActiveElement = useCallback((instanceId, updates) => {
     setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
+  }, []);
+
+  const dismissMapPing = useCallback((id) => {
+    setMapPings(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const appendMapPing = useCallback((p) => {
+    if (!p?.id) return;
+    setMapPings(prev => (prev.some(x => x.id === p.id) ? prev : [...prev.slice(-30), p]));
+  }, []);
+
+  const appendMapScribble = useCallback((evt) => {
+    if (!evt?.id) return;
+    if (evt._clientId === CLIENT_ID) return;
+    setMapScribbles((prev) => (prev.some((x) => x.id === evt.id) ? prev : [...prev.slice(-400), evt]));
   }, []);
 
   // Canonicalize legacy /gm-table/... URLs (needs user uid for bare /gm-table and /gm-table/:collection/:id)
@@ -446,11 +558,21 @@ function App() {
       setTableBattleMods({});
       setPlayerEmails([]);
       setTableName('');
+      setMaps([]);
+      setActiveMapId(null);
+      setGmMapView(null);
+      setMapViews([]);
+      setGmActiveViewId(null);
+      setPlayerSelectedViewId(null);
+      setPlayerFreeMapExplore(false);
+      setPlayerFreeExploreMapId(null);
       setLifeSupportSelections({});
       setRestMovesSelections({});
       setTableFeatureState({});
       setTableTop(null);
       setTableStateReady(false);
+      setMapPings([]);
+      setMapScribbles([]);
     }
     prevTableIdRef.current = route.tableId;
   }, [route.view, route.tableId]);
@@ -470,6 +592,12 @@ function App() {
         setPlayerEmails([]);
         setTableName('');
         setMapConfig(DEFAULT_MAP_CONFIG);
+        setMaps([]);
+        setActiveMapId(null);
+        setGmMapView(null);
+        setMapViews([]);
+        setGmActiveViewId(null);
+        setPlayerSelectedViewId(null);
         setLifeSupportSelections({});
         setRestMovesSelections({});
         setTableFeatureState({});
@@ -486,6 +614,19 @@ function App() {
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
       if (tableState.tableName != null) setTableName(tableState.tableName);
       if (tableState.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
+      if (Array.isArray(tableState.maps)) setMaps(tableState.maps);
+      else setMaps([]);
+      if (tableState.activeMapId != null) setActiveMapId(tableState.activeMapId);
+      else setActiveMapId(null);
+      if (tableState.gmMapView != null && typeof tableState.gmMapView === 'object') {
+        setGmMapView(tableState.gmMapView);
+      } else {
+        setGmMapView(null);
+      }
+      if (Array.isArray(tableState.mapViews)) setMapViews(tableState.mapViews);
+      else setMapViews([]);
+      if (tableState.gmActiveViewId != null) setGmActiveViewId(tableState.gmActiveViewId);
+      else setGmActiveViewId(null);
       if (tableState.lifeSupportSelections != null) setLifeSupportSelections(tableState.lifeSupportSelections);
       if (tableState.restMovesSelections != null) setRestMovesSelections(tableState.restMovesSelections);
       if (tableState.featureState != null && typeof tableState.featureState === 'object') {
@@ -530,6 +671,19 @@ function App() {
           setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
         }
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
+        if (Array.isArray(state.maps)) setMaps(state.maps);
+        else setMaps([]);
+        if (state.activeMapId != null) setActiveMapId(state.activeMapId);
+        else setActiveMapId(null);
+        if (state.gmMapView != null && typeof state.gmMapView === 'object') {
+          setGmMapView(state.gmMapView);
+        } else {
+          setGmMapView(null);
+        }
+        if (Array.isArray(state.mapViews)) setMapViews(state.mapViews);
+        else setMapViews([]);
+        if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
+        else setGmActiveViewId(null);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         if (state.featureState != null && typeof state.featureState === 'object') {
@@ -560,12 +714,26 @@ function App() {
         const intent = JSON.parse(e.data);
         setPendingPlayerIntent(intent); // null clears the banner
       });
+      es.addEventListener('map_ping', (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          if (!p?.id) return;
+          appendMapPing(p);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('map_scribble', (e) => {
+        try {
+          const s = JSON.parse(e.data);
+          if (!s?.id) return;
+          appendMapScribble(s);
+        } catch { /* ignore */ }
+      });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
     postTableOp({ op: 'set-gm-display-name', gmDisplayName: user?.displayName || '' }, tableId);
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [user?.uid, route.view, route.tableId, isPlayer]);
+  }, [user?.uid, route.view, route.tableId, isPlayer, appendMapPing, appendMapScribble]);
 
   // Player SSE: receive table state snapshots, banners, and dice roll events for the invited table
   useEffect(() => {
@@ -587,6 +755,19 @@ function App() {
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.tableName != null) setTableName(state.tableName);
         if (state.mapConfig != null) setMapConfig(state.mapConfig);
+        if (Array.isArray(state.maps)) setMaps(state.maps);
+        else setMaps([]);
+        if (state.activeMapId != null) setActiveMapId(state.activeMapId);
+        else setActiveMapId(null);
+        if (state.gmMapView != null && typeof state.gmMapView === 'object') {
+          setGmMapView(state.gmMapView);
+        } else {
+          setGmMapView(null);
+        }
+        if (Array.isArray(state.mapViews)) setMapViews(state.mapViews);
+        else setMapViews([]);
+        if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
+        else setGmActiveViewId(null);
         if (state.lifeSupportSelections != null) setLifeSupportSelections(state.lifeSupportSelections);
         if (state.restMovesSelections != null) setRestMovesSelections(state.restMovesSelections);
         if (state.featureState != null && typeof state.featureState === 'object') {
@@ -621,11 +802,25 @@ function App() {
         const data = JSON.parse(e.data);
         setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
       });
+      es.addEventListener('map_ping', (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          if (!p?.id) return;
+          appendMapPing(p);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('map_scribble', (e) => {
+        try {
+          const s = JSON.parse(e.data);
+          if (!s?.id) return;
+          appendMapScribble(s);
+        } catch { /* ignore */ }
+      });
       es.onerror = () => { es.close(); reconnectTimer = setTimeout(connect, 3000); };
     };
     connect();
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
-  }, [isPlayer, user?.uid, route.tableId, tableOwnerUid]);
+  }, [isPlayer, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble]);
 
   // Drive Action Log live updates from the pendingBanners subscription channel.
   // roll-history seeds seenLogDbIdsRef on connect; here we append any newly-arriving
@@ -1029,8 +1224,121 @@ function App() {
 
   const sendSetMapConfig = (newConfig, resetTokenPositions = false) => {
     const merged = { ...mapConfig, ...newConfig };
-    postTableOp({ op: 'set-map', ...merged, resetTokenPositions }, tableId);
+    const mid =
+      mapViews.find(v => v.id === gmActiveViewId)?.mapId ?? activeMapId ?? maps[0]?.id ?? DEFAULT_LEGACY_MAP_ID;
+    postTableOp({ op: 'set-map', ...merged, resetTokenPositions, mapId: mid }, tableId);
   };
+
+  const sendMapViewSync = useCallback(
+    (mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm) => {
+      const mapId =
+        mapViews.find(v => v.id === gmActiveViewId)?.mapId ??
+        activeMapId ??
+        maps[0]?.id ??
+        DEFAULT_LEGACY_MAP_ID;
+      if (gmActiveViewId == null) {
+        postTableOp(
+          { op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, viewId: null, mapId },
+          tableId,
+        );
+        return;
+      }
+      postTableOp(
+        { op: 'set-map-view', mapViewZoomRatio, mapViewPanNorm, mapViewVisibleNorm, viewId: gmActiveViewId },
+        tableId,
+      );
+    },
+    [tableId, gmActiveViewId, activeMapId, maps, mapViews],
+  );
+
+  const sendMapFreeExplore = useCallback(
+    (mapId) => {
+      postTableOp({ op: 'set-map-free-explore', mapId }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetActiveView = useCallback(
+    (viewId) => {
+      postTableOp({ op: 'set-active-view', viewId }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetActiveMap = useCallback((id) => {
+    postTableOp({ op: 'set-active-map', activeMapId: id }, tableId);
+  }, [tableId]);
+
+  const sendAddMapView = useCallback((payload = {}) => {
+    postTableOp({ op: 'add-map-view', ...payload }, tableId);
+  }, [tableId]);
+
+  const sendRemoveMapView = useCallback(
+    (viewId) => {
+      postTableOp({ op: 'remove-map-view', viewId }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendRenameMapView = useCallback(
+    (viewId, name) => {
+      postTableOp({ op: 'rename-map-view', viewId, name }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetViewBroadcast = useCallback(
+    (viewId, broadcastToPlayers) => {
+      postTableOp({ op: 'set-view-broadcast', viewId, broadcastToPlayers }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetMapShare = useCallback(
+    (mapId, shareWithPlayers) => {
+      postTableOp({ op: 'set-map-share', mapId, shareWithPlayers }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetMapOverlay = useCallback(
+    (mapId, overlayPng) => {
+      postTableOp({ op: 'set-map-overlay', mapId, overlayPng: overlayPng ?? null }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendSetMapViewOverlay = useCallback(
+    (viewId, overlayPng) => {
+      postTableOp({ op: 'set-map-view-overlay', viewId, overlayPng: overlayPng ?? null }, tableId);
+    },
+    [tableId],
+  );
+
+  const sendAddMap = useCallback(() => {
+    postTableOp({ op: 'add-map' }, tableId);
+  }, [tableId]);
+
+  /** New map with image (paste / upload when current map already has art). */
+  const sendAddMapWithImage = useCallback((img) => {
+    postTableOp(
+      {
+        op: 'add-map',
+        mapImageUrl: img.mapImageUrl,
+        mapImageNaturalWidth: img.mapImageNaturalWidth,
+        mapImageNaturalHeight: img.mapImageNaturalHeight,
+      },
+      tableId,
+    );
+  }, [tableId]);
+
+  const sendRemoveMap = useCallback((mapId) => {
+    postTableOp({ op: 'remove-map', mapId }, tableId);
+  }, [tableId]);
+
+  const sendRenameMap = useCallback((mapId, name) => {
+    postTableOp({ op: 'rename-map', mapId, name }, tableId);
+  }, [tableId]);
 
   const sendLifeSupportSelect = (rollDbId, instanceId) => {
     const key = String(rollDbId);
@@ -1394,8 +1702,36 @@ function App() {
                 onExitPreview={isPreviewMode ? () => setPreviewAsPlayerEmail(null) : undefined}
                 actionLog={actionLog}
                 setActionLog={setActionLog}
-                mapConfig={mapConfig}
+                mapConfig={battleMapConfig}
+                maps={maps}
+                activeMapId={activeMapId ?? maps[0]?.id ?? null}
+                gmMapView={gmMapView}
+                mapViews={mapViews}
+                gmActiveViewId={gmActiveViewId}
+                onSetActiveView={effectiveIsPlayer ? undefined : sendSetActiveView}
+                onAddMapViewOp={effectiveIsPlayer ? undefined : sendAddMapView}
+                onRemoveMapView={effectiveIsPlayer ? undefined : sendRemoveMapView}
+                onRenameMapView={effectiveIsPlayer ? undefined : sendRenameMapView}
+                onSetViewBroadcast={effectiveIsPlayer ? undefined : sendSetViewBroadcast}
+                onSetMapShare={effectiveIsPlayer ? undefined : sendSetMapShare}
+                playerSelectedViewId={effectiveIsPlayer ? playerSelectedViewId : null}
+                onPlayerSelectView={effectiveIsPlayer ? handlePlayerSelectMapView : undefined}
+                playerFreeMapExplore={effectiveIsPlayer ? playerFreeMapExplore : false}
+                playerFreeExploreMapId={effectiveIsPlayer ? playerFreeExploreMapId : null}
+                onPlayerEnterMapFreeExplore={effectiveIsPlayer ? handlePlayerEnterMapFreeExplore : undefined}
+                onPlayerExitMapFreeExplore={effectiveIsPlayer ? handlePlayerExitMapFreeExplore : undefined}
+                onMapFreeExplore={!effectiveIsPlayer ? sendMapFreeExplore : undefined}
+                onSetActiveMap={effectiveIsPlayer ? undefined : sendSetActiveMap}
+                onAddMap={effectiveIsPlayer ? undefined : sendAddMap}
+                onAddMapWithImage={effectiveIsPlayer ? undefined : sendAddMapWithImage}
+                onRemoveMap={effectiveIsPlayer ? undefined : sendRemoveMap}
+                onRenameMap={effectiveIsPlayer ? undefined : sendRenameMap}
                 onMapConfigChange={effectiveIsPlayer ? () => {} : sendSetMapConfig}
+                onMapViewSync={
+                  shouldPersistMapViewToTable({ userUid: user?.uid, tableOwnerUid, effectiveIsPlayer })
+                    ? sendMapViewSync
+                    : undefined
+                }
                 lifeSupportSelections={lifeSupportSelections}
                 onLifeSupportSelect={sendLifeSupportSelect}
                 onLifeSupportClear={effectiveIsPlayer ? () => {} : sendLifeSupportClear}
@@ -1406,6 +1742,12 @@ function App() {
                 sessionPlayAllowed={sessionPlayAllowed}
                 sessionStarted={sessionStarted}
                 sessionPaused={sessionPaused}
+                mapPings={mapPings}
+                onDismissMapPing={dismissMapPing}
+                appendMapPing={appendMapPing}
+                mapScribbles={mapScribbles}
+                onSetMapOverlay={!effectiveIsPlayer ? sendSetMapOverlay : undefined}
+                onSetMapViewOverlay={!effectiveIsPlayer ? sendSetMapViewOverlay : undefined}
               />
             </div>
           </>

@@ -4,6 +4,23 @@
  */
 
 /**
+ * Convert WheelEvent deltas to pixel space (handles DOM_DELTA_LINE / PAGE).
+ * @param {Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode'>} e
+ */
+export function normalizeWheelDeltaPixels(e, viewportW, viewportH) {
+  let dx = e.deltaX;
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) {
+    dx *= 16;
+    dy *= 16;
+  } else if (e.deltaMode === 2) {
+    dx *= viewportW;
+    dy *= viewportH;
+  }
+  return { dx, dy };
+}
+
+/**
  * Clamp scroll so content stays in range for current zoom and viewport.
  */
 export function clampPanScroll(scrollLeft, scrollTop, { mapZoom, renderedWidthPx, renderedHeightPx, viewportW, viewportH }) {
@@ -108,4 +125,76 @@ export function scrollAfterZoomTowardPoint({
   nextLeft = Math.max(0, Math.min(maxLeft, nextLeft));
   nextTop = Math.max(0, Math.min(maxTop, nextTop));
   return { scrollLeft: nextLeft, scrollTop: nextTop };
+}
+
+/**
+ * Pan so an inner-map point (px, pre-scale) is centered in the viewport at current zoom.
+ */
+export function computePanToCenterInnerPointPx({
+  innerCenterXPx,
+  innerCenterYPx,
+  mapZoom,
+  renderedWidthPx,
+  renderedHeightPx,
+  viewportW,
+  viewportH,
+}) {
+  const sx = innerCenterXPx * mapZoom;
+  const sy = innerCenterYPx * mapZoom;
+  const scrollLeft = sx - viewportW / 2;
+  const scrollTop = sy - viewportH / 2;
+  return clampPanScroll(scrollLeft, scrollTop, {
+    mapZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+    viewportW,
+    viewportH,
+  });
+}
+
+/**
+ * Max zoom in (largest z) that still fits an axis-aligned inner bbox (+ padding), then pan to center it.
+ * Inner coords are pre-scale map pixels (same space as renderedWidthPx).
+ *
+ * @param {object} p
+ * @param {number} p.minInnerX
+ * @param {number} p.minInnerY
+ * @param {number} p.maxInnerX
+ * @param {number} p.maxInnerY
+ * @param {number} [p.paddingPx]
+ */
+export function computeZoomAndPanToFitInnerBounds({
+  minInnerX,
+  minInnerY,
+  maxInnerX,
+  maxInnerY,
+  paddingPx = 0,
+  minZoom,
+  maxZoom,
+  renderedWidthPx,
+  renderedHeightPx,
+  viewportW,
+  viewportH,
+}) {
+  const pad = paddingPx;
+  const minX = minInnerX - pad;
+  const minY = minInnerY - pad;
+  const maxX = maxInnerX + pad;
+  const maxY = maxInnerY + pad;
+  const W = Math.max(1, maxX - minX);
+  const H = Math.max(1, maxY - minY);
+  const zFit = Math.min(viewportW / W, viewportH / H);
+  const mapZoom = clampMapZoom(zFit, minZoom, maxZoom);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const scrollLeft = cx * mapZoom - viewportW / 2;
+  const scrollTop = cy * mapZoom - viewportH / 2;
+  const pan = clampPanScroll(scrollLeft, scrollTop, {
+    mapZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+    viewportW,
+    viewportH,
+  });
+  return { mapZoom, scrollLeft: pan.scrollLeft, scrollTop: pan.scrollTop };
 }

@@ -34,7 +34,11 @@ import {
   CharacterSheetHighlightSurface,
 } from './CharacterSheetSourceHighlight.jsx';
 import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
-import { getNumericFeatureStateEntries, TRAIT_FULL } from './CharacterDisplay.jsx';
+import { TRAIT_FULL } from './CharacterDisplay.jsx';
+import { getFeatureGetSetStateLines } from '../lib/feature-get-set-state-display.js';
+import { GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
+import { WidthSortedFlexWrap } from './WidthSortedFlexWrap.jsx';
+import { collectV2IsToggleCardFeatureGroups } from '../lib/build-feature-card-model.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
@@ -60,7 +64,11 @@ import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp,
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
-import { applyDeferredV2ToggleOnAckFromRoll, applyV2OwnedCardChipEngineResultToTable } from '../lib/v2-owned-card-chip-table.js';
+import {
+  applyDeferredV2ToggleOnAckFromRoll,
+  applyV2OwnedCardChipEngineResultToTable,
+  runV2OwnedCardChipTableAction,
+} from '../lib/v2-owned-card-chip-table.js';
 import {
   collectV2ReviewActionChips,
   activateV2ReviewChip,
@@ -329,10 +337,33 @@ function enrichRollWithDamage(roll, elements) {
 /** Width of the character table editor column (unified sheet + slide-out form). */
 const CHARACTER_TABLE_EDITOR_DRAWER_WIDTH = 'min(42rem, calc(100vw - 15rem))';
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, onMapConfigChange, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+  mapScribbles = [],
+  mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
+  onSetMapOverlay,
+  onSetMapViewOverlay,
+  playerSelectedViewId = null, onPlayerSelectView,
+  playerFreeMapExplore = false,
+  playerFreeExploreMapId = null,
+  onPlayerEnterMapFreeExplore,
+  onPlayerExitMapFreeExplore,
+  onMapFreeExplore,
+}) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const v2Registry = useMemo(() => (srdData ? buildV2RegistryWithSrdItems(srdData) : null), [srdData]);
+
+  /** Same shape as {@link CharacterHoverCard} / Actions strip — V2 card chips on sidebar character cards. */
+  const v2TableContextForPanels = useMemo(
+    () => ({
+      activeElements,
+      fearCount,
+      mapConfig,
+      tableFeatureState,
+      registry: v2Registry ?? undefined,
+    }),
+    [activeElements, fearCount, mapConfig, tableFeatureState, v2Registry]
+  );
 
   /** Mirrors `table_state` top for `gateTableOpForPrepMode` (sendOp bypass path). */
   const tableStateForGate = useMemo(
@@ -1187,6 +1218,30 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     dismissAllHoverCards();
     postActionNotification(notification, tableId).catch(() => {});
   };
+
+  /** V2 `isToggle` card chips on sidebar character cards (GM only — same path as hover sheet Actions). */
+  const handleCharacterPanelV2CardChip = useCallback(
+    (characterEl, displayEl) => (payload) => {
+      if (isPlayer || !tableId || !v2Registry) return;
+      void runV2OwnedCardChipTableAction({
+        featRow: payload.featRow,
+        chip: payload.chip,
+        passedFeatureKey: payload.featureKey,
+        selectOpts: payload.selectOpts,
+        placementShape: payload.placementShape,
+        displayEl,
+        el: characterEl,
+        activeElementsForV2Snapshots: activeElements,
+        v2Registry,
+        tableFeatureState,
+        fearCount,
+        mapConfig,
+        tableId,
+        onActionLoopNotification: handleActionNotification,
+      });
+    },
+    [isPlayer, tableId, v2Registry, activeElements, tableFeatureState, fearCount, mapConfig, handleActionNotification]
+  );
 
   const handleRestBannerV2Chip = useCallback(
     (rawChip, characterEl, isPlayerSession) => {
@@ -3787,11 +3842,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         mergeV2DeclarativeSheetOverlay(base, el, srdData, {
           fearCount,
           mapConfig,
+          tableFeatureState,
         })
       );
     }
     return map;
-  }, [srdData, tableCharacters, fearCount, mapConfig]);
+  }, [srdData, tableCharacters, fearCount, mapConfig, tableFeatureState]);
 
   /** V2 engine `reviewAction` chips for pending banners (Phase 2 — keyed by `_rollDbId`). */
   const v2ReviewChipsByRollDbId = useMemo(() => {
@@ -4486,6 +4542,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             const pendingManual = findPendingManualTrackBanner(pendingBanners, el.instanceId);
             const manualAck = getPendingManualTrackAckDeltas(el, pendingManual);
             const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, el.instanceId);
+            const featureGetSetLines = getFeatureGetSetStateLines(el);
             const displayChar = characterDisplayByInstanceId.get(el.instanceId) ?? el;
             const charComplete = isCharacterComplete(el);
             const isIncomplete = !charComplete.complete;
@@ -4596,7 +4653,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         <Tooltip
                           content={evasionTip || undefined}
                           className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums bg-cyan-900/50 border border-cyan-800/50 rounded px-1 ${evModTotal ? 'text-sky-300' : 'text-cyan-400/70'}`}
-                          placement="top"
+                          placement="right"
                         >
                           <span>EVA {displayChar.evasion}</span>
                           {evModTotal !== 0 ? (
@@ -4669,18 +4726,61 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     />
                   </div>
                 )}
-                {/* Numeric feature state (e.g. Seaborne Know the Tide tokens) — badge aligned with first track box */}
-                {getNumericFeatureStateEntries(el).map(({ featureName, key, label, value }) => (
-                  <div key={`${featureName}-${key}`} className="ml-[14px]">
-                    <span className="text-[10px] font-bold text-dh bg-dh-hover border border-dh-border rounded px-1.5">
-                      {featureName} — {label}: {value}
-                    </span>
-                  </div>
-                ))}
                 {el.conditions && (
                   <div className="ml-[14px] text-[10px] text-dh leading-snug">
                     <span className="font-semibold text-dh-muted">Conditions: </span>
                     {el.conditions}
+                  </div>
+                )}
+                {/* V2 isToggle card chips — same chip row styling as sheet Actions (`actionsStripLayout`). GM only. */}
+                {!isPlayer && v2Registry && srdData && (() => {
+                  const displayElPanel = characterDisplayByInstanceId.get(el.instanceId) ?? el;
+                  const toggleGroups = collectV2IsToggleCardFeatureGroups(displayElPanel, v2TableContextForPanels);
+                  if (toggleGroups.length === 0) return null;
+                  const channeled = displayElPanel.featureState?.WardenOfTheElements?.channeledElement ?? null;
+                  return (
+                    <div className="pt-1.5 mt-1 border-t border-dh-border/80 min-w-0">
+                      <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
+                        {toggleGroups.map((g, gi) => (
+                          <GuideFeatureCardChips
+                            key={`${g.featRow._sourceScopeKey || g.featRow.name}-${g.featRow.type}-${gi}`}
+                            model={g.model}
+                            tableForChips={g.table}
+                            featRow={g.featRow}
+                            el={displayElPanel}
+                            featureKey={g.featRow._sourceScopeKey || g.featRow.name}
+                            v2TableContext={v2TableContextForPanels}
+                            interactionMode="interactive"
+                            onlyIsToggle
+                            actionsStripLayout
+                            stripKeyPrefix={g.featRow._sourceScopeKey || g.featRow.name}
+                            activeChanneledElement={g.featRow.name === 'Elemental Incarnation' ? channeled : undefined}
+                            stressMaxed={
+                              g.featRow.name === 'Elemental Incarnation'
+                                ? (el.currentStress ?? 0) >= (el.maxStress ?? 6)
+                                : undefined
+                            }
+                            onV2CardChip={handleCharacterPanelV2CardChip(el, displayElPanel)}
+                            pendingBanners={pendingBanners}
+                            chipTooltipPlacement="right"
+                          />
+                        ))}
+                      </WidthSortedFlexWrap>
+                    </div>
+                  );
+                })()}
+                {featureGetSetLines.length > 0 && (
+                  <div className="pt-1.5 mt-1 border-t border-dh-border/80 min-w-0">
+                    <p className="text-[9px] font-semibold text-dh-muted uppercase tracking-wide mb-0.5">
+                      Feature state
+                    </p>
+                    <div className="font-mono text-[9px] text-dh leading-snug space-y-0.5 break-all">
+                      {featureGetSetLines.map(({ lineKey, value }) => (
+                        <div key={lineKey}>
+                          <span className="text-dh-muted">{lineKey}:</span> {value}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -5385,7 +5485,32 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             pendingResourceCosts={pendingResourceCosts}
             lifeSupportSelections={lifeSupportSelections}
             mapConfig={mapConfig}
+            maps={maps}
+            activeMapId={activeMapId}
+            gmMapView={gmMapView}
+            mapViews={mapViews}
+            gmActiveViewId={gmActiveViewId}
+            onSetActiveView={onSetActiveView}
+            onAddMapViewOp={onAddMapViewOp}
+            onRemoveMapView={onRemoveMapView}
+            onRenameMapView={onRenameMapView}
+            onSetViewBroadcast={onSetViewBroadcast}
+            onSetMapShare={onSetMapShare}
+            playerSelectedViewId={playerSelectedViewId}
+            onPlayerSelectView={onPlayerSelectView}
+            playerFreeMapExplore={playerFreeMapExplore}
+            playerFreeExploreMapId={playerFreeExploreMapId}
+            onPlayerEnterMapFreeExplore={onPlayerEnterMapFreeExplore}
+            onPlayerExitMapFreeExplore={onPlayerExitMapFreeExplore}
+            onMapFreeExplore={onMapFreeExplore}
+            onSetActiveMap={onSetActiveMap}
+            onAddMap={onAddMap}
+            onAddMapWithImage={onAddMapWithImage}
+            onRemoveMap={onRemoveMap}
+            onRenameMap={onRenameMap}
+            tableId={tableId}
             onMapConfigChange={onMapConfigChange}
+            onMapViewSync={onMapViewSync}
             tableName={tableName}
             tableStateReady={tableStateReady}
             onTableNameChange={onTableNameChange}
@@ -5396,6 +5521,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             pendingBannerCount={!isPlayer ? (pendingBanners?.length ?? 0) : 0}
             onCancelAllBanners={!isPlayer ? handleCancelAllBanners : undefined}
             onTokenDragEnd={!isPlayer ? handleTokenDragEnd : undefined}
+            mapPings={mapPings}
+            onDismissMapPing={onDismissMapPing}
+            appendMapPing={appendMapPing}
+            mapScribbles={mapScribbles}
+            onSetMapOverlay={onSetMapOverlay}
+            onSetMapViewOverlay={onSetMapViewOverlay}
             className="flex-1 min-h-0"
           />
         </div>
