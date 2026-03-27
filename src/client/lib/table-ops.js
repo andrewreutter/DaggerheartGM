@@ -4,8 +4,22 @@ import {
   DEFAULT_LEGACY_MAP_ID,
   deriveMapConfigFromState,
   newMapId,
+  newViewId,
   normalizeMapState,
 } from './map-table-state.js';
+
+/** Keep legacy `gmMapView` + `activeMapId` aligned with `gmActiveViewId` for snapshots. */
+function syncGmMapViewFromActiveView(state) {
+  if (state.gmActiveViewId == null) return;
+  const v = state.mapViews?.find(x => x.id === state.gmActiveViewId) || state.mapViews?.[0];
+  if (!v) return;
+  state.activeMapId = v.mapId;
+  state.gmMapView = {
+    mapId: v.mapId,
+    mapViewZoomRatio: v.mapViewZoomRatio ?? null,
+    mapViewPanNorm: v.mapViewPanNorm ?? null,
+  };
+}
 
 // Runtime fields that are local to the Game Table and NOT overwritten by library data.
 // Used when resolving characters by reference: library base data is merged in, but
@@ -153,13 +167,17 @@ export function applyTableOp(op, state) {
         if (op.mapSizeFt !== undefined) merged.mapSizeFt = op.mapSizeFt;
         if (op.mapImageNaturalWidth !== undefined) merged.mapImageNaturalWidth = op.mapImageNaturalWidth;
         if (op.mapImageNaturalHeight !== undefined) merged.mapImageNaturalHeight = op.mapImageNaturalHeight;
+        if (op.shareWithPlayers !== undefined) merged.shareWithPlayers = !!op.shareWithPlayers;
         return merged;
       });
-      let gmMapView = { ...base.gmMapView };
+      let mapViews = base.mapViews.map(v => ({ ...v }));
       if (op.resetTokenPositions) {
-        gmMapView = { mapId: targetMapId, mapViewZoomRatio: null, mapViewPanNorm: null };
+        mapViews = mapViews.map(v =>
+          v.mapId === targetMapId ? { ...v, mapViewZoomRatio: null, mapViewPanNorm: null } : v
+        );
       }
-      const nextState = { ...base, maps, gmMapView };
+      const nextState = { ...base, maps, mapViews };
+      syncGmMapViewFromActiveView(nextState);
       const mapConfig = deriveMapConfigFromState(nextState);
       let nextEls = activeElements;
       if (op.resetTokenPositions) {
@@ -172,26 +190,91 @@ export function applyTableOp(op, state) {
       }
       return {
         maps,
+        mapViews,
         activeMapId: nextState.activeMapId,
-        gmMapView,
+        gmActiveViewId: nextState.gmActiveViewId,
+        gmMapView: nextState.gmMapView,
         mapConfig,
         ...(nextEls !== activeElements ? { activeElements: nextEls } : {}),
       };
     }
     case 'set-map-view': {
       const base = normalizeMapState(state);
-      const mapId = op.mapId ?? base.activeMapId;
-      const gmMapView = {
-        ...base.gmMapView,
-        mapId,
-        ...(op.mapViewZoomRatio !== undefined ? { mapViewZoomRatio: op.mapViewZoomRatio } : {}),
-        ...(op.mapViewPanNorm !== undefined ? { mapViewPanNorm: op.mapViewPanNorm } : {}),
-      };
-      const nextState = { ...base, gmMapView };
+      /** Framing not tied to a named view — only `gmMapView` updates. */
+      if (base.gmActiveViewId === null) {
+        const mid = op.mapId ?? base.gmMapView?.mapId ?? base.activeMapId;
+        if (!mid || !base.maps.some(m => m.id === mid)) return {};
+        const nextGm = {
+          mapId: mid,
+          mapViewZoomRatio: op.mapViewZoomRatio !== undefined ? op.mapViewZoomRatio : base.gmMapView?.mapViewZoomRatio ?? null,
+          mapViewPanNorm: op.mapViewPanNorm !== undefined ? op.mapViewPanNorm : base.gmMapView?.mapViewPanNorm ?? null,
+        };
+        const nextState = { ...base, gmMapView: nextGm, activeMapId: mid, gmActiveViewId: null };
+        return {
+          maps: nextState.maps,
+          mapViews: nextState.mapViews,
+          activeMapId: mid,
+          gmActiveViewId: null,
+          gmMapView: nextGm,
+          mapConfig: deriveMapConfigFromState(nextState),
+        };
+      }
+      const viewId = op.viewId ?? base.gmActiveViewId;
+      const mapViews = base.mapViews.map(v => {
+        if (v.id !== viewId) return v;
+        return {
+          ...v,
+          ...(op.mapViewZoomRatio !== undefined ? { mapViewZoomRatio: op.mapViewZoomRatio } : {}),
+          ...(op.mapViewPanNorm !== undefined ? { mapViewPanNorm: op.mapViewPanNorm } : {}),
+        };
+      });
+      const nextState = { ...base, mapViews };
+      syncGmMapViewFromActiveView(nextState);
       return {
         maps: nextState.maps,
+        mapViews,
         activeMapId: nextState.activeMapId,
-        gmMapView,
+        gmActiveViewId: nextState.gmActiveViewId,
+        gmMapView: nextState.gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'set-map-free-explore': {
+      const base = normalizeMapState(state);
+      const mapId = op.mapId;
+      if (!mapId || !base.maps.some(m => m.id === mapId)) return {};
+      const nextState = {
+        ...base,
+        gmActiveViewId: null,
+        activeMapId: mapId,
+        gmMapView: {
+          mapId,
+          mapViewZoomRatio: op.mapViewZoomRatio ?? null,
+          mapViewPanNorm: op.mapViewPanNorm ?? null,
+        },
+      };
+      return {
+        maps: nextState.maps,
+        mapViews: nextState.mapViews,
+        activeMapId: mapId,
+        gmActiveViewId: null,
+        gmMapView: nextState.gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'set-active-view': {
+      const base = normalizeMapState(state);
+      const vid = op.viewId;
+      if (!vid || !base.mapViews.some(v => v.id === vid)) return {};
+      const nextState = { ...base, gmActiveViewId: vid };
+      const view = nextState.mapViews.find(v => v.id === vid);
+      nextState.activeMapId = view.mapId;
+      syncGmMapViewFromActiveView(nextState);
+      return {
+        mapViews: nextState.mapViews,
+        activeMapId: nextState.activeMapId,
+        gmActiveViewId: vid,
+        gmMapView: nextState.gmMapView,
         mapConfig: deriveMapConfigFromState(nextState),
       };
     }
@@ -199,17 +282,108 @@ export function applyTableOp(op, state) {
       const base = normalizeMapState(state);
       const targetId = op.activeMapId;
       if (!targetId || !base.maps.some(m => m.id === targetId)) return {};
-      const gmMapView = {
-        mapId: targetId,
-        mapViewZoomRatio: null,
-        mapViewPanNorm: null,
-      };
-      const nextState = { ...base, activeMapId: targetId, gmMapView };
+      const firstView = base.mapViews.find(v => v.mapId === targetId);
+      if (!firstView) return {};
+      const nextState = { ...base, gmActiveViewId: firstView.id, activeMapId: targetId };
+      syncGmMapViewFromActiveView(nextState);
       return {
         activeMapId: targetId,
-        gmMapView,
+        gmActiveViewId: firstView.id,
+        gmMapView: nextState.gmMapView,
+        mapViews: nextState.mapViews,
         mapConfig: deriveMapConfigFromState(nextState),
       };
+    }
+    case 'add-map-view': {
+      const base = normalizeMapState(state);
+      const cur = base.gmActiveViewId
+        ? base.mapViews.find(v => v.id === base.gmActiveViewId)
+        : base.mapViews.find(v => v.mapId === base.gmMapView?.mapId) || base.mapViews[0];
+      if (!cur) return {};
+      const mapId = cur.mapId;
+      const siblings = base.mapViews.filter(v => v.mapId === mapId);
+      const name =
+        op.name && String(op.name).trim()
+          ? String(op.name).trim()
+          : `View ${siblings.length + 1}`;
+      const fromFreeExplore = base.gmActiveViewId == null;
+      const newView = {
+        id: newViewId(),
+        mapId,
+        name,
+        mapViewZoomRatio:
+          op.mapViewZoomRatio ??
+          (fromFreeExplore ? base.gmMapView?.mapViewZoomRatio : cur.mapViewZoomRatio) ??
+          null,
+        mapViewPanNorm:
+          op.mapViewPanNorm ?? (fromFreeExplore ? base.gmMapView?.mapViewPanNorm : cur.mapViewPanNorm) ?? null,
+        broadcastToPlayers: false,
+      };
+      const mapViews = [...base.mapViews, newView];
+      const nextState = { ...base, mapViews, gmActiveViewId: newView.id };
+      nextState.activeMapId = mapId;
+      syncGmMapViewFromActiveView(nextState);
+      return {
+        mapViews,
+        activeMapId: mapId,
+        gmActiveViewId: newView.id,
+        gmMapView: nextState.gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'remove-map-view': {
+      const base = normalizeMapState(state);
+      const vid = op.viewId;
+      if (!vid) return {};
+      const victim = base.mapViews.find(v => v.id === vid);
+      if (!victim) return {};
+      const remainingOnMap = base.mapViews.filter(v => v.mapId === victim.mapId && v.id !== vid);
+      if (remainingOnMap.length < 1) return {};
+      let mapViews = base.mapViews.filter(v => v.id !== vid);
+      let gmActiveViewId = base.gmActiveViewId;
+      if (gmActiveViewId === vid) {
+        gmActiveViewId = remainingOnMap[0].id;
+      }
+      const nextState = { ...base, mapViews, gmActiveViewId };
+      const av = mapViews.find(v => v.id === gmActiveViewId);
+      nextState.activeMapId = av.mapId;
+      syncGmMapViewFromActiveView(nextState);
+      return {
+        mapViews,
+        activeMapId: nextState.activeMapId,
+        gmActiveViewId,
+        gmMapView: nextState.gmMapView,
+        mapConfig: deriveMapConfigFromState(nextState),
+      };
+    }
+    case 'rename-map-view': {
+      const base = normalizeMapState(state);
+      const vid = op.viewId;
+      const name = op.name != null ? String(op.name).trim() : '';
+      if (!vid || !name) return {};
+      const mapViews = base.mapViews.map(v => (v.id === vid ? { ...v, name } : v));
+      const nextState = { ...base, mapViews };
+      return { mapViews, mapConfig: deriveMapConfigFromState(nextState) };
+    }
+    case 'set-view-broadcast': {
+      const base = normalizeMapState(state);
+      const vid = op.viewId;
+      if (!vid || !base.mapViews.some(v => v.id === vid)) return {};
+      const mapViews = base.mapViews.map(v =>
+        v.id === vid ? { ...v, broadcastToPlayers: !!op.broadcastToPlayers } : v
+      );
+      const nextState = { ...base, mapViews };
+      return { mapViews, mapConfig: deriveMapConfigFromState(nextState) };
+    }
+    case 'set-map-share': {
+      const base = normalizeMapState(state);
+      const mid = op.mapId;
+      if (!mid || !base.maps.some(m => m.id === mid)) return {};
+      const maps = base.maps.map(m =>
+        m.id === mid ? { ...m, shareWithPlayers: !!op.shareWithPlayers } : m
+      );
+      const nextState = { ...base, maps };
+      return { maps, mapConfig: deriveMapConfigFromState(nextState) };
     }
     case 'add-map': {
       const base = normalizeMapState(state);
@@ -226,14 +400,26 @@ export function applyTableOp(op, state) {
         mapSizeFt: op.mapSizeFt ?? 100,
         mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
         mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
+        shareWithPlayers: true,
+      };
+      const newView = {
+        id: newViewId(),
+        mapId: id,
+        name: 'Main',
+        mapViewZoomRatio: null,
+        mapViewPanNorm: null,
+        broadcastToPlayers: false,
       };
       const maps = [...base.maps, newMap];
-      const gmMapView = { mapId: id, mapViewZoomRatio: null, mapViewPanNorm: null };
-      const nextState = { ...base, maps, activeMapId: id, gmMapView };
+      const mapViews = [...base.mapViews, newView];
+      const nextState = { ...base, maps, mapViews, activeMapId: id, gmActiveViewId: newView.id };
+      syncGmMapViewFromActiveView(nextState);
       return {
         maps,
+        mapViews,
         activeMapId: id,
-        gmMapView,
+        gmActiveViewId: newView.id,
+        gmMapView: nextState.gmMapView,
         mapConfig: deriveMapConfigFromState(nextState),
       };
     }
@@ -243,11 +429,14 @@ export function applyTableOp(op, state) {
       if (!targetId || base.maps.length <= 1) return {};
       if (!base.maps.some(m => m.id === targetId)) return {};
       const maps = base.maps.filter(m => m.id !== targetId);
+      const mapViews = base.mapViews.filter(v => v.mapId !== targetId);
       let activeMapId = base.activeMapId;
-      if (activeMapId === targetId) activeMapId = maps[0].id;
-      let gmMapView = { ...base.gmMapView };
-      if (gmMapView.mapId === targetId) {
-        gmMapView = { mapId: activeMapId, mapViewZoomRatio: null, mapViewPanNorm: null };
+      let gmActiveViewId = base.gmActiveViewId;
+      if (activeMapId === targetId) {
+        activeMapId = maps[0].id;
+        gmActiveViewId = mapViews.find(v => v.mapId === activeMapId)?.id ?? mapViews[0]?.id;
+      } else if (!mapViews.some(v => v.id === gmActiveViewId)) {
+        gmActiveViewId = mapViews.find(v => v.mapId === activeMapId)?.id ?? mapViews[0]?.id;
       }
       const nextEls = activeElements.map(el => {
         if (el.tokenX == null || el.tokenY == null) return el;
@@ -255,11 +444,14 @@ export function applyTableOp(op, state) {
         if (mid !== targetId) return el;
         return { ...el, tokenX: null, tokenY: null, mapId: null };
       });
-      const nextState = { ...base, maps, activeMapId, gmMapView };
+      const nextState = { ...base, maps, mapViews, activeMapId, gmActiveViewId };
+      syncGmMapViewFromActiveView(nextState);
       return {
         maps,
+        mapViews,
         activeMapId,
-        gmMapView,
+        gmActiveViewId,
+        gmMapView: nextState.gmMapView,
         activeElements: nextEls,
         mapConfig: deriveMapConfigFromState(nextState),
       };

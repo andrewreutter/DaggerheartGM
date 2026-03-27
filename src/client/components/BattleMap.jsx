@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, Fragment } from 'react';
+import { createPortal } from 'react-dom';
 import {
   clampMapZoom,
   clampPanScroll,
@@ -9,8 +10,12 @@ import {
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
 import { decodeMapViewState, encodeMapViewState } from '../lib/map-view-sync.js';
-import { shouldApplyRemotePlayerMapView } from '../lib/map-view-player-sync.js';
-import { Upload, X, Map, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX, Focus, RefreshCw, Camera } from 'lucide-react';
+import {
+  shouldApplyRemotePlayerMapView,
+  personalCameraTargetsUnsharedMap,
+  freeMapExploreTargetsUnsharedMap,
+} from '../lib/map-view-player-sync.js';
+import { Upload, X, Map as MapIcon, ArrowLeftToLine, Pencil, Eraser, Eye, EyeOff, Trash2, CircleX, Focus, Camera, Radio, Plus } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { HOPE_TRACK_FILL } from './CharacterStatBlockGraphic.jsx';
@@ -19,9 +24,12 @@ import {
   getAuthToken,
   fetchPersonalCameras,
   postPersonalCamera,
+  patchPersonalCamera,
   patchPersonalCameraName,
   deletePersonalCamera,
+  postMapPing,
 } from '../lib/api.js';
+import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import {
@@ -34,6 +42,17 @@ import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
+/** Approx. time for fireworks-js rocket to reach target (no API hook); tuned for default trace speed. */
+const MAP_PING_FIREWORK_LAND_MS = 800;
+const MAP_PING_LABEL_FADE_MS = 5000;
+/** User-editable map span along the chosen edge (W/H); clamped for UI + `getMapDimensions`. */
+const MAP_SIZE_FT_MIN = 1;
+const MAP_SIZE_FT_MAX = 3000;
+
+function mapConfigHasImage(mc) {
+  const u = mc?.mapImageUrl;
+  return typeof u === 'string' && u.trim().length > 0;
+}
 /** Padding around map token wrappers for easier drag grabs; visual token size unchanged. */
 const MAP_TOKEN_HIT_PADDING_PX = 12;
 
@@ -61,7 +80,7 @@ function tokenAbbrev(name) {
 
 function getMapDimensions(mapConfig) {
   const { mapSizeFt = 100, mapDimension = 'width', mapImageNaturalWidth, mapImageNaturalHeight } = mapConfig ?? {};
-  const sizeFt = Math.max(1, Math.min(500, Number(mapSizeFt) || 100));
+  const sizeFt = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, Number(mapSizeFt) || 100));
   if (mapImageNaturalWidth > 0 && mapImageNaturalHeight > 0) {
     const aspect = mapImageNaturalWidth / mapImageNaturalHeight;
     return mapDimension === 'width'
@@ -103,9 +122,235 @@ function isInsideRect(clientX, clientY, rect) {
   return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
 }
 
+/** Red dot centered on click (3× the old 8px dot); label above the dot. Fades over `fadeMs`. */
+function MapPingNameLabel({
+  xFt,
+  yFt,
+  pxPerFt,
+  displayName,
+  pingId,
+  onDismissMapPing,
+  landDelayMs = MAP_PING_FIREWORK_LAND_MS,
+  fadeMs = MAP_PING_LABEL_FADE_MS,
+}) {
+  const [landed, setLanded] = useState(false);
+
+  useEffect(() => {
+    const landT = setTimeout(() => setLanded(true), landDelayMs);
+    const dismissT = setTimeout(() => onDismissMapPing(pingId), landDelayMs + fadeMs);
+    return () => {
+      clearTimeout(landT);
+      clearTimeout(dismissT);
+    };
+  }, [pingId, onDismissMapPing, landDelayMs, fadeMs]);
+
+  const cx = xFt * pxPerFt;
+  const cy = yFt * pxPerFt;
+
+  return (
+    <div
+      className="absolute pointer-events-none"
+      style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)', zIndex: 42 }}
+    >
+      {landed && (
+        <div
+          className="relative h-6 w-6 dh-map-ping-marker-fade"
+          style={{ animationDuration: `${fadeMs}ms` }}
+        >
+          <span
+            className="absolute inset-0 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.95)] ring-2 ring-red-400/60"
+            aria-hidden
+          />
+          <div className="absolute bottom-full left-1/2 z-10 mb-1 max-w-[15rem] -translate-x-1/2 truncate whitespace-nowrap px-1.5 py-0.5 rounded border border-dh-border bg-dh-raised/95 text-[11px] font-medium text-dh shadow-md">
+            {displayName || '?'}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function pointInRect(clientX, clientY, el) {
   if (!el) return false;
   return isInsideRect(clientX, clientY, el.getBoundingClientRect());
+}
+
+/** Fixed thumb size for strip previews (matches w-[4.75rem] × aspect 4:3). */
+const THUMB_STRIP_W_PX = 76;
+const THUMB_STRIP_H_PX = (THUMB_STRIP_W_PX * 3) / 4;
+
+function hasDecodableView(viewState) {
+  if (!viewState || typeof viewState !== 'object') return false;
+  const r = viewState.mapViewZoomRatio;
+  const pan = viewState.mapViewPanNorm;
+  const hasRatio = r != null && Number.isFinite(r);
+  const hasPan =
+    pan != null &&
+    typeof pan === 'object' &&
+    Number.isFinite(pan.x) &&
+    Number.isFinite(pan.y);
+  return hasRatio || hasPan;
+}
+
+/**
+ * Same scroll/zoom model as the main map viewport, scaled to a small tile (decodeMapViewState + bounds).
+ */
+function computeThumbViewRender(mapRow, viewState, viewportW, viewportH) {
+  const mc = {
+    mapSizeFt: mapRow?.mapSizeFt ?? 100,
+    mapDimension: mapRow?.mapDimension ?? 'width',
+    mapImageNaturalWidth: mapRow?.mapImageNaturalWidth,
+    mapImageNaturalHeight: mapRow?.mapImageNaturalHeight,
+  };
+  const { mapWidthFt, mapHeightFt } = getMapDimensions(mc);
+  const pxPerFt = Math.max(viewportW / mapWidthFt, MIN_PX_PER_FT);
+  const renderedWidthPx = Math.round(mapWidthFt * pxPerFt);
+  const renderedHeightPx = Math.round(mapHeightFt * pxPerFt);
+  const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
+  const { minZoom, maxZoom } = computeMapZoomBounds({
+    containerW: viewportW,
+    containerH: viewportH,
+    renderedWidthPx,
+    renderedHeightPx,
+    tokenSizePx,
+  });
+  const decodeCtx = {
+    minZoom,
+    maxZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+    viewportW,
+    viewportH,
+  };
+  const stored = hasDecodableView(viewState) ? viewState : null;
+  const dec = stored ? decodeMapViewState(stored, decodeCtx) : null;
+  const mapZoom = dec?.mapZoom ?? minZoom;
+  const scrollLeft = dec?.scrollLeft ?? 0;
+  const scrollTop = dec?.scrollTop ?? 0;
+  return { renderedWidthPx, renderedHeightPx, mapZoom, scrollLeft, scrollTop };
+}
+
+function MapViewThumbInterior({ mapRow, viewState }) {
+  const hasArt = mapConfigHasImage({ mapImageUrl: mapRow?.mapImageUrl });
+  const { renderedWidthPx, renderedHeightPx, mapZoom, scrollLeft, scrollTop } = useMemo(
+    () => computeThumbViewRender(mapRow, viewState, THUMB_STRIP_W_PX, THUMB_STRIP_H_PX),
+    [mapRow, viewState],
+  );
+
+  if (!hasArt) {
+    return (
+      <div
+        className="flex w-full items-center justify-center bg-dh-canvas/40 text-dh-muted"
+        style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX }}
+      >
+        <MapIcon size={18} strokeWidth={1.5} aria-hidden />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden bg-dh-canvas/40" style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX }}>
+      <div className="absolute left-0 top-0 overflow-hidden" style={{ width: THUMB_STRIP_W_PX, height: THUMB_STRIP_H_PX }}>
+        <div
+          className="relative shrink-0 will-change-transform"
+          style={{
+            transform: `translate(${-scrollLeft}px, ${-scrollTop}px)`,
+            width: renderedWidthPx * mapZoom,
+            height: renderedHeightPx * mapZoom,
+          }}
+        >
+          <div
+            className="absolute left-0 top-0 origin-top-left"
+            style={{
+              width: renderedWidthPx,
+              height: renderedHeightPx,
+              transform: `scale(${mapZoom})`,
+            }}
+          >
+            <img
+              src={mapRow.mapImageUrl}
+              alt=""
+              draggable={false}
+              className="absolute inset-0 h-full w-full select-none object-fill pointer-events-none"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Thumbnail tile for the maps + saved views strip (map switch or apply saved zoom/pan). */
+function MapViewStripTile({
+  mapRow,
+  viewState,
+  label,
+  isActive,
+  onClick,
+  variant = 'map',
+  actions,
+  interactive = true,
+  showCameraBadge = false,
+  /** Hide the caption under the thumb (e.g. player full-map tile — map name only for GM). */
+  hideCaption = false,
+  /** Optional `title` on the thumb control (defaults to `label`). */
+  tooltipTitle,
+}) {
+  const titleAttr = tooltipTitle !== undefined ? tooltipTitle : label;
+  const thumbClass = `group relative overflow-hidden rounded-md border text-left transition-colors ${
+    variant === 'map' && isActive
+      ? 'border-amber-500/55 bg-amber-950/35 ring-1 ring-amber-500/40'
+      : interactive
+        ? 'border-dh-strong bg-dh-canvas/25 hover:bg-dh-hover/70'
+        : 'border-dh-border/50 bg-dh-canvas/25 cursor-default'
+  } ${variant === 'camera' ? 'border-violet-500/30' : ''}`;
+
+  const thumbInner = (
+    <div className="relative">
+      <MapViewThumbInterior mapRow={mapRow} viewState={viewState} />
+      {showCameraBadge ? (
+        <div className="absolute bottom-0.5 right-0.5 rounded border border-dh-border/80 bg-dh-raised/95 p-0.5 shadow-sm">
+          <Camera size={10} className="text-violet-300/90" aria-hidden />
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div className="flex w-[4.75rem] shrink-0 flex-col gap-0.5">
+      {interactive ? (
+        <button
+          type="button"
+          role={variant === 'map' ? 'tab' : undefined}
+          aria-selected={variant === 'map' ? isActive : undefined}
+          onClick={onClick}
+          className={thumbClass}
+          title={titleAttr}
+        >
+          {thumbInner}
+        </button>
+      ) : (
+        <div className={thumbClass} title={titleAttr}>
+          {thumbInner}
+        </div>
+      )}
+      {!hideCaption || actions ? (
+        <div className="flex min-w-0 flex-col gap-0.5">
+          {!hideCaption ? (
+            <span
+              className={`truncate text-center text-[10px] leading-tight ${
+                variant === 'map' && isActive ? 'font-medium text-dh' : 'text-dh-muted'
+              }`}
+              title={label}
+            >
+              {label}
+            </span>
+          ) : null}
+          {actions}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // ─── TokenDotRing ─────────────────────────────────────────────────────────────
@@ -218,7 +463,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
   };
 
   const commitSize = () => {
-    const v = Math.max(1, Math.min(500, parseInt(sizeInput, 10) || 100));
+    const v = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, parseInt(sizeInput, 10) || 100));
     setSizeInput(String(v));
     if (v !== mapSizeFt) {
       const { mapWidthFt: oldW } = getMapDimensions(mapConfig);
@@ -281,7 +526,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
       <div className="flex items-center gap-2 ml-auto">
         <div className="w-px h-4 bg-dh-hover" />
 
-        {mapImageUrl && !isUploading ? (
+        {!isUploading ? (
           <span className="text-[10px] text-dh-muted/45 select-none whitespace-nowrap">Paste or</span>
         ) : null}
 
@@ -330,8 +575,8 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
         </div>
         <input
           type="number"
-          min={1}
-          max={500}
+          min={MAP_SIZE_FT_MIN}
+          max={MAP_SIZE_FT_MAX}
           value={sizeInput}
           onChange={e => setSizeInput(e.target.value)}
           onBlur={commitSize}
@@ -680,24 +925,16 @@ function MapViewControls({
   onPanTopChange,
   onZoomToActors,
   zoomToActorsDisabled,
-  localViewOverride = false,
-  onClearLocalViewOverride,
 }) {
   const xMax = Math.max(0, maxPanLeft);
   const yMax = Math.max(0, maxPanTop);
   const zRange = maxZoom > minZoom;
   const xStep = xMax > 0 ? Math.min(0.25, Math.max(0.01, xMax / 200)) : 1;
   const yStep = yMax > 0 ? Math.min(0.25, Math.max(0.01, yMax / 200)) : 1;
-  const xAccent = localViewOverride ? 'accent-red-500' : 'accent-sky-600';
-  const yAccent = localViewOverride ? 'accent-red-500' : 'accent-sky-600';
-  const zAccent = localViewOverride ? 'accent-red-500' : 'accent-amber-600/90';
-  const barClass = localViewOverride
-    ? 'border-b border-red-800/70 bg-red-950/25'
-    : 'border-b border-dh-border bg-dh-surface/80';
   return (
-    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 py-1.5 shrink-0 text-[11px] ${barClass}`}>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 py-1.5 shrink-0 text-[11px] border-b border-dh-border bg-dh-surface/80">
       <label className="flex items-center gap-1.5 min-w-0">
-        <span className={`font-medium w-4 shrink-0 ${localViewOverride ? 'text-red-300/90' : 'text-dh-muted'}`}>X</span>
+        <span className="font-medium w-4 shrink-0 text-dh-muted">X</span>
         <input
           type="range"
           aria-label="Pan horizontal"
@@ -707,11 +944,11 @@ function MapViewControls({
           value={xMax > 0 ? Math.min(panLeft, xMax) : 0}
           disabled={xMax <= 0}
           onChange={(e) => onPanLeftChange(Number(e.target.value))}
-          className={`w-20 sm:w-28 disabled:opacity-40 ${xAccent}`}
+          className="w-20 sm:w-28 disabled:opacity-40 accent-sky-600"
         />
       </label>
       <label className="flex items-center gap-1.5 min-w-0">
-        <span className={`font-medium w-4 shrink-0 ${localViewOverride ? 'text-red-300/90' : 'text-dh-muted'}`}>Y</span>
+        <span className="font-medium w-4 shrink-0 text-dh-muted">Y</span>
         <input
           type="range"
           aria-label="Pan vertical"
@@ -721,11 +958,11 @@ function MapViewControls({
           value={yMax > 0 ? Math.min(panTop, yMax) : 0}
           disabled={yMax <= 0}
           onChange={(e) => onPanTopChange(Number(e.target.value))}
-          className={`w-20 sm:w-28 disabled:opacity-40 ${yAccent}`}
+          className="w-20 sm:w-28 disabled:opacity-40 accent-sky-600"
         />
       </label>
       <label className="flex items-center gap-1.5 min-w-0 flex-1 sm:flex-initial">
-        <span className={`font-medium shrink-0 ${localViewOverride ? 'text-red-300/90' : 'text-dh-muted'}`}>Zoom</span>
+        <span className="font-medium shrink-0 text-dh-muted">Zoom</span>
         <input
           type="range"
           aria-label="Map zoom"
@@ -735,23 +972,10 @@ function MapViewControls({
           value={mapZoom}
           disabled={!zRange}
           onChange={(e) => onZoomChange(Number(e.target.value))}
-          className={`min-w-[5rem] flex-1 sm:w-32 disabled:opacity-40 ${zAccent}`}
+          className="min-w-[5rem] flex-1 sm:w-32 disabled:opacity-40 accent-amber-600/90"
         />
-        <span className={`tabular-nums w-12 shrink-0 text-right ${localViewOverride ? 'text-red-200/90' : 'text-dh-muted'}`}>{mapZoom.toFixed(2)}×</span>
+        <span className="tabular-nums w-12 shrink-0 text-right text-dh-muted">{mapZoom.toFixed(2)}×</span>
       </label>
-      {localViewOverride && onClearLocalViewOverride && (
-        <Tooltip label="Discard local pan/zoom and follow the GM view">
-          <button
-            type="button"
-            aria-label="Follow GM map view"
-            onClick={onClearLocalViewOverride}
-            className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded border border-red-700/80 bg-red-950/40 hover:bg-red-900/50 text-red-200 text-[10px] font-medium"
-          >
-            <RefreshCw size={12} className="shrink-0" />
-            Follow GM
-          </button>
-        </Tooltip>
-      )}
       {onZoomToActors && (
         <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">
           <button
@@ -801,11 +1025,38 @@ export function BattleMap({
   lifeSupportSelections = {},
   maps = [],
   activeMapId = null,
+  /** GM broadcast framing from `table_state` — used for map thumbnails when not the active map (and players). */
+  gmMapView = null,
+  mapViews = [],
+  gmActiveViewId = null,
+  /** GM: enter map-only framing (no named view); persists as `set-map-free-explore` + `set-map-view` with `viewId: null`. */
+  onMapFreeExplore,
+  playerFreeMapExplore = false,
+  playerFreeExploreMapId = null,
+  onPlayerEnterMapFreeExplore,
+  onPlayerExitMapFreeExplore,
+  onSetActiveView,
+  /** GM: persist new view (`add-map-view` op) with optional zoom/pan + name */
+  onAddMapViewOp,
+  onRemoveMapView,
+  onRenameMapView,
+  onSetViewBroadcast,
+  /** GM: per-map allow player pan/zoom */
+  onSetMapShare,
+  playerSelectedViewId = null,
+  onPlayerSelectView,
   onSetActiveMap,
   onAddMap,
+  /** GM: `add-map` with image fields — used when pasting/uploading while the active map already has art */
+  onAddMapWithImage,
   onRemoveMap,
   onRenameMap,
   tableId,
+  /** Ephemeral map pings from SSE (`map_ping`) */
+  mapPings = [],
+  onDismissMapPing = () => {},
+  /** Optimistic add when `postMapPing` returns authoritative `ping` (deduped in app). */
+  appendMapPing = () => {},
 }) {
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -814,11 +1065,20 @@ export function BattleMap({
   const leftTrayRef = useRef(null);
   const rightTrayRef = useRef(null);
   const dragRef = useRef(null);
+  const mapPingTapRef = useRef(null);
+  const mapPingPointerUpRef = useRef(null);
+  /** In-map anchor for measuring where to place the portaled fireworks layer (above DiceRoller z-15). */
+  const fireworksAnchorRef = useRef(null);
+  const fireworksPortalMountRef = useRef(null);
+  const fireworksInstanceRef = useRef(null);
+  const mapPingSeenIdsRef = useRef(new Set());
   const fileInputRef = useRef(null);
 
   /** Start at 0 so zoom bounds + renderedWidth match the flex layout before hydrating from localStorage (avoids stale 600×400 vs real wrapper size). */
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
+  /** Viewport rect for map fireworks (fixed layer in document.body, above 3D dice). */
+  const [fireworksViewport, setFireworksViewport] = useState(null);
   const [dragGhost, setDragGhost] = useState(null); // { element, clientX, clientY, instanceNum, isMyCharacter }
   const [highlightLeftTray, setHighlightLeftTray] = useState(false);
   const [highlightRightTray, setHighlightRightTray] = useState(false);
@@ -850,7 +1110,29 @@ export function BattleMap({
     return () => ro.disconnect();
   }, []);
 
-  // Paste map image
+  const handleImageFile = useCallback(async (file) => {
+    setIsUploading(true);
+    try {
+      const { url, naturalWidth, naturalHeight } = await processImageFile(file);
+      if (!url) return;
+      const img = {
+        mapImageUrl: url,
+        mapImageNaturalWidth: naturalWidth,
+        mapImageNaturalHeight: naturalHeight,
+      };
+      if (mapConfigHasImage(mapConfig) && typeof onAddMapWithImage === 'function') {
+        onAddMapWithImage(img);
+      } else {
+        onMapConfigChange(img, true);
+      }
+    } catch (err) {
+      console.error('[BattleMap] image processing failed:', err);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [mapConfig, onMapConfigChange, onAddMapWithImage]);
+
+  // Paste map image (after handleImageFile)
   useEffect(() => {
     if (isPlayer) return;
     const handler = async (e) => {
@@ -862,22 +1144,7 @@ export function BattleMap({
     };
     document.addEventListener('paste', handler);
     return () => document.removeEventListener('paste', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlayer, mapConfig]);
-
-  const handleImageFile = useCallback(async (file) => {
-    setIsUploading(true);
-    try {
-      const { url, naturalWidth, naturalHeight } = await processImageFile(file);
-      if (url) {
-        onMapConfigChange({ mapImageUrl: url, mapImageNaturalWidth: naturalWidth, mapImageNaturalHeight: naturalHeight }, true);
-      }
-    } catch (err) {
-      console.error('[BattleMap] image processing failed:', err);
-    } finally {
-      setIsUploading(false);
-    }
-  }, [onMapConfigChange]);
+  }, [isPlayer, handleImageFile]);
 
   // Derived map dimensions
   const { mapWidthFt, mapHeightFt } = useMemo(() => getMapDimensions(mapConfig), [mapConfig]);
@@ -890,10 +1157,72 @@ export function BattleMap({
   const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
   const trayTokenSizePx = CHARACTER_TRAY_WIDTH_PX - 16; // 36; fixed size for tray tokens
 
-  const activeMapIdResolved = useMemo(
-    () => activeMapId ?? maps[0]?.id ?? DEFAULT_LEGACY_MAP_ID,
-    [activeMapId, maps],
+  const activeViewIdResolved = useMemo(() => {
+    if (isPlayer && playerFreeMapExplore) return null;
+    if (!isPlayer && gmActiveViewId === null) return null;
+    if (!isPlayer) return gmActiveViewId ?? mapViews[0]?.id ?? null;
+    return playerSelectedViewId ?? mapViews[0]?.id ?? null;
+  }, [isPlayer, playerFreeMapExplore, gmActiveViewId, playerSelectedViewId, mapViews]);
+
+  const activeMapIdResolved = useMemo(() => {
+    if (isPlayer && playerFreeMapExplore && playerFreeExploreMapId) {
+      return playerFreeExploreMapId;
+    }
+    if (!isPlayer && gmActiveViewId === null && gmMapView?.mapId) {
+      return gmMapView.mapId;
+    }
+    const v = activeViewIdResolved && mapViews.find(x => x.id === activeViewIdResolved);
+    return v?.mapId ?? activeMapId ?? maps[0]?.id ?? DEFAULT_LEGACY_MAP_ID;
+  }, [
+    isPlayer,
+    playerFreeMapExplore,
+    playerFreeExploreMapId,
+    activeViewIdResolved,
+    mapViews,
+    activeMapId,
+    maps,
+    gmActiveViewId,
+    gmMapView,
+  ]);
+
+  const sortedMapViews = useMemo(() => {
+    const order = new Map(maps.map((m, i) => [m.id, i]));
+    return [...mapViews].sort((a, b) => {
+      const ia = order.get(a.mapId) ?? 999;
+      const ib = order.get(b.mapId) ?? 999;
+      if (ia !== ib) return ia - ib;
+      return mapViews.findIndex(x => x.id === a.id) - mapViews.findIndex(x => x.id === b.id);
+    });
+  }, [mapViews, maps]);
+
+  /** GM strip: one group per map that has views — full-map tile + view tiles. */
+  const gmMapViewGroups = useMemo(() => {
+    const byMap = new Map();
+    for (const v of sortedMapViews) {
+      const arr = byMap.get(v.mapId) || [];
+      arr.push(v);
+      byMap.set(v.mapId, arr);
+    }
+    return maps
+      .map((m) => ({ map: m, views: byMap.get(m.id) || [] }))
+      .filter((g) => g.views.length > 0);
+  }, [maps, sortedMapViews]);
+
+  const playerStripViews = useMemo(() => {
+    return sortedMapViews.filter(v => {
+      if (!v.broadcastToPlayers) return false;
+      return maps.some(x => x.id === v.mapId);
+    });
+  }, [sortedMapViews, maps]);
+
+  const visibleMapPings = useMemo(
+    () => (mapPings || []).filter(p => effectiveTokenMapId(p.mapId) === activeMapIdResolved),
+    [mapPings, activeMapIdResolved],
   );
+
+  useEffect(() => {
+    mapPingSeenIdsRef.current = new Set();
+  }, [tableId]);
 
   const { minZoom, maxZoom } = useMemo(
     () =>
@@ -925,19 +1254,123 @@ export function BattleMap({
   const mapPanTopRef = useRef(0);
   mapPanLeftRef.current = mapPanLeft;
   mapPanTopRef.current = mapPanTop;
+
+  /** Sync in-map anchor rect → fixed layer in document.body (above DiceRoller z-15 WebGL). */
+  const syncFireworksViewport = useCallback(() => {
+    const el = fireworksAnchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    setFireworksViewport((prev) => {
+      const next = {
+        top: Math.round(r.top * 10) / 10,
+        left: Math.round(r.left * 10) / 10,
+        width: Math.round(r.width * 10) / 10,
+        height: Math.round(r.height * 10) / 10,
+      };
+      if (
+        prev &&
+        prev.top === next.top &&
+        prev.left === next.left &&
+        prev.width === next.width &&
+        prev.height === next.height
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    syncFireworksViewport();
+  }, [
+    syncFireworksViewport,
+    mapZoom,
+    mapPanLeft,
+    mapPanTop,
+    renderedWidthPx,
+    renderedHeightPx,
+    containerWidth,
+    containerHeight,
+  ]);
+
+  useLayoutEffect(() => {
+    const el = fireworksAnchorRef.current;
+    if (!el) return;
+    syncFireworksViewport();
+    const ro = new ResizeObserver(() => syncFireworksViewport());
+    ro.observe(el);
+    window.addEventListener('resize', syncFireworksViewport);
+    window.addEventListener('scroll', syncFireworksViewport, true);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', syncFireworksViewport);
+      window.removeEventListener('scroll', syncFireworksViewport, true);
+    };
+  }, [syncFireworksViewport]);
+
+  useLayoutEffect(() => {
+    const mount = fireworksPortalMountRef.current;
+    if (!mount || !fireworksViewport || fireworksViewport.width <= 0 || fireworksViewport.height <= 0) return;
+
+    let fw = fireworksInstanceRef.current;
+    if (!fw) {
+      fw = new Fireworks(mount, {
+        intensity: 0,
+        autoresize: false,
+        mouse: { click: false, move: false, max: 1 },
+        sound: { enabled: false },
+      });
+      fw.start();
+      fireworksInstanceRef.current = fw;
+    }
+    fw.updateSize({ width: fireworksViewport.width, height: fireworksViewport.height });
+  }, [fireworksViewport]);
+
+  useEffect(() => {
+    return () => {
+      fireworksInstanceRef.current?.stop?.(true);
+      fireworksInstanceRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const fw = fireworksInstanceRef.current;
+    if (!fw || !fireworksViewport) return;
+    const sx = fireworksViewport.width / renderedWidthPx;
+    const sy = fireworksViewport.height / renderedHeightPx;
+    for (const p of visibleMapPings) {
+      if (mapPingSeenIdsRef.current.has(p.id)) continue;
+      mapPingSeenIdsRef.current.add(p.id);
+      const px = p.xFt * pxPerFt * sx;
+      const py = p.yFt * pxPerFt * sy;
+      fw.mouse.x = px;
+      fw.mouse.y = py;
+      fw.mouse.active = true;
+      fw.launch(1);
+      fw.mouse.active = false;
+    }
+  }, [visibleMapPings, pxPerFt, renderedWidthPx, renderedHeightPx, fireworksViewport]);
+
   const gmViewHydratedRef = useRef(false);
   const mapViewPersistTimerRef = useRef(null);
-  /** Player-only: manual pan/zoom blocks remote GM view until cleared */
-  const [playerLocalOverride, setPlayerLocalOverride] = useState(false);
+  /** Player-only: when set, the player is framing a personal camera (pan/zoom allowed); otherwise they follow the GM view. */
+  const [playerActivePersonalCameraId, setPlayerActivePersonalCameraId] = useState(null);
+  const playerActivePersonalCameraIdRef = useRef(null);
+  playerActivePersonalCameraIdRef.current = playerActivePersonalCameraId;
+  const playerCameraPersistTimerRef = useRef(null);
+  const playerFreeMapPersistTimerRef = useRef(null);
+  const playerFreeMapHydratedKeyRef = useRef('');
   /** Per-user saved cameras (private API; not in SSE). */
   const [personalCameras, setPersonalCameras] = useState([]);
-  /** Remount camera `<select>` after pick so it returns to "My cameras…". */
-  const [cameraSelectKey, setCameraSelectKey] = useState(0);
-  /** Camera id for Rename / Delete actions (separate from one-shot load dropdown). */
-  const [manageCameraId, setManageCameraId] = useState('');
   const [cameraHint, setCameraHint] = useState('');
   const cameraHintTimerRef = useRef(null);
-  const canControlMapView = isPlayer || !!onMapViewSync;
+  const mapAllowsPlayerCameras = maps.find(m => m.id === activeMapIdResolved)?.shareWithPlayers !== false;
+  const canControlMapView =
+    (!isPlayer && !!onMapViewSync) ||
+    (isPlayer &&
+      mapAllowsPlayerCameras &&
+      (!!playerActivePersonalCameraId || playerFreeMapExplore));
 
   const mapViewSig = useMemo(
     () => `${mapConfig?.mapViewZoomRatio ?? ''}|${JSON.stringify(mapConfig?.mapViewPanNorm ?? null)}`,
@@ -968,19 +1401,89 @@ export function BattleMap({
     }, 120);
   }, [onMapViewSync]);
 
+  const schedulePersistPlayerCamera = useCallback(() => {
+    if (!isPlayer || !tableId) return;
+    const camId = playerActivePersonalCameraIdRef.current;
+    if (!camId) return;
+    if (playerCameraPersistTimerRef.current) clearTimeout(playerCameraPersistTimerRef.current);
+    playerCameraPersistTimerRef.current = setTimeout(async () => {
+      playerCameraPersistTimerRef.current = null;
+      const wrap = scrollWrapperRef.current;
+      const vw = wrap?.clientWidth ?? 0;
+      const vh = wrap?.clientHeight ?? 0;
+      if (vw <= 0 || vh <= 0) return;
+      const id = playerActivePersonalCameraIdRef.current;
+      if (!id) return;
+      const encoded = encodeMapViewState({
+        mapZoom: mapZoomRef.current,
+        scrollLeft: mapPanLeftRef.current,
+        scrollTop: mapPanTopRef.current,
+        minZoom: minZoomRef.current,
+        maxZoom: maxZoomRef.current,
+        renderedWidthPx: renderedWRef.current,
+        renderedHeightPx: renderedHRef.current,
+        viewportW: vw,
+        viewportH: vh,
+      });
+      try {
+        const { camera } = await patchPersonalCamera(tableId, id, {
+          mapViewZoomRatio: encoded.mapViewZoomRatio,
+          mapViewPanNorm: encoded.mapViewPanNorm,
+        });
+        setPersonalCameras((prev) => prev.map((c) => (c.id === camera.id ? { ...c, ...camera } : c)));
+      } catch (err) {
+        console.error('[BattleMap] patch personal camera failed:', err);
+      }
+    }, 120);
+  }, [isPlayer, tableId]);
+
+  const schedulePersistPlayerFreeMap = useCallback(() => {
+    if (!isPlayer || !tableId || !playerFreeExploreMapId) return;
+    if (playerFreeMapPersistTimerRef.current) clearTimeout(playerFreeMapPersistTimerRef.current);
+    playerFreeMapPersistTimerRef.current = setTimeout(() => {
+      playerFreeMapPersistTimerRef.current = null;
+      const wrap = scrollWrapperRef.current;
+      const vw = wrap?.clientWidth ?? 0;
+      const vh = wrap?.clientHeight ?? 0;
+      if (vw <= 0 || vh <= 0) return;
+      const encoded = encodeMapViewState({
+        mapZoom: mapZoomRef.current,
+        scrollLeft: mapPanLeftRef.current,
+        scrollTop: mapPanTopRef.current,
+        minZoom: minZoomRef.current,
+        maxZoom: maxZoomRef.current,
+        renderedWidthPx: renderedWRef.current,
+        renderedHeightPx: renderedHRef.current,
+        viewportW: vw,
+        viewportH: vh,
+      });
+      try {
+        localStorage.setItem(
+          `dh_player_free_map:${tableId}:${playerFreeExploreMapId}`,
+          JSON.stringify({
+            mapViewZoomRatio: encoded.mapViewZoomRatio,
+            mapViewPanNorm: encoded.mapViewPanNorm,
+          }),
+        );
+      } catch {
+        /* ignore */
+      }
+    }, 120);
+  }, [isPlayer, tableId, playerFreeExploreMapId]);
+
+  const schedulePersistPlayerViewport = useCallback(() => {
+    if (playerFreeMapExplore) schedulePersistPlayerFreeMap();
+    else schedulePersistPlayerCamera();
+  }, [playerFreeMapExplore, schedulePersistPlayerFreeMap, schedulePersistPlayerCamera]);
+
   useEffect(() => {
     gmViewHydratedRef.current = false;
-  }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved]);
+  }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved, gmActiveViewId]);
 
   useEffect(() => {
     if (!isPlayer) return;
-    setPlayerLocalOverride(false);
+    setPlayerActivePersonalCameraId(null);
   }, [isPlayer, mapConfig?.mapImageUrl]);
-
-  const clearPlayerLocalViewOverride = useCallback(() => {
-    if (!isPlayer) return;
-    setPlayerLocalOverride(false);
-  }, [isPlayer]);
 
   useEffect(() => {
     if (!tableId) {
@@ -1002,17 +1505,18 @@ export function BattleMap({
     if (cameraHintTimerRef.current != null) window.clearTimeout(cameraHintTimerRef.current);
   }, []);
 
-  useEffect(() => {
-    if (!manageCameraId) return;
-    if (!personalCameras.some(c => c.id === manageCameraId)) setManageCameraId('');
-  }, [manageCameraId, personalCameras]);
-
   const applyPersonalCamera = useCallback(
     (camera) => {
       if (!camera) return;
+      if (isPlayer) onPlayerExitMapFreeExplore?.();
       if (camera.mapId !== activeMapIdResolved) {
-        if (onSetActiveMap) onSetActiveMap(camera.mapId);
-        else {
+        const viewOnMap = mapViews.find(v => v.mapId === camera.mapId);
+        if (onSetActiveMap) {
+          onSetActiveMap(camera.mapId);
+          if (viewOnMap && onPlayerSelectView) onPlayerSelectView(viewOnMap.id);
+        } else if (viewOnMap && onPlayerSelectView) {
+          onPlayerSelectView(viewOnMap.id);
+        } else {
           const msg =
             maps.length > 1
               ? 'This camera is for another map. Follow the GM until that map is shown, then load it again.'
@@ -1039,7 +1543,7 @@ export function BattleMap({
       mapPanTopRef.current = d.scrollTop;
       setMapPanLeft(d.scrollLeft);
       setMapPanTop(d.scrollTop);
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) setPlayerActivePersonalCameraId(camera.id);
     },
     [
       activeMapIdResolved,
@@ -1050,13 +1554,15 @@ export function BattleMap({
       containerWidth,
       containerHeight,
       onSetActiveMap,
+      onPlayerSelectView,
       isPlayer,
       maps,
+      mapViews,
+      onPlayerExitMapFreeExplore,
     ],
   );
 
   const handleSplitCamera = useCallback(async () => {
-    if (!tableId) return;
     const wrap = scrollWrapperRef.current;
     const vw = wrap?.clientWidth ?? 0;
     const vh = wrap?.clientHeight ?? 0;
@@ -1072,11 +1578,21 @@ export function BattleMap({
       viewportW: vw,
       viewportH: vh,
     });
-    const name = window.prompt('Name this camera', 'Split camera');
+    const name = window.prompt('Name this view', 'View');
     if (name === null) return;
+    const trimmed = (name || 'View').trim() || 'View';
+    if (onAddMapViewOp) {
+      onAddMapViewOp({
+        name: trimmed,
+        mapViewZoomRatio: encoded.mapViewZoomRatio,
+        mapViewPanNorm: encoded.mapViewPanNorm,
+      });
+      return;
+    }
+    if (!tableId) return;
     try {
       const { camera } = await postPersonalCamera(tableId, {
-        name: (name || 'Camera').trim() || 'Camera',
+        name: trimmed,
         mapId: activeMapIdResolved,
         mapViewZoomRatio: encoded.mapViewZoomRatio,
         mapViewPanNorm: encoded.mapViewPanNorm,
@@ -1085,39 +1601,69 @@ export function BattleMap({
     } catch (err) {
       console.error('[BattleMap] split camera failed:', err);
     }
-  }, [tableId, activeMapIdResolved]);
+  }, [tableId, activeMapIdResolved, onAddMapViewOp]);
 
-  const handleRenameManagedCamera = useCallback(async () => {
-    if (!tableId || !manageCameraId) return;
-    const cam = personalCameras.find(c => c.id === manageCameraId);
-    if (!cam) return;
-    const name = window.prompt('Camera name', cam.name || 'Camera');
+  const handlePlayerCreateCamera = useCallback(async () => {
+    if (!isPlayer || !tableId || !mapAllowsPlayerCameras) return;
+    const wrap = scrollWrapperRef.current;
+    const vw = wrap?.clientWidth ?? 0;
+    const vh = wrap?.clientHeight ?? 0;
+    if (vw <= 0 || vh <= 0) return;
+    const encoded = encodeMapViewState({
+      mapZoom: mapZoomRef.current,
+      scrollLeft: mapPanLeftRef.current,
+      scrollTop: mapPanTopRef.current,
+      minZoom: minZoomRef.current,
+      maxZoom: maxZoomRef.current,
+      renderedWidthPx: renderedWRef.current,
+      renderedHeightPx: renderedHRef.current,
+      viewportW: vw,
+      viewportH: vh,
+    });
+    const name = window.prompt('Name this camera', 'Camera');
+    if (name === null) return;
+    const trimmed = (name || 'Camera').trim() || 'Camera';
+    try {
+      const { camera } = await postPersonalCamera(tableId, {
+        name: trimmed,
+        mapId: activeMapIdResolved,
+        mapViewZoomRatio: encoded.mapViewZoomRatio,
+        mapViewPanNorm: encoded.mapViewPanNorm,
+      });
+      setPersonalCameras((prev) => [...prev, camera]);
+      setPlayerActivePersonalCameraId(camera.id);
+    } catch (err) {
+      console.error('[BattleMap] player create camera failed:', err);
+    }
+  }, [isPlayer, tableId, mapAllowsPlayerCameras, activeMapIdResolved]);
+
+  const handleRenameCamera = useCallback(async (cam) => {
+    if (!tableId || !cam?.id) return;
+    const name = window.prompt('View name', cam.name || 'Saved view');
     if (name === null) return;
     const trimmed = name.trim();
     if (!trimmed) return;
     try {
-      await patchPersonalCameraName(tableId, manageCameraId, trimmed);
+      await patchPersonalCameraName(tableId, cam.id, trimmed);
       setPersonalCameras((prev) =>
-        prev.map((c) => (c.id === manageCameraId ? { ...c, name: trimmed } : c)),
+        prev.map((c) => (c.id === cam.id ? { ...c, name: trimmed } : c)),
       );
     } catch (err) {
       console.error('[BattleMap] rename camera failed:', err);
     }
-  }, [tableId, manageCameraId, personalCameras]);
+  }, [tableId]);
 
-  const handleDeleteManagedCamera = useCallback(async () => {
-    if (!tableId || !manageCameraId) return;
-    const cam = personalCameras.find(c => c.id === manageCameraId);
-    if (!cam) return;
-    if (!window.confirm(`Delete saved camera “${cam.name || 'Camera'}”?`)) return;
+  const handleDeleteCamera = useCallback(async (cam) => {
+    if (!tableId || !cam?.id) return;
+    if (!window.confirm(`Delete saved view “${cam.name || 'Saved view'}”?`)) return;
     try {
-      await deletePersonalCamera(tableId, manageCameraId);
-      setPersonalCameras((prev) => prev.filter((c) => c.id !== manageCameraId));
-      setManageCameraId('');
+      await deletePersonalCamera(tableId, cam.id);
+      setPersonalCameras((prev) => prev.filter((c) => c.id !== cam.id));
+      setPlayerActivePersonalCameraId((id) => (id === cam.id ? null : id));
     } catch (err) {
       console.error('[BattleMap] delete camera failed:', err);
     }
-  }, [tableId, manageCameraId, personalCameras]);
+  }, [tableId]);
 
   // GM: broadcast portable mapViewZoomRatio/mapViewPanNorm (same encoding as the X/Y/Zoom sliders) whenever the
   // map viewport or zoom bounds change, so players receive updates after layout and when the GM resizes or edits map size.
@@ -1180,7 +1726,7 @@ export function BattleMap({
 
   useLayoutEffect(() => {
     if (onMapViewSync || !tableStateReady) return;
-    if (!shouldApplyRemotePlayerMapView(isPlayer, playerLocalOverride)) return;
+    if (!shouldApplyRemotePlayerMapView(isPlayer, playerActivePersonalCameraId, playerFreeMapExplore)) return;
     if (containerWidth <= 0 || containerHeight <= 0) return;
     const d = decodeMapViewState(mapConfig, {
       minZoom,
@@ -1201,7 +1747,8 @@ export function BattleMap({
     onMapViewSync,
     tableStateReady,
     isPlayer,
-    playerLocalOverride,
+    playerActivePersonalCameraId,
+    playerFreeMapExplore,
     mapViewSig,
     minZoom,
     maxZoom,
@@ -1211,8 +1758,80 @@ export function BattleMap({
     containerHeight,
   ]);
 
+  useLayoutEffect(() => {
+    if (!isPlayer || !playerFreeMapExplore || !playerFreeExploreMapId || !tableId) return;
+    if (containerWidth <= 0 || containerHeight <= 0) return;
+    const key = `${tableId}:${playerFreeExploreMapId}:${mapConfig?.mapImageUrl ?? ''}`;
+    if (playerFreeMapHydratedKeyRef.current === key) return;
+    let d = null;
+    try {
+      const raw = localStorage.getItem(`dh_player_free_map:${tableId}:${playerFreeExploreMapId}`);
+      if (raw) {
+        const { mapViewZoomRatio, mapViewPanNorm } = JSON.parse(raw);
+        d = decodeMapViewState(
+          { mapViewZoomRatio, mapViewPanNorm },
+          {
+            minZoom,
+            maxZoom,
+            renderedWidthPx,
+            renderedHeightPx,
+            viewportW: containerWidth,
+            viewportH: containerHeight,
+          },
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+    if (!d) {
+      d = decodeMapViewState(
+        {
+          mapViewZoomRatio: mapConfig?.mapViewZoomRatio ?? null,
+          mapViewPanNorm: mapConfig?.mapViewPanNorm ?? null,
+        },
+        {
+          minZoom,
+          maxZoom,
+          renderedWidthPx,
+          renderedHeightPx,
+          viewportW: containerWidth,
+          viewportH: containerHeight,
+        },
+      );
+    }
+    if (d) {
+      mapZoomRef.current = d.mapZoom;
+      setMapZoom(d.mapZoom);
+      mapPanLeftRef.current = d.scrollLeft;
+      mapPanTopRef.current = d.scrollTop;
+      setMapPanLeft(d.scrollLeft);
+      setMapPanTop(d.scrollTop);
+    }
+    playerFreeMapHydratedKeyRef.current = key;
+  }, [
+    isPlayer,
+    playerFreeMapExplore,
+    playerFreeExploreMapId,
+    tableId,
+    mapConfig?.mapImageUrl,
+    mapConfig?.mapViewZoomRatio,
+    mapConfig?.mapViewPanNorm,
+    containerWidth,
+    containerHeight,
+    minZoom,
+    maxZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+  ]);
+
+  useEffect(() => {
+    if (!playerFreeMapExplore) playerFreeMapHydratedKeyRef.current = '';
+  }, [playerFreeMapExplore]);
+
   useEffect(() => () => {
     if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
+    if (playerCameraPersistTimerRef.current) clearTimeout(playerCameraPersistTimerRef.current);
+    if (playerFreeMapPersistTimerRef.current) clearTimeout(playerFreeMapPersistTimerRef.current);
   }, []);
 
   useLayoutEffect(() => {
@@ -1241,6 +1860,95 @@ export function BattleMap({
   const maxPanTop = Math.max(0, renderedHeightPx * mapZoom - containerHeight);
   const canPanMap = maxPanLeft > 0 || maxPanTop > 0;
 
+  /** Live normalized view for the active map — strip thumbnails match the main viewport before SSE catches up. */
+  const liveStripView = useMemo(() => {
+    if (isPlayer) return null;
+    if (!containerWidth || !containerHeight) return null;
+    return encodeMapViewState({
+      mapZoom,
+      scrollLeft: mapPanLeft,
+      scrollTop: mapPanTop,
+      minZoom,
+      maxZoom,
+      renderedWidthPx,
+      renderedHeightPx,
+      viewportW: containerWidth,
+      viewportH: containerHeight,
+    });
+  }, [
+    isPlayer,
+    containerWidth,
+    containerHeight,
+    mapZoom,
+    mapPanLeft,
+    mapPanTop,
+    minZoom,
+    maxZoom,
+    renderedWidthPx,
+    renderedHeightPx,
+  ]);
+
+  const viewStateForStripTile = useCallback(
+    (view) => {
+      const m = maps.find(x => x.id === view?.mapId);
+      if (!m || !view) return null;
+      if (!isPlayer && gmActiveViewId && view.id === gmActiveViewId && liveStripView) {
+        return liveStripView;
+      }
+      return {
+        mapViewZoomRatio: view.mapViewZoomRatio,
+        mapViewPanNorm: view.mapViewPanNorm,
+      };
+    },
+    [isPlayer, gmActiveViewId, liveStripView, maps],
+  );
+
+  const camerasByMapId = useMemo(() => {
+    const out = new Map();
+    for (const cam of personalCameras) {
+      const list = out.get(cam.mapId) || [];
+      list.push(cam);
+      out.set(cam.mapId, list);
+    }
+    return out;
+  }, [personalCameras]);
+
+  const orphanCameras = useMemo(
+    () => personalCameras.filter((c) => !maps.some((m) => m.id === c.mapId)),
+    [personalCameras, maps],
+  );
+
+  /** Player strip: one scroll batch per map that has GM views and/or personal cameras. */
+  const playerViewBatches = useMemo(() => {
+    const out = [];
+    for (const m of maps) {
+      const gmViews = playerStripViews.filter((v) => v.mapId === m.id);
+      const cams =
+        m.shareWithPlayers !== false ? (camerasByMapId.get(m.id) || []) : [];
+      if (!gmViews.length && !cams.length) continue;
+      out.push({ map: m, gmViews, cams });
+    }
+    return out;
+  }, [maps, playerStripViews, camerasByMapId]);
+
+  useEffect(() => {
+    if (!isPlayer) return;
+    if (personalCameraTargetsUnsharedMap(playerActivePersonalCameraId, personalCameras, maps)) {
+      setPlayerActivePersonalCameraId(null);
+    }
+    if (freeMapExploreTargetsUnsharedMap(playerFreeExploreMapId, playerFreeMapExplore, maps)) {
+      onPlayerExitMapFreeExplore?.();
+    }
+  }, [
+    isPlayer,
+    maps,
+    personalCameras,
+    playerActivePersonalCameraId,
+    playerFreeMapExplore,
+    playerFreeExploreMapId,
+    onPlayerExitMapFreeExplore,
+  ]);
+
   const applyZoomFromControl = useCallback(
     (newZ) => {
       if (!canControlMapView) return;
@@ -1266,7 +1974,7 @@ export function BattleMap({
       setMapPanLeft(pan.scrollLeft);
       setMapPanTop(pan.scrollTop);
       if (onMapViewSync) schedulePersistView();
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) schedulePersistPlayerViewport();
     },
     [
       canControlMapView,
@@ -1278,6 +1986,7 @@ export function BattleMap({
       renderedHeightPx,
       onMapViewSync,
       schedulePersistView,
+      schedulePersistPlayerViewport,
       isPlayer,
     ],
   );
@@ -1311,9 +2020,9 @@ export function BattleMap({
       setMapPanLeft(next.scrollLeft);
       setMapPanTop(next.scrollTop);
       if (onMapViewSync) schedulePersistView();
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) schedulePersistPlayerViewport();
     },
-    [canControlMapView, onMapViewSync, pxPerFt, schedulePersistView, isPlayer, activeMapIdResolved],
+    [canControlMapView, onMapViewSync, pxPerFt, schedulePersistView, schedulePersistPlayerViewport, isPlayer, activeMapIdResolved],
   );
 
   const applyZoomToFitActors = useCallback(() => {
@@ -1361,8 +2070,8 @@ export function BattleMap({
     setMapPanLeft(result.scrollLeft);
     setMapPanTop(result.scrollTop);
     if (onMapViewSync) schedulePersistView();
-    if (isPlayer) setPlayerLocalOverride(true);
-  }, [canControlMapView, onMapViewSync, activeElements, pxPerFt, tokenSizePx, schedulePersistView, isPlayer, activeMapIdResolved]);
+    if (isPlayer) schedulePersistPlayerViewport();
+  }, [canControlMapView, onMapViewSync, activeElements, pxPerFt, tokenSizePx, schedulePersistView, schedulePersistPlayerViewport, isPlayer, activeMapIdResolved]);
 
   // Map viewport: wheel = pan Y, Shift+wheel = pan X, ⌘/Ctrl+wheel = zoom toward cursor (GM persists; player local only)
   useEffect(() => {
@@ -1418,7 +2127,7 @@ export function BattleMap({
         setMapPanLeft(pan.scrollLeft);
         setMapPanTop(pan.scrollTop);
         if (onMapViewSync) schedulePersistView();
-        if (isPlayer) setPlayerLocalOverride(true);
+        if (isPlayer) schedulePersistPlayerViewport();
         return;
       }
 
@@ -1439,7 +2148,7 @@ export function BattleMap({
         setMapPanLeft(next.scrollLeft);
         setMapPanTop(next.scrollTop);
         if (onMapViewSync) schedulePersistView();
-        if (isPlayer) setPlayerLocalOverride(true);
+        if (isPlayer) schedulePersistPlayerViewport();
         return;
       }
 
@@ -1458,12 +2167,12 @@ export function BattleMap({
       setMapPanLeft(next.scrollLeft);
       setMapPanTop(next.scrollTop);
       if (onMapViewSync) schedulePersistView();
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) schedulePersistPlayerViewport();
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [canControlMapView, onMapViewSync, schedulePersistView, containerWidth, containerHeight, isPlayer]);
+  }, [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, containerWidth, containerHeight, isPlayer]);
 
   const onPanLeftChange = useCallback(
     (v) => {
@@ -1471,9 +2180,9 @@ export function BattleMap({
       mapPanLeftRef.current = v;
       setMapPanLeft(v);
       if (onMapViewSync) schedulePersistView();
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) schedulePersistPlayerViewport();
     },
-    [canControlMapView, onMapViewSync, schedulePersistView, isPlayer],
+    [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, isPlayer],
   );
 
   const onPanTopChange = useCallback(
@@ -1482,9 +2191,9 @@ export function BattleMap({
       mapPanTopRef.current = v;
       setMapPanTop(v);
       if (onMapViewSync) schedulePersistView();
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) schedulePersistPlayerViewport();
     },
-    [canControlMapView, onMapViewSync, schedulePersistView, isPlayer],
+    [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, isPlayer],
   );
 
   // Categorize elements
@@ -1619,6 +2328,38 @@ export function BattleMap({
 
   const handleMapPointerLeave = useCallback(() => {
     if (!frozenBullseyeRef.current) setBullseyeFt(null);
+  }, []);
+
+  const handleMapPingPointerDown = useCallback((e) => {
+    if (e.button !== 0) return;
+    if (!tableId) return;
+    if (panRightDragRef.current) return;
+    mapPingTapRef.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+    const onUp = async (e2) => {
+      if (e2.pointerId !== mapPingTapRef.current?.pointerId) return;
+      window.removeEventListener('pointerup', onUp);
+      mapPingPointerUpRef.current = null;
+      const d = mapPingTapRef.current;
+      mapPingTapRef.current = null;
+      if (!d) return;
+      const dx = e2.clientX - d.x;
+      const dy = e2.clientY - d.y;
+      if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+      const ft = clientToFt(e2.clientX, e2.clientY);
+      if (!ft) return;
+      if (ft.x < 0 || ft.x > mapWidthFt || ft.y < 0 || ft.y > mapHeightFt) return;
+      const res = await postMapPing(tableId, { xFt: ft.x, yFt: ft.y, mapId: activeMapIdResolved }, !isPlayer);
+      if (res?.ping) appendMapPing(res.ping);
+    };
+    mapPingPointerUpRef.current = onUp;
+    window.addEventListener('pointerup', onUp);
+  }, [tableId, clientToFt, mapWidthFt, mapHeightFt, activeMapIdResolved, isPlayer, appendMapPing]);
+
+  useEffect(() => () => {
+    if (mapPingPointerUpRef.current) {
+      window.removeEventListener('pointerup', mapPingPointerUpRef.current);
+      mapPingPointerUpRef.current = null;
+    }
   }, []);
 
   // Compute range band index (0–4) for each placed token based on distance to bullseye.
@@ -1890,9 +2631,9 @@ export function BattleMap({
       setMapPanLeft(next.scrollLeft);
       setMapPanTop(next.scrollTop);
       if (onMapViewSync) schedulePersistView();
-      if (isPlayer) setPlayerLocalOverride(true);
+      if (isPlayer) schedulePersistPlayerViewport();
     },
-    [schedulePersistView, onMapViewSync, isPlayer],
+    [schedulePersistView, onMapViewSync, schedulePersistPlayerViewport, isPlayer],
   );
 
   const handleRightPanPointerUp = useCallback(
@@ -1963,125 +2704,402 @@ export function BattleMap({
           onDeleteTable={onDeleteTable}
         />
       )}
-      {!isPlayer && maps.length > 0 && onSetActiveMap && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
-          <span className="text-dh-muted shrink-0">Maps</span>
-          <select
-            className="max-w-[min(200px,40vw)] px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh text-xs"
-            value={activeMapIdResolved}
-            onChange={(e) => onSetActiveMap(e.target.value)}
-            aria-label="Active map"
+      {!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore && (
+        <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
+          <Tooltip label="Camera views">
+            <span className="shrink-0 flex items-center justify-center" role="img" aria-label="Camera views">
+              <Camera size={trayTokenSizePx} className="text-dh-muted" strokeWidth={1.25} aria-hidden />
+            </span>
+          </Tooltip>
+          <div
+            className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
+            role="tablist"
+            aria-label="Map views"
           >
-            {maps.map(m => (
-              <option key={m.id} value={m.id}>{m.name || m.id}</option>
+            {gmMapViewGroups.map(({ map, views }, idx) => (
+              <Fragment key={map.id}>
+                {idx > 0 ? (
+                  <div
+                    className="w-px shrink-0 self-stretch min-h-[4.75rem] bg-dh-border/60"
+                    aria-hidden
+                  />
+                ) : null}
+                <div className="flex shrink-0 items-start gap-1 rounded-md border border-dh-border/50 bg-dh-canvas/15 p-1">
+                <MapViewStripTile
+                  variant="map"
+                  mapRow={map}
+                  viewState={
+                    gmActiveViewId === null && map.id === activeMapIdResolved && liveStripView
+                      ? liveStripView
+                      : null
+                  }
+                  label={map.name || 'Map'}
+                  isActive={
+                    (gmActiveViewId === null && map.id === activeMapIdResolved) ||
+                    views.some((v) => v.id === gmActiveViewId)
+                  }
+                  onClick={() => {
+                    if (onMapFreeExplore) onMapFreeExplore(map.id);
+                  }}
+                  actions={
+                    onSetMapShare || onRenameMap || (onRemoveMap && maps.length > 1) ? (
+                      <div className="flex items-center justify-center gap-0.5">
+                        {onSetMapShare ? (
+                          <Tooltip
+                            label={
+                              map.shareWithPlayers !== false
+                                ? 'Players see the map tile and can pan/zoom and save personal cameras'
+                                : 'Players only see broadcast views (no map tile or personal cameras)'
+                            }
+                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const allowed = map.shareWithPlayers !== false;
+                                onSetMapShare(map.id, !allowed);
+                              }}
+                              className={`rounded p-0.5 ${
+                                map.shareWithPlayers !== false
+                                  ? 'text-sky-400'
+                                  : 'text-dh-muted hover:text-dh'
+                              }`}
+                              aria-label={
+                                map.shareWithPlayers !== false
+                                  ? 'Player map views and cameras on'
+                                  : 'Player map views and cameras off'
+                              }
+                            >
+                              <Radio size={11} aria-hidden />
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                        {onRenameMap ? (
+                          <Tooltip label="Rename map">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const cur = map.name ?? '';
+                                const name = window.prompt('Map name', cur);
+                                if (name != null && name.trim()) onRenameMap(map.id, name.trim());
+                              }}
+                              className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
+                              aria-label="Rename map"
+                            >
+                              <Pencil size={11} aria-hidden />
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                        {onRemoveMap && maps.length > 1 ? (
+                          <Tooltip label="Remove map">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!window.confirm('Remove this map? Tokens on it return to the tray.')) return;
+                                onRemoveMap(map.id);
+                              }}
+                              className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
+                              aria-label="Remove map"
+                            >
+                              <Trash2 size={11} aria-hidden />
+                            </button>
+                          </Tooltip>
+                        ) : null}
+                      </div>
+                    ) : null
+                  }
+                />
+                {views.map((view) => {
+                  const nOnMap = views.length;
+                  const label = view.name || 'View';
+                  return (
+                    <MapViewStripTile
+                      key={view.id}
+                      variant="map"
+                      mapRow={map}
+                      viewState={viewStateForStripTile(view)}
+                      label={label}
+                      isActive={view.id === gmActiveViewId}
+                      onClick={() => onSetActiveView(view.id)}
+                      actions={
+                        <div className="flex items-center justify-center gap-0.5">
+                          {onSetViewBroadcast ? (
+                            <Tooltip label={view.broadcastToPlayers ? 'Broadcasting to players' : 'Not broadcast'}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSetViewBroadcast(view.id, !view.broadcastToPlayers);
+                                }}
+                                className={`rounded p-0.5 ${view.broadcastToPlayers ? 'text-sky-400' : 'text-dh-muted hover:text-dh'}`}
+                                aria-label={view.broadcastToPlayers ? 'Stop broadcast' : 'Broadcast to players'}
+                              >
+                                <Radio size={11} aria-hidden />
+                              </button>
+                            </Tooltip>
+                          ) : null}
+                          {onRenameMapView ? (
+                            <Tooltip label="Rename view">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const cur = view.name || 'View';
+                                  const name = window.prompt('View name', cur);
+                                  if (name != null && name.trim()) onRenameMapView(view.id, name.trim());
+                                }}
+                                className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
+                                aria-label="Rename view"
+                              >
+                                <Pencil size={11} aria-hidden />
+                              </button>
+                            </Tooltip>
+                          ) : null}
+                          {onRemoveMapView && nOnMap > 1 ? (
+                            <Tooltip label="Delete view">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!window.confirm('Delete this view?')) return;
+                                  onRemoveMapView(view.id);
+                                }}
+                                className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
+                                aria-label="Delete view"
+                              >
+                                <Trash2 size={11} aria-hidden />
+                              </button>
+                            </Tooltip>
+                          ) : null}
+                        </div>
+                      }
+                    />
+                  );
+                })}
+                </div>
+              </Fragment>
             ))}
-          </select>
-          {onAddMap && (
-            <button type="button" onClick={onAddMap} className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px]">
-              + Map
-            </button>
-          )}
-          {onRemoveMap && maps.length > 1 && (
-            <button
-              type="button"
-              onClick={() => {
-                if (!window.confirm('Remove this map? Tokens on it return to the tray.')) return;
-                onRemoveMap(activeMapIdResolved);
-              }}
-              className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-red-900/40 text-dh text-[11px]"
-            >
-              Remove
-            </button>
-          )}
-          {onRenameMap && (
-            <button
-              type="button"
-              onClick={() => {
-                const cur = maps.find(m => m.id === activeMapIdResolved)?.name ?? '';
-                const name = window.prompt('Map name', cur);
-                if (name != null && name.trim()) onRenameMap(activeMapIdResolved, name.trim());
-              }}
-              className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px]"
-            >
-              Rename
-            </button>
-          )}
-        </div>
-      )}
-      {isPlayer && maps.length > 1 && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0">
-          <span className="text-dh-muted">Map</span>
-          <span className="text-dh font-medium truncate">{maps.find(m => m.id === activeMapIdResolved)?.name ?? 'Map'}</span>
-        </div>
-      )}
-      {tableId && (
-        <div className="bg-dh-surface/90 border-b border-dh-border text-[11px] shrink-0">
-          <div className="flex items-center gap-2 px-3 py-1 flex-wrap">
-            <Camera size={14} className="text-dh-muted shrink-0" aria-hidden />
-            <span className="text-dh-muted shrink-0">Cameras</span>
-            <select
-              key={cameraSelectKey}
-              className="max-w-[min(180px,36vw)] px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh text-[11px]"
-              defaultValue=""
-              onChange={(e) => {
-                const id = e.target.value;
-                if (!id) return;
-                const cam = personalCameras.find(c => c.id === id);
-                if (cam) applyPersonalCamera(cam);
-                setCameraSelectKey(k => k + 1);
-              }}
-              aria-label="Load saved camera"
-            >
-              <option value="">My cameras…</option>
-              {personalCameras.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            <button type="button" onClick={handleSplitCamera} className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px]">
-              Split camera…
-            </button>
-          </div>
-          {personalCameras.length > 0 && (
-            <div className="flex items-center gap-2 px-3 pb-1.5 pt-0 flex-wrap">
-              <span className="text-dh-muted shrink-0">Manage</span>
-              <select
-                className="max-w-[min(180px,36vw)] px-1.5 py-0.5 rounded bg-dh-raised border border-dh-strong text-dh text-[11px]"
-                value={manageCameraId}
-                onChange={(e) => setManageCameraId(e.target.value)}
-                aria-label="Select camera to rename or delete"
-              >
-                <option value="">(select camera)</option>
-                {personalCameras.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+            {tableId && orphanCameras.length > 0 ? (
+              <div className="flex shrink-0 items-start gap-1 rounded-md border border-amber-800/35 bg-amber-950/20 p-1">
+                {orphanCameras.map((cam) => (
+                  <MapViewStripTile
+                    key={cam.id}
+                    variant="camera"
+                    mapRow={{
+                      mapSizeFt: 100,
+                      mapDimension: 'width',
+                      mapImageUrl: null,
+                      mapImageNaturalWidth: null,
+                      mapImageNaturalHeight: null,
+                    }}
+                    viewState={{
+                      mapViewZoomRatio: cam.mapViewZoomRatio,
+                      mapViewPanNorm: cam.mapViewPanNorm,
+                    }}
+                    label={cam.name || 'View'}
+                    isActive={false}
+                    showCameraBadge
+                    onClick={() => applyPersonalCamera(cam)}
+                    actions={
+                      <div className="flex items-center justify-center gap-0.5">
+                        <Tooltip label="Rename">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleRenameCamera(cam);
+                            }}
+                            className="rounded p-0.5 text-dh-muted hover:bg-dh-hover/80 hover:text-dh"
+                            aria-label={`Rename ${cam.name || 'saved view'}`}
+                          >
+                            <Pencil size={11} aria-hidden />
+                          </button>
+                        </Tooltip>
+                        <Tooltip label="Delete">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDeleteCamera(cam);
+                            }}
+                            className="rounded p-0.5 text-dh-muted hover:bg-red-900/35 hover:text-red-200"
+                            aria-label={`Delete ${cam.name || 'saved view'}`}
+                          >
+                            <Trash2 size={11} aria-hidden />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    }
+                  />
                 ))}
-              </select>
-              <button
-                type="button"
-                disabled={!manageCameraId}
-                onClick={handleRenameManagedCamera}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Pencil size={12} className="shrink-0" aria-hidden />
-                Rename
-              </button>
-              <button
-                type="button"
-                disabled={!manageCameraId}
-                onClick={handleDeleteManagedCamera}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-red-900/35 text-dh text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Trash2 size={12} className="shrink-0" aria-hidden />
-                Delete
-              </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-col gap-1 items-end pt-0.5">
+            <div className="flex flex-wrap items-center justify-end gap-1">
+              <Tooltip label="Save the current zoom and pan as a new view on this map">
+                <button
+                  type="button"
+                  onClick={handleSplitCamera}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 text-dh text-[11px] shrink-0"
+                >
+                  <Camera size={12} className="text-violet-300/90 shrink-0" aria-hidden />
+                  New view
+                </button>
+              </Tooltip>
+              {onAddMap && (
+                <button type="button" onClick={onAddMap} className="px-1.5 py-0.5 rounded border border-dh-strong bg-dh-raised/80 hover:bg-dh-hover text-dh text-[11px] shrink-0">
+                  + Map
+                </button>
+              )}
             </div>
-          )}
-          {cameraHint ? (
-            <div className="px-3 pb-1.5 text-[11px] text-amber-200/90 leading-snug" role="status">
-              {cameraHint}
-            </div>
-          ) : null}
+          </div>
         </div>
       )}
+      {isPlayer &&
+        tableId &&
+        (playerStripViews.length > 0 || personalCameras.length > 0 || mapAllowsPlayerCameras) && (
+          <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
+            <Tooltip label="Camera views">
+              <span className="shrink-0 flex items-center justify-center" role="img" aria-label="Camera views">
+                <Camera size={trayTokenSizePx} className="text-dh-muted" strokeWidth={1.25} aria-hidden />
+              </span>
+            </Tooltip>
+            {mapAllowsPlayerCameras ? (
+              <Tooltip label="Save current zoom and pan as your personal camera">
+                <button
+                  type="button"
+                  onClick={() => void handlePlayerCreateCamera()}
+                  className="mt-0.5 shrink-0 rounded-md border border-violet-500/40 bg-violet-950/30 p-1 text-violet-200 hover:bg-violet-900/40"
+                  aria-label="Add personal camera"
+                >
+                  <span className="relative inline-flex items-center justify-center">
+                    <Camera size={20} className="text-violet-300/95" aria-hidden />
+                    <Plus
+                      size={11}
+                      strokeWidth={3}
+                      className="absolute -bottom-0.5 -right-0.5 rounded-full bg-dh-canvas text-violet-200"
+                      aria-hidden
+                    />
+                  </span>
+                </button>
+              </Tooltip>
+            ) : null}
+            <div
+              className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
+              aria-label="GM broadcast views and your saved views"
+            >
+              {playerViewBatches.map(({ map: m, gmViews, cams }, idx) => (
+                <Fragment key={m.id}>
+                  {idx > 0 ? (
+                    <div
+                      className="w-px shrink-0 self-stretch min-h-[4.75rem] bg-dh-border/60"
+                      aria-hidden
+                    />
+                  ) : null}
+                  <div className="flex shrink-0 items-start gap-1 rounded-md border border-dh-border/50 bg-dh-canvas/15 p-1">
+                    {m.shareWithPlayers !== false ? (
+                    <MapViewStripTile
+                      variant="map"
+                      mapRow={m}
+                      viewState={null}
+                      label={m.name || 'Map'}
+                      hideCaption
+                      tooltipTitle="Pan and zoom freely (not a saved view)"
+                      isActive={
+                        !!(
+                          !playerActivePersonalCameraId &&
+                          (playerFreeMapExplore && playerFreeExploreMapId === m.id
+                            ? true
+                            : gmViews.length > 0 &&
+                              gmViews.some((v) => v.id === playerSelectedViewId))
+                        )
+                      }
+                      onClick={() => {
+                        setPlayerActivePersonalCameraId(null);
+                        onPlayerEnterMapFreeExplore?.(m.id);
+                      }}
+                    />
+                    ) : null}
+                    {gmViews.map((view) => (
+                      <MapViewStripTile
+                        key={view.id}
+                        variant="map"
+                        mapRow={m}
+                        viewState={viewStateForStripTile(view)}
+                        label={view.name || 'View'}
+                        isActive={
+                          view.id === playerSelectedViewId &&
+                          !playerActivePersonalCameraId &&
+                          !playerFreeMapExplore
+                        }
+                        onClick={() => {
+                          setPlayerActivePersonalCameraId(null);
+                          onPlayerSelectView?.(view.id);
+                        }}
+                      />
+                    ))}
+                    {cams.map((cam) => (
+                      <MapViewStripTile
+                        key={cam.id}
+                        variant="camera"
+                        mapRow={m}
+                        viewState={{
+                          mapViewZoomRatio: cam.mapViewZoomRatio,
+                          mapViewPanNorm: cam.mapViewPanNorm,
+                        }}
+                        label={cam.name || 'View'}
+                        isActive={cam.id === playerActivePersonalCameraId}
+                        showCameraBadge
+                        onClick={() => applyPersonalCamera(cam)}
+                      />
+                    ))}
+                  </div>
+                </Fragment>
+              ))}
+              {orphanCameras.length > 0 ? (
+                <>
+                  {playerViewBatches.length > 0 ? (
+                    <div
+                      className="w-px shrink-0 self-stretch min-h-[4.75rem] bg-dh-border/60"
+                      aria-hidden
+                    />
+                  ) : null}
+                  <div className="flex shrink-0 items-start gap-1 rounded-md border border-amber-800/35 bg-amber-950/20 p-1">
+                    {orphanCameras.map((cam) => (
+                      <MapViewStripTile
+                        key={cam.id}
+                        variant="camera"
+                        mapRow={{
+                          mapSizeFt: 100,
+                          mapDimension: 'width',
+                          mapImageUrl: null,
+                          mapImageNaturalWidth: null,
+                          mapImageNaturalHeight: null,
+                        }}
+                        viewState={{
+                          mapViewZoomRatio: cam.mapViewZoomRatio,
+                          mapViewPanNorm: cam.mapViewPanNorm,
+                        }}
+                        label={cam.name || 'View'}
+                        isActive={cam.id === playerActivePersonalCameraId}
+                        showCameraBadge
+                        onClick={() => applyPersonalCamera(cam)}
+                      />
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </div>
+        )}
+      {tableId && cameraHint ? (
+        <div className="px-3 py-1 bg-dh-surface border-b border-dh-border text-[11px] text-amber-200/90 leading-snug" role="status">
+          {cameraHint}
+        </div>
+      ) : null}
 
       {/* Map area */}
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
@@ -2172,8 +3190,6 @@ export function BattleMap({
               onPanTopChange={onPanTopChange}
               onZoomToActors={applyZoomToFitActors}
               zoomToActorsDisabled={!hasPlacedActorsOnMap}
-              localViewOverride={isPlayer && playerLocalOverride}
-              onClearLocalViewOverride={isPlayer ? clearPlayerLocalViewOverride : undefined}
             />
           )}
           <div ref={scrollWrapperRef} className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
@@ -2208,6 +3224,7 @@ export function BattleMap({
                   height: renderedHeightPx,
                   transform: `scale(${mapZoom})`,
                 }}
+                onPointerDown={handleMapPingPointerDown}
                 onPointerMove={handleMapPointerMove}
                 onPointerLeave={handleMapPointerLeave}
               >
@@ -2223,18 +3240,26 @@ export function BattleMap({
                 <div className="absolute inset-0 bg-dh-map-blank flex items-center justify-center">
                   {!isPlayer && charTrayTokens.length === 0 && advTrayTokens.length === 0 && charMapTokens.length === 0 && advMapTokens.length === 0 && (
                     <div className="text-dh-muted text-sm text-center pointer-events-none">
-                      <Map size={32} className="mx-auto mb-2 opacity-50" />
+                      <MapIcon size={32} className="mx-auto mb-2 opacity-50" />
                       <div>Upload a map image or drag tokens here</div>
                     </div>
                   )}
                   {isPlayer && charMapTokens.length === 0 && advMapTokens.length === 0 && (
                     <div className="text-dh-muted text-sm text-center pointer-events-none">
-                      <Map size={32} className="mx-auto mb-2 opacity-50" />
+                      <MapIcon size={32} className="mx-auto mb-2 opacity-50" />
                       <div>No map loaded</div>
                     </div>
                   )}
                 </div>
               )}
+
+              {/* Measure rect for portaled fireworks (above DiceRoller z-15); bursts render in document.body */}
+              <div
+                ref={fireworksAnchorRef}
+                className="absolute inset-0 pointer-events-none overflow-hidden"
+                style={{ width: renderedWidthPx, height: renderedHeightPx, zIndex: 7 }}
+                aria-hidden
+              />
 
               {/* Range band bullseye overlay */}
               {bullseyeFt && (
@@ -2421,6 +3446,18 @@ export function BattleMap({
                 </div>
                 );
               })}
+
+              {visibleMapPings.map(p => (
+                <MapPingNameLabel
+                  key={p.id}
+                  pingId={p.id}
+                  xFt={p.xFt}
+                  yFt={p.yFt}
+                  pxPerFt={pxPerFt}
+                  displayName={p.displayName}
+                  onDismissMapPing={onDismissMapPing}
+                />
+              ))}
               </div>
             </div>
           </div>
@@ -2501,6 +3538,23 @@ export function BattleMap({
           />
         );
       })()}
+
+      {typeof document !== 'undefined' && fireworksViewport && fireworksViewport.width > 0 && createPortal(
+        <div
+          ref={fireworksPortalMountRef}
+          className="pointer-events-none overflow-hidden"
+          style={{
+            position: 'fixed',
+            top: fireworksViewport.top,
+            left: fireworksViewport.left,
+            width: fireworksViewport.width,
+            height: fireworksViewport.height,
+            zIndex: 25,
+          }}
+          aria-hidden
+        />,
+        document.body,
+      )}
     </div>
   );
 }

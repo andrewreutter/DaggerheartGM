@@ -369,6 +369,154 @@ describe('applyTableOp', () => {
     expect(result.gmMapView).toEqual({ mapId: 'b', mapViewZoomRatio: null, mapViewPanNorm: null });
   });
 
+  it('set-active-view selects a view and syncs activeMapId', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: 0.2,
+          mapViewPanNorm: { x: 0.3, y: 0.4 },
+          broadcastToPlayers: true,
+        },
+        {
+          id: 'v2',
+          mapId: 'a',
+          name: 'Close-up',
+          mapViewZoomRatio: 0.9,
+          mapViewPanNorm: { x: 0.1, y: 0.1 },
+          broadcastToPlayers: false,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'set-active-view', viewId: 'v2' }, state);
+    expect(result.gmActiveViewId).toBe('v2');
+    expect(result.activeMapId).toBe('a');
+    expect(result.mapConfig.mapViewZoomRatio).toBe(0.9);
+  });
+
+  it('set-map-share toggles map shareWithPlayers', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'set-map-share', mapId: 'a', shareWithPlayers: false }, state);
+    expect(result.maps[0].shareWithPlayers).toBe(false);
+  });
+
+  it('set-map-free-explore clears gmActiveViewId and keeps framing on gmMapView only', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: 0.5,
+          mapViewPanNorm: { x: 0.1, y: 0.2 },
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: 'v1',
+      activeMapId: 'a',
+      activeElements: [],
+    };
+    const result = applyTableOp({ op: 'set-map-free-explore', mapId: 'a' }, state);
+    expect(result.gmActiveViewId).toBeNull();
+    expect(result.activeMapId).toBe('a');
+    expect(result.mapViews[0].mapViewZoomRatio).toBe(0.5);
+    expect(result.mapConfig.mapViewZoomRatio).toBeNull();
+  });
+
+  it('set-map-view with gmActiveViewId null updates gmMapView only', () => {
+    const state = {
+      maps: [
+        {
+          id: 'a',
+          name: 'A',
+          mapImageUrl: 'x',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'a',
+          name: 'Main',
+          mapViewZoomRatio: 0.5,
+          mapViewPanNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      gmActiveViewId: null,
+      activeMapId: 'a',
+      gmMapView: { mapId: 'a', mapViewZoomRatio: null, mapViewPanNorm: null },
+      activeElements: [],
+    };
+    const result = applyTableOp(
+      {
+        op: 'set-map-view',
+        viewId: null,
+        mapId: 'a',
+        mapViewZoomRatio: 0.8,
+        mapViewPanNorm: { x: 0.3, y: 0.4 },
+      },
+      state,
+    );
+    expect(result.mapViews[0].mapViewZoomRatio).toBe(0.5);
+    expect(result.mapConfig.mapViewZoomRatio).toBe(0.8);
+  });
+
   it('remove-map clears tokens on that map and cannot remove last map', () => {
     const mkMap = (id, url) => ({
       id,

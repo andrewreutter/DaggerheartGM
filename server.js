@@ -3,13 +3,13 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
-import { randomInt } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { watchFile } from 'fs';
 import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, listPersonalMapCameras, insertPersonalMapCamera, updatePersonalMapCameraName, deletePersonalMapCamera } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, listPersonalMapCameras, insertPersonalMapCamera, updatePersonalMapCameraPatch, deletePersonalMapCamera } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -694,6 +694,33 @@ function broadcastPresenceToTable(tableId) {
   for (const clientRes of room.gmClients) { clientRes.write(msg); clientRes.flush?.(); }
 }
 
+/** Ephemeral map click ping — all GM + player SSE connections for this table (no DB). */
+function broadcastMapPingToTable(tableId, payload) {
+  const room = rooms.get(tableId);
+  if (!room) return;
+  const msg = `event: map_ping\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const clientRes of room.gmClients) {
+    try {
+      if (!clientRes.writableEnded) { clientRes.write(msg); clientRes.flush?.(); }
+    } catch { /* ignore */ }
+  }
+  for (const [, p] of room.players) {
+    try {
+      if (p?.res && !p.res.writableEnded) { p.res.write(msg); p.res.flush?.(); }
+    } catch { /* ignore */ }
+  }
+}
+
+async function resolveDisplayNameForMapPing(req) {
+  try {
+    const u = await getAuth().getUser(req.uid);
+    const n = (u.displayName && String(u.displayName).trim()) || (u.email && u.email.split('@')[0]);
+    return n || 'Player';
+  } catch {
+    return req.email?.split('@')[0] || 'Player';
+  }
+}
+
 // In-memory pending player intents (pre-roll banner state): tableId → intent object
 // Intent shape: { characterName, characterInstanceId, rollText, chips, timestamp }
 // chips are display-only (no functions): [{ label, description, hopeCost, stressCost, frequency, isToggle }]
@@ -801,10 +828,17 @@ async function applyOpToTableState(tableId, op) {
       op.op === 'set-gm-display-name' ||
       op.op === 'touch-session-activity' ||
       op.op === 'set-map-view' ||
+      op.op === 'set-map-free-explore' ||
       op.op === 'set-active-map' ||
+      op.op === 'set-active-view' ||
       op.op === 'add-map' ||
+      op.op === 'add-map-view' ||
       op.op === 'remove-map' ||
+      op.op === 'remove-map-view' ||
       op.op === 'rename-map' ||
+      op.op === 'rename-map-view' ||
+      op.op === 'set-view-broadcast' ||
+      op.op === 'set-map-share' ||
       bypassPrepGate;
     if (!skipActivityStamp) {
       newState.top = {
@@ -1862,6 +1896,55 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
   }
 });
 
+// POST /api/room/my/map-ping — GM broadcast map click ripple (SSE `map_ping` to all; not persisted).
+app.post('/api/room/my/map-ping', requireAuth, async (req, res) => {
+  const { tableId: bodyTableId, xFt, yFt, mapId } = req.body || {};
+  const tid = bodyTableId || req.uid;
+  const row = await getTableStateById(APP_ID, tid);
+  if (!row || row.userId !== req.uid) {
+    return res.status(403).json({ error: 'Not your table' });
+  }
+  const x = Number(xFt);
+  const y = Number(yFt);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+  const displayName = await resolveDisplayNameForMapPing(req);
+  const payload = {
+    id: randomUUID(),
+    xFt: x,
+    yFt: y,
+    displayName,
+    mapId: mapId != null && mapId !== '' ? String(mapId) : null,
+    tsMs: Date.now(),
+  };
+  broadcastMapPingToTable(tid, payload);
+  res.json({ ok: true, ping: payload });
+});
+
+// POST /api/room/:tableId/map-ping — invited player broadcast map click ripple (same as GM).
+app.post('/api/room/:tableId/map-ping', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { xFt, yFt, mapId } = req.body || {};
+  const x = Number(xFt);
+  const y = Number(yFt);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+  const displayName = await resolveDisplayNameForMapPing(req);
+  const payload = {
+    id: randomUUID(),
+    xFt: x,
+    yFt: y,
+    displayName,
+    mapId: mapId != null && mapId !== '' ? String(mapId) : null,
+    tsMs: Date.now(),
+  };
+  broadcastMapPingToTable(ctx.tableId, payload);
+  res.json({ ok: true, ping: payload });
+});
+
 // POST /api/room/my/roll — GM rolls dice server-side; persists to DB, returns result.
 // When silent is true: build and return roll data only (no DB write, no banner notification).
 app.post('/api/room/my/roll', requireAuth, async (req, res) => {
@@ -2769,9 +2852,16 @@ app.patch('/api/room/:tableId/personal-cameras/:cameraId', requireAuth, async (r
   const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
   if (!process.env.DATABASE_URL) return res.status(503).json({ error: 'Database not configured' });
-  const { name } = req.body || {};
+  const { name, mapViewZoomRatio, mapViewPanNorm } = req.body || {};
+  const patch = {};
+  if (name !== undefined) patch.name = name;
+  if (mapViewZoomRatio !== undefined) patch.mapViewZoomRatio = mapViewZoomRatio;
+  if (mapViewPanNorm !== undefined) patch.mapViewPanNorm = mapViewPanNorm;
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'No fields to update' });
+  }
   try {
-    const camera = await updatePersonalMapCameraName(APP_ID, req.params.tableId, req.uid, req.params.cameraId, name);
+    const camera = await updatePersonalMapCameraPatch(APP_ID, req.params.tableId, req.uid, req.params.cameraId, patch);
     if (!camera) return res.status(404).json({ error: 'Not found' });
     res.json({ camera });
   } catch (err) {

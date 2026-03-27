@@ -664,7 +664,8 @@ export const postPersonalCamera = async (tableId, body) => {
   return res.json();
 };
 
-export const patchPersonalCameraName = async (tableId, cameraId, name) => {
+/** Body: { name?, mapViewZoomRatio?, mapViewPanNorm? } */
+export const patchPersonalCamera = async (tableId, cameraId, body) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch(
@@ -672,7 +673,7 @@ export const patchPersonalCameraName = async (tableId, cameraId, name) => {
     {
       method: 'PATCH',
       headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(body),
     }
   );
   if (!res.ok) {
@@ -680,6 +681,10 @@ export const patchPersonalCameraName = async (tableId, cameraId, name) => {
     throw new Error(errBody.error || `HTTP ${res.status}`);
   }
   return res.json();
+};
+
+export const patchPersonalCameraName = async (tableId, cameraId, name) => {
+  return patchPersonalCamera(tableId, cameraId, { name });
 };
 
 export const deletePersonalCamera = async (tableId, cameraId) => {
@@ -781,6 +786,28 @@ export const clearPlayerIntent = async (tableId) => {
  * tableId: null = GM mode (POST /api/room/my/action), string = player mode (POST /api/room/:tableId/action).
  * Best-effort — errors are swallowed.
  */
+/**
+ * Broadcast a map click “ping” (ripple + name) to all GM and player clients via SSE (`map_ping`).
+ * Coordinates are in map feet on the active map. Not persisted.
+ */
+/** @returns {Promise<{ ok?: boolean, ping?: object }|null>} */
+export const postMapPing = async (tableId, { xFt, yFt, mapId }, isGm) => {
+  const token = await getAuthToken();
+  if (!token || tableId == null) return null;
+  const url = isGm ? '/api/room/my/map-ping' : `/api/room/${encodeURIComponent(tableId)}/map-ping`;
+  const body = isGm ? { tableId, xFt, yFt, mapId } : { xFt, yFt, mapId };
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+      body: JSON.stringify(body),
+    });
+    return resp.ok ? resp.json() : null;
+  } catch {
+    return null;
+  }
+};
+
 export const postActionNotification = async (notification, tableId = null, opts = {}) => {
   const token = await getAuthToken();
   if (!token) return null;

@@ -1254,6 +1254,41 @@ export async function updatePersonalMapCameraName(appId, tableId, userId, camera
   return rows[0] ?? null;
 }
 
+/** Patch name and/or framing fields for a personal camera. */
+export async function updatePersonalMapCameraPatch(appId, tableId, userId, cameraId, patch) {
+  const { name, mapViewZoomRatio, mapViewPanNorm } = patch || {};
+  const sets = [];
+  const vals = [appId, tableId, userId, cameraId];
+  let i = 5;
+  if (name !== undefined) {
+    const n = String(name).trim();
+    if (!n) return null;
+    sets.push(`name = $${i}`);
+    vals.push(n);
+    i++;
+  }
+  if (mapViewZoomRatio !== undefined) {
+    sets.push(`map_view_zoom_ratio = $${i}`);
+    vals.push(mapViewZoomRatio);
+    i++;
+  }
+  if (mapViewPanNorm !== undefined) {
+    sets.push(`map_view_pan_norm = $${i}::jsonb`);
+    vals.push(JSON.stringify(mapViewPanNorm));
+    i++;
+  }
+  if (sets.length === 0) return null;
+  const db = getPool();
+  const { rows } = await db.query(
+    `UPDATE personal_map_cameras SET ${sets.join(', ')}
+     WHERE app_id = $1 AND table_id = $2 AND user_id = $3 AND id = $4
+     RETURNING id, name, map_id AS "mapId", map_view_zoom_ratio AS "mapViewZoomRatio",
+               map_view_pan_norm AS "mapViewPanNorm", created_at AS "createdAt"`,
+    vals
+  );
+  return rows[0] ?? null;
+}
+
 export async function deletePersonalMapCamera(appId, tableId, userId, cameraId) {
   const db = getPool();
   const { rowCount } = await db.query(

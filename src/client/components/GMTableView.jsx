@@ -337,7 +337,15 @@ function enrichRollWithDamage(roll, elements) {
 /** Width of the character table editor column (unified sheet + slide-out form). */
 const CHARACTER_TABLE_EDITOR_DRAWER_WIDTH = 'min(42rem, calc(100vw - 15rem))';
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, onSetActiveMap, onAddMap, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false }) {
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+  mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
+  playerSelectedViewId = null, onPlayerSelectView,
+  playerFreeMapExplore = false,
+  playerFreeExploreMapId = null,
+  onPlayerEnterMapFreeExplore,
+  onPlayerExitMapFreeExplore,
+  onMapFreeExplore,
+}) {
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const v2Registry = useMemo(() => (srdData ? buildV2RegistryWithSrdItems(srdData) : null), [srdData]);
@@ -5476,8 +5484,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             mapConfig={mapConfig}
             maps={maps}
             activeMapId={activeMapId}
+            gmMapView={gmMapView}
+            mapViews={mapViews}
+            gmActiveViewId={gmActiveViewId}
+            onSetActiveView={onSetActiveView}
+            onAddMapViewOp={onAddMapViewOp}
+            onRemoveMapView={onRemoveMapView}
+            onRenameMapView={onRenameMapView}
+            onSetViewBroadcast={onSetViewBroadcast}
+            onSetMapShare={onSetMapShare}
+            playerSelectedViewId={playerSelectedViewId}
+            onPlayerSelectView={onPlayerSelectView}
+            playerFreeMapExplore={playerFreeMapExplore}
+            playerFreeExploreMapId={playerFreeExploreMapId}
+            onPlayerEnterMapFreeExplore={onPlayerEnterMapFreeExplore}
+            onPlayerExitMapFreeExplore={onPlayerExitMapFreeExplore}
+            onMapFreeExplore={onMapFreeExplore}
             onSetActiveMap={onSetActiveMap}
             onAddMap={onAddMap}
+            onAddMapWithImage={onAddMapWithImage}
             onRemoveMap={onRemoveMap}
             onRenameMap={onRenameMap}
             tableId={tableId}
@@ -5493,6 +5518,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             pendingBannerCount={!isPlayer ? (pendingBanners?.length ?? 0) : 0}
             onCancelAllBanners={!isPlayer ? handleCancelAllBanners : undefined}
             onTokenDragEnd={!isPlayer ? handleTokenDragEnd : undefined}
+            mapPings={mapPings}
+            onDismissMapPing={onDismissMapPing}
+            appendMapPing={appendMapPing}
             className="flex-1 min-h-0"
           />
         </div>
