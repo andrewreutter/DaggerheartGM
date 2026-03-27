@@ -219,22 +219,11 @@ Scenes can reference adversaries, environments, and **nested Scenes** (allowing 
 
 Nested scene chips display in **blue** on `ItemCard` in the Scenes library tab.
 
-### Image Import
+### Unified import (stat blocks, maps, notes)
 
-The **"Import"** button in the Library header opens an `ImageImportModal` — a single-page import flow for stat block images or pasted text.
+GM sessions use **`UnifiedImportModal`** (`src/client/components/modals/UnifiedImportModal.jsx`) behind **`UnifiedImportProvider`** (`src/client/lib/unified-import-context.jsx`). Open from the nav **Import** button, the Library **Import** button, **drop** images on the app (outside import UI), **paste** images from the clipboard, or from the battle map **Upload** / drop when on the Game Table as GM.
 
-**Three input methods** are supported:
-- **Drag and drop** — drop image files onto the drop zone
-- **Click to browse** — standard file picker (`image/*`, multiple selection)
-- **Clipboard paste** — Ctrl/Cmd+V after copying a screenshot or image
-
-**Optional text input** — paste one or more stat blocks as plain text (separate multiple blocks with blank lines).
-
-**Auto-parse**: images are parsed automatically as they're added or removed (debounced 600ms). Each image thumbnail has a role toggle — **"Stat block"** (default, sent to `POST /api/import/parse` for OCR + regex detection) or **"Scene img"** (excluded from parsing, used as scene artwork). Toggling an image to "Scene img" automatically enables the Scene builder. The server runs Tesseract.js OCR on each buffer via `ocrBuffer()`, then calls `detectCollection()` to auto-detect adversary vs environment using keyword heuristics. No LLM is used.
-
-**Inline preview**: parsed items appear below the input area in collapsible cards. A confidence badge (%) indicates parse quality. An `⇄` button lets you override the auto-detected type. All cards are editable inline via `AdversaryForm` / `EnvironmentForm` before importing. Duplicate detection warns when an item's name matches an existing library entry, with "Add as new" / "Replace existing" choice.
-
-**Scene builder**: a "Create a Scene" checkbox at the bottom of the modal assembles a scene from imported items. Parsed adversaries/environments are saved first, then a scene is created with references to them. Images marked as "Scene img" become the scene's `imageUrl` (converted to data URL). The import button reflects what will be created (e.g. "Import Scene + 3 Items").
+**Flow**: load images (client-side page layout + optional **Crop…** via `PageLayoutPreviewModal`), merge OCR text with always-visible **Additional text**, choose type per slice (adversary / environment / map / note), preview and edit via `ImportPreviewCard`, then **Import**. On the Game Table, **Add to table** defaults on for adversaries, environments, maps, and notes. Server parsing uses `POST /api/import/parse` (OCR + `detectCollection()` with `src/import-type-hotwords.js` heuristics). Notes (and text-first adversary/environment refinement) use `POST /api/import/encounter-parse-text`.
 
 ### Markdown Support
 

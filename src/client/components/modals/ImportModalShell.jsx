@@ -37,8 +37,17 @@ export function useImportSelection() {
  */
 export function ImportModalShell({ title, onClose, children, footer }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between p-5 border-b border-dh-border">
           <h2 className="text-xl font-bold text-white">{title}</h2>
           <button onClick={onClose} className="text-dh-muted hover:text-white"><X size={20} /></button>
@@ -46,7 +55,7 @@ export function ImportModalShell({ title, onClose, children, footer }) {
         <div className="flex-1 overflow-y-auto p-5">
           {children}
         </div>
-        <div className="p-5 border-t border-dh-border flex justify-end gap-3">
+        <div className="p-5 border-t border-dh-border flex flex-wrap items-center justify-between gap-3 w-full min-w-0">
           {footer}
         </div>
       </div>

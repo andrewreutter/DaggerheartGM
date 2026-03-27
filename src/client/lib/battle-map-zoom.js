@@ -163,6 +163,111 @@ export function computePanToCenterInnerPointPx({
  * @param {number} p.maxInnerY
  * @param {number} [p.paddingPx]
  */
+/**
+ * Zoom bounds for a plain image viewport (no game tokens): fully zoomed out fits the image in the container;
+ * max zoom matches the spirit of {@link computeMapZoomBounds} using a synthetic detail size (~4% of the shorter side).
+ */
+export function computeImageViewportZoomBounds({
+  containerW,
+  containerH,
+  imageWidthPx,
+  imageHeightPx,
+}) {
+  if (
+    containerW <= 0 ||
+    containerH <= 0 ||
+    imageWidthPx <= 0 ||
+    imageHeightPx <= 0
+  ) {
+    return { minZoom: 1, maxZoom: 1 };
+  }
+  const fitMap = Math.min(containerW / imageWidthPx, containerH / imageHeightPx);
+  const tokenSizePx = Math.max(24, Math.min(imageWidthPx, imageHeightPx) * 0.04);
+  const fitToken = Math.min(containerW, containerH) / tokenSizePx;
+  let minZoom = fitMap;
+  let maxZoom = fitToken;
+  if (minZoom > maxZoom) {
+    const mid = Math.sqrt(minZoom * maxZoom);
+    minZoom = maxZoom = mid;
+  }
+  return { minZoom, maxZoom };
+}
+
+/**
+ * Same wheel semantics as BattleMap: ⌘/Ctrl+wheel zoom toward cursor, Shift+wheel horizontal pan, else vertical pan.
+ * Returns `null` if nothing changes (caller should not preventDefault). Otherwise `{ scrollLeft, scrollTop, mapZoom }`.
+ */
+export function applyViewportWheelPanZoom(e, {
+  viewportW,
+  viewportH,
+  viewportX,
+  viewportY,
+  scrollLeft,
+  scrollTop,
+  mapZoom,
+  minZoom,
+  maxZoom,
+  renderedWidthPx,
+  renderedHeightPx,
+}) {
+  const { dx, dy } = normalizeWheelDeltaPixels(e, viewportW, viewportH);
+  const z = mapZoom;
+  const rw = renderedWidthPx;
+  const rh = renderedHeightPx;
+  const minZ = minZoom;
+  const maxZ = maxZoom;
+
+  const maxL = Math.max(0, rw * z - viewportW);
+  const maxT = Math.max(0, rh * z - viewportH);
+
+  const zoomChord = e.metaKey || e.ctrlKey;
+
+  if (zoomChord) {
+    if (maxZ <= minZ) return null;
+    if (dy === 0 || !Number.isFinite(dy)) return null;
+    const factor = Math.exp(-dy * 0.0015);
+    const oldZ = mapZoom;
+    const newZ = clampMapZoom(oldZ * factor, minZ, maxZ);
+    if (newZ === oldZ) return null;
+    const pan = scrollAfterZoomTowardPoint({
+      scrollLeft,
+      scrollTop,
+      viewportX,
+      viewportY,
+      oldZoom: oldZ,
+      newZoom: newZ,
+      innerWidthPx: rw,
+      innerHeightPx: rh,
+      viewportW,
+      viewportH,
+    });
+    return { scrollLeft: pan.scrollLeft, scrollTop: pan.scrollTop, mapZoom: newZ };
+  }
+
+  if (e.shiftKey) {
+    if (maxL <= 0) return null;
+    const horizDelta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    if (horizDelta === 0 || !Number.isFinite(horizDelta)) return null;
+    const next = clampPanScroll(
+      scrollLeft + horizDelta,
+      scrollTop,
+      { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW, viewportH },
+    );
+    if (next.scrollLeft === scrollLeft && next.scrollTop === scrollTop) return null;
+    return { scrollLeft: next.scrollLeft, scrollTop: next.scrollTop, mapZoom: z };
+  }
+
+  if (maxT <= 0) return null;
+  if (dy === 0 || !Number.isFinite(dy)) return null;
+  const next = clampPanScroll(
+    scrollLeft,
+    scrollTop + dy,
+    { mapZoom: z, renderedWidthPx: rw, renderedHeightPx: rh, viewportW, viewportH },
+  );
+  if (next.scrollLeft === scrollLeft && next.scrollTop === scrollTop) return null;
+  return { scrollLeft: next.scrollLeft, scrollTop: next.scrollTop, mapZoom: z };
+}
+
 export function computeZoomAndPanToFitInnerBounds({
   minInnerX,
   minInnerY,

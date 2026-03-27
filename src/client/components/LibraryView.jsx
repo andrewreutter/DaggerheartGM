@@ -23,7 +23,6 @@ import {
   Puzzle,
 } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
-import { ImageImportModal } from './modals/ImageImportModal.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters, LibrarySearchIncludeStrip } from './CollectionFilters.jsx';
 import { LibraryAllFilters } from './LibraryAllFilters.jsx';
@@ -37,6 +36,7 @@ import { enrichItems, enrichSingleItem, loadLibraryAllCounts } from '../lib/api.
 import { generateId } from '../lib/helpers.js';
 import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
 import { buildLibraryModalPath } from '../lib/library-modal-path.js';
+import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import {
   SRD_UNIFIED_COLLECTIONS,
   LIBRARY_USER_EDITABLE_COLLECTIONS,
@@ -163,7 +163,7 @@ export function LibraryView({
   const [libraryCardHeight, setLibraryCardHeight] = useState(() => readStoredLibraryCardHeight(userUid, activeTab));
   /** Viewport width of the library card area; slider max = one full-width card per row. */
   const [libraryGridInnerWidth, setLibraryGridInnerWidth] = useState(null);
-  const [showImageImport, setShowImageImport] = useState(false);
+  const { openImport, enabled: unifiedImportEnabled } = useUnifiedImport();
   const [showDaggerstackImport, setShowDaggerstackImport] = useState(false);
   const [modalState, setModalState] = useState(null);
   const [nonPaginatedLoading, setNonPaginatedLoading] = useState(false);
@@ -713,19 +713,6 @@ export function LibraryView({
         </div>
       )}
 
-      {showImageImport && (
-        <ImageImportModal
-          onClose={() => setShowImageImport(false)}
-          saveItem={saveItem}
-          data={data}
-          onImportSuccess={(collection, id) => {
-            setShowImageImport(false);
-            search.refresh();
-            navigate(buildLibraryModalPath(activeTab, collection, id));
-          }}
-        />
-      )}
-
       {showDaggerstackImport && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
           <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-5 relative">
@@ -821,10 +808,10 @@ export function LibraryView({
             <h2 className="text-2xl font-bold text-white capitalize">{activeTab === 'all' ? 'All' : activeTab}</h2>
 
             <div className="flex items-center gap-3 flex-wrap">
-              {(activeTab === 'adversaries' || activeTab === 'environments') && (
+              {unifiedImportEnabled && (
                 <button
                   type="button"
-                  onClick={() => setShowImageImport(true)}
+                  onClick={() => openImport()}
                   className="text-xs bg-dh-raised hover:bg-dh-hover text-amber-400 hover:text-amber-300 px-3 py-1.5 rounded transition-colors border border-dh-strong hover:border-amber-700"
                 >
                   Import

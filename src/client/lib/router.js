@@ -3,6 +3,8 @@ import { SRD_UNIFIED_COLLECTIONS } from './library-filter-config.js';
 
 const VALID_TABS = new Set(['all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
 const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
+/** Table deep-link modals only — includes encounter notes (not a library tab). */
+const TABLE_MODAL_COLLECTIONS = new Set([...VALID_COLLECTIONS, 'notes']);
 
 /** Default tab when URL is `/library` or `/library/` without a segment (and invalid tab names). */
 export const DEFAULT_LIBRARY_TAB = 'all';
@@ -31,11 +33,11 @@ export function legacyGmTableToCanonical(pathname, userUid = null) {
   const gmUid = parts[1] || null;
   let tableId = gmUid;
   let collectionOffset = 2;
-  if (parts[2] && !VALID_COLLECTIONS.has(parts[2])) {
+  if (parts[2] && !TABLE_MODAL_COLLECTIONS.has(parts[2])) {
     tableId = parts[2];
     collectionOffset = 3;
   }
-  const modalCollection = VALID_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
+  const modalCollection = TABLE_MODAL_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
   const modalItemId = modalCollection && parts[collectionOffset + 1] ? parts[collectionOffset + 1] : null;
   let out = `/table/${tableId}`;
   if (modalCollection && modalItemId) out += `/${modalCollection}/${modalItemId}`;
@@ -53,11 +55,11 @@ function parseGmTableParts(parts) {
   const gmUid = parts[1] || null;
   let tableId = gmUid;
   let collectionOffset = 2;
-  if (parts[2] && !VALID_COLLECTIONS.has(parts[2])) {
+  if (parts[2] && !TABLE_MODAL_COLLECTIONS.has(parts[2])) {
     tableId = parts[2];
     collectionOffset = 3;
   }
-  const modalCollection = VALID_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
+  const modalCollection = TABLE_MODAL_COLLECTIONS.has(parts[collectionOffset]) ? parts[collectionOffset] : null;
   const modalItemId = modalCollection && parts[collectionOffset + 1] ? parts[collectionOffset + 1] : null;
   return { tableId, modalCollection, modalItemId };
 }
@@ -87,7 +89,7 @@ export function parseRoute(pathname) {
 
   if (parts[0] === 'table') {
     const tableId = parts[1] || null;
-    const modalCollection = VALID_COLLECTIONS.has(parts[2]) ? parts[2] : null;
+    const modalCollection = TABLE_MODAL_COLLECTIONS.has(parts[2]) ? parts[2] : null;
     const modalItemId = modalCollection && parts[3] ? parts[3] : null;
     return { view: 'table', tableId, tab: null, modalCollection, modalItemId };
   }

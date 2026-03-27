@@ -202,7 +202,7 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal, onImageSaved }) {
+export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal, onImageSaved, omitPublicCheckbox = false }) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
@@ -283,16 +283,18 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
         <FeaturesInput features={formData.features} onChange={features => update({ ...formData, features })} />
 
         {!isControlled && (
-          <div className="flex justify-between items-center mt-6 pt-6 border-t border-dh-border">
-            <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
-              <input
-                type="checkbox"
-                checked={!!formData.is_public}
-                onChange={e => update({ ...formData, is_public: e.target.checked })}
-                className="accent-blue-500"
-              />
-              Make Public
-            </label>
+          <div className={`flex items-center mt-6 pt-6 border-t border-dh-border ${omitPublicCheckbox ? 'justify-end' : 'justify-between'}`}>
+            {!omitPublicCheckbox && (
+              <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
+                <input
+                  type="checkbox"
+                  checked={!!formData.is_public}
+                  onChange={e => update({ ...formData, is_public: e.target.checked })}
+                  className="accent-blue-500"
+                />
+                Make Public
+              </label>
+            )}
             <div className="flex gap-3">
               <button onClick={onCancel} className="px-4 py-2 text-dh-muted hover:text-white">Cancel</button>
               <button onClick={() => onSave(formData)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded">Save Environment</button>
@@ -300,7 +302,7 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
           </div>
         )}
 
-        {isControlled && (
+        {isControlled && !omitPublicCheckbox && (
           <div className="mt-6 pt-4 border-t border-dh-border">
             <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-dh-muted">
               <input

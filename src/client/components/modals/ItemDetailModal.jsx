@@ -420,6 +420,9 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
     collection === 'characters' ? 'max-w-[88rem]' :
     'max-w-3xl';
 
+  /** Match main card + overlay padding so the feature-library column cannot stretch the row past the viewport (avoids vertical center clipping). */
+  const libraryModalMaxHClass = 'max-h-[calc(100dvh-5.5rem)]';
+
   const showCharAutosaveHint = editable && collection === 'characters' && !charAutosaveHintDismissed;
 
   const saveStatus = (() => {
@@ -783,20 +786,20 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4 pt-[4.5rem] overflow-hidden"
       onClick={handleOverlayClick}
     >
-      <div className={`flex gap-3 items-stretch w-full ${maxWidth}`}>
+      <div className={`flex gap-3 items-stretch w-full min-h-0 ${libraryModalMaxHClass} ${maxWidth}`}>
         {/* Main modal card — height follows content up to viewport; body panes scroll when needed */}
         <div
-          className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden max-h-[calc(100dvh-5.5rem)]"
+          className={`bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden ${libraryModalMaxHClass}`}
           {...editorGestureProps}
         >
           {mainCardBody}
         </div>
 
-        {/* Feature Library portal — stretches to main card height so FeatureLibrary h-full + list scroll work */}
+        {/* Feature Library portal — same max height as main card so long lists scroll inside, not grow the flex row */}
         {showFeatureLibrary && (
           <div
             ref={setLibraryPortal}
-            className="w-72 shrink-0 min-h-0 flex flex-col rounded-xl"
+            className={`w-72 shrink-0 min-h-0 flex flex-col overflow-hidden rounded-xl ${libraryModalMaxHClass}`}
           />
         )}
       </div>

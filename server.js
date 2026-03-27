@@ -19,7 +19,14 @@ import { unifiedListConfig } from './src/unified-list-config.js';
 import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
 import multer from 'multer';
 import { parseStatBlock, mergeResults, detectCollection } from './src/text-parse.js';
-import { ocrImages, ocrBuffer } from './src/ocr-parse.js';
+import {
+  ocrImages,
+  ocrBuffer,
+  analyzePageLayout,
+  ocrCropRegionText,
+  parseEncounterDropBuffer,
+  parseEncounterDropText,
+} from './src/ocr-parse.js';
 import { generateImage as hfGenerateImage, editImage as hfEditImage, isConfigured as hfIsConfigured } from './src/huggingface-image.js';
 import { syncDaggerstackCharacter, invalidateSrdLookupCache } from './src/daggerstack-sync.js';
 import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.js';
@@ -1579,6 +1586,72 @@ app.post('/api/import/parse', requireAuth, importUpload.array('images', 20), asy
   } catch (err) {
     console.error('POST /api/import/parse error:', err);
     res.status(500).json({ error: err.message || 'Failed to parse import' });
+  }
+});
+
+/** Game Table Encounter panel: OCR + parse one image for adversary, environment, or note import. */
+app.post('/api/import/encounter-drop', requireAuth, importUpload.single('image'), async (req, res) => {
+  try {
+    const kind = (req.body?.kind || '').trim();
+    if (!['adversary', 'environment', 'note'].includes(kind)) {
+      return res.status(400).json({ error: 'kind must be adversary, environment, or note' });
+    }
+    const file = req.file;
+    if (!file?.buffer) {
+      return res.status(400).json({ error: 'image file is required' });
+    }
+    const result = await parseEncounterDropBuffer(file.buffer, kind);
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/import/encounter-drop error:', err);
+    res.status(500).json({ error: err.message || 'Failed to parse encounter import' });
+  }
+});
+
+app.post('/api/import/page-layout', requireAuth, importUpload.single('image'), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file?.buffer) {
+      return res.status(400).json({ error: 'image file is required' });
+    }
+    const layout = await analyzePageLayout(file.buffer);
+    res.json(layout);
+  } catch (err) {
+    console.error('POST /api/import/page-layout error:', err);
+    res.status(500).json({ error: err.message || 'Failed to analyze page layout' });
+  }
+});
+
+/** OCR a cropped region for the encounter import modal: raw text + text-detected flag. */
+app.post('/api/import/page-layout-region-ocr', requireAuth, importUpload.single('image'), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file?.buffer) {
+      return res.status(400).json({ error: 'image file is required' });
+    }
+    const { text, hasText } = await ocrCropRegionText(file.buffer);
+    res.json({ hasText, text });
+  } catch (err) {
+    console.error('POST /api/import/page-layout-region-ocr error:', err);
+    res.status(500).json({ error: err.message || 'Failed to classify region' });
+  }
+});
+
+/** Parse OCR/plaintext for encounter import without re-running OCR (same shapes as encounter-drop). */
+// Body is already parsed by the global application/json middleware (see JSON_LIMIT above); do not
+// add express.json() here — it would try to read the stream again and return 500.
+app.post('/api/import/encounter-parse-text', requireAuth, async (req, res) => {
+  try {
+    const kind = (req.body?.kind || '').trim();
+    if (!['adversary', 'environment', 'note'].includes(kind)) {
+      return res.status(400).json({ error: 'kind must be adversary, environment, or note' });
+    }
+    const text = typeof req.body?.text === 'string' ? req.body.text : '';
+    const result = parseEncounterDropText(text, kind);
+    res.json(result);
+  } catch (err) {
+    console.error('POST /api/import/encounter-parse-text error:', err);
+    res.status(500).json({ error: err.message || 'Failed to parse text' });
   }
 });
 
