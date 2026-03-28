@@ -8,14 +8,15 @@ import { applyDamageBoost } from '../lib/battle-points.js';
 import { libraryTierBodyLine, libraryTierSubtitleText } from '../lib/library-tier-subtitle.js';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
 import { CheckboxTrack } from './CheckboxTrack.jsx';
+import { buildAdversaryCardRollAttackData } from '../lib/adversary-roll-descriptors.js';
 
 export { CheckboxTrack };
 
-const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
-const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
-
 /** Stub element so `GuideFeatureCard` runs in Library-style preview (no instance / no V2 table hooks). */
 const ADV_ENV_FEATURE_EL_STUB = { instanceId: null, elementType: 'character', name: '' };
+
+/** Stub for adversary library preview (`elementType` so `table.me.isAdversary` is true when no instance). */
+const ADV_ADV_FEATURE_EL_STUB = { instanceId: null, elementType: 'adversary', name: '' };
 
 function normalizeAdvEnvFeatureRow(feat, parentEl, collection) {
   if (!feat || typeof feat !== 'object') return null;
@@ -34,6 +35,7 @@ function normalizeAdvEnvFeatureRow(feat, parentEl, collection) {
 /**
  * Adversary / environment feature list using `GuideFeatureCard` (matches Library generic detail).
  * Optional `onRollAttack` (adversaries): dice icon per rollable feature posts to the dice room.
+ * When `v2TableContext` + `featureListEl` + `onV2CardChip` are set (adversaries), card chips are interactive (GM table).
  */
 function DetailCardGuideFeatureList({
   parentEl,
@@ -43,8 +45,22 @@ function DetailCardGuideFeatureList({
   collection,
   onRollAttack,
   damageBoost,
+  v2TableContext,
+  featureListEl,
+  interactionMode,
+  onV2CardChip,
 }) {
   if (!features?.length) return null;
+  const guideEl =
+    collection === 'adversaries'
+      ? featureListEl && typeof featureListEl === 'object'
+        ? featureListEl
+        : { ...ADV_ADV_FEATURE_EL_STUB, name: parentEl?.name || '' }
+      : ADV_ENV_FEATURE_EL_STUB;
+  const mode =
+    collection === 'adversaries' && interactionMode === 'interactive' && typeof onV2CardChip === 'function'
+      ? 'interactive'
+      : 'preview';
   return (
     <div className="space-y-1.5">
       <h5 className="text-xs font-semibold text-dh-muted uppercase border-b border-dh-border pb-1">Features</h5>
@@ -62,14 +78,9 @@ function DetailCardGuideFeatureList({
 
           let rollBtn = null;
           if (collection === 'adversaries' && typeof onRollAttack === 'function') {
-            const attackMatch = feat.type === 'action' && feat.description ? ATTACK_DESC_RE.exec(feat.description) : null;
-            const forceAttack = !attackMatch && /\bmakes?\b.*?\battack\b/is.test(feat.description || '');
-            const dicePatterns =
-              !attackMatch && !forceAttack && feat.description
-                ? [...feat.description.matchAll(DICE_PATTERN_RE)].map((m) => m[0])
-                : [];
-            const isRollable = !!(attackMatch || forceAttack || dicePatterns.length > 0);
-            if (isRollable) {
+            const boost = damageBoost && collection === 'adversaries' ? damageBoost : null;
+            const { attackData, isRollable } = buildAdversaryCardRollAttackData(feat, parentEl, featIdx, boost);
+            if (isRollable && attackData) {
               rollBtn = (
                 <button
                   type="button"
@@ -77,31 +88,7 @@ function DetailCardGuideFeatureList({
                   title="Roll to dice room"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (attackMatch) {
-                      onRollAttack(
-                        {
-                          name: feat.name,
-                          modifier: parseInt(attackMatch[1], 10),
-                          range: attackMatch[2],
-                          damage: boostedDamage(attackMatch[3], damageBoost),
-                          trait: attackMatch[4],
-                        },
-                        e,
-                      );
-                    } else if (forceAttack) {
-                      onRollAttack(
-                        {
-                          name: feat.name,
-                          modifier: parentEl.attack?.modifier ?? 0,
-                          range: parentEl.attack?.range || 'Melee',
-                          damage: boostedDamage(parentEl.attack?.damage, damageBoost),
-                          trait: parentEl.attack?.trait,
-                        },
-                        e,
-                      );
-                    } else {
-                      onRollAttack({ name: feat.name, patterns: dicePatterns }, e);
-                    }
+                    onRollAttack(attackData, e);
                   }}
                 >
                   <Dices size={14} />
@@ -124,10 +111,12 @@ function DetailCardGuideFeatureList({
                   <GuideFeatureCard
                     featRow={featRow}
                     featureKey={String(feat.id ?? `${cardKey}-${fKey}`)}
-                    el={ADV_ENV_FEATURE_EL_STUB}
+                    el={guideEl}
                     open
                     onToggle={() => {}}
-                    interactionMode="preview"
+                    interactionMode={mode}
+                    v2TableContext={collection === 'adversaries' ? v2TableContext : undefined}
+                    onV2CardChip={collection === 'adversaries' && mode === 'interactive' ? onV2CardChip : undefined}
                   />
                 </div>
               </div>
@@ -291,9 +280,18 @@ export function AdversaryCardContent({
   scaledMeta,
   onScaledToggle,
   suppressTierBadge = false,
+  /** Merged `mergeAdversaryV2Overlay` row (Game Table / library): drives `activeFeatures` + Guide `el`. */
+  featureDisplayEl,
+  v2TableContext,
+  /** `'interactive'` when GM table + chips; default `'preview'`. */
+  adversaryInteractionMode = 'preview',
+  onV2CardChip,
 }) {
   // damageBoost: 'd4' | 'static' | null — when set, visually appends +1d4 or +2 to all damage.
   const dmgBoost = damageBoost || el._damageBoost || null;
+  const rawFeatureList = el.features ?? el.feature ?? [];
+  const featureRowsForGuide =
+    featureDisplayEl?.activeFeatures?.length > 0 ? featureDisplayEl.activeFeatures : rawFeatureList;
   const advTierLine = suppressTierBadge
     ? libraryTierBodyLine(el, 'adversaries')
     : libraryTierSubtitleText(el, 'adversaries');
@@ -458,7 +456,15 @@ export function AdversaryCardContent({
                 ? 'border-yellow-500'
                 : 'border-transparent'
             } ${onRollAttack ? 'cursor-pointer hover:bg-dh-hover/40 py-0.5 pr-1 group/atk' : ''}`}
-            onClick={onRollAttack ? (e) => onRollAttack({ name: el.attack.name, modifier: el.attack.modifier, range: el.attack.range, damage: boostedDamage(el.attack.damage, dmgBoost), trait: el.attack.trait }, e) : undefined}
+            onClick={onRollAttack ? (e) => onRollAttack({
+              name: el.attack.name,
+              modifier: el.attack.modifier,
+              range: el.attack.range,
+              damage: boostedDamage(el.attack.damage, dmgBoost),
+              trait: el.attack.trait,
+              _featureKey: 'attack',
+              _featureName: el.attack.name,
+            }, e) : undefined}
             title={onRollAttack ? 'Roll to dice room' : undefined}
           >
             <span className="font-bold text-dh">{el.attack.name}:</span>
@@ -472,12 +478,16 @@ export function AdversaryCardContent({
 
       <DetailCardGuideFeatureList
         parentEl={el}
-        features={el.features}
+        features={featureRowsForGuide}
         cardKey={cardKey}
         hoveredFeature={hoveredFeature}
         collection="adversaries"
         onRollAttack={onRollAttack}
         damageBoost={dmgBoost}
+        featureListEl={featureDisplayEl}
+        v2TableContext={v2TableContext}
+        interactionMode={adversaryInteractionMode}
+        onV2CardChip={onV2CardChip}
       />
     </>
   );

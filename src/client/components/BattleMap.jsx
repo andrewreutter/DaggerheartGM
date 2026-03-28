@@ -18,6 +18,7 @@ import {
   shouldApplyRemotePlayerMapView,
   freeMapExploreTargetsUnsharedMap,
   countPlayerMapStripTiles,
+  shouldShowPlayerMapViewStrip,
 } from '../lib/map-view-player-sync.js';
 import {
   gmMapStripFullMapTileActive,
@@ -3791,7 +3792,7 @@ export function BattleMap({
           ) : null}
         </div>
       )}
-      {isPlayer && tableId && playerStripTileCount >= 1 && (
+      {isPlayer && tableId && shouldShowPlayerMapViewStrip(playerStripTileCount) && (
           <div className="flex items-start gap-2 px-3 py-1.5 bg-dh-surface border-b border-dh-border text-xs shrink-0 flex-wrap">
             <div
               className="flex flex-1 min-w-0 items-stretch gap-2 overflow-x-auto pb-0.5 -mb-0.5"
@@ -4554,7 +4555,7 @@ export function BattleMap({
           {canControlMapView &&
             !(
               (!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore) ||
-              (isPlayer && tableId && playerStripTileCount >= 1)
+              (isPlayer && tableId && shouldShowPlayerMapViewStrip(playerStripTileCount))
             ) && (
             <div className="pointer-events-none absolute right-2 bottom-2 z-20">
               <Tooltip label="Zoom to actors — fit everyone on the map at the closest zoom">

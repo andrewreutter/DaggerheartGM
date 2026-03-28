@@ -11,6 +11,7 @@
  */
 
 import { applyDeclarativeFeatures, loadCharacterFeatures } from '../../features-v2/engine/feature-loader.js';
+import { mergeAdversaryV2Overlay } from '../../features-v2/engine/adversary-feature-loader.js';
 import { collectPhaseChipsOnly, createActionLoop } from '../../features-v2/engine/action-loop.js';
 import { buildTableSnapshot } from '../../features-v2/engine/table.js';
 import {
@@ -738,9 +739,16 @@ export function activateV2RestPlacementChip(opts) {
  */
 export function loadAllV2FeaturesForTable(activeElements, registry, opts = {}) {
   const out = [];
+  const tableBase = {
+    featureState: mergeV2TableFeatureState(opts.tableFeatureState, activeElements),
+  };
   for (const el of activeElements || []) {
-    if (el.elementType !== 'character') continue;
-    out.push(...loadV2FeaturesForCharacterElement(el, registry, opts));
+    if (el.elementType === 'character') {
+      out.push(...loadV2FeaturesForCharacterElement(el, registry, opts));
+    } else if (el.elementType === 'adversary') {
+      const merged = mergeAdversaryV2Overlay(el, el, registry, { tableBase });
+      if (Array.isArray(merged.activeFeatures)) out.push(...merged.activeFeatures);
+    }
   }
   return out;
 }

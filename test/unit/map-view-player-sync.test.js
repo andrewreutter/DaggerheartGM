@@ -4,6 +4,7 @@ import {
   freeMapExploreTargetsUnsharedMap,
   playerCanAccessMapViewSelection,
   countPlayerMapStripTiles,
+  shouldShowPlayerMapViewStrip,
 } from '../../src/client/lib/map-view-player-sync.js';
 
 describe('map-view-player-sync', () => {
@@ -53,5 +54,11 @@ describe('map-view-player-sync', () => {
       },
     ];
     expect(countPlayerMapStripTiles(batches)).toBe(1 + 2 + 0 + 1);
+  });
+
+  it('shouldShowPlayerMapViewStrip hides strip when there is only one selectable tile', () => {
+    expect(shouldShowPlayerMapViewStrip(0)).toBe(false);
+    expect(shouldShowPlayerMapViewStrip(1)).toBe(false);
+    expect(shouldShowPlayerMapViewStrip(2)).toBe(true);
   });
 });

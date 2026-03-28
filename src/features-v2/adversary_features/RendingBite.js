@@ -1,0 +1,10 @@
+/**
+ * Adversary passive — Rending Bite (SRD)
+ *
+ * TODO PASSIVE [ARMOR]: Target marks Armor Slot without benefit; if they cannot, mark extra HP instead (per SRD).
+ */
+export const RendingBite = {
+  name: "Rending Bite",
+  type: 'passive',
+  description: "When the Shark makes a successful attack, the target must mark an Armor Slot without receiving its benefits (they can still use armor to reduce the damage). If they can't mark an Armor Slot, they must mark an additional HP.",
+};

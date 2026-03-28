@@ -1,27 +1,8 @@
-import { useEffect } from 'react';
-import { postDebugLog } from '../lib/debug-log.js';
-
 /**
  * Prep / idle-pause hint — portaled to `document.body` from `app.jsx` so GM and player
  * always see it above the Game Table layout (not behind dice canvas or column stacking).
  */
 export function SessionBlockedBanner({ isPlayer, sessionStarted }) {
-  // #region agent log
-  useEffect(() => {
-    const isPrep = sessionStarted === false;
-    postDebugLog({
-      _debugSessionId: '7dabc3',
-      sessionId: '7dabc3',
-      location: 'SessionBlockedBanner.jsx:mount',
-      message: 'SessionBlockedBanner mounted',
-      hypothesisId: 'H3',
-      data: { isPlayer, sessionStarted, isPrep, titleKind: isPrep ? 'prep' : 'paused' },
-      timestamp: Date.now(),
-      runId: 'pre-fix',
-    });
-  }, [isPlayer, sessionStarted]);
-  // #endregion
-
   const isPrep = sessionStarted === false;
   const title = isPrep ? 'Prep mode' : 'Session paused';
   const bodyGm = isPrep

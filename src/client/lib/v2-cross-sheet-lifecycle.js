@@ -7,6 +7,7 @@
  */
 
 import { applyDeclarativeFeatures, loadCharacterFeatures } from '../../features-v2/engine/feature-loader.js';
+import { loadAdversaryFeatures } from '../../features-v2/engine/adversary-feature-loader.js';
 import {
   collectChips,
   collectChipsForShapePlacement,
@@ -175,9 +176,18 @@ export function activateV2OwnedCardChip(characterEl, featureName, rawChip, activ
     top: { fear: opts.fearCount ?? 0, map: opts.mapConfig ?? null },
     featureState: merged,
   };
-  const base = loadCharacterFeatures(characterEl, registry);
-  const decl = applyDeclarativeFeatures(base, characterEl, tableBase, registry);
-  const feature = decl.mergedFeatures.find((f) => f.name === featureName);
+  let mergedFeatures;
+  if (characterEl?.elementType === 'adversary') {
+    mergedFeatures =
+      Array.isArray(characterEl.activeFeatures) && characterEl.activeFeatures.length > 0
+        ? characterEl.activeFeatures
+        : loadAdversaryFeatures(characterEl, registry);
+  } else {
+    const base = loadCharacterFeatures(characterEl, registry);
+    const decl = applyDeclarativeFeatures(base, characterEl, tableBase, registry);
+    mergedFeatures = decl.mergedFeatures;
+  }
+  const feature = mergedFeatures.find((f) => f.name === featureName);
   if (!feature) {
     return { mutations: [], chipState: makeChipState(), feature: null, engineChip: null, error: 'no-feature' };
   }

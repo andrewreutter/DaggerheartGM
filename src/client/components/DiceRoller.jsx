@@ -9,7 +9,7 @@ import { postRollSilent } from '../lib/api.js';
 import { parseSubDetails as _parseSubDetails, extractDetailsValues } from '../lib/dice-utils.js';
 import { rangeFtToLabel } from '../lib/map-range.js';
 import { rollShouldUseMapFilteredTargets, rollIsHitMissEligibleAttack } from '../lib/banner-target-roll.js';
-import { formatTargetSummary, computeHpLoss } from '../lib/helpers.js';
+import { formatTargetSummary, computeHpLoss, effectivePhysicalDamageForBannerPreview } from '../lib/helpers.js';
 import {
   wrapRoll,
   getWeaponTagAutomatedForBanner,
@@ -25,6 +25,7 @@ import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
 import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
+import { resolveBannerAttackerElement } from '../lib/adversary-roll-descriptors.js';
 import {
   V2_REVIEW_CHIP_INLINE_OPTION_MAX,
   V2_INLINE_GROUP_OUTER,
@@ -1217,12 +1218,10 @@ function V2ReviewChipRow({
   return panel;
 }
 
-function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
+function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTargetsForRoll, getTargetDisadvantageLabels, onApplyDamage, onApplyVulnerable, onConcussiveKnock, disableDismiss, canApplyDamage = true, onQuickTarget, onDoubledUpTarget, onBouncingTarget, wizardsWithHope = [], onNotThisTime, displayOverridesByRollId, tableCharacters = [], adversaryDisplayByInstanceId, rangerFocusRerollChars = [], onRangerFocusReroll, onRangerFocusRerollRequest, rangerFocusRequestedBannerIds, holdThemOffChars = [], onHoldThemOffToggle, onBannerTargetsChange, lockedOnAutoSuccessRollDbIds = new Set(), wingsOfLightFlyingInstanceIds, onWingsD8Toggle, onWingsD8ToggleRequest, onGetWingsD8Extra, getV2DamageBannerAckNotices, sessionRole, isPlayer = false, currentUserUid = null, onResolveInstantly, onReplayDice, v2ReviewChips = [], onV2ReviewChip, resolveV2ReviewChipPicker, getV2ReviewChipDisableHint, canUseV2ReviewChips, v2PendingMoveInfo = { blocked: false, desiredCondition: '', description: '', featureName: '' } }) {
   const visible = useBannerVisible();
   const effectiveSessionRole = sessionRole ?? (isPlayer ? 'player' : 'gm');
-  const attackerEl = roll._attackerInstanceId
-    ? tableCharacters.find((c) => c.instanceId === roll._attackerInstanceId)
-    : null;
+  const attackerEl = resolveBannerAttackerElement(roll, { tableCharacters, adversaryDisplayByInstanceId });
   const gmHelperSuffix = getGmHelperBannerSuffix({ sessionRole: effectiveSessionRole, roll, attackerElement: attackerEl });
   const gmHelperTooltip = getGmHelperBannerTooltip({ sessionRole: effectiveSessionRole, roll, attackerElement: attackerEl });
   const { dominant, total, characterName, rollUser } = roll;
@@ -1714,8 +1713,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           const firstDmgType = dmg?.type ?? (damageSubs[0] && parseDiceSub(damageSubs[0])?.type);
           const selectedTarget = selectedDamageTargetId ? filteredTargets.find(t => t.instanceId === selectedDamageTargetId) : null;
           const isPhysicalDmg = firstDmgType === 'phy' || firstDmgType === 'Physical';
-          const hasPhysicalResistance = selectedTarget?.type === 'character' && (selectedTarget.retractedActive || (Array.isArray(selectedTarget.resistance) && selectedTarget.resistance.some(r => (r.type === 'physical' || r.type === 'Physical'))));
-          const effectiveDisplayDmg = (hasPhysicalResistance && isPhysicalDmg) ? Math.floor(displayDmg / 2) : displayDmg;
+          const effectiveDisplayDmg = effectivePhysicalDamageForBannerPreview(
+            displayDmg,
+            firstDmgType,
+            selectedTarget,
+            adversaryDisplayByInstanceId
+          );
+          const hasPhysicalResistancePreview = isPhysicalDmg && effectiveDisplayDmg < displayDmg;
           return (
             <div className="flex items-baseline justify-center flex-wrap gap-x-1 mt-1.5 leading-snug">
               <span className="text-[11px] text-red-300/60">
@@ -1756,7 +1760,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 {(resolved || (damageSubs.length > 0 && damageSubs.every((s) => s._preset)))
                   ? (roll._damageTotalOverride != null
                       ? <><span>{damageTotal}</span> <span className="text-red-300/80 font-semibold">({effectiveDisplayDmg})</span></>
-                      : hasPhysicalResistance && isPhysicalDmg
+                      : hasPhysicalResistancePreview
                         ? <><span className="line-through">{displayDmg}</span> <span className="text-orange-400/95">{effectiveDisplayDmg}</span></>
                         : effectiveDisplayDmg)
                   : <Spinner />}
@@ -1765,7 +1769,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                 <span className="text-sm font-semibold text-red-300/80 ml-0.5">{firstDmgType}</span>
               )}
               <span className="text-sm font-semibold text-red-300/80">damage</span>
-              {hasPhysicalResistance && isPhysicalDmg && (
+              {hasPhysicalResistancePreview && (
                 <span className="text-[10px] font-medium text-orange-400/90 ml-1">(Resistance)</span>
               )}
             </div>
@@ -2160,7 +2164,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const dmgType = dmg?.type || '';
                                     const armorBlockedByType = (t.armorFeatureName === 'Physical' && dmgType === 'mag') || (t.armorFeatureName === 'Magic' && dmgType === 'phy');
                                     const hasArmor = t.type === 'character' && (t.maxArmor ?? 0) > 0 && (t.currentArmor ?? 0) < (t.maxArmor ?? 0) && !armorBlockedByType;
-                                    const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                                    const previewDmg = effectivePhysicalDamageForBannerPreview(displayDmg, dmgType, t, adversaryDisplayByInstanceId);
+                                    const hpLoss = resolved && t.thresholds != null ? computeHpLoss(previewDmg, t.thresholds) : null;
                                     return (
                                       <div key={id} className="flex items-center justify-between gap-2 text-[11px] w-full">
                                         <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
@@ -2213,7 +2218,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                       return filteredTargets.map((t) => {
                                         const sum = formatTargetSummary(t, { hideMax: isPlayer });
                                         const isSelected = selectedDamageTargetIds.includes(t.instanceId);
-                                        const hpLoss = hasDamage && resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                                        const previewDmg = effectivePhysicalDamageForBannerPreview(displayDmg, dmg?.type || '', t, adversaryDisplayByInstanceId);
+                                        const hpLoss = hasDamage && resolved && t.thresholds != null ? computeHpLoss(previewDmg, t.thresholds) : null;
                                         return (
                                           <button
                                             key={t.instanceId}
@@ -2303,7 +2309,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                                     const dmgReduction = selectedDmgReduceDie?.value ?? 0;
                                     const wingsBonus = roll._wingsOfLightD8Result ?? 0;
                                     const displayDmg = Math.max(0, baseDamage + wingsBonus - dmgReduction);
-                                    const hpLoss = selectedTarget.thresholds != null ? computeHpLoss(displayDmg, selectedTarget.thresholds) : 0;
+                                    const previewDmg = effectivePhysicalDamageForBannerPreview(displayDmg, dmg?.type || '', selectedTarget, adversaryDisplayByInstanceId);
+                                    const hpLoss = selectedTarget.thresholds != null ? computeHpLoss(previewDmg, selectedTarget.thresholds) : 0;
                                     const wouldBeZero = currentHp - hpLoss <= 0;
                                     const hasImpenetrable = selectedTarget.armorFeatureName === 'Impenetrable';
                                     const hasStressSpace = (selectedTarget.currentStress ?? 0) < (selectedTarget.maxStress ?? 6);
@@ -2366,7 +2373,8 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
                               const wingsBonus = roll._wingsOfLightD8Result ?? 0;
                               const baseDmg = baseDamage + wingsBonus;
                               const displayDmg = Math.max(0, baseDmg - dmgReduction);
-                              const hpLoss = resolved && t.thresholds != null ? computeHpLoss(displayDmg, t.thresholds) : null;
+                              const previewDmg = effectivePhysicalDamageForBannerPreview(displayDmg, dmg?.type || '', t, adversaryDisplayByInstanceId);
+                              const hpLoss = resolved && t.thresholds != null ? computeHpLoss(previewDmg, t.thresholds) : null;
                               return (
                                 <div className="mt-1 flex items-center justify-between gap-2 text-[11px] w-full">
                                   <span className="font-medium text-dh truncate min-w-0">{t.name}</span>
@@ -2742,6 +2750,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   onNotThisTime,
   displayOverridesByRollId = {},
   tableCharacters = [],
+  adversaryDisplayByInstanceId,
   rangerFocusRerollChars = [],
   onRangerFocusReroll,
   onRangerFocusRerollRequest,
@@ -3371,6 +3380,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
                 onNotThisTime={onNotThisTime}
                 displayOverridesByRollId={displayOverridesByRollId}
                 tableCharacters={tableCharacters}
+                adversaryDisplayByInstanceId={adversaryDisplayByInstanceId}
                 rangerFocusRerollChars={rangerFocusRerollChars}
                 onRangerFocusReroll={onRangerFocusReroll}
                 onRangerFocusRerollRequest={onRangerFocusRerollRequest}

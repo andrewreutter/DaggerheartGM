@@ -2,8 +2,8 @@
  * V2 Feature Registry
  *
  * Imports all feature collection barrel files and re-exports them as a single
- * registry object. Pass this registry to `loadCharacterFeatures` from the
- * engine to resolve features for any character.
+ * registry object. Pass this registry to `loadCharacterFeatures` / `loadAdversaryFeatures` from the
+ * engine to resolve features for characters and adversary statblocks.
  *
  * Each barrel exports a default object: { [featureId]: featureDescriptor }.
  * The registry is keyed by collection name (matching the keys used in
@@ -20,6 +20,7 @@ import abilities from './abilities/index.js';
 import beastforms from './beastforms/index.js';
 import items from './items/index.js';
 import consumables from './consumables/index.js';
+import adversary_features from './adversary_features/index.js';
 
 const registry = {
   ancestries,
@@ -32,6 +33,7 @@ const registry = {
   beastforms,
   items,
   consumables,
+  adversary_features,
 };
 
 export default registry;
@@ -46,4 +48,5 @@ export {
   beastforms,
   items,
   consumables,
+  adversary_features,
 };

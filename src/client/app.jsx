@@ -14,7 +14,6 @@ import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
-import { postDebugLog } from './lib/debug-log.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
@@ -1199,46 +1198,6 @@ function App() {
   );
   const sessionStarted = tableTop == null ? true : tableTop.sessionStarted !== false;
   const sessionPaused = tableTop?.sessionPaused === true;
-
-  // #region agent log
-  useEffect(() => {
-    if (route.view !== 'table' || !user) return;
-    const portalGate = route.view === 'table' && !!user && !sessionPlayAllowed;
-    postDebugLog({
-      _debugSessionId: '7dabc3',
-      sessionId: '7dabc3',
-      location: 'app.jsx:tableSessionPortalGate',
-      message: 'table session + SessionBlockedBanner portal gate',
-      hypothesisId: 'H1-H2-H4-H5',
-      data: {
-        portalGate,
-        sessionPlayAllowed,
-        sessionStarted,
-        sessionPaused,
-        tableTopNull: tableTop == null,
-        topSessionStarted: tableTop?.sessionStarted,
-        topSessionPaused: tableTop?.sessionPaused,
-        isPlayer,
-        effectiveIsPlayer,
-        isPreviewMode: !isPlayer && !!previewAsPlayerEmail && route.view === 'table',
-        routeTableId: route.tableId,
-      },
-      timestamp: Date.now(),
-      runId: 'pre-fix',
-    });
-  }, [
-    route.view,
-    route.tableId,
-    user,
-    sessionPlayAllowed,
-    sessionStarted,
-    sessionPaused,
-    tableTop,
-    isPlayer,
-    effectiveIsPlayer,
-    previewAsPlayerEmail,
-  ]);
-  // #endregion
 
   const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
     if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {

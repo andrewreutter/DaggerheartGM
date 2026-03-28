@@ -106,6 +106,43 @@ export function computeHpLoss(damage, thresholds) {
 }
 
 /**
+ * True when merged V2 `activeFeatures` rows declare resistance to physical damage via `damageAffinities`
+ * (e.g. adversary Ghost passive). Used when applying damage to adversary targets on the Game Table.
+ * @param {unknown} activeFeatures
+ */
+export function hasPhysicalResistanceFromAffinityRows(activeFeatures) {
+  if (!Array.isArray(activeFeatures)) return false;
+  return activeFeatures.some((f) => {
+    const r = f?.damageAffinities?.resistances;
+    return Array.isArray(r) && r.some((x) => String(x).toLowerCase() === 'physical');
+  });
+}
+
+/**
+ * Physical damage total for banner HP preview — matches {@code applyDamageToTarget} halving (PC resistance + adversary V2 affinity).
+ * @param {number} displayDmg — post–prayer/wings, pre-threshold
+ * @param {string} [firstDmgType] — e.g. `phy` / `mag` from damage sub-item
+ * @param {{ type?: string, instanceId?: string, retractedActive?: boolean, resistance?: unknown[] } | null} target
+ * @param {Map<string, object>|undefined} adversaryDisplayByInstanceId — merged overlay from {@code mergeAdversaryV2Overlay}
+ */
+export function effectivePhysicalDamageForBannerPreview(displayDmg, firstDmgType, target, adversaryDisplayByInstanceId) {
+  const isPhysicalDmg = firstDmgType === 'phy' || firstDmgType === 'Physical';
+  if (!isPhysicalDmg || target == null) return displayDmg;
+  if (target.type === 'character') {
+    const resistance = Array.isArray(target.resistance) ? target.resistance : [];
+    const hasResistance =
+      target.retractedActive || resistance.some((r) => r.type === 'physical' || r.type === 'Physical');
+    if (hasResistance) return Math.floor(displayDmg / 2);
+    return displayDmg;
+  }
+  if (target.type === 'adversary' && adversaryDisplayByInstanceId?.get && target.instanceId != null) {
+    const merged = adversaryDisplayByInstanceId.get(target.instanceId);
+    if (hasPhysicalResistanceFromAffinityRows(merged?.activeFeatures)) return Math.floor(displayDmg / 2);
+  }
+  return displayDmg;
+}
+
+/**
  * Returns a character's effective Evasion: sheet evasion (including beastform when folded in recompute),
  * optional beastform bonus resolved from SRD when `srdData` is passed and `activeBeastform` has no bonus text,
  * active evasion modifiers (e.g. Timeslowing), and Rogue's Dodge passive.

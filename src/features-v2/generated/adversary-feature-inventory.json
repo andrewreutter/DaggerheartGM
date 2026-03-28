@@ -1,0 +1,2269 @@
+{
+  "generatedAt": "2026-03-28T02:42:16.959Z",
+  "sourceRelative": "daggerheart-srd/.build/03_json/adversaries.json",
+  "adversaryStatblockCount": 129,
+  "uniqueFeatureNameTypePairs": 323,
+  "entries": [
+    {
+      "name": "Momentum",
+      "type": "reaction",
+      "count": 23,
+      "representativeAdversaryId": "srd-adv-bear",
+      "representativeAdversaryName": "Bear"
+    },
+    {
+      "name": "Group Attack",
+      "type": "action",
+      "count": 16,
+      "representativeAdversaryId": "srd-adv-giant-rat",
+      "representativeAdversaryName": "Giant Rat"
+    },
+    {
+      "name": "Relentless (2)",
+      "type": "passive",
+      "count": 8,
+      "representativeAdversaryId": "srd-adv-construct",
+      "representativeAdversaryName": "Construct"
+    },
+    {
+      "name": "Relentless (3)",
+      "type": "passive",
+      "count": 7,
+      "representativeAdversaryId": "srd-adv-acid-burrower",
+      "representativeAdversaryName": "Acid Burrower"
+    },
+    {
+      "name": "Terrifying",
+      "type": "passive",
+      "count": 7,
+      "representativeAdversaryId": "srd-adv-skeleton-knight",
+      "representativeAdversaryName": "Skeleton Knight"
+    },
+    {
+      "name": "Minion (6)",
+      "type": "passive",
+      "count": 4,
+      "representativeAdversaryId": "srd-adv-apprentice-assassin",
+      "representativeAdversaryName": "Apprentice Assassin"
+    },
+    {
+      "name": "Slow",
+      "type": "passive",
+      "count": 4,
+      "representativeAdversaryId": "srd-adv-green-ooze",
+      "representativeAdversaryName": "Green Ooze"
+    },
+    {
+      "name": "Acidic Form",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-green-ooze",
+      "representativeAdversaryName": "Green Ooze"
+    },
+    {
+      "name": "Flying",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-giant-mosquitoes",
+      "representativeAdversaryName": "Giant Mosquitoes"
+    },
+    {
+      "name": "Ghost",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-spectral-archer",
+      "representativeAdversaryName": "Spectral Archer"
+    },
+    {
+      "name": "Horde (1d4+1)",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-giant-mosquitoes",
+      "representativeAdversaryName": "Giant Mosquitoes"
+    },
+    {
+      "name": "Minion (3)",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-giant-rat",
+      "representativeAdversaryName": "Giant Rat"
+    },
+    {
+      "name": "Minion (4)",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-sellsword",
+      "representativeAdversaryName": "Sellsword"
+    },
+    {
+      "name": "Swashbuckler",
+      "type": "passive",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-pirate-captain",
+      "representativeAdversaryName": "Pirate Captain"
+    },
+    {
+      "name": "Split",
+      "type": "reaction",
+      "count": 3,
+      "representativeAdversaryId": "srd-adv-green-ooze",
+      "representativeAdversaryName": "Green Ooze"
+    },
+    {
+      "name": "Envelop",
+      "type": "action",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-green-ooze",
+      "representativeAdversaryName": "Green Ooze"
+    },
+    {
+      "name": "Eruption",
+      "type": "action",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-war-wizard",
+      "representativeAdversaryName": "War Wizard"
+    },
+    {
+      "name": "Mind Dance",
+      "type": "action",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-juvenile-flickerfly",
+      "representativeAdversaryName": "Juvenile Flickerfly"
+    },
+    {
+      "name": "Scapegoat",
+      "type": "action",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-courtier",
+      "representativeAdversaryName": "Courtier"
+    },
+    {
+      "name": "Divine Flight",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-hallowed-soldier",
+      "representativeAdversaryName": "Hallowed Soldier"
+    },
+    {
+      "name": "From Above",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-jagged-knife-bandit",
+      "representativeAdversaryName": "Jagged Knife Bandit"
+    },
+    {
+      "name": "Hallucinatory Breath",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-juvenile-flickerfly",
+      "representativeAdversaryName": "Juvenile Flickerfly"
+    },
+    {
+      "name": "Horde (1d4+2)",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-tangle-bramble-swarm",
+      "representativeAdversaryName": "Tangle Bramble Swarm"
+    },
+    {
+      "name": "Horde (2d4+1)",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-demonic-hound-pack",
+      "representativeAdversaryName": "Demonic Hound Pack"
+    },
+    {
+      "name": "Minion (13)",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-hallowed-soldier",
+      "representativeAdversaryName": "Hallowed Soldier"
+    },
+    {
+      "name": "Pack Tactics",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-dire-wolf",
+      "representativeAdversaryName": "Dire Wolf"
+    },
+    {
+      "name": "Ramp Up",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-cave-ogre",
+      "representativeAdversaryName": "Cave Ogre"
+    },
+    {
+      "name": "Relentless (4)",
+      "type": "passive",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-adult-flickerfly",
+      "representativeAdversaryName": "Adult Flickerfly"
+    },
+    {
+      "name": "Death Quake",
+      "type": "reaction",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-construct",
+      "representativeAdversaryName": "Construct"
+    },
+    {
+      "name": "Doombringer",
+      "type": "reaction",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-realm-breaker",
+      "representativeAdversaryName": "Fallen Warlord: Realm-Breaker"
+    },
+    {
+      "name": "Overwhelm",
+      "type": "reaction",
+      "count": 2,
+      "representativeAdversaryId": "srd-adv-zombie-pack",
+      "representativeAdversaryName": "Zombie Pack"
+    },
+    {
+      "name": "Adrenaline Burst",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-weaponmaster",
+      "representativeAdversaryName": "Weaponmaster"
+    },
+    {
+      "name": "Another for the Pile",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-patchwork-zombie-hulk",
+      "representativeAdversaryName": "Patchwork Zombie Hulk"
+    },
+    {
+      "name": "Arcane Artillery",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-war-wizard",
+      "representativeAdversaryName": "War Wizard"
+    },
+    {
+      "name": "Ashen Cloud",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-ashen-tyrant",
+      "representativeAdversaryName": "Volcanic Dragon: Ashen Tyrant"
+    },
+    {
+      "name": "Avalanche",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-ice-dragon",
+      "representativeAdversaryName": "Young Ice Dragon"
+    },
+    {
+      "name": "Avalanche Roar",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-stonewraith",
+      "representativeAdversaryName": "Stonewraith"
+    },
+    {
+      "name": "Avalanche Tail",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-obsidian-predator",
+      "representativeAdversaryName": "Volcanic Dragon: Obsidian Predator"
+    },
+    {
+      "name": "Battering Ram",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-brawler",
+      "representativeAdversaryName": "Giant Brawler"
+    },
+    {
+      "name": "Battle Lust",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-wrath",
+      "representativeAdversaryName": "Demon of Wrath"
+    },
+    {
+      "name": "Beam of Decay",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-arch-necromancer",
+      "representativeAdversaryName": "Arch-Necromancer"
+    },
+    {
+      "name": "Bend Ears",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-royal-advisor",
+      "representativeAdversaryName": "Royal Advisor"
+    },
+    {
+      "name": "Bite",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-bear",
+      "representativeAdversaryName": "Bear"
+    },
+    {
+      "name": "Blade of the Forest",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-stag-knight",
+      "representativeAdversaryName": "Stag Knight"
+    },
+    {
+      "name": "Blizzard Breath",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-ice-dragon",
+      "representativeAdversaryName": "Young Ice Dragon"
+    },
+    {
+      "name": "Boiling Blast",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-kraken",
+      "representativeAdversaryName": "Kraken"
+    },
+    {
+      "name": "Box In",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-sentinel",
+      "representativeAdversaryName": "Vault Guardian Sentinel"
+    },
+    {
+      "name": "Bramble Patch",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-dryad",
+      "representativeAdversaryName": "Dryad"
+    },
+    {
+      "name": "Cavalry Charge",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-knight-of-the-realm",
+      "representativeAdversaryName": "Knight of the Realm"
+    },
+    {
+      "name": "Chaotic Flux",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-hexer",
+      "representativeAdversaryName": "Jagged Knife Hexer"
+    },
+    {
+      "name": "Charging Bull",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minotaur-wrecker",
+      "representativeAdversaryName": "Minotaur Wrecker"
+    },
+    {
+      "name": "Clear the Decks",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-pirate-tough",
+      "representativeAdversaryName": "Pirate Tough"
+    },
+    {
+      "name": "Cloaked",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-shadow",
+      "representativeAdversaryName": "Jagged Knife Shadow"
+    },
+    {
+      "name": "Conflagration",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-sorcerer",
+      "representativeAdversaryName": "Fallen Sorcerer"
+    },
+    {
+      "name": "Coup de Grace",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-lieutenant",
+      "representativeAdversaryName": "Jagged Knife Lieutenant"
+    },
+    {
+      "name": "Crown of Serpents",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-gorgon",
+      "representativeAdversaryName": "Gorgon"
+    },
+    {
+      "name": "Crownsguard",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-monarch",
+      "representativeAdversaryName": "Monarch"
+    },
+    {
+      "name": "Crush",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-tangle-bramble-swarm",
+      "representativeAdversaryName": "Tangle Bramble Swarm"
+    },
+    {
+      "name": "Curse",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-hexer",
+      "representativeAdversaryName": "Jagged Knife Hexer"
+    },
+    {
+      "name": "Cut to the Bone",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-skeleton-knight",
+      "representativeAdversaryName": "Skeleton Knight"
+    },
+    {
+      "name": "Dance of Death",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-arch-necromancer",
+      "representativeAdversaryName": "Arch-Necromancer"
+    },
+    {
+      "name": "Deadly Companion",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-beastmaster",
+      "representativeAdversaryName": "Giant Beastmaster"
+    },
+    {
+      "name": "Deadly Dive",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-eagle",
+      "representativeAdversaryName": "Giant Eagle"
+    },
+    {
+      "name": "Deadly Drop",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-eagle",
+      "representativeAdversaryName": "Giant Eagle"
+    },
+    {
+      "name": "Deadly Shot",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-skeleton-archer",
+      "representativeAdversaryName": "Skeleton Archer"
+    },
+    {
+      "name": "Deathlock",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-mortal-hunter",
+      "representativeAdversaryName": "Mortal Hunter"
+    },
+    {
+      "name": "Desperate Rampage",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-ashen-tyrant",
+      "representativeAdversaryName": "Volcanic Dragon: Ashen Tyrant"
+    },
+    {
+      "name": "Detain",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-bladed-guard",
+      "representativeAdversaryName": "Bladed Guard"
+    },
+    {
+      "name": "Disgorge Reality Flotsam",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-outer-realms-corruptor",
+      "representativeAdversaryName": "Outer Realms Corruptor"
+    },
+    {
+      "name": "Dive-Bomb",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-obsidian-predator",
+      "representativeAdversaryName": "Volcanic Dragon: Obsidian Predator"
+    },
+    {
+      "name": "Divine Volley",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hallowed-archer",
+      "representativeAdversaryName": "Hallowed Archer"
+    },
+    {
+      "name": "Double Strike",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-scorpion",
+      "representativeAdversaryName": "Giant Scorpion"
+    },
+    {
+      "name": "Draining Bite",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vampire",
+      "representativeAdversaryName": "Vampire"
+    },
+    {
+      "name": "Dreadhowl",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demonic-hound-pack",
+      "representativeAdversaryName": "Demonic Hound Pack"
+    },
+    {
+      "name": "Drowning Embrace",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-greater-water-elemental",
+      "representativeAdversaryName": "Greater Water Elemental"
+    },
+    {
+      "name": "Earth Eruption",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-acid-burrower",
+      "representativeAdversaryName": "Acid Burrower"
+    },
+    {
+      "name": "Enchanting Song",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-siren",
+      "representativeAdversaryName": "Siren"
+    },
+    {
+      "name": "Endless Legions",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-undefeated-champion",
+      "representativeAdversaryName": "Fallen Warlord: Undefeated Champion"
+    },
+    {
+      "name": "Enervating Blast",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cult-adept",
+      "representativeAdversaryName": "Cult Adept"
+    },
+    {
+      "name": "Escape Plan",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-masked-thief",
+      "representativeAdversaryName": "Masked Thief"
+    },
+    {
+      "name": "Everyone Has a Price",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-merchant-baron",
+      "representativeAdversaryName": "Merchant Baron"
+    },
+    {
+      "name": "Execute Them!",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-monarch",
+      "representativeAdversaryName": "Monarch"
+    },
+    {
+      "name": "Exile",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-petty-noble",
+      "representativeAdversaryName": "Petty Noble"
+    },
+    {
+      "name": "Explosion",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-fire-elemental",
+      "representativeAdversaryName": "Minor Fire Elemental"
+    },
+    {
+      "name": "Feed on Followers",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-head-vampire",
+      "representativeAdversaryName": "Head Vampire"
+    },
+    {
+      "name": "Focused Volley",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-archer-squadron",
+      "representativeAdversaryName": "Archer Squadron"
+    },
+    {
+      "name": "For the Realm!",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-knight-of-the-realm",
+      "representativeAdversaryName": "Knight of the Realm"
+    },
+    {
+      "name": "Forest Control",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-sylvan-soldier",
+      "representativeAdversaryName": "Sylvan Soldier"
+    },
+    {
+      "name": "Fumigation",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-assassin-poisoner",
+      "representativeAdversaryName": "Assassin Poisoner"
+    },
+    {
+      "name": "Gathering Secrets",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spy",
+      "representativeAdversaryName": "Spy"
+    },
+    {
+      "name": "Goading Strike",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-weaponmaster",
+      "representativeAdversaryName": "Weaponmaster"
+    },
+    {
+      "name": "God Rays",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-high-seraph",
+      "representativeAdversaryName": "High Seraph"
+    },
+    {
+      "name": "Gore",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minotaur-wrecker",
+      "representativeAdversaryName": "Minotaur Wrecker"
+    },
+    {
+      "name": "Grab and Drag",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-deeproot-defender",
+      "representativeAdversaryName": "Deeproot Defender"
+    },
+    {
+      "name": "Grapple and Drown",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-kraken",
+      "representativeAdversaryName": "Kraken"
+    },
+    {
+      "name": "Grave Blade",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spectral-guardian",
+      "representativeAdversaryName": "Spectral Guardian"
+    },
+    {
+      "name": "Ground Slam",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-deeproot-defender",
+      "representativeAdversaryName": "Deeproot Defender"
+    },
+    {
+      "name": "Grow Saplings",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-dryad",
+      "representativeAdversaryName": "Dryad"
+    },
+    {
+      "name": "Guards, Seize Them!",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-petty-noble",
+      "representativeAdversaryName": "Petty Noble"
+    },
+    {
+      "name": "Hail of Boulders",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cave-ogre",
+      "representativeAdversaryName": "Cave Ogre"
+    },
+    {
+      "name": "Hellfire",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-demon",
+      "representativeAdversaryName": "Minor Demon"
+    },
+    {
+      "name": "Hobbling Shot",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-archer-guard",
+      "representativeAdversaryName": "Archer Guard"
+    },
+    {
+      "name": "Hobbling Strike",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-dire-wolf",
+      "representativeAdversaryName": "Dire Wolf"
+    },
+    {
+      "name": "Hold Them Down",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-kneebreaker",
+      "representativeAdversaryName": "Jagged Knife Kneebreaker"
+    },
+    {
+      "name": "Ignite",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-red-ooze",
+      "representativeAdversaryName": "Red Ooze"
+    },
+    {
+      "name": "Inevitable Death",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-mortal-hunter",
+      "representativeAdversaryName": "Mortal Hunter"
+    },
+    {
+      "name": "Judgment",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-high-seraph",
+      "representativeAdversaryName": "High Seraph"
+    },
+    {
+      "name": "Lock Up",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-gaoler",
+      "representativeAdversaryName": "Vault Guardian Gaoler"
+    },
+    {
+      "name": "Lurching Lunge",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-failed-experiment",
+      "representativeAdversaryName": "Failed Experiment"
+    },
+    {
+      "name": "Magic Burst",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-chaos-skull",
+      "representativeAdversaryName": "Chaos Skull"
+    },
+    {
+      "name": "Mana Bolt",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-sentinel",
+      "representativeAdversaryName": "Vault Guardian Sentinel"
+    },
+    {
+      "name": "Mark Target",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-turret",
+      "representativeAdversaryName": "Vault Guardian Turret"
+    },
+    {
+      "name": "Mockery",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-courtier",
+      "representativeAdversaryName": "Courtier"
+    },
+    {
+      "name": "Money Is Time",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-avarice",
+      "representativeAdversaryName": "Demon of Avarice"
+    },
+    {
+      "name": "More Where That Came From",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-lieutenant",
+      "representativeAdversaryName": "Jagged Knife Lieutenant"
+    },
+    {
+      "name": "Move as a Unit",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spellblade",
+      "representativeAdversaryName": "Spellblade"
+    },
+    {
+      "name": "Nightmare Tableau",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-sorcerer",
+      "representativeAdversaryName": "Fallen Sorcerer"
+    },
+    {
+      "name": "No Quarter",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-pirate-captain",
+      "representativeAdversaryName": "Pirate Captain"
+    },
+    {
+      "name": "Open the Gates of Death",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-arch-necromancer",
+      "representativeAdversaryName": "Arch-Necromancer"
+    },
+    {
+      "name": "Paralyzing Shock",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-electric-eels",
+      "representativeAdversaryName": "Electric Eels"
+    },
+    {
+      "name": "Perfect Strike",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-perfected-zombie",
+      "representativeAdversaryName": "Perfected Zombie"
+    },
+    {
+      "name": "Pick Off the Straggler",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cult-fang",
+      "representativeAdversaryName": "Cult Fang"
+    },
+    {
+      "name": "Pick Your Target",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spectral-archer",
+      "representativeAdversaryName": "Spectral Archer"
+    },
+    {
+      "name": "Pinning Strike",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-beastmaster",
+      "representativeAdversaryName": "Giant Beastmaster"
+    },
+    {
+      "name": "Pronounce Fate",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oracle-of-doom",
+      "representativeAdversaryName": "Oracle of Doom"
+    },
+    {
+      "name": "Quick Hands",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-masked-thief",
+      "representativeAdversaryName": "Masked Thief"
+    },
+    {
+      "name": "Rally Guards",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-head-guard",
+      "representativeAdversaryName": "Head Guard"
+    },
+    {
+      "name": "Randomized Tactics",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-battle-box",
+      "representativeAdversaryName": "Battle Box"
+    },
+    {
+      "name": "Reality Quake",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-outer-realms-abomination",
+      "representativeAdversaryName": "Outer Realms Abomination"
+    },
+    {
+      "name": "Refresh Warding Sphere",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-war-wizard",
+      "representativeAdversaryName": "War Wizard"
+    },
+    {
+      "name": "Regeneration",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hydra",
+      "representativeAdversaryName": "Hydra"
+    },
+    {
+      "name": "Reinforce",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-elite-soldier",
+      "representativeAdversaryName": "Elite Soldier"
+    },
+    {
+      "name": "Reinforcements",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-pirate-captain",
+      "representativeAdversaryName": "Pirate Captain"
+    },
+    {
+      "name": "Remake Reality",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-chaos-elemental",
+      "representativeAdversaryName": "Minor Chaos Elemental"
+    },
+    {
+      "name": "Rend Asunder",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-brawny-zombie",
+      "representativeAdversaryName": "Brawny Zombie"
+    },
+    {
+      "name": "Rockslide",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-greater-earth-elemental",
+      "representativeAdversaryName": "Greater Earth Elemental"
+    },
+    {
+      "name": "Rocky Ambush",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-stonewraith",
+      "representativeAdversaryName": "Stonewraith"
+    },
+    {
+      "name": "Scorched Earth",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-fire-elemental",
+      "representativeAdversaryName": "Minor Fire Elemental"
+    },
+    {
+      "name": "Screech",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-dire-bat",
+      "representativeAdversaryName": "Dire Bat"
+    },
+    {
+      "name": "Seed Barrage",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oak-treant",
+      "representativeAdversaryName": "Oak Treant"
+    },
+    {
+      "name": "Seize Your Moment",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-secret-keeper",
+      "representativeAdversaryName": "Secret-Keeper"
+    },
+    {
+      "name": "Shadow Shackles",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cult-adept",
+      "representativeAdversaryName": "Cult Adept"
+    },
+    {
+      "name": "Shattering Might",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-molten-scourge",
+      "representativeAdversaryName": "Volcanic Dragon: Molten Scourge"
+    },
+    {
+      "name": "Shattering Strike",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-undefeated-champion",
+      "representativeAdversaryName": "Fallen Warlord: Undefeated Champion"
+    },
+    {
+      "name": "Shroud of the Fallen",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cult-adept",
+      "representativeAdversaryName": "Cult Adept"
+    },
+    {
+      "name": "Sickening Flux",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-chaos-elemental",
+      "representativeAdversaryName": "Minor Chaos Elemental"
+    },
+    {
+      "name": "Siphon Magic",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-chaos-skull",
+      "representativeAdversaryName": "Chaos Skull"
+    },
+    {
+      "name": "Spinning Serpent",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-glass-snake",
+      "representativeAdversaryName": "Glass Snake"
+    },
+    {
+      "name": "Spit Acid",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-acid-burrower",
+      "representativeAdversaryName": "Acid Burrower"
+    },
+    {
+      "name": "Spitter",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-glass-snake",
+      "representativeAdversaryName": "Glass Snake"
+    },
+    {
+      "name": "Strike as One",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-master-assassin",
+      "representativeAdversaryName": "Master Assassin"
+    },
+    {
+      "name": "Summon Tormentors",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oracle-of-doom",
+      "representativeAdversaryName": "Oracle of Doom"
+    },
+    {
+      "name": "Suppressing Blast",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spellblade",
+      "representativeAdversaryName": "Spellblade"
+    },
+    {
+      "name": "Suppressing Fire",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-archer-squadron",
+      "representativeAdversaryName": "Archer Squadron"
+    },
+    {
+      "name": "Tactician",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-lieutenant",
+      "representativeAdversaryName": "Jagged Knife Lieutenant"
+    },
+    {
+      "name": "Take Root",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oak-treant",
+      "representativeAdversaryName": "Oak Treant"
+    },
+    {
+      "name": "Terrifying Chorus",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hydra",
+      "representativeAdversaryName": "Hydra"
+    },
+    {
+      "name": "The Best Muscle Money Can Buy",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-merchant-baron",
+      "representativeAdversaryName": "Merchant Baron"
+    },
+    {
+      "name": "The Hunt Is On",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-head-vampire",
+      "representativeAdversaryName": "Head Vampire"
+    },
+    {
+      "name": "The Root of Villainy",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-hubris",
+      "representativeAdversaryName": "Demon of Hubris"
+    },
+    {
+      "name": "Thorny Cage",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-dryad",
+      "representativeAdversaryName": "Young Dryad"
+    },
+    {
+      "name": "Tormented Screams",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-patchwork-zombie-hulk",
+      "representativeAdversaryName": "Patchwork Zombie Hulk"
+    },
+    {
+      "name": "Tormenting Lash",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-realm-breaker",
+      "representativeAdversaryName": "Fallen Warlord: Realm-Breaker"
+    },
+    {
+      "name": "Trample",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-construct",
+      "representativeAdversaryName": "Construct"
+    },
+    {
+      "name": "Unending Battle",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spectral-captain",
+      "representativeAdversaryName": "Spectral Captain"
+    },
+    {
+      "name": "Unparalleled Skill",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-hubris",
+      "representativeAdversaryName": "Demon of Hubris"
+    },
+    {
+      "name": "Venomous Stinger",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-scorpion",
+      "representativeAdversaryName": "Giant Scorpion"
+    },
+    {
+      "name": "Voice of the Forest",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-dryad",
+      "representativeAdversaryName": "Young Dryad"
+    },
+    {
+      "name": "Water Jet",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-greater-water-elemental",
+      "representativeAdversaryName": "Greater Water Elemental"
+    },
+    {
+      "name": "We Are One",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-high-seraph",
+      "representativeAdversaryName": "High Seraph"
+    },
+    {
+      "name": "Whirlwind",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-adult-flickerfly",
+      "representativeAdversaryName": "Adult Flickerfly"
+    },
+    {
+      "name": "Your Struggle Is Pointless",
+      "type": "action",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-despair",
+      "representativeAdversaryName": "Demon of Despair"
+    },
+    {
+      "name": "All Must Fall",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-demon",
+      "representativeAdversaryName": "Minor Demon"
+    },
+    {
+      "name": "All-Consuming Rage",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-realm-breaker",
+      "representativeAdversaryName": "Fallen Warlord: Realm-Breaker"
+    },
+    {
+      "name": "Anger Unrelenting",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-wrath",
+      "representativeAdversaryName": "Demon of Wrath"
+    },
+    {
+      "name": "Apocalyptic Thrashing",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-ashen-tyrant",
+      "representativeAdversaryName": "Volcanic Dragon: Ashen Tyrant"
+    },
+    {
+      "name": "Arcane Form",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-chaos-elemental",
+      "representativeAdversaryName": "Minor Chaos Elemental"
+    },
+    {
+      "name": "Arcane Steel",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spellblade",
+      "representativeAdversaryName": "Spellblade"
+    },
+    {
+      "name": "Armor-Shredding Shards",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-glass-snake",
+      "representativeAdversaryName": "Glass Snake"
+    },
+    {
+      "name": "Ashes to Ashes",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-ashen-tyrant",
+      "representativeAdversaryName": "Volcanic Dragon: Ashen Tyrant"
+    },
+    {
+      "name": "Aura of Doom",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-shock-troop",
+      "representativeAdversaryName": "Fallen Shock Troop"
+    },
+    {
+      "name": "Backstab",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-shadow",
+      "representativeAdversaryName": "Jagged Knife Shadow"
+    },
+    {
+      "name": "Battle Teleport",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-war-wizard",
+      "representativeAdversaryName": "War Wizard"
+    },
+    {
+      "name": "Blocking Shield",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-gaoler",
+      "representativeAdversaryName": "Vault Guardian Gaoler"
+    },
+    {
+      "name": "Blood and Souls",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-wrath",
+      "representativeAdversaryName": "Demon of Wrath"
+    },
+    {
+      "name": "Bone Breaker",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cave-ogre",
+      "representativeAdversaryName": "Cave Ogre"
+    },
+    {
+      "name": "Captive Audience",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-siren",
+      "representativeAdversaryName": "Siren"
+    },
+    {
+      "name": "Casus Belli",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-monarch",
+      "representativeAdversaryName": "Monarch"
+    },
+    {
+      "name": "Chaotic Form",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-outer-realms-abomination",
+      "representativeAdversaryName": "Outer Realms Abomination"
+    },
+    {
+      "name": "Chevalier",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-knight-of-the-realm",
+      "representativeAdversaryName": "Knight of the Realm"
+    },
+    {
+      "name": "Circle of Defilement",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-undefeated-champion",
+      "representativeAdversaryName": "Fallen Warlord: Undefeated Champion"
+    },
+    {
+      "name": "Climber",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-bandit",
+      "representativeAdversaryName": "Jagged Knife Bandit"
+    },
+    {
+      "name": "Cornered",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-ashen-tyrant",
+      "representativeAdversaryName": "Volcanic Dragon: Ashen Tyrant"
+    },
+    {
+      "name": "Cracked Scales",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-molten-scourge",
+      "representativeAdversaryName": "Volcanic Dragon: Molten Scourge"
+    },
+    {
+      "name": "Creeping Fire",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-red-ooze",
+      "representativeAdversaryName": "Red Ooze"
+    },
+    {
+      "name": "Crushing Blows",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-greater-earth-elemental",
+      "representativeAdversaryName": "Greater Earth Elemental"
+    },
+    {
+      "name": "Deadly Flight",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-adult-flickerfly",
+      "representativeAdversaryName": "Adult Flickerfly"
+    },
+    {
+      "name": "Depths of Despair",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-despair",
+      "representativeAdversaryName": "Demon of Despair"
+    },
+    {
+      "name": "Destructible",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-patchwork-zombie-hulk",
+      "representativeAdversaryName": "Patchwork Zombie Hulk"
+    },
+    {
+      "name": "Devastating Retort",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-royal-advisor",
+      "representativeAdversaryName": "Royal Advisor"
+    },
+    {
+      "name": "Disorienting Presence",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-outer-realms-abomination",
+      "representativeAdversaryName": "Outer Realms Abomination"
+    },
+    {
+      "name": "Double or Nothing",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-hubris",
+      "representativeAdversaryName": "Demon of Hubris"
+    },
+    {
+      "name": "Faltering Armor",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-undefeated-champion",
+      "representativeAdversaryName": "Fallen Warlord: Undefeated Champion"
+    },
+    {
+      "name": "Fearsome Presence",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-perfected-zombie",
+      "representativeAdversaryName": "Perfected Zombie"
+    },
+    {
+      "name": "Firespite Plate Armor",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-realm-breaker",
+      "representativeAdversaryName": "Fallen Warlord: Realm-Breaker"
+    },
+    {
+      "name": "Flailing Limbs",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-patchwork-zombie-hulk",
+      "representativeAdversaryName": "Patchwork Zombie Hulk"
+    },
+    {
+      "name": "Flight",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-eagle",
+      "representativeAdversaryName": "Giant Eagle"
+    },
+    {
+      "name": "Grindletooth Venom",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-assassin-poisoner",
+      "representativeAdversaryName": "Assassin Poisoner"
+    },
+    {
+      "name": "Heavily Armored",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-knight-of-the-realm",
+      "representativeAdversaryName": "Knight of the Realm"
+    },
+    {
+      "name": "Horde (1d6+3)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-archer-squadron",
+      "representativeAdversaryName": "Archer Squadron"
+    },
+    {
+      "name": "Horde (2d6+5)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-zombie-legion",
+      "representativeAdversaryName": "Zombie Legion"
+    },
+    {
+      "name": "Horrifying",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-shambling-zombie",
+      "representativeAdversaryName": "Shambling Zombie"
+    },
+    {
+      "name": "I've Got 'Em",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-kneebreaker",
+      "representativeAdversaryName": "Jagged Knife Kneebreaker"
+    },
+    {
+      "name": "Immovable Object",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-greater-earth-elemental",
+      "representativeAdversaryName": "Greater Earth Elemental"
+    },
+    {
+      "name": "In Your Face",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-swarm-of-rats",
+      "representativeAdversaryName": "Swarm of Rats"
+    },
+    {
+      "name": "Injured Wings",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-ashen-tyrant",
+      "representativeAdversaryName": "Volcanic Dragon: Ashen Tyrant"
+    },
+    {
+      "name": "Just a Tree",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oak-treant",
+      "representativeAdversaryName": "Oak Treant"
+    },
+    {
+      "name": "Kinetic Slam",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-sentinel",
+      "representativeAdversaryName": "Vault Guardian Sentinel"
+    },
+    {
+      "name": "Levitation",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-chaos-skull",
+      "representativeAdversaryName": "Chaos Skull"
+    },
+    {
+      "name": "Look into My Eyes",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-head-vampire",
+      "representativeAdversaryName": "Head Vampire"
+    },
+    {
+      "name": "Maintain Distance",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-harrier",
+      "representativeAdversaryName": "Harrier"
+    },
+    {
+      "name": "Many Tentacles",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-kraken",
+      "representativeAdversaryName": "Kraken"
+    },
+    {
+      "name": "Many-Headed Menace",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hydra",
+      "representativeAdversaryName": "Hydra"
+    },
+    {
+      "name": "Minion (12)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-shock-troop",
+      "representativeAdversaryName": "Fallen Shock Troop"
+    },
+    {
+      "name": "Minion (5)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-treant",
+      "representativeAdversaryName": "Minor Treant"
+    },
+    {
+      "name": "Minion (7)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-recruit",
+      "representativeAdversaryName": "Giant Recruit"
+    },
+    {
+      "name": "Minion (9)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-elemental-spark",
+      "representativeAdversaryName": "Elemental Spark"
+    },
+    {
+      "name": "Money Talks",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-avarice",
+      "representativeAdversaryName": "Demon of Avarice"
+    },
+    {
+      "name": "My Land, My Rules",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-petty-noble",
+      "representativeAdversaryName": "Petty Noble"
+    },
+    {
+      "name": "Never Misses",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-adult-flickerfly",
+      "representativeAdversaryName": "Adult Flickerfly"
+    },
+    {
+      "name": "No Hope",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-ice-dragon",
+      "representativeAdversaryName": "Young Ice Dragon"
+    },
+    {
+      "name": "Numbers Must Go Up",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-avarice",
+      "representativeAdversaryName": "Demon of Avarice"
+    },
+    {
+      "name": "Obsidian Scales",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-obsidian-predator",
+      "representativeAdversaryName": "Volcanic Dragon: Obsidian Predator"
+    },
+    {
+      "name": "On My Signal",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-head-guard",
+      "representativeAdversaryName": "Head Guard"
+    },
+    {
+      "name": "Only Bones",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-skeleton-warrior",
+      "representativeAdversaryName": "Skeleton Warrior"
+    },
+    {
+      "name": "Opportunist",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-skeleton-archer",
+      "representativeAdversaryName": "Skeleton Archer"
+    },
+    {
+      "name": "Out of Nowhere",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-assassin-poisoner",
+      "representativeAdversaryName": "Assassin Poisoner"
+    },
+    {
+      "name": "Overwhelm",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-failed-experiment",
+      "representativeAdversaryName": "Failed Experiment"
+    },
+    {
+      "name": "Overwhelming Force",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-bear",
+      "representativeAdversaryName": "Bear"
+    },
+    {
+      "name": "Peerless Accuracy",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-juvenile-flickerfly",
+      "representativeAdversaryName": "Juvenile Flickerfly"
+    },
+    {
+      "name": "Preferential Treatment",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-merchant",
+      "representativeAdversaryName": "Merchant"
+    },
+    {
+      "name": "Punish the Guilty",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hallowed-archer",
+      "representativeAdversaryName": "Hallowed Archer"
+    },
+    {
+      "name": "Rampage",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-mortal-hunter",
+      "representativeAdversaryName": "Mortal Hunter"
+    },
+    {
+      "name": "Relentless (X)",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hydra",
+      "representativeAdversaryName": "Hydra"
+    },
+    {
+      "name": "Rend and Crush",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-ice-dragon",
+      "representativeAdversaryName": "Young Ice Dragon"
+    },
+    {
+      "name": "Rending Bite",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-shark",
+      "representativeAdversaryName": "Shark"
+    },
+    {
+      "name": "Shackles of Guilt",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-sorcerer",
+      "representativeAdversaryName": "Fallen Sorcerer"
+    },
+    {
+      "name": "Shadow's Embrace",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cult-fang",
+      "representativeAdversaryName": "Cult Fang"
+    },
+    {
+      "name": "Shield Wall",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-bladed-guard",
+      "representativeAdversaryName": "Bladed Guard"
+    },
+    {
+      "name": "Slow Firing",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-turret",
+      "representativeAdversaryName": "Vault Guardian Turret"
+    },
+    {
+      "name": "Stonestrider",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-stonewraith",
+      "representativeAdversaryName": "Stonewraith"
+    },
+    {
+      "name": "Summoning Ritual",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-secret-keeper",
+      "representativeAdversaryName": "Secret-Keeper"
+    },
+    {
+      "name": "Sunsear Arrows",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-gorgon",
+      "representativeAdversaryName": "Gorgon"
+    },
+    {
+      "name": "Take Off- Action",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-eagle",
+      "representativeAdversaryName": "Giant Eagle"
+    },
+    {
+      "name": "The Runaround",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-merchant",
+      "representativeAdversaryName": "Merchant"
+    },
+    {
+      "name": "Too Many to Handle",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-shambling-zombie",
+      "representativeAdversaryName": "Shambling Zombie"
+    },
+    {
+      "name": "Two as One",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-beastmaster",
+      "representativeAdversaryName": "Giant Beastmaster"
+    },
+    {
+      "name": "Unprotected Mind",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-jealousy",
+      "representativeAdversaryName": "Demon of Jealousy"
+    },
+    {
+      "name": "Unseen Strike",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-jagged-knife-sniper",
+      "representativeAdversaryName": "Jagged Knife Sniper"
+    },
+    {
+      "name": "Unyielding",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-zombie-legion",
+      "representativeAdversaryName": "Zombie Legion"
+    },
+    {
+      "name": "Walls Closing In",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oracle-of-doom",
+      "representativeAdversaryName": "Oracle of Doom"
+    },
+    {
+      "name": "Wards",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-chaos-skull",
+      "representativeAdversaryName": "Chaos Skull"
+    },
+    {
+      "name": "Warped Fortitude",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-failed-experiment",
+      "representativeAdversaryName": "Failed Experiment"
+    },
+    {
+      "name": "Weak Structure",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-construct",
+      "representativeAdversaryName": "Construct"
+    },
+    {
+      "name": "Will-Shattering Touch",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-outer-realms-corruptor",
+      "representativeAdversaryName": "Outer Realms Corruptor"
+    },
+    {
+      "name": "Won't See It Coming",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-master-assassin",
+      "representativeAdversaryName": "Master Assassin"
+    },
+    {
+      "name": "Your Life Is Mine",
+      "type": "passive",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-arch-necromancer",
+      "representativeAdversaryName": "Arch-Necromancer"
+    },
+    {
+      "name": "Acid Bath",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-acid-burrower",
+      "representativeAdversaryName": "Acid Burrower"
+    },
+    {
+      "name": "Ashen Vengeance (Phase Change)",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-molten-scourge",
+      "representativeAdversaryName": "Volcanic Dragon: Molten Scourge"
+    },
+    {
+      "name": "Blend In",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-sylvan-soldier",
+      "representativeAdversaryName": "Sylvan Soldier"
+    },
+    {
+      "name": "Blood in the Water",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-shark",
+      "representativeAdversaryName": "Shark"
+    },
+    {
+      "name": "Bloodsucker",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-mosquitoes",
+      "representativeAdversaryName": "Giant Mosquitoes"
+    },
+    {
+      "name": "Bloody Reprisal",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-giant-brawler",
+      "representativeAdversaryName": "Giant Brawler"
+    },
+    {
+      "name": "Burning",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-tiny-red-ooze",
+      "representativeAdversaryName": "Tiny Red Ooze"
+    },
+    {
+      "name": "Concentrate Fire",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-turret",
+      "representativeAdversaryName": "Vault Guardian Turret"
+    },
+    {
+      "name": "Consume Kindling",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-fire-elemental",
+      "representativeAdversaryName": "Minor Fire Elemental"
+    },
+    {
+      "name": "Detonation",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vault-guardian-turret",
+      "representativeAdversaryName": "Vault Guardian Turret"
+    },
+    {
+      "name": "Dig Two Graves",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-skeleton-knight",
+      "representativeAdversaryName": "Skeleton Knight"
+    },
+    {
+      "name": "Drain and Multiply",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-tangle-bramble",
+      "representativeAdversaryName": "Tangle Bramble"
+    },
+    {
+      "name": "Encumber",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-tangle-bramble-swarm",
+      "representativeAdversaryName": "Tangle Bramble Swarm"
+    },
+    {
+      "name": "Erupting Rage (Phase Change)",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-obsidian-predator",
+      "representativeAdversaryName": "Volcanic Dragon: Obsidian Predator"
+    },
+    {
+      "name": "Fall Back",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-harrier",
+      "representativeAdversaryName": "Harrier"
+    },
+    {
+      "name": "Fallen Hounds",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-secret-keeper",
+      "representativeAdversaryName": "Secret-Keeper"
+    },
+    {
+      "name": "Fear Is Fuel",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cult-adept",
+      "representativeAdversaryName": "Cult Adept"
+    },
+    {
+      "name": "Fly on the Wall",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spy",
+      "representativeAdversaryName": "Spy"
+    },
+    {
+      "name": "Frozen Scales",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-young-ice-dragon",
+      "representativeAdversaryName": "Young Ice Dragon"
+    },
+    {
+      "name": "Guardian",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-dire-bat",
+      "representativeAdversaryName": "Dire Bat"
+    },
+    {
+      "name": "High Tide",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-greater-water-elemental",
+      "representativeAdversaryName": "Greater Water Elemental"
+    },
+    {
+      "name": "Hold Fast",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-spectral-captain",
+      "representativeAdversaryName": "Spectral Captain"
+    },
+    {
+      "name": "I Have Never Known Defeat (Phase Change)",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-warlord-realm-breaker",
+      "representativeAdversaryName": "Fallen Warlord: Realm-Breaker"
+    },
+    {
+      "name": "Lava Splash",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-molten-scourge",
+      "representativeAdversaryName": "Volcanic Dragon: Molten Scourge"
+    },
+    {
+      "name": "Lifesuck",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-head-vampire",
+      "representativeAdversaryName": "Head Vampire"
+    },
+    {
+      "name": "Magical reflection",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-chaos-elemental",
+      "representativeAdversaryName": "Minor Chaos Elemental"
+    },
+    {
+      "name": "Magical Weakness",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-hydra",
+      "representativeAdversaryName": "Hydra"
+    },
+    {
+      "name": "Mistform",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-vampire",
+      "representativeAdversaryName": "Vampire"
+    },
+    {
+      "name": "My Turn",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-jealousy",
+      "representativeAdversaryName": "Demon of Jealousy"
+    },
+    {
+      "name": "Not Today, My Dears",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-arch-necromancer",
+      "representativeAdversaryName": "Arch-Necromancer"
+    },
+    {
+      "name": "Ominous Knowledge",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oracle-of-doom",
+      "representativeAdversaryName": "Oracle of Doom"
+    },
+    {
+      "name": "Our Master's Will",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-secret-keeper",
+      "representativeAdversaryName": "Secret-Keeper"
+    },
+    {
+      "name": "Overcharge",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-battle-box",
+      "representativeAdversaryName": "Battle Box"
+    },
+    {
+      "name": "Overload",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-construct",
+      "representativeAdversaryName": "Construct"
+    },
+    {
+      "name": "Petrifying Gaze",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-gorgon",
+      "representativeAdversaryName": "Gorgon"
+    },
+    {
+      "name": "Rampaging Fury",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-cave-ogre",
+      "representativeAdversaryName": "Cave Ogre"
+    },
+    {
+      "name": "Reaper",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-minor-demon",
+      "representativeAdversaryName": "Minor Demon"
+    },
+    {
+      "name": "Retaliation",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-wrath",
+      "representativeAdversaryName": "Demon of Wrath"
+    },
+    {
+      "name": "Rip and Tear",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-brawny-zombie",
+      "representativeAdversaryName": "Brawny Zombie"
+    },
+    {
+      "name": "Rivalry",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-jealousy",
+      "representativeAdversaryName": "Demon of Jealousy"
+    },
+    {
+      "name": "Searing Glance",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-courtesan",
+      "representativeAdversaryName": "Courtesan"
+    },
+    {
+      "name": "Skilled Opportunist",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-perfected-zombie",
+      "representativeAdversaryName": "Perfected Zombie"
+    },
+    {
+      "name": "Slippery",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-fallen-sorcerer",
+      "representativeAdversaryName": "Fallen Sorcerer"
+    },
+    {
+      "name": "The Subtle Blade",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-master-assassin",
+      "representativeAdversaryName": "Master Assassin"
+    },
+    {
+      "name": "Thorny Armor",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-stag-knight",
+      "representativeAdversaryName": "Stag Knight"
+    },
+    {
+      "name": "Uncanny Reflexes",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-adult-flickerfly",
+      "representativeAdversaryName": "Adult Flickerfly"
+    },
+    {
+      "name": "Unreal Form",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-outer-realms-abomination",
+      "representativeAdversaryName": "Outer Realms Abomination"
+    },
+    {
+      "name": "Vassal's Loyalty",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-elite-soldier",
+      "representativeAdversaryName": "Elite Soldier"
+    },
+    {
+      "name": "Vengeful Fate",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-oracle-of-doom",
+      "representativeAdversaryName": "Oracle of Doom"
+    },
+    {
+      "name": "Volcanic Breath",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-volcanic-dragon-molten-scourge",
+      "representativeAdversaryName": "Volcanic Dragon: Molten Scourge"
+    },
+    {
+      "name": "Warding Sphere",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-war-wizard",
+      "representativeAdversaryName": "War Wizard"
+    },
+    {
+      "name": "We Are All One",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-dryad",
+      "representativeAdversaryName": "Dryad"
+    },
+    {
+      "name": "What's Yours Is Mine",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-jealousy",
+      "representativeAdversaryName": "Demon of Jealousy"
+    },
+    {
+      "name": "Won't Stay Dead",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-skeleton-warrior",
+      "representativeAdversaryName": "Skeleton Warrior"
+    },
+    {
+      "name": "You Pale in Comparison",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-hubris",
+      "representativeAdversaryName": "Demon of Hubris"
+    },
+    {
+      "name": "Your Friends Will Fail You",
+      "type": "reaction",
+      "count": 1,
+      "representativeAdversaryId": "srd-adv-demon-of-despair",
+      "representativeAdversaryName": "Demon of Despair"
+    }
+  ]
+}

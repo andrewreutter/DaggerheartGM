@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyTableOp,
   RUNTIME_KEYS,
+  ADVERSARY_RUNTIME_KEYS,
   CHARACTER_RUNTIME_KEYS,
   TABLE_STATE_V2_ROOT_KEYS,
   applyV2ActiveModifierMutations,
@@ -162,6 +163,8 @@ describe('applyTableOp', () => {
       id: 'adv-1', instanceId: 'inst-1', elementType: 'adversary',
       name: 'Goblin', currentHp: 3, currentStress: 1, conditions: 'poisoned',
       role: 'bruiser', tier: 2, hp_max: 10, features: [{ name: 'Smash' }],
+      featureState: { Scope: { k: 1 } },
+      featureUsage: { Terrifying: { used: false, cycle: 'session' } },
     });
     const state = { activeElements: [el] };
     const newBaseData = { id: 'adv-1', role: 'skulk', tier: 3, hp_max: 15, features: [{ name: 'Sneak' }] };
@@ -178,6 +181,8 @@ describe('applyTableOp', () => {
     expect(updated.currentStress).toBe(1);
     expect(updated.conditions).toBe('poisoned');
     expect(updated.tier).toBe(2);
+    expect(updated.featureState).toEqual({ Scope: { k: 1 } });
+    expect(updated.featureUsage).toEqual({ Terrifying: { used: false, cycle: 'session' } });
   });
 
   it('update-base-data does not affect non-matching elements', () => {
@@ -832,6 +837,12 @@ describe('RUNTIME_KEYS', () => {
     expect(RUNTIME_KEYS).toContain('tier');
     expect(RUNTIME_KEYS).toContain('mapId');
   });
+
+  it('ADVERSARY_RUNTIME_KEYS are preserved by update-base-data (subset of RUNTIME_KEYS)', () => {
+    for (const k of ADVERSARY_RUNTIME_KEYS) {
+      expect(RUNTIME_KEYS).toContain(k);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1162,6 +1173,17 @@ describe('applyV2BannerMutations', () => {
     );
     expect(skipped).toHaveLength(0);
     expect(updates[0].updates.featureState.Rally).toEqual({ granted: true });
+  });
+
+  it('applies setFeatureState on an adversary', () => {
+    const activeElements = [{ instanceId: 'a1', elementType: 'adversary', featureState: {} }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'setFeatureState', payload: { featureKey: 'Terrifying', key: 'toggle', value: true } }],
+      'a1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.featureState.Terrifying).toEqual({ toggle: true });
   });
 
   it('clears legacy element activeBeastform when Druid scoped activeBeastform is set to null', () => {

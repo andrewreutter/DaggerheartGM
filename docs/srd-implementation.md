@@ -37,6 +37,22 @@ See [Maintenance Instructions](#maintenance-instructions) at the bottom.
 
 No per-element tracking needed — all adversaries share the same rendering and automation pipeline.
 
+### Passive / aura features (unique names)
+
+Coverage is counted by **parsed passive feature name** (same strings as `features[].name` on statblocks), not by adversary row. The canonical registry is **`src/features-v2/adversary_features/`** — one `*.js` file per passive name plus **`index.js`** that composes `registry.adversary_features`.
+
+| Metric | Count |
+| ------ | ----- |
+| Unique passive names in SRD | **116** |
+| Registry rows (`registry.adversary_features`) | **116** (one module per name; maintain by hand) |
+
+**Implementation notes:**
+
+- **Display:** Merged V2 rows (`loadAdversaryFeatures` / `mergeAdversaryV2Overlay`) drive `GuideFeatureCard` in the Library (when `srdData` is available) and on the Game Table (merged overlay + `featureState`). Static **damage affinities** (resist / immune / vulnerable) use `damageAffinities` on registry rows where applicable; Horde / Minion / Relentless lines are **text + registry** only in this slice (no Fear-table automation).
+- **Interactive exemplar:** **Terrifying** exposes a card-level **toggle** chip so the GM can persist tracking state under `element.featureState['Terrifying']` (Hope/Fear effects remain manual per SRD).
+- **Parity:** Unit test `adversary registry barrel` asserts each registry key matches its row’s `name`.
+- **TODO tags:** Each passive module’s JSDoc lists `TODO [TAG]: …` for unimplemented mechanics (`TODO_TAGS.md`). Optional: `npm run apply:adv-passive-todos` refreshes JSDoc from `description` (extend `scripts/apply-adversary-passive-todos.mjs` when adding new passives).
+
 ---
 
 ## Environments (19)

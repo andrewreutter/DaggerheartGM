@@ -98,8 +98,8 @@ DaggerheartGM/
 │   │   │   │   └── modals/         # ItemDetailModal (unified view+edit overlay; SceneBudgetBar for scenes)
 │   │   │   └── lib/                # API client, helpers, constants, battle-points.js, table-ops.js, game-table-mechanics.js (V2 activeFeatures facade), feature-hook-dispatch.js, v2-action-loop-bridge.js (banner gameState + pre-roll intent chips + damage-commit reviewOutcome), v2-chip-session-view.js (session role + V2 chip viewer), v2-merge-element-updates.js, v2-owned-card-chip-table.js (V2 card chips on hover sheet), v2-cross-sheet-lifecycle.js, v2-declarative-sheet.js, character-calc.js, useCharacterSrdData.js, weapon-roll-text.js, dice-utils.js, feature-actions.js (deriveFeatureActionFromV2Row, parseSubFeatures), router, hooks, markdown
 │   ├── features-v2/            # V2 engine: action loop, table snapshot, migrated SRD feature modules (single feature codepath)
-│   │   ├── registry.js         # Composes full registry for loadCharacterFeatures / character-calc
-│   │   ├── engine/             # table.js (buildTableSnapshot; table.registry; table.source get/set when sourceScopeKey — CONV-035), action-loop.js, chip-system.js, feature-loader.js (loadCharacterFeatures + applyDeclarativeFeatures + virtualSource / virtualSources mergedFeatures)
+│   │   ├── registry.js         # Composes full registry for loadCharacterFeatures / loadAdversaryFeatures / character-calc
+│   │   ├── engine/             # table.js (buildTableSnapshot; table.registry; table.source get/set when sourceScopeKey — CONV-035), action-loop.js, chip-system.js, feature-loader.js (loadCharacterFeatures + applyDeclarativeFeatures + virtualSource / virtualSources mergedFeatures), adversary-feature-loader.js (loadAdversaryFeatures + mergeAdversaryV2Overlay)
 │   │   ├── classes/            # Class features (per-class modules + index.js registry)
 │   │   ├── subclasses/         # Subclass features (per-subclass modules + index.js registry, e.g. Troubadour, Beastbound, Elemental Origin)
 │   │   ├── ancestries/         # Origin: ancestry feature modules
@@ -109,7 +109,9 @@ DaggerheartGM/
 │   │   ├── abilities/          # Domain spells (per-domain subfolders, e.g. Arcana/; index.js flat registry keyed srd-abl-*)
 │   │   ├── beastforms/         # srd-data.js + per-form modules (named exports + `features` array); marry.js attaches JSON ids; index.js default registry
 │   │   ├── items/              # SRD item modules (when migrated)
-│   │   └── consumables/        # SRD consumable modules (when migrated)
+│   │   ├── consumables/        # SRD consumable modules (when migrated)
+│   │   ├── adversary_features/ # SRD adversary feature templates (keyed by parsed feature name); gap-fill: npm run gen:missing-adversary-stubs
+│   │   └── generated/          # feature-catalog.json (npm run gen:feature-catalog), adversary-feature-inventory.json (npm run gen:adversary-feature-inventory); burndown: docs/adversary-feature-todo-report.md (npm run report:adversary-feature-todos)
 │   ├── srd/                    # SRD sub-application (no DB dependency)
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id

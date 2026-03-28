@@ -43,6 +43,8 @@ export {
   parseBeastformStatBonus,
   advantageTriggersFromBeastformRow,
   parseBeastformAttackLine,
+  loadAdversaryFeatures,
+  mergeAdversaryV2Overlay,
 } from './engine/index.js';
 
 // Registry
@@ -58,4 +60,5 @@ export {
   beastforms,
   items,
   consumables,
+  adversary_features,
 } from './registry.js';

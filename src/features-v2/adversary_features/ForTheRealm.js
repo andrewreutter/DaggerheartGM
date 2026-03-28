@@ -1,0 +1,13 @@
+/**
+ * Adversary action — For the Realm! (SRD)
+ *
+ * TODO ACTION [ACTIONSECONDARY]: Secondary dice / saves / pools (`clientHoverUseRoll`, banner chips per authoring guide).
+ * TODO ACTION [DAMAGE]: Half damage on success vs full on failure where stated (per SRD).
+ * TODO ACTION [RESOURCE]: Adversary Stress mark for movement/ability (per SRD).
+ * TODO ACTION [SPOTLIGHT]: Spotlight/Fear interactions (per SRD).
+ */
+export const ForTheRealm = {
+  name: "For the Realm!",
+  type: 'action',
+  description: "**Mark a Stress** to spotlight **1d4+1** allies. Attacks they make while spotlighted in this way deal half damage.",
+};

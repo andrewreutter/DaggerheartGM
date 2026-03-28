@@ -13,6 +13,8 @@ import { coerceLibraryAttack } from '../../lib/library-attack-display.js';
 import { libraryTierBodyLine, showLibraryLevelBadge } from '../../lib/library-tier-subtitle.js';
 import { expandDomainCardEntries } from '../../lib/library-domain-cards.js';
 import { TierShieldBadge } from '../TierShieldBadge.jsx';
+import { mergeAdversaryV2Overlay } from '../../../features-v2/index.js';
+import { buildV2RegistryWithSrdItems } from '../../lib/v2-declarative-sheet.js';
 
 const GENERIC_DETAIL_SET = new Set(LIBRARY_GENERIC_DETAIL_COLLECTIONS);
 
@@ -702,6 +704,32 @@ export function LibraryItemDisplayContent({
 }) {
   const libraryCard = layout === 'libraryCard';
 
+  const adversaryLibraryOverlay = useMemo(() => {
+    if (collection !== 'adversaries' || !srdData || !item) return null;
+    const registry = buildV2RegistryWithSrdItems(srdData);
+    const row = { ...item, features: item.features ?? item.feature ?? [] };
+    return mergeAdversaryV2Overlay(
+      row,
+      { instanceId: '__library_adv__', elementType: 'adversary' },
+      registry,
+      { tableBase: { featureState: {} } }
+    );
+  }, [collection, srdData, item]);
+
+  const libraryAdvV2Context = useMemo(
+    () =>
+      srdData
+        ? {
+            activeElements: [],
+            fearCount: 0,
+            mapConfig: null,
+            tableFeatureState: {},
+            registry: buildV2RegistryWithSrdItems(srdData),
+          }
+        : undefined,
+    [srdData]
+  );
+
   return (
     <>
       {enriching ? (
@@ -721,6 +749,8 @@ export function LibraryItemDisplayContent({
           scaledMeta={adversaryScaledMeta}
           onScaledToggle={onAdversaryScaledToggle}
           suppressTierBadge
+          featureDisplayEl={adversaryLibraryOverlay}
+          v2TableContext={libraryAdvV2Context}
         />
       )}
       {collection === 'environments' && (

@@ -7,6 +7,8 @@ import {
   formatArmorChipTooltip,
   formatStatModsTooltip,
   extractGmFeatureWhenClause,
+  hasPhysicalResistanceFromAffinityRows,
+  effectivePhysicalDamageForBannerPreview,
 } from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
@@ -150,6 +152,54 @@ describe('formatStatModsTooltip', () => {
 
   it('returns empty when no matching bonus', () => {
     expect(formatStatModsTooltip({}, 'maxHp')).toBe('');
+  });
+});
+
+describe('hasPhysicalResistanceFromAffinityRows', () => {
+  it('is true when a row lists physical in damageAffinities.resistances', () => {
+    expect(
+      hasPhysicalResistanceFromAffinityRows([
+        { name: 'Ghost', damageAffinities: { resistances: ['physical'] } },
+      ]),
+    ).toBe(true);
+  });
+
+  it('is false for empty or non-array', () => {
+    expect(hasPhysicalResistanceFromAffinityRows([])).toBe(false);
+    expect(hasPhysicalResistanceFromAffinityRows(null)).toBe(false);
+  });
+
+  it('is false when only magical resistance', () => {
+    expect(
+      hasPhysicalResistanceFromAffinityRows([
+        { damageAffinities: { resistances: ['magical'] } },
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe('effectivePhysicalDamageForBannerPreview', () => {
+  it('halves physical damage for adversary with merged Ghost-style affinity', () => {
+    const map = new Map([
+      [
+        'adv-1',
+        {
+          activeFeatures: [{ name: 'Ghost', damageAffinities: { resistances: ['physical'] } }],
+        },
+      ],
+    ]);
+    expect(
+      effectivePhysicalDamageForBannerPreview(8, 'phy', { type: 'adversary', instanceId: 'adv-1' }, map),
+    ).toBe(4);
+  });
+
+  it('does not halve when damage is not physical', () => {
+    const map = new Map([
+      ['adv-1', { activeFeatures: [{ damageAffinities: { resistances: ['physical'] } }] }],
+    ]);
+    expect(
+      effectivePhysicalDamageForBannerPreview(8, 'mag', { type: 'adversary', instanceId: 'adv-1' }, map),
+    ).toBe(8);
   });
 });
 

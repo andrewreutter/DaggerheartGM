@@ -1260,6 +1260,14 @@ export function GuideFeatureCard({
               )}
             </div>
           )}
+          {typeof featRow?.adversaryAuraReminder === 'string' && featRow.adversaryAuraReminder.trim() ? (
+            <div className="mb-1.5 clear-both flex flex-wrap items-start gap-x-1.5 gap-y-0.5 rounded border border-amber-800/40 bg-amber-950/25 px-2 py-1">
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-400/95 shrink-0">
+                Aura
+              </span>
+              <span className="text-[10px] text-dh-muted leading-snug min-w-0">{featRow.adversaryAuraReminder.trim()}</span>
+            </div>
+          ) : null}
           {model.description ? <MarkdownText text={model.description} className="dh-md" /> : null}
           {featRow.charge && (
             <span className="block clear-both mt-0.5 text-[10px] text-dh-muted italic">

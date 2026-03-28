@@ -96,7 +96,13 @@ export const RUNTIME_KEYS = [
   'v2PendingMove',     // V2: pending map positioning for a banner (see CHARACTER_RUNTIME_KEYS)
   'v2MoveLockRollDbId',
   'v2MoveLockSource',
+  /** V2 — preserved on `update-base-data` for adversaries (and any element) using declarative bags */
+  'featureState',
+  'featureUsage',
 ];
+
+/** Subset documented for adversary elements; full preservation uses {@link RUNTIME_KEYS}. */
+export const ADVERSARY_RUNTIME_KEYS = ['featureState', 'featureUsage'];
 
 /**
  * Apply a table operation to GM-side state (pure function).
@@ -865,19 +871,19 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
           break;
         }
         const el = getBase(targetOwner);
-        if (!el || el.elementType !== 'character') {
+        if (!el || (el.elementType !== 'character' && el.elementType !== 'adversary')) {
           skip();
           break;
         }
         const fs = { ...(el.featureState || {}) };
         const bag = { ...(fs[featureKey] || {}) };
         bag[key] = value;
-        if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
+        if (el.elementType === 'character' && featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
           bag.evolutionTraitKey = null;
         }
         fs[featureKey] = bag;
         merge(targetOwner, { featureState: fs });
-        if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
+        if (el.elementType === 'character' && featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
           merge(targetOwner, { activeBeastform: null, selectedBeastformAdvantage: null });
         }
         break;

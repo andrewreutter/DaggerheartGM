@@ -53,4 +53,5 @@ export {
   advantageTriggersFromBeastformRow,
   parseBeastformAttackLine,
 } from './feature-loader.js';
+export { loadAdversaryFeatures, mergeAdversaryV2Overlay } from './adversary-feature-loader.js';
 export { findWeaponDamageDieForPool } from './weapon-damage-die.js';

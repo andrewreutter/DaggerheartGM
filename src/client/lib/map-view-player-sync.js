@@ -44,7 +44,6 @@ export function freeMapExploreTargetsUnsharedMap(freeExploreMapId, playerFreeMap
 
 /**
  * Selectable tiles on the player map strip: optional free-map tile per batch, GM views.
- * BattleMap shows the strip when this count is ≥ 1 so map/view names stay visible (including a single shared map).
  *
  * @param {Array<{ map: { shareWithPlayers?: boolean }, gmViews: unknown[] }>} playerViewBatches
  */
@@ -55,4 +54,12 @@ export function countPlayerMapStripTiles(playerViewBatches) {
     n += gmViews.length;
   }
   return n;
+}
+
+/**
+ * Player map strip (map tiles + saved cameras): only useful when there is more than one choice.
+ * @param {number} tileCount — {@link countPlayerMapStripTiles}
+ */
+export function shouldShowPlayerMapViewStrip(tileCount) {
+  return tileCount > 1;
 }

@@ -5,7 +5,7 @@ import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, hasPhysicalResistanceFromAffinityRows, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { HOPE_TRACK_FILL, HOPE_TRACK_ICON_CLASS, CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
@@ -67,6 +67,12 @@ import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp,
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
+import { mergeAdversaryV2Overlay } from '../../features-v2/index.js';
+import {
+  buildAdversaryFeatureRollParts,
+  applyAdversaryRollMetaBasics,
+  pickAdversaryAttackerIds,
+} from '../lib/adversary-roll-descriptors.js';
 import {
   applyDeferredV2ToggleOnAckFromRoll,
   applyV2OwnedCardChipEngineResultToTable,
@@ -219,9 +225,6 @@ const ROLE_MOVES = {
   support:  'The {name} clears a condition on themselves or someone else.',
 };
 
-const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
-const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
-
 function parseFearCost(description) {
   const m = (description || '').match(/(?:spend|mark)\s+(\d+|a|an)\s+fear/i);
   if (!m) return 1;
@@ -371,6 +374,11 @@ function GmMovesFeatureTooltipPanel({
   scaledToggleState,
   onAdversaryScaledToggle,
   updateActiveElement,
+  adversaryDisplayByInstanceId,
+  v2TableContextForPanels,
+  isPlayer,
+  tableId,
+  onAdversaryV2CardChip,
 }) {
   if (item.kind === 'environment') {
     return (
@@ -410,6 +418,8 @@ function GmMovesFeatureTooltipPanel({
   const showScaled = scaledToggleState[el.id] ?? true;
   const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
   const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
+  const firstInstId = item.instances?.[0]?.instanceId;
+  const advFeatureDisplay = firstInstId ? adversaryDisplayByInstanceId?.get(firstInstId) : null;
   return (
     <div className="p-4 max-h-[min(70vh,calc(100vh-48px))] overflow-y-auto">
       {el.imageUrl && (
@@ -436,6 +446,12 @@ function GmMovesFeatureTooltipPanel({
         onRollAttack={null}
         scaledMeta={scaledMeta}
         onScaledToggle={scaledMeta && onAdversaryScaledToggle ? () => onAdversaryScaledToggle(el.id) : null}
+        featureDisplayEl={advFeatureDisplay}
+        v2TableContext={v2TableContextForPanels}
+        adversaryInteractionMode={!isPlayer && tableId && advFeatureDisplay ? 'interactive' : 'preview'}
+        onV2CardChip={
+          advFeatureDisplay && !isPlayer && tableId ? onAdversaryV2CardChip(advFeatureDisplay) : undefined
+        }
       />
     </div>
   );
@@ -902,6 +918,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       if (hasResistance) wrappedRoll.damageTotal = Math.floor(wrappedRoll.damageTotal / 2);
     }
 
+    // Adversary: physical resistance from merged V2 registry rows (e.g. Ghost — damageAffinities)
+    if (
+      (target.type === 'adversary' || target.elementType === 'adversary')
+      && (dmgType === 'phy' || dmgType === 'Physical')
+    ) {
+      const mergedAdv = adversaryDisplayByInstanceId?.get?.(target.instanceId);
+      if (hasPhysicalResistanceFromAffinityRows(mergedAdv?.activeFeatures)) {
+        wrappedRoll.damageTotal = Math.floor(wrappedRoll.damageTotal / 2);
+      }
+    }
+
     // Store initial HP loss and use roll.hpLoss as the pipeline accumulator
     const initialHpLoss = computeHpLoss(wrappedRoll.damageTotal, target.thresholds);
     wrappedRoll._initialHpLoss = initialHpLoss;
@@ -1335,6 +1362,30 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         placementShape: payload.placementShape,
         displayEl,
         el: characterEl,
+        activeElementsForV2Snapshots: activeElements,
+        v2Registry,
+        tableFeatureState,
+        fearCount,
+        mapConfig,
+        tableId,
+        onActionLoopNotification: handleActionNotification,
+      });
+    },
+    [isPlayer, tableId, v2Registry, activeElements, tableFeatureState, fearCount, mapConfig, handleActionNotification]
+  );
+
+  /** V2 card chips on adversary encounter cards / overlays — merged `mergeAdversaryV2Overlay` as both display + owner. */
+  const handleAdversaryV2CardChip = useCallback(
+    (adversaryEl) => (payload) => {
+      if (isPlayer || !tableId || !v2Registry || !adversaryEl?.instanceId) return;
+      void runV2OwnedCardChipTableAction({
+        featRow: payload.featRow,
+        chip: payload.chip,
+        passedFeatureKey: payload.featureKey,
+        selectOpts: payload.selectOpts,
+        placementShape: payload.placementShape,
+        displayEl: adversaryEl,
+        el: adversaryEl,
         activeElementsForV2Snapshots: activeElements,
         v2Registry,
         tableFeatureState,
@@ -3074,14 +3125,20 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       rollText = parts.join(' ');
     }
     const displayName = `${feature.sourceName} ${feature.name}`;
+    const instances = activeElements.filter(e => e.elementType === 'adversary' && e.id === feature.cardKey);
+    const rollMeta = {
+      ...pickAdversaryAttackerIds(instances),
+    };
+    applyAdversaryRollMetaBasics(rollMeta, { featureKey: feature.featureKey, featureName: feature.name });
     // For GM Moves adversary attacks with a range: show in-place target picker if instances are on the map.
     if (feature._rollData?.range) {
-      const instances = activeElements.filter(e => e.elementType === 'adversary' && e.id === feature.cardKey);
       const onMap = instances.filter(i => i.tokenX != null && i.tokenY != null);
       if (onMap.length >= 1) {
         const rangeFt = rangeBandNameToFt(feature._rollData.range);
         if (rangeFt != null) {
-          const rollMeta = { _attackerType: 'adversary', _attackRangeFt: rangeFt };
+          rollMeta._attackRangeFt = rangeFt;
+          delete rollMeta._attackerInstanceId;
+          delete rollMeta._attackerInstanceIds;
           if (onMap.length === 1) rollMeta._attackerInstanceId = onMap[0].instanceId;
           else rollMeta._attackerInstanceIds = onMap.map(i => i.instanceId);
           const inRange = rollMeta._attackerInstanceIds?.length > 0
@@ -3096,7 +3153,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     }
     const key = `${feature.cardKey}|${feature.featureKey}`;
-    postRoll(rollText, displayName, tableId).then(() => {
+    postRoll(rollText, displayName, tableId, rollMeta).then(() => {
       setRolledKey(key);
       setTimeout(() => setRolledKey(prev => prev === key ? null : prev), 1500);
     }).catch(err => handleRollTransportError(err, 'Roll failed:'));
@@ -3114,14 +3171,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       rollText = buildAttackRollText(name, modifier, range, damage, trait, sourceName);
     }
     const displayName = `${sourceName} ${name}`;
-    let rollMeta = {};
+    const rollMeta = {
+      ...pickAdversaryAttackerIds(attackerInstances || []),
+    };
+    applyAdversaryRollMetaBasics(rollMeta, {
+      featureKey: attackData._featureKey,
+      featureName: attackData._featureName ?? name,
+    });
     if (Array.isArray(attackerInstances) && attackerInstances.length > 0 && range) {
       const onMap = attackerInstances.filter(i => i.tokenX != null && i.tokenY != null);
       if (onMap.length >= 1) {
         const rangeFt = rangeBandNameToFt(range);
         if (rangeFt != null) {
-          rollMeta._attackerType = 'adversary';
           rollMeta._attackRangeFt = rangeFt;
+          delete rollMeta._attackerInstanceId;
+          delete rollMeta._attackerInstanceIds;
           if (onMap.length === 1) {
             rollMeta._attackerInstanceId = onMap[0].instanceId;
           } else {
@@ -3140,7 +3204,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       setAdversaryTargetMenu({ anchorRect, rollText, displayName, rollMeta, validTargets });
       return;
     }
-    postRoll(rollText, displayName, tableId, Object.keys(rollMeta).length ? rollMeta : undefined).catch(err => handleRollTransportError(err, 'Roll failed:'));
+    postRoll(rollText, displayName, tableId, rollMeta).catch(err => handleRollTransportError(err, 'Roll failed:'));
   };
 
   const handleTraitRoll = (rollText, displayName, rollMeta = {}) => {
@@ -3900,30 +3964,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
       element.features?.forEach((feature, featureIdx) => {
         const category = parseFeatureCategory(feature);
-        const m = feature.type === 'action' && feature.description ? ATTACK_DESC_RE.exec(feature.description) : null;
-        const dicePatterns = feature.description
-          ? [...feature.description.matchAll(DICE_PATTERN_RE)].map(dm => dm[0])
-          : [];
-        const includeAttack = /\bmakes?\b.*?\battack\b/is.test(feature.description || '');
+        const { _rollData, _diceRoll } = buildAdversaryFeatureRollParts(feature, element, {});
         menu[category].push({
           ...feature,
           sourceName: element.name,
           cardKey,
           featureKey: `feat-${featureIdx}`,
-          _rollData: m ? {
-            modifier: parseInt(m[1]),
-            range: m[2],
-            damage: m[3],
-            trait: m[4],
-          } : null,
-          _diceRoll: !m && (dicePatterns.length > 0 || includeAttack) ? {
-            patterns: dicePatterns,
-            includeAttack,
-            attackModifier: includeAttack ? (element.attack?.modifier ?? 0) : null,
-            attackDamage: includeAttack && dicePatterns.length === 0 ? (element.attack?.damage || null) : null,
-            attackTrait: includeAttack && dicePatterns.length === 0 ? (element.attack?.trait || null) : null,
-            attackRange: includeAttack && dicePatterns.length === 0 ? (element.attack?.range || 'Melee') : null,
-          } : null,
+          _rollData,
+          _diceRoll,
         });
       });
 
@@ -4014,6 +4062,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     return map;
   }, [srdData, tableCharacters, fearCount, mapConfig, tableFeatureState]);
+
+  /** Merged adversary statblocks + V2 `activeFeatures` for banners / roll tags (parallel to `characterDisplayByInstanceId`). */
+  const adversaryDisplayByInstanceId = useMemo(() => {
+    if (!srdData) return new Map();
+    const registry = buildV2RegistryWithSrdItems(srdData);
+    const map = new Map();
+    const tableBase = { featureState: mergeV2TableFeatureState(tableFeatureState, activeElements) };
+    for (const el of activeElements) {
+      if (el.elementType !== 'adversary') continue;
+      map.set(el.instanceId, mergeAdversaryV2Overlay(el, el, registry, { tableBase }));
+    }
+    return map;
+  }, [srdData, activeElements, tableFeatureState]);
 
   /** V2 engine `reviewAction` chips for pending banners (Phase 2 — keyed by `_rollDbId`). */
   const v2ReviewChipsByRollDbId = useMemo(() => {
@@ -4534,6 +4595,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           scaledToggleState={scaledToggleState}
           onAdversaryScaledToggle={(id) => setScaledToggleState((prev) => ({ ...prev, [id]: !(prev[id] ?? true) }))}
           updateActiveElement={updateActiveElement}
+          adversaryDisplayByInstanceId={adversaryDisplayByInstanceId}
+          v2TableContextForPanels={v2TableContextForPanels}
+          isPlayer={isPlayer}
+          tableId={tableId}
+          onAdversaryV2CardChip={handleAdversaryV2CardChip}
         />
       ),
       extra: <span className="sr-only" aria-hidden>preview</span>,
@@ -5721,6 +5787,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onNotThisTime={isPlayer ? undefined : handleNotThisTime}
             displayOverridesByRollId={displayOverridesByRollId}
             tableCharacters={tableCharacters}
+            adversaryDisplayByInstanceId={adversaryDisplayByInstanceId}
             sessionRole={chipViewer.sessionRole}
             rangerFocusRerollChars={rangerFocusRerollChars}
             onRangerFocusReroll={isPlayer ? undefined : handleRangerFocusReroll}
@@ -6798,6 +6865,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               );
               const liveInstances = liveGroup?.instances ?? trackerOverlay.data.instances;
               const liveBaseElement = liveGroup?.baseElement ?? trackerOverlay.data.baseElement;
+              const trackerAdvDisp =
+                liveInstances[0]?.instanceId != null
+                  ? adversaryDisplayByInstanceId.get(liveInstances[0].instanceId)
+                  : null;
               return (
                 <>
                   <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
@@ -6837,6 +6908,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     damageBoost={tableDamageBoost || liveBaseElement._damageBoost || null}
                     scaledMeta={null}
                     onScaledToggle={null}
+                    featureDisplayEl={trackerAdvDisp}
+                    v2TableContext={v2TableContextForPanels}
+                    adversaryInteractionMode={!isPlayer && tableId && trackerAdvDisp ? 'interactive' : 'preview'}
+                    onV2CardChip={
+                      trackerAdvDisp && !isPlayer && tableId ? handleAdversaryV2CardChip(trackerAdvDisp) : undefined
+                    }
                   />
                 </>
               );
@@ -6930,6 +7007,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             const showScaled = scaledToggleState[el.id] ?? true;
             const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
             const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
+            const hoverAdvDisp =
+              displayElement.instances?.[0]?.instanceId != null
+                ? adversaryDisplayByInstanceId.get(displayElement.instances[0].instanceId)
+                : null;
             return (
             <div className="p-5 relative">
               {el.imageUrl && (
@@ -6960,6 +7041,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   onRollAttack={(data, e) => handleCardRoll(data, el.name, displayElement.instances, e)}
                   scaledMeta={scaledMeta}
                   onScaledToggle={() => setScaledToggleState(prev => ({ ...prev, [el.id]: !(prev[el.id] ?? true) }))}
+                  featureDisplayEl={hoverAdvDisp}
+                  v2TableContext={v2TableContextForPanels}
+                  adversaryInteractionMode={!isPlayer && tableId && hoverAdvDisp ? 'interactive' : 'preview'}
+                  onV2CardChip={
+                    hoverAdvDisp && !isPlayer && tableId ? handleAdversaryV2CardChip(hoverAdvDisp) : undefined
+                  }
                 />
               </div>
             </div>
