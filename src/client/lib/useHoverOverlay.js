@@ -161,12 +161,14 @@ export function useHoverOverlay({
   }, [isTouch, mode, show, scheduleClose, applyClickOverlayData]);
 
   /**
-   * Props to spread on the overlay element (desktop only — keeps overlay open
-   * while the mouse moves between trigger and overlay).
+   * Props to spread on the overlay element (desktop hover mode only — keeps overlay open
+   * while the mouse moves between trigger and overlay). Click mode uses outside-dismiss only.
    */
   const overlayHandlers = isTouch
     ? {}
-    : { onMouseEnter: clearTimer, onMouseLeave: close };
+    : mode === 'click'
+      ? {}
+      : { onMouseEnter: clearTimer, onMouseLeave: close };
 
   return {
     data,

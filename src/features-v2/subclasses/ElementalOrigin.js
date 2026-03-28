@@ -4,10 +4,11 @@
 
 import { when, isActing, anAttackSucceeds, againstYou } from '../engine/when.js';
 
-const FS = 'ElementalOrigin';
+/** Matches `sourceScopeKey` on `registry.subclasses['srd-sub-elemental-origin']`. */
+const ELEMENTAL_ORIGIN_SCOPE = 'ElementalOrigin';
 
 function transcendence(table) {
-  return table.source?.get?.('transcendence') ?? table.featureState?.[FS]?.transcendence;
+  return table.source?.get?.('transcendence') ?? table.featureState?.[ELEMENTAL_ORIGIN_SCOPE]?.transcendence;
 }
 
 function transcendenceActive(table) {

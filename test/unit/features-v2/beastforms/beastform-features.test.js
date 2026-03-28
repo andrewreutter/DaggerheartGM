@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { applyDeclarativeFeatures, loadCharacterFeatures } from '../../../../src/features-v2/engine/feature-loader.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../../../src/features-v2/engine/feature-scope-keys.js';
 import registry from '../../../../src/features-v2/registry.js';
 import { mockCharacter } from '../helpers.js';
+
+function druidScoped(fs) {
+  return { [SRD_CLASS_DRUID_SCOPE_KEY]: fs };
+}
 
 describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)', () => {
   it('includes Agile + Fragile when Agile Scout is active', () => {
@@ -9,11 +14,9 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       instanceId: 'd1',
       classId: 'srd-cls-druid',
       level: 1,
-      featureState: {
-        Beastform: {
-          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
-        },
-      },
+      featureState: druidScoped({
+        activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+      }),
     });
     const druid = raw;
     const base = loadCharacterFeatures(druid, registry);
@@ -35,11 +38,9 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       instanceId: 'd1',
       classId: 'srd-cls-druid',
       level: 1,
-      featureState: {
-        Evolution: {
-          activeBeastform: { beastformId: 'srd-bst-pack-predator', viaEvolution: true },
-        },
-      },
+      featureState: druidScoped({
+        activeBeastform: { beastformId: 'srd-bst-pack-predator', viaEvolution: true },
+      }),
     });
     const druid = raw;
     const base = loadCharacterFeatures(druid, registry);
@@ -53,7 +54,7 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       instanceId: 'd1',
       classId: 'srd-cls-druid',
       level: 1,
-      featureState: { Beastform: {} },
+      featureState: druidScoped({}),
     });
     const druid = raw;
     const base = loadCharacterFeatures(druid, registry);
@@ -68,11 +69,9 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       classId: 'srd-cls-druid',
       level: 2,
       armorThresholds: { major: 7, severe: 12 },
-      featureState: {
-        Beastform: {
-          activeBeastform: { beastformId: 'srd-bst-powerful-beast', viaEvolution: false },
-        },
-      },
+      featureState: druidScoped({
+        activeBeastform: { beastformId: 'srd-bst-powerful-beast', viaEvolution: false },
+      }),
     });
     const druid = raw;
     const feats = loadCharacterFeatures(druid, registry);
@@ -87,11 +86,9 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       classId: 'srd-cls-druid',
       level: 2,
       armorThresholds: { major: 7, severe: 12 },
-      featureState: {
-        Beastform: {
-          activeBeastform: { beastformId: 'srd-bst-winged-beast', viaEvolution: false },
-        },
-      },
+      featureState: druidScoped({
+        activeBeastform: { beastformId: 'srd-bst-winged-beast', viaEvolution: false },
+      }),
     });
     const druid = raw;
     const feats = loadCharacterFeatures(druid, registry);
@@ -106,11 +103,9 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       classId: 'srd-cls-druid',
       level: 2,
       armorThresholds: { major: 4, severe: 9 },
-      featureState: {
-        Beastform: {
-          activeBeastform: { beastformId: 'srd-bst-mighty-lizard', viaEvolution: false },
-        },
-      },
+      featureState: druidScoped({
+        activeBeastform: { beastformId: 'srd-bst-mighty-lizard', viaEvolution: false },
+      }),
     });
     const druid = raw;
     const feats = loadCharacterFeatures(druid, registry);
@@ -125,11 +120,9 @@ describe('beastform sub-features via applyDeclarativeFeatures (virtualSources)',
       classId: 'srd-cls-druid',
       level: 5,
       evasion: 12,
-      featureState: {
-        Beastform: {
-          activeBeastform: { beastformId: 'srd-bst-legendary-beast', viaEvolution: false },
-        },
-      },
+      featureState: druidScoped({
+        activeBeastform: { beastformId: 'srd-bst-legendary-beast', viaEvolution: false },
+      }),
     });
     const druid = raw;
     const feats = loadCharacterFeatures(druid, registry);

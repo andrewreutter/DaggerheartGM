@@ -46,7 +46,7 @@ Scan at least:
 
 For each row: **category** (explicit during-rest choice / automatic on acknowledge / buff expiry / narrative-only), **current mechanism**, **migrate to `rest`?** (yes/no + one-line reason). **No additional** `placement: 'rest'` migrations in this milestone unless the audit flags a trivial follow-up the implementer chooses to batch with Sweet Moss (default: **only Sweet Moss**).
 
-Output: short appendix — acceptable locations: subsection in [`docs/v2-v1-cutover.md`](docs/v2-v1-cutover.md) matrix notes, or a small `docs/rest-adjacent-audit.md` (only if you want a standalone file; otherwise inline in PR + cutover row).
+Output: short appendix — acceptable locations: note under [`docs/v2-game-table-cutover-remaining.md`](docs/v2-game-table-cutover-remaining.md), or a small `docs/rest-adjacent-audit.md` (only if you want a standalone file; otherwise inline in PR + tracker).
 
 ### 2b. Sweet Moss — migrate to `placement: 'rest'`
 

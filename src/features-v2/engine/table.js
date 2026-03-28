@@ -243,8 +243,8 @@ function buildActor(element, gameState, mutations) {
     },
 
     /**
-     * True while this character has an active beastform (`element.activeBeastform`, Druid scoped
-     * bag, or legacy `Beastform` / `Evolution` featureState keys).
+     * True while this character has an active beastform (`element.activeBeastform` denormalized cache
+     * or Druid scoped `featureState['classes:srd-cls-druid'].activeBeastform`).
      */
     get inBeastform() {
       if (!isChar) return false;
@@ -252,15 +252,8 @@ function buildActor(element, gameState, mutations) {
       if (ab && typeof ab === 'object' && (ab.id || ab.beastformId)) return true;
       const efs = element.featureState;
       if (efs?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId) return true;
-      if (efs?.Beastform?.activeBeastform?.beastformId || efs?.Evolution?.activeBeastform?.beastformId) {
-        return true;
-      }
       const fs = gameState.featureState;
-      return !!(
-        fs?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
-        fs?.Beastform?.activeBeastform?.beastformId ||
-        fs?.Evolution?.activeBeastform?.beastformId
-      );
+      return !!fs?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId;
     },
 
     /**
@@ -272,11 +265,7 @@ function buildActor(element, gameState, mutations) {
       if (legacy && typeof legacy === 'object' && legacy.name) return String(legacy.name);
       const id =
         element.featureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
-        element.featureState?.Beastform?.activeBeastform?.beastformId ||
-        element.featureState?.Evolution?.activeBeastform?.beastformId ||
         gameState.featureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
-        gameState.featureState?.Beastform?.activeBeastform?.beastformId ||
-        gameState.featureState?.Evolution?.activeBeastform?.beastformId ||
         (legacy && typeof legacy === 'object' ? legacy.beastformId || legacy.id : null);
       if (!id) return null;
       const beasts = gameState.registry?.beastforms;

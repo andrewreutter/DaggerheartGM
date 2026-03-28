@@ -145,18 +145,6 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.inBeastform).toBe(true);
   });
 
-  it('exposes inBeastform from gameState.featureState.Beastform', () => {
-    const char = mockCharacter({ instanceId: 'c1' });
-    const table = buildTableSnapshot(mockGameState({
-      activeElements: [char],
-      _ownerInstanceId: 'c1',
-      featureState: {
-        Beastform: { activeBeastform: { beastformId: 'srd-bst-agile-scout' } },
-      },
-    }));
-    expect(table.me?.inBeastform).toBe(true);
-  });
-
   it('exposes inBeastform from scoped Druid class featureState bag', () => {
     const char = mockCharacter({ instanceId: 'c1' });
     const table = buildTableSnapshot(mockGameState({

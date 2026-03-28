@@ -21,20 +21,20 @@ todos:
     content: Tests for Fragile flag on merged rows + mutation list / applyTableOp shape for exit
     status: pending
   - id: docs-v2-cutover
-    content: "Update docs/v2-v1-cutover.md §2–§4 / §3 row #15 per Phase F contract"
+    content: "Update docs/v2-game-table-cutover-remaining.md when beastform VTT slice closes"
     status: pending
 isProject: true
 ---
 
 # Phase F — Beastform / Druid VTT parity (revised)
 
-## Scope (from [`.cursor/plans/v2-game-table-cutover-completion.plan.md`](v2-game-table-cutover-completion.plan.md))
+## Scope (from archived completion plan; backlog lives in [`docs/v2-game-table-cutover-remaining.md`](../../docs/v2-game-table-cutover-remaining.md))
 
 - **Fragile** (Major+ damage forces drop when the form has Fragile)
 - **Advantage chip** (`selectedBeastformAdvantage` / +d6 on beastform attack)
 - **Voluntary drop** (V2 "Drop out of Beastform" card chip + damage-driven drops)
 
-Tracker: [`docs/v2-v1-cutover.md`](../../docs/v2-v1-cutover.md) §3 row **#15**, §4 **Tech debt**.
+Tracker: [`docs/v2-game-table-cutover-remaining.md`](../../docs/v2-game-table-cutover-remaining.md) (Beastform / session vs scene as applicable).
 
 ---
 
@@ -86,7 +86,7 @@ Tracker: [`docs/v2-v1-cutover.md`](../../docs/v2-v1-cutover.md) §3 row **#15**,
 
 ### 5) Documentation
 
-- [`docs/v2-v1-cutover.md`](../../docs/v2-v1-cutover.md): §2, §3 row **#15**, §4 tech debt; optional [`docs/srd-implementation.md`](../../docs/srd-implementation.md) if status changes.
+- [`docs/v2-game-table-cutover-remaining.md`](../../docs/v2-game-table-cutover-remaining.md); optional [`docs/srd-implementation.md`](../../docs/srd-implementation.md) if status changes.
 
 ---
 

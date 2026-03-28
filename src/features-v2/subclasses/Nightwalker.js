@@ -4,7 +4,8 @@
 
 import { when, isActing, youSucceedOnAnAttack } from '../engine/when.js';
 
-const FS = 'Nightwalker';
+/** Matches `sourceScopeKey` on `registry.subclasses['srd-sub-nightwalker']`. */
+const NIGHTWALKER_SCOPE = 'Nightwalker';
 
 function fearDominates(table) {
   const h = table.rolls?.action?.hopeDie?.value;
@@ -99,7 +100,8 @@ export const VanishingAct = {
       isActing,
       (table) => table.action?.generatesHopeFear === true,
       (table) =>
-        (table.source?.get?.('vanishingActCloak') ?? table.featureState?.[FS]?.vanishingActCloak) === true,
+        (table.source?.get?.('vanishingActCloak') ??
+          table.featureState?.[NIGHTWALKER_SCOPE]?.vanishingActCloak) === true,
       fearDominates,
       (table) => {
         table.source.set('vanishingActCloak', false);
@@ -107,7 +109,10 @@ export const VanishingAct = {
       }
     ),
     onRest(table) {
-      if ((table.source?.get?.('vanishingActCloak') ?? table.featureState?.[FS]?.vanishingActCloak) !== true)
+      if (
+        (table.source?.get?.('vanishingActCloak') ??
+          table.featureState?.[NIGHTWALKER_SCOPE]?.vanishingActCloak) !== true
+      )
         return;
       table.source.set('vanishingActCloak', false);
       table.me.removeCondition('Cloaked');

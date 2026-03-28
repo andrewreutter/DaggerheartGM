@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { getEvasionModifierTotal, formatEvasionModifierTooltip } from '../../src/client/lib/helpers.js';
+import { SRD_CLASS_ROGUE_SCOPE_KEY } from '../../src/features-v2/engine/feature-scope-keys.js';
 
 describe('getEvasionModifierTotal', () => {
   it('includes Rogue\'s Dodge +2 from featureState via passiveStatMods (not activeModifiers)', () => {
     const el = {
       evasion: 12,
       instanceId: 'c1',
-      featureState: { "Rogue's Dodge": { roguesDodgeActive: true } },
+      featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
       activeModifiers: [],
     };
     expect(getEvasionModifierTotal(el)).toBe(2);

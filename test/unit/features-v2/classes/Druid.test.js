@@ -103,7 +103,7 @@ describe('Druid — Beastform', () => {
       classId: 'srd-cls-druid',
       level: 1,
       featureState: {
-        Evolution: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
           activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: true },
           evolutionTraitKey: 'agility',
         },
@@ -145,11 +145,8 @@ describe('Druid — Drop out of Beastform (Beastform card chip)', () => {
       classId: 'srd-cls-druid',
       level: 1,
       featureState: {
-        Beastform: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
           activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
-        },
-        Evolution: {
-          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: true },
           evolutionTraitKey: 'agility',
         },
       },
@@ -265,7 +262,7 @@ describe('Druid — beastform declarative overlay', () => {
       evasion: 10,
       primaryWeaponId: 'srd-wpn-test',
       featureState: {
-        Beastform: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
           activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
         },
       },
@@ -318,23 +315,6 @@ describe('Druid — beastform declarative overlay', () => {
     expect(out.stats.agility).toBe(3);
   });
 
-  it('Evolution adds +1 to chosen trait via evolutionTraitKey (legacy Evolution bag)', () => {
-    const raw = mockCharacter({
-      instanceId: 'd1',
-      classId: 'srd-cls-druid',
-      level: 1,
-      featureState: {
-        Evolution: {
-          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: true },
-          evolutionTraitKey: 'agility',
-        },
-      },
-    });
-    const druid = raw;
-    const feats = loadCharacterFeatures(druid, registry);
-    const out = applyDeclarativeFeatures(feats, druid, {}, registry);
-    expect(out.stats.agility).toBe(3);
-  });
 });
 
 describe('Druid — auto-drop beastform at 0 HP', () => {
@@ -344,7 +324,7 @@ describe('Druid — auto-drop beastform at 0 HP', () => {
       classId: 'srd-cls-druid',
       currentHp: 0,
       featureState: {
-        Beastform: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
           activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
         },
       },

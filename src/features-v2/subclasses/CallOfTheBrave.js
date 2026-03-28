@@ -58,7 +58,7 @@ export const RiseToTheChallenge = {
   },
 };
 
-/** Narrative-only for now — full automation deferred (see Tech Debt in `docs/v2-v1-cutover.md`). */
+/** Narrative-only for now — full automation deferred (tracker Tech Debt / `docs/v2-game-table-cutover-remaining.md`). */
 export const Camaraderie = {
   name: 'Camaraderie',
   description:

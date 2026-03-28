@@ -5,7 +5,7 @@
 | Doc | Role |
 |-----|------|
 | This file | **Goals, phases, exit criteria, and order of operations** |
-| [`v2-v1-cutover.md`](v2-v1-cutover.md) | **Analysis + parity matrix** — VTT bridge vs V2 engine; [completion plan](../.cursor/plans/v2-game-table-cutover-completion.plan.md) |
+| [`v2-game-table-cutover-remaining.md`](v2-game-table-cutover-remaining.md) | **Remaining cutover backlog** — unfinished wiring only (engine/bridge stay feature-agnostic) |
 | [`docs/v2-migration-tracker-snapshot.md`](v2-migration-tracker-snapshot.md) (GitHub `v2-migration` Issues) | **SRD feature coverage** in `src/features-v2/` (separate from table wiring) |
 | [`v2-ui-integration-phaseB-handoff.md`](v2-ui-integration-phaseB-handoff.md) | Bridge hardening history + deferred items |
 | [`v2-ui-integration-phase3-handoff.md`](v2-ui-integration-phase3-handoff.md) | Review-action / banner UX |
@@ -51,7 +51,7 @@ Record the choice in [`docs/v2-migration-tracker-snapshot.md`](v2-migration-trac
 
 - **Facade:** [`game-table-mechanics.js`](../src/client/lib/game-table-mechanics.js) re-exports **`wrapEntity` / `wrapRoll` / `wrapBanner`** from **`table-entity-roll.js`** and **`runCharacterHook`** from **`feature-hook-dispatch.js`**, and implements resolvers that read **only** merged **`activeFeatures`** (weapon/armor tags, Parry, etc.). Table components import the facade, not feature registry maps.
 - **Declarative sheet overlay:** `src/client/lib/v2-declarative-sheet.js` (`mergeV2DeclarativeSheetOverlay` — always on).
-- **Cutover matrix:** [`v2-v1-cutover.md`](v2-v1-cutover.md) lists parallel stacks and remaining UX gaps.
+- **Cutover backlog:** [`v2-game-table-cutover-remaining.md`](v2-game-table-cutover-remaining.md).
 - **Phase B (bridge):** Partition + server follow-ups largely landed; some items deferred (Rally on non-owner banners, session vs scene end) — see tracker § V2 UI integration backlog.
 
 ---
@@ -74,7 +74,7 @@ Work **roughly** in this order; later phases can overlap once contracts are stab
 
 **Goal:** Session start, virtual weapon ack, `onFeatureActivated`, and ancestry banner reactions are fully driven by V2 **`activeFeatures`** + engine hooks (or one thin adapter), without duplicate name-based UI.
 
-- Follow rows in [`v2-v1-cutover.md`](v2-v1-cutover.md) § parity matrix (#17–27, #29–30).
+- Align with [`v2-game-table-cutover-remaining.md`](v2-game-table-cutover-remaining.md) and `GMTableView.jsx` / bridge call sites as you touch a surface.
 - Prefer V2 `hooks.onSessionStart`, declarative `featureState`, and banner chip collection.
 
 ### Phase H — Weapon / armor tag pipeline (DiceRoller + HoverCard)
@@ -99,7 +99,7 @@ Work **roughly** in this order; later phases can overlap once contracts are stab
 
 ### Phase K — Documentation + cleanup
 
-When architecture or imports change: update [`.cursor/rules/project.mdc`](../.cursor/rules/project.mdc), [`README.md`](../README.md), [`v2-v1-cutover.md`](v2-v1-cutover.md) import surface, and tracker backlog / Tech Debt rows per project rules.
+When architecture or imports change: update [`.cursor/rules/project.mdc`](../.cursor/rules/project.mdc), [`README.md`](../README.md), [`v2-game-table-cutover-remaining.md`](v2-game-table-cutover-remaining.md) if the backlog shifts, and tracker backlog / Tech Debt rows per project rules.
 
 ### Phase L — Optional hardening
 
@@ -125,10 +125,10 @@ These overlap the polestar but are **tracked in detail** elsewhere — pull into
 
 ## 6. How to use this doc
 
-1. **Starting a table-focused task:** Read **§4** for phase, **§1** for exit checks, **v2-v1-cutover.md** for the exact call site.
+1. **Starting a table-focused task:** Read **§4** for phase, **§1** for exit checks, **v2-game-table-cutover-remaining.md** for open items, then the relevant bridge / `GMTableView` code.
 2. **Starting SRD coverage:** Use **docs/v2-migration-tracker-snapshot.md** and agent prompts — that work **feeds** Phase G–J but does not replace table wiring.
-3. **Closing the program:** Re-run **§1** checklist; update **v2-v1-cutover.md** status column to “VTT done” or remove rows when obsolete.
+3. **Closing the program:** Re-run **§1** checklist; update **v2-game-table-cutover-remaining.md** when an item closes.
 
 ---
 
-*Last updated: 2026-03-22 — Phase E doc sweep: removed references to deleted `src/features/`; current imports are `table-entity-roll.js`, `feature-hook-dispatch.js`, `game-table-mechanics.js`, `src/features-v2/`.*
+*Last updated: 2026-03-27 — Cutover analysis + completion plan consolidated into `v2-game-table-cutover-remaining.md`; polestar remains the phase order / exit-criteria doc.*

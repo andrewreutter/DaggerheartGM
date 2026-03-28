@@ -3,6 +3,10 @@
  */
 
 import { queueInternalMutation } from '../engine/table.js';
+import { RALLY_FEATURE_STATE_BAG_KEY } from '../classes/Bard.js';
+
+/** Subclass feature name — `featureState` bag for Virtuoso. */
+const VIRTUOSO_FEATURE_BAG_KEY = 'Virtuoso';
 
 /**
  * "Close range" for Gifted Performer songs: Melee, Very Close, or Close (≤30 ft).
@@ -22,7 +26,7 @@ function adversariesInClose(table) {
 
 /** Virtuoso doubles each song’s per–long-rest uses (tracked on Virtuoso feature state). */
 function giftedPerformerUseCap(table) {
-  return table.featureState?.Virtuoso?.doublesGiftedPerformer === true ? 2 : 1;
+  return table.featureState?.[VIRTUOSO_FEATURE_BAG_KEY]?.doublesGiftedPerformer === true ? 2 : 1;
 }
 
 export const GiftedPerformer = {
@@ -135,7 +139,7 @@ export const Maestro = {
     onSessionStart(table) {
       // Cross-feature: state lives on the Bard **Rally** bag, not the Troubadour subclass scope — use setFeatureState.
       queueInternalMutation(table, 'setFeatureState', {
-        featureKey: 'Rally',
+        featureKey: RALLY_FEATURE_STATE_BAG_KEY,
         key: 'maestroRallyChoices',
         value: null,
       });
@@ -155,7 +159,7 @@ export const Maestro = {
       isDisabled: (table) => {
         const id = table.me?.instanceId;
         if (!id) return 'No character.';
-        const row = table.featureState?.Rally?.maestroRallyChoices;
+        const row = table.featureState?.[RALLY_FEATURE_STATE_BAG_KEY]?.maestroRallyChoices;
         if (!row || typeof row !== 'object') return 'Maestro choices are not available yet (after Bard Rally).';
         if (!Object.prototype.hasOwnProperty.call(row, id)) return 'You were not part of this Rally.';
         if (row[id] !== null) return 'You already chose Hope or Stress for this Rally.';
@@ -166,11 +170,11 @@ export const Maestro = {
         if (!meId) return;
         const sel = chip.get('selectedId');
         if (sel !== 'hope' && sel !== 'stress') return;
-        const prev = table.featureState?.Rally?.maestroRallyChoices;
+        const prev = table.featureState?.[RALLY_FEATURE_STATE_BAG_KEY]?.maestroRallyChoices;
         if (!prev || typeof prev !== 'object' || prev[meId] !== null) return;
         const next = { ...prev, [meId]: sel };
         queueInternalMutation(table, 'setFeatureState', {
-          featureKey: 'Rally',
+          featureKey: RALLY_FEATURE_STATE_BAG_KEY,
           key: 'maestroRallyChoices',
           value: next,
         });

@@ -18,7 +18,7 @@ function clearArmorForOwnerInBatch(table) {
 }
 
 function reinforcedActiveIsTrue(table) {
-  return table.feature.get('reinforcedActive') === true;
+  return table.source?.get?.('reinforcedActive') === true;
 }
 
 export const Reinforced = {
@@ -26,7 +26,7 @@ export const Reinforced = {
   description:
     'When you mark your last Armor Slot, increase your damage thresholds by +2 until you clear at least 1 Armor Slot.',
   passiveStatMods: when(
-    (table) => !!table.feature.get('reinforcedActive'),
+    (table) => !!table.source?.get?.('reinforcedActive'),
     { majorThreshold: 2, severeThreshold: 2 }
   ),
   hooks: {
@@ -35,14 +35,14 @@ export const Reinforced = {
       armorUseCommitted,
       oneArmorSlotRemaining,
       (table) => {
-        table.feature.set('reinforcedActive', true);
+        table.source.set('reinforcedActive', true);
       }
     ),
     onStateChange: when(
       clearArmorForOwnerInBatch,
       reinforcedActiveIsTrue,
       (table) => {
-        table.feature.set('reinforcedActive', false);
+        table.source.set('reinforcedActive', false);
       }
     ),
   },

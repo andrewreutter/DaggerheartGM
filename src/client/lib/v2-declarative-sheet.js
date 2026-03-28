@@ -9,6 +9,7 @@ import {
   loadCharacterFeatures,
   applyDeclarativeFeatures,
 } from '../../features-v2/index.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 import { getResolvedActiveBeastformBonuses } from './character-calc.js';
 
 /**
@@ -220,7 +221,9 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     gold: rawCharacter.gold ?? recomputed.gold ?? 0,
     inventory: rawCharacter.inventory ?? recomputed.inventory ?? [],
     spellcastTrait: rawCharacter.spellcastTrait ?? recomputed.spellcastTrait,
-    evolutionTraitKey: rawCharacter.evolutionTraitKey ?? recomputed.evolutionTraitKey,
+    evolutionTraitKey:
+      rawCharacter.featureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.evolutionTraitKey ??
+      recomputed.evolutionTraitKey,
     domainLoadout: rawCharacter.domainLoadout ?? recomputed.domainLoadout,
     substituteArmorForHope:
       rawCharacter.substituteArmorForHope ?? recomputed.substituteArmorForHope,

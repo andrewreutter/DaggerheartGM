@@ -15,7 +15,7 @@ todos:
     content: Align Rest banner slot counts with merged character stats / `featureState` after chip use (close gap vs ancestry-only `getRestMovesForCharacter` scan)
     status: completed
   - id: tests-docs
-    content: Unit tests + update docs/v2-code-conventions.md (CONV-011 / placement), feature-authoring-guide, v2-v1-cutover when done
+    content: Unit tests + update docs/v2-code-conventions.md (CONV-011 / placement), feature-authoring-guide, v2-game-table-cutover-remaining when done
     status: completed
 isProject: true
 ---
@@ -91,7 +91,7 @@ Without this, the potion’s `passiveStatMods` will not change the Rest banner s
 
 - `[docs/v2-code-conventions.md](docs/v2-code-conventions.md)` — CONV-011 cross-link + new `**placement: 'rest'**` note.
 - `[docs/feature-authoring-guide.md](docs/feature-authoring-guide.md)` — how to author rest chips.
-- `[docs/v2-v1-cutover.md](docs/v2-v1-cutover.md)` — §3 row #14, §4 Tech debt; `[v2-game-table-cutover-completion.plan.md](.cursor/plans/v2-game-table-cutover-completion.plan.md)` Phase F bullet.
+- `[docs/v2-game-table-cutover-remaining.md](docs/v2-game-table-cutover-remaining.md)` — rest / session lifecycle as applicable; [`docs/v2-game-table-polestar.md`](docs/v2-game-table-polestar.md) for phase context.
 - `[docs/srd-implementation.md](docs/srd-implementation.md)` — Potion row if status moves to **Done** (per srd-tracking).
 
 ---

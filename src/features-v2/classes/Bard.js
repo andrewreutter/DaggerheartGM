@@ -126,6 +126,12 @@ function spendRallyDieClearStress(table) {
  *
  * **Troubadour Maestro:** `featureState.Rally.maestroRallyChoices` (ally instanceId → pending / choice); **Maestro** subclass chips (`Troubadour.js`). **Wordsmith Epic Poetry:** d10 advantage on Tag Team help (`Wordsmith.js`).
  */
+/** `featureState` bag for Bard Rally (matches `table.feature` / `setFeatureState` routing for the Rally row). */
+export const RALLY_FEATURE_STATE_BAG_KEY = 'Rally';
+
+/** Keys stripped from {@link RALLY_FEATURE_STATE_BAG_KEY} on session start/end (host orchestration). */
+export const RALLY_SESSION_VOLATILE_KEYS = ['partyDice', 'maestroRallyChoices'];
+
 export function rallySessionGrant(table) {
   const die = rallyDieSizeForBard(table.me);
   const partyDice = {};
