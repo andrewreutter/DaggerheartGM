@@ -1,0 +1,12 @@
+---
+description: New mechanics ship through the V2 declarative engine; legacy paths are maintain-only unless a migration task says otherwise
+alwaysApply: true
+---
+
+# Default stack: V2 engine
+
+**New game mechanics** (classes, subclasses, gear, consumables, beastforms, domain abilities, and Game Table behavior tied to them) belong **on the V2 declarative engine**: registry modules under `src/features-v2/`, declarative fields and hooks per `docs/feature-authoring-guide.md` and **CONV-029** in `docs/v2-code-conventions.md`, and generic integration via `src/client/lib/v2-*.js`, `game-table-mechanics.js`, and `applyV2*` paths in `table-ops.js` — not ad hoc name checks in large UI shells.
+
+**Legacy V1-style wiring** (hardcoded feature names, pre-V2 roll/tag pipelines, one-off branches in `GMTableView.jsx` / `DiceRoller.jsx` / `CharacterHoverCard.jsx`) is **maintain-only**: fix bugs and keep behavior stable there unless an explicit task or doc (e.g. cutover notes under `docs/`) calls for migrating that slice to V2.
+
+**How this pairs with boundaries:** Shared engine and bridge code stay feature-agnostic — see **`.cursor/rules/v2-framework-boundaries.mdc`**. Per-feature behavior lives in `src/features-v2/**` modules, not in framework files.

@@ -68,8 +68,8 @@ export const CHARACTER_RUNTIME_KEYS = [
 
 /**
  * Optional top-level keys on the `table_state` JSON document (alongside `elements`, `fearCount`, …)
- * used by the V2 engine for **session-wide** `gameState.featureState` (e.g. Bard **Rally** `partyDice`
- * stored under `featureState.Rally` when the host merges table + character state).
+ * used by the V2 engine for **session-wide** `gameState.featureState` (e.g. Bard Rally `partyDice`
+ * on the Rally `featureState` bag when the host merges table + character state).
  * The DB stores the full `table_state` blob; these keys are not stripped (only character elements are stripped).
  */
 export const TABLE_STATE_V2_ROOT_KEYS = ['featureState'];
@@ -872,6 +872,9 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         const fs = { ...(el.featureState || {}) };
         const bag = { ...(fs[featureKey] || {}) };
         bag[key] = value;
+        if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
+          bag.evolutionTraitKey = null;
+        }
         fs[featureKey] = bag;
         merge(targetOwner, { featureState: fs });
         if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {

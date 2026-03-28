@@ -128,18 +128,20 @@ export function PortalHoverTooltipLayer({ tooltip, tooltipRef, scheduleClose, cl
     ? Math.min(PORTAL_HOVER_TOOLTIP_WIDTH_WIDE, window.innerWidth - 24)
     : PORTAL_HOVER_TOOLTIP_WIDTH;
 
+  const interactive = tooltip.extra != null || tooltip.renderInner != null;
+
   return createPortal(
     <div
       ref={tooltipRef}
-      className={`fixed z-[90] ${tooltip.extra ? 'pointer-events-auto' : 'pointer-events-none'}`}
+      className={`fixed z-[90] ${interactive ? 'pointer-events-auto' : 'pointer-events-none'}`}
       style={{
         left: tooltip.x,
         top: tooltip.y,
         width,
         maxHeight: window.innerHeight - PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
       }}
-      onMouseEnter={tooltip.extra ? clearLeaveTimer : undefined}
-      onMouseLeave={tooltip.extra ? scheduleClose : undefined}
+      onMouseEnter={interactive ? clearLeaveTimer : undefined}
+      onMouseLeave={interactive ? scheduleClose : undefined}
     >
       <div className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 overflow-y-auto max-h-[min(70vh,calc(100vh-32px))]">
         {tooltip.renderInner != null ? (

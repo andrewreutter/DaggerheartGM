@@ -3,6 +3,7 @@ import { cropLayoutRegionToPngBlob, cropLayoutRegionToPngDataUrl } from './page-
 import { defaultAdversaryStub, defaultEnvironmentStub } from './unified-import-commit.js';
 import { buildDefaultNewSrdLibraryItem } from './library-default-new-item.js';
 import { generateId } from './helpers.js';
+import { scoreAdversaryVsEnvironmentSignals } from '../../import-type-hotwords.js';
 
 /**
  * Parse pasted text via server auto-detect (first block).
@@ -47,6 +48,25 @@ export async function parseImportTextAsKind(text, collection) {
   const item = r?.item;
   if (!item) return null;
   return { collection, item: { ...item, id: item.id || generateId() } };
+}
+
+/**
+ * Game Table "Note" default: infer adversary / environment / note from hotwords (same signals as
+ * {@link detectCollection} in text-parse). On tied non-zero scores, uses {@link parseImportTextAuto}
+ * so behavior matches OCR/pasted import parse.
+ * @param {string} text
+ * @returns {Promise<'adversaries'|'environments'|'notes'>}
+ */
+export async function resolveAutoNoteSliceCollection(text) {
+  const t = (text || '').trim();
+  if (!t) return 'notes';
+  const { advSignals, envSignals } = scoreAdversaryVsEnvironmentSignals(t);
+  if (advSignals === 0 && envSignals === 0) return 'notes';
+  if (advSignals > envSignals) return 'adversaries';
+  if (envSignals > advSignals) return 'environments';
+  const auto = await parseImportTextAuto(t);
+  if (auto?.collection === 'adversaries' || auto?.collection === 'environments') return auto.collection;
+  return 'notes';
 }
 
 /**
@@ -159,18 +179,22 @@ export async function buildDraftForImportSlice(row, allRows) {
         return { draft: null, draftCollection: null, parseError: null };
       }
       const coll = row.libraryCollection || 'adversaries';
-      if (coll === 'adversaries' || coll === 'environments' || coll === 'notes') {
-        const r = await parseImportTextAsKind(body, coll);
+      let encounterColl = coll;
+      if (coll === 'notes' && !row.userPickedSliceTarget) {
+        encounterColl = await resolveAutoNoteSliceCollection(body);
+      }
+      if (encounterColl === 'adversaries' || encounterColl === 'environments' || encounterColl === 'notes') {
+        const r = await parseImportTextAsKind(body, encounterColl);
         if (!r?.item) {
           return { draft: null, draftCollection: null, parseError: 'Could not parse text' };
         }
         let item = { ...r.item, is_public: false };
-        if (coll === 'adversaries' || coll === 'environments') {
+        if (encounterColl === 'adversaries' || encounterColl === 'environments') {
           const { imageUrl: _i, _additionalImages: _a, ...rest } = item;
           item = { ...rest, is_public: false };
         }
-        const draft = await mergeAttachingImageCropsIntoDraft(row, item, coll, allRows);
-        return { draft, draftCollection: coll, parseError: null };
+        const draft = await mergeAttachingImageCropsIntoDraft(row, item, encounterColl, allRows);
+        return { draft, draftCollection: encounterColl, parseError: null };
       }
       const auto = await parseImportTextAuto(body);
       if (!auto?.item) {
@@ -219,7 +243,12 @@ export async function buildDraftForImportSlice(row, allRows) {
     const useText = row.preferTextForParse !== false && row.ocrHasText && (row.ocrText || '').trim();
     const text = useText ? row.ocrText.trim() : '';
 
-    if (coll === 'adversaries') {
+    let encounterColl = coll;
+    if (coll === 'notes' && text && !row.userPickedSliceTarget) {
+      encounterColl = await resolveAutoNoteSliceCollection(text);
+    }
+
+    if (encounterColl === 'adversaries') {
       if (text) {
         const r = await postEncounterParseText(text, 'adversary');
         const item = r?.item;
@@ -250,7 +279,7 @@ export async function buildDraftForImportSlice(row, allRows) {
       return { draft: merged, draftCollection: 'adversaries', parseError: null };
     }
 
-    if (coll === 'environments') {
+    if (encounterColl === 'environments') {
       if (text) {
         const r = await postEncounterParseText(text, 'environment');
         const item = r?.item;
@@ -281,7 +310,7 @@ export async function buildDraftForImportSlice(row, allRows) {
       return { draft: merged, draftCollection: 'environments', parseError: null };
     }
 
-    if (coll === 'notes') {
+    if (encounterColl === 'notes') {
       if (text) {
         const r = await postEncounterParseText(text, 'note');
         const item = r?.item;

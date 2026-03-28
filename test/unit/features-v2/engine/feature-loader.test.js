@@ -158,19 +158,20 @@ describe('applyDeclarativeFeatures', () => {
   });
 
   it('mergeDeclarativeFeatureState merges table and character bags; character wins', () => {
+    const bagKey = 'armor:merge-test';
     const char = mockCharacter({
       instanceId: 'c1',
-      featureState: { Reinforced: { reinforcedActive: true } },
+      featureState: { [bagKey]: { reinforcedActive: true } },
     });
     const table = buildTableSnapshot(
       mockGameState({
         activeElements: [char],
         _ownerInstanceId: 'c1',
-        featureState: { Reinforced: { reinforcedActive: false } },
+        featureState: { [bagKey]: { reinforcedActive: false } },
       })
     );
     const merged = mergeDeclarativeFeatureState(char, table);
-    expect(merged.Reinforced.reinforcedActive).toBe(true);
+    expect(merged[bagKey].reinforcedActive).toBe(true);
   });
 
   it('handles majorThreshold and severeThreshold as static passiveStatMods', () => {
@@ -256,7 +257,7 @@ describe('loadCharacterFeatures — source scope keys', () => {
       instanceId: 'd1',
       classId: 'srd-cls-druid',
       featureState: {
-        Beastform: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
           activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
         },
       },
@@ -274,7 +275,7 @@ describe('applyDeclarativeFeatures — beastform virtualSources (married SRD + V
       instanceId: 'd1',
       classId: 'srd-cls-druid',
       featureState: {
-        Beastform: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
           activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
         },
       },

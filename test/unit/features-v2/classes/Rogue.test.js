@@ -18,6 +18,7 @@ import {
   runResolve,
   runReviewAction,
 } from '../helpers.js';
+import { SRD_CLASS_ROGUE_SCOPE_KEY } from '../../../../src/features-v2/engine/feature-scope-keys.js';
 
 const ROGUE_DODGE_KEY = "Rogue's Dodge";
 
@@ -30,7 +31,11 @@ describe("Rogue's Dodge", () => {
         activeElements: [rogue, adv],
         _ownerInstanceId: 'char-1',
         _featureKey: ROGUE_DODGE_KEY,
-        _activeFeature: { ...RoguesDodge, _ownerInstanceId: 'char-1' },
+        _activeFeature: {
+          ...RoguesDodge,
+          _ownerInstanceId: 'char-1',
+          _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY,
+        },
         action: {
           type: 'free',
           actorInstanceId: 'char-1',
@@ -42,7 +47,7 @@ describe("Rogue's Dodge", () => {
         featureState: {},
       })
     );
-    const chips = collectChips([{ ...RoguesDodge, _ownerInstanceId: 'char-1' }], 'card', tbl);
+    const chips = collectChips([{ ...RoguesDodge, _ownerInstanceId: 'char-1', _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY }], 'card', tbl);
     expect(chips).toHaveLength(1);
     const fromUse = activateChip(chips[0], tbl, makeChipState());
     const mutations = [...fromUse, ...applyMutations(tbl)];
@@ -51,7 +56,7 @@ describe("Rogue's Dodge", () => {
       expect.objectContaining({
         type: 'setFeatureState',
         payload: expect.objectContaining({
-          featureKey: ROGUE_DODGE_KEY,
+          featureKey: SRD_CLASS_ROGUE_SCOPE_KEY,
           key: 'roguesDodgeActive',
           value: true,
         }),
@@ -62,10 +67,10 @@ describe("Rogue's Dodge", () => {
   it('applyDeclarativeFeatures adds +2 evasion while roguesDodgeActive', () => {
     const rogue = mockCharacter({ instanceId: 'char-1', evasion: 10 });
     const { stats } = applyDeclarativeFeatures(
-      [{ ...RoguesDodge, _ownerInstanceId: 'char-1' }],
+      [{ ...RoguesDodge, _ownerInstanceId: 'char-1', _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY }],
       {
         ...rogue,
-        featureState: { [ROGUE_DODGE_KEY]: { roguesDodgeActive: true } },
+        featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
       },
       {},
       null
@@ -77,7 +82,7 @@ describe("Rogue's Dodge", () => {
     expect(
       resolveRoguesDodgePassiveEvasion({
         instanceId: 'c1',
-        featureState: { [ROGUE_DODGE_KEY]: { roguesDodgeActive: true } },
+        featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
       })
     ).toBe(2);
     expect(resolveRoguesDodgePassiveEvasion({ instanceId: 'c1', featureState: {} })).toBe(0);
@@ -88,10 +93,10 @@ describe("Rogue's Dodge", () => {
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const { mutations } = runIntent(
-      { ...RoguesDodge, _ownerInstanceId: 'char-1' },
+      { ...RoguesDodge, _ownerInstanceId: 'char-1', _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY },
       {
         activeElements: [rogue, adv],
-        featureState: { [ROGUE_DODGE_KEY]: { roguesDodgeActive: true } },
+        featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
         action: mockAction({
           type: 'attack',
           actorInstanceId: 'adv-1',
@@ -108,10 +113,10 @@ describe("Rogue's Dodge", () => {
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const { mutations } = runResolve(
-      { ...RoguesDodge, _ownerInstanceId: 'char-1' },
+      { ...RoguesDodge, _ownerInstanceId: 'char-1', _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY },
       {
         activeElements: [rogue, adv],
-        featureState: { [ROGUE_DODGE_KEY]: { roguesDodgeActive: true } },
+        featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
         rolls: mockRoll({ action: { isSuccess: true } }),
         action: mockAction({
           type: 'attack',
@@ -125,7 +130,7 @@ describe("Rogue's Dodge", () => {
       expect.objectContaining({
         type: 'setFeatureState',
         payload: expect.objectContaining({
-          featureKey: ROGUE_DODGE_KEY,
+          featureKey: SRD_CLASS_ROGUE_SCOPE_KEY,
           key: 'roguesDodgeActive',
           value: false,
         }),
@@ -139,10 +144,10 @@ describe("Rogue's Dodge", () => {
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const { mutations } = runResolve(
-      { ...RoguesDodge, _ownerInstanceId: 'char-1' },
+      { ...RoguesDodge, _ownerInstanceId: 'char-1', _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY },
       {
         activeElements: [rogue, adv],
-        featureState: { [ROGUE_DODGE_KEY]: { roguesDodgeActive: true } },
+        featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
         rolls: mockRoll({ action: { isSuccess: false } }),
         action: mockAction({
           type: 'attack',
@@ -168,10 +173,10 @@ describe("Rogue's Dodge", () => {
     const adv = mockAdversary({ instanceId: 'adv-1' });
 
     const { mutations } = runIntent(
-      { ...RoguesDodge, _ownerInstanceId: 'char-1' },
+      { ...RoguesDodge, _ownerInstanceId: 'char-1', _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY },
       {
         activeElements: [rogue, adv],
-        featureState: { [ROGUE_DODGE_KEY]: { roguesDodgeActive: true } },
+        featureState: { [SRD_CLASS_ROGUE_SCOPE_KEY]: { roguesDodgeActive: true } },
         actionType: 'shortRest',
       }
     );
@@ -180,7 +185,7 @@ describe("Rogue's Dodge", () => {
       expect.objectContaining({
         type: 'setFeatureState',
         payload: expect.objectContaining({
-          featureKey: ROGUE_DODGE_KEY,
+          featureKey: SRD_CLASS_ROGUE_SCOPE_KEY,
           key: 'roguesDodgeActive',
           value: false,
         }),

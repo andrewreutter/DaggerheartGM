@@ -36,7 +36,7 @@ todos:
     content: Address Shifting disadvantage + isWingsOfLightFlying hardcoded names via registry/toggle discovery
     status: pending
   - id: tests-and-docs
-    content: Update all listed tests; sync project.mdc, README, v2-v1-cutover.md
+    content: Update all listed tests; sync project.mdc, README, v2-game-table-cutover-remaining.md
     status: pending
 isProject: true
 ---
@@ -172,7 +172,7 @@ Update or delete fixtures that use `Beastform` / `Evolution` bags or title-key c
 
 - `[.cursor/rules/project.mdc](../../.cursor/rules/project.mdc)` — canonical `featureState` + session lifecycle.
 - `[README.md](../../README.md)` — if architecture section mentions legacy normalization.
-- `[docs/v2-v1-cutover.md](../../docs/v2-v1-cutover.md)` — mark legacy dual-read removed.
+- `[docs/v2-game-table-cutover-remaining.md](../../docs/v2-game-table-cutover-remaining.md)` — mark legacy dual-read removed when touching backlog.
 
 ---
 

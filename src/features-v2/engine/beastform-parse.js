@@ -30,18 +30,12 @@ export function parseBeastformAttackLine(line) {
 }
 
 /**
- * Pick active beastform ref from merged feature state.
- * Prefer Druid scoped bag; fall back to legacy `Beastform` / `Evolution` keys (tests + old JSON
- * until `normalizePersistedCharacterElement` has merged into scoped).
+ * Pick active beastform ref from merged feature state (`featureState['classes:srd-cls-druid']` only).
  */
 export function pickActiveBeastformRef(mergedFeatureState) {
   const scoped = mergedFeatureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform;
   if (scoped?.beastformId) {
     return { ref: scoped, viaEvolution: scoped.viaEvolution === true };
   }
-  const b = mergedFeatureState?.Beastform?.activeBeastform;
-  const e = mergedFeatureState?.Evolution?.activeBeastform;
-  if (b?.beastformId) return { ref: b, viaEvolution: false };
-  if (e?.beastformId) return { ref: e, viaEvolution: true };
   return null;
 }

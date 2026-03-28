@@ -1,4 +1,6 @@
 import { resolveRoguesDodgePassiveEvasion } from '../../features-v2/classes/Rogue.js';
+import { WINGED_SENTINEL_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
+import { WingsOfLight } from '../../features-v2/subclasses/WingedSentinel.js';
 import { getV2ToggleStateKey } from '../../features-v2/engine/chip-system.js';
 import { getResolvedActiveBeastformBonuses } from './character-calc.js';
 
@@ -37,6 +39,20 @@ export const parseFeatureCategory = (feature) => {
   if (feature.type === 'passive') return 'Passives';
   return 'Actions';
 };
+
+/**
+ * GM Moves / sheet chips: extract the condition after a leading "When …" clause
+ * (e.g. "the Burrower takes Severe damage" from Acid Bath). Falls back to a short excerpt.
+ */
+export function extractGmFeatureWhenClause(description) {
+  if (!description || typeof description !== 'string') return '';
+  const trimmed = description.trim();
+  const m = /^When\s+(.+?)(?=[,.]\s|[,.]$|\n|$)/is.exec(trimmed);
+  if (m) return m[1].trim();
+  const first = trimmed.split(/\n/)[0].trim();
+  if (first.length <= 96) return first;
+  return `${first.slice(0, 93)}…`;
+}
 
 export const hideImgOnError = (e) => { e.target.parentElement.style.display = 'none'; };
 
@@ -310,15 +326,15 @@ export function isAdversaryDefeated(element) {
 }
 
 /**
- * Winged Sentinel — Wings of Light: flying from `featureState.WingedSentinel` (`_v2t` toggle key).
+ * Winged Sentinel — Wings of Light: flying from `featureState[WINGED_SENTINEL_SCOPE_KEY]` (`_v2t` toggle key).
  */
 export function isWingsOfLightFlying(el) {
   if (!el || typeof el !== 'object') return false;
-  const ws = el.featureState?.WingedSentinel;
+  const ws = el.featureState?.[WINGED_SENTINEL_SCOPE_KEY];
   if (!ws || typeof ws !== 'object') return false;
   const k = getV2ToggleStateKey(
-    { name: 'Wings of Light' },
-    { name: 'Flying', placements: ['card'] },
+    { name: WingsOfLight.name },
+    WingsOfLight.chips[0],
     null,
   );
   return ws[k] === true;
@@ -344,7 +360,11 @@ export function getPendingV2DeferToggleNext(pendingBanners, instanceId, featureN
       if (String(r._v2DeferFeatureName ?? r._featureName ?? r.actionName ?? '') !== fn) continue;
       if (String(r._v2DeferChipName ?? '') !== cn) continue;
       nextBool = r._v2DeferToggleNext;
-    } else if (r._wingsOfLightFlightDefer === true && fn === 'Wings of Light' && (cn === 'Flight' || cn === 'Flying')) {
+    } else if (
+      r._wingsOfLightFlightDefer === true &&
+      fn === WingsOfLight.name &&
+      (cn === 'Flight' || cn === WingsOfLight.chips[0].name)
+    ) {
       nextBool = r._wingsOfLightFlightNext === true;
     } else {
       continue;
@@ -354,7 +374,7 @@ export function getPendingV2DeferToggleNext(pendingBanners, instanceId, featureN
   return last;
 }
 
-/** @deprecated Use {@link getPendingV2DeferToggleNext} with `'Wings of Light'` and `'Flying'`. */
+/** @deprecated Use {@link getPendingV2DeferToggleNext} with {@link WingsOfLight} names. */
 export function getPendingWingsOfLightFlightNext(pendingBanners, instanceId) {
-  return getPendingV2DeferToggleNext(pendingBanners, instanceId, 'Wings of Light', 'Flying');
+  return getPendingV2DeferToggleNext(pendingBanners, instanceId, WingsOfLight.name, WingsOfLight.chips[0].name);
 }

@@ -94,6 +94,35 @@ function fixOcrArtifacts(text) {
     .replace(/\bO\b(?=\d)/gi, '0');           // lone O before digit → 0
 }
 
+/**
+ * OCR often renders HP/Stress checkboxes as the letter "O". Lines like "HP:O O O Stress: O O"
+ * are not prose — strip them when we already have numeric HP/Stress elsewhere, or leave them
+ * for extractHP/extractStress to count only if no numeric values exist.
+ */
+function stripOcrCircleTrackerLines(text, opts = {}) {
+  const { force = false } = opts;
+  const hasNumericHp =
+    /\bHP:\s*\d+/i.test(text) ||
+    /(?<![+-])(\d+)\s*HP\b/i.test(text) ||
+    /Hit\s*Points?:\s*\d+/i.test(text);
+  const hasNumericStress =
+    /\bStress:\s*\d+/i.test(text) ||
+    /(?<![+-])(\d+)\s*Stress\b/i.test(text);
+  if (!force && !hasNumericHp && !hasNumericStress) return text;
+
+  // Same-line only: \s+ would include newlines and would incorrectly delete a two-line
+  // "HP:O O O\nStress:O O" block (circle fallback for extractHP/extractStress).
+  const circleLine =
+    /^\s*HP:\s*[Oo](?:\s+[Oo])*[ \t]+Stress:\s*[Oo](?:\s+[Oo])*\s*$/gim;
+  const instanceHeader = /^\s*[^\n]+#\d+\s*$/gim;
+
+  let out = text.replace(circleLine, '\n');
+  if (force || (hasNumericHp && hasNumericStress)) {
+    out = out.replace(instanceHeader, '\n');
+  }
+  return out.replace(/\n{3,}/g, '\n\n');
+}
+
 function preprocess(text) {
   return fixOcrArtifacts(stripMarkdown(text));
 }
@@ -127,14 +156,15 @@ function extractName(raw, title) {
   }
 
   // First line followed by a "Tier N" line (possibly with blank lines between) — strong
-  // signal in Daggerheart stat blocks. Capture ends with [A-Z]; [^\n]* eats trailing
-  // OCR noise on the title line; [\s\n]* allows blank lines before "Tier".
+  // signal in Daggerheart stat blocks. Take the full title line (title case like "Base Camp
+  // Warden" ends in lowercase; the old pattern required a trailing [A-Z] and truncated at
+  // the last capital). Strip optional horde count "x3" at end of the line.
   {
-    const tierFollows = raw.match(/^([A-Z][A-Za-z\s\u2019'-]{2,}[A-Z])(?:\s*[x\xd7]\s*\d+)?[^\n]*\n[\s\n]*Tier\s+\d/m);
+    const tierFollows = raw.match(/^\s*([^\n]+)\s*\n[\s\n]*Tier\s+\d/m);
 
     if (tierFollows) {
-      const candidate = tierFollows[1].trim();
-      if (!SECTION_HEADERS.test(candidate.toUpperCase())) return toTitleCase(candidate);
+      let candidate = tierFollows[1].trim().replace(/\s*[x\xd7]\s*\d+\s*$/i, '').trim();
+      if (candidate && !SECTION_HEADERS.test(candidate.toUpperCase())) return toTitleCase(candidate);
     }
   }
 
@@ -156,6 +186,27 @@ function extractName(raw, title) {
       const candidate = pronounRef[1].toLowerCase();
       if (!EXCLUDE_NOUNS.has(candidate)) {
         return candidate[0].toUpperCase() + candidate.slice(1);
+      }
+    }
+  }
+
+  // First line looks like a printed title (e.g. "Thistlefolk Ambusher (Reference)") before
+  // stat lines — not all-caps OCR headings and not the dash-separated attack summary line.
+  {
+    const first = raw.match(/^\s*([^\n]+)/);
+    if (first) {
+      const line = first[1].trim();
+      const looksLikeDashAttack =
+        /^\s*\S+\s+-\s+(?:Melee|Very Close|Close|Far|Very Far)\s+-\s*\d+d\d+/i.test(line);
+      if (
+        line.length >= 3 &&
+        line.length <= 120 &&
+        !SECTION_HEADERS.test(line.toUpperCase()) &&
+        !/^(FEATURES|FEATURE|ATTACK|ATK|DIFFICULTY|DC|TIER|EXPERIENCE|EXPERIENCES|HP|STRESS|MOTIVES?)\b/i.test(line) &&
+        !looksLikeDashAttack &&
+        !/Attack\s+Modifier/i.test(line)
+      ) {
+        return line;
       }
     }
   }
@@ -224,27 +275,77 @@ function extractDifficulty(text) {
   return null;
 }
 
+function countOcrCircles(segment) {
+  if (!segment) return 0;
+  const tokens = segment.match(/\b[Oo]\b/g);
+  return tokens ? tokens.length : 0;
+}
+
+/**
+ * "HP:O O O" / "HP: O O O" — count letter-O tokens as boxes when no numeric HP was found.
+ */
+function extractHpFromCircleLine(text) {
+  const m = text.match(/HP:\s*([Oo\s]+?)(?=\s+Stress:|\s*$)/im);
+  if (!m) return null;
+  const n = countOcrCircles(m[1]);
+  return n > 0 ? n : null;
+}
+
+function extractStressFromCircleLine(text) {
+  const m = text.match(/Stress:\s*([Oo\s]+?)\s*$/im);
+  if (!m) return null;
+  const n = countOcrCircles(m[1]);
+  return n > 0 ? n : null;
+}
+
 function extractHP(text) {
   const patterns = [
     /HP:\s*(\d+)/i,
     /Hit\s*Points?:\s*(\d+)/i,
-    /(\d+)\s*HP\b/i,
+    // Avoid "Attack Modifier: +0" + newlines + "HP: ..." matching digit 0 as "0 HP"
+    /(?<![+-])(\d+)\s*HP\b/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);
     if (m) return parseInt(m[1]);
   }
-  return null;
+  return extractHpFromCircleLine(text);
 }
 
 function extractStress(text) {
   const patterns = [
     /Stress:\s*(\d+)/i,
-    /(\d+)\s*Stress\b/i,
+    /(?<![+-])(\d+)\s*Stress\b/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);
     if (m) return parseInt(m[1]);
+  }
+  return extractStressFromCircleLine(text);
+}
+
+/**
+ * Stack-card layout: threshold numbers on their own line, MAJOR / SEVERE labels on the following line, e.g.
+ *   8
+ *   MAJOR
+ *   2 HP
+ *   14
+ *   SEVERE
+ */
+function extractThresholdsValueBeforeLabel(text) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  let major = null;
+  let severe = null;
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i];
+    const next = lines[i + 1];
+    if (!/^\d+$/.test(line)) continue;
+    const n = parseInt(line, 10);
+    if (/^MAJOR$/i.test(next)) major = n;
+    if (/^SEVERE$/i.test(next)) severe = n;
+  }
+  if (major != null || severe != null) {
+    return { major, severe };
   }
   return null;
 }
@@ -254,27 +355,50 @@ function extractThresholds(text) {
     /Thresholds?:\s*(\d+)\s*\/\s*(\d+)/i,
     /Major[:\s]+(\d+)\s*[,|\/]\s*Severe[:\s]+(\d+)/i,
     /Severe[:\s]+(\d+)\s*[,|\/]\s*Major[:\s]+(\d+)/i,  // reversed order
+    /Minor\s+\d+\s*\|\s*Major\s+(\d+)\s*\|\s*Severe\s+(\d+)/i,
   ];
   for (const re of patterns) {
     const m = text.match(re);
     if (m) {
       // Third pattern has reversed order
       if (/^Severe/i.test(re.source)) {
-        return { major: parseInt(m[2]), severe: parseInt(m[1]) };
+        return { major: parseInt(m[2], 10), severe: parseInt(m[1], 10) };
       }
-      return { major: parseInt(m[1]), severe: parseInt(m[2]) };
+      return { major: parseInt(m[1], 10), severe: parseInt(m[2], 10) };
     }
   }
   // Try "none"
   if (/Thresholds?:\s*none/i.test(text)) {
     return { major: null, severe: null };
   }
-  return null;
+  const stacked = extractThresholdsValueBeforeLabel(text);
+  if (!stacked) return null;
+  return {
+    major: stacked.major ?? null,
+    severe: stacked.severe ?? null,
+  };
 }
 
 function extractAttack(text) {
   const attack = { name: '', range: 'Melee', modifier: 0, trait: 'Phy', damage: '' };
   let found = false;
+
+  // Reference-card style: "Dagger - Melee - 2d8+1 (phy) Minor 1 | Major 6 | Severe 10"
+  const dashSeparated = text.match(
+    /^\s*([^\n\r-]+?)\s+-\s+(Melee|Very Close|Close|Far|Very Far)\s+-\s*(\d+d\d+(?:[+-]\d+)?)(?:\s*\((\w+)\))?/im
+  );
+  if (dashSeparated) {
+    attack.name = dashSeparated[1].trim();
+    attack.range = normalizeRange(dashSeparated[2]);
+    const { damage, trait } = parseDamageAndTrait(
+      `${dashSeparated[3]} ${dashSeparated[4] ? `(${dashSeparated[4]})` : 'phy'}`
+    );
+    attack.damage = damage;
+    attack.trait = trait;
+    const modMatch = text.match(/Attack\s*(?:Modifier|Mod):\s*([+-]?\d+)/i);
+    if (modMatch) attack.modifier = parseInt(modMatch[1], 10);
+    return attack;
+  }
 
   // Pattern: ATK: +N | Name: Range | damage trait
   const srdStyle = text.match(
@@ -301,6 +425,35 @@ function extractAttack(text) {
     const { damage, trait } = parseDamageAndTrait(`${commaStyle[4]} ${commaStyle[5]}`);
     attack.damage = damage;
     attack.trait = trait;
+    return attack;
+  }
+
+  // Stack-card: "Attack: +N" on one line; next line "Name: Range | dice trait" (name starts that line)
+  const attackModThenNameLine = text.match(
+    /Attack:\s*([+-]?\d+)\s*\r?\n\s*([^\r\n:|]+?):\s*(Melee|Very Close|Close|Far|Very Far)\s*\|\s*(\S+)\s*(\w+)/i
+  );
+  if (attackModThenNameLine) {
+    attack.modifier = parseInt(attackModThenNameLine[1], 10);
+    attack.name = attackModThenNameLine[2].trim();
+    attack.range = normalizeRange(attackModThenNameLine[3]);
+    const { damage, trait } = parseDamageAndTrait(`${attackModThenNameLine[4]} ${attackModThenNameLine[5]}`);
+    attack.damage = damage;
+    attack.trait = trait;
+    return attack;
+  }
+
+  // "ATTACK" as a line; next line "Name: Range | dice trait"
+  const attackHeaderNextLine = text.match(
+    /(?:^|[\r\n])ATTACK\s*[\r\n]+\s*([^\r\n:|]+?):\s*(Melee|Very Close|Close|Far|Very Far)\s*\|\s*(\S+)\s*(\w+)/i
+  );
+  if (attackHeaderNextLine) {
+    attack.name = attackHeaderNextLine[1].trim();
+    attack.range = normalizeRange(attackHeaderNextLine[2]);
+    const { damage, trait } = parseDamageAndTrait(`${attackHeaderNextLine[3]} ${attackHeaderNextLine[4]}`);
+    attack.damage = damage;
+    attack.trait = trait;
+    const modBefore = text.match(/Attack:\s*([+-]?\d+)\s*(?:[\r\n]|$)/i);
+    if (modBefore) attack.modifier = parseInt(modBefore[1], 10);
     return attack;
   }
 
@@ -407,17 +560,27 @@ function formatListPatterns(text) {
   return text;
 }
 
+/**
+ * Stack-card blocks often place "HP & STRESS" / threshold labels after the last feature.
+ * Without trimming, the final feature's regex captures through end-of-string and swallows that block.
+ */
+function trimFeatureTextBeforeHpStressTrack(s) {
+  const m = s.match(/\n\s*HP\s*&\s*STRESS\b/i);
+  return m ? s.slice(0, m.index) : s;
+}
+
 function extractFeatures(text) {
   const features = [];
 
-  // Find the features section — look for "FEATURES" or "Features:" header
-  const headerIdx = text.search(/\bFEATURES?\b:?\s*/i);
-  const featureText = headerIdx >= 0 ? text.slice(headerIdx) : text;
+  // Find the features section — "FEATURE" / "FEATURES" / "Features:"; slice *after* header so
+  // the word "Features" is not mistaken for a feature name.
+  const headerMatch = text.match(/\bFEATURES?\b:?\s*/i);
+  let featureText = headerMatch ? text.slice(headerMatch.index + headerMatch[0].length) : text;
+  featureText = trimFeatureTextBeforeHpStressTrack(featureText);
 
-  // Strategy 1: "Name - Type: description" — captures multi-line/multi-paragraph descriptions
-  // Uses [\s\S]+? (non-greedy, crosses blank lines) with a lookahead that stops at the next
-  // feature header or end of text.
-  const featureBlockRe = /([A-Z][^\n.!?]*?)\s+[-\u2014]\s+(Passive|Action|Reaction)\s*[:.]\s*([\s\S]+?)(?=\n[A-Z][^\n]*\s+[-\u2014]\s+(?:Passive|Action|Reaction)|$)/gi;
+  // Strategy 1: "Name - Type: description" or "Name – Type:" (hyphen / en dash / em dash).
+  // Next feature may be separated by one or more blank lines. Optional [:.] after the type.
+  const featureBlockRe = /([A-Z][^\n.!?]*?)\s+[-\u2013\u2014]\s+(Passive|Action|Reaction)\s*(?:[:.]\s*)?\s*([\s\S]+?)(?=\n\s*[A-Z][^\n]*\s+[-\u2013\u2014]\s+(?:Passive|Action|Reaction)\b|$)/gi;
   for (const m of featureText.matchAll(featureBlockRe)) {
     const name = m[1].trim().replace(/^[-*•]\s*/, '');
     const type = m[2].toLowerCase();
@@ -433,8 +596,8 @@ function extractFeatures(text) {
 
   if (features.length > 0) return features;
 
-  // Strategy 2: "Name (Type): description"
-  const parenRe = /([A-Z][^\n(]*?)\s*\((Passive|Action|Reaction)\)\s*[:.]\s*([^\n]+)/gi;
+  // Strategy 2: "Name (Type): description" or "Name (Type)" + rest of line / next line
+  const parenRe = /([A-Z][^\n(]*?)\s*\((Passive|Action|Reaction)\)\s*(?:[:.]\s*)?([^\n]+)/gi;
   for (const m of featureText.matchAll(parenRe)) {
     const name = m[1].trim().replace(/^[-*•]\s*/, '');
     const type = m[2].toLowerCase();
@@ -448,7 +611,7 @@ function extractFeatures(text) {
 
   // Strategy 3: Bold markdown "**Name - Type:** description" (before stripping)
   // This works on the raw text, so caller should try with both raw and stripped
-  const boldRe = /\*\*([^*]+?)\s+[-\u2014]\s+(Passive|Action|Reaction)\*?\*?:?\s*([^\n]+)/gi;
+  const boldRe = /\*\*([^*]+?)\s+[-\u2013\u2014]\s+(Passive|Action|Reaction)\*?\*?:?\s*([^\n]+)/gi;
   for (const m of text.matchAll(boldRe)) {
     const name = m[1].trim();
     const type = m[2].toLowerCase();
@@ -540,9 +703,15 @@ function normalizeRange(raw) {
 
 function parseDamageAndTrait(damageStr) {
   if (!damageStr) return { damage: '', trait: 'Phy' };
-  const parts = damageStr.trim().split(/\s+/);
+  const trimmed = damageStr.trim();
+  const parenFirst = trimmed.match(/^(\d+d\d+(?:[+-]\d+)?)\s*\(([^)]+)\)/i);
+  if (parenFirst) {
+    const traitRaw = parenFirst[2].trim().toLowerCase();
+    return { damage: parenFirst[1], trait: TRAIT_MAP[traitRaw] || 'Phy' };
+  }
+  const parts = trimmed.split(/\s+/);
   const damage = parts[0] || '';
-  const traitRaw = (parts[1] || '').toLowerCase();
+  const traitRaw = (parts[1] || '').toLowerCase().replace(/[(),]/g, '');
   const trait = TRAIT_MAP[traitRaw] || 'Phy';
   return { damage, trait };
 }
@@ -567,10 +736,21 @@ export function parseStatBlock(text, collection = 'adversaries', title = '') {
   }
 
   const raw = text;
-  const processed = preprocess(text);
+  const processedBase = preprocess(text);
+  const hasNumericHpStress =
+    /\bHP:\s*\d+/i.test(processedBase) && /\bStress:\s*\d+/i.test(processedBase);
+  const processed =
+    collection === 'adversaries'
+      ? stripOcrCircleTrackerLines(processedBase, { force: hasNumericHpStress })
+      : processedBase;
 
-  // Extract features from BOTH raw (markdown) and processed (stripped) text
-  const rawFeatures = extractFeatures(raw);
+  // Extract features from BOTH raw (markdown) and processed (stripped) text; drop OCR circle
+  // rows when real HP/Stress numbers exist so they are not swallowed into the last feature.
+  const rawForFeatures =
+    collection === 'adversaries'
+      ? stripOcrCircleTrackerLines(raw, { force: hasNumericHpStress })
+      : raw;
+  const rawFeatures = extractFeatures(rawForFeatures);
   const processedFeatures = extractFeatures(processed);
   const features = rawFeatures.length >= processedFeatures.length ? rawFeatures : processedFeatures;
 

@@ -46,11 +46,12 @@ describe('computeArmorModifiers (V2 armor_properties only)', () => {
   });
 
   it('buildV2SheetUnwrapGameState maps reinforcedActive for Reinforced unwrap', () => {
+    const aid = 'srd-arm-tst';
     const gs = buildV2SheetUnwrapGameState(
       { traits: { presence: 0 }, tier: 2, level: 3 },
-      { reinforcedActive: true, featureState: {} }
+      { reinforcedActive: true, armorId: aid, featureState: {} }
     );
-    expect(gs.featureState.Reinforced?.reinforcedActive).toBe(true);
+    expect(gs.featureState[`armor:${aid}`]?.reinforcedActive).toBe(true);
     expect(gs.activeElements[0].elementType).toBe('character');
   });
 });

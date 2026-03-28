@@ -19,8 +19,8 @@ const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 const DRUID_CLASS_ID = 'srd-cls-druid';
 
 /**
- * Active beastform id for sheet display — legacy `activeBeastform` or V2 `featureState` (scoped / Beastform / Evolution).
- * Matches engine `table.me.inBeastform` sources so `beastformFeatures` stays in sync when legacy mirror is absent.
+ * Active beastform id for sheet display — denormalized `activeBeastform` or Druid scoped `featureState` bag.
+ * Matches engine `table.me.inBeastform` sources.
  */
 function getActiveBeastformIdFromCharacterData(data) {
   const ab = data?.activeBeastform;
@@ -30,11 +30,7 @@ function getActiveBeastformIdFromCharacterData(data) {
   }
   const fs = data?.featureState;
   if (!fs || typeof fs !== 'object') return { id: null, legacyAb: null };
-  const id =
-    fs[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ||
-    fs.Beastform?.activeBeastform?.beastformId ||
-    fs.Evolution?.activeBeastform?.beastformId ||
-    null;
+  const id = fs[SRD_CLASS_DRUID_SCOPE_KEY]?.activeBeastform?.beastformId ?? null;
   return { id, legacyAb: null };
 }
 
@@ -249,7 +245,7 @@ export function parseArmorThresholds(thresholdStr) {
 /**
  * Minimal game-state shape for `buildTableSnapshot` when unwrapping V2 `when()` on gear
  * `passiveStatMods` during `recomputeCharacter`. Mirrors P1 `reinforcedActive` into
- * `featureState.Reinforced` so V2 Reinforced predicates can see it.
+ * `featureState['armor:<armorId>']` so V2 Reinforced predicates (`table.source`) can see it.
  *
  * @param {object} computed — partial recompute output (traits, tier, …)
  * @param {object} raw — library / table element (runtime keys, featureState, …)
@@ -273,8 +269,9 @@ export function buildV2SheetUnwrapGameState(computed = {}, raw = {}) {
     currentArmor: raw.currentArmor ?? computed.currentArmor ?? 0,
   };
   const featureState = { ...(raw.featureState || {}) };
-  if (raw.reinforcedActive === true) {
-    featureState.Reinforced = { ...(featureState.Reinforced || {}), reinforcedActive: true };
+  if (raw.reinforcedActive === true && raw.armorId) {
+    const armorScope = `armor:${raw.armorId}`;
+    featureState[armorScope] = { ...(featureState[armorScope] || {}), reinforcedActive: true };
   }
   return {
     fear: 0,

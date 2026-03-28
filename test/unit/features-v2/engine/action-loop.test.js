@@ -439,20 +439,22 @@ describe('loop.setRolls() and loop.setEffects()', () => {
 
 describe('dispatchStateChangeHooks()', () => {
   it('runs onStateChange and returns setFeatureState mutations from hooks', () => {
+    const armorScope = 'armor:srd-arm-tst';
     const char = mockCharacter({
       instanceId: 'c1',
+      armorId: 'srd-arm-tst',
       currentArmor: 2,
     });
     const gameState = mockGameState({
       activeElements: [char],
-      featureState: { Reinforced: { reinforcedActive: true } },
+      featureState: { [armorScope]: { reinforcedActive: true } },
     });
 
     const batch = [{ type: 'clearArmor', payload: { instanceId: 'c1', amount: 1 } }];
 
     const { mutations } = dispatchStateChangeHooks(
       gameState,
-      [{ ...Reinforced, _ownerInstanceId: 'c1' }],
+      [{ ...Reinforced, _ownerInstanceId: 'c1', _sourceScopeKey: armorScope }],
       batch
     );
 
@@ -460,7 +462,7 @@ describe('dispatchStateChangeHooks()', () => {
       mutations.some(
         (m) =>
           m.type === 'setFeatureState' &&
-          m.payload.featureKey === 'Reinforced' &&
+          m.payload.featureKey === armorScope &&
           m.payload.key === 'reinforcedActive' &&
           m.payload.value === false
       )

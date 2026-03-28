@@ -1187,6 +1187,8 @@ describe('applyV2BannerMutations', () => {
     expect(skipped).toHaveLength(0);
     expect(updates[0].updates.activeBeastform).toBeNull();
     expect(updates[0].updates.selectedBeastformAdvantage).toBeNull();
+    expect(updates[0].updates.featureState[SRD_CLASS_DRUID_SCOPE_KEY].activeBeastform).toBeNull();
+    expect(updates[0].updates.featureState[SRD_CLASS_DRUID_SCOPE_KEY].evolutionTraitKey).toBeNull();
   });
 
   it('applies gainHope', () => {

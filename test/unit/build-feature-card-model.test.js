@@ -19,6 +19,7 @@ import { CaprineLeap } from '../../src/features-v2/ancestries/Faun.js';
 import { Retract } from '../../src/features-v2/ancestries/Galapa.js';
 import { PrayerDice } from '../../src/features-v2/classes/Seraph.js';
 import { buildTableSnapshot } from '../../src/features-v2/engine/table.js';
+import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../src/features-v2/engine/feature-scope-keys.js';
 import registry from '../../src/features-v2/registry.js';
 import { mockCharacter, mockGameState, mockRoll } from './features-v2/helpers.js';
 
@@ -259,7 +260,7 @@ describe('buildFeatureCardModel', () => {
         activeElements: [raw],
         _ownerInstanceId: 'd1',
         _featureKey: 'Beastform',
-        featureState: { Beastform: {} },
+        featureState: { [SRD_CLASS_DRUID_SCOPE_KEY]: {} },
         action: {
           type: 'free',
           actorInstanceId: 'd1',
@@ -284,7 +285,7 @@ describe('buildFeatureCardModel', () => {
         activeElements: [rawIn],
         _ownerInstanceId: 'd1',
         _featureKey: 'Beastform',
-        featureState: { Beastform: {} },
+        featureState: { [SRD_CLASS_DRUID_SCOPE_KEY]: {} },
         action: {
           type: 'free',
           actorInstanceId: 'd1',

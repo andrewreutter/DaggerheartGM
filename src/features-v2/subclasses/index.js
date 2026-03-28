@@ -24,6 +24,7 @@ import {
   WardensProtection,
   Defender,
 } from './WardenOfRenewal.js';
+import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../engine/feature-scope-keys.js';
 import { ElementalIncarnation, ElementalAura, ElementalDominion } from './WardenOfTheElements.js';
 import { WellConnected, ContactsEverywhere, ReliableBackup } from './Syndicate.js';
 import {
@@ -89,7 +90,7 @@ export default {
   'srd-sub-warden-of-the-elements': {
     name: 'Warden of the Elements',
     // Shared featureState bag: table.source.get / table.source.set in features
-    sourceScopeKey: 'WardenOfTheElements',
+    sourceScopeKey: WARDEN_OF_THE_ELEMENTS_SCOPE_KEY,
     features: [ElementalIncarnation, ElementalAura, ElementalDominion],
   },
   'srd-sub-syndicate': {

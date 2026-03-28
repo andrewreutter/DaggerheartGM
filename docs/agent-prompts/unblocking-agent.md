@@ -61,7 +61,7 @@ CLASS / SUBCLASS RESOLUTIONS — V1 AS INSPIRATION (NOT A TEMPLATE)
 ────────────────────────────────────────────────────────
 When the blocked work concerns a **class or subclass** feature (or you need
 semantics that were already solved in an older build), it is **acceptable
-and often desirable** to read **`docs/v2-v1-cutover.md`**, UI code in
+and often desirable** to read **`docs/v2-game-table-cutover-remaining.md`**, UI code in
 `GMTableView.jsx` / `CharacterHoverCard.jsx`, and **git history** for the
 removed Phase 1 package for **ideas and elegant patterns**: lifecycle ordering,
 edge cases, resource costs, and what the table UX needs from the engine.

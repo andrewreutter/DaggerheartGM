@@ -53,6 +53,47 @@ function truncateText(s, max = 96) {
   return `${t.slice(0, max)}…`;
 }
 
+/** Editable text that feeds the import parser (text assets and image OCR / “use as text”). */
+function SliceParseTextEditor({ row, updateTextAsset, onImageRegionOcrChange }) {
+  if (!row) {
+    return <p className="text-xs text-dh-muted px-1">Select a slice to edit parse text.</p>;
+  }
+  if (row.source === 'text') {
+    return (
+      <label className="flex min-h-0 flex-1 flex-col gap-1">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-dh-muted">Parse text</span>
+        <textarea
+          value={row.textBody ?? ''}
+          onChange={(e) => updateTextAsset(row.assetId, e.target.value)}
+          spellCheck={false}
+          className="min-h-[160px] flex-1 w-full resize-y rounded border border-dh-border bg-dh-inset px-2 py-1.5 font-mono text-[11px] leading-snug text-dh"
+          placeholder="Text sent to the adversary / environment / note parser…"
+        />
+      </label>
+    );
+  }
+  if (row.source === 'image' && row.layout && row.rect) {
+    const pending = row.ocrPending;
+    return (
+      <label className="flex min-h-0 flex-1 flex-col gap-1">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-dh-muted">
+          Parse text {pending ? '(detecting…)' : '(OCR — edit before import)'}
+        </span>
+        <textarea
+          value={row.ocrText ?? ''}
+          onChange={(e) => onImageRegionOcrChange(row.assetId, row.regionId, e.target.value)}
+          readOnly={pending}
+          disabled={pending}
+          spellCheck={false}
+          className="min-h-[160px] flex-1 w-full resize-y rounded border border-dh-border bg-dh-inset px-2 py-1.5 font-mono text-[11px] leading-snug text-dh disabled:opacity-60"
+          placeholder={pending ? '…' : 'OCR text — fix typos or paste missing lines for a better parse.'}
+        />
+      </label>
+    );
+  }
+  return null;
+}
+
 /** Image-only reference crops for the slice preview column (title lives in the parent). */
 function SliceGroupReferencePreview({ primaryRow, sliceRows }) {
   if (!primaryRow) return null;
@@ -475,6 +516,20 @@ export function UnifiedImportModal({
     setAddTextModalOpen(false);
   };
   const updateTextAsset = (id, body) => setTextAssets((prev) => prev.map((t) => (t.id === id ? { ...t, body } : t)));
+  const updateImageRegionOcrText = useCallback((assetId, regionId, ocrText) => {
+    const has = ocrText.trim().length > 0;
+    setImageAssets((prev) =>
+      prev.map((a) => {
+        if (a.id !== assetId) return a;
+        return {
+          ...a,
+          regions: a.regions.map((reg) =>
+            reg.id === regionId ? { ...reg, ocrText, ocrHasText: has, ocrComplete: true } : reg,
+          ),
+        };
+      }),
+    );
+  }, []);
   const removeTextAsset = (id) => {
     setTextAssets((prev) => prev.filter((t) => t.id !== id));
     if (textEditorAssetId === id) setTextEditorAssetId(null);
@@ -898,7 +953,12 @@ export function UnifiedImportModal({
               <h3 className="text-xs font-semibold uppercase tracking-wide text-dh-muted px-3 pt-3 pb-1 shrink-0">
                 Slice preview
               </h3>
-              <div className="flex flex-1 min-h-0 flex-col px-2 pb-2 pt-0">
+              <div className="flex flex-1 min-h-0 flex-col gap-2 px-2 pb-2 pt-0">
+                <SliceParseTextEditor
+                  row={reviewRow}
+                  updateTextAsset={updateTextAsset}
+                  onImageRegionOcrChange={updateImageRegionOcrText}
+                />
                 {reviewRow ? <SliceGroupReferencePreview primaryRow={reviewRow} sliceRows={sliceRows} /> : null}
               </div>
             </div>

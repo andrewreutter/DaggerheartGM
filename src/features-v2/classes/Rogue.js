@@ -1,5 +1,6 @@
 import { when, isActing, anAttackSucceeds, againstYou, unwrap, youSucceedOnAnAttack } from '../engine/when.js';
 import { buildTableSnapshot } from '../engine/table.js';
+import { SRD_CLASS_ROGUE_SCOPE_KEY } from '../engine/feature-scope-keys.js';
 
 /**
  * Rogue class features — SRD: daggerheart-srd/classes/Rogue.md
@@ -7,25 +8,30 @@ import { buildTableSnapshot } from '../engine/table.js';
 
 const ROGUE_DODGE_KEY = "Rogue's Dodge";
 
+/** Shared class `featureState` bag — Rogue's Dodge state uses `table.source`, not the per-feature name key. */
+export const ROGUE_CLASS_FEATURE_STATE_SCOPE = SRD_CLASS_ROGUE_SCOPE_KEY;
+
 function roguesDodgeActive(table) {
-  return table.feature.get('roguesDodgeActive') === true;
+  return table.source?.get?.('roguesDodgeActive') === true;
 }
 
 export const RoguesDodge = {
   name: ROGUE_DODGE_KEY,
+  /** Game Table: apply dodge activation via `featureState[scope]` (see {@link ROGUE_CLASS_FEATURE_STATE_SCOPE}). */
+  hostRollMetaFeatureStateActivate: true,
   description:
     'Spend 3 Hope to gain a +2 bonus to your Evasion until the next time an attack succeeds against you. Otherwise, this bonus lasts until your next rest.',
   hopeCost: 3,
   passiveStatMods: when(roguesDodgeActive, { evasion: 2 }),
   onUse(table) {
-    table.feature.set('roguesDodgeActive', true);
+    table.source.set('roguesDodgeActive', true);
   },
   hooks: {
     onResolve: when(anAttackSucceeds, againstYou, roguesDodgeActive, (table) => {
-      table.feature.set('roguesDodgeActive', false);
+      table.source.set('roguesDodgeActive', false);
     }),
     onRest(table) {
-      table.feature.set('roguesDodgeActive', false);
+      table.source.set('roguesDodgeActive', false);
     },
   },
 };
@@ -41,6 +47,7 @@ export function resolveRoguesDodgePassiveEvasion(character = {}) {
     activeElements: [{ ...character, elementType: 'character', instanceId: ownerId }],
     _ownerInstanceId: ownerId,
     _featureKey: ROGUE_DODGE_KEY,
+    _activeFeature: { _sourceScopeKey: SRD_CLASS_ROGUE_SCOPE_KEY },
     featureState: character.featureState,
   });
   const mods = unwrap(RoguesDodge.passiveStatMods, table);

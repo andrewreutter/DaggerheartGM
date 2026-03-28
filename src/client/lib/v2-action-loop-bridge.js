@@ -31,6 +31,7 @@ import { buildV2RegistryWithSrdItems, expandSrdAncestryIdsToV2Keys } from './v2-
 import { computeHpLoss, effectiveEvasion, effectiveThresholds } from './helpers.js';
 import { applyV2LifecycleMutations } from './table-ops.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../game-constants.js';
+import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 
 /** Display names for synthetic trait sub-items (matches CharacterDisplay TRAIT_FULL). */
 const TRAIT_FULL_PRETTY = {
@@ -1476,7 +1477,7 @@ function tryWaterSplashActionNotification(roll, mutations, activeElements) {
   const attackerId = roll?._attackerInstanceId;
   if (!targetId || !attackerId) return null;
   const atk = activeElements.find((e) => e.instanceId === attackerId && e.elementType === 'character');
-  const ch = atk?.featureState?.WardenOfTheElements?.channeledElement;
+  const ch = atk?.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement;
   if (ch !== 'water') return null;
   const marked = (mutations || []).filter(
     (m) =>
@@ -1582,7 +1583,7 @@ export function computeV2DamageBannerAckNotices(opts) {
     selectedDamageTargetId
   ) {
     const t = activeElements.find((e) => e.instanceId === selectedDamageTargetId && e.elementType === 'character');
-    const ch = t?.featureState?.WardenOfTheElements?.channeledElement;
+    const ch = t?.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement;
     if (ch === 'fire') {
       notes.push(`🔥 Fire: ${t?.name || 'Target'} retaliates 1d10 magic damage.`);
     }
@@ -1592,7 +1593,7 @@ export function computeV2DamageBannerAckNotices(opts) {
   const attackerId = roll._attackerInstanceId;
   if (hasDamage && attackerId && selectedDamageTargetId) {
     const atk = activeElements.find((e) => e.instanceId === attackerId && e.elementType === 'character');
-    if (atk?.featureState?.WardenOfTheElements?.channeledElement === 'water') {
+    if (atk?.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement === 'water') {
       const advTarget = activeElements.find((e) => e.instanceId === selectedDamageTargetId);
       const isMeleeHit = (() => {
         if (atk.tokenX != null && advTarget?.tokenX != null) {

@@ -7,6 +7,8 @@ import { buildChipsForFeature, getFeatureUsageCycleForV2Chip } from '../../featu
 import { unwrapTopLevelWhenChain } from '../../features-v2/engine/when.js';
 import { loadV2FeaturesForCharacterElement, buildRestBannerTableForCharacter } from './v2-action-loop-bridge.js';
 import { getFeatureUsageKeyForGuideFeature, getDisplayLabelForFeatureUsageKey } from './feature-usage-key.js';
+import { SHIFTING_DISADVANTAGE_SOURCE_ID } from '../../features-v2/armor_properties/Shifting.js';
+import { hasConsumableRestBonusPending } from '../../features-v2/engine/consumable-rest-bonus.js';
 
 /**
  * @param {'short'|'long'} restDuration
@@ -72,16 +74,11 @@ export function computeRestBannerRefreshPreview(opts) {
   modifierLabels.sort((a, b) => a.localeCompare(b));
 
   const notes = [];
-  if (cyclesToClear.includes('rest') && Array.isArray(characterEl.disadvantageSources) && characterEl.disadvantageSources.includes('Shifting')) {
+  if (cyclesToClear.includes('rest') && Array.isArray(characterEl.disadvantageSources) && characterEl.disadvantageSources.includes(SHIFTING_DISADVANTAGE_SOURCE_ID)) {
     notes.push('Shifting (clears disadvantage)');
   }
-  if (characterEl.featureState && typeof characterEl.featureState === 'object') {
-    for (const [k, bag] of Object.entries(characterEl.featureState)) {
-      if (/^consumables:/.test(k) && bag && typeof bag === 'object' && bag.restBonusActive === true) {
-        notes.push('Extra downtime move (consumable bonus expires)');
-        break;
-      }
-    }
+  if (hasConsumableRestBonusPending(characterEl.featureState)) {
+    notes.push('Extra downtime move (consumable bonus expires)');
   }
   notes.sort((a, b) => a.localeCompare(b));
 

@@ -60,6 +60,7 @@ import {
   getLifeSupportPendingHealSlots,
 } from '../lib/manual-track-action-loop.js';
 import { buildWeaponRollText } from '../lib/weapon-roll-text.js';
+import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 
 // formatGold is re-exported from CharacterDisplay; re-export it for callers that
 // already import it from here (keeps backwards-compatibility during migration).
@@ -676,9 +677,10 @@ export function CharacterHoverCard({
       _targetType: action.targetType,
       ...(inputVal !== null ? { _inputValue: inputVal } : {}),
       // Legacy action-notification path (no V2 activateV2OwnedCardChip): GM ack applies via applyFeatureResources.
-      ...(feature.name === "Rogue's Dodge"
+      ...(feature.hostRollMetaFeatureStateActivate === true && feature._sourceScopeKey
         ? {
             _roguesDodgeFeatureStateActivate: true,
+            _roguesDodgeFeatureStateScopeKey: feature._sourceScopeKey,
           }
         : {}),
     };
@@ -1190,7 +1192,7 @@ export function CharacterHoverCard({
               featureUsage={el.featureUsage}
               currentHope={currentHope}
               updateFn={updateFn}
-              activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
+              activeChanneledElement={el.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement ?? null}
               prayerDice={(el.activeModifiers || []).filter(m => m.name === 'Prayer Die')}
               onPrayerDieGainHope={onActionNotification ? (mod) => onActionNotification({
                 _action: true,
@@ -1257,7 +1259,7 @@ export function CharacterHoverCard({
                     }
                   : undefined
               }
-              activeChanneledElement={el.featureState?.WardenOfTheElements?.channeledElement ?? null}
+              activeChanneledElement={el.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement ?? null}
               pendingBanners={pendingBanners}
               rollModifiers={rollModifiers}
               selectedRollModIndex={selectedRollModIndex}

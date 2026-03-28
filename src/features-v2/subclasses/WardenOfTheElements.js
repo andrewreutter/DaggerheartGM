@@ -11,11 +11,10 @@ import {
   againstYou,
   youTakeSevereDamage,
 } from '../engine/when.js';
-
-const FS = 'WardenOfTheElements';
+import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../engine/feature-scope-keys.js';
 
 function warden(table) {
-  return table.featureState?.[FS] ?? {};
+  return table.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY] ?? {};
 }
 
 function masteryUnlocked(table) {

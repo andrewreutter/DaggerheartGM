@@ -5,13 +5,12 @@
 
 import { when } from '../engine/when.js';
 
-const FS = 'Blinding Orb';
 const SCOPE = 'consumables:srd-cns-blinding-orb';
 
 function getAffectedInstanceIds(table) {
   const scoped = table.source?.get?.('affectedInstanceIds');
   if (scoped !== undefined) return scoped;
-  return table.featureState?.[SCOPE]?.affectedInstanceIds ?? table.featureState?.[FS]?.affectedInstanceIds;
+  return table.featureState?.[SCOPE]?.affectedInstanceIds;
 }
 
 /** SRD "within Close range": Melee, Very Close, or Close. */

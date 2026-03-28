@@ -5,10 +5,10 @@ import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
-import { HOPE_TRACK_FILL, HOPE_TRACK_ICON_CLASS } from './CharacterStatBlockGraphic.jsx';
+import { HOPE_TRACK_FILL, HOPE_TRACK_ICON_CLASS, CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
@@ -46,6 +46,7 @@ import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequenc
 import { DiceRoller } from './DiceRoller.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { Tooltip } from './Tooltip.jsx';
+import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-hover-tooltip.jsx';
 import {
   wrapEntity,
   wrapRoll,
@@ -101,6 +102,11 @@ import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChi
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
 import { buildTableSnapshot, applyMutations } from '../../features-v2/engine/table.js';
 import { dispatchSessionEndHooks } from '../../features-v2/engine/action-loop.js';
+import { RALLY_FEATURE_STATE_BAG_KEY, RALLY_SESSION_VOLATILE_KEYS } from '../../features-v2/classes/Bard.js';
+import { ROGUE_CLASS_FEATURE_STATE_SCOPE } from '../../features-v2/classes/Rogue.js';
+import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
+import { SHIFTING_DISADVANTAGE_SOURCE_ID } from '../../features-v2/armor_properties/Shifting.js';
+import { stripConsumableRestBonusPending } from '../../features-v2/engine/consumable-rest-bonus.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../lib/v2-class-subclass-feature-descriptors.js';
 import { getV2OriginFeatureDescriptor } from '../lib/v2-origin-feature-descriptors.js';
 import { v2RollDieExtrasFromActionLoopPayload } from '../lib/v2-action-notification-dice.js';
@@ -135,6 +141,15 @@ import {
   getLifeSupportPendingHealSlots,
 } from '../lib/manual-track-action-loop.js';
 
+function stripRallyVolatileSessionKeys(fs) {
+  if (!fs?.[RALLY_FEATURE_STATE_BAG_KEY]) return fs;
+  const bag = { ...fs[RALLY_FEATURE_STATE_BAG_KEY] };
+  for (const k of RALLY_SESSION_VOLATILE_KEYS) delete bag[k];
+  const next = { ...fs };
+  if (Object.keys(bag).length === 0) delete next[RALLY_FEATURE_STATE_BAG_KEY];
+  else next[RALLY_FEATURE_STATE_BAG_KEY] = bag;
+  return next;
+}
 
 /**
  * Shared hook: after layout, measure a fixed-position overlay and compute a
@@ -339,6 +354,93 @@ function enrichRollWithDamage(roll, elements) {
 /** Width of the character table editor column (unified sheet + slide-out form). */
 const CHARACTER_TABLE_EDITOR_DRAWER_WIDTH = 'min(42rem, calc(100vw - 15rem))';
 
+function pickTallestGmSection(prLen, actionsLen, fearLen) {
+  const max = Math.max(prLen, actionsLen, fearLen);
+  if (prLen === max) return 'pr';
+  if (actionsLen === max) return 'actions';
+  return 'fear';
+}
+
+/** Portaled GM Moves preview: full adversary/environment sheet with feature highlight (PCs: compact preview). */
+function GmMovesFeatureTooltipPanel({
+  item,
+  feature,
+  hoveredFeature,
+  featureCountdowns,
+  onAddAdversary,
+  scaledToggleState,
+  onAdversaryScaledToggle,
+  updateActiveElement,
+}) {
+  if (item.kind === 'environment') {
+    return (
+      <div className="p-4 max-h-[min(70vh,calc(100vh-48px))] overflow-y-auto">
+        {item.element.imageUrl && (
+          <div className="float-right ml-2 mb-2 w-14 aspect-square overflow-hidden rounded-lg border border-dh-border">
+            <img src={item.element.imageUrl} alt="" className="h-full w-full object-cover opacity-90" />
+          </div>
+        )}
+        <h3 className="text-lg font-bold text-dh mb-2 pr-16">{item.element.name}</h3>
+        <EnvironmentCardContent
+          element={item.element}
+          hoveredFeature={hoveredFeature}
+          cardKey={item.element.instanceId}
+          featureCountdowns={featureCountdowns}
+          updateCountdown={null}
+          onAddAdversary={onAddAdversary}
+        />
+      </div>
+    );
+  }
+  if (item.kind === 'character') {
+    return (
+      <div className="p-4 max-h-[min(70vh,calc(100vh-48px))] overflow-y-auto">
+        <h3 className="text-lg font-bold text-dh mb-2">{item.element.name}</h3>
+        <div
+          data-feature-key={feature.featureKey}
+          className="rounded-lg border border-yellow-500/50 bg-dh-inset/40 p-2"
+        >
+          <div className="font-semibold text-dh text-sm">{feature.name}</div>
+          <FeatureDescription description={feature.description} />
+        </div>
+      </div>
+    );
+  }
+  const el = item.baseElement;
+  const showScaled = scaledToggleState[el.id] ?? true;
+  const displayEl = el._scaledFromTier != null && !showScaled ? getUnscaledAdversary(el) : el;
+  const scaledMeta = el._scaledFromTier != null ? { fromTier: el._scaledFromTier, showScaled } : null;
+  return (
+    <div className="p-4 max-h-[min(70vh,calc(100vh-48px))] overflow-y-auto">
+      {el.imageUrl && (
+        <div className="float-right ml-2 mb-2 w-14 aspect-square overflow-hidden rounded-lg border border-dh-border">
+          <img src={el.imageUrl} alt="" className="h-full w-full object-cover opacity-90" />
+        </div>
+      )}
+      <h3 className="text-lg font-bold text-dh mb-2 pr-16">
+        {displayEl.name}
+        {item.instances.length > 1 && (
+          <span className="text-dh-muted font-normal ml-1.5">×{item.instances.length}</span>
+        )}
+      </h3>
+      <AdversaryCardContent
+        element={displayEl}
+        hoveredFeature={hoveredFeature}
+        cardKey={el.id}
+        count={item.instances.length}
+        instances={item.instances}
+        updateFn={updateActiveElement}
+        showInstanceRemove={false}
+        featureCountdowns={featureCountdowns}
+        updateCountdown={null}
+        onRollAttack={null}
+        scaledMeta={scaledMeta}
+        onScaledToggle={scaledMeta && onAdversaryScaledToggle ? () => onAdversaryScaledToggle(el.id) : null}
+      />
+    </div>
+  );
+}
+
 export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
@@ -458,11 +560,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     mode: 'click',
     getClickToggleKey: (d) => d?.element?.instanceId,
     suppressOutsideDismissRef: suppressCharacterOverlayOutsideDismissRef,
-    // Sheet closes via same-character trigger toggle or dismissAllHoverCards (rolls/actions); not on outside click (portaled UI / inputs).
-    disableDesktopOutsideDismiss: true,
   });
   const potAdvOverlay     = useHoverOverlay({ hideDelay: 120, isTouch });
-  const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch });
+  const gmMovesOverlay    = useHoverOverlay({ hideDelay: 150, isTouch, mode: 'click', getClickToggleKey: () => 'gm-moves' });
+  const gmMovesPortalTooltip = usePortalHoverTooltip();
 
   // GM Feature hover (multi-trigger within GM Moves panel — managed separately)
   const [hoveredFeature, setHoveredFeature] = useState(null);
@@ -536,8 +637,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return () => window.removeEventListener('keydown', handler);
   }, [lightboxUrl]);
 
-  const [hoveredDefaultMove, setHoveredDefaultMove] = useState(null);
-  const [hoveredCompactTooltip, setHoveredCompactTooltip] = useState(null);
   const [showStripLegend, setShowStripLegend] = useState(false);
   const [rolledKey, setRolledKey] = useState(null);
   // In-place target picker for adversary attacks (shown before rolling when attackers are on the map with a range).
@@ -2210,10 +2309,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       };
     }
     if (roll._roguesDodgeFeatureStateActivate) {
-      const RD = "Rogue's Dodge";
+      const scope = roll._roguesDodgeFeatureStateScopeKey ?? ROGUE_CLASS_FEATURE_STATE_SCOPE;
       updates.featureState = {
         ...(el.featureState || {}),
-        [RD]: { ...(el.featureState?.[RD] || {}), roguesDodgeActive: true },
+        [scope]: { ...(el.featureState?.[scope] || {}), roguesDodgeActive: true },
       };
     }
     // Feature-specific modifier additions — attacker only (e.g. Prayer Dice d4 chips)
@@ -2252,27 +2351,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         const kept = char.activeModifiers.filter(m => !cyclesToClear.includes(m.refreshOn));
         if (kept.length !== char.activeModifiers.length) updates.activeModifiers = kept;
       }
-      if (char.featureState?.Rally) {
-        const fs = { ...char.featureState };
-        const rally = { ...fs.Rally };
-        delete rally.partyDice;
-        delete rally.maestroRallyChoices;
-        if (Object.keys(rally).length === 0) delete fs.Rally;
-        else fs.Rally = rally;
-        updates.featureState = fs;
+      if (char.featureState?.[RALLY_FEATURE_STATE_BAG_KEY]) {
+        updates.featureState = stripRallyVolatileSessionKeys({ ...char.featureState });
       }
       if (Object.keys(updates).length > 0) {
         updateActiveElement(char.instanceId, updates);
       }
     }
-    // Root `table_state.featureState` merges into banner snapshots; clear Rally bags here too (mirrors `runSessionEndClear`).
-    if (tableFeatureState?.Rally) {
-      const tf = { ...tableFeatureState };
-      const rally = { ...tf.Rally };
-      delete rally.partyDice;
-      delete rally.maestroRallyChoices;
-      if (Object.keys(rally).length === 0) delete tf.Rally;
-      else tf.Rally = rally;
+    // Root `table_state.featureState` merges into banner snapshots; clear Rally volatile keys (mirrors `runSessionEndClear`).
+    if (tableFeatureState?.[RALLY_FEATURE_STATE_BAG_KEY]) {
+      const tf = stripRallyVolatileSessionKeys({ ...tableFeatureState });
       sessionTableFeatureState = tf;
       sendOp({ op: 'set-table-feature-state', featureState: tf });
     }
@@ -2422,17 +2510,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     const batchMap = {};
     for (const char of charactersList) {
       const updates = {};
-      if (char.featureState?.Rally) {
-        const fs = { ...char.featureState };
-        const rally = { ...fs.Rally };
-        delete rally.partyDice;
-        delete rally.maestroRallyChoices;
-        if (Object.keys(rally).length === 0) {
-          delete fs.Rally;
-        } else {
-          fs.Rally = rally;
-        }
-        updates.featureState = fs;
+      if (char.featureState?.[RALLY_FEATURE_STATE_BAG_KEY]) {
+        updates.featureState = stripRallyVolatileSessionKeys({ ...char.featureState });
       }
       if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
     }
@@ -2442,14 +2521,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })),
       });
     }
-    if (tableFeatureState?.Rally) {
-      const tf = { ...tableFeatureState };
-      const rally = { ...tf.Rally };
-      delete rally.partyDice;
-      delete rally.maestroRallyChoices;
-      if (Object.keys(rally).length === 0) delete tf.Rally;
-      else tf.Rally = rally;
-      sendOp({ op: 'set-table-feature-state', featureState: tf });
+    if (tableFeatureState?.[RALLY_FEATURE_STATE_BAG_KEY]) {
+      sendOp({ op: 'set-table-feature-state', featureState: stripRallyVolatileSessionKeys({ ...tableFeatureState }) });
     }
     if (v2Registry && srdData) {
       let workingElements = activeElements.map((e) => {
@@ -2534,7 +2607,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       rollUser: 'GM',
       actionName: label,
       actionText:
-        'Start Session — acknowledge to reset **session-frequency feature uses**, clear **session-refresh modifiers** (e.g. Rally die tokens), refresh **Bard Rally** pooled dice, and run **session-start hooks** (e.g. Seraph Prayer Dice pool).',
+        'Start Session — acknowledge to reset **session-frequency feature uses**, clear **session-refresh modifiers** (e.g. Rally die tokens), refresh **Rally** pooled dice, and run **session-start hooks** (e.g. Seraph Prayer Dice pool).',
     };
     handleActionNotification(cycleNotification);
   };
@@ -2562,21 +2635,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
       // Warden channel + Rogue's Dodge: cleared via generic V2 `onRest` in `runV2RestHooksForTable` (batched below).
       // Shifting (armor): disadvantage until rest — clear on rest
-      if (cyclesToClear.includes('rest') && Array.isArray(char.disadvantageSources) && char.disadvantageSources.includes('Shifting')) {
-        updates.disadvantageSources = char.disadvantageSources.filter(s => s !== 'Shifting');
+      if (cyclesToClear.includes('rest') && Array.isArray(char.disadvantageSources) && char.disadvantageSources.includes(SHIFTING_DISADVANTAGE_SOURCE_ID)) {
+        updates.disadvantageSources = char.disadvantageSources.filter(s => s !== SHIFTING_DISADVANTAGE_SOURCE_ID);
       }
       // Potion of Stability (rest) — clear `restBonusActive` on consumable scope bags after rest completes
-      if (char.featureState && typeof char.featureState === 'object') {
-        let nextFs = null;
-        for (const [k, bag] of Object.entries(char.featureState)) {
-          if (!/^consumables:/.test(k) || !bag || typeof bag !== 'object' || bag.restBonusActive !== true) continue;
-          if (!nextFs) nextFs = { ...char.featureState };
-          const { restBonusActive: _rb, ...restBag } = bag;
-          if (Object.keys(restBag).length === 0) delete nextFs[k];
-          else nextFs[k] = restBag;
-        }
-        if (nextFs) updates.featureState = nextFs;
-      }
+      const strippedRest = stripConsumableRestBonusPending(char.featureState);
+      if (strippedRest) updates.featureState = strippedRest;
       if (Object.keys(updates).length > 0) batchMap[char.instanceId] = updates;
     }
     if (cyclesToClear.includes('rest') && srdData) {
@@ -2669,10 +2733,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   useEffect(() => {
     if (!gmMovesOverlay.isOpen) {
       setHoveredFeature(null);
-      setHoveredDefaultMove(null);
-      setHoveredCompactTooltip(null);
+      gmMovesPortalTooltip.hide();
     }
-  }, [gmMovesOverlay.isOpen]);
+  }, [gmMovesOverlay.isOpen, gmMovesPortalTooltip.hide]);
 
   // Touch: dismiss GM feature overlay on tap outside
   useEffect(() => {
@@ -2828,6 +2891,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
 
   useEffect(() => {
+    if (!characterOverlay.isOpen) return;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (suppressCharacterOverlayOutsideDismissRef.current) return;
+      characterOverlay.close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [characterOverlay.isOpen, characterOverlay.close]);
+
+  useEffect(() => {
+    if (!gmMovesOverlay.isOpen) return;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      gmMovesOverlay.close();
+      gmMovesPortalTooltip.hide();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [gmMovesOverlay.isOpen, gmMovesOverlay.close, gmMovesPortalTooltip.hide]);
+
+  useEffect(() => {
     if (characterDrawerEditMismatch) setCharacterDrawerChromeSync(null);
   }, [characterDrawerEditMismatch]);
 
@@ -2921,9 +3007,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     characterOverlay.close();
     potAdvOverlay.close();
     gmMovesOverlay.close();
+    gmMovesPortalTooltip.hide();
     if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
-    setHoveredDefaultMove(null);
-    setHoveredCompactTooltip(null);
     setHoveredFeature(null);
     setGmHoverOverlayActive(false);
   };
@@ -3082,6 +3167,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
 
+    /** Merged sheet (incl. beastform synthetic `activeFeatures` / advantageTriggers) — read-only for preroll chip collection; keep `characterEl` for persisted state. */
+    const characterElForIntent =
+      srdData && characterEl.instanceId
+        ? mergeV2DeclarativeSheetOverlay(recomputeCharacter(characterEl, srdData), characterEl, srdData, {
+            fearCount,
+            mapConfig,
+            tableFeatureState,
+          })
+        : characterEl;
+
     let textToUse = rollText;
     if (characterEl.disadvantageSources?.length > 0) {
       textToUse = insertDisadvantageD6(textToUse, characterEl.disadvantageSources[0]);
@@ -3205,17 +3300,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return { get, set };
     };
     // Collect pre-roll chips from declarative chips array (placement: 'preroll').
-    if (Array.isArray(characterEl.activeFeatures) && characterEl.activeFeatures.length > 0) {
-      for (const feature of characterEl.activeFeatures) {
+    if (Array.isArray(characterElForIntent.activeFeatures) && characterElForIntent.activeFeatures.length > 0) {
+      for (const feature of characterElForIntent.activeFeatures) {
         const prerollChips = feature.chips?.filter(c => c.placement === 'preroll') || [];
         for (const c of prerollChips) {
           canvas.addChip({ ...c, _featureName: feature.name });
         }
       }
     } else {
-      const featureNames = [...(characterEl.ancestryFeatures || []).map(f => f.name), ...(characterEl.communityFeatures || []).map(f => f.name)];
+      const featureNames = [...(characterElForIntent.ancestryFeatures || []).map(f => f.name), ...(characterElForIntent.communityFeatures || []).map(f => f.name)];
       for (const name of featureNames) {
-        const descriptor = resolveOriginFeatureDescriptor(characterEl, name);
+        const descriptor = resolveOriginFeatureDescriptor(characterElForIntent, name);
         const prerollChips = descriptor?.chips?.filter(c => c.placement === 'preroll') || [];
         for (const c of prerollChips) {
           canvas.addChip({ ...c, _featureName: name });
@@ -3223,7 +3318,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     }
 
-    for (const advChip of buildAdvantageTriggerPrerollChips(characterEl, {
+    for (const advChip of buildAdvantageTriggerPrerollChips(characterElForIntent, {
       resolveOriginFeatureDescriptor,
       resolveClassFeatureDescriptor,
       resolveWeaponTagDescriptor,
@@ -3243,7 +3338,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       const v2WeaponIntent = collectV2WeaponIntentChips({
         pendingMeta: meta,
         pendingRollText: textToUse,
-        characterEl,
+        characterEl: characterElForIntent,
         activeElements,
         srdData,
         fearCount,
@@ -4779,7 +4874,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   const displayElPanel = characterDisplayByInstanceId.get(el.instanceId) ?? el;
                   const toggleGroups = collectV2IsToggleCardFeatureGroups(displayElPanel, v2TableContextForPanels);
                   if (toggleGroups.length === 0) return null;
-                  const channeled = displayElPanel.featureState?.WardenOfTheElements?.channeledElement ?? null;
+                  const channeled = displayElPanel.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement ?? null;
                   return (
                     <div className="pt-1.5 mt-1 border-t border-dh-border/80 min-w-0">
                       <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">

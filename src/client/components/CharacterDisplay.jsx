@@ -30,6 +30,7 @@ import {
 import { getFeatureUsageKeyForGuideFeature } from '../lib/feature-usage-key.js';
 import { entryHasUnusableActionChipsForSheet, hasAnyUnusableActionChipsForSheet } from '../lib/v2-action-chip-strip.js';
 import { omitShapeId } from '../lib/json-schema-dh.js';
+import { RoguesDodge } from '../../features-v2/classes/Rogue.js';
 import { DeclarativeSchemaSheetCard } from './DeclarativeSchemaCard.jsx';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { Tooltip } from './Tooltip.jsx';
@@ -948,7 +949,7 @@ function ModifierChip({ mod, selected, onSelect, onUse, onUseMode, onRemove, eli
       : 'bg-violet-950/40 border-violet-700/60 text-violet-300 hover:bg-violet-900/40';
   else if (mod.name === 'Sneak Attack') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
   else if (mod.name === 'No Mercy') colorCls = selected ? 'bg-amber-800/70 border-amber-500 text-dh ring-1 ring-amber-500/50' : 'bg-amber-950/40 border-amber-700/60 text-dh hover:bg-amber-900/40';
-  else if (mod.name === "Rogue's Dodge") colorCls = selected ? 'bg-cyan-800/70 border-cyan-500 text-cyan-100 ring-1 ring-cyan-500/50' : 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/40';
+  else if (mod.name === RoguesDodge.name) colorCls = selected ? 'bg-cyan-800/70 border-cyan-500 text-cyan-100 ring-1 ring-cyan-500/50' : 'bg-cyan-950/40 border-cyan-700/60 text-cyan-300 hover:bg-cyan-900/40';
   else if (mod.name === 'Evolution') colorCls = selected ? 'bg-violet-800/70 border-violet-500 text-violet-100 ring-1 ring-violet-500/50' : 'bg-violet-950/40 border-violet-700/60 text-violet-300 hover:bg-violet-900/40';
   else if (mod.name === 'Dread Visage') colorCls = selected ? 'bg-red-800/70 border-red-500 text-red-100 ring-1 ring-red-500/50' : 'bg-red-950/40 border-red-700/60 text-red-300 hover:bg-red-900/40';
   else colorCls = selected ? 'dh-tint-sky-row border ring-1 ring-sky-500/50' : 'dh-tint-trait-chip border hover:brightness-110';

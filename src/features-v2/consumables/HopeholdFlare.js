@@ -5,7 +5,6 @@
 
 import { when } from '../engine/when.js';
 
-const FS = 'Hopehold Flare';
 const SCOPE = 'consumables:srd-cns-hopehold-flare';
 
 function hopeholdBag(table) {
@@ -19,7 +18,7 @@ function hopeholdBag(table) {
       return { active, activatorInstanceId };
     }
   }
-  return table.featureState?.[SCOPE] ?? table.featureState?.[FS];
+  return table.featureState?.[SCOPE];
 }
 
 /** SRD "within Close range": Melee, Very Close, or Close (not Far / Very Far). */

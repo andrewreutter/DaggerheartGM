@@ -11,6 +11,7 @@ import { enrichHoverActionMeta } from './hover-action-enrich.js';
 import { unwrap, unwrapAll } from './when.js';
 import { buildTableSnapshot } from './table.js';
 import { SRD_CLASS_DRUID_SCOPE_KEY } from './feature-scope-keys.js';
+import { forEachConsumableRestBonusPending } from './consumable-rest-bonus.js';
 import beastformsRegistryDefault from '../beastforms/index.js';
 import { getActiveBeastformRow } from './beastform-virtual-weapon-decl.js';
 
@@ -455,14 +456,12 @@ export function loadCharacterFeatures(character, registry) {
   // Rest-banner / consumable use: passiveStatMods may still apply after inventory removes the row
   // (e.g. Potion of Stability — `restBonusActive` until rest completes). Re-include those consumables.
   if (character.featureState && registry.consumables) {
-    for (const [featKey, bag] of Object.entries(character.featureState)) {
-      if (!bag || typeof bag !== 'object' || bag.restBonusActive !== true) continue;
-      const m = /^consumables:(.+)$/.exec(featKey);
-      const cid = m ? m[1] : null;
+    forEachConsumableRestBonusPending(character.featureState, (featKey) => {
+      const cid = featKey.startsWith('consumables:') ? featKey.slice('consumables:'.length) : null;
       if (cid && registry.consumables[cid] && !consumableIdsSeen.has(cid)) {
         pushConsumableFeaturesForId(cid);
       }
-    }
+    });
   }
 
   return features.map((f) => enrichHoverActionMeta(f));
@@ -479,7 +478,7 @@ export {
 
 /**
  * Apply SRD beastform row bonuses, weapon disable hints, and domain lockout
- * when the druid has an active beastform (feature state or legacy full `character.activeBeastform`).
+ * when the druid has an active beastform (Druid scoped `featureState` and/or denormalized `character.activeBeastform`).
  *
  * Virtual natural weapon is contributed by the **Beastform** class feature via
  * `virtualWeapon: when(hasActiveBeastformInTable, resolveBeastformVirtualWeapon)` in `classes/Druid.js`.
@@ -498,10 +497,7 @@ function applyBeastformDeclarativeOverlay({
   const { row, viaEvolution } = resolved;
 
   if (viaEvolution) {
-    const ek =
-      mergedFeatureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.evolutionTraitKey ??
-      mergedFeatureState?.Evolution?.evolutionTraitKey ??
-      character.evolutionTraitKey;
+    const ek = mergedFeatureState?.[SRD_CLASS_DRUID_SCOPE_KEY]?.evolutionTraitKey;
     if (ek && typeof stats[ek] === 'number') stats[ek] += 1;
   }
 
