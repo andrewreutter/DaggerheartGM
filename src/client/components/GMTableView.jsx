@@ -2737,6 +2737,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
   }, [gmMovesOverlay.isOpen, gmMovesPortalTooltip.hide]);
 
+  useEffect(() => {
+    if (!gmMovesPortalTooltip.tooltip && hoveredFeature?.fromChip) {
+      setHoveredFeature(null);
+    }
+  }, [gmMovesPortalTooltip.tooltip, hoveredFeature?.fromChip]);
+
   // Touch: dismiss GM feature overlay on tap outside
   useEffect(() => {
     if (!isTouch || !gmHoverOverlayActive) return;
@@ -3673,6 +3679,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return result;
   }, [activeElements]);
 
+  const consolidatedByCardKey = useMemo(() => {
+    const m = new Map();
+    for (const item of consolidatedElements) {
+      if (item.kind === 'adversary-group') m.set(item.baseElement.id, item);
+      else if (item.kind === 'environment' || item.kind === 'character' || item.kind === 'note') {
+        m.set(item.element.instanceId, item);
+      }
+    }
+    return m;
+  }, [consolidatedElements]);
+
   // Seed character card expanded state: complete characters start expanded, incomplete start collapsed.
   useEffect(() => {
     setCharacterCardExpanded(prev => {
@@ -3699,7 +3716,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, [hoveredFeature, consolidatedElements]);
 
   useEffect(() => {
-    if (!hoveredFeature || !overlayScrollRef.current) return;
+    if (!hoveredFeature || hoveredFeature.fromChip || !overlayScrollRef.current) return;
     const el = overlayScrollRef.current.querySelector(`[data-feature-key="${hoveredFeature.featureKey}"]`);
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }, [hoveredFeature]);
@@ -3930,6 +3947,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     });
     return menu;
   }, [activeElements]);
+
+  const gmMovesPrFeatures = useMemo(
+    () => [...(consolidatedMenu.Passives ?? []), ...(consolidatedMenu.Reactions ?? [])],
+    [consolidatedMenu],
+  );
+  const gmMovesActionFeatures = consolidatedMenu.Actions ?? [];
+  const gmMovesFearFeatures = consolidatedMenu['Fear Actions'] ?? [];
+  const tallGmSection = pickTallestGmSection(
+    gmMovesPrFeatures.length,
+    gmMovesActionFeatures.length,
+    gmMovesFearFeatures.length,
+  );
 
   const removeGroup = (instances) => {
     instances.forEach(inst => removeActiveElement(inst.instanceId));
@@ -4488,6 +4517,201 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const difficultyValue = effectiveMods.lessDifficult ? 'lessDifficult' : effectiveMods.slightlyMoreDangerous ? 'slightlyMoreDangerous' : effectiveMods.moreDangerous ? 'moreDangerous' : '';
   const damageBoostValue = effectiveMods.damageBoostPlusOne ? 'plusOne' : effectiveMods.damageBoostD4 ? 'd4' : effectiveMods.damageBoostStatic ? 'static' : '';
 
+  const showGmMovesChipTooltip = (e, feature) => {
+    const item = consolidatedByCardKey.get(feature.cardKey);
+    if (!item) return;
+    const hf = { cardKey: feature.cardKey, featureKey: feature.featureKey, fromChip: true };
+    setHoveredFeature(hf);
+    gmMovesPortalTooltip.showFromPointerEvent(e, {
+      wide: true,
+      renderInner: (
+        <GmMovesFeatureTooltipPanel
+          item={item}
+          feature={feature}
+          hoveredFeature={hf}
+          featureCountdowns={featureCountdowns}
+          onAddAdversary={handleAddPotentialAdversary}
+          scaledToggleState={scaledToggleState}
+          onAdversaryScaledToggle={(id) => setScaledToggleState((prev) => ({ ...prev, [id]: !(prev[id] ?? true) }))}
+          updateActiveElement={updateActiveElement}
+        />
+      ),
+      extra: <span className="sr-only" aria-hidden>preview</span>,
+    });
+  };
+
+  const renderGmMovesPassiveChip = (feature) => {
+    const item = consolidatedByCardKey.get(feature.cardKey);
+    const whenText = extractGmFeatureWhenClause(feature.description);
+    return (
+      <button
+        type="button"
+        key={`${feature.cardKey}-${feature.featureKey}`}
+        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-dh-strong bg-dh-raised/90 px-2 py-1 text-left text-xs text-dh transition-colors hover:border-dh-hope/40"
+        onMouseEnter={(e) => {
+          if (isTouch) return;
+          if (!item) return;
+          showGmMovesChipTooltip(e, feature);
+        }}
+        onMouseLeave={() => {
+          gmMovesPortalTooltip.scheduleClose();
+        }}
+        onClick={(e) => {
+          const canRoll = !!(feature._rollData || feature._diceRoll);
+          if (canRoll) handleRoll(feature, e);
+        }}
+      >
+        <span className="min-w-0 flex-1 truncate font-medium leading-snug">{whenText}</span>
+        <span className="shrink-0 text-[10px] text-dh-muted">{feature.sourceName}</span>
+      </button>
+    );
+  };
+
+  const renderGmMovesFeatureCardRow = (feature, category) => {
+    const allCds = parseAllCountdownValues(feature.description);
+    const cdKey = `${feature.cardKey}|${feature.featureKey}`;
+    const cdVals = allCds.map((cd, cdIdx) =>
+      featureCountdowns[`${cdKey}|${cdIdx}`] ?? cd.value
+    );
+    const canRoll = !!(feature._rollData || feature._diceRoll);
+    const justRolled = rolledKey === cdKey;
+    return (
+      <div
+        key={`${feature.cardKey}-${feature.featureKey}-${feature.name}`}
+        onMouseEnter={(e) => {
+          if (isTouch) return;
+          if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
+          setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey });
+        }}
+        onMouseLeave={() => {
+          if (isTouch) return;
+          setHoveredFeature(null);
+          gmHoverHideTimer.current = setTimeout(() => { setGmHoverOverlayActive(false); gmHoverHideTimer.current = null; }, 120);
+        }}
+        onClick={(e) => {
+          if (category === 'Fear Actions') {
+            if (setFearCount) setFearCount((prev) => Math.max(0, prev - parseFearCost(feature.description)));
+          }
+          if (canRoll) handleRoll(feature, e);
+        }}
+        className={`group flex w-full rounded border bg-dh-raised/50 text-left transition-all hover:bg-dh-raised ${(category === 'Fear Actions' || canRoll) ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-dh-strong hover:border-r-yellow-500'}`}
+      >
+        {feature._isRoleMove && (
+          <div className="flex shrink-0 gap-[3px] py-1.5 pl-1">
+            <div className="h-full w-1 rounded-full bg-dh-hope/90" />
+            <div className="h-full w-1 rounded-full bg-fuchsia-500/85" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1 p-2">
+          <div className="flex items-start justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-dh">
+              {feature.name}
+              {canRoll && (
+                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : 'text-dh-muted transition-colors group-hover:text-red-400'}`} />
+              )}
+            </span>
+            <span className="shrink-0 rounded bg-dh-surface px-1.5 py-0.5 text-[10px] text-dh-muted">{feature.sourceName}</span>
+          </div>
+          {!feature._isRoleMove && feature.featureKey !== 'attack' && (
+            <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-dh-muted">
+              <FeatureDescription description={feature.description} />
+            </p>
+          )}
+          {allCds.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 border-t border-dh-strong pt-1.5" onClick={(e) => e.stopPropagation()}>
+              {allCds.map((cd, cdIdx) => (
+                <div key={cdIdx} className="flex items-center gap-1">
+                  <span className="text-[10px] text-dh-muted">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
+                  <div className="inline-flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
+                      className="flex h-4 w-4 items-center justify-center rounded bg-dh-hover text-[10px] font-bold leading-none text-dh transition-colors hover:bg-red-800"
+                    >−</button>
+                    <span className="min-w-[1.25rem] text-center text-xs font-bold tabular-nums text-dh-hope">{cdVals[cdIdx]}</span>
+                    <button
+                      type="button"
+                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
+                      className="flex h-4 w-4 items-center justify-center rounded bg-dh-hover text-[10px] font-bold leading-none text-dh transition-colors hover:bg-green-800"
+                    >+</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const gmMovesPrSection = (
+    <CharacterSheetEmphasisCard title="Passives & Reactions" compact>
+      <div className="max-h-[min(48vh,360px)] overflow-y-auto pr-0.5">
+        <div className="flex flex-wrap gap-1.5">
+          {gmMovesPrFeatures.length === 0 ? (
+            <span className="text-xs text-dh-muted">—</span>
+          ) : (
+            gmMovesPrFeatures.map(renderGmMovesPassiveChip)
+          )}
+        </div>
+      </div>
+    </CharacterSheetEmphasisCard>
+  );
+  const gmMovesActionsSection = (
+    <CharacterSheetEmphasisCard title="Actions" compact>
+      <div className="max-h-[min(48vh,360px)] space-y-1.5 overflow-y-auto pr-0.5">
+        {gmMovesActionFeatures.length === 0 ? (
+          <span className="text-xs text-dh-muted">—</span>
+        ) : (
+          gmMovesActionFeatures.map((f) => renderGmMovesFeatureCardRow(f, 'Actions'))
+        )}
+      </div>
+    </CharacterSheetEmphasisCard>
+  );
+  const gmMovesFearSection = (
+    <CharacterSheetEmphasisCard title="Fear Actions" compact>
+      <div className="max-h-[min(48vh,360px)] space-y-1.5 overflow-y-auto pr-0.5">
+        {gmMovesFearFeatures.length === 0 ? (
+          <span className="text-xs text-dh-muted">—</span>
+        ) : (
+          gmMovesFearFeatures.map((f) => renderGmMovesFeatureCardRow(f, 'Fear Actions'))
+        )}
+      </div>
+    </CharacterSheetEmphasisCard>
+  );
+
+  const gmMovesMainColumns = (
+    <div className="flex min-h-0 min-w-0 flex-1 gap-2">
+      {tallGmSection === 'pr' && (
+        <>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{gmMovesPrSection}</div>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+            {gmMovesActionsSection}
+            {gmMovesFearSection}
+          </div>
+        </>
+      )}
+      {tallGmSection === 'actions' && (
+        <>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{gmMovesActionsSection}</div>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+            {gmMovesPrSection}
+            {gmMovesFearSection}
+          </div>
+        </>
+      )}
+      {tallGmSection === 'fear' && (
+        <>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{gmMovesFearSection}</div>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+            {gmMovesPrSection}
+            {gmMovesActionsSection}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Preview-as-player banner */}
@@ -4935,196 +5159,104 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         </div>
       </div>
 
-      {/* GM Moves hover overlay */}
+      {/* GM Moves — click to toggle; Escape / outside click close */}
       {gmMovesOverlay.isOpen && (
       <div
         ref={gmMovesOverlay.overlayRef}
-        className="fixed z-[55]"
-        style={{ right: 'calc(14rem)', paddingRight: '8px', top: 90, width: 'calc(20rem + 8px)', maxHeight: 'calc(100dvh - 98px)' }}
-        {...gmMovesOverlay.overlayHandlers}
+        className="fixed z-[55] flex gap-2"
+        style={{
+          right: 'calc(14rem)',
+          paddingRight: '8px',
+          top: 90,
+          width: 'min(96vw, calc(14rem + 28rem + 28rem + 2rem))',
+          maxHeight: 'calc(100dvh - 98px)',
+        }}
       >
-      <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100dvh - 98px)' }}>
-        <div className="p-3 bg-dh-canvas border-b border-dh-strong sticky top-0 z-10 rounded-t-xl shrink-0">
-          <h2 className="font-bold text-dh uppercase tracking-wider flex items-center gap-2 text-sm">
-            <Zap size={16} className="text-dh-hope" /> GM Moves
-          </h2>
-        </div>
-
-        <div className="p-3 space-y-5 overflow-y-auto flex-1 min-h-0">
-          {Object.entries(consolidatedMenu).map(([category, features]) => {
-            if (features.length === 0) return null;
-            const catCollapsed = collapsedSections.has(category);
-            return (
-              <div key={category}>
-                <button
-                  onClick={() => toggleSection(category)}
-                  className="w-full flex items-center gap-1.5 text-xs font-semibold text-dh-muted uppercase tracking-wider mb-3 border-b border-dh-border pb-1 hover:text-dh transition-colors"
-                >
-                  {catCollapsed
-                    ? <ChevronRight size={12} className="shrink-0" />
-                    : <ChevronDown size={12} className="shrink-0" />
-                  }
-                  <span className="flex-1 text-left">{category}</span>
-                  <span className="text-[10px] font-normal text-dh-muted normal-case tracking-normal">{features.length}</span>
-                </button>
-                {!catCollapsed && <div className="space-y-1.5">
-                  {features.map((feature, idx) => {
-                    const allCds = parseAllCountdownValues(feature.description);
-                    const cdKey = `${feature.cardKey}|${feature.featureKey}`;
-                    const cdVals = allCds.map((cd, cdIdx) =>
-                      featureCountdowns[`${cdKey}|${cdIdx}`] ?? cd.value
-                    );
-                    const canRoll = !!(feature._rollData || feature._diceRoll);
-                    const justRolled = rolledKey === cdKey;
-                    return (
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-dh-strong bg-dh-surface shadow-2xl"
+          style={{ maxHeight: 'calc(100dvh - 98px)' }}
+        >
+          <div className="z-10 shrink-0 rounded-t-xl border-b border-dh-strong bg-dh-canvas p-3">
+            <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-dh">
+              <Zap size={16} className="text-dh-hope" /> GM Moves
+            </h2>
+          </div>
+          <div className="flex min-h-0 flex-1 gap-2 p-2">
+            <div className="flex h-full min-h-0 w-52 shrink-0 flex-col overflow-hidden rounded-lg border border-dh-border bg-dh-surface/90">
+              <div className="shrink-0 border-b border-dh-border bg-dh-canvas px-2 py-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-dh-muted">Default Moves</span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <div className="flex gap-2">
+                  <div
+                    className="relative w-4 shrink-0 cursor-default"
+                    onMouseEnter={() => { if (!isTouch) setShowStripLegend(true); }}
+                    onMouseLeave={() => { if (!isTouch) setShowStripLegend(false); }}
+                    onClick={() => { if (isTouch) setShowStripLegend((v) => !v); }}
+                  >
+                    <div className="absolute left-0 w-1 rounded-full bg-dh-hope/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                    <div className="absolute left-[5px] w-1 rounded-full bg-fuchsia-500/85" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
+                    <div className="absolute left-[10px] w-1 rounded-full bg-blue-900" style={{ top: `${(FEAR_FAILURE_START / DEFAULT_GM_MOVES.length) * 100}%`, bottom: 0 }} />
+                    {showStripLegend && (
+                      <div className="pointer-events-none absolute left-6 top-0 z-50 w-48 rounded-lg border border-dh-strong bg-dh-raised p-3 shadow-xl">
+                        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-dh-muted">When to use</p>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2.5 w-2.5 shrink-0 rounded-sm bg-dh-hope" />
+                            <span className="text-xs text-dh">Failure with Hope</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="h-2.5 w-2.5 shrink-0 rounded-sm bg-fuchsia-500" />
+                            <span className="text-xs text-dh">Success with Fear</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="h-2.5 w-2.5 shrink-0 rounded-sm bg-blue-900" />
+                            <span className="text-xs text-dh">Failure with Fear</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {DEFAULT_GM_MOVES.map((move, idx) => (
                       <div
-                        key={`${feature.id}-${idx}`}
+                        key={idx}
                         onMouseEnter={(e) => {
                           if (isTouch) return;
-                          if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
-                          setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey });
-                          if (feature._isRoleMove || feature.featureKey === 'attack') {
-                            const rect = e.currentTarget.getBoundingClientRect();
-                            setHoveredCompactTooltip({ description: feature.description, top: rect.top, bottom: rect.bottom });
-                          }
+                          gmMovesPortalTooltip.showFromPointerEvent(e, {
+                            wide: true,
+                            label: move.name,
+                            description: move.example,
+                          });
                         }}
-                        onMouseLeave={() => {
-                          if (isTouch) return;
-                          setHoveredFeature(null);
-                          if (feature._isRoleMove || feature.featureKey === 'attack') setHoveredCompactTooltip(null);
-                          gmHoverHideTimer.current = setTimeout(() => { setGmHoverOverlayActive(false); gmHoverHideTimer.current = null; }, 120);
-                        }}
+                        onMouseLeave={() => gmMovesPortalTooltip.scheduleClose()}
                         onClick={(e) => {
-                          if (category === 'Fear Actions') {
-                            if (setFearCount) setFearCount(prev => Math.max(0, prev - parseFearCost(feature.description)));
-                          }
-                          if (canRoll) handleRoll(feature, e);
+                          if (!isTouch) return;
+                          gmMovesPortalTooltip.showFromPointerEvent(e, {
+                            wide: true,
+                            label: move.name,
+                            description: move.example,
+                          });
                         }}
-                        className={`w-full text-left bg-dh-raised/50 hover:bg-dh-raised rounded border transition-all group flex ${(category === 'Fear Actions' || canRoll) ? 'cursor-pointer' : 'cursor-default'} ${justRolled ? 'border-green-600 bg-green-900/20' : 'border-dh-strong hover:border-r-yellow-500'}`}
+                        className="w-full cursor-default rounded px-2 py-1 text-left text-xs leading-snug text-dh transition-colors hover:bg-dh-raised"
                       >
-                        {feature._isRoleMove && (
-                          <div className="flex shrink-0 gap-[3px] py-1.5 pl-1">
-                            <div className="w-1 rounded-full bg-dh-hope/90" />
-                            <div className="w-1 rounded-full bg-fuchsia-500/85" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0 p-2">
-                          <div className="flex justify-between items-start gap-2">
-                            <span className="font-medium text-dh group-hover:text-dh text-sm flex items-center gap-1.5 min-w-0">
-                              {feature.name}
-                              {canRoll && (
-                                <Dices size={11} className={`shrink-0 ${justRolled ? 'text-green-400' : 'text-dh-muted group-hover:text-red-400 transition-colors'}`} />
-                              )}
-                            </span>
-                            <span className="text-[10px] bg-dh-surface px-1.5 py-0.5 rounded text-dh-muted shrink-0">{feature.sourceName}</span>
-                          </div>
-                          {!feature._isRoleMove && feature.featureKey !== 'attack' && <p className="text-xs text-dh-muted line-clamp-2 leading-snug mt-0.5"><FeatureDescription description={feature.description} /></p>}
-                          {allCds.length > 0 && (
-                            <div className="mt-1.5 pt-1.5 border-t border-dh-strong flex flex-wrap items-center gap-2" onClick={e => e.stopPropagation()}>
-                              {allCds.map((cd, cdIdx) => (
-                                <div key={cdIdx} className="flex items-center gap-1">
-                                  <span className="text-[10px] text-dh-muted">{allCds.length > 1 ? cd.label : 'Countdown'}</span>
-                                  <div className="inline-flex items-center gap-0.5">
-                                    <button
-                                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, Math.max(0, cdVals[cdIdx] - 1))}
-                                      className="w-4 h-4 rounded bg-dh-hover hover:bg-red-800 text-dh flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
-                                    >−</button>
-                                    <span className="min-w-[1.25rem] text-center font-bold text-dh-hope text-xs tabular-nums">{cdVals[cdIdx]}</span>
-                                    <button
-                                      onClick={() => updateCountdown(feature.cardKey, feature.featureKey, cdIdx, cdVals[cdIdx] + 1)}
-                                      className="w-4 h-4 rounded bg-dh-hover hover:bg-green-800 text-dh flex items-center justify-center text-[10px] font-bold transition-colors leading-none"
-                                    >+</button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                        {move.name}
                       </div>
-                    );
-                  })}
-                </div>}
+                    ))}
+                  </div>
+                </div>
               </div>
-            );
-          })}
-          {activeElements.length === 0 && (
-            <div className="text-center text-dh-muted text-sm py-8">
-              No active elements.<br />Add adversaries, environments, or scenes to populate the table.
             </div>
-          )}
-
-          {/* Default GM Moves — collapsible */}
-          <div>
-            <button
-              onClick={() => toggleSection('Defaults')}
-              className="w-full flex items-center gap-1.5 text-xs font-semibold text-dh-muted uppercase tracking-wider mb-3 border-b border-dh-border pb-1 hover:text-dh transition-colors"
-            >
-              {collapsedSections.has('Defaults')
-                ? <ChevronRight size={12} className="shrink-0" />
-                : <ChevronDown size={12} className="shrink-0" />
-              }
-              <span className="flex-1 text-left">Defaults</span>
-              <span className="text-[10px] font-normal text-dh-muted normal-case tracking-normal">{DEFAULT_GM_MOVES.length}</span>
-            </button>
-            {!collapsedSections.has('Defaults') && (
-              <div className="flex">
-                {/* Three color strips indicating which dice results use each move */}
-                <div
-                  className="relative w-4 shrink-0 mr-2 cursor-default"
-                  onMouseEnter={() => { if (!isTouch) setShowStripLegend(true); }}
-                  onMouseLeave={() => { if (!isTouch) setShowStripLegend(false); }}
-                  onClick={() => { if (isTouch) setShowStripLegend(v => !v); }}
-                >
-                  <div className="absolute left-0 w-1 rounded-full bg-dh-hope/90" style={{ top: 0, height: `${(HOPE_END / DEFAULT_GM_MOVES.length) * 100}%` }} />
-                  <div className="absolute left-[5px] w-1 rounded-full bg-fuchsia-500/85" style={{ top: `${(FEAR_SUCCESS_START / DEFAULT_GM_MOVES.length) * 100}%`, height: `${((FEAR_SUCCESS_END - FEAR_SUCCESS_START) / DEFAULT_GM_MOVES.length) * 100}%` }} />
-                  <div className="absolute left-[10px] w-1 rounded-full bg-blue-900" style={{ top: `${(FEAR_FAILURE_START / DEFAULT_GM_MOVES.length) * 100}%`, bottom: 0 }} />
-                  {showStripLegend && (
-                    <div className="absolute left-6 top-0 z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-xl p-3 w-48 pointer-events-none">
-                      <p className="text-[10px] font-semibold text-dh-muted uppercase tracking-wide mb-2">When to use</p>
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-sm bg-dh-hope shrink-0" />
-                          <span className="text-xs text-dh">Failure with Hope</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-sm bg-fuchsia-500 shrink-0" />
-                          <span className="text-xs text-dh">Success with Fear</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-sm bg-blue-900 shrink-0" />
-                          <span className="text-xs text-dh">Failure with Fear</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              {gmMovesMainColumns}
+              {activeElements.length === 0 && (
+                <div className="mt-2 text-center text-xs text-dh-muted">
+                  No active elements. Add adversaries, environments, or scenes to populate the table.
                 </div>
-                {/* Compact move list */}
-                <div className="flex-1">
-                  {DEFAULT_GM_MOVES.map((move, idx) => (
-                    <div
-                      key={idx}
-                      onMouseEnter={(e) => {
-                        if (isTouch) return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setHoveredDefaultMove({ ...move, top: rect.top, bottom: rect.bottom });
-                      }}
-                      onMouseLeave={() => { if (!isTouch) setHoveredDefaultMove(null); }}
-                      onClick={(e) => {
-                        if (!isTouch) return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setHoveredDefaultMove(prev => prev?.name === move.name ? null : { ...move, top: rect.top, bottom: rect.bottom });
-                      }}
-                      className="w-full text-left px-2 py-1 rounded hover:bg-dh-raised transition-colors cursor-default"
-                    >
-                      <span className="text-dh text-xs leading-snug">{move.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
-      </div>
       </div>
       )}
 
@@ -5919,7 +6051,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           {/* GM Moves hover trigger */}
           <div
             data-testid="gm-moves-trigger"
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-default ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
+            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
             {...gmMovesOverlay.triggerProps(true)}
           >
             <Zap size={14} className="text-dh-hope shrink-0" />
@@ -6750,35 +6882,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       </div>
     )}
 
-    {/* Hover overlay for default GM Moves — shown regardless of tab */}
+    <PortalHoverTooltipLayer
+      tooltip={gmMovesPortalTooltip.tooltip}
+      tooltipRef={gmMovesPortalTooltip.tooltipRef}
+      scheduleClose={gmMovesPortalTooltip.scheduleClose}
+      clearLeaveTimer={gmMovesPortalTooltip.clearLeaveTimer}
+    />
 
-    {hoveredDefaultMove && (
-      <div
-        className="fixed z-50 pointer-events-none"
-        style={{ right: 'calc(34rem + 20px)', top: (hoveredDefaultMove.top + hoveredDefaultMove.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
-      >
-        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl p-5">
-          <p className="text-sm text-dh italic leading-relaxed">{hoveredDefaultMove.example}</p>
-        </div>
-      </div>
-    )}
-
-    {/* Hover overlay for role moves and basic attacks — description shown on hover */}
-    {hoveredCompactTooltip && (
-      <div
-        className="fixed z-[60] pointer-events-none"
-        style={{ right: 'calc(34rem + 20px)', top: (hoveredCompactTooltip.top + hoveredCompactTooltip.bottom) / 2, transform: 'translateY(-50%)', width: '22rem' }}
-      >
-        <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl p-5">
-          <p className="text-sm text-dh leading-relaxed"><FeatureDescription description={hoveredCompactTooltip.description} /></p>
-        </div>
-      </div>
-    )}
-
-    {/* Hover overlay: shown when a GM Moves item is hovered */}
-    {(hoveredElement || gmHoverOverlayActive) && (() => {
+    {/* Hover overlay: Actions / Fear rows — full sheet (not passives/reactions chips) */}
+    {(hoveredElement || gmHoverOverlayActive) && !hoveredFeature?.fromChip && (() => {
       const displayElement = hoveredElement || lastHoveredElementRef.current;
       if (!displayElement) return null;
+      if (displayElement.kind === 'character') return null;
       return (
       <div
         ref={gmFeatureOverlayRef}
