@@ -6,6 +6,7 @@ import {
   getPendingV2DeferToggleNext,
   formatArmorChipTooltip,
   formatStatModsTooltip,
+  extractGmFeatureWhenClause,
 } from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
@@ -149,5 +150,19 @@ describe('formatStatModsTooltip', () => {
 
   it('returns empty when no matching bonus', () => {
     expect(formatStatModsTooltip({}, 'maxHp')).toBe('');
+  });
+});
+
+describe('extractGmFeatureWhenClause', () => {
+  it('returns text after When until comma (Acid Bath)', () => {
+    const d =
+      'When the Burrower takes Severe damage, all creatures within Close range are bathed in their acidic blood.';
+    expect(extractGmFeatureWhenClause(d)).toBe('the Burrower takes Severe damage');
+  });
+
+  it('falls back to first line excerpt when no When clause', () => {
+    expect(extractGmFeatureWhenClause('The Burrower can be spotlighted up to three times.')).toBe(
+      'The Burrower can be spotlighted up to three times.',
+    );
   });
 });
