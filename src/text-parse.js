@@ -127,14 +127,15 @@ function extractName(raw, title) {
   }
 
   // First line followed by a "Tier N" line (possibly with blank lines between) — strong
-  // signal in Daggerheart stat blocks. Capture ends with [A-Z]; [^\n]* eats trailing
-  // OCR noise on the title line; [\s\n]* allows blank lines before "Tier".
+  // signal in Daggerheart stat blocks. Take the full title line (title case like "Base Camp
+  // Warden" ends in lowercase; the old pattern required a trailing [A-Z] and truncated at
+  // the last capital). Strip optional horde count "x3" at end of the line.
   {
-    const tierFollows = raw.match(/^([A-Z][A-Za-z\s\u2019'-]{2,}[A-Z])(?:\s*[x\xd7]\s*\d+)?[^\n]*\n[\s\n]*Tier\s+\d/m);
+    const tierFollows = raw.match(/^\s*([^\n]+)\s*\n[\s\n]*Tier\s+\d/m);
 
     if (tierFollows) {
-      const candidate = tierFollows[1].trim();
-      if (!SECTION_HEADERS.test(candidate.toUpperCase())) return toTitleCase(candidate);
+      let candidate = tierFollows[1].trim().replace(/\s*[x\xd7]\s*\d+\s*$/i, '').trim();
+      if (candidate && !SECTION_HEADERS.test(candidate.toUpperCase())) return toTitleCase(candidate);
     }
   }
 
@@ -249,6 +250,32 @@ function extractStress(text) {
   return null;
 }
 
+/**
+ * Stack-card layout: threshold numbers on their own line, MAJOR / SEVERE labels on the following line, e.g.
+ *   8
+ *   MAJOR
+ *   2 HP
+ *   14
+ *   SEVERE
+ */
+function extractThresholdsValueBeforeLabel(text) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  let major = null;
+  let severe = null;
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = lines[i];
+    const next = lines[i + 1];
+    if (!/^\d+$/.test(line)) continue;
+    const n = parseInt(line, 10);
+    if (/^MAJOR$/i.test(next)) major = n;
+    if (/^SEVERE$/i.test(next)) severe = n;
+  }
+  if (major != null || severe != null) {
+    return { major, severe };
+  }
+  return null;
+}
+
 function extractThresholds(text) {
   const patterns = [
     /Thresholds?:\s*(\d+)\s*\/\s*(\d+)/i,
@@ -260,16 +287,21 @@ function extractThresholds(text) {
     if (m) {
       // Third pattern has reversed order
       if (/^Severe/i.test(re.source)) {
-        return { major: parseInt(m[2]), severe: parseInt(m[1]) };
+        return { major: parseInt(m[2], 10), severe: parseInt(m[1], 10) };
       }
-      return { major: parseInt(m[1]), severe: parseInt(m[2]) };
+      return { major: parseInt(m[1], 10), severe: parseInt(m[2], 10) };
     }
   }
   // Try "none"
   if (/Thresholds?:\s*none/i.test(text)) {
     return { major: null, severe: null };
   }
-  return null;
+  const stacked = extractThresholdsValueBeforeLabel(text);
+  if (!stacked) return null;
+  return {
+    major: stacked.major ?? null,
+    severe: stacked.severe ?? null,
+  };
 }
 
 function extractAttack(text) {
@@ -301,6 +333,35 @@ function extractAttack(text) {
     const { damage, trait } = parseDamageAndTrait(`${commaStyle[4]} ${commaStyle[5]}`);
     attack.damage = damage;
     attack.trait = trait;
+    return attack;
+  }
+
+  // Stack-card: "Attack: +N" on one line; next line "Name: Range | dice trait" (name starts that line)
+  const attackModThenNameLine = text.match(
+    /Attack:\s*([+-]?\d+)\s*\r?\n\s*([^\r\n:|]+?):\s*(Melee|Very Close|Close|Far|Very Far)\s*\|\s*(\S+)\s*(\w+)/i
+  );
+  if (attackModThenNameLine) {
+    attack.modifier = parseInt(attackModThenNameLine[1], 10);
+    attack.name = attackModThenNameLine[2].trim();
+    attack.range = normalizeRange(attackModThenNameLine[3]);
+    const { damage, trait } = parseDamageAndTrait(`${attackModThenNameLine[4]} ${attackModThenNameLine[5]}`);
+    attack.damage = damage;
+    attack.trait = trait;
+    return attack;
+  }
+
+  // "ATTACK" as a line; next line "Name: Range | dice trait"
+  const attackHeaderNextLine = text.match(
+    /(?:^|[\r\n])ATTACK\s*[\r\n]+\s*([^\r\n:|]+?):\s*(Melee|Very Close|Close|Far|Very Far)\s*\|\s*(\S+)\s*(\w+)/i
+  );
+  if (attackHeaderNextLine) {
+    attack.name = attackHeaderNextLine[1].trim();
+    attack.range = normalizeRange(attackHeaderNextLine[2]);
+    const { damage, trait } = parseDamageAndTrait(`${attackHeaderNextLine[3]} ${attackHeaderNextLine[4]}`);
+    attack.damage = damage;
+    attack.trait = trait;
+    const modBefore = text.match(/Attack:\s*([+-]?\d+)\s*(?:[\r\n]|$)/i);
+    if (modBefore) attack.modifier = parseInt(modBefore[1], 10);
     return attack;
   }
 
@@ -410,14 +471,14 @@ function formatListPatterns(text) {
 function extractFeatures(text) {
   const features = [];
 
-  // Find the features section — look for "FEATURES" or "Features:" header
-  const headerIdx = text.search(/\bFEATURES?\b:?\s*/i);
-  const featureText = headerIdx >= 0 ? text.slice(headerIdx) : text;
+  // Find the features section — "FEATURE" / "FEATURES" / "Features:"; slice *after* header so
+  // the word "Features" is not mistaken for a feature name.
+  const headerMatch = text.match(/\bFEATURES?\b:?\s*/i);
+  const featureText = headerMatch ? text.slice(headerMatch.index + headerMatch[0].length) : text;
 
-  // Strategy 1: "Name - Type: description" — captures multi-line/multi-paragraph descriptions
-  // Uses [\s\S]+? (non-greedy, crosses blank lines) with a lookahead that stops at the next
-  // feature header or end of text.
-  const featureBlockRe = /([A-Z][^\n.!?]*?)\s+[-\u2014]\s+(Passive|Action|Reaction)\s*[:.]\s*([\s\S]+?)(?=\n[A-Z][^\n]*\s+[-\u2014]\s+(?:Passive|Action|Reaction)|$)/gi;
+  // Strategy 1: "Name - Type: description" or "Name – Type:" (hyphen / en dash / em dash).
+  // Next feature may be separated by one or more blank lines. Optional [:.] after the type.
+  const featureBlockRe = /([A-Z][^\n.!?]*?)\s+[-\u2013\u2014]\s+(Passive|Action|Reaction)\s*(?:[:.]\s*)?\s*([\s\S]+?)(?=\n\s*[A-Z][^\n]*\s+[-\u2013\u2014]\s+(?:Passive|Action|Reaction)\b|$)/gi;
   for (const m of featureText.matchAll(featureBlockRe)) {
     const name = m[1].trim().replace(/^[-*•]\s*/, '');
     const type = m[2].toLowerCase();
@@ -433,8 +494,8 @@ function extractFeatures(text) {
 
   if (features.length > 0) return features;
 
-  // Strategy 2: "Name (Type): description"
-  const parenRe = /([A-Z][^\n(]*?)\s*\((Passive|Action|Reaction)\)\s*[:.]\s*([^\n]+)/gi;
+  // Strategy 2: "Name (Type): description" or "Name (Type)" + rest of line / next line
+  const parenRe = /([A-Z][^\n(]*?)\s*\((Passive|Action|Reaction)\)\s*(?:[:.]\s*)?([^\n]+)/gi;
   for (const m of featureText.matchAll(parenRe)) {
     const name = m[1].trim().replace(/^[-*•]\s*/, '');
     const type = m[2].toLowerCase();
@@ -448,7 +509,7 @@ function extractFeatures(text) {
 
   // Strategy 3: Bold markdown "**Name - Type:** description" (before stripping)
   // This works on the raw text, so caller should try with both raw and stripped
-  const boldRe = /\*\*([^*]+?)\s+[-\u2014]\s+(Passive|Action|Reaction)\*?\*?:?\s*([^\n]+)/gi;
+  const boldRe = /\*\*([^*]+?)\s+[-\u2013\u2014]\s+(Passive|Action|Reaction)\*?\*?:?\s*([^\n]+)/gi;
   for (const m of text.matchAll(boldRe)) {
     const name = m[1].trim();
     const type = m[2].toLowerCase();
