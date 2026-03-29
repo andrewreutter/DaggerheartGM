@@ -13,11 +13,28 @@ describe('parseRoute /library', () => {
       view: 'library',
       tab: 'all',
       itemId: null,
+      libraryNewCollection: null,
     });
     expect(parseRoute('/library/all/some-item-id')).toEqual({
       view: 'library',
       tab: 'all',
       itemId: 'some-item-id',
+      libraryNewCollection: null,
+    });
+  });
+
+  it('parses /library/all/new?c= for merged-tab new item type', () => {
+    expect(parseRoute('/library/all/new')).toEqual({
+      view: 'library',
+      tab: 'all',
+      itemId: 'new',
+      libraryNewCollection: null,
+    });
+    expect(parseRoute('/library/all/new?c=adversaries')).toEqual({
+      view: 'library',
+      tab: 'all',
+      itemId: 'new',
+      libraryNewCollection: 'adversaries',
     });
   });
 
@@ -26,11 +43,13 @@ describe('parseRoute /library', () => {
       view: 'library',
       tab: 'features',
       itemId: null,
+      libraryNewCollection: null,
     });
     expect(parseRoute('/library/features/v2feat-classes-srd-cls-bard-rally')).toEqual({
       view: 'library',
       tab: 'features',
       itemId: 'v2feat-classes-srd-cls-bard-rally',
+      libraryNewCollection: null,
     });
   });
 });

@@ -1,27 +1,8 @@
-import { useEffect } from 'react';
-import { postDebugLog } from '../lib/debug-log.js';
-
 /**
  * Prep / idle-pause hint — portaled to `document.body` from `app.jsx` so GM and player
  * always see it above the Game Table layout (not behind dice canvas or column stacking).
  */
 export function SessionBlockedBanner({ isPlayer, sessionStarted }) {
-  // #region agent log
-  useEffect(() => {
-    const isPrep = sessionStarted === false;
-    postDebugLog({
-      _debugSessionId: '7dabc3',
-      sessionId: '7dabc3',
-      location: 'SessionBlockedBanner.jsx:mount',
-      message: 'SessionBlockedBanner mounted',
-      hypothesisId: 'H3',
-      data: { isPlayer, sessionStarted, isPrep, titleKind: isPrep ? 'prep' : 'paused' },
-      timestamp: Date.now(),
-      runId: 'pre-fix',
-    });
-  }, [isPlayer, sessionStarted]);
-  // #endregion
-
   const isPrep = sessionStarted === false;
   const title = isPrep ? 'Prep mode' : 'Session paused';
   const bodyGm = isPrep
@@ -32,15 +13,7 @@ export function SessionBlockedBanner({ isPlayer, sessionStarted }) {
     : 'Waiting for the GM to resume the session.';
   return (
     <div
-      className="select-none pointer-events-none"
-      style={{
-        position: 'fixed',
-        left: '50%',
-        bottom: '7rem',
-        transform: 'translateX(-50%)',
-        zIndex: 100050,
-        maxWidth: 'min(420px, calc(100vw - 2rem))',
-      }}
+      className="select-none pointer-events-none fixed left-1/2 bottom-[7rem] z-[52] max-w-[min(420px,calc(100vw-2rem))] -translate-x-1/2"
     >
       <div className="px-5 py-3 rounded-xl shadow-2xl text-center bg-dh-surface/95 border-2 border-dh-strong backdrop-blur-sm">
         <div className="text-[11px] uppercase tracking-widest text-dh-muted mb-1">Table</div>

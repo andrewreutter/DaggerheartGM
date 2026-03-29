@@ -1,15 +1,20 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { Loader2 } from 'lucide-react';
 import { Link2, Plus, Search, Trash2 } from 'lucide-react';
 import { TIERS, ENV_TYPES } from '../../lib/constants.js';
+import { coerceEnvironmentType, coerceEnvironmentTier } from '../../lib/environment-coerce.js';
 import { generateId } from '../../lib/helpers.js';
 import { saveItem, ensureMirror } from '../../lib/api.js';
 import { FormRow } from './FormRow.jsx';
+import { CustomSelect } from './CustomSelect.jsx';
 import { FeaturesInput } from './FeaturesInput.jsx';
 import { FeatureLibrary } from './FeatureLibrary.jsx';
 import { ItemPickerModal } from '../modals/ItemPickerModal.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
+import { ConceptAiStrip } from '../ConceptAiStrip.jsx';
+import { postEnvironmentAiBuild } from '../../lib/api.js';
 
 /**
  * Normalize the potential_adversaries field from any legacy or current format
@@ -23,6 +28,15 @@ export function normalizePotentialAdversaries(raw) {
   }
   return [];
 }
+
+export { coerceEnvironmentType, coerceEnvironmentTier };
+
+const ENV_TYPE_LABEL = {
+  traversal: 'Traversal',
+  exploration: 'Exploration',
+  social: 'Social',
+  event: 'Event',
+};
 
 /**
  * Edit widget for the potential_adversaries field.
@@ -202,12 +216,25 @@ function PotentialAdversariesInput({ entries, onChange, tier }) {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal, onImageSaved, omitPublicCheckbox = false }) {
+export function EnvironmentForm({
+  initial,
+  value,
+  onChange,
+  onSave,
+  onCancel,
+  featureLibraryPortal,
+  onImageSaved,
+  omitPublicCheckbox = false,
+  onAiBusyChange,
+  autoRunAiConcept,
+  onAutoRunAiConceptConsumed,
+  autoRunSessionKey = '',
+}) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
     name: initial?.name || '', tier: initial?.tier || 1, type: initial?.type || 'exploration',
-    difficulty: initial?.difficulty || 10,
+    difficulty: initial?.difficulty ?? 10,
     description: initial?.description || '', impulses: initial?.impulses || '',
     imageUrl: initial?.imageUrl || '', _additionalImages: initial?._additionalImages || [],
     features: (initial?.features || []).map(f => f.id ? f : { ...f, id: generateId() }),
@@ -216,6 +243,10 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
   });
 
   const formData = isControlled ? value : localData;
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+  const aiStripRef = useRef(null);
+  const [aiBusy, setAiBusy] = useState(false);
 
   const update = (newData) => {
     if (isControlled) {
@@ -230,6 +261,12 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
 
   const addFeatureFromLibrary = feature => update({ ...formData, features: [...formData.features, { ...feature, id: generateId() }] });
 
+  const displayTier = coerceEnvironmentTier(formData.tier) ?? 1;
+  const displayType = coerceEnvironmentType(formData.type);
+  // Tier/type must be valid for the API; missing tier (new/legacy rows) coerces via displayTier — use ?? 1 so "unset" is not blocked.
+  const environmentConceptAiReady =
+    coerceEnvironmentTier(formData.tier ?? 1) != null && ENV_TYPES.includes(displayType);
+
   const featureLibraryEl = (
     <FeatureLibrary
       tier={formData.tier}
@@ -242,21 +279,92 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
 
   return (
     <>
-      <div className="space-y-4">
-        <div className="grid grid-cols-4 gap-4">
-          <div className="col-span-2"><FormRow label="Name"><input type="text" value={formData.name} onChange={e => update({ ...formData, name: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow></div>
-          <FormRow label="Tier">
-            <select value={formData.tier} onChange={e => update({ ...formData, tier: parseInt(e.target.value) })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full">
-              {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
+      <div className="space-y-4 p-1 relative">
+        <div className="relative">
+          {aiBusy ? (
+            <>
+              <div
+                className="absolute inset-0 z-10 min-h-[200px] rounded-md bg-dh-canvas/60 backdrop-blur-[1px] pointer-events-none"
+                aria-hidden
+              />
+              <div className="absolute inset-0 z-20 flex items-start justify-center pt-20 pointer-events-none">
+                <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-dh-strong bg-dh-surface px-4 py-3 shadow-xl">
+                  <Loader2 size={22} className="animate-spin text-violet-400 shrink-0" aria-hidden />
+                  <span className="text-sm text-dh-muted">Building environment…</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      aiStripRef.current?.cancel();
+                    }}
+                    className="text-sm font-medium px-2.5 py-1 rounded-md border border-dh-border text-dh hover:bg-dh-raised transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : null}
+          <div className={aiBusy ? 'pointer-events-none select-none opacity-[0.68]' : ''}>
+        <FormRow label="Name"><input type="text" value={formData.name} onChange={e => update({ ...formData, name: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow>
+        <div className="grid grid-cols-[minmax(0,4.75rem)_minmax(0,1fr)_minmax(0,6rem)] gap-x-3 gap-y-1 items-end mb-4">
+          <FormRow label="Tier" className="mb-0 min-w-0">
+            <CustomSelect
+              value={displayTier}
+              onChange={(tier) => update({ ...formData, tier })}
+              options={TIERS}
+              getOptionLabel={(t) => String(t)}
+              className="min-w-0"
+            />
           </FormRow>
-          <FormRow label="Difficulty"><input type="number" value={formData.difficulty} onChange={e => update({ ...formData, difficulty: parseInt(e.target.value) || 0 })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow>
+          <FormRow label="Type" className="mb-0 min-w-0">
+            <CustomSelect
+              value={displayType}
+              onChange={(type) => update({ ...formData, type })}
+              options={ENV_TYPES}
+              getOptionLabel={(t) => ENV_TYPE_LABEL[t] ?? t}
+              className="min-w-0 w-full"
+            />
+          </FormRow>
+          <FormRow label="Difficulty" className="mb-0 min-w-0">
+            <input
+              type="number"
+              value={formData.difficulty ?? 10}
+              onChange={e => update({ ...formData, difficulty: parseInt(e.target.value, 10) || 0 })}
+              className="w-full min-w-0 bg-dh-inset border border-dh-border rounded p-2 text-dh"
+            />
+          </FormRow>
         </div>
-        <FormRow label="Type">
-          <select value={formData.type} onChange={e => update({ ...formData, type: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh">
-            {ENV_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </FormRow>
+
+        <ConceptAiStrip
+          ref={aiStripRef}
+          postBuild={(concept, opts) =>
+            postEnvironmentAiBuild(concept, {
+              ...opts,
+              tier: coerceEnvironmentTier(formDataRef.current.tier) ?? 1,
+              type: coerceEnvironmentType(formDataRef.current.type),
+            })
+          }
+          getMergeBase={() => formDataRef.current}
+          onComplete={(merged) => update(merged)}
+          onAiBusyChange={(busy) => {
+            setAiBusy(busy);
+            onAiBusyChange?.(busy);
+          }}
+          showBuildButtonSpinner={false}
+          initialConcept={autoRunAiConcept}
+          initialConceptKey={autoRunSessionKey}
+          autoSubmitKey={autoRunAiConcept?.trim() ? autoRunSessionKey : undefined}
+          onPendingConsumed={onAutoRunAiConceptConsumed}
+          prerequisitesReady={environmentConceptAiReady}
+          prerequisitesHint="Set tier and type above to load matching SRD examples."
+          labels={{
+            title: 'Describe an environment concept, we’ll draft features and tone',
+            placeholder: 'e.g. A flooded cathedral nave where stained glass casts sickly light and something hums below…',
+            buildButton: 'Build with AI',
+            summaryTitle: 'AI picks summary',
+          }}
+        />
+
         <FormRow label={<>Description<MarkdownHelpTooltip /></>}>
           <textarea value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh h-24 resize-none" />
         </FormRow>
@@ -315,6 +423,8 @@ export function EnvironmentForm({ initial, value, onChange, onSave, onCancel, fe
             </label>
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       {featureLibraryPortal && createPortal(featureLibraryEl, featureLibraryPortal)}

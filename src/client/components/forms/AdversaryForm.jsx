@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { Loader2 } from 'lucide-react';
 import { ROLES, TIERS, RANGES, DAMAGE_TYPES } from '../../lib/constants.js';
 import { generateId } from '../../lib/helpers.js';
 import { FormRow } from './FormRow.jsx';
@@ -12,6 +13,8 @@ import { LibraryPanelStack } from './LibraryPanelStack.jsx';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 import { ImageEditor } from './ImageEditor.jsx';
 import { AdversaryStatChangeModal } from '../modals/AdversaryStatChangeModal.jsx';
+import { ConceptAiStrip } from '../ConceptAiStrip.jsx';
+import { postAdversaryAiBuild } from '../../lib/api.js';
 import {
   getBaselineStats,
   computeScaledStats,
@@ -27,7 +30,20 @@ import {
  * Uncontrolled mode: pass `initial`, `onSave`, `onCancel` (legacy path).
  * Save/Cancel buttons are only rendered in uncontrolled mode.
  */
-export function AdversaryForm({ initial, value, onChange, onSave, onCancel, featureLibraryPortal, onImageSaved, omitPublicCheckbox = false }) {
+export function AdversaryForm({
+  initial,
+  value,
+  onChange,
+  onSave,
+  onCancel,
+  featureLibraryPortal,
+  onImageSaved,
+  omitPublicCheckbox = false,
+  onAiBusyChange,
+  autoRunAiConcept,
+  onAutoRunAiConceptConsumed,
+  autoRunSessionKey = '',
+}) {
   const isControlled = value !== undefined;
 
   const [localData, setLocalData] = useState({
@@ -43,6 +59,10 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
   });
 
   const formData = isControlled ? value : localData;
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+  const aiStripRef = useRef(null);
+  const [aiBusy, setAiBusy] = useState(false);
 
   // When user changes tier/role with customized stats, we show this modal instead of window.confirm.
   const [pendingStatChange, setPendingStatChange] = useState(null);
@@ -151,6 +171,12 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
   const baseline = getBaselineStats(formData.role, formData.tier);
   const guideRanges = getGuideRanges(formData.role, formData.tier);
 
+  const adversaryConceptAiReady =
+    Number.isFinite(Number(formData.tier)) &&
+    Number(formData.tier) >= 1 &&
+    Number(formData.tier) <= 4 &&
+    ROLES.includes(String(formData.role ?? '').toLowerCase());
+
   const featureLibraryEl = (
     <LibraryPanelStack
       tier={formData.tier}
@@ -165,7 +191,32 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
 
   return (
     <>
-      <div className="space-y-4">
+      <div className="space-y-4 p-1 relative">
+        <div className="relative">
+          {aiBusy ? (
+            <>
+              <div
+                className="absolute inset-0 z-10 min-h-[200px] rounded-md bg-dh-canvas/60 backdrop-blur-[1px] pointer-events-none"
+                aria-hidden
+              />
+              <div className="absolute inset-0 z-20 flex items-start justify-center pt-20 pointer-events-none">
+                <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-dh-strong bg-dh-surface px-4 py-3 shadow-xl">
+                  <Loader2 size={22} className="animate-spin text-violet-400 shrink-0" aria-hidden />
+                  <span className="text-sm text-dh-muted">Building adversary…</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      aiStripRef.current?.cancel();
+                    }}
+                    className="text-sm font-medium px-2.5 py-1 rounded-md border border-dh-border text-dh hover:bg-dh-raised transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : null}
+          <div className={aiBusy ? 'pointer-events-none select-none opacity-[0.68]' : ''}>
         <FormRow label="Name"><input type="text" value={formData.name} onChange={e => update({ ...formData, name: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow>
 
         <div className="grid grid-cols-2 gap-4">
@@ -184,6 +235,36 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
             />
           </FormRow>
         </div>
+
+        <ConceptAiStrip
+          ref={aiStripRef}
+          postBuild={(concept, opts) =>
+            postAdversaryAiBuild(concept, {
+              ...opts,
+              tier: formDataRef.current.tier,
+              role: formDataRef.current.role,
+            })
+          }
+          getMergeBase={() => formDataRef.current}
+          onComplete={(merged) => update(merged)}
+          onAiBusyChange={(busy) => {
+            setAiBusy(busy);
+            onAiBusyChange?.(busy);
+          }}
+          showBuildButtonSpinner={false}
+          initialConcept={autoRunAiConcept}
+          initialConceptKey={autoRunSessionKey}
+          autoSubmitKey={autoRunAiConcept?.trim() ? autoRunSessionKey : undefined}
+          onPendingConsumed={onAutoRunAiConceptConsumed}
+          prerequisitesReady={adversaryConceptAiReady}
+          prerequisitesHint="Set tier and role above to load matching SRD examples."
+          labels={{
+            title: 'Describe an adversary concept, we’ll draft stats and features',
+            placeholder: 'e.g. A glassy-eyed swamp cultist who drags victims under with conjured roots…',
+            buildButton: 'Build with AI',
+            summaryTitle: 'AI picks summary',
+          }}
+        />
 
         <FormRow label="Motives & Tactics"><input type="text" placeholder="e.g. To add to their bone collection" value={formData.motive} onChange={e => update({ ...formData, motive: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh w-full" /></FormRow>
         <FormRow label={<>Description (Flavor)<MarkdownHelpTooltip /></>}><textarea placeholder="Description or flavor text..." value={formData.description} onChange={e => update({ ...formData, description: e.target.value })} className="bg-dh-inset border border-dh-border rounded p-2 text-dh h-20 resize-none w-full" /></FormRow>
@@ -312,6 +393,8 @@ export function AdversaryForm({ initial, value, onChange, onSave, onCancel, feat
             </label>
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       {featureLibraryPortal && createPortal(featureLibraryEl, featureLibraryPortal)}

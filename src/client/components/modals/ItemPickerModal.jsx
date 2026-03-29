@@ -1,13 +1,18 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react';
-import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight, Swords, Trees } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
 import { DaggerstackImport } from '../DaggerstackImport.jsx';
-import { saveItem } from '../../lib/api.js';
+import { saveItem, conceptAiEnabled } from '../../lib/api.js';
+import { useAiUiPreference } from '../../lib/ai-ui-preference-context.jsx';
+import { shouldShowConceptAiUi } from '../../lib/ai-ui-visibility.js';
+import { AiDismissBuildWithAiLink } from '../AiDismissBuildWithAiLink.jsx';
 import { generateId } from '../../lib/helpers.js';
 import { isCharacterComplete } from '../../lib/character-calc.js';
-import { DEFAULT_CHARACTER_STARTING_HOPE } from '../../lib/constants.js';
-import { CharacterAiConceptStrip } from '../CharacterAiConceptStrip.jsx';
+import { TIERS, ENV_TYPES } from '../../lib/constants.js';
+import { CustomSelect } from '../forms/CustomSelect.jsx';
+import { RoleSelect } from '../forms/RoleSelect.jsx';
+import { handleAiConceptTextareaKeyDown } from '../../lib/ai-concept-textarea.js';
 
 export const ITEM_PICKER_SINGULAR = {
   adversaries: 'Adversary',
@@ -17,6 +22,13 @@ export const ITEM_PICKER_SINGULAR = {
   characters: 'Character',
 };
 
+const ENV_TYPE_LABEL = {
+  traversal: 'Traversal',
+  exploration: 'Exploration',
+  social: 'Social',
+  event: 'Event',
+};
+
 /**
  * A searchable, filterable item picker modal.
  *
@@ -24,13 +36,16 @@ export const ITEM_PICKER_SINGULAR = {
  * For scenes/adventures: uses a simple client-side name search over `data[collection]`.
  *
  * Props:
-   *   collection    — which collection to browse ('adversaries' | 'environments' | 'scenes' | 'adventures')
+ *   collection    — which collection to browse ('adversaries' | 'environments' | 'scenes' | 'adventures')
  *   data          — { [collection]: item[] } used for non-paginated collections
  *   title         — optional override for the modal header (default: "Add <Singular>")
  *   initialSearch — pre-fill the search input on open (useful for "Link placeholder" flow)
  *   onClose       — called when the modal is dismissed
  *   onSelect      — called with the selected item; modal closes itself after
- *   onCreateNew   — optional; when collection === 'characters', called when user clicks "Create new character"
+ *   onCreateNew   — optional; creates a new library entry and adds to table (Game Table)
+ *   onCharacterAiConceptSubmit — optional (characters); opens editor + runs AI with concept
+ *   onAdversaryAiConceptSubmit — optional (adversaries); (concept, tier, role)
+ *   onEnvironmentAiConceptSubmit — optional (environments); (concept, tier, type)
  *   showDaggerstackImport — when true (default) and collection === 'characters', show the collapsible Daggerstack import block (Game Table passes false).
  */
 export function ItemPickerModal({
@@ -41,14 +56,35 @@ export function ItemPickerModal({
   onClose,
   onSelect,
   onCreateNew,
+  onCharacterAiConceptSubmit,
+  onAdversaryAiConceptSubmit,
+  onEnvironmentAiConceptSubmit,
   isLoading,
   excludeIds,
   showDaggerstackImport = true,
 }) {
+  const { hideAiUi } = useAiUiPreference();
+  const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
   const isPaginated = collection === 'adversaries' || collection === 'environments';
   const showNonPaginatedLoading = !isPaginated && isLoading;
   const singular = ITEM_PICKER_SINGULAR[collection] || collection;
   const actionLabel = title || `Add ${singular}`;
+
+  const [pickerSubMode, setPickerSubMode] = useState('browse');
+  const [charAiConcept, setCharAiConcept] = useState('');
+  const [advAiTier, setAdvAiTier] = useState(1);
+  const [advAiRole, setAdvAiRole] = useState('standard');
+  const [advAiConcept, setAdvAiConcept] = useState('');
+  const [envAiTier, setEnvAiTier] = useState(1);
+  const [envAiType, setEnvAiType] = useState('exploration');
+  const [envAiConcept, setEnvAiConcept] = useState('');
+
+  useEffect(() => {
+    setPickerSubMode('browse');
+    setCharAiConcept('');
+    setAdvAiConcept('');
+    setEnvAiConcept('');
+  }, [collection]);
 
   // Add Adversary / Add Environment dialogs default to Mine + SRD (not just Mine).
   const pickerDefaultFilters = isPaginated ? { defaultFilters: { includes: ['own', 'srd'] } } : {};
@@ -57,6 +93,16 @@ export function ItemPickerModal({
   const sentinelRef = useRef(null);
   const [daggerstackOpen, setDaggerstackOpen] = useState(false);
 
+  const showBrowse =
+    !showConceptAiUi ||
+    pickerSubMode === 'browse' ||
+    (collection !== 'characters' && collection !== 'adversaries' && collection !== 'environments');
+
+  const showAiPanel =
+    showConceptAiUi &&
+    pickerSubMode === 'ai' &&
+    (collection === 'characters' || collection === 'adversaries' || collection === 'environments');
+
   useEffect(() => {
     if (initialSearch) search.setFilter('search', initialSearch);
   // Run only once on mount
@@ -64,21 +110,6 @@ export function ItemPickerModal({
   }, []);
 
   const excludeSet = useMemo(() => new Set(excludeIds || []), [excludeIds]);
-
-  const handleCharacterAiComplete = useCallback(
-    async (recomputed) => {
-      const charToSave = { ...recomputed };
-      delete charToSave.elementType;
-      delete charToSave.conditions;
-      delete charToSave.playerName;
-      const saved = await saveItem('characters', charToSave);
-      if (saved) {
-        onSelect(saved);
-        onClose();
-      }
-    },
-    [onSelect, onClose],
-  );
 
   const clientItems = useMemo(() => {
     if (isPaginated) return excludeSet.size ? search.items.filter(item => !excludeSet.has(item.id)) : search.items;
@@ -111,6 +142,32 @@ export function ItemPickerModal({
     return () => io.disconnect();
   }, [search.hasMore, search.isLoadingMore, search.loadMore]);
 
+  const browseAiToggle = useCallback(
+    (mode) => (
+      <div className="flex rounded-lg border border-dh-border overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setPickerSubMode('browse')}
+          className={`flex-1 py-2 text-xs font-semibold transition-colors ${
+            mode === 'browse' ? 'bg-violet-900/50 text-violet-100' : 'bg-dh-raised text-dh-muted hover:text-dh'
+          }`}
+        >
+          Browse library
+        </button>
+        <button
+          type="button"
+          onClick={() => setPickerSubMode('ai')}
+          className={`flex-1 py-2 text-xs font-semibold transition-colors border-l border-dh-border ${
+            mode === 'ai' ? 'bg-violet-900/50 text-violet-100' : 'bg-dh-raised text-dh-muted hover:text-dh'
+          }`}
+        >
+          Build with AI
+        </button>
+      </div>
+    ),
+    [],
+  );
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-start justify-center pt-24 p-4" onClick={onClose}>
       <div
@@ -121,7 +178,7 @@ export function ItemPickerModal({
         <div className="flex items-center justify-between px-5 py-4 border-b border-dh-border shrink-0">
           <div className="flex items-baseline gap-3">
             <h2 className="font-bold text-white text-lg">{actionLabel}</h2>
-            {isPaginated && !search.loading && search.totalCount > 0 && (
+            {isPaginated && showBrowse && !search.loading && search.totalCount > 0 && (
               <span className="text-xs text-dh-muted">
                 {search.items.length} of {search.totalCount.toLocaleString()}
               </span>
@@ -132,7 +189,6 @@ export function ItemPickerModal({
           </button>
         </div>
 
-        {/* Create new character — only for characters; at top, opens editor, add to table on first complete */}
         {collection === 'characters' && onCreateNew && (
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <button
@@ -149,30 +205,204 @@ export function ItemPickerModal({
           </div>
         )}
 
-        {collection === 'characters' && onCreateNew && (
+        {collection === 'adversaries' && onCreateNew && (
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
-            <CharacterAiConceptStrip
-              variant="compact"
-              compactJustification
-              showOrSeparators
-              getMergeBase={() => ({
-                id: generateId(),
-                name: '',
-                level: 1,
-                baseTraits: {},
-                hope: DEFAULT_CHARACTER_STARTING_HOPE,
-                experiences: [
-                  { name: '', score: 2, id: generateId() },
-                  { name: '', score: 2, id: generateId() },
-                ],
-              })}
-              onComplete={handleCharacterAiComplete}
-            />
+            <button
+              type="button"
+              onClick={() => {
+                onCreateNew();
+                onClose();
+              }}
+              className="w-full rounded-lg border-2 border-amber-600 bg-amber-700 hover:bg-amber-600 text-white font-semibold py-3 px-4 flex items-center justify-center gap-2 transition-colors"
+            >
+              <Swords size={18} />
+              Create new adversary
+            </button>
+          </div>
+        )}
+
+        {collection === 'environments' && onCreateNew && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                onCreateNew();
+                onClose();
+              }}
+              className="w-full rounded-lg border-2 border-emerald-600 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 px-4 flex items-center justify-center gap-2 transition-colors"
+            >
+              <Trees size={18} />
+              Create new environment
+            </button>
+          </div>
+        )}
+
+        {collection === 'characters' && onCreateNew && showConceptAiUi && onCharacterAiConceptSubmit && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0 space-y-2">
+            {browseAiToggle(pickerSubMode)}
+            {showAiPanel && (
+              <div className="space-y-2 pt-1">
+                <textarea
+                  value={charAiConcept}
+                  onChange={(e) => setCharAiConcept(e.target.value)}
+                  onKeyDown={(e) =>
+                    handleAiConceptTextareaKeyDown(e, {
+                      canSubmit: !!charAiConcept.trim(),
+                      onSubmit: () => {
+                        const q = charAiConcept.trim();
+                        if (!q) return;
+                        onCharacterAiConceptSubmit(q);
+                        onClose();
+                      },
+                    })
+                  }
+                  rows={3}
+                  className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-violet-500 focus:outline-none resize-y"
+                  placeholder="Describe a character concept…"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const q = charAiConcept.trim();
+                    if (!q) return;
+                    onCharacterAiConceptSubmit(q);
+                    onClose();
+                  }}
+                  disabled={!charAiConcept.trim()}
+                  className="w-full py-2 rounded-md text-sm font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Build with AI
+                </button>
+                <AiDismissBuildWithAiLink className="block w-full pt-0.5" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {collection === 'adversaries' && onCreateNew && showConceptAiUi && onAdversaryAiConceptSubmit && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0 space-y-2">
+            {browseAiToggle(pickerSubMode)}
+            {showAiPanel && (
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-[10px] text-dh-muted block mb-0.5">Tier</span>
+                    <CustomSelect
+                      value={advAiTier}
+                      onChange={setAdvAiTier}
+                      options={TIERS}
+                      getOptionLabel={(t) => String(t)}
+                      className="w-full"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-dh-muted block mb-0.5">Role</span>
+                    <RoleSelect value={advAiRole} onChange={setAdvAiRole} className="w-full" />
+                  </div>
+                </div>
+                <textarea
+                  value={advAiConcept}
+                  onChange={(e) => setAdvAiConcept(e.target.value)}
+                  onKeyDown={(e) =>
+                    handleAiConceptTextareaKeyDown(e, {
+                      canSubmit: !!advAiConcept.trim(),
+                      onSubmit: () => {
+                        const q = advAiConcept.trim();
+                        if (!q) return;
+                        onAdversaryAiConceptSubmit(q, advAiTier, advAiRole);
+                        onClose();
+                      },
+                    })
+                  }
+                  rows={3}
+                  className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-violet-500 focus:outline-none resize-y"
+                  placeholder="Describe an adversary concept…"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const q = advAiConcept.trim();
+                    if (!q) return;
+                    onAdversaryAiConceptSubmit(q, advAiTier, advAiRole);
+                    onClose();
+                  }}
+                  disabled={!advAiConcept.trim()}
+                  className="w-full py-2 rounded-md text-sm font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Build with AI
+                </button>
+                <AiDismissBuildWithAiLink className="block w-full pt-0.5" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {collection === 'environments' && onCreateNew && showConceptAiUi && onEnvironmentAiConceptSubmit && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0 space-y-2">
+            {browseAiToggle(pickerSubMode)}
+            {showAiPanel && (
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-[10px] text-dh-muted block mb-0.5">Tier</span>
+                    <CustomSelect
+                      value={envAiTier}
+                      onChange={setEnvAiTier}
+                      options={TIERS}
+                      getOptionLabel={(t) => String(t)}
+                      className="w-full"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-dh-muted block mb-0.5">Type</span>
+                    <CustomSelect
+                      value={envAiType}
+                      onChange={setEnvAiType}
+                      options={ENV_TYPES}
+                      getOptionLabel={(t) => ENV_TYPE_LABEL[t] ?? t}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+                <textarea
+                  value={envAiConcept}
+                  onChange={(e) => setEnvAiConcept(e.target.value)}
+                  onKeyDown={(e) =>
+                    handleAiConceptTextareaKeyDown(e, {
+                      canSubmit: !!envAiConcept.trim(),
+                      onSubmit: () => {
+                        const q = envAiConcept.trim();
+                        if (!q) return;
+                        onEnvironmentAiConceptSubmit(q, envAiTier, envAiType);
+                        onClose();
+                      },
+                    })
+                  }
+                  rows={3}
+                  className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-violet-500 focus:outline-none resize-y"
+                  placeholder="Describe an environment concept…"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const q = envAiConcept.trim();
+                    if (!q) return;
+                    onEnvironmentAiConceptSubmit(q, envAiTier, envAiType);
+                    onClose();
+                  }}
+                  disabled={!envAiConcept.trim()}
+                  className="w-full py-2 rounded-md text-sm font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Build with AI
+                </button>
+                <AiDismissBuildWithAiLink className="block w-full pt-0.5" />
+              </div>
+            )}
           </div>
         )}
 
         {/* Daggerstack import — only for characters; collapsible, collapsed by default; right under Create. Hidden on Game Table Add Character via showDaggerstackImport={false}. */}
-        {collection === 'characters' && showDaggerstackImport && (
+        {collection === 'characters' && showBrowse && showDaggerstackImport && (
           <div className="border-b border-dh-border shrink-0">
             <button
               type="button"
@@ -204,7 +434,7 @@ export function ItemPickerModal({
         )}
 
         {/* Filters — only for paginated collections (adversaries / environments) */}
-        {isPaginated && (
+        {isPaginated && showBrowse && (
           <div className="px-5 py-4 border-b border-dh-border shrink-0">
             <CollectionFilters
               collection={collection}
@@ -217,7 +447,7 @@ export function ItemPickerModal({
         )}
 
         {/* Simple search for non-paginated (scenes / adventures / characters) */}
-        {!isPaginated && (
+        {!isPaginated && showBrowse && (
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <div className="flex items-center gap-2 bg-dh-raised border border-dh-border rounded-lg px-3 py-2 focus-within:border-blue-500 transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-dh-muted shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -233,6 +463,7 @@ export function ItemPickerModal({
         )}
 
         {/* Results */}
+        {showBrowse && (
         <div ref={resultsRef} className="flex-1 overflow-y-auto min-h-0">
           {(search.loading || showNonPaginatedLoading) && !search.isLoadingMore && (
             <div className="text-center text-dh-muted text-sm py-10">Loading…</div>
@@ -283,6 +514,7 @@ export function ItemPickerModal({
           {search.hasMore && !search.isLoadingMore && <div style={{ height: 200 }} />}
           <div ref={sentinelRef} className="h-1" />
         </div>
+        )}
       </div>
     </div>
   );

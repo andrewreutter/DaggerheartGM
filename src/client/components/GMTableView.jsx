@@ -5,7 +5,7 @@ import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, User, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
@@ -13,24 +13,61 @@ import { getCheckboxTrackPreset } from './CheckboxTrack.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { CharacterAiConceptStrip } from './CharacterAiConceptStrip.jsx';
+import { CustomSelect } from './forms/CustomSelect.jsx';
+import { RoleSelect } from './forms/RoleSelect.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
 import { MarkdownText } from '../lib/markdown.js';
+import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
 import { buildSystemContext } from '../lib/feature-context.js';
-import { postRoll as postRollToServer, postTableOp, postActionNotification, postBannerAck, postBannerCancel, postRerollHopeDie, postBannerGenericRerollRequest, postRerollDualityDice, postBannerRangerFocusRerollRequest, postBannerHoldThemOff, postBannerTargets, postBannerWingsD8, postBannerWingsD8Toggle, postBannerMakeASceneTarget, postBannerChipResolve, postBannerAddDamage, postBannerActionAddDie, postBannerActionAddStatic, postBannerRerollDie, postCharacterUpdate, postHopeDieUpgrade, postPlayerIntent, postPlayerV2ReviewChip, clearPlayerIntent, syncDaggerstackCharacter, resolveItems, requestGoogleContactsAccess, searchGoogleContacts } from '../lib/api.js';
+import {
+  postRoll as postRollToServer,
+  postTableOp,
+  postActionNotification,
+  postBannerAck,
+  postBannerCancel,
+  postRerollHopeDie,
+  postBannerGenericRerollRequest,
+  postRerollDualityDice,
+  postBannerRangerFocusRerollRequest,
+  postBannerHoldThemOff,
+  postBannerTargets,
+  postBannerWingsD8,
+  postBannerWingsD8Toggle,
+  postBannerMakeASceneTarget,
+  postBannerChipResolve,
+  postBannerAddDamage,
+  postBannerActionAddDie,
+  postBannerActionAddStatic,
+  postBannerRerollDie,
+  postCharacterUpdate,
+  postHopeDieUpgrade,
+  postPlayerIntent,
+  postPlayerV2ReviewChip,
+  clearPlayerIntent,
+  syncDaggerstackCharacter,
+  resolveItems,
+  requestGoogleContactsAccess,
+  searchGoogleContacts,
+  conceptAiEnabled,
+} from '../lib/api.js';
+import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
+import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
+import { AiDismissBuildWithAiLink } from './AiDismissBuildWithAiLink.jsx';
 import {
   characterSheetTableInteractionFlags,
   gateTableOpForPrepMode,
   isPrepModeElementUpdateBlocked,
 } from '../lib/table-session-gate.js';
-import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE } from '../lib/constants.js';
+import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE, ROLES, TIERS, ENV_TYPES } from '../lib/constants.js';
 import {
   characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
   shouldSuppressCharacterOverlayOutsideDismiss,
 } from '../lib/character-drawer-edit-mismatch.js';
 import { resolveGameTableCharacterEditMode } from '../lib/game-table-character-modal-url.js';
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
-import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
+import { getUnscaledAdversary, getBaselineStats } from '../lib/adversary-defaults.js';
+import { ensureEditorListIds } from '../lib/ensure-editor-list-ids.js';
+import { coerceEnvironmentType, coerceEnvironmentTier } from '../lib/environment-coerce.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
 import {
   CHARACTER_TABLE_EDITOR_DRAWER_WIDTH,
@@ -453,6 +490,53 @@ function GmMovesFeatureTooltipPanel({
   );
 }
 
+function buildGameTableNewAdversaryStub(tier = 1, role = 'standard') {
+  const id = generateId();
+  const r = ROLES.includes(String(role).toLowerCase()) ? String(role).toLowerCase() : 'standard';
+  const t = Number.isFinite(Number(tier)) && tier >= 1 && tier <= 4 ? Number(tier) : 1;
+  const baseline = getBaselineStats(r, t) || getBaselineStats('standard', 1);
+  return {
+    id,
+    name: '',
+    tier: t,
+    role: r,
+    ...baseline,
+    motive: '',
+    description: '',
+    imageUrl: '',
+    _additionalImages: [],
+    experiences: ensureEditorListIds([]),
+    features: ensureEditorListIds([]),
+    is_public: false,
+  };
+}
+
+function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
+  const dt = coerceEnvironmentTier(tier) ?? 1;
+  const dtype = coerceEnvironmentType(type);
+  return {
+    id: generateId(),
+    name: '',
+    tier: dt,
+    type: dtype,
+    difficulty: 10,
+    description: '',
+    impulses: '',
+    imageUrl: '',
+    _additionalImages: [],
+    features: ensureEditorListIds([]),
+    potential_adversaries: [],
+    is_public: false,
+  };
+}
+
+const ENV_TYPE_LABEL = {
+  traversal: 'Traversal',
+  exploration: 'Exploration',
+  social: 'Social',
+  event: 'Event',
+};
+
 export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
@@ -467,6 +551,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onForcePlayersToMapView,
   onBattleMapViewportAspectChange,
 }) {
+  const { hideAiUi } = useAiUiPreference();
+  const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
   const isTouch = useTouchDevice();
   const { srdData } = useCharacterSrdData();
   const v2Registry = useMemo(() => (srdData ? buildV2RegistryWithSrdItems(srdData) : null), [srdData]);
@@ -584,6 +670,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const lastHoveredElementRef = useRef(null);
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
+  const [characterPanelAiConcept, setCharacterPanelAiConcept] = useState('');
+  const [encounterAdvAiTier, setEncounterAdvAiTier] = useState(1);
+  const [encounterAdvAiRole, setEncounterAdvAiRole] = useState('standard');
+  const [encounterAdvAiConcept, setEncounterAdvAiConcept] = useState('');
+  const [encounterEnvAiTier, setEncounterEnvAiTier] = useState(1);
+  const [encounterEnvAiType, setEncounterEnvAiType] = useState('exploration');
+  const [encounterEnvAiConcept, setEncounterEnvAiConcept] = useState('');
+  /** Encounter panel AI strip: which builder is shown (Adversary vs Environment). */
+  const [encounterAiBuilderKind, setEncounterAiBuilderKind] = useState('adversary');
   /** Viewport anchor for programmatic character sheet open (Add Character → create / pick). */
   const addCharacterAnchorRef = useRef(null);
 
@@ -2821,38 +2916,53 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return { top: r.top, bottom: r.bottom };
   }, []);
 
-  const handleCharacterPanelAiComplete = useCallback(
-    async (draft) => {
+  const openNewCharacterEditor = useCallback(
+    async (opts = {}) => {
+      const { pendingAiConcept } = opts;
+      const newId = generateId();
+      const stub = {
+        id: newId,
+        name: '',
+        level: 1,
+        baseTraits: {},
+        hope: DEFAULT_CHARACTER_STARTING_HOPE,
+        experiences: [
+          { name: '', score: 2, id: generateId() },
+          { name: '', score: 2, id: generateId() },
+        ],
+      };
       const rect = getAddCharacterAnchorRect();
       if (isPlayer && onPlayerAddCharacter) {
-        const res = await onPlayerAddCharacter({ ...draft, elementType: 'character' });
+        const res = await onPlayerAddCharacter({ ...stub, elementType: 'character' });
         const newEl = res?.character;
         if (!newEl?.instanceId) return;
-        navigate(`${gameTableBasePath}/characters/${draft.id}`, { replace: true });
+        navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
         setEditState({
           step: 'form',
-          item: draft,
+          item: stub,
           collection: 'characters',
           mode: 'new',
           baseElement: newEl,
           instances: [newEl],
           presentation: 'rightDrawer',
+          ...(pendingAiConcept?.trim() ? { pendingCharacterAiConcept: pendingAiConcept.trim() } : {}),
         });
         characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
         return;
       }
-      const newEls = await addToTable(draft, 'characters');
+      const newEls = await addToTable(stub, 'characters');
       const newEl = newEls?.[0];
       if (!newEl) return;
-      navigate(`${gameTableBasePath}/characters/${draft.id}`, { replace: true });
+      navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
       setEditState({
         step: 'form',
-        item: draft,
+        item: stub,
         collection: 'characters',
         mode: 'new',
         baseElement: newEl,
         instances: [newEl],
         presentation: 'rightDrawer',
+        ...(pendingAiConcept?.trim() ? { pendingCharacterAiConcept: pendingAiConcept.trim() } : {}),
       });
       characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
     },
@@ -2865,6 +2975,48 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       navigate,
       onPlayerAddCharacter,
     ],
+  );
+
+  const openNewAdversaryEditor = useCallback(
+    async (opts = {}) => {
+      const { pendingAiConcept, tier = 1, role = 'standard' } = opts;
+      const stub = buildGameTableNewAdversaryStub(tier, role);
+      const newEls = await addToTable(stub, 'adversaries');
+      const newEl = newEls?.[0];
+      if (!newEl) return;
+      navigate(`${gameTableBasePath}/adversaries/${stub.id}`, { replace: true });
+      setEditState({
+        step: 'form',
+        item: stub,
+        collection: 'adversaries',
+        mode: 'original',
+        instances: [newEl],
+        baseElement: newEl,
+        ...(pendingAiConcept?.trim() ? { pendingAdversaryAiConcept: pendingAiConcept.trim() } : {}),
+      });
+    },
+    [addToTable, gameTableBasePath, navigate],
+  );
+
+  const openNewEnvironmentEditor = useCallback(
+    async (opts = {}) => {
+      const { pendingAiConcept, tier = 1, type = 'exploration' } = opts;
+      const stub = buildGameTableNewEnvironmentStub(tier, type);
+      const newEls = await addToTable(stub, 'environments');
+      const newEl = newEls?.[0];
+      if (!newEl) return;
+      navigate(`${gameTableBasePath}/environments/${stub.id}`, { replace: true });
+      setEditState({
+        step: 'form',
+        item: stub,
+        collection: 'environments',
+        mode: 'original',
+        instances: [newEl],
+        baseElement: newEl,
+        ...(pendingAiConcept?.trim() ? { pendingEnvironmentAiConcept: pendingAiConcept.trim() } : {}),
+      });
+    },
+    [addToTable, gameTableBasePath, navigate],
   );
 
   // Deep-link: open modal when URL has /table/:collection/:id (e.g. refresh, back/forward, shared link)
@@ -2891,7 +3043,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
     // Don't overwrite if user already opened via handleEditClick (choice or form)
-    if (editState?.collection === modalCollection && editState?.baseElement?.id === modalItemId) return;
+    if (editState?.collection === modalCollection && editState?.baseElement?.id === modalItemId) {
+      return;
+    }
     const elType = COLLECTION_TO_ELEMENT_TYPE[modalCollection];
     if (!elType) return;
     const instances = activeElements.filter(e => e.elementType === elType && e.id === modalItemId);
@@ -3057,11 +3211,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         itemWithId
       );
     } else {
-      await saveItem(collection, itemWithId);
-      // Characters are resolved at render-time from the library, so no manual
-      // activeElements update is needed — saveItem already updated data.characters.
-      if (collection !== 'characters') {
-        updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+      const saved = await saveItem(collection, itemWithId);
+      // Characters: saveItem mirrors library into activeElements. Adversaries/environments: same, using
+      // server `saved` — then persist table blob (update-base-data op) with that row.
+      if (collection !== 'characters' && saved) {
+        updateActiveElementsBaseData(el => el.id === saved.id, saved);
       }
     }
   };
@@ -5000,7 +5154,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     <span className="text-[10px]">Incomplete</span>
                   </span>
                 )}
-                <span className="text-[10px] font-bold text-sky-500 bg-dh-raised border border-dh-strong rounded px-1 shrink-0 group-hover/char:hidden">T{el.tier ?? 1}</span>
+                <span className="text-[10px] font-bold text-sky-500 bg-dh-raised border border-dh-strong rounded px-1 shrink-0 group-hover/char:hidden" title="Tier">T{el.tier ?? 1}</span>
                 {el.playerName && (
                   <span className="text-[10px] text-dh-muted truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
                 )}
@@ -5057,6 +5211,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         label="Hope"
                         verbs={['Gain', 'Spend']}
                         pulseOnDecreaseOnly
+                        slotTypeTooltip
                       />
                     </div>
                   );
@@ -5066,10 +5221,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {displayChar.evasion != null && (() => {
                       const evModTotal = getEvasionModifierTotal(displayChar);
-                      const evasionTip = formatEvasionModifierTooltip(displayChar);
                       return (
                         <Tooltip
-                          content={evasionTip || undefined}
+                          content="Evasion"
                           className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums bg-cyan-900/50 border border-cyan-800/50 rounded px-1 ${evModTotal ? 'text-sky-300' : 'text-cyan-400/70'}`}
                           placement="right"
                         >
@@ -5087,7 +5241,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       if (!t) return null;
                       const eb = displayChar._v2MajorThresholdBonus ?? 0;
                       return (
-                        <span className="text-[10px] text-dh-muted">
+                        <span className="text-[10px] text-dh-muted" title="Damage thresholds">
                           Thresholds{' '}
                           {eb > 0 ? <><span className="font-bold text-dh-muted">{t.major - eb}</span><span className="text-dh-muted"> +{eb} =</span>{' '}</> : null}
                           <span className="font-bold text-dh">{t.major}</span>
@@ -5110,6 +5264,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       trackKind="armor"
                       label="Armor"
                       verbs={['Mark', 'Clear']}
+                      slotTypeTooltip
                     />
                   </div>
                 )}
@@ -5124,6 +5279,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       trackKind="hp"
                       label="HP"
                       verbs={['Mark', 'Clear']}
+                      slotTypeTooltip
                     />
                   </div>
                 )}
@@ -5138,6 +5294,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       trackKind="stress"
                       label="Stress"
                       verbs={['Mark', 'Clear']}
+                      slotTypeTooltip
                     />
                   </div>
                 )}
@@ -5211,23 +5368,45 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           )}
 
-          <CharacterAiConceptStrip
-            variant="compact"
-            compactJustification
-            textareaRows={4}
-            getMergeBase={() => ({
-              id: generateId(),
-              name: '',
-              level: 1,
-              baseTraits: {},
-              hope: DEFAULT_CHARACTER_STARTING_HOPE,
-              experiences: [
-                { name: '', score: 2, id: generateId() },
-                { name: '', score: 2, id: generateId() },
-              ],
-            })}
-            onComplete={handleCharacterPanelAiComplete}
-          />
+          {showConceptAiUi && (
+            <div className="rounded-lg border border-violet-800/45 bg-violet-950/20 p-3 space-y-2">
+              <label className="text-xs font-medium text-dh block">
+                Describe a character concept, we&apos;ll match it as best as we can
+              </label>
+              <textarea
+                value={characterPanelAiConcept}
+                onChange={(e) => setCharacterPanelAiConcept(e.target.value)}
+                onKeyDown={(e) =>
+                  handleAiConceptTextareaKeyDown(e, {
+                    canSubmit: !!characterPanelAiConcept.trim(),
+                    onSubmit: () => {
+                      const q = characterPanelAiConcept.trim();
+                      if (!q) return;
+                      void openNewCharacterEditor({ pendingAiConcept: q });
+                      setCharacterPanelAiConcept('');
+                    },
+                  })
+                }
+                rows={3}
+                className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-violet-500 focus:outline-none resize-y"
+                placeholder="e.g. A cheerful halfling thief who grew up in a library…"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const q = characterPanelAiConcept.trim();
+                  if (!q) return;
+                  void openNewCharacterEditor({ pendingAiConcept: q });
+                  setCharacterPanelAiConcept('');
+                }}
+                disabled={!characterPanelAiConcept.trim()}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Build with AI
+              </button>
+              <AiDismissBuildWithAiLink />
+            </div>
+          )}
         </div>
       </div>
 
@@ -6163,53 +6342,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               </div>
             );
           })}
-          {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
-            const el = item.element;
-            return (
-              <div
-                key={el.instanceId}
-                className="flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 py-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40"
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigate(`${gameTableBasePath}/notes/${el.id}`);
-                    setEditState({
-                      step: 'note',
-                      item: {
-                        id: el.id,
-                        name: el.name || 'Note',
-                        body: el.body || '',
-                        imageUrl: el.imageUrl || '',
-                      },
-                      baseElement: el,
-                    });
-                  }}
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                >
-                  {el.imageUrl ? (
-                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
-                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
-                    </span>
-                  ) : (
-                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-amber-100/90 truncate">{el.name || 'Note'}</div>
-                    <div className="mt-1 max-h-24 overflow-hidden text-left">
-                      <MarkdownText text={el.body || '—'} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
-                    </div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeActiveElement(el.instanceId)}
-                  className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
-                  title="Remove note"
-                ><X size={12} /></button>
-              </div>
-            );
-          })}
           {consolidatedElements.filter(item => item.kind === 'adversary-group').map((item) => {
             const { baseElement: el, instances } = item;
             const count = instances.length;
@@ -6398,7 +6530,208 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               </div>
             );
           })}
-          {consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
+          {showConceptAiUi && (
+            <div className="rounded-lg border border-violet-800/45 bg-violet-950/20 p-2 space-y-2">
+              <div className="flex rounded-lg border border-violet-800/50 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setEncounterAiBuilderKind('adversary')}
+                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+                    encounterAiBuilderKind === 'adversary'
+                      ? 'bg-violet-900/50 text-violet-100'
+                      : 'bg-dh-raised text-dh-muted hover:text-dh'
+                  }`}
+                >
+                  Adversary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEncounterAiBuilderKind('environment')}
+                  className={`flex-1 py-1.5 text-xs font-semibold border-l border-violet-800/50 transition-colors ${
+                    encounterAiBuilderKind === 'environment'
+                      ? 'bg-violet-900/50 text-violet-100'
+                      : 'bg-dh-raised text-dh-muted hover:text-dh'
+                  }`}
+                >
+                  Environment
+                </button>
+              </div>
+              {encounterAiBuilderKind === 'adversary' ? (
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[10px] text-dh-muted block mb-0.5">Tier</span>
+                      <CustomSelect
+                        value={encounterAdvAiTier}
+                        onChange={setEncounterAdvAiTier}
+                        options={TIERS}
+                        getOptionLabel={(t) => String(t)}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-dh-muted block mb-0.5">Role</span>
+                      <RoleSelect value={encounterAdvAiRole} onChange={setEncounterAdvAiRole} className="w-full" />
+                    </div>
+                  </div>
+                  <textarea
+                    value={encounterAdvAiConcept}
+                    onChange={(e) => setEncounterAdvAiConcept(e.target.value)}
+                    onKeyDown={(e) =>
+                      handleAiConceptTextareaKeyDown(e, {
+                        canSubmit: !!encounterAdvAiConcept.trim(),
+                        onSubmit: () => {
+                          const q = encounterAdvAiConcept.trim();
+                          if (!q) return;
+                          void openNewAdversaryEditor({
+                            pendingAiConcept: q,
+                            tier: encounterAdvAiTier,
+                            role: encounterAdvAiRole,
+                          });
+                          setEncounterAdvAiConcept('');
+                        },
+                      })
+                    }
+                    rows={3}
+                    className="w-full min-h-[4.5rem] bg-dh-raised border border-dh-border rounded px-2 py-1 text-xs text-dh focus:border-violet-500 focus:outline-none resize-y"
+                    placeholder="Describe an adversary concept…"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const q = encounterAdvAiConcept.trim();
+                      if (!q) return;
+                      void openNewAdversaryEditor({
+                        pendingAiConcept: q,
+                        tier: encounterAdvAiTier,
+                        role: encounterAdvAiRole,
+                      });
+                      setEncounterAdvAiConcept('');
+                    }}
+                    disabled={!encounterAdvAiConcept.trim()}
+                    className="w-full py-1.5 rounded-md text-xs font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Build with AI
+                  </button>
+                  <AiDismissBuildWithAiLink />
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[10px] text-dh-muted block mb-0.5">Tier</span>
+                      <CustomSelect
+                        value={encounterEnvAiTier}
+                        onChange={setEncounterEnvAiTier}
+                        options={TIERS}
+                        getOptionLabel={(t) => String(t)}
+                        className="w-full"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-dh-muted block mb-0.5">Type</span>
+                      <CustomSelect
+                        value={encounterEnvAiType}
+                        onChange={setEncounterEnvAiType}
+                        options={ENV_TYPES}
+                        getOptionLabel={(t) => ENV_TYPE_LABEL[t] ?? t}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                  <textarea
+                    value={encounterEnvAiConcept}
+                    onChange={(e) => setEncounterEnvAiConcept(e.target.value)}
+                    onKeyDown={(e) =>
+                      handleAiConceptTextareaKeyDown(e, {
+                        canSubmit: !!encounterEnvAiConcept.trim(),
+                        onSubmit: () => {
+                          const q = encounterEnvAiConcept.trim();
+                          if (!q) return;
+                          void openNewEnvironmentEditor({
+                            pendingAiConcept: q,
+                            tier: encounterEnvAiTier,
+                            type: encounterEnvAiType,
+                          });
+                          setEncounterEnvAiConcept('');
+                        },
+                      })
+                    }
+                    rows={3}
+                    className="w-full min-h-[4.5rem] bg-dh-raised border border-dh-border rounded px-2 py-1 text-xs text-dh focus:border-violet-500 focus:outline-none resize-y"
+                    placeholder="Describe an environment concept…"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const q = encounterEnvAiConcept.trim();
+                      if (!q) return;
+                      void openNewEnvironmentEditor({
+                        pendingAiConcept: q,
+                        tier: encounterEnvAiTier,
+                        type: encounterEnvAiType,
+                      });
+                      setEncounterEnvAiConcept('');
+                    }}
+                    disabled={!encounterEnvAiConcept.trim()}
+                    className="w-full py-1.5 rounded-md text-xs font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Build with AI
+                  </button>
+                  <AiDismissBuildWithAiLink />
+                </div>
+              )}
+            </div>
+          )}
+          {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
+            const el = item.element;
+            return (
+              <div
+                key={el.instanceId}
+                className="flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 py-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(`${gameTableBasePath}/notes/${el.id}`);
+                    setEditState({
+                      step: 'note',
+                      item: {
+                        id: el.id,
+                        name: el.name || 'Note',
+                        body: el.body || '',
+                        imageUrl: el.imageUrl || '',
+                      },
+                      baseElement: el,
+                    });
+                  }}
+                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                >
+                  {el.imageUrl ? (
+                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
+                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
+                    </span>
+                  ) : (
+                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-amber-100/90 truncate">{el.name || 'Note'}</div>
+                    <div className="mt-1 max-h-24 overflow-hidden text-left">
+                      <MarkdownText text={el.body || '—'} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeActiveElement(el.instanceId)}
+                  className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
+                  title="Remove note"
+                ><X size={12} /></button>
+              </div>
+            );
+          })}
+          {consolidatedElements.filter(item => item.kind === 'environment').length === 0
+            && consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
             <div className="text-center text-dh-muted text-xs py-6">
               No adversaries or environments on table.
             </div>
@@ -6568,49 +6901,31 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         }}
         onCreateNew={modalOpen === 'characters' ? () => {
           setModalOpen(null);
-          void (async () => {
-            const newId = generateId();
-            const stub = {
-              id: newId,
-              name: '',
-              level: 1,
-              baseTraits: {},
-              hope: DEFAULT_CHARACTER_STARTING_HOPE,
-              experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-            };
-            const rect = getAddCharacterAnchorRect();
-            if (isPlayer && onPlayerAddCharacter) {
-              const res = await onPlayerAddCharacter({ ...stub, elementType: 'character' });
-              const newEl = res?.character;
-              if (!newEl?.instanceId) return;
-              navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
-              setEditState({
-                step: 'form',
-                item: stub,
-                collection: 'characters',
-                mode: 'new',
-                baseElement: newEl,
-                instances: [newEl],
-                presentation: 'rightDrawer',
-              });
-              characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
-              return;
-            }
-            const newEls = await addToTable(stub, 'characters');
-            const newEl = newEls?.[0];
-            if (!newEl) return;
-            navigate(`${gameTableBasePath}/characters/${stub.id}`, { replace: true });
-            setEditState({
-              step: 'form',
-              item: stub,
-              collection: 'characters',
-              mode: 'new',
-              baseElement: newEl,
-              instances: [newEl],
-              presentation: 'rightDrawer',
-            });
-            characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
-          })();
+          void openNewCharacterEditor();
+        } : modalOpen === 'adversaries' ? () => {
+          setModalOpen(null);
+          const q = encounterAdvAiConcept.trim();
+          void openNewAdversaryEditor(
+            q ? { pendingAiConcept: q, tier: encounterAdvAiTier, role: encounterAdvAiRole } : {},
+          );
+        } : modalOpen === 'environments' ? () => {
+          setModalOpen(null);
+          const q = encounterEnvAiConcept.trim();
+          void openNewEnvironmentEditor(
+            q ? { pendingAiConcept: q, tier: encounterEnvAiTier, type: encounterEnvAiType } : {},
+          );
+        } : undefined}
+        onCharacterAiConceptSubmit={modalOpen === 'characters' ? (concept) => {
+          setModalOpen(null);
+          void openNewCharacterEditor({ pendingAiConcept: concept });
+        } : undefined}
+        onAdversaryAiConceptSubmit={modalOpen === 'adversaries' ? (concept, tier, role) => {
+          setModalOpen(null);
+          void openNewAdversaryEditor({ pendingAiConcept: concept, tier, role });
+        } : undefined}
+        onEnvironmentAiConceptSubmit={modalOpen === 'environments' ? (concept, tier, type) => {
+          setModalOpen(null);
+          void openNewEnvironmentEditor({ pendingAiConcept: concept, tier, type });
         } : undefined}
         isLoading={['scenes', 'adventures', 'characters'].includes(modalOpen) ? pickerLoading : undefined}
         excludeIds={modalOpen === 'characters' ? activeElements.filter(el => el.elementType === 'character').map(el => el.id) : undefined}
@@ -6667,7 +6982,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               editDrawerOpen={effectiveEditDrawerOpen}
               onEdit={(!isPlayer || isMyCharacter) ? () => openTableCharacterEditor(liveEl) : undefined}
               onDone={closeEditModal}
-              doneDisabled={!!characterDrawerChromeSync?.aiCharacterBusy}
+              doneDisabled={!!characterDrawerChromeSync?.aiConceptBusy}
               onUndo={() => characterTableDetailModalRef.current?.undo()}
               onRedo={() => characterTableDetailModalRef.current?.redo()}
               canUndo={!!sync?.canUndo}
@@ -6821,14 +7136,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               itemWithId
             );
           } else {
-            await saveItem(editState.collection, itemWithId);
+            const saved = await saveItem(editState.collection, itemWithId);
             if (saveImage && (editedData.imageUrl != null || editedData._additionalImages != null)) {
               await saveImage(editState.collection, itemWithId.id, editedData.imageUrl ?? '', { _additionalImages: editedData._additionalImages });
             }
-            // Characters are resolved at render-time from the library; no manual
-            // activeElements update needed — saveItem already updated data.characters.
-            if (editState.collection !== 'characters') {
-              updateActiveElementsBaseData(el => el.id === itemWithId.id, itemWithId);
+            if (editState.collection !== 'characters' && saved) {
+              updateActiveElementsBaseData(el => el.id === saved.id, saved);
             }
           }
         }}
@@ -6837,6 +7150,18 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         partyTier={partyTier}
         characters={characters}
         onMergeAdversary={onMergeAdversary}
+        pendingCharacterAiConcept={editState?.pendingCharacterAiConcept}
+        onPendingCharacterAiConceptConsumed={() =>
+          setEditState((s) => (s ? { ...s, pendingCharacterAiConcept: undefined } : s))
+        }
+        pendingAdversaryAiConcept={editState?.pendingAdversaryAiConcept}
+        onPendingAdversaryAiConceptConsumed={() =>
+          setEditState((s) => (s ? { ...s, pendingAdversaryAiConcept: undefined } : s))
+        }
+        pendingEnvironmentAiConcept={editState?.pendingEnvironmentAiConcept}
+        onPendingEnvironmentAiConceptConsumed={() =>
+          setEditState((s) => (s ? { ...s, pendingEnvironmentAiConcept: undefined } : s))
+        }
       />
     )}
 

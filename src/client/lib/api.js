@@ -15,7 +15,7 @@ let firebaseConfig;
 export let imageGenEnabled = false;
 export let supabaseStorageBase = null;
 export let devAgentQueueEnabled = false;
-export let characterAiEnabled = false;
+export let conceptAiEnabled = false;
 try {
   const res = await fetch('/api/config', { headers: apiHeaders() });
   const json = await res.json();
@@ -23,7 +23,7 @@ try {
   imageGenEnabled = !!json.imageGenEnabled;
   supabaseStorageBase = json.supabaseStorageBase || null;
   devAgentQueueEnabled = !!json.devAgentQueueEnabled;
-  characterAiEnabled = !!json.characterAiEnabled;
+  conceptAiEnabled = !!json.conceptAiEnabled;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);
 }
@@ -595,7 +595,7 @@ export const postRollSilent = async (rollText, displayName = '', tableId = null)
   return { ...rollData, value };
 };
 
-/** Returns `{ isAdmin, isQa }` for the currently signed-in user. */
+/** Returns `{ isAdmin, isQa, preferences?: { hideAiUi } }` for the currently signed-in user. */
 export const fetchMe = async () => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
@@ -604,6 +604,20 @@ export const fetchMe = async () => {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+};
+
+/** Persist user preferences (server JSON merge). */
+export const putUserPreferences = async (body) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/me/preferences', {
+    method: 'PUT',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  const errBody = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(errBody.error || `HTTP ${res.status}`);
+  return errBody;
 };
 
 /** Loads `docs/feature-authoring-guide.md` from the server at request time. Returns `{ markdown }`. */
@@ -648,6 +662,48 @@ export const postCharacterAiBuild = async (concept, options = {}) => {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ concept }),
+    signal,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/**
+ * LLM adversary draft from a concept.
+ * @param {string} concept
+ * @param {{ signal?: AbortSignal, tier: number, role: string }} [options]
+ * @returns {Promise<{ patch: object, justification: string, warnings: string[] }>}
+ */
+export const postAdversaryAiBuild = async (concept, options = {}) => {
+  const { signal, tier, role } = options;
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/adversary-ai-build', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ concept, tier, role }),
+    signal,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/**
+ * LLM environment draft from a concept.
+ * @param {string} concept
+ * @param {{ signal?: AbortSignal, tier: number, type: string }} [options]
+ * @returns {Promise<{ patch: object, justification: string, warnings: string[] }>}
+ */
+export const postEnvironmentAiBuild = async (concept, options = {}) => {
+  const { signal, tier, type } = options;
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/environment-ai-build', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ concept, tier, type }),
     signal,
   });
   const body = await res.json().catch(() => ({}));

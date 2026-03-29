@@ -99,6 +99,26 @@ export const RUNTIME_KEYS = [
 ];
 
 /**
+ * Fields preserved from the existing element when applying `update-base-data` after a library save
+ * from the Game Table (adversaries, environments, etc.). Excludes library-shaped keys (`name`,
+ * `tier`, `features`, …) so merged `newBaseData` from the server replaces stale stub/base fields.
+ * `_`-prefixed keys are preserved like `character-library-update` (e.g. `_scaledFromTier`).
+ */
+export const UPDATE_BASE_DATA_RUNTIME_KEYS = [
+  'instanceId', 'elementType',
+  'currentHp', 'currentStress', 'conditions',
+  'tokenX', 'tokenY',
+  'mapId',
+  'weaponMods', 'armorMods',
+  'difficultyMod',
+  'vulnerable',
+  'focusedBy',
+  'v2PendingMove',
+  'v2MoveLockRollDbId',
+  'v2MoveLockSource',
+];
+
+/**
  * Apply a table operation to GM-side state (pure function).
  * Returns an object containing only the state keys that changed.
  */
@@ -134,7 +154,8 @@ export function applyTableOp(op, state) {
         activeElements: activeElements.map(el => {
           if (el.id !== op.elementId) return el;
           const runtime = {};
-          RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+          UPDATE_BASE_DATA_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+          Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
           return { ...op.newBaseData, ...runtime };
         }),
       };

@@ -12,6 +12,8 @@ describe('buildDefaultNewSrdLibraryItem', () => {
       name: '',
       description: '',
       tier: 1,
+      type: 'exploration',
+      difficulty: 10,
     });
   });
 

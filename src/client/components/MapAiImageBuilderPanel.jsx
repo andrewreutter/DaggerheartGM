@@ -1,0 +1,210 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Loader2 } from 'lucide-react';
+import { generateImage, editImage, postMapImageFile } from '../lib/api.js';
+import { buildBattleMapDefaultPrompt } from '../lib/ai-image-prompts.js';
+import { imageSrcToDataUrlForApi, loadImageNaturalSizeFromUrl } from '../lib/map-image-data-url.js';
+import { AiImageWorkbench } from './AiImageWorkbench.jsx';
+
+/**
+ * Shared generate/edit/upload flow for battle map AI images.
+ * Used by MapAiImageDialog (modal) and BattleMap Theatre of the Mind inline panel.
+ */
+export function MapAiImageBuilderPanel({
+  mapSizeFt = 100,
+  mapImageUrl,
+  savedMapAiImagePrompt,
+  onMapConfigChange,
+  /** Called after a successful save (e.g. close modal). */
+  onSaved,
+  /** Cancel / close without saving (modal toolbar). */
+  onCancel,
+  /** Notifies parent when generate/save is in progress (e.g. block overlay Escape). */
+  onBusyChange,
+  /** Live preview of the selected history image on the battle map (cleared on unmount). */
+  onGenerationPreviewChange,
+  compact = false,
+  showCancel = true,
+  className = '',
+}) {
+  const [editedPrompt, setEditedPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [imageHistory, setImageHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [error, setError] = useState(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editInstruction, setEditInstruction] = useState('');
+
+  const latestRef = useRef({ mapSizeFt, mapImageUrl, savedMapAiImagePrompt });
+  latestRef.current = { mapSizeFt, mapImageUrl, savedMapAiImagePrompt };
+
+  const currentPreview = historyIndex >= 0 ? imageHistory[historyIndex] : null;
+
+  useEffect(() => {
+    onGenerationPreviewChange?.(currentPreview ?? null);
+  }, [currentPreview, onGenerationPreviewChange]);
+
+  useEffect(() => {
+    return () => {
+      onGenerationPreviewChange?.(null);
+    };
+  }, [onGenerationPreviewChange]);
+
+  const resetFromProps = useCallback(() => {
+    const { mapSizeFt: ft, mapImageUrl: img, savedMapAiImagePrompt: saved } = latestRef.current;
+    setError(null);
+    setSaving(false);
+    const prompt = (saved && String(saved).trim())
+      ? String(saved).trim()
+      : buildBattleMapDefaultPrompt(ft);
+    setEditedPrompt(prompt);
+    if (img) {
+      setImageHistory([img]);
+      setHistoryIndex(0);
+    } else {
+      setImageHistory([]);
+      setHistoryIndex(-1);
+    }
+    setEditOpen(false);
+    setEditInstruction('');
+    setLightboxOpen(false);
+  }, []);
+
+  // Init from props on mount (parent remounts modal when reopened).
+  useEffect(() => {
+    resetFromProps();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
+  }, []);
+
+  const handleGenerate = useCallback(async () => {
+    setError(null);
+    setGenerating(true);
+    try {
+      const { imageUrl } = await generateImage(editedPrompt);
+      setImageHistory(prev => [...prev, imageUrl]);
+      setHistoryIndex(prev => prev + 1);
+    } catch (err) {
+      setError(err.message || 'Image generation failed.');
+    } finally {
+      setGenerating(false);
+    }
+  }, [editedPrompt]);
+
+  const handleEdit = useCallback(async () => {
+    if (!currentPreview || !editInstruction.trim()) return;
+    setError(null);
+    setGenerating(true);
+    try {
+      const dataUrl = await imageSrcToDataUrlForApi(currentPreview);
+      const { imageUrl } = await editImage(dataUrl, editInstruction.trim());
+      setImageHistory(prev => [...prev, imageUrl]);
+      setHistoryIndex(prev => prev + 1);
+    } catch (err) {
+      setError(err.message || 'Image editing failed.');
+    } finally {
+      setGenerating(false);
+    }
+  }, [currentPreview, editInstruction]);
+
+  const rebuildPrompt = () => {
+    setEditedPrompt(buildBattleMapDefaultPrompt(latestRef.current.mapSizeFt));
+  };
+
+  const handleSave = async () => {
+    if (!currentPreview || saving || generating) return;
+    setError(null);
+    setSaving(true);
+    try {
+      const dataUrl = await imageSrcToDataUrlForApi(currentPreview);
+      const { width, height } = await loadImageNaturalSizeFromUrl(dataUrl);
+      const blob = await fetch(dataUrl).then(r => r.blob());
+      const mime = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/png';
+      const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
+      const file = new File([blob], `battle-map.${ext}`, { type: mime });
+      const { url } = await postMapImageFile(file);
+      if (!url) throw new Error('Upload did not return a URL');
+      onMapConfigChange(
+        {
+          mapImageUrl: url,
+          mapImageNaturalWidth: width,
+          mapImageNaturalHeight: height,
+          mapAiImagePrompt: editedPrompt.trim() || null,
+        },
+        true,
+      );
+      onSaved?.();
+    } catch (err) {
+      setError(err.message || 'Could not save map image.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const busy = generating || saving;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
+  return (
+    <div className={`flex min-h-0 flex-col overflow-hidden ${className}`}>
+      <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? 'px-0 py-1' : 'px-4 py-3'}`}>
+        <AiImageWorkbench
+          editedPrompt={editedPrompt}
+          onEditedPromptChange={setEditedPrompt}
+          onRebuildPrompt={rebuildPrompt}
+          rebuildButtonTitle="Rebuild default prompt"
+          generating={busy}
+          error={error}
+          imageHistory={imageHistory}
+          historyIndex={historyIndex}
+          onHistoryIndexChange={setHistoryIndex}
+          onGenerate={handleGenerate}
+          onEdit={handleEdit}
+          editOpen={editOpen}
+          onEditOpenChange={setEditOpen}
+          editInstruction={editInstruction}
+          onEditInstructionChange={setEditInstruction}
+          showUseButton={false}
+          lightboxOpen={lightboxOpen}
+          onLightboxOpenChange={setLightboxOpen}
+          inline
+          promptRows={compact ? 5 : 6}
+          previewMaxClass={compact ? 'max-h-56' : 'max-h-72'}
+        />
+      </div>
+      <div
+        className={`flex shrink-0 items-center gap-2 border-t border-dh-strong ${
+          compact ? 'px-0 py-2 justify-end' : 'px-4 py-3 justify-end'
+        }`}
+      >
+        {showCancel ? (
+          <button
+            type="button"
+            onClick={() => { if (!busy) onCancel?.(); }}
+            disabled={busy}
+            className="rounded-md border border-dh-border px-4 py-2 text-sm text-dh hover:bg-dh-hover disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={!currentPreview || busy}
+          className="flex items-center gap-2 rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              Uploading…
+            </>
+          ) : (
+            'Save'
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
