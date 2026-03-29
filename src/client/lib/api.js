@@ -15,6 +15,7 @@ let firebaseConfig;
 export let imageGenEnabled = false;
 export let supabaseStorageBase = null;
 export let devAgentQueueEnabled = false;
+export let characterAiEnabled = false;
 try {
   const res = await fetch('/api/config', { headers: apiHeaders() });
   const json = await res.json();
@@ -22,6 +23,7 @@ try {
   imageGenEnabled = !!json.imageGenEnabled;
   supabaseStorageBase = json.supabaseStorageBase || null;
   devAgentQueueEnabled = !!json.devAgentQueueEnabled;
+  characterAiEnabled = !!json.characterAiEnabled;
 } catch(e) {
   console.error('Failed to fetch /api/config:', e);
 }
@@ -626,6 +628,27 @@ export const syncDaggerstackCharacter = async (url, email, password) => {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
     body: JSON.stringify({ url, email, password }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/**
+ * LLM level-1 character draft from a concept. Pass `signal` to cancel (AbortController).
+ * @param {string} concept
+ * @param {{ signal?: AbortSignal }} [options]
+ * @returns {Promise<{ patch: object, justification: string, warnings: string[] }>}
+ */
+export const postCharacterAiBuild = async (concept, options = {}) => {
+  const { signal } = options;
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/character-ai-build', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ concept }),
+    signal,
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);

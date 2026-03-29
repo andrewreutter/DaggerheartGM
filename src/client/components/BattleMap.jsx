@@ -1576,6 +1576,12 @@ export function BattleMap({
   const drawPaintRef = useRef(null);
   const drawSizeRef = useRef({ w: 0, h: 0 });
   const drawBrushActiveRef = useRef(false);
+  /** Pointer id passed to `setPointerCapture` on draw/scribble canvases — released when a second touch starts a map pinch. */
+  const mapDrawCapturePointerIdRef = useRef(null);
+  /** Active pointers on the map viewport (for two-finger pinch zoom on touch devices). */
+  const mapPinchPointersRef = useRef(new Map());
+  const mapPinchActiveRef = useRef(false);
+  const mapPinchLastDistanceRef = useRef(0);
   const drawLastPxRef = useRef(null);
   const drawShapeDragRef = useRef(null);
   /** Eraser: click-to-flood vs drag — set on pointer down, cleared when drag starts or up/cancel */
@@ -2136,8 +2142,8 @@ export function BattleMap({
       if (isPlayer) schedulePersistPlayerViewport();
     };
 
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener('wheel', onWheel, { capture: true });
   }, [canControlMapView, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, containerWidth, containerHeight, isPlayer]);
 
   // Categorize elements
@@ -2617,6 +2623,7 @@ export function BattleMap({
         scribbleBroadcastLastPxRef.current = p;
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
+          mapDrawCapturePointerIdRef.current = e.pointerId;
         } catch {
           /* ignore */
         }
@@ -2646,6 +2653,7 @@ export function BattleMap({
           };
           setMapDrawCaptureActive(true);
           e.currentTarget.setPointerCapture(e.pointerId);
+          mapDrawCapturePointerIdRef.current = e.pointerId;
         } catch {
           /* ignore */
         }
@@ -2679,6 +2687,7 @@ export function BattleMap({
       }
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
+        mapDrawCapturePointerIdRef.current = e.pointerId;
       } catch {
         /* ignore */
       }
@@ -2963,6 +2972,7 @@ export function BattleMap({
         await commitOverlayPng(png);
       }
       } finally {
+        mapDrawCapturePointerIdRef.current = null;
         setMapDrawCaptureActive(false);
       }
     },
@@ -3029,11 +3039,166 @@ export function BattleMap({
       }
       await handleDrawPointerUp(e);
       } finally {
+        mapDrawCapturePointerIdRef.current = null;
         setMapDrawCaptureActive(false);
       }
     },
     [handleDrawPointerUp, drawTool, isPlayer, flushScribbleTailToPeers],
   );
+
+  /** End draw/scribble stroke without relying on canvas target (second finger starts pinch on iPad). */
+  const abortActiveMapDrawForPinch = useCallback(() => {
+    const pid = mapDrawCapturePointerIdRef.current;
+    if (pid != null) {
+      for (const node of [scribbleCanvasRef.current, drawPaintRef.current]) {
+        if (!node) continue;
+        try {
+          node.releasePointerCapture(pid);
+        } catch {
+          /* ignore */
+        }
+      }
+      mapDrawCapturePointerIdRef.current = null;
+    }
+
+    if (scribbleBrushActiveRef.current) {
+      flushScribbleTailToPeers();
+    }
+    scribbleBrushActiveRef.current = false;
+    scribbleLastPxRef.current = null;
+    scribbleStrokeIdRef.current = null;
+    scribbleBroadcastLastPxRef.current = null;
+
+    if (drawShapeDragRef.current) {
+      const shape = drawShapeDragRef.current;
+      drawShapeDragRef.current = null;
+      const c = drawPaintRef.current;
+      const ctx = c?.getContext('2d');
+      if (ctx && c && shape.snapshot) {
+        try {
+          ctx.putImageData(shape.snapshot, 0, 0);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    if (drawEraserPendingRef.current) {
+      drawEraserPendingRef.current = null;
+    }
+
+    if (drawBrushActiveRef.current) {
+      const commitStroke = drawTool === 'brush' || drawTool === 'eraser';
+      drawBrushActiveRef.current = false;
+      drawLastPxRef.current = null;
+      if (commitStroke && drawPaintRef.current) {
+        const png = drawPaintRef.current.toDataURL('image/png');
+        void commitOverlayPng(png);
+      }
+    }
+
+    setMapDrawCaptureActive(false);
+  }, [flushScribbleTailToPeers, drawTool, commitOverlayPng]);
+
+  useEffect(() => {
+    if (!canControlMapView) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const pointers = mapPinchPointersRef.current;
+
+    const pinchDistance = () => {
+      const vals = [...pointers.values()];
+      if (vals.length < 2) return 0;
+      const dx = vals[1].x - vals[0].x;
+      const dy = vals[1].y - vals[0].y;
+      return Math.hypot(dx, dy);
+    };
+
+    const onPointerDownCapture = (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        abortActiveMapDrawForPinch();
+        mapPinchActiveRef.current = true;
+        const d0 = pinchDistance();
+        mapPinchLastDistanceRef.current = d0 > 1e-6 ? d0 : 1;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    };
+
+    const onPointerMoveCapture = (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (!mapPinchActiveRef.current || pointers.size < 2) return;
+
+      const vw = el.clientWidth;
+      const vh = el.clientHeight;
+      if (vw <= 0 || vh <= 0) return;
+
+      const newDist = pinchDistance();
+      const lastDist = mapPinchLastDistanceRef.current;
+      if (newDist < 1e-6 || lastDist < 1e-6) return;
+      const ratio = newDist / lastDist;
+      mapPinchLastDistanceRef.current = newDist;
+
+      const oldZ = mapZoomRef.current;
+      const newZ = clampMapZoom(oldZ * ratio, minZoomRef.current, maxZoomRef.current);
+      if (newZ === oldZ) return;
+
+      const rect = el.getBoundingClientRect();
+      const vals = [...pointers.values()];
+      const viewportX = (vals[0].x + vals[1].x) / 2 - rect.left;
+      const viewportY = (vals[0].y + vals[1].y) / 2 - rect.top;
+
+      const pan = scrollAfterZoomTowardPoint({
+        scrollLeft: mapPanLeftRef.current,
+        scrollTop: mapPanTopRef.current,
+        viewportX,
+        viewportY,
+        oldZoom: oldZ,
+        newZoom: newZ,
+        innerWidthPx: renderedWRef.current,
+        innerHeightPx: renderedHRef.current,
+        viewportW: vw,
+        viewportH: vh,
+      });
+
+      mapZoomRef.current = newZ;
+      mapPanLeftRef.current = pan.scrollLeft;
+      mapPanTopRef.current = pan.scrollTop;
+      setMapZoom(newZ);
+      setMapPanLeft(pan.scrollLeft);
+      setMapPanTop(pan.scrollTop);
+      if (onMapViewSync) schedulePersistView();
+      if (isPlayer) schedulePersistPlayerViewport();
+
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+
+    const onPointerUpCapture = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) {
+        mapPinchActiveRef.current = false;
+        mapPinchLastDistanceRef.current = 0;
+      }
+    };
+
+    el.addEventListener('pointerdown', onPointerDownCapture, { capture: true });
+    el.addEventListener('pointermove', onPointerMoveCapture, { capture: true });
+    el.addEventListener('pointerup', onPointerUpCapture, { capture: true });
+    el.addEventListener('pointercancel', onPointerUpCapture, { capture: true });
+    return () => {
+      pointers.clear();
+      mapPinchActiveRef.current = false;
+      el.removeEventListener('pointerdown', onPointerDownCapture, { capture: true });
+      el.removeEventListener('pointermove', onPointerMoveCapture, { capture: true });
+      el.removeEventListener('pointerup', onPointerUpCapture, { capture: true });
+      el.removeEventListener('pointercancel', onPointerUpCapture, { capture: true });
+    };
+  }, [canControlMapView, abortActiveMapDrawForPinch, onMapViewSync, schedulePersistView, schedulePersistPlayerViewport, isPlayer]);
 
   const handleDrawClearAll = useCallback(() => {
     if (!drawEditContext || isPlayer) return;

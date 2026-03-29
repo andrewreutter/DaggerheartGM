@@ -83,6 +83,11 @@ export function AiImageWorkbench({
         <textarea
           value={editedPrompt}
           onChange={e => onEditedPromptChange(e.target.value)}
+          onKeyDown={e => {
+            if (e.key !== 'Enter' || e.shiftKey) return;
+            e.preventDefault();
+            if (!generating && editedPrompt.trim()) onGenerate();
+          }}
           disabled={generating}
           rows={promptRows}
           className="w-full bg-dh-inset border border-dh-border rounded p-2 text-sm text-dh resize-y disabled:opacity-50 focus:border-purple-600 focus:outline-none"
@@ -169,14 +174,18 @@ export function AiImageWorkbench({
 
             {editOpen ? (
               <div className="flex gap-2 items-start pt-1">
-                <input
-                  type="text"
+                <textarea
                   value={editInstruction}
                   onChange={e => onEditInstructionChange(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !generating && editInstruction.trim()) onEdit(); }}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter' || e.shiftKey) return;
+                    e.preventDefault();
+                    if (!generating && editInstruction.trim()) onEdit();
+                  }}
                   disabled={generating}
+                  rows={2}
                   placeholder="e.g. make the background darker, add a sword…"
-                  className="flex-1 bg-dh-inset border border-dh-border rounded px-2 py-1.5 text-xs text-dh placeholder-dh-muted disabled:opacity-50 focus:border-purple-600 focus:outline-none"
+                  className="flex-1 min-h-[2.75rem] bg-dh-inset border border-dh-border rounded px-2 py-1.5 text-xs text-dh placeholder-dh-muted disabled:opacity-50 focus:border-purple-600 focus:outline-none resize-y"
                 />
                 <button
                   type="button"

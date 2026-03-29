@@ -104,10 +104,10 @@ export function useCharacterSheetSourceBadgeHover() {
  * Wrap the entire character sheet chrome (title + body) so leaving the panel clears the highlight.
  * Must render inside {@link CharacterSheetSourceHighlightProvider}.
  */
-export function CharacterSheetHighlightSurface({ children, className = '' }) {
+export function CharacterSheetHighlightSurface({ children, className = '', style }) {
   const ctx = useCharacterSheetSourceHighlightState();
   return (
-    <div className={className} onMouseLeave={() => ctx?.clearHighlightSoon()}>
+    <div className={className} style={style} onMouseLeave={() => ctx?.clearHighlightSoon()}>
       {children}
     </div>
   );

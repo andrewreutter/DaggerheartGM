@@ -37,11 +37,13 @@ import { gateTableOpForPrepMode, isTablePlayAllowed } from './src/client/lib/tab
 import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action-notification-dice.js';
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
+import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
 import { attachDerivedMapConfig } from './src/client/lib/map-table-state.js';
 import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
+import { DEFAULT_CHARACTER_STARTING_HOPE } from './src/game-constants.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
@@ -167,6 +169,7 @@ app.get('/api/config', (req, res) => {
       ? `${process.env.SUPABASE_URL}/storage/v1/object/public`
       : null,
     devAgentQueueEnabled: process.env.DEV_AGENT_QUEUE_ENABLED === '1',
+    characterAiEnabled: !!process.env.OPENAI_API_KEY,
   });
 });
 
@@ -1436,6 +1439,27 @@ app.post('/api/daggerstack/sync', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('POST /api/daggerstack/sync error:', err);
     res.status(400).json({ error: err.message });
+  }
+});
+
+/** Level-1 character draft from a concept (OpenAI). Resolver maps names → SRD ids. */
+app.post('/api/character-ai-build', requireAuth, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'Character AI is not configured' });
+  }
+  const concept = req.body?.concept;
+  if (typeof concept !== 'string' || !concept.trim()) {
+    return res.status(400).json({ error: 'concept (non-empty string) is required' });
+  }
+  try {
+    const { patch, justification, warnings } = await buildCharacterAiFromConcept(concept.trim());
+    res.json({ patch, justification, warnings });
+  } catch (err) {
+    if (err?.code === 'BAD_REQUEST') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('POST /api/character-ai-build error:', err);
+    res.status(500).json({ error: err.message || 'Character AI failed' });
   }
 });
 
@@ -3291,13 +3315,14 @@ app.post('/api/room/:tableId/add-character', requireAuth, async (req, res) => {
       hope, currentHp, currentStress, currentArmor, conditions, tokenX, tokenY,
       assignedPlayerUid, ...extraFields } = req.body;
     const instanceId = crypto.randomUUID();
+    const maxH = maxHope || 6;
     const runtimeData = {
       instanceId,
       elementType: 'character',
       assignedPlayerEmail: req.email,
       assignedPlayerUid: assignedPlayerUid || req.uid,
       playerName: playerName || req.email,
-      hope: hope ?? (maxHope || 6),
+      hope: hope != null ? hope : Math.min(DEFAULT_CHARACTER_STARTING_HOPE, maxH),
       currentHp: currentHp ?? (maxHp || 6),
       currentStress: currentStress ?? 0,
       currentArmor: currentArmor ?? 0,
