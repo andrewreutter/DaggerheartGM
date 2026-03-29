@@ -274,6 +274,44 @@ describe('applyTableOp', () => {
     expect(result.mapConfig.mapViewPanNorm).toEqual({ x: 0.2, y: 0.3 });
   });
 
+  it('set-map clears mapAiImagePrompt when mapImageUrl is removed', () => {
+    const state = {
+      maps: [
+        {
+          id: 'm-default',
+          name: 'Map 1',
+          mapImageUrl: 'https://x/map.png',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          mapAiImagePrompt: 'a prompt',
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'm-default',
+          name: 'Main',
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          mapViewVisibleNorm: null,
+          broadcastToPlayers: true,
+        },
+      ],
+      activeMapId: 'm-default',
+      gmActiveViewId: 'v1',
+      activeElements: [],
+    };
+    const result = applyTableOp(
+      { op: 'set-map', mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null },
+      state,
+    );
+    expect(result.maps[0].mapImageUrl).toBeNull();
+    expect(result.maps[0].mapAiImagePrompt).toBeNull();
+  });
+
   it('set-map with resetTokenPositions clears map view and resets tokens', () => {
     const state = {
       mapConfig: {

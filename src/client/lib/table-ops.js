@@ -164,11 +164,17 @@ export function applyTableOp(op, state) {
       const maps = base.maps.map(m => {
         if (m.id !== targetMapId) return m;
         const merged = { ...m };
-        if (op.mapImageUrl !== undefined) merged.mapImageUrl = op.mapImageUrl;
+        if (op.mapImageUrl !== undefined) {
+          merged.mapImageUrl = op.mapImageUrl;
+          if (op.mapImageUrl !== undefined && (op.mapImageUrl === null || op.mapImageUrl === '')) {
+            merged.mapAiImagePrompt = null;
+          }
+        }
         if (op.mapDimension !== undefined) merged.mapDimension = op.mapDimension;
         if (op.mapSizeFt !== undefined) merged.mapSizeFt = op.mapSizeFt;
         if (op.mapImageNaturalWidth !== undefined) merged.mapImageNaturalWidth = op.mapImageNaturalWidth;
         if (op.mapImageNaturalHeight !== undefined) merged.mapImageNaturalHeight = op.mapImageNaturalHeight;
+        if (op.mapAiImagePrompt !== undefined) merged.mapAiImagePrompt = op.mapAiImagePrompt;
         if (op.shareWithPlayers !== undefined) merged.shareWithPlayers = !!op.shareWithPlayers;
         return merged;
       });
@@ -492,6 +498,7 @@ export function applyTableOp(op, state) {
         mapSizeFt: op.mapSizeFt ?? 100,
         mapImageNaturalWidth: op.mapImageNaturalWidth ?? null,
         mapImageNaturalHeight: op.mapImageNaturalHeight ?? null,
+        mapAiImagePrompt: op.mapAiImagePrompt ?? null,
         shareWithPlayers: true,
       };
       const newView = {

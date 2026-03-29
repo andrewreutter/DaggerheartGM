@@ -72,7 +72,14 @@ function App() {
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
   const [tableName, setTableName] = useState('');
-  const DEFAULT_MAP_CONFIG = { mapImageUrl: null, mapDimension: 'width', mapSizeFt: 100, mapImageNaturalWidth: null, mapImageNaturalHeight: null };
+  const DEFAULT_MAP_CONFIG = {
+    mapImageUrl: null,
+    mapDimension: 'width',
+    mapSizeFt: 100,
+    mapImageNaturalWidth: null,
+    mapImageNaturalHeight: null,
+    mapAiImagePrompt: null,
+  };
   const [mapConfig, setMapConfig] = useState(DEFAULT_MAP_CONFIG);
   /** Parallel battle maps + shared active map id (from `table_state`; derived `mapConfig` matches active map). */
   const [maps, setMaps] = useState([]);

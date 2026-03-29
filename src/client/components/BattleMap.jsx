@@ -43,11 +43,13 @@ import {
   Circle,
   Pipette,
   Plus,
+  Sparkles,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
-import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID } from '../lib/api.js';
+import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
+import { MapAiImageDialog } from './MapAiImageDialog.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -645,8 +647,9 @@ function TokenDotRing({ size, groups }) {
 // ─── MapConfigToolbar ────────────────────────────────────────────────────────
 
 function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable }) {
-  const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl } = mapConfig ?? {};
+  const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl, mapAiImagePrompt } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
+  const [aiMapOpen, setAiMapOpen] = useState(false);
   const fileInputRef = useRef(null);
   const isNewTable = tableName === '' || tableName === 'New Table';
   const [isEditingName, setIsEditingName] = useState(false);
@@ -769,11 +772,38 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
           />
         </label>
 
+        {imageGenEnabled ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setAiMapOpen(true)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40 transition-colors"
+              title="Generate map image with AI (Hugging Face)"
+            >
+              <Sparkles size={12} />
+              Generate with AI
+            </button>
+            <MapAiImageDialog
+              open={aiMapOpen}
+              onClose={() => setAiMapOpen(false)}
+              mapSizeFt={mapSizeFt}
+              mapImageUrl={mapImageUrl}
+              savedMapAiImagePrompt={mapAiImagePrompt}
+              onMapConfigChange={onMapConfigChange}
+            />
+          </>
+        ) : null}
+
         {mapImageUrl && (
           <button
             className="flex items-center gap-1 px-2 py-1 rounded bg-dh-hover hover:bg-red-900 text-dh-muted hover:text-red-300 transition-colors"
             title="Remove map image"
-            onClick={() => onMapConfigChange({ mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null }, true)}
+            onClick={() =>
+              onMapConfigChange(
+                { mapImageUrl: null, mapImageNaturalWidth: null, mapImageNaturalHeight: null, mapAiImagePrompt: null },
+                true,
+              )
+            }
           >
             <X size={11} /> Remove
           </button>
