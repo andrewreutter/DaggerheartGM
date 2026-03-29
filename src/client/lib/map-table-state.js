@@ -29,6 +29,8 @@ function defaultMapRow(mc, id, name) {
     mapSizeFt: mc.mapSizeFt ?? 100,
     mapImageNaturalWidth: mc.mapImageNaturalWidth ?? null,
     mapImageNaturalHeight: mc.mapImageNaturalHeight ?? null,
+    /** Last AI text-to-image prompt saved with the current map art (for Generate with AI dialog). */
+    mapAiImagePrompt: mc.mapAiImagePrompt ?? null,
     shareWithPlayers: true,
   };
 }
@@ -181,6 +183,7 @@ export function deriveMapConfigFromState(state) {
         mapSizeFt: 100,
         mapImageNaturalWidth: null,
         mapImageNaturalHeight: null,
+        mapAiImagePrompt: null,
         mapViewZoomRatio: null,
         mapViewPanNorm: null,
         mapViewVisibleNorm: null,
@@ -192,6 +195,7 @@ export function deriveMapConfigFromState(state) {
       mapSizeFt: map.mapSizeFt ?? 100,
       mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
       mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
+      mapAiImagePrompt: map.mapAiImagePrompt ?? null,
       mapViewZoomRatio: s.gmMapView.mapViewZoomRatio ?? null,
       mapViewPanNorm: s.gmMapView.mapViewPanNorm ?? null,
       mapViewVisibleNorm: s.gmMapView.mapViewVisibleNorm ?? null,
@@ -200,28 +204,30 @@ export function deriveMapConfigFromState(state) {
   const view = s.mapViews?.find(v => v.id === s.gmActiveViewId) || s.mapViews?.[0];
   const map = (view && s.maps.find(m => m.id === view.mapId)) || s.maps[0];
   if (!map) {
+      return {
+        mapImageUrl: null,
+        mapDimension: 'width',
+        mapSizeFt: 100,
+        mapImageNaturalWidth: null,
+        mapImageNaturalHeight: null,
+        mapAiImagePrompt: null,
+        mapViewZoomRatio: null,
+        mapViewPanNorm: null,
+        mapViewVisibleNorm: null,
+      };
+    }
     return {
-      mapImageUrl: null,
-      mapDimension: 'width',
-      mapSizeFt: 100,
-      mapImageNaturalWidth: null,
-      mapImageNaturalHeight: null,
-      mapViewZoomRatio: null,
-      mapViewPanNorm: null,
-      mapViewVisibleNorm: null,
+      mapImageUrl: map.mapImageUrl ?? null,
+      mapDimension: map.mapDimension ?? 'width',
+      mapSizeFt: map.mapSizeFt ?? 100,
+      mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
+      mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
+      mapAiImagePrompt: map.mapAiImagePrompt ?? null,
+      mapViewZoomRatio: view?.mapViewZoomRatio ?? null,
+      mapViewPanNorm: view?.mapViewPanNorm ?? null,
+      mapViewVisibleNorm: view?.mapViewVisibleNorm ?? null,
     };
   }
-  return {
-    mapImageUrl: map.mapImageUrl ?? null,
-    mapDimension: map.mapDimension ?? 'width',
-    mapSizeFt: map.mapSizeFt ?? 100,
-    mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
-    mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
-    mapViewZoomRatio: view?.mapViewZoomRatio ?? null,
-    mapViewPanNorm: view?.mapViewPanNorm ?? null,
-    mapViewVisibleNorm: view?.mapViewVisibleNorm ?? null,
-  };
-}
 
 /**
  * Map image + default (null) framing for a map id — used for player “map tile” free explore.
@@ -238,6 +244,7 @@ export function deriveMapConfigForMapId(state, mapId) {
     mapSizeFt: map.mapSizeFt ?? 100,
     mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
+    mapAiImagePrompt: map.mapAiImagePrompt ?? null,
     mapViewZoomRatio: null,
     mapViewPanNorm: null,
     mapViewVisibleNorm: null,
@@ -261,6 +268,7 @@ export function deriveMapConfigForViewId(state, viewId) {
     mapSizeFt: map.mapSizeFt ?? 100,
     mapImageNaturalWidth: map.mapImageNaturalWidth ?? null,
     mapImageNaturalHeight: map.mapImageNaturalHeight ?? null,
+    mapAiImagePrompt: map.mapAiImagePrompt ?? null,
     mapViewZoomRatio: view.mapViewZoomRatio ?? null,
     mapViewPanNorm: view.mapViewPanNorm ?? null,
     mapViewVisibleNorm: view.mapViewVisibleNorm ?? null,

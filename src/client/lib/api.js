@@ -829,6 +829,25 @@ export const postMapScribble = async (tableId, payload, isGm) => {
   }
 };
 
+/**
+ * GM: upload a map image file to storage (Supabase) or receive a data URL fallback.
+ * Field name must be `file` (multer). Returns `{ url }`.
+ */
+export const postMapImageFile = async (file) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/room/my/map-image', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+    body: form,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
 export const postActionNotification = async (notification, tableId = null, opts = {}) => {
   const token = await getAuthToken();
   if (!token) return null;
