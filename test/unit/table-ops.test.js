@@ -18,6 +18,7 @@ import {
   formatV2RollDieMutationLine,
   partitionV2BannerChipMutations,
   normalizeV2BannerChipMutations,
+  stripV2BannerAuxiliaryMutations,
 } from '../../src/client/lib/table-ops.js';
 import { computeArmorModifiers, getEffectiveWeaponRange } from '../../src/client/lib/character-calc.js';
 import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../src/features-v2/engine/feature-scope-keys.js';
@@ -1331,6 +1332,48 @@ describe('applyV2BannerMutations', () => {
     expect(byId['c-tgt'].v2MoveLockRollDbId).toBe(42);
     expect(byId['c-tgt'].v2MoveLockSource).toBe('Kick: pending map position');
   });
+
+  it('applies spendFear to GM pool when opts.fearCount is set', () => {
+    const activeElements = [{ instanceId: 'a1', elementType: 'adversary' }];
+    const { updates, skipped, fearCountNext } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'spendFear', payload: { amount: 2 } }],
+      'a1',
+      { fearCount: 5 }
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates).toHaveLength(0);
+    expect(fearCountNext).toBe(3);
+  });
+
+  it('skips spendFear when opts.fearCount is omitted', () => {
+    const activeElements = [{ instanceId: 'a1', elementType: 'adversary' }];
+    const { skipped, fearCountNext } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'spendFear', payload: { amount: 2 } }],
+      'a1'
+    );
+    expect(skipped.some((s) => s.type === 'spendFear')).toBe(true);
+    expect(fearCountNext).toBeUndefined();
+  });
+
+  it('applies gainFear when opts.fearCount is set (capped at 12)', () => {
+    const activeElements = [{ instanceId: 'a1', elementType: 'adversary' }];
+    const { fearCountNext } = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'gainFear', payload: { amount: 2 } }],
+      'a1',
+      { fearCount: 5 }
+    );
+    expect(fearCountNext).toBe(7);
+    const capped = applyV2BannerMutations(
+      activeElements,
+      [{ type: 'gainFear', payload: { amount: 20 } }],
+      'a1',
+      { fearCount: 5 }
+    );
+    expect(capped.fearCountNext).toBe(12);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1604,6 +1647,25 @@ describe('rest cycle activeModifiers clearing', () => {
     const modMissingRefresh = { id: 'legacy', type: 'evasion', value: 2 };
     const kept = [modMissingRefresh].filter((m) => !cyclesToClear.includes(m.refreshOn));
     expect(kept).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('stripV2BannerAuxiliaryMutations', () => {
+  it('pulls sheetActionRoll and actionLoop into side arrays', () => {
+    const mutations = [
+      { type: 'sheetActionRoll', payload: { rollText: '  [1d10] ', displayName: 'X', rollMeta: { a: 1 } } },
+      { type: 'actionLoop', payload: { instanceId: 'adv-1', title: 'Hazard', description: 'Note' } },
+      { type: 'markStress', payload: { instanceId: 'c1', amount: 1 } },
+    ];
+    const { rest, sheetActionRolls, actionLoops } = stripV2BannerAuxiliaryMutations(mutations);
+    expect(rest).toHaveLength(1);
+    expect(rest[0].type).toBe('markStress');
+    expect(sheetActionRolls).toEqual([
+      { rollText: '[1d10]', displayName: 'X', rollMeta: { a: 1 } },
+    ]);
+    expect(actionLoops[0].title).toBe('Hazard');
   });
 });
 

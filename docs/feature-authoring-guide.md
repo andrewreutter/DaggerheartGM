@@ -76,7 +76,7 @@ export const DanceTheTango = {
   
   // These properties configure the Default Card Action:
   hopeCost: 1,
-  frequency: 'session', // Can be 'session', 'shortRest', 'longRest', or 'rest' (both)
+  frequency: 'session', // Can be 'session', 'scene', 'shortRest', 'longRest', or 'rest' (both)
   
   onUse: (table) => {
     // We will cover the `table` object and hooks later!
@@ -133,7 +133,7 @@ Often, you only want a declarative behavior (or a hook, or a chip) to apply unde
 The engine will evaluate the condition using the Game Table Snapshot (which we'll cover next) and unwrap the value only if the condition is true.
 
 ```javascript
-import { when } from '../feature-utils';
+import { when } from '../engine/when.js';
 
 export const SmoothTalker = {
   name: "Smooth Talker",
@@ -148,7 +148,7 @@ export const SmoothTalker = {
 Because checking "is the character who owns this feature the one currently acting?" or "are they the target of this action?" is so common, `when()` accepts multiple condition functions and requires *all* of them to be true. We also provide built-in helpers for common checks:
 
 ```javascript
-import { when, isActing, isTargeted, hasDamage, hasPhysicalDamage } from '../feature-utils';
+import { when, isActing, isTargeted, hasDamage, hasPhysicalDamage } from '../engine/when.js';
 
 export const Retaliate = {
   // ...
@@ -174,23 +174,115 @@ export const Retaliate = {
 }
 ```
 
-**Built-in predicates:**
+**Import:** Predicates and `when` live in `src/features-v2/engine/when.js`. From a typical feature file use a relative path such as `../engine/when.js` or `../../engine/when.js` (same as other features in the repo).
 
+**How `when()` combines predicates:** `when(a, b, value)` unwraps `value` only when **both** `a(table)` and `b(table)` are truthy. Order does not change semantics, but readability matters.
 
-| Predicate              | True when...                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| `isActing`             | The feature's owner is the one currently acting                                |
-| `isTargeted`           | The feature's owner is one of the action's targets                             |
-| `armorUseCommitted`    | The owner committed to use armor on this hit (`useArmorByTargetId` / `useArmor` on damage effects; §C.3) |
-| `hasDamage`            | There is a pending damage effect targeting the feature's owner with amount > 0 |
-| `hasPhysicalDamage`    | Same as `hasDamage`, but only for `damageType: 'physical'`                     |
-| `isWithinFarRangeOfMe(table, otherActor)` | `table.me.rangeFrom(otherActor)` is a band other than `veryFar` (distance ≤ 100') |
-| `isPrayerDicePoolNonEmpty` | Seraph **Prayer Dice**: at least one die remains in `table.me.prayerDice.pool` |
-| `hasPrayerDiceAidableDamage` | Pending `{ type: 'damage' }` to you or to an ally PC within Far range (Seraph) |
-| `prayerDiceAidRollEligible` | An action or damage roll is in progress and the actor is you or an ally PC within Far range |
+**Avoid redundant guards (especially on-hit damage tiers):**
 
+- **`youSucceedOnAnAttack`** — Prefer when the text is **“successful attack”** (or equivalent) and the mechanic does **not** depend on **Minor / Major / Severe** tier. It only checks that the attack roll succeeded; it does **not** read pending HP tiers.
+- **`youDealMinorDamage` / `youDealMajorDamage` / `youDealSevereDamage`** each already require **`youAreTheActor`** (you are `table.action.actor`). Prefer these when the rider cares about **outgoing threshold tier** after resolution. In the normal Game Table flow, pending `{ stat: 'currentHP' }` on the **primary target** at **`reviewOutcome`** is hydrated after a hit is resolved, so these predicates usually **subsume** **`youSucceedOnAnAttack`** for **tier-shaped** on-hit reactions—do not stack both unless you have an unusual synthetic case.
+- **`youDeal*`** does **not** require `table.action.type === 'attack'**. Add `(table) => table.action?.type === 'attack'` if the SRD must exclude non-attack damage that still produces HP effects.
+- **`anAttackSucceeds`** is from the **defender’s** perspective (any successful attack in context). Pair with **`againstYou`** / **`isTargeted`**, not with **`youDeal*`**.
+- **`youTakeMinorDamage` / `youTakeMajorDamage` / `youTakeSevereDamage`** are for **incoming** HP loss to you. They do **not** assert you were targeted—compose **`when(isTargeted, youTakeSevereDamage, …)`** when the text means a hit *against you*.
 
 ---
+
+#### Built-in `when()` predicate helpers
+
+Use these as the first arguments to `when(...)`. For one-off rules, use an inline `(table) => boolean` instead.
+
+**Actor and action role**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `isActing` | The feature owner has the Spotlight / is the current actor in the action loop. |
+| `youAreTheActor` | You need “you” as **`table.action.actor`** without requiring attack vs trait (e.g. shared with non-attack actions). |
+
+**Spellcast rolls**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `makeASpellcastRoll` | The current action is a **Spellcast Roll** (`action.type === 'spellcast'`) and the rolled trait matches `table.me.spellcastTrait`. (Plain trait rolls stay `type === 'trait'` even when using the spellcast trait.) |
+| `actingOnASpellcastRollForMe` | **`isActing` && `makeASpellcastRoll`** — e.g. domain effects that only apply on your spellcast roll. |
+
+**Targeting (defender)**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `isTargeted` | The feature owner is in **`table.action.targets`**. |
+| `againstYou` | Same as **`isTargeted`** — use whichever reads closer to SRD wording (“against you”). |
+
+**Attack roll outcome**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `anAttackSucceeds` | **`action.type === 'attack'`** and the action roll succeeded — for **defender** reactions (“when an attack succeeds…”). Combine with **`againstYou`**. |
+| `youSucceedOnAnAttack` | **You** are the attacker and the attack roll succeeded (“when you succeed on an attack…”). For **on-hit tier effects** after damage is resolved, prefer **`youDeal*`** below to avoid double guards. |
+| `youFailOnAnAttack` | You are the attacker and the attack roll did not succeed (“when you fail an attack…”). |
+
+**Map range (attacker vs primary target)**
+
+These use **`table.action.actor`** and **`table.action.target`** and map positions (`attacker.rangeFrom(target)`). **`within*`** means that band **or any closer** band (e.g. **Within Close** includes Melee, Very Close, and Close). **`In*`** means **exactly** that band. If tokens are off-map, these are false unless you add a local OR with extra bridge metadata.
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `againstATargetInMeleeRange` | Primary target is exactly **Melee**. |
+| `againstATargetWithinMeleeRange` | Same as In Melee (nothing is closer than Melee). |
+| `againstATargetInVeryCloseRange` / `againstATargetWithinVeryCloseRange` | **Very Close** exactly, or that band and closer. |
+| `againstATargetInCloseRange` / `againstATargetWithinCloseRange` | **Close** exactly, or **Within Close**. |
+| `againstATargetInFarRange` / `againstATargetWithinFarRange` | **Far** exactly, or **Within Far**. |
+| `againstATargetInVeryFarRange` | Exactly **Very Far**. |
+| `againstATargetWithinVeryFarRange` | Any resolved in-map band (up to Very Far maximum). |
+
+**Lower-level range helpers (custom predicates):** `attackerAndTargetAreInRangeBand(attacker, target, band)` and `attackerAndTargetAreWithinRangeBand(attacker, target, band)` — same **In** vs **Within** semantics; **`RANGE_BAND_ORDER`** / **`rangeBandIndex`** match engine band ordering. For **`onUse`** on adversary or character modules, prefer **`actor.isWithinRangeBandOf(target, band)`** on the snapshot actor when the docs allow it.
+
+**Pending damage lines (`{ type: 'damage' }`)**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `hasDamage` | Pending damage to **you** with amount **> 0**. |
+| `hasPhysicalDamage` | Same, with **`damageType: 'physical'`**. |
+| `hasMagicDamage` | Same, with **`damageType: 'magic'`**. |
+| `armorUseCommitted` | You committed armor on this hit (**`useArmorByTargetId`** / **`useArmor`** on damage effects — see §C.3). |
+
+**Outgoing HP threshold (you deal — attacker, primary target)**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `youDealMinorDamage` | You are the actor and the primary target has pending **Minor** tier HP loss (marks/tiers from the bridge). |
+| `youDealMajorDamage` | Same for **Major**. |
+| `youDealSevereDamage` | Same for **Severe**. |
+
+**Incoming HP threshold (you take — defender)**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `youTakeMinorDamage` | Pending **Minor** `{ stat: 'currentHP' }` to **you**. |
+| `youTakeMajorDamage` | Pending **Major** to **you**. |
+| `youTakeSevereDamage` | Pending **Severe** to **you**. |
+
+**Seraph (Prayer Dice)**
+
+| Predicate | Use when… |
+| --------- | --------- |
+| `isPrayerDicePoolNonEmpty` | At least one die remains in **`table.me.prayerDice.pool`**. |
+| `isWithinFarRangeOfMe(table, otherActor)` | **`table.me.rangeFrom(otherActor)`** is not **`veryFar`** (distance ≤ 100'). |
+| `hasPrayerDiceAidableDamage` | Pending damage to you **or** to an ally PC within Far range (aid targets). |
+| `prayerDiceAidRollEligible` | An action or damage roll is in progress and the actor is you or a Far-range ally PC. |
+
+**Advanced / composition**
+
+| Helper | Use when… |
+| ------ | --------- |
+| `pendingHpLossToPrimaryTargetEffect(table)` | You need the raw pending **`{ stat: 'currentHP' }`** effect on the primary target for custom logic. |
+| `isMinorPendingHpLossEffect` / `isMajorPendingHpLossEffect` / `isSeverePendingHpLossEffect` | Classifying a single pending HP effect object (tests / custom predicates). |
+| `effectTargetsMe(e, table)` | A given **`{ stat: 'currentHP' }`** effect applies to **you**. |
+| `unwrap` / `unwrapAll` / `unwrapTopLevelWhenChain` | Engine and occasional feature code that must resolve **`when()`** wrappers manually; most declarative fields are unwrapped for you. |
+
+---
+
+
 
 ## 2. The Game Table Snapshot
 
@@ -306,7 +398,7 @@ A Chip is an object that tells the engine:
 Because phase-based chips (like those that interrupt a roll) usually only matter when the character who owns the feature is the one acting, you will frequently wrap them in a `when(isActing, ...)` condition.
 
 ```javascript
-import { when, isActing } from '../feature-utils';
+import { when, isActing } from '../engine/when.js';
 
 export const FelineInstincts = {
   name: "Feline Instincts",
@@ -341,7 +433,7 @@ The `placements` array tells the engine where in the UI (and when in the Action 
 Chips can define their own resource costs and reset cycles. When a user clicks a chip, the engine automatically deducts the cost and marks the cycle as used.
 
 ```javascript
-import { when, isActing } from '../feature-utils';
+import { when, isActing } from '../engine/when.js';
 
 export const ChargeUp = {
   name: "Charge Up",
@@ -621,7 +713,7 @@ Instead, use the **chip-gates-hook** pattern: define a toggle chip with **no `on
 This dramatically simplifies features that gate a damage modification behind a player choice:
 
 ```javascript
-import { when, isTargeted, hasPhysicalDamage } from '../feature-utils';
+import { when, isTargeted, hasPhysicalDamage } from '../engine/when.js';
 
 export const IncreasedFortitude = {
   name: "Increased Fortitude",
@@ -991,7 +1083,7 @@ When these properties are defined on a chip, the engine automatically handles de
 - `stressCost` *(number | `(table) => number`)*: Amount of Stress to mark. Can be a function evaluated at deduction time.
 - `armorMark` *(number | `(table) => number`)*: Number of Armor slots to mark. Can be a function evaluated at deduction time.
 - `armorClear` *(number | `(table) => number`)*: Number of Armor slots to clear. Can be a function evaluated at deduction time.
-- `frequency` *(string)*: Limits how often the chip can be used. Valid values: `'session'`, `'shortRest'`, `'longRest'`, or `'rest'` (resets on both short and long rests).
+- `frequency` *(string)*: Limits how often the chip can be used. Valid values: `'session'`, `'scene'`, `'shortRest'`, `'longRest'`, or `'rest'` (resets on both short and long rests). **`'scene'`** is independent of play **session**: the GM resets it with **Start Scene** in the Encounter panel (clears `element.featureUsage` entries whose `cycle` is `'scene'` for all characters and adversaries on the table). **`'session'`** resets when the GM runs **Start Session** (acknowledge banner).
 - `frequencyMaxUses` *(number | `(table) => number`, optional)*: How many times this chip may be used per frequency cycle (default **1**). Use when a rule grants multiple uses per session/rest (e.g. **Reliable Backup** and **Contacts Everywhere**).
 - `temporaryStatMods` *(object)*: A declarative object of stat boosts to apply for the duration of the current action loop when this chip is used. Each value can be a static number (e.g., `{ evasion: 2 }`) or a function `(table) => number` for dynamic boosts (e.g., `{ evasion: (table) => table.me?.armor ?? 0 }`). Function values are resolved at activation time and cached so toggle-off removes the same amount.
 
@@ -1040,12 +1132,70 @@ Contains global information about the game table.
 
 Entities on the board (Characters and Adversaries) share a common Actor API. `table.me` always refers to the Actor that owns the feature currently executing. **`table.action.actor`** is whoever initiated the current Action Loop — use it when an effect should apply to **that** character’s roll (e.g. Bard **Rally** **Spend Rally Die — Action** / **Spend Rally Die — Damage**: two **`reviewAction`** chips; `when()` checks **`table.feature.get('partyDice')`**, **`table.action.actor`**, and either **`table.rolls.action`** or **`table.rolls.damage`**; **`onUse`** updates **`partyDice`** on spend, not **`table.me`**).
 
+#### C.2.0 Actor, Character, and Adversary APIs (overview)
+
+Implementation lives in **`src/features-v2/engine/table.js`** (`buildActor`, `buildActionContext`, `buildTableSnapshot`). This subsection is the map authors use most often; the bullets under **Read Properties** / **Write Methods** below are the full list.
+
+**Roles**
+
+- **`table.me`** — the feature owner (the Actor for the feature row being evaluated). Set via **`gameState._ownerInstanceId`** when the engine builds the snapshot.
+- **`table.action.actor`** — whoever started the **current** action loop (attacker, caster, etc.). Compare to **`table.me`** when the rule cares about “you” vs “the person rolling.”
+- **`table.action.target`** / **`table.action.targets`** — primary target and full target list as **Actor** objects (same shape as **`table.me`**).
+- Branch with **`actor.isCharacter`** / **`actor.isAdversary`** when mechanics differ (e.g. Difficulty vs traits).
+
+**Targeting (not a field on Actor)**
+
+There is **no** `table.me.isTargeted` property. Use the **`isTargeted`** or **`againstYou`** predicates from **`src/features-v2/engine/when.js`** in **`when(...)`**, or inline:
+
+```javascript
+table.action?.targets?.some((t) => t?.instanceId === table.me?.instanceId)
+```
+
+See **`when.js`** for related predicates (**`youSucceedOnAnAttack`**, **`youTakeSevereDamage`**, **`anAttackSucceeds`**, etc.) and their composition rules (module docblock at top of **`when.js`**).
+
+**Range (map bands)**
+
+Distance uses the same **nearest-edge** model as the Game Table (**`src/client/lib/map-range.js`**, **`tokenDistanceFt`**): standard **5×5'** tokens (**2.5'** half-width). Bands from **`actor.rangeFrom(otherActor)`** (and **`rangeFromTarget`** / **`lastPosition.rangeFrom`**) are:
+
+| Band | Max distance |
+|------|----------------|
+| `melee` | 5' |
+| `veryClose` | 10' |
+| `close` | 30' |
+| `far` | 100' |
+| `veryFar` | 300' |
+
+- **`null`** — one or both tokens are off-map or coordinates missing; treat as **not** in range for conservative automation.
+- **`tokenX` / `tokenY`** *(numbers | null)* — raw map feet (token top-left); prefer **`rangeFrom`** for rules text.
+- **`actor.rangeFrom(other)`** — band from this actor to another **Actor** (any combination of PC / adversary).
+- **`actor.rangeFromTarget`** — band from this actor to **`table.action`**’s first target (same strings or `null`).
+- **`actor.isWithinRangeBandOf(other, maxBand)`** — `true` when the distance is **at most** `maxBand` (that band or any **closer** band). Prefer this inside **`onUse`** / feature modules instead of importing **`attackerAndTargetAreWithinRangeBand`** from **`when.js`**.
+- **`actor.lastPosition`** — previous token position after a **`move`**; exposes **`rangeFrom`** / **`rangeFromTarget`** from that point (e.g. “moved from Far into Melee”).
+- **`src/features-v2/engine/when.js`** exports **`RANGE_BAND_ORDER`**, **`rangeBandIndex`**, and **`attackerAndTargetAreWithinRangeBand`** / **`attackerAndTargetAreInRangeBand`** for predicates and tests.
+
+**Spatial filters:** Use **`table.adversaries`**, **`table.characters`**, or **`table.actors`** (see **C.5**) with **`table.me.rangeFrom(actor)`**. Trait rolls without a target have no **`rangeFromTarget`** — filter the board explicitly (example under **`table.action.type`** in **C.3**).
+
+**Armor: slots vs Armor Score vs mutations**
+
+- **`armor` / `maxArmor`** — **armor slot** pool (unmarked vs total). **`markArmor(n)`** / **`clearArmor(n)`** queue slot changes.
+- **`armorScore`** — static **Armor Score** from gear (damage reduction rules, e.g. Warded); not the same as slot counts.
+- **`substituteArmorForHope`** — when true, **`table.me.spendHope(amount, { armorInstead: true })`** (or **`payWithArmorSlot: true`**) queues **`markArmor`** instead of Hope (throws if not allowed or not enough slots).
+- **`table.action.redeemSelfPendingStressWithArmorMarks()`** — **reviewOutcome** helper: swaps pending Stress on **you** for **`markArmor`** (Grace-Touched pattern); see **C.3**.
+- Banner / VTT: **`table.action.useArmorByTargetId`** and per-effect **`useArmor`** — see **C.3** (armor commitment).
+
+**Character-only (typical)**
+
+`traits`, `proficiency`, `level`, `tier`, `classId`, `subclassId`, `spellcastTrait`, `experiences`, `weapons`, `primaryWeapon` / `secondaryWeapon`, `inventory`, **`loadout`**, **`domainLoadout`** / **`domainVault`**, **`prayerDice`**, Tag Team getters, **`companion`**, **`activeModifiers`**, beastform getters (**`inBeastform`**, etc.), Ranger Focus fields on the **character** element, **`refreshExhaustedFeature`**, and most sheet/economy writes. **`applyStatMod('difficulty', …)`** throws on characters — use **`difficulty`** / **`effectiveDifficulty`** on **adversaries** only.
+
+**Adversary-only (typical)**
+
+**`difficulty`**, **`difficultyMod`**, **`effectiveDifficulty`** (reaction DCs vs the stat block), **`focusedBy`**, **`setFocusedBy`**. Attacks use **`table.rolls.action.gmDie`**, not Hope/Fear.
+
 **Read Properties:**
 
 - `name` *(string)*: The actor's name.
 - `isCharacter` / `isAdversary` *(boolean)*: Entity type flags.
 - `isActing` *(boolean)*: True if this actor initiated the current Action Loop.
-- `isTargeted` *(boolean)*: True if this actor is one of the targets of the current Action Loop.
 - `currentHP`, `maxHP`, `currentStress`, `maxStress`, `hope`, `armor`, `maxArmor` *(numbers)*: Current resource values. `armor` is the number of currently available (unmarked) armor slots; `maxArmor` is the total number of slots.
 - `armorScore` *(number)*: Static Armor Score from equipped armor (used for rules that reduce damage by “your Armor Score,” e.g. Warded). Distinct from slot counts `armor` / `maxArmor`. Defaults to `0` when not set on the element.
 - `substituteArmorForHope` *(boolean)*: When true, this actor may pay Hope costs by marking armor slots (`spendHope` with `{ armorInstead: true }`). Populated from declarative feature data via `applyDeclarativeFeatures` → merge onto the element (not by hardcoding SRD names in the engine).
@@ -1126,6 +1276,9 @@ Entities on the board (Characters and Adversaries) share a common Actor API. `ta
 - `spendHope(amount, opts?)`, `gainHope(amount)` — optional second argument `{ armorInstead: true }` or `{ payWithArmorSlot: true }` marks armor slots instead of spending Hope when `substituteArmorForHope` is true on the element and slots are available (throws otherwise); see **Armor-for-Hope substitution** under Resource Costs above.
 - `markArmor(amount)`, `clearArmor(amount)`
 - `addCondition(conditionName)`, `removeCondition(conditionName)`
+- `spendGold(amount)`: Queues **`spendGold`** — deducts from this actor’s **`gold`** (base‑9 inventory handfuls on PCs). Meaningful for **characters** with a **`gold`** field; host applies the mutation.
+- `refreshExhaustedFeature(featureKey)`: **Characters** — queues **`clearFeatureUsageKey`** so a once/session or once/rest **`featureUsage`** entry can fire again (same key as on the element).
+- `addRestAction()`: Queues **`addRestAction`** — extra downtime move for rest flows when the rules grant one.
 - `addExperienceBonus(experienceId, amount)`: Queues a permanent +`amount` bonus to the experience with the given id. Typically called from a `create`-phase `isSelect` chip's `onUse` when the player makes their selection.
 - `actionLoop(title, description, opts?)`: Triggers a brand new Action Loop (useful for features that grant free attacks or actions). Optional `opts` fields:
   - `trait` *(string)*: The trait name to roll (e.g. `'Instinct'`). When provided, the engine scopes the roll to that trait.
@@ -1429,7 +1582,7 @@ const anyMaxD8 = damageDice.some(d => d.die === 'd8' && d.value === 8);
 
 #### C.5 Board Queries (`table.actors`, `table.characters`, `table.adversaries`, `table.environments`)
 
-Arrays containing all entities and environments currently on the game table. Useful for features that affect allies or enemies in an area, or interact with the environment.
+Arrays containing all entities and environments currently on the game table. Useful for features that affect allies or enemies in an area, or interact with the environment. Combine with **`actor.rangeFrom(other)`** and **`isWithinRangeBandOf`** — see **C.2.0** (range) and the spatial trait-roll example in **C.3**.
 
 #### C.6 Local State (`table.feature` and `chip`)
 

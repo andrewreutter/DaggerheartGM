@@ -80,7 +80,7 @@ export function resolveChipDisabled(chip, table) {
 export function canPayChipCosts(chip, table) {
   if (!chip || typeof chip !== 'object') return true;
   const me = table?.me;
-  if (!me || me.isCharacter !== true) return true;
+  if (!me) return true;
 
   const resolve = (v) => (typeof v === 'function' ? v(table) : v);
   const n = (key) => {
@@ -89,6 +89,24 @@ export function canPayChipCosts(chip, table) {
     const num = Number(raw);
     return Number.isFinite(num) ? Math.max(0, num) : 0;
   };
+
+  /** Adversaries: Fear pool + Stress; no Hope/Armor self-costs on the creature. */
+  if (me.isAdversary === true) {
+    const fearCost = n('fearCost');
+    if (fearCost > 0) {
+      const pool = table?.top?.fear ?? 0;
+      if (pool < fearCost) return false;
+    }
+    const stressCost = n('stressCost');
+    if (stressCost > 0) {
+      const cur = me.currentStress ?? 0;
+      const maxS = me.maxStress;
+      if (maxS != null && maxS - cur < stressCost) return false;
+    }
+    return true;
+  }
+
+  if (me.isCharacter !== true) return true;
 
   const hopeCost = n('hopeCost');
   if (hopeCost > 0) {
@@ -136,7 +154,7 @@ export function canPayChipCosts(chip, table) {
 export function describeChipResourceBlock(chip, table) {
   if (!chip || typeof chip !== 'object') return null;
   const me = table?.me;
-  if (!me || me.isCharacter !== true) return null;
+  if (!me) return null;
 
   const resolve = (v) => (typeof v === 'function' ? v(table) : v);
   const n = (key) => {
@@ -147,6 +165,25 @@ export function describeChipResourceBlock(chip, table) {
   };
 
   const parts = [];
+
+  if (me.isAdversary === true) {
+    const fearCost = n('fearCost');
+    if (fearCost > 0) {
+      const pool = table?.top?.fear ?? 0;
+      if (pool < fearCost) parts.push(`Need ${fearCost} Fear (have ${pool}).`);
+    }
+    const stressCost = n('stressCost');
+    if (stressCost > 0) {
+      const cur = me.currentStress ?? 0;
+      const maxS = me.maxStress;
+      if (maxS != null && maxS - cur < stressCost) {
+        parts.push(`Need ${stressCost} free Stress box${stressCost === 1 ? '' : 'es'} (${maxS - cur} free).`);
+      }
+    }
+    return parts.length ? parts.join(' ') : null;
+  }
+
+  if (me.isCharacter !== true) return null;
 
   const hopeCost = n('hopeCost');
   if (hopeCost > 0) {
@@ -684,7 +721,7 @@ export function activateChip(chip, table, chipState = makeChipState(), selectOpt
 
 /**
  * Queue resource-cost mutations for the chip's defined costs.
- * Respects hopeCost, stressCost, armorMark, armorClear.
+ * Respects hopeCost, fearCost (adversary + `table.top` Fear pool), stressCost, armorMark, armorClear.
  *
  * Each cost property can be a static number OR a function `(table) => number`.
  * Functions are evaluated at deduction time so that costs can depend on runtime
@@ -704,10 +741,19 @@ export function deductChipCosts(chip, table, costOpts = {}) {
   const resolve = (v) => (typeof v === 'function' ? v(table) : v);
 
   const hopeCost = resolve(chip.hopeCost);
+  const fearCost = resolve(chip.fearCost);
   const stressCost = resolve(chip.stressCost);
   const goldCost = resolve(chip.goldCost);
   const armorMark = resolve(chip.armorMark);
   const armorClear = resolve(chip.armorClear);
+
+  if (table.me.isAdversary === true) {
+    const fc = Number(fearCost);
+    if (fc > 0) table.top.spendFear(fc);
+    const sc = Number(stressCost);
+    if (sc > 0) table.me.markStress(sc);
+    return;
+  }
 
   if (hopeCost) {
     const wantsArmor = costOpts?.armorInsteadOfHope === true;
@@ -729,15 +775,17 @@ export function deductChipCosts(chip, table, costOpts = {}) {
 
 /**
  * Map V2 chip `frequency` / `resetsOn` values to **`element.featureUsage[key].cycle`**
- * (`'session' | 'rest' | 'longRest'`) so Start Session / Short Rest / Long Rest clears
+ * (`'session' | 'scene' | 'rest' | 'longRest'`) so Start Session / Start Scene / rests
  * in `GMTableView` match engine semantics (`shortRest` → short-rest bucket `rest`).
+ * Unknown strings return `null` (no persisted usage cycle).
  *
  * @param {unknown} freq
- * @returns {'session'|'rest'|'longRest'|null}
+ * @returns {'session'|'scene'|'rest'|'longRest'|null}
  */
 export function mapV2ChipFrequencyToFeatureUsageCycle(freq) {
   if (freq == null || freq === '') return null;
   if (freq === 'session') return 'session';
+  if (freq === 'scene') return 'scene';
   if (freq === 'longRest') return 'longRest';
   if (freq === 'shortRest' || freq === 'rest') return 'rest';
   return null;
@@ -745,7 +793,7 @@ export function mapV2ChipFrequencyToFeatureUsageCycle(freq) {
 
 /**
  * @param {object|null|undefined} chip — resolved engine chip (may have `frequency` and/or `resetsOn`)
- * @returns {'session'|'rest'|'longRest'|null}
+ * @returns {'session'|'scene'|'rest'|'longRest'|null}
  */
 export function getFeatureUsageCycleForV2Chip(chip) {
   if (!chip || typeof chip !== 'object') return null;
@@ -773,7 +821,7 @@ function getFrequencyUsedCount(entry) {
  * still available before incrementing.
  *
  * @param {string} chipKey       — stable key for the chip
- * @param {string} frequency     — 'session' | 'shortRest' | 'longRest' | 'rest'
+ * @param {string} frequency     — 'session' | 'scene' | 'shortRest' | 'longRest' | 'rest'
  * @param {object} usageStore    — mutable object: { [chipKey]: { used?, cycle, count? } }
  * @param {number} [maxUses]     — max uses per cycle (default 1). When >1, `count` tracks consumption.
  * @returns {boolean} wasAvailable
@@ -790,7 +838,7 @@ export function trackChipFrequency(chipKey, frequency, usageStore, maxUses = 1) 
 /**
  * Reset all chips matching the given frequency cycle.
  *
- * @param {'session'|'shortRest'|'longRest'|'rest'} cycle
+ * @param {'session'|'scene'|'shortRest'|'longRest'|'rest'} cycle
  * @param {object} usageStore
  */
 export function resetChipFrequency(cycle, usageStore) {
@@ -872,6 +920,7 @@ export function buildChipsForFeature(feature) {
   // Root-level default card action shortcut
   const hasDefaultAction =
     feature.hopeCost !== undefined ||
+    feature.fearCost !== undefined ||
     feature.stressCost !== undefined ||
     feature.goldCost !== undefined ||
     feature.armorMark !== undefined ||
@@ -888,6 +937,7 @@ export function buildChipsForFeature(feature) {
         description: feature.description,
         placements: ['card'],
         hopeCost: feature.hopeCost,
+        fearCost: feature.fearCost,
         stressCost: feature.stressCost,
         goldCost: feature.goldCost,
         armorMark: feature.armorMark,

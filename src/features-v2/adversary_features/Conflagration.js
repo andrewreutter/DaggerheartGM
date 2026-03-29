@@ -5,9 +5,9 @@
  * TODO ACTION [FEAR_SPEND]: GM spends Fear — wire to Fear track + spotlight/ability costs (per SRD line).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const Conflagration = {
   name: "Conflagration",
   type: 'action',
   description: "**Spend a Fear** to unleash an all-consuming firestorm and make an attack against all targets within Close range. Targets the Sorcerer succeeds against take **2d10+6** direct magic damage.",
-  adversaryAuraReminder: "Close — .",
 };

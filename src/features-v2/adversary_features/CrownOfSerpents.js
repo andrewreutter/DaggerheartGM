@@ -5,9 +5,9 @@
  * TODO ACTION [RESOURCE]: Adversary Stress mark for movement/ability (per SRD).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const CrownOfSerpents = {
   name: "Crown of Serpents",
   type: 'action',
   description: "Make an attack roll against a target within Melee range using the Gorgon's protective snakes. On a success, **mark a Stress** to deal **2d10+4** physical damage and the target must mark a Stress.",
-  adversaryAuraReminder: "Melee — using the Gorgon's protective snakes.",
 };

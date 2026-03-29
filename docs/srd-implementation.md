@@ -51,7 +51,7 @@ Coverage is counted by **parsed passive feature name** (same strings as `feature
 - **Display:** Merged V2 rows (`loadAdversaryFeatures` / `mergeAdversaryV2Overlay`) drive `GuideFeatureCard` in the Library (when `srdData` is available) and on the Game Table (merged overlay + `featureState`). Static **damage affinities** (resist / immune / vulnerable) use `damageAffinities` on registry rows where applicable; Horde / Minion / Relentless lines are **text + registry** only in this slice (no Fear-table automation).
 - **Interactive exemplar:** **Terrifying** exposes a card-level **toggle** chip so the GM can persist tracking state under `element.featureState['Terrifying']` (Hope/Fear effects remain manual per SRD).
 - **Parity:** Unit test `adversary registry barrel` asserts each registry key matches its row’s `name`.
-- **TODO tags:** Each passive module’s JSDoc lists `TODO [TAG]: …` for unimplemented mechanics (`TODO_TAGS.md`). Optional: `npm run apply:adv-passive-todos` refreshes JSDoc from `description` (extend `scripts/apply-adversary-passive-todos.mjs` when adding new passives).
+- **TODO tags:** Adversary feature modules may list `TODO <SCOPE> [<TAG>]: …` in JSDoc for planning (`TODO_TAGS.md`); lines are **hand-maintained** (no generator).
 
 ---
 

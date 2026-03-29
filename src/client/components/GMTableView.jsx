@@ -104,7 +104,12 @@ import {
 } from '../lib/v2-action-loop-bridge.js';
 import { buildV2ChipViewer } from '../lib/v2-chip-session-view.js';
 import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
-import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
+import {
+  applyV2BannerMutations,
+  applyV2LifecycleMutations,
+  partitionV2BannerChipMutations,
+  stripV2BannerAuxiliaryMutations,
+} from '../lib/table-ops.js';
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
 import { buildTableSnapshot, applyMutations } from '../../features-v2/engine/table.js';
 import { dispatchSessionEndHooks } from '../../features-v2/engine/action-loop.js';
@@ -1429,6 +1434,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         el: characterEl,
         activeElementsForV2Snapshots: activeElements,
         tableId,
+        fearCount,
         onActionLoopNotification: handleActionNotification,
         isPlayer: isPlayerSession,
       });
@@ -2730,6 +2736,37 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (Object.keys(batchMap).length > 0) {
       sendOp({ op: 'update-elements', updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })) });
     }
+  };
+
+  /** Clear `featureUsage` entries with `cycle === 'scene'` for every element (characters + adversaries). */
+  const runSceneStartClear = () => {
+    const cyclesToClear = ['scene'];
+    const batchMap = {};
+    for (const el of activeElements) {
+      if (!el.featureUsage || typeof el.featureUsage !== 'object') continue;
+      const nextUsage = { ...el.featureUsage };
+      let changed = false;
+      for (const [key, val] of Object.entries(nextUsage)) {
+        if (val && cyclesToClear.includes(val.cycle)) {
+          delete nextUsage[key];
+          changed = true;
+        }
+      }
+      if (changed) batchMap[el.instanceId] = { featureUsage: nextUsage };
+    }
+    if (Object.keys(batchMap).length > 0) {
+      sendOp({ op: 'update-elements', updates: Object.entries(batchMap).map(([instanceId, updates]) => ({ instanceId, updates })) });
+    }
+  };
+
+  const handleStartScene = () => {
+    runSceneStartClear();
+    handleActionNotification({
+      _action: true,
+      rollUser: 'GM',
+      actionName: 'Start Scene',
+      actionText: 'Scene-frequency feature uses reset for all characters and adversaries on the table.',
+    });
   };
 
   // Track previous pendingBanners so removePendingCosts fires for non-initiating clients
@@ -4148,11 +4185,45 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       });
       if (error) return;
 
+      const { rest: mutationsForPartition, sheetActionRolls, actionLoops } =
+        stripV2BannerAuxiliaryMutations(mutations);
+
+      for (const pr of sheetActionRolls) {
+        postRoll(pr.rollText, pr.displayName || chip._featureName || 'GM', tableId, {
+          ...pr.rollMeta,
+          _suppressAncestryFeature: chip._featureName,
+        }).catch((err) => handleRollTransportError(err, 'V2 sheet roll failed:'));
+      }
+      for (const p of actionLoops) {
+        const baseDesc = p.description || '';
+        const actionText =
+          p.affectedSummary && String(p.affectedSummary).trim()
+            ? `${baseDesc}\n${p.affectedSummary}`
+            : baseDesc;
+        postActionNotification({
+          _action: true,
+          rollUser: 'Table',
+          actionName: p.title || chip._featureName || 'V2',
+          actionText,
+          _v2ActionLoop: true,
+          _reactorInstanceId: p.instanceId,
+          ...v2RollDieExtrasFromActionLoopPayload(p),
+          ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+            ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+            : {}),
+        }).catch(() => {});
+      }
+
       const { localMutations, serverFollowups, engineRollDisplayOnly, unsupported } =
-        partitionV2BannerChipMutations(mutations);
-      const { updates, skipped } = applyV2BannerMutations(activeElements, localMutations, chip._ownerInstanceId);
+        partitionV2BannerChipMutations(mutationsForPartition);
+      const { updates, skipped, fearCountNext } = applyV2BannerMutations(activeElements, localMutations, chip._ownerInstanceId, {
+        fearCount,
+      });
       if (updates.length) {
         sendOp({ op: 'update-elements', updates });
+      }
+      if (fearCountNext !== undefined) {
+        sendOp({ op: 'set-fear', fearCount: fearCountNext });
       }
 
       for (const m of localMutations) {
@@ -4273,7 +4344,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
       setV2BannerConsumedOnUseByRollDbId((prev) => recordV2BannerConsumedOnUse(currentBannerId, chip, prev));
     },
-    [isPlayer, activeElements, srdData, fearCount, mapConfig, tableFeatureState, sendOp, tableId]
+    [
+      isPlayer,
+      activeElements,
+      srdData,
+      fearCount,
+      mapConfig,
+      tableFeatureState,
+      sendOp,
+      tableId,
+      postRoll,
+      postActionNotification,
+      handleRollTransportError,
+    ]
   );
 
   const handlePlayerV2ReviewChip = useCallback(
@@ -6052,38 +6135,44 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             )}
           </div>
           {/* Session / Rest cycle buttons */}
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             {sessionPlayAllowed ? (
               <button
                 type="button"
                 title="End Session — pause play mechanics until you start again"
                 onClick={() => { void handleEndSession(); }}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
+                className="flex-1 min-w-[4.5rem] text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
               >■ End</button>
             ) : sessionPaused ? (
               <button
                 type="button"
                 title="Resume Session — table was idle; click to continue play"
                 onClick={() => { void handleResumeSession(); }}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+                className="flex-1 min-w-[4.5rem] text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
               >▶ Resume</button>
             ) : (
               <button
                 type="button"
                 title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
                 onClick={() => handleSessionCycle('session')}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+                className="flex-1 min-w-[4.5rem] text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
               >▶ Session</button>
             )}
             <button
+              type="button"
+              title="Start Scene — reset once-per-scene feature uses for all characters and adversaries"
+              onClick={() => handleStartScene()}
+              className="flex-1 min-w-[4.5rem] text-[10px] font-semibold px-1.5 py-1 rounded border border-amber-800/60 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 hover:border-amber-600 transition-colors"
+            >▣ Scene</button>
+            <button
               title="Short Rest — refresh rest-use features for all characters"
               onClick={() => handleSessionCycle('rest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+              className="flex-1 min-w-[4.5rem] text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
             >⏸ Short</button>
             <button
               title="Long Rest — refresh rest and long-rest features for all characters"
               onClick={() => handleSessionCycle('longRest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
+              className="flex-1 min-w-[4.5rem] text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
             >⏹ Long</button>
           </div>
           {/* Fear tracker */}

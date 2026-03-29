@@ -6,9 +6,9 @@
  * TODO REACTION [AURA]: Range-limited effect on PCs (per SRD).
  * TODO REACTION [TRIGGER]: Reaction window — detect event, optional costs, then resolve (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const BloodInTheWater = {
   name: "Blood in the Water",
   type: 'reaction',
   description: "When a creature within Close range of the Shark marks HP from another creature's attack, you can **mark a Stress** to immediately spotlight the Shark, moving them into Melee range of the target and making a standard attack.",
-  adversaryAuraReminder: "Close — of the Shark marks HP from another creature's attack, you can mark a Stress to immediately spotlight the Shark, moving them into Melee range of the target and making a standard attack.",
 };

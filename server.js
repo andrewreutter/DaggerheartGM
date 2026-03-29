@@ -2994,9 +2994,12 @@ app.post('/api/room/:tableId/v2-cross-sheet-chip', requireAuth, async (req, res)
     if (!computed.ok) {
       return res.status(computed.status).json({ error: computed.error });
     }
-    const { updates, actionLoopNotifications } = computed;
+    const { updates, actionLoopNotifications, fearCountNext } = computed;
     if (updates.length > 0) {
       await applyOpToTableState(tableId, { op: 'update-elements', updates });
+    }
+    if (fearCountNext !== undefined) {
+      await applyOpToTableState(tableId, { op: 'set-fear', fearCount: fearCountNext });
     }
     for (const p of actionLoopNotifications) {
       const baseDesc = p.description || '';

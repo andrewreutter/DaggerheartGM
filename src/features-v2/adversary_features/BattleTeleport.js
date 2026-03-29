@@ -5,9 +5,9 @@
  * TODO PASSIVE [MOVEMENT]: Teleport timing, range, and costs (per SRD).
  * TODO PASSIVE [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const BattleTeleport = {
   name: "Battle Teleport",
   type: 'passive',
   description: "Before or after making a standard attack, you can **mark a Stress** to teleport to a location within Far range.",
-  adversaryAuraReminder: "Far — .",
 };

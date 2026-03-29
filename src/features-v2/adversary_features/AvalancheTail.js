@@ -7,9 +7,9 @@
  * TODO ACTION [CONDITION]: Apply/remove conditions on targets (per SRD).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const AvalancheTail = {
   name: "Avalanche Tail",
   type: 'action',
   description: "**Mark a Stress** to make an attack against all targets within Close range. Targets the Obsidian Predator succeeds against take **4d6+4** physical damage and are knocked back to Far range and _Vulnerable_ until their next roll with Hope.",
-  adversaryAuraReminder: "Close — .",
 };

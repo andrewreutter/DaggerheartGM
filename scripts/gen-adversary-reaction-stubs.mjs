@@ -1,7 +1,6 @@
 /**
  * Creates `src/features-v2/adversary_features/*Reaction.js` (or PascalCase) for each unique
  * SRD reaction feature. `Overwhelm` reaction uses `OverwhelmReaction.js` (passive `Overwhelm.js` exists).
- * Run `node scripts/apply-adversary-feature-todos.mjs` after to fill JSDoc TODOs.
  *
  *   node scripts/gen-adversary-reaction-stubs.mjs
  */
@@ -60,8 +59,6 @@ for (const [name, desc] of [...byName.entries()].sort((a, b) => a[0].localeCompa
   if (existsSync(path)) continue;
   const body = `/**
  * Adversary reaction — ${name} (SRD)
- *
- * TODO REACTION [PLACEHOLDER]: Run scripts/apply-adversary-feature-todos.mjs to expand.
  */
 export const ${exportName} = {
   name: ${JSON.stringify(name)},

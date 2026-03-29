@@ -1,18 +1,20 @@
-import { Sparkles, Zap, Shield, ShieldCheck } from 'lucide-react';
+import { Sparkles, Zap, Shield, ShieldCheck, Ghost } from 'lucide-react';
 
 /**
- * Renders repeated stat icons for Hope, Stress, and armor slot costs (mark / clear),
+ * Renders repeated stat icons for Hope, Fear (GM pool), Stress, and armor slot costs (mark / clear),
  * placed immediately after a feature or chip name.
  */
 export function FeatureResourceCostIcons({ action, iconSize = 10, className = '' }) {
   if (!action) return null;
   const hc = Math.max(0, Number(action.hopeCost) || 0);
+  const fc = Math.max(0, Number(action.fearCost) || 0);
   const sc = Math.max(0, Number(action.stressCost) || 0);
   const am = Math.max(0, Number(action.armorMark) || 0);
   const ac = Math.max(0, Number(action.armorClear) || 0);
-  if (!hc && !sc && !am && !ac) return null;
+  if (!hc && !fc && !sc && !am && !ac) return null;
   const parts = [];
   if (hc) parts.push(`${hc} Hope`);
+  if (fc) parts.push(`${fc} Fear`);
   if (sc) parts.push(`${sc} Stress`);
   if (am) parts.push(`Mark ${am} Armor`);
   if (ac) parts.push(`Clear ${ac} Armor`);
@@ -25,6 +27,9 @@ export function FeatureResourceCostIcons({ action, iconSize = 10, className = ''
     >
       {Array.from({ length: hc }, (_, i) => (
         <Sparkles key={`h-${i}`} size={iconSize} className="text-amber-400" />
+      ))}
+      {Array.from({ length: fc }, (_, i) => (
+        <Ghost key={`f-${i}`} size={iconSize} className="text-violet-400" />
       ))}
       {Array.from({ length: sc }, (_, i) => (
         <Zap key={`s-${i}`} size={iconSize} className="text-orange-400" />

@@ -1,11 +1,12 @@
 # Adversary feature `TODO` reference
 
-Maintenance scripts:
+Bracket tags in JSDoc (`TODO <SCOPE> [<TAG>]: …`) are for **grep and batch planning** only. **Nothing in the repo regenerates these lines** — edit them by hand when implementation status changes.
 
-- **`scripts/apply-adversary-feature-todos.mjs`** — rewrites JSDoc on every module from SRD `description` text (taxonomized lines).
-- **`scripts/gen-adversary-action-stubs.mjs`** / **`scripts/gen-adversary-reaction-stubs.mjs`** — scaffold missing action/reaction files from built SRD JSON (then run the apply script).
-- **`scripts/gen-missing-adversary-feature-stubs.mjs`** — **`npm run gen:missing-adversary-stubs`** — fills gaps: any SRD `name::type` not yet present as a module (the action-stub generator only covered attack/dice-shaped actions). Regenerates `index.js`.
-- **`scripts/gen-adversary-feature-todo-report.mjs`** — writes **`docs/adversary-feature-todo-report.md`**: taxonomy counts, features with zero TODO lines, statblocks where all mapped features are clear, and unmapped SRD feature references. Run **`npm run report:adversary-feature-todos`** whenever you implement or remove adversary-feature TODOs (or change the module set) so the report stays current.
+## Scaffolding (optional)
+
+- **`scripts/gen-adversary-action-stubs.mjs`** / **`scripts/gen-adversary-reaction-stubs.mjs`** — create missing action/reaction modules from built SRD JSON.
+- **`scripts/gen-missing-adversary-feature-stubs.mjs`** — **`npm run gen:missing-adversary-stubs`** — fills any remaining SRD `name::type` gaps; regenerates `index.js`.
+- **`npm run gen:adversary-feature-inventory`** — writes **`src/features-v2/generated/adversary-feature-inventory.json`** (coverage vs SRD).
 
 ## Line format
 

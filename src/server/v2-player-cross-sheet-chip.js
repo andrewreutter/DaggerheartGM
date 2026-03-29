@@ -59,11 +59,12 @@ export function computePlayerV2CrossSheetChipApply(params) {
     return { ok: false, status: 400, error: 'No effect' };
   }
 
-  const { updates, actionLoopNotifications } = applyV2LifecycleMutations(
+  const { updates, actionLoopNotifications, fearCountNext } = applyV2LifecycleMutations(
     activeElements,
     mutations,
-    chip._ownerInstanceId
+    chip._ownerInstanceId,
+    fearCount
   );
 
-  return { ok: true, updates, actionLoopNotifications };
+  return { ok: true, updates, actionLoopNotifications, fearCountNext };
 }

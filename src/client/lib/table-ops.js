@@ -38,7 +38,7 @@ export const CHARACTER_RUNTIME_KEYS = [
   'reinforcedActive',
   'selectedExperienceIndex',  // which experience is selected for the next roll (+2)
   // Feature interaction state
-  'featureUsage',      // { [featureKey]: { used: boolean, cycle: 'session'|'rest'|'longRest' } }
+  'featureUsage',      // { [featureKey]: { used: boolean, cycle: 'session'|'scene'|'rest'|'longRest' } }
   'activeModifiers',   // [{ id, name, dice?, value?, mode?, bonus?, trait?, type, refreshOn }]
   'focusTargetId',     // Ranger's Focus (mirrors focusTargetInstanceId for persisted table rows)
   'focusTargetInstanceId',
@@ -801,11 +801,18 @@ export function accumulateOtherPartyEffectiveNumericDeltas(activeElements, mutat
  * @param {object[]} activeElements
  * @param {string|undefined} ownerInstanceId
  * @param {((canon: string, type: string, delta: number) => void) | null} onOtherPartyNumericDelta
- * @returns {{ skipped: object[], byId: Map<string, object>, modMuts: object[] }}
+ * @param {number|undefined} fearCount — current GM Fear pool (0–12); when set, `spendFear` / `gainFear` mutations apply; otherwise they are skipped
+ * @returns {{ skipped: object[], byId: Map<string, object>, modMuts: object[], fearCountNext?: number }}
  */
-function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onOtherPartyNumericDelta) {
+function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onOtherPartyNumericDelta, fearCount) {
   const skipped = [];
   const byId = new Map();
+  const FEAR_POOL_MAX = 12;
+  const initialFear =
+    typeof fearCount === 'number' && Number.isFinite(fearCount)
+      ? Math.max(0, Math.min(FEAR_POOL_MAX, Math.floor(fearCount)))
+      : null;
+  let workingFear = initialFear;
 
   function resolveCanonicalInstanceId(id) {
     if (id == null || id === '') return null;
@@ -1200,12 +1207,32 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         merge(instanceId, { inventory: inv });
         break;
       }
+      case 'spendFear': {
+        const n = Math.max(0, Math.floor(Number(payload.amount)) || 0);
+        if (workingFear === null || n <= 0) {
+          skip();
+          break;
+        }
+        workingFear = Math.max(0, workingFear - n);
+        break;
+      }
+      case 'gainFear': {
+        const n = Math.max(0, Math.floor(Number(payload.amount)) || 0);
+        if (workingFear === null || n <= 0) {
+          skip();
+          break;
+        }
+        workingFear = Math.min(FEAR_POOL_MAX, workingFear + n);
+        break;
+      }
       default:
         skip();
     }
   }
 
-  return { skipped, byId, modMuts };
+  const fearCountNext =
+    initialFear !== null && workingFear !== initialFear ? workingFear : undefined;
+  return { skipped, byId, modMuts, fearCountNext };
 }
 
 /**
@@ -1215,11 +1242,18 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
  *
  * @param {object[]} activeElements — current table elements (read-only basis; caller merges)
  * @param {object[]} mutations — `{ type, payload }[]`
- * @param {string} ownerInstanceId — feature owner (`chip._ownerInstanceId`) for `setFeatureState` rows
- * @returns {{ updates: { instanceId: string, updates: object }[], skipped: object[] }}
+ * @param {{ fearCount?: number }} [opts] — when `fearCount` is set, `spendFear` / `gainFear` mutations apply to the Fear pool
+ * @returns {{ updates: { instanceId: string, updates: object }[], skipped: object[], fearCountNext?: number }}
  */
-export function applyV2BannerMutations(activeElements, mutations, ownerInstanceId) {
-  const { skipped, byId, modMuts } = runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, null);
+export function applyV2BannerMutations(activeElements, mutations, ownerInstanceId, opts = {}) {
+  const fearCount = opts.fearCount;
+  const { skipped, byId, modMuts, fearCountNext } = runV2BannerMutationLoop(
+    mutations,
+    activeElements,
+    ownerInstanceId,
+    null,
+    fearCount
+  );
 
   let mergedEls = activeElements.map((el) => {
     const key = el.instanceId ?? el.id;
@@ -1244,7 +1278,7 @@ export function applyV2BannerMutations(activeElements, mutations, ownerInstanceI
     }
   }
 
-  return { updates, skipped };
+  return { updates, skipped, fearCountNext };
 }
 
 /**
@@ -1301,6 +1335,49 @@ export function normalizeV2BannerChipMutations(mutations) {
     out.push(a);
   }
   return out;
+}
+
+/**
+ * Pull **`sheetActionRoll`** and **`actionLoop`** mutations out of a banner chip activation batch so
+ * {@link applyV2BannerMutations} does not treat them as `default → skipped`, and the host can
+ * `postRoll` / action-notification them (same payloads as {@link applyV2LifecycleMutations}).
+ *
+ * @param {object[]} mutations
+ * @returns {{
+ *   rest: object[],
+ *   sheetActionRolls: { rollText: string, displayName: string, rollMeta: object }[],
+ *   actionLoops: object[],
+ * }}
+ */
+export function stripV2BannerAuxiliaryMutations(mutations) {
+  /** @type {{ rollText: string, displayName: string, rollMeta: object }[]} */
+  const sheetActionRolls = [];
+  /** @type {object[]} */
+  const actionLoops = [];
+  /** @type {object[]} */
+  const rest = [];
+
+  for (const m of mutations || []) {
+    if (!m?.type) continue;
+    if (m.type === 'sheetActionRoll') {
+      const p = m.payload;
+      if (p && typeof p === 'object' && typeof p.rollText === 'string' && p.rollText.trim()) {
+        sheetActionRolls.push({
+          rollText: p.rollText.trim(),
+          displayName: p.displayName != null ? String(p.displayName) : '',
+          rollMeta: p.rollMeta && typeof p.rollMeta === 'object' ? p.rollMeta : {},
+        });
+      }
+      continue;
+    }
+    if (m.type === 'actionLoop' && m.payload && typeof m.payload === 'object') {
+      actionLoops.push(m.payload);
+      continue;
+    }
+    rest.push(m);
+  }
+
+  return { rest, sheetActionRolls, actionLoops };
 }
 
 /**
@@ -1509,9 +1586,10 @@ export function formatV2RollDieMutationLine(m) {
  * @param {object[]} activeElements
  * @param {object[]} mutations
  * @param {string|undefined} setFeatureStateOwnerId — `chip._ownerInstanceId` for `setFeatureState` rows (e.g. Bard for Rally); omit when none
- * @returns {{ updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[], skipped: object[], sheetActionRolls: { rollText: string, displayName: string, rollMeta: object }[] }}
+ * @param {number|undefined} fearCount — current GM Fear pool for `spendFear` / `gainFear` mutations
+ * @returns {{ updates: { instanceId: string, updates: object }[], actionLoopNotifications: object[], skipped: object[], sheetActionRolls: { rollText: string, displayName: string, rollMeta: object }[], fearCountNext?: number }}
  */
-export function applyV2LifecycleMutations(activeElements, mutations, setFeatureStateOwnerId) {
+export function applyV2LifecycleMutations(activeElements, mutations, setFeatureStateOwnerId, fearCount) {
   /** @type {{ rollText: string, displayName: string, rollMeta: object }[]} */
   const sheetActionRolls = [];
   const mutationsForLifecycle = [];
@@ -1580,10 +1658,11 @@ export function applyV2LifecycleMutations(activeElements, mutations, setFeatureS
   const afterConditions = applyV2ConditionMutations(activeElements, conditionMuts);
   const conditionUpdates = diffElements(activeElements, afterConditions);
 
-  const { updates: bannerUpdates, skipped } = applyV2BannerMutations(
+  const { updates: bannerUpdates, skipped, fearCountNext } = applyV2BannerMutations(
     afterConditions,
     bannerMuts,
-    setFeatureStateOwnerId
+    setFeatureStateOwnerId,
+    { fearCount }
   );
 
   if (rollDieBlock && actionLoopNotifications.length === 0) {
@@ -1600,6 +1679,6 @@ export function applyV2LifecycleMutations(activeElements, mutations, setFeatureS
   }
 
   const updates = mergeElementUpdatesByInstance(conditionUpdates, bannerUpdates);
-  return { updates, actionLoopNotifications, skipped, sheetActionRolls };
+  return { updates, actionLoopNotifications, skipped, sheetActionRolls, fearCountNext };
 }
 

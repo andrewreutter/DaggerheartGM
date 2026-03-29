@@ -6,9 +6,9 @@
  * TODO ACTION [SPOTLIGHT]: Spotlight/Fear interactions (per SRD).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const AshenCloud = {
   name: "Ashen Cloud",
   type: "action",
   description: "**Spend a Fear** to smash the ground and kick up ash within Far range. While within the ash cloud, a target has disadvantage on action rolls. The ash cloud clears the next time an adversary is spotlighted.",
-  adversaryAuraReminder: "Far — .",
 };

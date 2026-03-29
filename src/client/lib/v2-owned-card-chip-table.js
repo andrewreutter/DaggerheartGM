@@ -26,6 +26,7 @@ export function applyV2OwnedCardChipEngineResultToTable({
   el,
   activeElementsForV2Snapshots,
   tableId,
+  fearCount,
   onActionLoopNotification,
   onSheetActionRoll,
   isPlayer = false,
@@ -40,10 +41,11 @@ export function applyV2OwnedCardChipEngineResultToTable({
   ) {
     return false;
   }
-  const { updates, actionLoopNotifications, sheetActionRolls } = applyV2LifecycleMutations(
+  const { updates, actionLoopNotifications, sheetActionRolls, fearCountNext } = applyV2LifecycleMutations(
     activeElementsForV2Snapshots,
     mutations,
-    el.instanceId
+    el.instanceId,
+    fearCount
   );
   if (Array.isArray(sheetActionRolls) && typeof onSheetActionRoll === 'function') {
     for (const p of sheetActionRolls) {
@@ -62,6 +64,9 @@ export function applyV2OwnedCardChipEngineResultToTable({
     } else {
       updates.push({ instanceId: el.instanceId, updates: { featureUsage: mergedFu } });
     }
+  }
+  if (fearCountNext !== undefined && tableId && !isPlayer) {
+    postTableOp({ op: 'set-fear', fearCount: fearCountNext }, tableId);
   }
   if (updates.length > 0) {
     if (isPlayer && tableId) {
@@ -154,6 +159,7 @@ export async function applyDeferredV2ToggleOnAckFromRoll({
     el,
     activeElementsForV2Snapshots,
     tableId,
+    fearCount,
     onActionLoopNotification,
     isPlayer: false,
   });
@@ -275,6 +281,7 @@ export async function runV2OwnedCardChipTableAction({
     el,
     activeElementsForV2Snapshots,
     tableId,
+    fearCount,
     onActionLoopNotification,
     onSheetActionRoll,
     isPlayer,

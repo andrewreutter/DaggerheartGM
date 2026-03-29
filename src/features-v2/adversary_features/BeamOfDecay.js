@@ -8,9 +8,9 @@
  * TODO ACTION [CONDITION]: Apply/remove conditions on targets (per SRD).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const BeamOfDecay = {
   name: "Beam of Decay",
   type: 'action',
   description: "**Mark 2 Stress** to cause all targets within Far range to make a Strength Reaction Roll. Targets who fail take **2d20+12** magic damage and you gain a Fear. Targets who succeed take half damage. A target who marks 2 or more HP must also mark **2 Stress** and becomes _Vulnerable_ until they roll with Hope.",
-  adversaryAuraReminder: "Far — to make a Strength Reaction Roll.",
 };

@@ -50,6 +50,7 @@
 
 import { SRD_CLASS_DRUID_SCOPE_KEY } from './feature-scope-keys.js';
 import { normalizeConditionsToList } from '../../client/lib/conditions-utils.js';
+import { rangeBandIndex } from './when.js';
 
 const MUTATIONS_KEY = Symbol('mutations');
 
@@ -547,6 +548,51 @@ function buildActor(element, gameState, mutations) {
 
     rangeFrom(otherActor) {
       return rangeBetween(element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+    },
+
+    /**
+     * True when map distance to `otherActor` is **at most** `maxBand` (that band or any closer band —
+     * e.g. `'far'` = within Far). Uses `rangeFrom`; missing token positions → false.
+     * Prefer this in feature `onUse` over importing range helpers from `when.js`.
+     * @param {{ tokenX?: number|null, tokenY?: number|null }} otherActor
+     * @param {'melee'|'veryClose'|'close'|'far'|'veryFar'} maxBand
+     */
+    isWithinRangeBandOf(otherActor, maxBand) {
+      const b = this.rangeFrom(otherActor);
+      if (!b) return false;
+      const i = rangeBandIndex(b);
+      const max = rangeBandIndex(maxBand);
+      if (i < 0 || max < 0) return false;
+      return i <= max;
+    },
+
+    /**
+     * Other combatants on the table whose token is **within** `maxBand` of this actor (same **Within**
+     * semantics as {@link #isWithinRangeBandOf} — that band or any closer band). Omits `table.me`.
+     * Uses `gameState.activeElements` + {@link rangeBetween}; unknown positions are skipped.
+     *
+     * @param {'melee'|'veryClose'|'close'|'far'|'veryFar'} maxBand
+     * @returns {object[]} Actor snapshots (same shape as {@link buildActor})
+     */
+    actorsWithinRangeBand(maxBand) {
+      const cap = rangeBandIndex(maxBand);
+      if (cap < 0) return [];
+      const x1 = element.tokenX;
+      const y1 = element.tokenY;
+      if (x1 == null || y1 == null) return [];
+      const out = [];
+      const els = gameState.activeElements || [];
+      for (const el of els) {
+        const oid = el?.instanceId ?? el?.id;
+        if (oid == null || oid === '') continue;
+        if (String(oid) === String(instanceId)) continue;
+        const b = rangeBetween(x1, y1, el.tokenX, el.tokenY);
+        if (!b) continue;
+        const i = rangeBandIndex(b);
+        if (i < 0 || i > cap) continue;
+        out.push(buildActor(el, gameState, mutations));
+      }
+      return dedupeActorsByInstanceId(out);
     },
 
     /**

@@ -7,19 +7,21 @@
  *
  * **Predicate implications (avoid redundant `when()` guards):**
  *
+ * - **`youSucceedOnAnAttack`** — Prefer when the SRD says **“successful attack”** (or equivalent) and the
+ *   effect does **not** depend on **Minor / Major / Severe** tier. It only checks attack success
+ *   (`action.type === 'attack'`, `rolls.action.isSuccess`, you are `table.action.actor`).
  * - **`youDealMinorDamage` / `youDealMajorDamage` / `youDealSevereDamage`** each include
- *   **`youAreTheActor`** (the feature owner is `table.action.actor`). In the normal Game Table
- *   flow, pending `{ stat: 'currentHP' }` on the primary target at **`reviewOutcome`** (or similar)
- *   is only hydrated after a hit is resolved, so these predicates **subsume**
- *   **`youSucceedOnAnAttack`** for on-hit, damage-tier reactions — do not stack both unless you have
+ *   **`youAreTheActor`**. Prefer these when the rider cares about **outgoing threshold tier** after
+ *   resolution. In the normal Game Table flow, pending `{ stat: 'currentHP' }` on the primary target
+ *   at **`reviewOutcome`** is hydrated after the hit, so these predicates **subsume**
+ *   **`youSucceedOnAnAttack`** for **tier-shaped** on-hit effects — do not stack both unless you have
  *   an unusual case (e.g. synthetic effects without a successful attack roll).
  * - **`youDeal*`** does **not** check `table.action.type === 'attack'`. Add an explicit
  *   `(table) => table.action?.type === 'attack'` predicate if the SRD must exclude non-attack
  *   damage sources that could still produce `currentHP` effects.
- * - **`youSucceedOnAnAttack`** implies **`youAreTheActor`** for attacks (`type === 'attack'`,
- *   `rolls.action.isSuccess`, attacker is `table.me`). It does **not** imply **`isActing`** by
- *   name, but for the feature owner, **`isActing`** and **`youAreTheActor`** coincide when you are
- *   the current actor.
+ * - **`youSucceedOnAnAttack`** also implies **`youAreTheActor`** for attacks; it does **not** imply **`isActing`**
+ *   by name, but for the feature owner **`isActing`** and **`youAreTheActor`** coincide when you are the
+ *   current actor.
  * - **`anAttackSucceeds`** is from the defender’s perspective (any successful attack); pair with
  *   **`againstYou`** / **`isTargeted`**, not with **`youDeal*`**.
  * - **`youTakeMinorDamage` / `youTakeMajorDamage` / `youTakeSevereDamage`** are for **incoming** HP
@@ -114,11 +116,9 @@ export function anAttackSucceeds(table) {
 
 /**
  * True when **you** (the feature owner) are the attacker and your attack roll succeeded.
- * Mirrors SRD phrasing: "when you succeed on an attack…".
- *
- * Redundant with **`youDealMinorDamage` / `youDealMajorDamage` / `youDealSevereDamage`** when the
- * VTT has already applied pending `{ stat: 'currentHP' }` on the primary target for that hit — see
- * module docblock **Predicate implications**.
+ * Mirrors SRD phrasing: "when you succeed on an attack…". Prefer this when the rule does **not**
+ * depend on Minor/Major/Severe tier; use **`youDeal*Damage`** predicates when it does — see module
+ * docblock **Predicate implications**.
  */
 export function youSucceedOnAnAttack(table) {
   if (table.action?.type !== 'attack') return false;
@@ -173,6 +173,9 @@ export function attackerAndTargetAreInRangeBand(attacker, target, band) {
 /**
  * True when `attacker.rangeFrom(target)` is **at most** `band` — that band or any closer band
  * (**Within Close** includes Melee, Very Close, and Close).
+ *
+ * For **`onUse` on feature modules**, prefer **`attacker.isWithinRangeBandOf(target, band)`** on the
+ * snapshot actor (`buildTableSnapshot`) instead of importing this helper.
  */
 export function attackerAndTargetAreWithinRangeBand(attacker, target, band) {
   if (!attacker || !target) return false;

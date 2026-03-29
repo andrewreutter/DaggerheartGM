@@ -1206,6 +1206,41 @@ describe('table.me.lastPosition', () => {
     expect(table.me?.lastPosition?.rangeFrom(advActor)).toBe('veryFar');
   });
 
+  it('isWithinRangeBandOf is true when rangeFrom is at most maxBand', () => {
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 0, tokenY: 0 });
+    const veryClosePc = mockCharacter({ instanceId: 'c1', tokenX: 10, tokenY: 0 });
+    const farPc = mockCharacter({ instanceId: 'c2', tokenX: 50, tokenY: 0 });
+    const veryFarPc = mockCharacter({ instanceId: 'c3', tokenX: 500, tokenY: 0 });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [adv, veryClosePc, farPc, veryFarPc],
+        _ownerInstanceId: 'a1',
+      })
+    );
+    const me = table.me;
+    const [c1, c2, c3] = table.characters;
+    expect(me.isWithinRangeBandOf(c1, 'far')).toBe(true);
+    expect(me.isWithinRangeBandOf(c2, 'far')).toBe(true);
+    expect(me.isWithinRangeBandOf(c3, 'far')).toBe(false);
+  });
+
+  it('actorsWithinRangeBand lists other actors within the band (excludes self)', () => {
+    const adv = mockAdversary({ instanceId: 'a1', tokenX: 0, tokenY: 0 });
+    const veryClosePc = mockCharacter({ instanceId: 'c1', tokenX: 10, tokenY: 0 });
+    const closePc = mockCharacter({ instanceId: 'c2', tokenX: 25, tokenY: 0 });
+    const table = buildTableSnapshot(
+      mockGameState({
+        activeElements: [adv, veryClosePc, closePc],
+        _ownerInstanceId: 'a1',
+      })
+    );
+    const me = table.me;
+    const inClose = me.actorsWithinRangeBand('close');
+    const ids = inClose.map((a) => a.instanceId).sort();
+    expect(ids).toEqual(['c1', 'c2']);
+    expect(inClose.every((a) => a.instanceId !== 'a1')).toBe(true);
+  });
+
   it('rangeFrom returns null when the other actor has no token position', () => {
     const char = mockCharacter({ instanceId: 'c1', tokenX: 0, tokenY: 0 });
     const adv = mockAdversary({ instanceId: 'a1' }); // tokenX/Y default to null

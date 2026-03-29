@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { tokenDistanceFt, getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, rangeBandNameToFt, RANGE_BANDS_FT, FAR_RANGE_FT, CLOSE_RANGE_FT } from '../../src/client/lib/map-range.js';
+import {
+  tokenDistanceFt,
+  getCharactersWithinFarRange,
+  getCharactersWithinCloseRangeWithMarkedHp,
+  getAdversariesWithinMeleeRange,
+  getAdversariesWithinRangeFt,
+  getCharactersWithinRangeFt,
+  rangeBandNameToFt,
+  RANGE_BANDS_FT,
+  FAR_RANGE_FT,
+  CLOSE_RANGE_FT,
+} from '../../src/client/lib/map-range.js';
 
 describe('tokenDistanceFt', () => {
   it('returns 0 for overlapping tokens', () => {
@@ -246,5 +257,45 @@ describe('getAdversariesWithinRangeFt', () => {
     const adv = { instanceId: 'adv1', elementType: 'adversary', name: 'Goblin', tokenX: 0, tokenY: 0 };
     expect(getAdversariesWithinRangeFt([source, adv], 'src', -1)).toEqual([]);
     expect(getAdversariesWithinRangeFt([source, adv], 'src', NaN)).toEqual([]);
+  });
+});
+
+describe('getCharactersWithinRangeFt (adversary source)', () => {
+  it('uses nearest-edge distance vs character tokens', () => {
+    const adv = {
+      instanceId: 'a1',
+      elementType: 'adversary',
+      tokenX: 0,
+      tokenY: 0,
+      mapId: null,
+    };
+    const pc = {
+      instanceId: 'c1',
+      elementType: 'character',
+      name: 'Riven',
+      tokenX: 5,
+      tokenY: 0,
+      mapId: null,
+    };
+    const farPc = {
+      instanceId: 'c2',
+      elementType: 'character',
+      name: 'Far',
+      tokenX: 97,
+      tokenY: 0,
+      mapId: null,
+    };
+    const els = [adv, pc, farPc];
+    expect(tokenDistanceFt(adv.tokenX, adv.tokenY, pc.tokenX, pc.tokenY)).toBeCloseTo(2.5, 5);
+    const inMelee = getCharactersWithinRangeFt(els, 'a1', 5);
+    expect(inMelee.map((x) => x.name)).toEqual(['Riven']);
+    const inFar = getCharactersWithinRangeFt(els, 'a1', FAR_RANGE_FT);
+    expect(inFar.map((x) => x.instanceId).sort()).toEqual(['c1', 'c2']);
+  });
+
+  it('returns empty when adversary not on map', () => {
+    const adv = { instanceId: 'a1', elementType: 'adversary', tokenX: null, tokenY: null };
+    const pc = { instanceId: 'c1', elementType: 'character', tokenX: 0, tokenY: 0 };
+    expect(getCharactersWithinRangeFt([adv, pc], 'a1', 100)).toEqual([]);
   });
 });

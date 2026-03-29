@@ -2,19 +2,15 @@
  * Creates registry modules for SRD adversary features that are not yet present under
  * `src/features-v2/adversary_features/`. The original `gen-adversary-action-stubs.mjs` only
  * emitted actions whose descriptions matched attack/dice heuristics; everything else stayed
- * unmapped in `docs/adversary-feature-todo-report.md`.
+ * unmapped until this script runs.
  *
  *   node scripts/gen-missing-adversary-feature-stubs.mjs
- *
- * Then: `node scripts/apply-adversary-feature-todos.mjs` (optional normalize) and
- * `npm run report:adversary-feature-todos`.
  */
 
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import vm from 'node:vm';
-import { buildAdversaryFeatureTodoLines } from './lib/adversary-feature-todo-builder.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ADV_DIR = join(__dirname, '../src/features-v2/adversary_features');
@@ -183,18 +179,8 @@ function main() {
     }
     usedFiles.add(fileName);
 
-    const todoLines = buildAdversaryFeatureTodoLines({
-      name,
-      type,
-      description,
-      hasAffinities: false,
-      hasChips: false,
-    });
-    const todoBlock = todoLines.join('\n');
     const header = `/**
  * Adversary ${titleForType(type)} — ${name} (SRD)
- *
-${todoBlock}
  */
 `;
 

@@ -5,9 +5,9 @@
  * TODO ACTION [RESOURCE]: Adversary Stress mark for movement/ability (per SRD).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const ChaoticFlux = {
   name: "Chaotic Flux",
   type: 'action',
   description: "Make an attack against up to three targets within Very Close range. **Mark a Stress** to deal **2d6+3** magic damage to targets the Hexer succeeded against.",
-  adversaryAuraReminder: "Very Close — .",
 };

@@ -412,7 +412,8 @@ export function runV2DamageApplyReviewOutcomePhase(ctx) {
   const { updates, actionLoopNotifications, skipped } = applyV2LifecycleMutations(
     activeForLoader,
     mutations || [],
-    isChar ? targetId : undefined
+    isChar ? targetId : undefined,
+    fearCount
   );
   return {
     elementUpdates: updates || [],
@@ -1461,7 +1462,12 @@ export function runV2RestHooksForTable(opts) {
   };
   const loop = createActionLoop(gameState, actionConfig, features, {});
   const { mutations } = loop.runPhase('intent');
-  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, mutations || [], undefined);
+  const { updates, skipped } = applyV2LifecycleMutations(
+    activeForLoader,
+    mutations || [],
+    undefined,
+    fearCount
+  );
   return { updates, skipped };
 }
 
@@ -1561,7 +1567,7 @@ export function runV2DamageAckReviewActionHooks(ctx) {
     if (pr) postRolls.push(pr);
   }
 
-  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, nonRoll, undefined);
+  const { updates, skipped } = applyV2LifecycleMutations(activeForLoader, nonRoll, undefined, fearCount);
   const actionNotifications = [];
   const splash = tryWaterSplashActionNotification(roll, mutations, activeForLoader);
   if (splash) actionNotifications.push(splash);

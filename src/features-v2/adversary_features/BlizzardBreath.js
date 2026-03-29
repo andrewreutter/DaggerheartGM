@@ -7,9 +7,9 @@
  * TODO ACTION [CONDITION]: Apply/remove conditions on targets (per SRD).
  * TODO ACTION [AURA]: Range-limited effect on PCs (per SRD).
  */
+// TODO(adversary): Aura/range reminder removed from Guide UI; add onUse if this should automate at the table.
 export const BlizzardBreath = {
   name: "Blizzard Breath",
   type: 'action',
   description: "**Spend 2 Fear** to release an icy whorl in front of the Dragon within Close range. All targets in this area must make an Agility Reaction Roll. Targets who fail take **4d6+5** magic damage and are _Restrained_ by ice until they break free with a successful Strength Roll. Targets who succeed must mark 2 Stress or take half damage.",
-  adversaryAuraReminder: "Close — .",
 };

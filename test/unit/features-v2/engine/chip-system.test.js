@@ -25,7 +25,7 @@ import { RetractingClaws } from '../../../../src/features-v2/ancestries/Katari.j
 import { BareBones } from '../../../../src/features-v2/abilities/Valor/BareBones.js';
 import { buildTableSnapshot, applyMutations } from '../../../../src/features-v2/engine/table.js';
 import { when, isActing } from '../../../../src/features-v2/engine/when.js';
-import { mockTable, mockGameState, mockCharacter } from '../helpers.js';
+import { mockTable, mockGameState, mockCharacter, mockAdversary } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // collectChips
@@ -328,6 +328,18 @@ describe('canPayChipCosts()', () => {
       )
     ).toBe(false);
   });
+
+  it('checks fearCost vs table.top.fear when owner is an adversary', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const state = mockGameState({
+      activeElements: [adv],
+      _ownerInstanceId: 'adv-1',
+      fear: 3,
+    });
+    const table = buildTableSnapshot(state);
+    expect(canPayChipCosts({ fearCost: 2 }, table)).toBe(true);
+    expect(canPayChipCosts({ fearCost: 5 }, table)).toBe(false);
+  });
 });
 
 describe('resolveChipDisabled()', () => {
@@ -520,6 +532,21 @@ describe('deductChipCosts()', () => {
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({ type: 'spendHope', payload: { instanceId: 'char-1', amount: 2 } })
+    );
+  });
+
+  it('queues spendFear for adversary fearCost', () => {
+    const adv = mockAdversary({ instanceId: 'adv-1' });
+    const state = mockGameState({
+      activeElements: [adv],
+      _ownerInstanceId: 'adv-1',
+      fear: 4,
+    });
+    const table = buildTableSnapshot(state);
+    deductChipCosts({ fearCost: 2 }, table);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ type: 'spendFear', payload: { amount: 2 } })
     );
   });
 
@@ -768,6 +795,18 @@ describe('resetChipFrequency()', () => {
     resetChipFrequency('shortRest', store);
     expect(store.key1).toBeDefined();
   });
+
+  it('resets scene chips on scene cycle', () => {
+    const store = { key1: { used: true, cycle: 'scene' } };
+    resetChipFrequency('scene', store);
+    expect(store.key1).toBeUndefined();
+  });
+
+  it('does not reset scene chips on session cycle', () => {
+    const store = { key1: { used: true, cycle: 'scene' } };
+    resetChipFrequency('session', store);
+    expect(store.key1).toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -799,8 +838,9 @@ describe('makeChipState()', () => {
 // ---------------------------------------------------------------------------
 
 describe('mapV2ChipFrequencyToFeatureUsageCycle()', () => {
-  it('maps session, shortRest, rest, longRest for table featureUsage clears', () => {
+  it('maps session, scene, shortRest, rest, longRest for table featureUsage clears', () => {
     expect(mapV2ChipFrequencyToFeatureUsageCycle('session')).toBe('session');
+    expect(mapV2ChipFrequencyToFeatureUsageCycle('scene')).toBe('scene');
     expect(mapV2ChipFrequencyToFeatureUsageCycle('shortRest')).toBe('rest');
     expect(mapV2ChipFrequencyToFeatureUsageCycle('rest')).toBe('rest');
     expect(mapV2ChipFrequencyToFeatureUsageCycle('longRest')).toBe('longRest');

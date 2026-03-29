@@ -8,7 +8,11 @@ import {
   activateV2ReviewChip,
   v2BannerChipActivationKey,
 } from '../client/lib/v2-action-loop-bridge.js';
-import { partitionV2BannerChipMutations, applyV2BannerMutations } from '../client/lib/table-ops.js';
+import {
+  partitionV2BannerChipMutations,
+  applyV2BannerMutations,
+  stripV2BannerAuxiliaryMutations,
+} from '../client/lib/table-ops.js';
 
 function buildSrdLookup(items) {
   const byId = {};
@@ -124,8 +128,9 @@ export function computePlayerV2ReviewChipApply(params) {
     return { ok: false, status: 400, error: 'No effect' };
   }
 
+  const { rest, sheetActionRolls, actionLoops } = stripV2BannerAuxiliaryMutations(mutations);
   const { localMutations, serverFollowups, engineRollDisplayOnly, unsupported } =
-    partitionV2BannerChipMutations(mutations);
+    partitionV2BannerChipMutations(rest);
   const { updates, skipped } = applyV2BannerMutations(activeElements, localMutations, chip._ownerInstanceId);
 
   return {
@@ -136,5 +141,7 @@ export function computePlayerV2ReviewChipApply(params) {
     unsupported,
     serverFollowups,
     engineRollDisplayOnly,
+    sheetActionRolls,
+    actionLoops,
   };
 }

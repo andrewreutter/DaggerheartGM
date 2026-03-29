@@ -875,7 +875,7 @@ export function GuideFeatureCardChips({
  * @param {object} [props.rangerFocusToggle] — legacy bridge when V2 card handler absent
  * @param {object} [props.faerieWingsProps]
  * @param {function} [props.onShareFeature]
- * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, activeElements?: object[] }} [props.v2TableContext] — for `isSelect` chips (Druid Beastform, etc.)
+ * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, activeElements?: object[] }} [props.v2TableContext] — for `isSelect` chips (Druid Beastform, etc.); `activeElements` also drives adversary **Aura** PC-in-range lines (map edge distance).
  * @param {boolean} [props.hideV2CardChips] — when true, omit the V2 chip row (e.g. chips live in a separate Actions card).
  * @param {object} [props.sheetHighlightAbility] — when set, row is a domain ability from `el.abilities` (source-badge dimming).
  */
@@ -1260,12 +1260,15 @@ export function GuideFeatureCard({
               )}
             </div>
           )}
-          {typeof featRow?.adversaryAuraReminder === 'string' && featRow.adversaryAuraReminder.trim() ? (
-            <div className="mb-1.5 clear-both flex flex-wrap items-start gap-x-1.5 gap-y-0.5 rounded border border-amber-800/40 bg-amber-950/25 px-2 py-1">
-              <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-400/95 shrink-0">
-                Aura
+          {typeof featRow?.adversaryResourceReminder === 'string' &&
+          featRow.adversaryResourceReminder.trim() ? (
+            <div className="mb-1.5 clear-both flex flex-wrap items-start gap-x-1.5 gap-y-0.5 rounded border border-orange-800/45 bg-orange-950/25 px-2 py-1">
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-orange-400/95 shrink-0">
+                Resource
               </span>
-              <span className="text-[10px] text-dh-muted leading-snug min-w-0">{featRow.adversaryAuraReminder.trim()}</span>
+              <span className="text-[10px] text-dh-muted leading-snug min-w-0 flex-1">
+                {featRow.adversaryResourceReminder.trim()}
+              </span>
             </div>
           ) : null}
           {model.description ? <MarkdownText text={model.description} className="dh-md" /> : null}
