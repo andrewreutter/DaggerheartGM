@@ -20,7 +20,7 @@ import { shouldAttemptConceptAiAutoSubmit } from '../lib/concept-ai-auto-submit.
  * @param {string} [prerequisitesHint] — shown when prerequisitesReady is false
  * @param {string} [initialConcept] — seed the textarea (e.g. pending “Build with AI” from Encounter / Add dialog)
  * @param {string} [initialConceptKey] — when this changes, re-apply initialConcept if non-empty (e.g. editor item id + session)
- * @param {string} [autoSubmitKey] — when set (e.g. same as initialConceptKey), run one Build after the textarea is seeded and prerequisites pass (panel → editor flow)
+ * @param {string} [autoSubmitKey] — when set, run one Build after the textarea is seeded and prerequisites pass (panel → editor flow). Include the pending concept in the key (e.g. `${session}:${concept}`) so a second pending concept for the same draft id auto-builds again.
  * @param {() => void} [onPendingConsumed] — after a successful build or a non-abort failure; clears parent “pending concept” state
  */
 export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
@@ -64,7 +64,9 @@ export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
   const abortControllerRef = useRef(null);
   const getMergeBaseRef = useRef(getMergeBase);
   const transformMergedRef = useRef(transformMerged);
-  const seededConceptKeyRef = useRef(null);
+  /** Keyed path: last applied `${initialConceptKey}\\0${trimmed}` so a new pending concept re-seeds even when the editor id is unchanged. */
+  const lastKeyedSeedSigRef = useRef(null);
+  const unkeyedInitialSeededRef = useRef(false);
   const autoSubmitFiredForKeyRef = useRef(null);
   const handleAiBuildRef = useRef(async () => {});
   getMergeBaseRef.current = getMergeBase;
@@ -75,13 +77,14 @@ export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
     if (!trimmed) return;
     if (initialConceptKey !== undefined && initialConceptKey !== null) {
       const key = String(initialConceptKey);
-      if (seededConceptKeyRef.current === key) return;
-      seededConceptKeyRef.current = key;
+      const sig = `${key}\0${trimmed}`;
+      if (lastKeyedSeedSigRef.current === sig) return;
+      lastKeyedSeedSigRef.current = sig;
       setAiConcept(initialConcept);
       return;
     }
-    if (seededConceptKeyRef.current !== null) return;
-    seededConceptKeyRef.current = 'unkeyed';
+    if (unkeyedInitialSeededRef.current) return;
+    unkeyedInitialSeededRef.current = true;
     setAiConcept(initialConcept);
   }, [initialConcept, initialConceptKey]);
 

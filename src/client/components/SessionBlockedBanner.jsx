@@ -1,6 +1,9 @@
 /**
  * Prep / idle-pause hint — portaled to `document.body` from `app.jsx` so GM and player
  * always see it above the Game Table layout (not behind dice canvas or column stacking).
+ *
+ * Keep `z-[52]` below fullscreen modal backdrops (e.g. `z-[53]` in EditChoiceDialog /
+ * ImportModalShell) and below `ItemDetailModal` (`z-[80]`), but above battle-map chrome (`z-50`).
  */
 export function SessionBlockedBanner({ isPlayer, sessionStarted }) {
   const isPrep = sessionStarted === false;

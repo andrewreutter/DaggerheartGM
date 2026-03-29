@@ -254,7 +254,11 @@ export function AdversaryForm({
           showBuildButtonSpinner={false}
           initialConcept={autoRunAiConcept}
           initialConceptKey={autoRunSessionKey}
-          autoSubmitKey={autoRunAiConcept?.trim() ? autoRunSessionKey : undefined}
+          autoSubmitKey={
+            autoRunAiConcept?.trim()
+              ? `${autoRunSessionKey}:${autoRunAiConcept.trim()}`
+              : undefined
+          }
           onPendingConsumed={onAutoRunAiConceptConsumed}
           prerequisitesReady={adversaryConceptAiReady}
           prerequisitesHint="Set tier and role above to load matching SRD examples."

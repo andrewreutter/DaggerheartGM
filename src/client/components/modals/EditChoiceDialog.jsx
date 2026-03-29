@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
  */
 export function EditChoiceDialog({ itemName, contextLabel, canEditOriginal, forceMessage, onEditCopy, onEditOriginal, onClose }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+    <div className="fixed inset-0 z-[53] flex items-center justify-center bg-black/70 p-4">
       <div className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-sm p-6">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-base font-bold text-white truncate pr-2">Edit "{itemName}"</h2>

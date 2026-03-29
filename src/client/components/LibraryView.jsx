@@ -786,7 +786,7 @@ export function LibraryView({
       )}
 
       {showDaggerstackImport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+        <div className="fixed inset-0 z-[53] flex items-center justify-center bg-black/70">
           <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-5 relative">
             <button
               onClick={() => setShowDaggerstackImport(false)}

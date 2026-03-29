@@ -7,54 +7,35 @@ describe('getGmTotMEmptyMapHint', () => {
       getGmTotMEmptyMapHint({
         tableStateReady: false,
         mapConfigHasImage: false,
-        characterCount: 0,
-        adversaryCount: 0,
       }),
     ).toBe(false);
   });
 
-  it('is true when ready, no map art, and no combatants', () => {
+  it('is false when a map image is set', () => {
+    expect(
+      getGmTotMEmptyMapHint({
+        tableStateReady: true,
+        mapConfigHasImage: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('is true when ready and there is no map art', () => {
     expect(
       getGmTotMEmptyMapHint({
         tableStateReady: true,
         mapConfigHasImage: false,
-        characterCount: 0,
-        adversaryCount: 0,
       }),
     ).toBe(true);
-  });
-
-  it('is false when any character exists on the table', () => {
-    expect(
-      getGmTotMEmptyMapHint({
-        tableStateReady: true,
-        mapConfigHasImage: false,
-        characterCount: 1,
-        adversaryCount: 0,
-      }),
-    ).toBe(false);
-  });
-
-  it('is false when any adversary exists on the table', () => {
-    expect(
-      getGmTotMEmptyMapHint({
-        tableStateReady: true,
-        mapConfigHasImage: false,
-        characterCount: 0,
-        adversaryCount: 2,
-      }),
-    ).toBe(false);
   });
 });
 
 describe('getPlayerTotMEmptyMapHint', () => {
-  it('matches GM rule: no combatants, no map, ready', () => {
+  it('matches GM rule: ready and no map art', () => {
     expect(
       getPlayerTotMEmptyMapHint({
         tableStateReady: true,
         mapConfigHasImage: false,
-        characterCount: 0,
-        adversaryCount: 0,
       }),
     ).toBe(true);
   });

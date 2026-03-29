@@ -353,7 +353,11 @@ export function EnvironmentForm({
           showBuildButtonSpinner={false}
           initialConcept={autoRunAiConcept}
           initialConceptKey={autoRunSessionKey}
-          autoSubmitKey={autoRunAiConcept?.trim() ? autoRunSessionKey : undefined}
+          autoSubmitKey={
+            autoRunAiConcept?.trim()
+              ? `${autoRunSessionKey}:${autoRunAiConcept.trim()}`
+              : undefined
+          }
           onPendingConsumed={onAutoRunAiConceptConsumed}
           prerequisitesReady={environmentConceptAiReady}
           prerequisitesHint="Set tier and type above to load matching SRD examples."

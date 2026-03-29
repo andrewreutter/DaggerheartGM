@@ -33,6 +33,18 @@ describe('shouldAttemptConceptAiAutoSubmit', () => {
     ).toBe(false);
   });
 
+  it('allows another auto-submit when the key includes a new pending concept (same session id)', () => {
+    const compositeFirst = 'session-1:a swamp hag';
+    const compositeSecond = 'session-1:a different concept';
+    expect(
+      shouldAttemptConceptAiAutoSubmit({
+        ...base,
+        autoSubmitKey: compositeSecond,
+        alreadyFiredForKey: compositeFirst,
+      }),
+    ).toBe(true);
+  });
+
   it('returns false while a build is in flight', () => {
     expect(shouldAttemptConceptAiAutoSubmit({ ...base, aiLoading: true })).toBe(false);
   });

@@ -3700,16 +3700,12 @@ export function BattleMap({
     getGmTotMEmptyMapHint({
       tableStateReady,
       mapConfigHasImage: hasMapArt,
-      characterCount: characters.length,
-      adversaryCount: adversaries.length,
     });
   const playerEmptyMapHint =
     isPlayer &&
     getPlayerTotMEmptyMapHint({
       tableStateReady,
       mapConfigHasImage: hasMapArt,
-      characterCount: characters.length,
-      adversaryCount: adversaries.length,
     });
 
   const showTotmOverlay = !hasMapArt && (gmEmptyMapHint || playerEmptyMapHint);

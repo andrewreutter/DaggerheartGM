@@ -312,7 +312,7 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
+    <div className="fixed inset-0 z-[53] flex items-center justify-center bg-black/70" onClick={onClose}>
       <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-dh flex items-center gap-2"><Camera size={18} /> Capture Table as Scene</h2>
@@ -6130,6 +6130,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               </span>
               <CheckboxTrack
                 className="min-w-0"
+                fillRow
                 total={6}
                 filled={Math.min(fearCount, 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v)}
@@ -6145,6 +6146,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               </span>
               <CheckboxTrack
                 className="min-w-0"
+                fillRow
                 total={6}
                 filled={Math.max(0, fearCount - 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
@@ -6755,6 +6757,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 </span>
                 <CheckboxTrack
                   className="min-w-0"
+                  fillRow
                   total={6}
                   filled={Math.min(fearCount, 6)}
                   trackKind="fear"
@@ -6768,6 +6771,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     </span>
                     <CheckboxTrack
                       className="min-w-0"
+                      fillRow
                       total={6}
                       filled={Math.max(0, fearCount - 6)}
                       trackKind="fear"

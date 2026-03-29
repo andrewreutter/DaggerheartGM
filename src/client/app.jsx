@@ -653,6 +653,7 @@ function App() {
       setTableBattleMods({});
       setPlayerEmails([]);
       setTableName('');
+      setMapConfig(DEFAULT_MAP_CONFIG);
       setMaps([]);
       setActiveMapId(null);
       setGmMapView(null);
@@ -710,7 +711,11 @@ function App() {
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
       if (tableState.tableName != null) setTableName(tableState.tableName);
-      if (tableState.mapConfig) setMapConfig(mc => ({ ...mc, ...tableState.mapConfig }));
+      if (tableState.mapConfig && typeof tableState.mapConfig === 'object') {
+        setMapConfig({ ...DEFAULT_MAP_CONFIG, ...tableState.mapConfig });
+      } else {
+        setMapConfig(DEFAULT_MAP_CONFIG);
+      }
       if (Array.isArray(tableState.maps)) setMaps(tableState.maps);
       else setMaps([]);
       if (tableState.activeMapId != null) setActiveMapId(tableState.activeMapId);
@@ -772,7 +777,9 @@ function App() {
           setTableName(state.tableName);
           setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
         }
-        if (state.mapConfig != null) setMapConfig(state.mapConfig);
+        if (state.mapConfig != null && typeof state.mapConfig === 'object') {
+          setMapConfig({ ...DEFAULT_MAP_CONFIG, ...state.mapConfig });
+        }
         if (Array.isArray(state.maps)) setMaps(state.maps);
         else setMaps([]);
         if (state.activeMapId != null) setActiveMapId(state.activeMapId);
@@ -861,7 +868,9 @@ function App() {
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.tableName != null) setTableName(state.tableName);
-        if (state.mapConfig != null) setMapConfig(state.mapConfig);
+        if (state.mapConfig != null && typeof state.mapConfig === 'object') {
+          setMapConfig({ ...DEFAULT_MAP_CONFIG, ...state.mapConfig });
+        }
         if (Array.isArray(state.maps)) setMaps(state.maps);
         else setMaps([]);
         if (state.activeMapId != null) setActiveMapId(state.activeMapId);

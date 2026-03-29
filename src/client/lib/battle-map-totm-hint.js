@@ -1,33 +1,12 @@
 /**
- * Theatre of the Mind empty-map overlay: no map image and no combatants on the table.
- * Uses character + adversary counts from `activeElements` (not tray/map token lists — those
- * can miss elements when map/plane resolution does not match `activeMapIdResolved`).
+ * Theatre of the Mind overlay: show when there is no battle map image yet (runs in “theatre”
+ * mode regardless of whether characters/adversaries are on the table or in trays).
  */
 
-export function getGmTotMEmptyMapHint({
-  tableStateReady,
-  mapConfigHasImage,
-  characterCount,
-  adversaryCount,
-}) {
-  return (
-    tableStateReady &&
-    !mapConfigHasImage &&
-    characterCount === 0 &&
-    adversaryCount === 0
-  );
+export function getGmTotMEmptyMapHint({ tableStateReady, mapConfigHasImage }) {
+  return tableStateReady && !mapConfigHasImage;
 }
 
-export function getPlayerTotMEmptyMapHint({
-  tableStateReady,
-  mapConfigHasImage,
-  characterCount,
-  adversaryCount,
-}) {
-  return (
-    tableStateReady &&
-    !mapConfigHasImage &&
-    characterCount === 0 &&
-    adversaryCount === 0
-  );
+export function getPlayerTotMEmptyMapHint({ tableStateReady, mapConfigHasImage }) {
+  return tableStateReady && !mapConfigHasImage;
 }
