@@ -10,6 +10,9 @@ export function MapAiImageDialog({
   open,
   onClose,
   mapSizeFt = 100,
+  mapDimension = 'width',
+  mapImageNaturalWidth,
+  mapImageNaturalHeight,
   mapImageUrl,
   /** Persisted prompt from the last Save for this map image */
   savedMapAiImagePrompt,
@@ -40,6 +43,9 @@ export function MapAiImageDialog({
       <MapAiImageBuilderPanel
         className="flex-1 min-h-0"
         mapSizeFt={mapSizeFt}
+        mapDimension={mapDimension}
+        mapImageNaturalWidth={mapImageNaturalWidth}
+        mapImageNaturalHeight={mapImageNaturalHeight}
         mapImageUrl={mapImageUrl}
         savedMapAiImagePrompt={savedMapAiImagePrompt}
         onMapConfigChange={onMapConfigChange}

@@ -1,17 +1,18 @@
-/** Match battle map size bounds in BattleMap.jsx */
-const BATTLE_MAP_SIZE_FT_MIN = 1;
-const BATTLE_MAP_SIZE_FT_MAX = 3000;
+import { getMapDimensionsFt } from './map-dimensions-ft.js';
 
 /**
- * Default battle-map AI prompt; `mapSizeFt` substitutes the example 300'x300' extent.
- * @param {number|string|undefined} mapSizeFt
+ * Default battle-map AI prompt; map footprint uses the same width×height math as the map toolbar
+ * (W/H widget + image aspect when an image is present).
+ * @param {number|string|undefined|object} mapSizeFtOrConfig — legacy: single foot span → square map; or a partial `mapConfig` (`mapSizeFt`, `mapDimension`, `mapImageNaturalWidth`, `mapImageNaturalHeight`).
  */
-export function buildBattleMapDefaultPrompt(mapSizeFt) {
-  const n = Math.max(
-    BATTLE_MAP_SIZE_FT_MIN,
-    Math.min(BATTLE_MAP_SIZE_FT_MAX, Number(mapSizeFt) || 100),
-  );
-  return `orthographic top-down view, ${n}'x${n}', complex cave filled with stalactites, stalagmites and a narrow running stream feeding into a bottomless pit.`;
+export function buildBattleMapDefaultPrompt(mapSizeFtOrConfig) {
+  const { mapWidthFt, mapHeightFt } =
+    mapSizeFtOrConfig != null && typeof mapSizeFtOrConfig === 'object'
+      ? getMapDimensionsFt(mapSizeFtOrConfig)
+      : getMapDimensionsFt({ mapSizeFt: mapSizeFtOrConfig });
+  const w = Math.round(mapWidthFt);
+  const h = Math.round(mapHeightFt);
+  return `orthographic top-down view, ${w}'x${h}', complex cave filled with stalactites, stalagmites and a narrow running stream feeding into a bottomless pit.`;
 }
 
 /** Strip markdown syntax characters that clutter image prompts. */
@@ -75,8 +76,7 @@ export function buildImagePrompt(formData, collection) {
     if (description?.trim()) lines.push('', stripMd(description));
 
   } else if (collection === 'battleMap') {
-    const { mapSizeFt } = formData || {};
-    return buildBattleMapDefaultPrompt(mapSizeFt);
+    return buildBattleMapDefaultPrompt(formData || {});
 
   } else {
     const { name } = formData || {};

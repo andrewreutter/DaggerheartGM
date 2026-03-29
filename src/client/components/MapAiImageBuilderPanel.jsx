@@ -11,6 +11,9 @@ import { AiImageWorkbench } from './AiImageWorkbench.jsx';
  */
 export function MapAiImageBuilderPanel({
   mapSizeFt = 100,
+  mapDimension = 'width',
+  mapImageNaturalWidth,
+  mapImageNaturalHeight,
   mapImageUrl,
   savedMapAiImagePrompt,
   onMapConfigChange,
@@ -36,8 +39,22 @@ export function MapAiImageBuilderPanel({
   const [editOpen, setEditOpen] = useState(false);
   const [editInstruction, setEditInstruction] = useState('');
 
-  const latestRef = useRef({ mapSizeFt, mapImageUrl, savedMapAiImagePrompt });
-  latestRef.current = { mapSizeFt, mapImageUrl, savedMapAiImagePrompt };
+  const latestRef = useRef({
+    mapSizeFt,
+    mapDimension,
+    mapImageNaturalWidth,
+    mapImageNaturalHeight,
+    mapImageUrl,
+    savedMapAiImagePrompt,
+  });
+  latestRef.current = {
+    mapSizeFt,
+    mapDimension,
+    mapImageNaturalWidth,
+    mapImageNaturalHeight,
+    mapImageUrl,
+    savedMapAiImagePrompt,
+  };
 
   const currentPreview = historyIndex >= 0 ? imageHistory[historyIndex] : null;
 
@@ -52,12 +69,24 @@ export function MapAiImageBuilderPanel({
   }, [onGenerationPreviewChange]);
 
   const resetFromProps = useCallback(() => {
-    const { mapSizeFt: ft, mapImageUrl: img, savedMapAiImagePrompt: saved } = latestRef.current;
+    const {
+      mapSizeFt: ft,
+      mapDimension: dim,
+      mapImageNaturalWidth: nw,
+      mapImageNaturalHeight: nh,
+      mapImageUrl: img,
+      savedMapAiImagePrompt: saved,
+    } = latestRef.current;
     setError(null);
     setSaving(false);
     const prompt = (saved && String(saved).trim())
       ? String(saved).trim()
-      : buildBattleMapDefaultPrompt(ft);
+      : buildBattleMapDefaultPrompt({
+          mapSizeFt: ft,
+          mapDimension: dim,
+          mapImageNaturalWidth: nw,
+          mapImageNaturalHeight: nh,
+        });
     setEditedPrompt(prompt);
     if (img) {
       setImageHistory([img]);
@@ -108,7 +137,15 @@ export function MapAiImageBuilderPanel({
   }, [currentPreview, editInstruction]);
 
   const rebuildPrompt = () => {
-    setEditedPrompt(buildBattleMapDefaultPrompt(latestRef.current.mapSizeFt));
+    const r = latestRef.current;
+    setEditedPrompt(
+      buildBattleMapDefaultPrompt({
+        mapSizeFt: r.mapSizeFt,
+        mapDimension: r.mapDimension,
+        mapImageNaturalWidth: r.mapImageNaturalWidth,
+        mapImageNaturalHeight: r.mapImageNaturalHeight,
+      }),
+    );
   };
 
   const handleSave = async () => {
