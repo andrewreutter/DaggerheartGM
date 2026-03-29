@@ -5,6 +5,10 @@ import { CharacterIdentitySourceBadges } from './CharacterDisplay.jsx';
 import { useCharacterSheetSourceBadgeHover } from './CharacterSheetSourceHighlight.jsx';
 import { SOURCE_BADGE } from '../lib/constants.js';
 import { V2SourceInspectButton } from './V2SourceInspectButton.jsx';
+import {
+  CHARACTER_TABLE_EDITOR_DRAWER_WIDTH,
+  CHARACTER_TABLE_SHEET_COLUMN_WIDTH,
+} from '../lib/character-table-layout.js';
 
 /**
  * Full-width title strip above the Game Table pinned character sheet + editor columns.
@@ -27,10 +31,12 @@ export function GameTableCharacterSheetTitleBar({
   savedFlash = false,
   v2LibrarySourcePath = null,
   showIncomplete = true,
-  /** Matches the sheet column width in GMTableView (`min(44rem, …)`). */
-  sheetColumnWidth = 'min(44rem, calc(100vw - 15rem))',
-  /** Matches the editor drawer width (e.g. `min(42rem, …)`). */
-  editorColumnWidth = 'min(42rem, calc(100vw - 15rem))',
+  /** Matches the sheet column width in GMTableView. */
+  sheetColumnWidth = CHARACTER_TABLE_SHEET_COLUMN_WIDTH,
+  /** Matches the editor drawer width. */
+  editorColumnWidth = CHARACTER_TABLE_EDITOR_DRAWER_WIDTH,
+  /** When true, Done is disabled (e.g. character AI build in flight). */
+  doneDisabled = false,
 }) {
   const nm = el?.name || 'Unnamed Character';
   const badge = item?._source ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
@@ -123,7 +129,9 @@ export function GameTableCharacterSheetTitleBar({
             <button
               type="button"
               onClick={onDone}
-              className="text-xs font-medium text-dh px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors"
+              disabled={doneDisabled}
+              title={doneDisabled ? 'Cancel AI build or wait to close' : undefined}
+              className="text-xs font-medium text-dh px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Done
             </button>

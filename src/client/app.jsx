@@ -8,7 +8,7 @@ import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveI
 import { generateId } from './lib/helpers.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-storage.js';
-import { isOwnItem } from './lib/constants.js';
+import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
 import { RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
@@ -1143,7 +1143,10 @@ function App() {
       });
     } else if (collectionName === 'characters') {
       const { is_public, _source, ...charData } = item;
-      newElements.push({ ...charData, instanceId: generateId(), elementType: 'character' });
+      const maxH = charData.maxHope ?? 6;
+      const hopeVal =
+        charData.hope != null ? charData.hope : Math.min(DEFAULT_CHARACTER_STARTING_HOPE, maxH);
+      newElements.push({ ...charData, hope: hopeVal, instanceId: generateId(), elementType: 'character' });
     } else if (collectionName === 'adventures') {
       const scenes = await ensureScenesLoaded();
       await ensureAdventuresLoaded();
@@ -1507,15 +1510,16 @@ function App() {
 
   // GM impersonation: add a character on behalf of the previewed player.
   const handleGmImpersonateAddCharacter = async (charData) => {
-    const { name, playerName, tier, maxHope, maxHp, maxStress, ...rest } = charData;
+    const { name, playerName, tier, maxHope, maxHp, maxStress, hope, ...rest } = charData;
+    const maxH = maxHope ?? 6;
     const newEls = await sendAddToTable({
       ...rest,
       elementType: 'character',
       name: name ?? '',
       playerName,
       tier: tier ?? 1,
-      hope: maxHope ?? 6,
-      maxHope: maxHope ?? 6,
+      hope: hope ?? Math.min(DEFAULT_CHARACTER_STARTING_HOPE, maxH),
+      maxHope: maxH,
       maxHp: maxHp ?? 6,
       maxStress: maxStress ?? 6,
       currentHp: maxHp ?? 6,

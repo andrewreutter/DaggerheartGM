@@ -346,7 +346,8 @@ SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 | `FIREBASE_APP_ID` | Yes | Firebase web app ID |
 | `DATABASE_URL` | Yes | Supabase Postgres connection string |
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
-| `OPENAI_API_KEY` | No | OpenAI API key — optional LLM fallback for Reddit posts that can't be parsed by regex/OCR |
+| `OPENAI_API_KEY` | No | OpenAI API key — enables **Character editor → Build with AI** (`POST /api/character-ai-build`, level-1 draft from a concept) and exposes `characterAiEnabled` on `GET /api/config`. Also used as optional LLM fallback for Reddit posts that can't be parsed by regex/OCR. |
+| `OPENAI_CHARACTER_MODEL` | No | OpenAI chat model for character AI (default: `gpt-4o-mini`). |
 | `HF_TOKEN` | No | Hugging Face access token — enables the "Generate with AI" image button in all item editor forms. Without this the button is hidden. Generate one at huggingface.co/settings/tokens (needs "Inference Providers" write permission). |
 | `HF_MODEL` | No | Hugging Face model ID for text-to-image generation (default: `black-forest-labs/FLUX.1-schnell`) |
 | `HF_EDIT_MODEL` | No | Hugging Face model ID for image-to-image editing (default: `black-forest-labs/FLUX.1-Kontext-dev`) |

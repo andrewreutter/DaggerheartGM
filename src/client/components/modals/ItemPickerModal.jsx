@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, useState } from 'react';
+import { useMemo, useEffect, useRef, useState, useCallback } from 'react';
 import { X, AlertTriangle, UserPlus, ChevronDown, ChevronRight } from 'lucide-react';
 import { CollectionFilters } from '../CollectionFilters.jsx';
 import { useCollectionSearch } from '../../lib/useCollectionSearch.js';
@@ -6,6 +6,8 @@ import { DaggerstackImport } from '../DaggerstackImport.jsx';
 import { saveItem } from '../../lib/api.js';
 import { generateId } from '../../lib/helpers.js';
 import { isCharacterComplete } from '../../lib/character-calc.js';
+import { DEFAULT_CHARACTER_STARTING_HOPE } from '../../lib/constants.js';
+import { CharacterAiConceptStrip } from '../CharacterAiConceptStrip.jsx';
 
 export const ITEM_PICKER_SINGULAR = {
   adversaries: 'Adversary',
@@ -62,6 +64,21 @@ export function ItemPickerModal({
   }, []);
 
   const excludeSet = useMemo(() => new Set(excludeIds || []), [excludeIds]);
+
+  const handleCharacterAiComplete = useCallback(
+    async (recomputed) => {
+      const charToSave = { ...recomputed };
+      delete charToSave.elementType;
+      delete charToSave.conditions;
+      delete charToSave.playerName;
+      const saved = await saveItem('characters', charToSave);
+      if (saved) {
+        onSelect(saved);
+        onClose();
+      }
+    },
+    [onSelect, onClose],
+  );
 
   const clientItems = useMemo(() => {
     if (isPaginated) return excludeSet.size ? search.items.filter(item => !excludeSet.has(item.id)) : search.items;
@@ -129,6 +146,28 @@ export function ItemPickerModal({
               <UserPlus size={18} />
               Create new character
             </button>
+          </div>
+        )}
+
+        {collection === 'characters' && onCreateNew && (
+          <div className="px-5 py-3 border-b border-dh-border shrink-0">
+            <CharacterAiConceptStrip
+              variant="compact"
+              compactJustification
+              showOrSeparators
+              getMergeBase={() => ({
+                id: generateId(),
+                name: '',
+                level: 1,
+                baseTraits: {},
+                hope: DEFAULT_CHARACTER_STARTING_HOPE,
+                experiences: [
+                  { name: '', score: 2, id: generateId() },
+                  { name: '', score: 2, id: generateId() },
+                ],
+              })}
+              onComplete={handleCharacterAiComplete}
+            />
           </div>
         )}
 

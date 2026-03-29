@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight, Shield, Swords, Star } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Shield, Swords, Star } from 'lucide-react';
 import { FormRow } from './FormRow.jsx';
 import { CustomSelect } from './CustomSelect.jsx';
 import { GuideFeatureCard } from '../features/GuideFeatureCard.jsx';
@@ -13,6 +13,7 @@ import { getAncestryExperienceBonus } from '../../lib/ancestry-experience-bonus.
 import { v2ClassSubclassFeatureDescriptorsByName } from '../../lib/v2-class-subclass-feature-descriptors.js';
 import { collectEditorCardsForCharacter } from '../../lib/build-feature-card-model.js';
 import { DeclarativeSchemaEditorCard } from '../DeclarativeSchemaCard.jsx';
+import { CharacterAiConceptStrip } from '../CharacterAiConceptStrip.jsx';
 
 const TRAIT_LABELS = {
   agility: 'Agility', strength: 'Strength', finesse: 'Finesse',
@@ -302,9 +303,9 @@ const ADVANCEMENT_TYPES = [
 
 /**
  * Controlled-mode character builder form.
- * Props: value (full formData) + onChange(newFormData)
+ * Props: value (full formData) + onChange(newFormData); optional onAiBusyChange(busy) for modal close guards.
  */
-export function CharacterForm({ value, onChange }) {
+export function CharacterForm({ value, onChange, onAiBusyChange }) {
   const { srdData, loading: srdLoading } = useCharacterSrdData();
   const isControlled = value !== undefined;
 
@@ -318,7 +319,12 @@ export function CharacterForm({ value, onChange }) {
   const [weaponSortOrder, setWeaponSortOrder] = useState('name');
   const [weaponGroupTraitOptimized, setWeaponGroupTraitOptimized] = useState(true);
 
+  const [aiBusy, setAiBusy] = useState(false);
+  const aiStripRef = useRef(null);
+
   const formData = isControlled ? value : localData;
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
 
   const previewRowsCacheRef = useRef({ srd: null, map: new Map() });
   if (previewRowsCacheRef.current.srd !== srdData) {
@@ -418,8 +424,6 @@ export function CharacterForm({ value, onChange }) {
   // When SRD data first loads, recompute so derived stats (evasion, traits, etc.)
   // reflect current equipment even if the DB record predates armor/weapon feature automation.
   const initialRecomputeDone = useRef(false);
-  const formDataRef = useRef(formData);
-  formDataRef.current = formData;
   useEffect(() => {
     if (!srdData || initialRecomputeDone.current) return;
     initialRecomputeDone.current = true;
@@ -631,7 +635,40 @@ export function CharacterForm({ value, onChange }) {
   }
 
   return (
-    <div className="space-y-5 p-1">
+    <div className="space-y-5 p-1 relative">
+      <CharacterAiConceptStrip
+        ref={aiStripRef}
+        getMergeBase={() => formDataRef.current}
+        onComplete={(recomputed) => update(recomputed)}
+        onAiBusyChange={(busy) => {
+          setAiBusy(busy);
+          onAiBusyChange?.(busy);
+        }}
+      />
+
+      <div className="relative">
+        {aiBusy ? (
+          <>
+            <div
+              className="absolute inset-0 z-10 min-h-[200px] rounded-md bg-dh-canvas/60 backdrop-blur-[1px] pointer-events-none"
+              aria-hidden
+            />
+            <div className="absolute inset-0 z-20 flex items-start justify-center pt-20 pointer-events-none">
+              <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-dh-strong bg-dh-surface px-4 py-3 shadow-xl">
+                <Loader2 size={22} className="animate-spin text-violet-400 shrink-0" aria-hidden />
+                <span className="text-sm text-dh-muted">Building character…</span>
+                <button
+                  type="button"
+                  onClick={() => aiStripRef.current?.cancel()}
+                  className="text-sm font-medium px-2.5 py-1 rounded-md border border-dh-border text-dh hover:bg-dh-raised transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
+        <div className={aiBusy ? 'pointer-events-none select-none opacity-[0.68]' : ''}>
       {/* ── Name and Identity ── */}
       <FormRow label="Name">
         <input
@@ -1191,6 +1228,8 @@ export function CharacterForm({ value, onChange }) {
           placeholder="Connection to other characters..."
         />
       </FormRow>
+        </div>
+      </div>
     </div>
   );
 }

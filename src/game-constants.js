@@ -54,6 +54,9 @@ export const ROLE_BP_COST = {
 export const ENV_TYPES = ['traversal', 'exploration', 'social', 'event'];
 export const TIERS = [1, 2, 3, 4];
 
+/** Default filled Hope boxes for a newly created PC (max pool remains 6). */
+export const DEFAULT_CHARACTER_STARTING_HOPE = 2;
+
 /**
  * V2 `featureState[scope][key]` — one-time Evasion bonus vs a pending attack (declarative features).
  * Engine mutations and Game Table banner math use this key; feature modules own the scope bag.

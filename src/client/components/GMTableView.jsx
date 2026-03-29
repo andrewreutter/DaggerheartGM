@@ -13,6 +13,7 @@ import { getCheckboxTrackPreset } from './CheckboxTrack.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
+import { CharacterAiConceptStrip } from './CharacterAiConceptStrip.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { buildSystemContext } from '../lib/feature-context.js';
@@ -22,7 +23,7 @@ import {
   gateTableOpForPrepMode,
   isPrepModeElementUpdateBlocked,
 } from '../lib/table-session-gate.js';
-import { isOwnItem, ROLE_BP_COST } from '../lib/constants.js';
+import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE } from '../lib/constants.js';
 import {
   characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
   shouldSuppressCharacterOverlayOutsideDismiss,
@@ -31,6 +32,13 @@ import { resolveGameTableCharacterEditMode } from '../lib/game-table-character-m
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
 import { getUnscaledAdversary } from '../lib/adversary-defaults.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
+import {
+  CHARACTER_TABLE_EDITOR_DRAWER_WIDTH,
+  CHARACTER_TABLE_EDITOR_DRAWER_WIDTH_WITH_EDITOR,
+  CHARACTER_TABLE_SHEET_COLUMN_WIDTH,
+  CHARACTER_TABLE_SHEET_COLUMN_WIDTH_WITH_EDITOR,
+  characterTableUnifiedCardWidth,
+} from '../lib/character-table-layout.js';
 import { GameTableCharacterSheetTitleBar } from './GameTableCharacterSheetTitleBar.jsx';
 import {
   CharacterSheetSourceHighlightProvider,
@@ -357,9 +365,6 @@ function enrichRollWithDamage(roll, elements) {
   roll.hpLoss = computeHpLoss(dmg.total, effectiveThresholds(targetEl));
   roll.dmgType = dmg.type;
 }
-
-/** Width of the character table editor column (unified sheet + slide-out form). */
-const CHARACTER_TABLE_EDITOR_DRAWER_WIDTH = 'min(42rem, calc(100vw - 15rem))';
 
 function pickTallestGmSection(prLen, actionsLen, fearLen) {
   const max = Math.max(prLen, actionsLen, fearLen);
@@ -2816,6 +2821,52 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return { top: r.top, bottom: r.bottom };
   }, []);
 
+  const handleCharacterPanelAiComplete = useCallback(
+    async (draft) => {
+      const rect = getAddCharacterAnchorRect();
+      if (isPlayer && onPlayerAddCharacter) {
+        const res = await onPlayerAddCharacter({ ...draft, elementType: 'character' });
+        const newEl = res?.character;
+        if (!newEl?.instanceId) return;
+        navigate(`${gameTableBasePath}/characters/${draft.id}`, { replace: true });
+        setEditState({
+          step: 'form',
+          item: draft,
+          collection: 'characters',
+          mode: 'new',
+          baseElement: newEl,
+          instances: [newEl],
+          presentation: 'rightDrawer',
+        });
+        characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+        return;
+      }
+      const newEls = await addToTable(draft, 'characters');
+      const newEl = newEls?.[0];
+      if (!newEl) return;
+      navigate(`${gameTableBasePath}/characters/${draft.id}`, { replace: true });
+      setEditState({
+        step: 'form',
+        item: draft,
+        collection: 'characters',
+        mode: 'new',
+        baseElement: newEl,
+        instances: [newEl],
+        presentation: 'rightDrawer',
+      });
+      characterOverlay.show({ element: newEl, top: rect.top, bottom: rect.bottom });
+    },
+    [
+      addToTable,
+      characterOverlay,
+      gameTableBasePath,
+      getAddCharacterAnchorRect,
+      isPlayer,
+      navigate,
+      onPlayerAddCharacter,
+    ],
+  );
+
   // Deep-link: open modal when URL has /table/:collection/:id (e.g. refresh, back/forward, shared link)
   const { modalCollection, modalItemId } = route || {};
   useEffect(() => {
@@ -5159,6 +5210,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               No characters yet.
             </div>
           )}
+
+          <CharacterAiConceptStrip
+            variant="compact"
+            compactJustification
+            textareaRows={4}
+            getMergeBase={() => ({
+              id: generateId(),
+              name: '',
+              level: 1,
+              baseTraits: {},
+              hope: DEFAULT_CHARACTER_STARTING_HOPE,
+              experiences: [
+                { name: '', score: 2, id: generateId() },
+                { name: '', score: 2, id: generateId() },
+              ],
+            })}
+            onComplete={handleCharacterPanelAiComplete}
+          />
         </div>
       </div>
 
@@ -6506,6 +6575,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               name: '',
               level: 1,
               baseTraits: {},
+              hope: DEFAULT_CHARACTER_STARTING_HOPE,
               experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
             };
             const rect = getAddCharacterAnchorRect();
@@ -6579,7 +6649,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return (
         <div
           ref={characterOverlay.overlayRef}
-          className="fixed z-[55] flex flex-row gap-2 items-start max-w-[calc(100vw-14rem-8px)]"
+          className="fixed z-[55] flex flex-row gap-2 items-start max-w-[calc(100vw-14rem-8px)] min-w-0 overflow-x-auto"
           style={{
             left: 'calc(14rem + 8px)',
             top: 90,
@@ -6587,13 +6657,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           }}
         >
           <CharacterSheetSourceHighlightProvider>
-          <CharacterSheetHighlightSurface className="flex flex-col rounded-xl border border-dh-strong bg-dh-surface shadow-2xl overflow-hidden max-h-full h-full min-h-0 shrink-0 min-w-0">
+          <CharacterSheetHighlightSurface
+            className="flex flex-col rounded-xl border border-dh-strong bg-dh-surface shadow-2xl overflow-hidden max-h-full h-full min-h-0 shrink-0 min-w-0"
+            style={{ width: characterTableUnifiedCardWidth(effectiveEditDrawerOpen) }}
+          >
             <GameTableCharacterSheetTitleBar
               el={titleBarEl}
               item={itemForTitleBadge}
               editDrawerOpen={effectiveEditDrawerOpen}
               onEdit={(!isPlayer || isMyCharacter) ? () => openTableCharacterEditor(liveEl) : undefined}
               onDone={closeEditModal}
+              doneDisabled={!!characterDrawerChromeSync?.aiCharacterBusy}
               onUndo={() => characterTableDetailModalRef.current?.undo()}
               onRedo={() => characterTableDetailModalRef.current?.redo()}
               canUndo={!!sync?.canUndo}
@@ -6604,14 +6678,25 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               savedFlash={sync?.savedFlash}
               v2LibrarySourcePath={v2TitlePath}
               showIncomplete
-              editorColumnWidth={CHARACTER_TABLE_EDITOR_DRAWER_WIDTH}
+              sheetColumnWidth={
+                effectiveEditDrawerOpen
+                  ? CHARACTER_TABLE_SHEET_COLUMN_WIDTH_WITH_EDITOR
+                  : CHARACTER_TABLE_SHEET_COLUMN_WIDTH
+              }
+              editorColumnWidth={
+                effectiveEditDrawerOpen
+                  ? CHARACTER_TABLE_EDITOR_DRAWER_WIDTH_WITH_EDITOR
+                  : CHARACTER_TABLE_EDITOR_DRAWER_WIDTH
+              }
             />
             <div className="flex flex-row items-stretch flex-1 min-h-0 overflow-hidden">
             <div
               ref={characterSheetColumnRef}
               className="relative z-10 flex flex-col overflow-hidden min-w-0 shrink-0"
               style={{
-                width: 'min(44rem, calc(100vw - 15rem))',
+                width: effectiveEditDrawerOpen
+                  ? CHARACTER_TABLE_SHEET_COLUMN_WIDTH_WITH_EDITOR
+                  : CHARACTER_TABLE_SHEET_COLUMN_WIDTH,
               }}
             >
               {(() => {
@@ -6656,13 +6741,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
             <div
               className="relative z-0 overflow-hidden shrink-0 h-full min-h-0 border-l border-dh-border transition-[width] duration-300 ease-out"
-              style={{ width: effectiveEditDrawerOpen ? CHARACTER_TABLE_EDITOR_DRAWER_WIDTH : 0 }}
+              style={{
+                width: effectiveEditDrawerOpen
+                  ? CHARACTER_TABLE_EDITOR_DRAWER_WIDTH_WITH_EDITOR
+                  : 0,
+              }}
               aria-hidden={!effectiveEditDrawerOpen}
             >
               <div
                 ref={setCharacterEditorPortalEl}
                 className={`h-full min-h-0 flex flex-col transition-transform duration-300 ease-out will-change-transform ${effectiveEditDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`}
-                style={{ width: CHARACTER_TABLE_EDITOR_DRAWER_WIDTH }}
+                style={{ width: CHARACTER_TABLE_EDITOR_DRAWER_WIDTH_WITH_EDITOR }}
               />
             </div>
             </div>

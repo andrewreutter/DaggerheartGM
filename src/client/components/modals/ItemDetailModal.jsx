@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Undo2, Redo2, Trash2, Sparkles, RefreshCw, ExternalLink, Check, User } from 'lucide-react';
+import { X, Undo2, Redo2, Trash2, Sparkles, RefreshCw, ExternalLink, Check, User, AlertTriangle } from 'lucide-react';
 import { ItemActionButtons } from '../ItemActionButtons.jsx';
 import { useAutoSaveUndo } from '../../lib/useAutoSaveUndo.js';
 import { AdversaryForm } from '../forms/AdversaryForm.jsx';
@@ -9,7 +9,7 @@ import { SceneForm } from '../forms/SceneForm.jsx';
 import { AdventureForm } from '../forms/AdventureForm.jsx';
 import { CharacterForm } from '../forms/CharacterForm.jsx';
 import { GenericSrdLibraryForm } from '../forms/GenericSrdLibraryForm.jsx';
-import { SOURCE_BADGE, isOwnItem } from '../../lib/constants.js';
+import { SOURCE_BADGE, isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from '../../lib/constants.js';
 import { generateId } from '../../lib/helpers.js';
 import { getBaselineStats, getUnscaledAdversary, computeScaledStats } from '../../lib/adversary-defaults.js';
 import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
@@ -32,6 +32,7 @@ import { MarkdownText } from '../../lib/markdown.js';
 import { V2SourceInspectButton } from '../V2SourceInspectButton.jsx';
 import { SRD_UNIFIED_COLLECTIONS, LIBRARY_CUSTOM_DETAIL_COLLECTIONS } from '../../lib/library-filter-config.js';
 import { buildDefaultNewSrdLibraryItem } from '../../lib/library-default-new-item.js';
+import { isCharacterComplete } from '../../lib/character-calc.js';
 import { CharacterIdentityTitleRow } from '../CharacterDisplay.jsx';
 
 const SRD_UNIFIED_SET = new Set(SRD_UNIFIED_COLLECTIONS);
@@ -119,6 +120,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   const [charAutosaveHintDismissed, setCharAutosaveHintDismissed] = useState(isCharacterEditorAutosaveHintDismissed);
   const overlayRef = useRef(null);
   const [drawerEntered, setDrawerEntered] = useState(false);
+  const [aiCharacterBusy, setAiCharacterBusy] = useState(false);
 
   useEffect(() => {
     const onReset = () => setCharAutosaveHintDismissed(isCharacterEditorAutosaveHintDismissed());
@@ -161,6 +163,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
         defaultsForNew = {
           level: 1,
           baseTraits: {},
+          hope: DEFAULT_CHARACTER_STARTING_HOPE,
           experiences: [
             { name: '', score: 2, id: generateId() },
             { name: '', score: 2, id: generateId() },
@@ -182,6 +185,10 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   }
 
   const editorSessionKey = item?.id ?? initialRef.current?.id ?? collection;
+
+  useEffect(() => {
+    setAiCharacterBusy(false);
+  }, [editorSessionKey]);
 
   useLayoutEffect(() => {
     if (!isRightDrawer) {
@@ -242,11 +249,14 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (mod && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
-      else if (e.key === 'Escape') { if (lightboxUrl) { setLightboxUrl(null); } else { onClose(); } }
+      else if (e.key === 'Escape') {
+        if (lightboxUrl) setLightboxUrl(null);
+        else if (!aiCharacterBusy) onClose();
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [undo, redo, onClose, lightboxUrl, setLightboxUrl]);
+  }, [undo, redo, onClose, lightboxUrl, setLightboxUrl, aiCharacterBusy]);
 
   const handleClone = async () => {
     if (!onClone) return;
@@ -262,7 +272,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   };
 
   const handleOverlayClick = (e) => {
-    if (e.target === overlayRef.current) onClose();
+    if (e.target === overlayRef.current && !aiCharacterBusy) onClose();
   };
 
   const baseDisplayItem = editable ? formData : item;
@@ -390,12 +400,13 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       characters,
       onImageSaved: item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined,
       onMergeAdversary,
+      ...(collection === 'characters' ? { onAiBusyChange: setAiCharacterBusy } : {}),
     };
 
-    return (
-      <div
-        className={`flex-1 min-w-0 overflow-y-auto p-4 ${isRightDrawer ? '[scrollbar-gutter:stable]' : ''}`}
-      >
+    const formScrollClass = `flex-1 min-h-0 overflow-y-auto p-4 ${isRightDrawer ? '[scrollbar-gutter:stable]' : ''}`;
+
+    const genericForm = (
+      <>
         {collection === 'adversaries' && <AdversaryForm {...sharedProps} />}
         {collection === 'environments' && <EnvironmentForm {...sharedProps} />}
         {collection === 'scenes' && <SceneForm {...sharedProps} />}
@@ -410,6 +421,39 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
             onImageSaved={item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined}
           />
         )}
+      </>
+    );
+
+    if (collection === 'characters') {
+      const charCheck = isCharacterComplete(
+        formData,
+        characterSrdData ? { srdData: characterSrdData } : undefined,
+      );
+      return (
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
+          {!charCheck.complete && (
+            <div
+              className="shrink-0 px-4 pt-3 pb-2 border-b border-amber-800/45 bg-amber-950/30"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="flex items-start gap-2 px-2.5 py-2 rounded-md border border-amber-700/60 bg-amber-950/45 text-[11px] text-dh">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-400" aria-hidden />
+                <p className="min-w-0 leading-relaxed">
+                  <span className="font-semibold text-amber-100/95">Incomplete — </span>
+                  missing: {charCheck.missing.join(', ')}
+                </p>
+              </div>
+            </div>
+          )}
+          <div className={formScrollClass}>{genericForm}</div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={formScrollClass}>
+        {genericForm}
       </div>
     );
   };
@@ -480,6 +524,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       savedFlash,
       canUndo,
       canRedo,
+      aiCharacterBusy,
     });
   }, [
     hidePortaledCharacterHeader,
@@ -491,6 +536,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
     savedFlash,
     canUndo,
     canRedo,
+    aiCharacterBusy,
   ]);
 
   const mainCardBody = (
@@ -558,7 +604,9 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                   <button
                     type="button"
                     onClick={onClose}
-                    className="text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors"
+                    disabled={aiCharacterBusy}
+                    title={aiCharacterBusy ? 'Cancel AI build or wait to close' : undefined}
+                    className="text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Done
                   </button>
@@ -652,10 +700,12 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               <button
                 type="button"
                 onClick={onClose}
+                disabled={aiCharacterBusy}
+                title={aiCharacterBusy ? 'Cancel AI build or wait to close' : undefined}
                 className={
                   isRightDrawer
-                    ? 'text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors'
-                    : 'text-sm font-medium text-dh hover:text-dh px-2.5 py-1.5 rounded-md border border-dh-strong hover:bg-dh-raised transition-colors'
+                    ? 'text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
+                    : 'text-sm font-medium text-dh hover:text-dh px-2.5 py-1.5 rounded-md border border-dh-strong hover:bg-dh-raised transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
                 }
               >
                 Done
@@ -757,7 +807,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
         <div
           className="fixed inset-0 z-[80] bg-black/50"
           aria-hidden
-          onClick={onClose}
+          onClick={aiCharacterBusy ? undefined : onClose}
         />
         <div
           className={`fixed z-[81] flex flex-col transition-transform duration-300 ease-out will-change-transform ${slideClass}`}

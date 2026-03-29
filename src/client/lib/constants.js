@@ -5,6 +5,7 @@ export {
   ROLE_BP_COST,
   ROLE_DESCRIPTIONS,
   FCG_PUBLIC_USER_ID,
+  DEFAULT_CHARACTER_STARTING_HOPE,
 } from '../../game-constants.js';
 export const FEATURE_TYPES = ['action', 'reaction', 'passive'];
 export const DAMAGE_TYPES = ['Phy', 'Mag', 'Dir'];
