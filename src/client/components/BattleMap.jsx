@@ -747,7 +747,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
         <div className="w-px h-4 bg-dh-hover" />
 
         {!isUploading ? (
-          <span className="text-[10px] text-dh-muted/45 select-none whitespace-nowrap">Paste or</span>
+          <span className="text-[10px] text-dh-muted/45 select-none whitespace-nowrap">Paste, drop, or</span>
         ) : null}
 
         <label

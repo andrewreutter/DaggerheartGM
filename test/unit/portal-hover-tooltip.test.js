@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  clampPortalHoverTooltipY,
   computePortalHoverTooltipPosition,
   computePortalHoverTooltipPositionBelow,
   PORTAL_HOVER_TOOLTIP_WIDTH,
   PORTAL_HOVER_TOOLTIP_GAP,
+  PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
 } from '../../src/client/lib/portal-hover-tooltip-position.js';
 
 describe('computePortalHoverTooltipPosition', () => {
@@ -21,6 +23,27 @@ describe('computePortalHoverTooltipPosition', () => {
     const { x } = computePortalHoverTooltipPosition(rect, false, innerWidth);
     const panelW = PORTAL_HOVER_TOOLTIP_WIDTH;
     expect(x).toBe(rect.left - panelW - PORTAL_HOVER_TOOLTIP_GAP);
+  });
+});
+
+describe('clampPortalHoverTooltipY', () => {
+  const pad = PORTAL_HOVER_TOOLTIP_BOTTOM_PAD;
+  const innerH = 800;
+
+  it('leaves top unchanged when panel fits below the viewport bottom', () => {
+    expect(clampPortalHoverTooltipY(100, 200, innerH, pad)).toBe(100);
+  });
+
+  it('shifts up when the panel would extend past the bottom edge', () => {
+    const h = 300;
+    const top = 600;
+    const maxTop = innerH - pad - h;
+    expect(clampPortalHoverTooltipY(top, h, innerH, pad)).toBe(maxTop);
+  });
+
+  it('pins to top pad when taller than usable viewport (scroll inside panel)', () => {
+    const usable = innerH - 2 * pad;
+    expect(clampPortalHoverTooltipY(400, usable + 50, innerH, pad)).toBe(pad);
   });
 });
 

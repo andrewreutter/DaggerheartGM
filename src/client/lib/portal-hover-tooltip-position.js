@@ -4,6 +4,23 @@ export const PORTAL_HOVER_TOOLTIP_GAP = 6;
 export const PORTAL_HOVER_TOOLTIP_BOTTOM_PAD = 16;
 
 /**
+ * Clamp `position: fixed` `top` so a panel of `height` px stays within the viewport
+ * with `pad` margin top and bottom. If taller than the usable viewport, pin to `pad`
+ * and rely on `max-height` + overflow on the panel.
+ */
+export function clampPortalHoverTooltipY(
+  top,
+  height,
+  innerHeight = typeof window !== 'undefined' ? window.innerHeight : 800,
+  pad = PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
+) {
+  const usable = innerHeight - 2 * pad;
+  if (height >= usable) return pad;
+  const maxTop = innerHeight - pad - height;
+  return Math.max(pad, Math.min(top, maxTop));
+}
+
+/**
  * Viewport-fixed position for a hover panel beside a trigger rect (same rules as CustomSelect option hover).
  * @param {Pick<DOMRect, 'left' | 'right' | 'top'>} rect
  * @param {boolean} wide

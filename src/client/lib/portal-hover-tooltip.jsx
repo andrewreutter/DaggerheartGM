@@ -5,6 +5,7 @@ import {
   PORTAL_HOVER_TOOLTIP_WIDTH,
   PORTAL_HOVER_TOOLTIP_WIDTH_WIDE,
   PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
+  clampPortalHoverTooltipY,
   computePortalHoverTooltipPosition,
   computePortalHoverTooltipPositionBelow,
 } from './portal-hover-tooltip-position.js';
@@ -14,6 +15,7 @@ export {
   PORTAL_HOVER_TOOLTIP_WIDTH_WIDE,
   PORTAL_HOVER_TOOLTIP_GAP,
   PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
+  clampPortalHoverTooltipY,
   computePortalHoverTooltipPosition,
   computePortalHoverTooltipPositionBelow,
 } from './portal-hover-tooltip-position.js';
@@ -98,13 +100,41 @@ export function usePortalHoverTooltip() {
   }, [clearLeaveTimer]);
 
   useLayoutEffect(() => {
-    if (!tooltip || !tooltipRef.current) return;
-    const elBottom = tooltipRef.current.getBoundingClientRect().bottom;
-    const overflow = elBottom - (window.innerHeight - PORTAL_HOVER_TOOLTIP_BOTTOM_PAD);
-    if (overflow > 0) {
-      setTooltip((t) => (t ? { ...t, y: Math.max(PORTAL_HOVER_TOOLTIP_BOTTOM_PAD, t.y - overflow) } : null));
+    if (!tooltip) return undefined;
+
+    const applyClamp = () => {
+      const el = tooltipRef.current;
+      if (!el) return;
+      const { height } = el.getBoundingClientRect();
+      if (height <= 0) return;
+      const innerH = window.innerHeight;
+      const pad = PORTAL_HOVER_TOOLTIP_BOTTOM_PAD;
+      setTooltip((t) => {
+        if (!t) return t;
+        const nextY = clampPortalHoverTooltipY(t.y, height, innerH, pad);
+        return Math.abs(nextY - t.y) > 0.5 ? { ...t, y: nextY } : t;
+      });
+    };
+
+    applyClamp();
+    const raf = requestAnimationFrame(() => {
+      applyClamp();
+    });
+
+    const node = tooltipRef.current;
+    if (typeof ResizeObserver === 'undefined' || !node) {
+      return () => cancelAnimationFrame(raf);
     }
-  }, [tooltip?.description, tooltip?.wide, tooltip?.extraKey, tooltip?.contentKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const ro = new ResizeObserver(() => {
+      applyClamp();
+    });
+    ro.observe(node);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [tooltip]);
 
   useEffect(() => () => clearLeaveTimer(), [clearLeaveTimer]);
 

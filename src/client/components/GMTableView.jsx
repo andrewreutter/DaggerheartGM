@@ -4568,6 +4568,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   };
 
   const renderGmMovesFeatureCardRow = (feature, category) => {
+    const rowItem = consolidatedByCardKey.get(feature.cardKey);
     const allCds = parseAllCountdownValues(feature.description);
     const cdKey = `${feature.cardKey}|${feature.featureKey}`;
     const cdVals = allCds.map((cd, cdIdx) =>
@@ -4580,13 +4581,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         key={`${feature.cardKey}-${feature.featureKey}-${feature.name}`}
         onMouseEnter={(e) => {
           if (isTouch) return;
-          if (gmHoverHideTimer.current) { clearTimeout(gmHoverHideTimer.current); gmHoverHideTimer.current = null; }
-          setHoveredFeature({ cardKey: feature.cardKey, featureKey: feature.featureKey });
+          if (!rowItem) return;
+          showGmMovesChipTooltip(e, feature);
         }}
         onMouseLeave={() => {
           if (isTouch) return;
-          setHoveredFeature(null);
-          gmHoverHideTimer.current = setTimeout(() => { setGmHoverOverlayActive(false); gmHoverHideTimer.current = null; }, 120);
+          gmMovesPortalTooltip.scheduleClose();
         }}
         onClick={(e) => {
           if (category === 'Fear Actions') {
@@ -4646,7 +4646,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   const gmMovesPrSection = (
     <CharacterSheetEmphasisCard title="Passives & Reactions" compact>
-      <div className="max-h-[min(48vh,360px)] overflow-y-auto pr-0.5">
+      <div className="pr-0.5">
         <div className="flex flex-wrap gap-1.5">
           {gmMovesPrFeatures.length === 0 ? (
             <span className="text-xs text-dh-muted">—</span>
@@ -4659,7 +4659,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
   const gmMovesActionsSection = (
     <CharacterSheetEmphasisCard title="Actions" compact>
-      <div className="max-h-[min(48vh,360px)] space-y-1.5 overflow-y-auto pr-0.5">
+      <div className="space-y-1.5 pr-0.5">
         {gmMovesActionFeatures.length === 0 ? (
           <span className="text-xs text-dh-muted">—</span>
         ) : (
@@ -4670,7 +4670,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
   const gmMovesFearSection = (
     <CharacterSheetEmphasisCard title="Fear Actions" compact>
-      <div className="max-h-[min(48vh,360px)] space-y-1.5 overflow-y-auto pr-0.5">
+      <div className="space-y-1.5 pr-0.5">
         {gmMovesFearFeatures.length === 0 ? (
           <span className="text-xs text-dh-muted">—</span>
         ) : (
@@ -4681,11 +4681,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
 
   const gmMovesMainColumns = (
-    <div className="flex min-h-0 min-w-0 flex-1 gap-2">
+    <div className="flex min-w-0 flex-1 items-start gap-2">
       {tallGmSection === 'pr' && (
         <>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{gmMovesPrSection}</div>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">{gmMovesPrSection}</div>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
             {gmMovesActionsSection}
             {gmMovesFearSection}
           </div>
@@ -4693,8 +4693,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       )}
       {tallGmSection === 'actions' && (
         <>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{gmMovesActionsSection}</div>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">{gmMovesActionsSection}</div>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
             {gmMovesPrSection}
             {gmMovesFearSection}
           </div>
@@ -4702,8 +4702,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       )}
       {tallGmSection === 'fear' && (
         <>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{gmMovesFearSection}</div>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col gap-2">{gmMovesFearSection}</div>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
             {gmMovesPrSection}
             {gmMovesActionsSection}
           </div>
@@ -5181,12 +5181,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               <Zap size={16} className="text-dh-hope" /> GM Moves
             </h2>
           </div>
-          <div className="flex min-h-0 flex-1 gap-2 p-2">
-            <div className="flex h-full min-h-0 w-52 shrink-0 flex-col overflow-hidden rounded-lg border border-dh-border bg-dh-surface/90">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <div className="flex items-start gap-2 p-2">
+            <div className="flex w-52 shrink-0 flex-col self-start overflow-hidden rounded-lg border border-dh-border bg-dh-surface/90">
               <div className="shrink-0 border-b border-dh-border bg-dh-canvas px-2 py-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-dh-muted">Default Moves</span>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              <div className="p-2">
                 <div className="flex gap-2">
                   <div
                     className="relative w-4 shrink-0 cursor-default"
@@ -5247,13 +5248,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 </div>
               </div>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
               {gmMovesMainColumns}
               {activeElements.length === 0 && (
-                <div className="mt-2 text-center text-xs text-dh-muted">
+                <div className="text-center text-xs text-dh-muted">
                   No active elements. Add adversaries, environments, or scenes to populate the table.
                 </div>
               )}
+            </div>
             </div>
           </div>
         </div>
@@ -5833,40 +5835,88 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               ><Trash2 size={13} /></button>
             </div>
           </div>
-          {/* + Add menu (Adversary, Environment, Scene, Note) */}
-          <div
-            className="relative"
-            ref={addMenuRef}
-            onMouseLeave={() => { if (!isTouch) setAddMenuOpen(false); }}
-          >
-            <button
-              onClick={() => setAddMenuOpen(p => !p)}
-              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-dh-strong bg-dh-raised/60' : 'border-dh-strong bg-dh-surface/50 hover:border-dh-strong'}`}
-            >
-              <Plus size={12} className="text-dh-muted" />
-              <span className="text-xs font-semibold text-dh-muted">Add...</span>
-            </button>
-            {addMenuOpen && (
-              <div className="absolute left-0 right-0 top-full z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-xl overflow-hidden">
-                {[
-                  { col: 'adversaries', label: 'Adversary' },
-                  { col: 'environments', label: 'Environment' },
-                  { col: 'scenes', label: 'Scene' },
-                  { col: '__note', label: 'Note' },
-                ].map(({ col, label }) => (
-                  <button
-                    key={col}
-                    onClick={() => {
-                      if (col === '__note') handleAddEmptyNote();
-                      else { setModalOpen(col); setAddMenuOpen(false); }
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs text-dh hover:bg-dh-hover hover:text-dh transition-colors"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+          {/* Session / Rest cycle buttons */}
+          <div className="flex items-center gap-1">
+            {sessionPlayAllowed ? (
+              <button
+                type="button"
+                title="End Session — pause play mechanics until you start again"
+                onClick={() => { void handleEndSession(); }}
+                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
+              >■ End</button>
+            ) : sessionPaused ? (
+              <button
+                type="button"
+                title="Resume Session — table was idle; click to continue play"
+                onClick={() => { void handleResumeSession(); }}
+                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+              >▶ Resume</button>
+            ) : (
+              <button
+                type="button"
+                title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
+                onClick={() => handleSessionCycle('session')}
+                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
+              >▶ Session</button>
             )}
+            <button
+              title="Short Rest — refresh rest-use features for all characters"
+              onClick={() => handleSessionCycle('rest')}
+              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
+            >⏸ Short</button>
+            <button
+              title="Long Rest — refresh rest and long-rest features for all characters"
+              onClick={() => handleSessionCycle('longRest')}
+              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
+            >⏹ Long</button>
+          </div>
+          {/* Fear tracker */}
+          <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2">
+            <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
+              <Flame size={12} className="shrink-0 text-fuchsia-400" />
+              <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-fuchsia-400/90">
+                FEAR
+              </span>
+              <CheckboxTrack
+                className="min-w-0"
+                total={6}
+                filled={Math.min(fearCount, 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v)}
+                fillColor="bg-fuchsia-600"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+                currentAbsoluteValue={fearCount}
+                targetToAbsolute={(v) => v}
+              />
+              <Flame size={12} className="invisible shrink-0" aria-hidden />
+              <span className="invisible shrink-0 text-[10px] font-bold uppercase tracking-widest" aria-hidden>
+                FEAR
+              </span>
+              <CheckboxTrack
+                className="min-w-0"
+                total={6}
+                filled={Math.max(0, fearCount - 6)}
+                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
+                fillColor="bg-fuchsia-600"
+                label="Fear"
+                verbs={['Gain', 'Spend']}
+                currentAbsoluteValue={fearCount}
+                targetToAbsolute={(v) => v + 6}
+              />
+            </div>
+          </div>
+          {/* GM Moves hover trigger */}
+          <div
+            data-testid="gm-moves-trigger"
+            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
+            {...gmMovesOverlay.triggerProps(true)}
+          >
+            <Zap size={14} className="text-dh-hope shrink-0" />
+            <span className="text-xs font-semibold text-dh uppercase tracking-wider flex-1">GM Moves</span>
+            {(() => {
+              const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
+              return count > 0 ? <span className="text-[10px] text-dh-muted tabular-nums">{count}</span> : null;
+            })()}
           </div>
           {/* Battle Budget card */}
           <div className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden">
@@ -5984,82 +6034,40 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               </div>
             )}
           </div>
-          {/* Session / Rest cycle buttons */}
-          <div className="flex items-center gap-1">
-            {sessionPlayAllowed ? (
-              <button
-                type="button"
-                title="End Session — pause play mechanics until you start again"
-                onClick={() => { void handleEndSession(); }}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-rose-800/60 bg-rose-950/30 text-rose-300 hover:bg-rose-900/40 hover:border-rose-600 transition-colors"
-              >■ End</button>
-            ) : sessionPaused ? (
-              <button
-                type="button"
-                title="Resume Session — table was idle; click to continue play"
-                onClick={() => { void handleResumeSession(); }}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
-              >▶ Resume</button>
-            ) : (
-              <button
-                type="button"
-                title="Start Session — acknowledge to reset session uses, modifiers, and session-start hooks"
-                onClick={() => handleSessionCycle('session')}
-                className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-emerald-800/60 bg-emerald-950/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-700 transition-colors"
-              >▶ Session</button>
-            )}
-            <button
-              title="Short Rest — refresh rest-use features for all characters"
-              onClick={() => handleSessionCycle('rest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-sky-800/60 bg-sky-950/30 text-sky-400 hover:bg-sky-900/40 hover:border-sky-700 transition-colors"
-            >⏸ Short</button>
-            <button
-              title="Long Rest — refresh rest and long-rest features for all characters"
-              onClick={() => handleSessionCycle('longRest')}
-              className="flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border border-dh-strong bg-dh-hover text-dh hover:bg-dh-strong transition-colors"
-            >⏹ Long</button>
-          </div>
-          {/* Fear tracker */}
-          <div className="rounded-lg border px-2.5 py-2 border-dh-strong bg-dh-surface">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <Flame size={12} className="shrink-0 text-fuchsia-400" />
-              <CheckboxTrack
-                total={6}
-                filled={Math.min(fearCount, 6)}
-                onSetFilled={(v) => setFearCount && setFearCount(v)}
-                fillColor="bg-fuchsia-600"
-                label="Fear"
-                verbs={['Gain', 'Spend']}
-                currentAbsoluteValue={fearCount}
-                targetToAbsolute={(v) => v}
-              />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Flame size={12} className="shrink-0 invisible" />
-              <CheckboxTrack
-                total={6}
-                filled={Math.max(0, fearCount - 6)}
-                onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
-                fillColor="bg-fuchsia-600"
-                label="Fear"
-                verbs={['Gain', 'Spend']}
-                currentAbsoluteValue={fearCount}
-                targetToAbsolute={(v) => v + 6}
-              />
-            </div>
-          </div>
-          {/* GM Moves hover trigger */}
+          {/* + Add menu (Adversary, Environment, Scene, Note) */}
           <div
-            data-testid="gm-moves-trigger"
-            className={`rounded-lg border px-2.5 py-2 flex items-center gap-2 transition-colors cursor-pointer ${gmMovesOverlay.isOpen ? 'border-dh-hope/60 bg-dh-inset' : 'border-dh-strong bg-dh-surface hover:border-dh-hope/40'}`}
-            {...gmMovesOverlay.triggerProps(true)}
+            className="relative"
+            ref={addMenuRef}
+            onMouseLeave={() => { if (!isTouch) setAddMenuOpen(false); }}
           >
-            <Zap size={14} className="text-dh-hope shrink-0" />
-            <span className="text-xs font-semibold text-dh uppercase tracking-wider flex-1">GM Moves</span>
-            {(() => {
-              const count = Object.values(consolidatedMenu).reduce((sum, f) => sum + f.length, 0);
-              return count > 0 ? <span className="text-[10px] text-dh-muted tabular-nums">{count}</span> : null;
-            })()}
+            <button
+              onClick={() => setAddMenuOpen(p => !p)}
+              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-dh-strong bg-dh-raised/60' : 'border-dh-strong bg-dh-surface/50 hover:border-dh-strong'}`}
+            >
+              <Plus size={12} className="text-dh-muted" />
+              <span className="text-xs font-semibold text-dh-muted">Add...</span>
+            </button>
+            {addMenuOpen && (
+              <div className="absolute left-0 right-0 top-full z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-xl overflow-hidden">
+                {[
+                  { col: 'adversaries', label: 'Adversary' },
+                  { col: 'environments', label: 'Environment' },
+                  { col: 'scenes', label: 'Scene' },
+                  { col: '__note', label: 'Note' },
+                ].map(({ col, label }) => (
+                  <button
+                    key={col}
+                    onClick={() => {
+                      if (col === '__note') handleAddEmptyNote();
+                      else { setModalOpen(col); setAddMenuOpen(false); }
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs text-dh hover:bg-dh-hover hover:text-dh transition-colors"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -6322,7 +6330,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           })}
           {consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
             <div className="text-center text-dh-muted text-xs py-6">
-              No adversaries on table.
+              No adversaries or environments on table.
             </div>
           )}
         </div>
@@ -6336,27 +6344,35 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               <Swords size={15} className="text-red-400" /> Encounter
             </h2>
             {/* Fear tracker — read-only */}
-            <div className="rounded-lg border px-2.5 py-2 border-dh-strong bg-dh-surface">
-              <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="rounded-lg border border-dh-strong bg-dh-surface px-2.5 py-2">
+              <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-1.5 gap-y-1.5">
                 <Flame size={12} className="shrink-0 text-fuchsia-400" />
+                <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-fuchsia-400/90">
+                  FEAR
+                </span>
                 <CheckboxTrack
+                  className="min-w-0"
                   total={6}
                   filled={Math.min(fearCount, 6)}
                   fillColor="bg-fuchsia-600"
                   label="Fear"
                 />
+                {fearCount > 6 && (
+                  <>
+                    <Flame size={12} className="invisible shrink-0" aria-hidden />
+                    <span className="invisible shrink-0 text-[10px] font-bold uppercase tracking-widest" aria-hidden>
+                      FEAR
+                    </span>
+                    <CheckboxTrack
+                      className="min-w-0"
+                      total={6}
+                      filled={Math.max(0, fearCount - 6)}
+                      fillColor="bg-fuchsia-600"
+                      label="Fear"
+                    />
+                  </>
+                )}
               </div>
-              {fearCount > 6 && (
-                <div className="flex items-center gap-1.5">
-                  <Flame size={12} className="shrink-0 invisible" />
-                  <CheckboxTrack
-                    total={6}
-                    filled={Math.max(0, fearCount - 6)}
-                    fillColor="bg-fuchsia-600"
-                    label="Fear"
-                  />
-                </div>
-              )}
             </div>
           </div>
 
