@@ -3,11 +3,21 @@ import { buildImagePrompt, buildBattleMapDefaultPrompt } from '../../src/client/
 import { imageSrcToDataUrlForApi } from '../../src/client/lib/map-image-data-url.js';
 
 describe('buildBattleMapDefaultPrompt', () => {
-  it('uses map size for both dimensions (300 example)', () => {
+  it('uses map size for both dimensions when square (300 example)', () => {
     const p = buildBattleMapDefaultPrompt(300);
     expect(p).toContain("300'x300'");
     expect(p).toContain('orthographic top-down');
     expect(p).toContain('stalactites');
+  });
+
+  it('uses width × height from map config and image aspect (matches toolbar)', () => {
+    const p = buildBattleMapDefaultPrompt({
+      mapSizeFt: 100,
+      mapDimension: 'width',
+      mapImageNaturalWidth: 200,
+      mapImageNaturalHeight: 100,
+    });
+    expect(p).toContain("100'x50'");
   });
 
   it('clamps size to valid range', () => {

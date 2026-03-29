@@ -52,9 +52,9 @@ import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID, imageGenEnabled 
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
-import { MapAiImageBuilderPanel } from './MapAiImageBuilderPanel.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
+import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import {
@@ -99,10 +99,6 @@ const DRAG_THRESHOLD_PX = 8;
 /** Approx. time for fireworks-js rocket to reach target (no API hook); tuned for default trace speed. */
 const MAP_PING_FIREWORK_LAND_MS = 800;
 const MAP_PING_LABEL_FADE_MS = 5000;
-/** User-editable map span along the chosen edge (W/H); clamped for UI + `getMapDimensions`. */
-const MAP_SIZE_FT_MIN = 1;
-const MAP_SIZE_FT_MAX = 3000;
-
 function mapConfigHasImage(mc) {
   const u = mc?.mapImageUrl;
   return typeof u === 'string' && u.trim().length > 0;
@@ -142,18 +138,6 @@ function tokenAbbrev(name) {
   if (words.length === 0) return '?';
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (words[0][0] + words[1][0]).toUpperCase();
-}
-
-function getMapDimensions(mapConfig) {
-  const { mapSizeFt = 100, mapDimension = 'width', mapImageNaturalWidth, mapImageNaturalHeight } = mapConfig ?? {};
-  const sizeFt = Math.max(MAP_SIZE_FT_MIN, Math.min(MAP_SIZE_FT_MAX, Number(mapSizeFt) || 100));
-  if (mapImageNaturalWidth > 0 && mapImageNaturalHeight > 0) {
-    const aspect = mapImageNaturalWidth / mapImageNaturalHeight;
-    return mapDimension === 'width'
-      ? { mapWidthFt: sizeFt, mapHeightFt: Math.round((sizeFt / aspect) * 10) / 10 }
-      : { mapHeightFt: sizeFt, mapWidthFt: Math.round(sizeFt * aspect * 10) / 10 };
-  }
-  return { mapWidthFt: sizeFt, mapHeightFt: sizeFt };
 }
 
 function isInsideRect(clientX, clientY, rect) {
@@ -661,10 +645,18 @@ function MapConfigToolbar({
   onDeleteTable,
   onMapAiGenerationPreviewChange,
   showImageGenAiUi = false,
+  aiMapOpen,
+  setAiMapOpen,
 }) {
-  const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl, mapAiImagePrompt } = mapConfig ?? {};
+  const {
+    mapDimension = 'width',
+    mapSizeFt = 100,
+    mapImageUrl,
+    mapImageNaturalWidth,
+    mapImageNaturalHeight,
+    mapAiImagePrompt,
+  } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
-  const [aiMapOpen, setAiMapOpen] = useState(false);
   const fileInputRef = useRef(null);
   const isNewTable = tableName === '' || tableName === 'New Table';
   const [isEditingName, setIsEditingName] = useState(false);
@@ -802,6 +794,9 @@ function MapConfigToolbar({
               open={aiMapOpen}
               onClose={() => setAiMapOpen(false)}
               mapSizeFt={mapSizeFt}
+              mapDimension={mapDimension}
+              mapImageNaturalWidth={mapImageNaturalWidth}
+              mapImageNaturalHeight={mapImageNaturalHeight}
               mapImageUrl={mapImageUrl}
               savedMapAiImagePrompt={mapAiImagePrompt}
               onMapConfigChange={onMapConfigChange}
@@ -1285,6 +1280,8 @@ export function BattleMap({
   const [followBullseyeFt, setFollowBullseyeFt] = useState(null);
   /** AI map editor: show selected generation on the table map before Save (data URL or hosted URL). */
   const [mapAiGenPreviewUrl, setMapAiGenPreviewUrl] = useState(null);
+  /** Shared with MapConfigToolbar "Generate with AI" and Theatre of the Mind overlay. */
+  const [aiMapOpen, setAiMapOpen] = useState(false);
   const mapAiGenPreviewUrlRef = useRef(null);
   mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
 
@@ -3732,6 +3729,8 @@ export function BattleMap({
           onDeleteTable={onDeleteTable}
           onMapAiGenerationPreviewChange={setMapAiGenPreviewUrl}
           showImageGenAiUi={showImageGenAiUi}
+          aiMapOpen={aiMapOpen}
+          setAiMapOpen={setAiMapOpen}
         />
       )}
       {!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore && (
@@ -4791,21 +4790,16 @@ export function BattleMap({
                     {showImageGenAiUi ? (
                       <>
                         <div className="text-dh-muted/90 text-xs font-medium py-0.5">OR</div>
-                        <div className="pointer-events-auto mt-1 text-left w-full rounded-lg border border-purple-800/40 bg-dh-canvas/50 p-3 shadow-sm">
-                          <div className="text-dh font-medium text-sm mb-2 flex items-center gap-1.5 justify-center">
-                            <Sparkles size={14} className="text-purple-300 shrink-0" aria-hidden />
-                            Generate battle map (AI)
-                          </div>
-                          <MapAiImageBuilderPanel
-                            mapSizeFt={mapConfig?.mapSizeFt ?? 100}
-                            mapImageUrl={mapConfig?.mapImageUrl}
-                            savedMapAiImagePrompt={mapConfig?.mapAiImagePrompt}
-                            onMapConfigChange={handleMapConfigChange}
-                            onGenerationPreviewChange={setMapAiGenPreviewUrl}
-                            compact
-                            showCancel={false}
-                            className="max-h-[min(60vh,520px)]"
-                          />
+                        <div className="pointer-events-auto flex justify-center pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setAiMapOpen(true)}
+                            className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40 transition-colors"
+                            title="Generate map image with AI (Hugging Face)"
+                          >
+                            <Sparkles size={12} />
+                            Generate with AI
+                          </button>
                         </div>
                       </>
                     ) : null}
