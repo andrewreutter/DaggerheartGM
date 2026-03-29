@@ -40,11 +40,23 @@ export function AiImageWorkbench({
       if (e.key === 'Escape') {
         e.stopImmediatePropagation();
         onLightboxOpenChange(false);
+        return;
+      }
+      if (imageHistory.length > 1) {
+        if (e.key === 'ArrowLeft' && canGoBack) {
+          e.preventDefault();
+          e.stopPropagation();
+          onHistoryIndexChange(i => i - 1);
+        } else if (e.key === 'ArrowRight' && canGoForward) {
+          e.preventDefault();
+          e.stopPropagation();
+          onHistoryIndexChange(i => i + 1);
+        }
       }
     };
     document.addEventListener('keydown', handler, { capture: true });
     return () => document.removeEventListener('keydown', handler, { capture: true });
-  }, [lightboxOpen, onLightboxOpenChange]);
+  }, [lightboxOpen, onLightboxOpenChange, imageHistory.length, canGoBack, canGoForward, onHistoryIndexChange]);
 
   return (
     <>
@@ -211,22 +223,51 @@ export function AiImageWorkbench({
 
       {lightboxOpen && currentPreview ? (
         <div
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-sm"
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4"
           onClick={() => onLightboxOpenChange(false)}
         >
           <button
             type="button"
-            onClick={() => onLightboxOpenChange(false)}
-            className="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 hover:bg-black/60 rounded-full p-1.5 transition-colors"
+            onClick={(e) => { e.stopPropagation(); onLightboxOpenChange(false); }}
+            className="absolute top-4 right-4 z-10 text-white/70 hover:text-white bg-black/40 hover:bg-black/60 rounded-full p-1.5 transition-colors"
           >
             <X size={20} />
           </button>
-          <img
-            src={currentPreview}
-            alt="Generated image (enlarged)"
-            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+          <div
+            className="relative max-h-[90vh] max-w-[90vw]"
             onClick={e => e.stopPropagation()}
-          />
+          >
+            <img
+              src={currentPreview}
+              alt="Generated image (enlarged)"
+              className="max-h-[85vh] max-w-full rounded-lg shadow-2xl object-contain mx-auto block"
+            />
+            {imageHistory.length > 1 ? (
+              <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-2 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onHistoryIndexChange(i => i - 1); }}
+                  disabled={!canGoBack}
+                  className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Previous image"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <span className="text-sm text-white bg-black/60 px-3 py-1 rounded-full tabular-nums">
+                  {historyIndex + 1} / {imageHistory.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onHistoryIndexChange(i => i + 1); }}
+                  disabled={!canGoForward}
+                  className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Next image"
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </>
