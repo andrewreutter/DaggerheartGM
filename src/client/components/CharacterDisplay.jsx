@@ -1,5 +1,5 @@
 import {
-  User, Shield, Heart, AlertCircle, AlertTriangle, Swords, Package,
+  User, Shield, AlertCircle, AlertTriangle, Swords, Package,
   ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind, Sparkles,
 } from 'lucide-react';
 import { useState, useMemo, useCallback } from 'react';
@@ -40,7 +40,6 @@ import {
   CharacterStatBlockGraphic,
   CharacterSheetEmphasisCard,
   HopeHeroTrack,
-  HOPE_TRACK_FILL,
 } from './CharacterStatBlockGraphic.jsx';
 import {
   resolveHopeFeatureName,
@@ -2462,7 +2461,7 @@ export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate })
     return {
       filled: el.hope ?? maxHope,
       onSetFilled: (h) => onCharacterRuntimeUpdate({ hope: h }),
-      fillColor: HOPE_TRACK_FILL,
+      trackKind: 'hope',
       label: 'Hope',
       verbs: ['Gain', 'Spend'],
       pulseOnDecreaseOnly: true,

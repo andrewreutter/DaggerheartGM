@@ -2,13 +2,14 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, Heart, AlertCircle, AlertTriangle, Tag, Flame, Edit, Sparkles, User, Users, Shield, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, User, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, formatEvasionModifierTooltip, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
-import { HOPE_TRACK_FILL, HOPE_TRACK_ICON_CLASS, CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
+import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
+import { getCheckboxTrackPreset } from './CheckboxTrack.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
@@ -302,14 +303,20 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
 }
 
 
-/** Renders N filled (marked) boxes with an icon — used in the player Encounter panel. */
-function MarkedBoxes({ count, fillColor, icon: Icon, iconColor }) {
+/** Renders N filled (marked) slots with preset icon-in-border — player Encounter panel summary. */
+function MarkedBoxes({ count, trackKind }) {
   if (!count || count <= 0) return null;
+  const preset = getCheckboxTrackPreset(trackKind);
+  const { Icon } = preset;
   return (
     <div className="flex items-center gap-0.5">
-      <Icon size={10} className={`${iconColor} shrink-0`} />
       {Array.from({ length: count }, (_, i) => (
-        <div key={i} className={`w-3 h-3 rounded-sm ${fillColor} flex-shrink-0`} />
+        <div
+          key={i}
+          className="w-3 h-3 rounded-sm flex-shrink-0 inline-flex items-center justify-center bg-transparent border-0"
+        >
+          <Icon className={`w-2 h-2 ${preset.icon}`} strokeWidth={2.5} aria-hidden />
+        </div>
       ))}
     </div>
   );
@@ -4990,13 +4997,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   const currentHope = el.hope ?? maxHope;
                   return maxHope > 0 && (
                     <div className="flex items-center gap-1">
-                      <Sparkles size={10} className={HOPE_TRACK_ICON_CLASS} />
                       <CheckboxTrack
                         total={maxHope}
                         filled={Math.max(0, currentHope - hopePending)}
                         pendingFilled={hopePending + manualAck.hopeGain}
                         pendingClearFilled={manualAck.hopeSpend}
-                        fillColor={HOPE_TRACK_FILL}
+                        trackKind="hope"
                         label="Hope"
                         verbs={['Gain', 'Spend']}
                         pulseOnDecreaseOnly
@@ -5006,7 +5012,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 })()}
                 {/* Evasion + Damage Thresholds (displayChar so ancestry mods e.g. Simiah Nimble show correctly) */}
                 {(displayChar.evasion != null || displayChar.armorThresholds) && (
-                  <div className="flex items-center gap-1.5 flex-wrap ml-[14px]">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     {displayChar.evasion != null && (() => {
                       const evModTotal = getEvasionModifierTotal(displayChar);
                       const evasionTip = formatEvasionModifierTooltip(displayChar);
@@ -5045,13 +5051,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 {/* Armor track */}
                 {(el.maxArmor || 0) > 0 && (
                   <div className="flex items-center gap-1">
-                    <Shield size={10} className="text-cyan-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxArmor || 0}
                       filled={el.currentArmor || 0}
                       pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
                       pendingClearFilled={manualAck.armorClear}
-                      fillColor="bg-cyan-500"
+                      trackKind="armor"
                       label="Armor"
                       verbs={['Mark', 'Clear']}
                     />
@@ -5060,13 +5065,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 {/* HP track */}
                 {(el.maxHp || 0) > 0 && (
                   <div className="flex items-center gap-1">
-                    <Heart size={10} className="text-red-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxHp || 0}
                       filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
                       pendingFilled={manualAck.hpDamageAdd}
                       pendingClearFilled={manualAck.hpHealSlots + lsHeal}
-                      fillColor="bg-red-500"
+                      trackKind="hp"
                       label="HP"
                       verbs={['Mark', 'Clear']}
                     />
@@ -5075,20 +5079,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 {/* Stress track */}
                 {(el.maxStress || 0) > 0 && (
                   <div className="flex items-center gap-1">
-                    <AlertCircle size={10} className="text-orange-500 shrink-0" />
                     <CheckboxTrack
                       total={el.maxStress || 0}
                       filled={el.currentStress || 0}
                       pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
                       pendingClearFilled={manualAck.stressClear}
-                      fillColor="bg-orange-500"
+                      trackKind="stress"
                       label="Stress"
                       verbs={['Mark', 'Clear']}
                     />
                   </div>
                 )}
                 {el.conditions && (
-                  <div className="ml-[14px] text-[10px] text-dh leading-snug">
+                  <div className="text-[10px] text-dh leading-snug">
                     <span className="font-semibold text-dh-muted">Conditions: </span>
                     {el.conditions}
                   </div>
@@ -5882,7 +5885,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 total={6}
                 filled={Math.min(fearCount, 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v)}
-                fillColor="bg-fuchsia-600"
+                trackKind="fear"
                 label="Fear"
                 verbs={['Gain', 'Spend']}
                 currentAbsoluteValue={fearCount}
@@ -5897,7 +5900,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 total={6}
                 filled={Math.max(0, fearCount - 6)}
                 onSetFilled={(v) => setFearCount && setFearCount(v + 6)}
-                fillColor="bg-fuchsia-600"
+                trackKind="fear"
                 label="Fear"
                 verbs={['Gain', 'Spend']}
                 currentAbsoluteValue={fearCount}
@@ -6261,14 +6264,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         )}
                         {(displayEl.hp_max || 0) > 0 && (
                           <div className="flex items-center gap-1">
-                            <Heart size={10} className="text-red-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.hp_max || 0}
                               filled={hpDamage}
                               pendingFilled={manualAckAdv.hpDamageAdd}
                               pendingClearFilled={manualAckAdv.hpHealSlots}
                               onSetFilled={(dmg) => queueManualTrackEdit(advTargetEl, { currentHp: (displayEl.hp_max || 0) - dmg })}
-                              fillColor="bg-red-500"
+                              trackKind="hp"
                               label="HP"
                               verbs={['Mark', 'Clear']}
                             />
@@ -6283,14 +6285,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         )}
                         {(displayEl.stress_max || 0) > 0 && (
                           <div className="flex items-center gap-1">
-                            <AlertCircle size={10} className="text-orange-500 shrink-0" />
                             <CheckboxTrack
                               total={displayEl.stress_max || 0}
                               filled={inst.currentStress || 0}
                               pendingFilled={manualAckAdv.stressAdd}
                               pendingClearFilled={manualAckAdv.stressClear}
                               onSetFilled={(s) => queueManualTrackEdit(advTargetEl, { currentStress: s })}
-                              fillColor="bg-orange-500"
+                              trackKind="stress"
                               label="Stress"
                               verbs={['Mark', 'Clear']}
                             />
@@ -6354,7 +6355,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   className="min-w-0"
                   total={6}
                   filled={Math.min(fearCount, 6)}
-                  fillColor="bg-fuchsia-600"
+                  trackKind="fear"
                   label="Fear"
                 />
                 {fearCount > 6 && (
@@ -6367,7 +6368,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       className="min-w-0"
                       total={6}
                       filled={Math.max(0, fearCount - 6)}
-                      fillColor="bg-fuchsia-600"
+                      trackKind="fear"
                       label="Fear"
                     />
                   </>
@@ -6431,20 +6432,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                             </span>
                           )}
                           {hpDamage > 0 && (
-                            <MarkedBoxes
-                              count={hpDamage}
-                              fillColor="bg-red-500"
-                              icon={Heart}
-                              iconColor="text-red-500"
-                            />
+                            <MarkedBoxes count={hpDamage} trackKind="hp" />
                           )}
                           {stressDamage > 0 && (
-                            <MarkedBoxes
-                              count={stressDamage}
-                              fillColor="bg-orange-500"
-                              icon={AlertCircle}
-                              iconColor="text-orange-500"
-                            />
+                            <MarkedBoxes count={stressDamage} trackKind="stress" />
                           )}
                           {inst.vulnerable && (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-950/50 border border-orange-700/60 text-orange-200">Vulnerable</span>

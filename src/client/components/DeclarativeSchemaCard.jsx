@@ -1,4 +1,4 @@
-import { AlertCircle, Swords } from 'lucide-react';
+import { Swords } from 'lucide-react';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { omitShapeId, getBoundObject, setBoundObject } from '../lib/json-schema-dh.js';
 import { generateId } from '../lib/helpers.js';
@@ -65,13 +65,12 @@ export function DeclarativeSchemaCardBody({
       if (mode === 'sheet') {
         nodes.push(
           <div key={key} className="flex items-center gap-1">
-            <AlertCircle size={10} className="text-orange-500 shrink-0" />
             {onTrackedSetFilled && !preview ? (
               <CheckboxTrack
                 total={total}
                 filled={filled}
                 onSetFilled={onTrackedSetFilled}
-                fillColor="bg-orange-500"
+                trackKind="stress"
                 label={title}
                 verbs={['Mark', 'Clear']}
               />
@@ -85,12 +84,11 @@ export function DeclarativeSchemaCardBody({
       } else {
         nodes.push(
           <div key={key} className="flex items-center gap-1">
-            <AlertCircle size={10} className="text-orange-500 shrink-0" />
             <CheckboxTrack
               total={total}
               filled={filled}
               onSetFilled={(n) => onEditorChange?.([key], n)}
-              fillColor="bg-orange-500"
+              trackKind="stress"
               label={title}
               verbs={['Mark', 'Clear']}
             />

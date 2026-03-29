@@ -2,8 +2,12 @@
  * Prototype graphical stat block: Hope hero row → evasion → damage thresholds → Stress / Armor / HP flow,
  * then armor feature cards (SRD) when not redundant with existing tooltips.
  */
-import { ArrowDown, ArrowRight, Heart, Shield, Sparkles, Zap } from 'lucide-react';
-import { CheckboxTrack } from './DetailCardContent.jsx';
+import { ArrowDown, ArrowRight, Shield, Sparkles } from 'lucide-react';
+import {
+  CheckboxTrack,
+  getCheckboxTrackPreset,
+  CHECKBOX_TRACK_EMPTY_ICON,
+} from './DetailCardContent.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { Tooltip } from './Tooltip.jsx';
 import {
@@ -118,14 +122,14 @@ function ArmorFeatureCards({ armorItem, sheetCtx }) {
 }
 
 /** Fits exactly three CheckboxTrack boxes (w-4 + gap-0.5); scrolls when total &gt; 3. */
-function NarrowCheckboxTrack({ total, filled, fillColor, ...checkboxRest }) {
+function NarrowCheckboxTrack({ total, filled, trackKind, ...checkboxRest }) {
   if (!total || total <= 0) {
     return <span className="inline-block w-4 h-4 shrink-0" aria-hidden />;
   }
   return (
     <div className="max-w-[3.25rem] overflow-x-auto overflow-y-hidden mx-auto">
       <div className="inline-flex justify-center min-w-min">
-        <CheckboxTrack total={total} filled={filled} fillColor={fillColor} {...checkboxRest} />
+        <CheckboxTrack total={total} filled={filled} trackKind={trackKind} {...checkboxRest} />
       </div>
     </div>
   );
@@ -245,16 +249,15 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
   if (hopeTrackInteraction != null) {
     return (
       <div className="w-full flex items-center gap-1.5 min-w-0">
-        <Sparkles className={HOPE_ICON} strokeWidth={2.25} aria-hidden />
         <span className={HOPE_LABEL}>Hope</span>
         <div className="flex-1 min-w-0">
           <CheckboxTrack
             total={maxHope}
             filled={filled}
-            fillColor={HOPE_TRACK_FILL}
+            trackKind="hope"
             fillRow
             className="w-full gap-1"
-            itemClassName="max-h-6 rounded border-2"
+            itemClassName="max-h-6 rounded"
             pulseOnDecreaseOnly
             {...hopeCheckboxRest}
           />
@@ -265,22 +268,26 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
 
   const useTwelveCol = 12 % maxHope === 0;
   const colSpan = useTwelveCol ? 12 / maxHope : 0;
+  const hopePreset = getCheckboxTrackPreset('hope');
   const boxes = Array.from({ length: maxHope }, (_, i) => {
     const isChecked = i < filled;
-    const on = isChecked ? `${HOPE_TRACK_FILL} border-transparent` : 'border-dh-strong/80';
     return (
       <div
         key={i}
-        className={`min-h-5 max-h-6 rounded border transition-colors ${on} ${useTwelveCol ? '' : 'flex-1 min-w-0'}`}
+        className={`min-h-5 max-h-6 rounded inline-flex items-center justify-center transition-colors border-solid ${isChecked ? hopePreset.borderFilled : hopePreset.borderEmpty} ${useTwelveCol ? '' : 'flex-1 min-w-0'}`}
         style={useTwelveCol ? { gridColumn: `span ${colSpan} / span ${colSpan}` } : undefined}
         aria-hidden
-      />
+      >
+        <Sparkles
+          className={`w-3 h-3 shrink-0 pointer-events-none ${isChecked ? hopePreset.icon : CHECKBOX_TRACK_EMPTY_ICON}`}
+          strokeWidth={2.25}
+        />
+      </div>
     );
   });
 
   return (
     <div className="w-full flex items-center gap-1.5 min-w-0">
-      <Sparkles className={HOPE_ICON} strokeWidth={2.25} aria-hidden />
       <span className={HOPE_LABEL}>Hope</span>
       {useTwelveCol ? (
         <div className="grid w-full min-w-0 grid-cols-12 gap-1">{boxes}</div>
@@ -291,18 +298,15 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
   );
 }
 
-/** ~1.4× prior 8px chip labels; icons match cap height */
+/** ~1.4× prior 8px chip labels */
 const STAT_CHIP_LABEL = 'text-[11px] font-semibold uppercase tracking-wide leading-tight';
-const STAT_CHIP_ICON = 'w-[11px] h-[11px] shrink-0';
 const EVASION_LABEL = 'text-[13px] font-semibold uppercase tracking-wide';
 /** Evasion shell matches Armor (cyan ring/labels); score uses sky (see evasionInner). */
 const EVASION_ICON = 'w-[13px] h-[13px] shrink-0 text-cyan-400 dh-light:text-dh';
 const HOPE_LABEL = 'text-[11px] font-semibold uppercase tracking-wide text-dh-muted shrink-0';
-/** Hope boxes — exported for CheckboxTrack rows that mirror the stat block. */
 export const HOPE_TRACK_FILL = 'bg-yellow-400 dh-light:bg-yellow-500';
 /** Hope Sparkles / small icons — same accent as {@link HopeHeroTrack}. */
 export const HOPE_TRACK_ICON_CLASS = 'text-yellow-500 dh-light:text-yellow-700 shrink-0';
-const HOPE_ICON = `w-[11px] h-[11px] ${HOPE_TRACK_ICON_CLASS}`;
 
 /** Hint under Armor / HP track titles (Daggerheart damage flow). */
 const DEFENSE_TRACK_SUBTITLE =
@@ -360,8 +364,7 @@ function ArmorStatChip({ el, compact, trackInteraction }) {
       className={`rounded-xl bg-dh-raised ring-1 ring-cyan-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
       <div className={CHIP_HEADER_BLOCK}>
-        <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-cyan-300/90 dh-light:text-dh text-center`}>
-          <Shield className={`${STAT_CHIP_ICON} text-cyan-400 dh-light:text-dh`} strokeWidth={2.25} />
+        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-cyan-300/90 dh-light:text-dh text-center`}>
           Armor
         </div>
         <div className={DEFENSE_TRACK_SUBTITLE}>Mark 1?</div>
@@ -374,7 +377,7 @@ function ArmorStatChip({ el, compact, trackInteraction }) {
           <NarrowCheckboxTrack
             total={maxArmor}
             filled={armor}
-            fillColor="bg-cyan-400"
+            trackKind="armor"
             {...(trackInteraction || {})}
           />
         ) : (
@@ -402,8 +405,7 @@ function StressStatChip({ el, compact, trackInteraction }) {
         className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/20 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
       >
         <div className={CHIP_HEADER_BLOCK}>
-          <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-orange-300/80 dh-light:text-dh text-center`}>
-            <Zap className={`${STAT_CHIP_ICON} text-orange-400/80 dh-light:text-dh`} strokeWidth={2.25} />
+          <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-orange-300/80 dh-light:text-dh text-center`}>
             Stress
           </div>
           <div className={`${DEFENSE_TRACK_SUBTITLE} invisible`} aria-hidden>
@@ -426,8 +428,7 @@ function StressStatChip({ el, compact, trackInteraction }) {
       className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
       <div className={CHIP_HEADER_BLOCK}>
-        <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-orange-300/90 dh-light:text-dh text-center`}>
-          <Zap className={`${STAT_CHIP_ICON} text-orange-400 dh-light:text-dh`} strokeWidth={2.25} />
+        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-orange-300/90 dh-light:text-dh text-center`}>
           Stress
         </div>
         <div className={`${DEFENSE_TRACK_SUBTITLE} invisible`} aria-hidden>
@@ -443,7 +444,7 @@ function StressStatChip({ el, compact, trackInteraction }) {
         <NarrowCheckboxTrack
           total={maxStress}
           filled={stress}
-          fillColor="bg-orange-500"
+          trackKind="stress"
           {...(trackInteraction || {})}
         />
       </div>
@@ -469,8 +470,7 @@ function HpStatChip({ el, compact, trackInteraction }) {
         className={`rounded-xl bg-dh-raised ring-1 ring-red-500/20 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
       >
         <div className={CHIP_HEADER_BLOCK}>
-          <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-red-300/80 dh-light:text-dh text-center`}>
-            <Heart className={`${STAT_CHIP_ICON} text-red-400/70 dh-light:text-dh`} strokeWidth={2.25} />
+          <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-red-300/80 dh-light:text-dh text-center`}>
             HP
           </div>
           <div className={DEFENSE_TRACK_SUBTITLE}>Mark the rest</div>
@@ -491,8 +491,7 @@ function HpStatChip({ el, compact, trackInteraction }) {
       className={`rounded-xl bg-dh-raised ring-1 ring-red-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
       <div className={CHIP_HEADER_BLOCK}>
-        <div className={`flex items-center justify-center gap-0.5 ${STAT_CHIP_LABEL} text-red-300/90 dh-light:text-dh text-center`}>
-          <Heart className={`${STAT_CHIP_ICON} text-red-400 dh-light:text-dh`} strokeWidth={2.25} />
+        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-red-300/90 dh-light:text-dh text-center`}>
           HP
         </div>
         <div className={DEFENSE_TRACK_SUBTITLE}>Mark the rest</div>
@@ -506,7 +505,7 @@ function HpStatChip({ el, compact, trackInteraction }) {
         <NarrowCheckboxTrack
           total={maxHp}
           filled={hpDamage}
-          fillColor="bg-red-500"
+          trackKind="hp"
           {...(trackInteraction || {})}
         />
       </div>

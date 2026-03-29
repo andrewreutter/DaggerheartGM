@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  AlertCircle, Sparkles, Heart, Shield,
   ChevronDown, ChevronRight, ExternalLink, RefreshCw, Bug, Pencil,
 } from 'lucide-react';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
@@ -8,8 +7,6 @@ import { CheckboxTrack } from './DetailCardContent.jsx';
 import {
   CharacterStatBlockGraphic,
   HopeHeroTrack,
-  HOPE_TRACK_FILL,
-  HOPE_TRACK_ICON_CLASS,
 } from './CharacterStatBlockGraphic.jsx';
 import {
   Section,
@@ -359,7 +356,7 @@ export function CharacterHoverCard({
         : (h) => updateFn(id, { hope: h }),
       pendingFilled: hopePending + manualAck.hopeGain,
       pendingClearFilled: manualAck.hopeSpend,
-      fillColor: HOPE_TRACK_FILL,
+      trackKind: 'hope',
       label: 'Hope',
       verbs: ['Gain', 'Spend'],
       pulseOnDecreaseOnly: true,
@@ -1359,7 +1356,6 @@ export function CharacterHoverCard({
                     const remainingServer = el.hope ?? maxHope;
                     return maxHope > 0 && (
                       <div className="flex items-center gap-1.5">
-                        <Sparkles size={11} className={HOPE_TRACK_ICON_CLASS} />
                         <span className="text-[11px] text-dh-muted w-10 shrink-0">Hope</span>
                         <CheckboxTrack
                           total={maxHope}
@@ -1369,13 +1365,13 @@ export function CharacterHoverCard({
                           onSetFilled={queueManualTrackEdit
                             ? (h) => queueManualTrackEdit(el, { hope: h })
                             : (h) => updateFn(el.instanceId, { hope: h })}
-                          fillColor={HOPE_TRACK_FILL}
+                          trackKind="hope"
                           label="Hope"
                           verbs={['Gain', 'Spend']}
                           pulseOnDecreaseOnly
                           fillRow
                           className="flex-1 min-w-0 gap-1"
-                          itemClassName="min-h-5 max-h-6 rounded border-2"
+                          itemClassName="min-h-5 max-h-6 rounded"
                         />
                         <span className="text-[10px] text-dh-muted tabular-nums ml-auto">{maxHope}</span>
                       </div>
@@ -1383,7 +1379,6 @@ export function CharacterHoverCard({
                   })()}
                   {(el.maxArmor || 0) > 0 && (
                     <div className="flex items-center gap-1.5">
-                      <Shield size={11} className="text-cyan-500 shrink-0" />
                       <span className="text-[11px] text-dh-muted w-10 shrink-0">Armor</span>
                       <CheckboxTrack
                         total={el.maxArmor}
@@ -1401,7 +1396,7 @@ export function CharacterHoverCard({
                               if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
                               updateFn(el.instanceId, upd);
                             }}
-                        fillColor="bg-cyan-500"
+                        trackKind="armor"
                         label="Armor"
                         verbs={['Mark', 'Clear']}
                       />
@@ -1410,7 +1405,6 @@ export function CharacterHoverCard({
                   )}
                   {(el.maxHp || 0) > 0 && (
                     <div className="flex items-center gap-1.5">
-                      <Heart size={11} className="text-red-500 shrink-0" />
                       <span className="text-[11px] text-dh-muted w-10 shrink-0">HP</span>
                       <CheckboxTrack
                         total={el.maxHp}
@@ -1420,7 +1414,7 @@ export function CharacterHoverCard({
                         onSetFilled={queueManualTrackEdit
                           ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
                           : (dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
-                        fillColor="bg-red-500"
+                        trackKind="hp"
                         label="HP"
                         verbs={['Mark', 'Clear']}
                       />
@@ -1429,7 +1423,6 @@ export function CharacterHoverCard({
                   )}
                   {(el.maxStress || 0) > 0 && (
                     <div className="flex items-center gap-1.5">
-                      <AlertCircle size={11} className="text-orange-500 shrink-0" />
                       <span className="text-[11px] text-dh-muted w-10 shrink-0">Stress</span>
                       <CheckboxTrack
                         total={el.maxStress}
@@ -1443,7 +1436,7 @@ export function CharacterHoverCard({
                               if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
                               updateFn(el.instanceId, { currentStress: s });
                             }}
-                        fillColor="bg-orange-500"
+                        trackKind="stress"
                         label="Stress"
                         verbs={['Mark', 'Clear']}
                       />

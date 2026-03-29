@@ -1,4 +1,51 @@
 import { useState, useRef, useEffect } from 'react';
+import { Skull, Shield, Sparkles, Flame, AlertCircle } from 'lucide-react';
+
+/**
+ * @typedef {'hope'|'fear'|'hp'|'armor'|'stress'|'stressPurple'} CheckboxTrackKind
+ */
+
+/** Empty slots: slightly light gray icon only (no border). */
+export const CHECKBOX_TRACK_EMPTY_ICON =
+  'text-neutral-400/95 dh-light:text-neutral-500';
+
+/** Preset icons + icon color when marked (borders only for hover preview / pending overlays). */
+export const CHECKBOX_TRACK_PRESETS = {
+  hope: {
+    Icon: Sparkles,
+    icon: 'text-yellow-400 dh-light:text-yellow-600',
+    /** Hope-only: solid yellow vs gray cell borders (character sheet header). */
+    borderFilled: 'border-2 border-yellow-400 dh-light:border-yellow-500',
+    borderEmpty: 'border-2 border-dh-muted dh-light:border-dh-muted',
+  },
+  fear: {
+    Icon: Flame,
+    icon: 'text-fuchsia-400 dh-light:text-fuchsia-600',
+  },
+  hp: {
+    Icon: Skull,
+    icon: 'text-red-500 stroke-red-600 dh-light:stroke-red-600',
+  },
+  armor: {
+    Icon: Shield,
+    icon: 'text-cyan-500 stroke-cyan-600 dh-light:stroke-cyan-700',
+  },
+  stress: {
+    Icon: AlertCircle,
+    icon: 'text-orange-500 stroke-orange-600 dh-light:stroke-orange-700',
+  },
+  stressPurple: {
+    Icon: AlertCircle,
+    icon: 'text-purple-500 stroke-purple-600',
+  },
+};
+
+/**
+ * @param {CheckboxTrackKind} kind
+ */
+export function getCheckboxTrackPreset(kind) {
+  return CHECKBOX_TRACK_PRESETS[kind] ?? CHECKBOX_TRACK_PRESETS.hp;
+}
 
 /**
  * Filled count after clicking the box at `hoverIndex` (same value `onSetFilled` receives
@@ -19,7 +66,10 @@ export function isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled) {
 
 /**
  * Resource track: `total` boxes, `filled` marked, optional pending GM-ack overlays.
- * With `onSetFilled`, hover shows the would-be state and a brighter outline on the hovered box.
+ * Default: type-colored or light-gray icons only. Dashed borders on hover preview and pending GM-ack.
+ *
+ * @param {object} props
+ * @param {CheckboxTrackKind} [props.trackKind] — icon + color palette.
  */
 export function CheckboxTrack({
   total,
@@ -27,7 +77,7 @@ export function CheckboxTrack({
   pendingFilled = 0,
   pendingClearFilled = 0,
   onSetFilled,
-  fillColor,
+  trackKind = 'hp',
   label,
   valueOffset = 0,
   verbs,
@@ -59,6 +109,9 @@ export function CheckboxTrack({
   }, [filled, pulseOnDecreaseOnly]);
 
   if (!total || total <= 0) return <span className="text-dh-muted text-xs">-</span>;
+
+  const preset = getCheckboxTrackPreset(trackKind);
+  const { Icon } = preset;
 
   const previewOn = !!onSetFilled && hoverIndex != null;
   const effectiveFilled = previewOn
@@ -95,30 +148,45 @@ export function CheckboxTrack({
     const El = onSetFilled ? 'button' : 'div';
     const isHovered = !!onSetFilled && hoverIndex === i;
 
-    /** Solid fill using `fillColor` — mutually exclusive with empty branch (single bg in DOM). */
-    let slotClass;
+    const iCheckedEffective = i < effectiveFilled;
+    let previewDiffers = false;
     if (previewOn) {
-      const previewDiffers = isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled);
-      if (previewDiffers) {
-        slotClass = 'bg-dh-muted/35 border-dh-strong';
-      } else if (i < effectiveFilled) {
-        slotClass = `${fillColor} border-transparent`;
-      } else {
-        slotClass = 'bg-transparent border-dh-strong';
-      }
-    } else if (isPendingClear && isChecked) {
-      slotClass = `${fillColor} border-emerald-400/70 border-dashed opacity-75`;
-    } else if (isChecked && !isPendingClear) {
-      slotClass = `${fillColor} border-transparent`;
+      previewDiffers = isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled);
+    }
+
+    /** Committed marks, plus pending GM-ack adds on still-empty slots */
+    const isMarkedVisual = previewOn
+      ? iCheckedEffective
+      : (i < filled || isPending);
+
+    let borderClass;
+    let iconClass;
+    if (previewDiffers) {
+      borderClass = 'border-2 border-dh-strong border-dashed bg-transparent';
+      iconClass = `${CHECKBOX_TRACK_EMPTY_ICON} opacity-90`;
+    } else if (isPendingClear) {
+      borderClass = 'border-2 border-emerald-400/70 border-dashed bg-transparent';
+      iconClass = `${preset.icon} opacity-75`;
     } else if (isPending) {
-      slotClass = `${fillColor} border-amber-400/60 border-dashed opacity-60`;
+      borderClass = 'border-2 border-amber-400/60 border-dashed bg-transparent';
+      iconClass = `${preset.icon} opacity-60`;
+    } else if (isMarkedVisual) {
+      borderClass = preset.borderFilled
+        ? `${preset.borderFilled} border-solid bg-transparent`
+        : 'border-0 border-transparent bg-transparent';
+      iconClass = preset.icon;
     } else {
-      slotClass = 'bg-transparent border-dh-strong';
+      borderClass = preset.borderEmpty
+        ? `${preset.borderEmpty} border-solid bg-transparent`
+        : 'border-0 border-transparent bg-transparent';
+      iconClass = CHECKBOX_TRACK_EMPTY_ICON;
     }
 
     const hoverOutline = isHovered
       ? 'relative z-[1] ring-2 ring-dh ring-offset-0'
       : '';
+
+    const iconSize = fillRow ? 'w-[0.875rem] h-[0.875rem]' : 'w-3 h-3';
 
     items.push(
       <El
@@ -127,8 +195,14 @@ export function CheckboxTrack({
         onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
         onMouseEnter={onSetFilled ? () => setHoverIndex(i) : undefined}
         title={onSetFilled || isPending || isPendingClear ? title : undefined}
-        className={`checkbox-track-item ${fillRow ? 'flex-1 min-w-0 min-h-5 rounded-sm border-2' : 'w-4 h-4 rounded-sm border-2 flex-shrink-0'} transition-[box-shadow,border-color,background-color] ${onSetFilled ? 'cursor-pointer' : ''} ${itemClassName} ${slotClass} ${hoverOutline}`}
-      />
+        className={`checkbox-track-item ${fillRow ? 'flex-1 min-w-0 min-h-5 rounded-sm' : 'w-4 h-4 rounded-sm flex-shrink-0'} inline-flex items-center justify-center ${onSetFilled ? 'cursor-pointer' : ''} ${itemClassName} ${borderClass} ${hoverOutline} transition-[box-shadow,border-color,opacity]`}
+      >
+        <Icon
+          className={`${iconSize} shrink-0 pointer-events-none ${iconClass}`}
+          strokeWidth={2.25}
+          aria-hidden
+        />
+      </El>,
     );
   }
 

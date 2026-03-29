@@ -46,7 +46,6 @@ import {
 } from 'lucide-react';
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
-import { HOPE_TRACK_FILL } from './CharacterStatBlockGraphic.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID } from '../lib/api.js';
 import Fireworks from 'fireworks-js';
@@ -1003,7 +1002,7 @@ function TokenDetailPanel({
             filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
             pendingFilled={manualAck.hpDamageAdd}
             pendingClearFilled={manualAck.hpHealSlots + lsHeal}
-            fillColor="bg-red-500"
+            trackKind="hp"
             onSetFilled={canEdit || canEditAdv
               ? (dmg) => applyResource({ currentHp: hpMax - dmg })
               : undefined}
@@ -1020,7 +1019,7 @@ function TokenDetailPanel({
             filled={element.currentStress ?? 0}
             pendingFilled={(pendingResourceCosts[element.instanceId]?.stress ?? 0) + manualAck.stressAdd}
             pendingClearFilled={manualAck.stressClear}
-            fillColor="bg-yellow-600"
+            trackKind="stress"
             onSetFilled={canEdit || canEditAdv
               ? (v) => applyResource({ currentStress: v })
               : undefined}
@@ -1041,7 +1040,7 @@ function TokenDetailPanel({
               filled={Math.max(0, remaining - hopePending)}
               pendingFilled={hopePending + manualAck.hopeGain}
               pendingClearFilled={manualAck.hopeSpend}
-              fillColor={HOPE_TRACK_FILL}
+              trackKind="hope"
               label="Hope"
               verbs={['Gain', 'Spend']}
               pulseOnDecreaseOnly
@@ -1058,7 +1057,7 @@ function TokenDetailPanel({
           <CheckboxTrack
             total={element.maxArmor ?? 0}
             filled={displayEl.currentArmor ?? element.maxArmor ?? 0}
-            fillColor="bg-cyan-600"
+            trackKind="armor"
             onSetFilled={canEdit ? (v) => {
               const upd = { currentArmor: v };
               if (element.reinforcedActive && v < (element.currentArmor ?? element.maxArmor ?? 0)) upd.reinforcedActive = false;

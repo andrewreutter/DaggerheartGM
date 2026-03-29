@@ -1,4 +1,4 @@
-import { Heart, AlertCircle, X, Dices, Link2, Zap } from 'lucide-react';
+import { X, Dices, Link2, Zap } from 'lucide-react';
 import { stripHtml } from '../lib/helpers.js';
 import { GuideFeatureCard } from './features/GuideFeatureCard.jsx';
 import { normalizePotentialAdversaries } from './forms/EnvironmentForm.jsx';
@@ -9,7 +9,12 @@ import { libraryTierBodyLine, libraryTierSubtitleText } from '../lib/library-tie
 import { TierShieldBadge } from './TierShieldBadge.jsx';
 import { CheckboxTrack } from './CheckboxTrack.jsx';
 
-export { CheckboxTrack };
+export {
+  CheckboxTrack,
+  getCheckboxTrackPreset,
+  CHECKBOX_TRACK_PRESETS,
+  CHECKBOX_TRACK_EMPTY_ICON,
+} from './CheckboxTrack.jsx';
 
 const ATTACK_DESC_RE = /^([+-]?\d+)\s+(Melee|Very Close|Close|Far|Very Far)\s*\|\s*([^\s]+)\s+(\w+)$/i;
 const DICE_PATTERN_RE = /\d+d\d+(?:[+-]\d+)?/gi;
@@ -376,26 +381,24 @@ export function AdversaryCardContent({
 
                   <div className="flex-1 min-w-0 space-y-1 border-l border-dh-border pl-3">
                     <div className="flex items-center gap-1.5">
-                      <Heart size={12} className="text-red-500 flex-shrink-0" />
                       <span className="text-xs font-semibold text-dh flex-shrink-0">{el.hp_max || 0}</span>
                       <CheckboxTrack
                         total={el.hp_max || 0}
                         filled={hpDamage}
                         onSetFilled={(dmg) => updateFn(inst.instanceId, { currentHp: (el.hp_max || 0) - dmg })}
-                        fillColor="bg-red-500"
+                        trackKind="hp"
                         label="HP"
                         verbs={['Mark', 'Clear']}
                       />
                     </div>
                     {(el.stress_max || 0) > 0 && (
                       <div className="flex items-center gap-1.5">
-                        <AlertCircle size={12} className="text-purple-500 flex-shrink-0" />
                         <span className="text-xs font-semibold text-dh flex-shrink-0">{el.stress_max}</span>
                         <CheckboxTrack
                           total={el.stress_max || 0}
                           filled={inst.currentStress || 0}
                           onSetFilled={(s) => updateFn(inst.instanceId, { currentStress: s })}
-                          fillColor="bg-purple-500"
+                          trackKind="stressPurple"
                           label="Stress"
                           verbs={['Mark', 'Clear']}
                         />
