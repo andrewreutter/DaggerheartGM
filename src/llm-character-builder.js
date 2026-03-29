@@ -179,7 +179,7 @@ OUTPUT: Return ONLY valid JSON matching this shape (no markdown):
 ${OUTPUT_SCHEMA}`;
 
   const requestBody = {
-    model: process.env.OPENAI_CHARACTER_MODEL || 'gpt-4o-mini',
+    model: process.env.OPENAI_CONCEPT_MODEL || 'gpt-4o-mini',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `Character concept:\n${trimmed}` },

@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -38,12 +38,14 @@ import { v2RollDieExtrasFromActionLoopPayload } from './src/client/lib/v2-action
 import { computePlayerV2CrossSheetChipApply } from './src/server/v2-player-cross-sheet-chip.js';
 import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/server/v2-player-review-chip.js';
 import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
+import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
+import { buildEnvironmentAiFromConcept } from './src/llm-environment-builder.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
 import { attachDerivedMapConfig } from './src/client/lib/map-table-state.js';
 import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
-import { DEFAULT_CHARACTER_STARTING_HOPE } from './src/game-constants.js';
+import { DEFAULT_CHARACTER_STARTING_HOPE, ROLES, ENV_TYPES } from './src/game-constants.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
@@ -169,17 +171,43 @@ app.get('/api/config', (req, res) => {
       ? `${process.env.SUPABASE_URL}/storage/v1/object/public`
       : null,
     devAgentQueueEnabled: process.env.DEV_AGENT_QUEUE_ENABLED === '1',
-    characterAiEnabled: !!process.env.OPENAI_API_KEY,
+    conceptAiEnabled: !!process.env.OPENAI_API_KEY,
   });
 });
 
 // --- Current user info ---
-app.get('/api/me', requireAuth, (req, res) => {
+app.get('/api/me', requireAuth, async (req, res) => {
   const em = req.email?.toLowerCase();
+  let preferences = { hideAiUi: false };
+  try {
+    if (process.env.DATABASE_URL) {
+      preferences = await getUserPreferences(APP_ID, req.uid);
+    }
+  } catch (err) {
+    console.error('GET /api/me preferences:', err);
+  }
   res.json({
     isAdmin: ADMIN_EMAILS.includes(em),
     isQa: isQaEmail(req.email),
+    preferences,
   });
+});
+
+app.put('/api/me/preferences', requireAuth, async (req, res) => {
+  const { hideAiUi } = req.body || {};
+  if (typeof hideAiUi !== 'boolean') {
+    return res.status(400).json({ error: 'hideAiUi must be a boolean' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Preferences require database' });
+  }
+  try {
+    await upsertUserPreferences(APP_ID, req.uid, { hideAiUi });
+    res.json({ preferences: { hideAiUi } });
+  } catch (err) {
+    console.error('PUT /api/me/preferences:', err);
+    res.status(500).json({ error: 'Failed to save preferences' });
+  }
 });
 
 registerDevAgentRoutes(app, { requireAuth, requireAdminOrQa });
@@ -1445,7 +1473,7 @@ app.post('/api/daggerstack/sync', requireAuth, async (req, res) => {
 /** Level-1 character draft from a concept (OpenAI). Resolver maps names → SRD ids. */
 app.post('/api/character-ai-build', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
-    return res.status(503).json({ error: 'Character AI is not configured' });
+    return res.status(503).json({ error: 'Concept AI is not configured' });
   }
   const concept = req.body?.concept;
   if (typeof concept !== 'string' || !concept.trim()) {
@@ -1460,6 +1488,74 @@ app.post('/api/character-ai-build', requireAuth, async (req, res) => {
     }
     console.error('POST /api/character-ai-build error:', err);
     res.status(500).json({ error: err.message || 'Character AI failed' });
+  }
+});
+
+function parseConceptAiTier(v) {
+  const t = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
+  if (Number.isNaN(t) || t < 1 || t > 4) return null;
+  return t;
+}
+
+function parseConceptAiRole(v) {
+  const r = String(v ?? '').toLowerCase().trim();
+  return ROLES.includes(r) ? r : null;
+}
+
+function parseConceptAiEnvType(v) {
+  const x = String(v ?? '').toLowerCase().trim();
+  return ENV_TYPES.includes(x) ? x : null;
+}
+
+/** Adversary draft from a concept (OpenAI). Body: concept, tier (1–4), role (ROLES). */
+app.post('/api/adversary-ai-build', requireAuth, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'Concept AI is not configured' });
+  }
+  const concept = req.body?.concept;
+  if (typeof concept !== 'string' || !concept.trim()) {
+    return res.status(400).json({ error: 'concept (non-empty string) is required' });
+  }
+  const tier = parseConceptAiTier(req.body?.tier);
+  const role = parseConceptAiRole(req.body?.role);
+  if (tier == null || role == null) {
+    return res.status(400).json({ error: 'tier (1–4) and role are required' });
+  }
+  try {
+    const { patch, justification, warnings } = await buildAdversaryAiFromConcept(concept.trim(), { tier, role });
+    res.json({ patch, justification, warnings });
+  } catch (err) {
+    if (err?.code === 'BAD_REQUEST') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('POST /api/adversary-ai-build error:', err);
+    res.status(500).json({ error: err.message || 'Adversary AI failed' });
+  }
+});
+
+/** Environment draft from a concept (OpenAI). Body: concept, tier (1–4), type (ENV_TYPES). */
+app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'Concept AI is not configured' });
+  }
+  const concept = req.body?.concept;
+  if (typeof concept !== 'string' || !concept.trim()) {
+    return res.status(400).json({ error: 'concept (non-empty string) is required' });
+  }
+  const tier = parseConceptAiTier(req.body?.tier);
+  const type = parseConceptAiEnvType(req.body?.type);
+  if (tier == null || type == null) {
+    return res.status(400).json({ error: 'tier (1–4) and type are required' });
+  }
+  try {
+    const { patch, justification, warnings } = await buildEnvironmentAiFromConcept(concept.trim(), { tier, type });
+    res.json({ patch, justification, warnings });
+  } catch (err) {
+    if (err?.code === 'BAD_REQUEST') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('POST /api/environment-ai-build error:', err);
+    res.status(500).json({ error: err.message || 'Environment AI failed' });
   }
 });
 

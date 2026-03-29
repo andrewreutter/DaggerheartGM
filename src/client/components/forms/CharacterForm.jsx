@@ -304,8 +304,16 @@ const ADVANCEMENT_TYPES = [
 /**
  * Controlled-mode character builder form.
  * Props: value (full formData) + onChange(newFormData); optional onAiBusyChange(busy) for modal close guards.
+ * Optional autoRunAiConcept: when set (e.g. Game Table opened editor with a pending concept), runs one AI build like the strip.
  */
-export function CharacterForm({ value, onChange, onAiBusyChange }) {
+export function CharacterForm({
+  value,
+  onChange,
+  onAiBusyChange,
+  autoRunAiConcept,
+  onAutoRunAiConceptConsumed,
+  autoRunSessionKey = '',
+}) {
   const { srdData, loading: srdLoading } = useCharacterSrdData();
   const isControlled = value !== undefined;
 
@@ -644,6 +652,11 @@ export function CharacterForm({ value, onChange, onAiBusyChange }) {
           setAiBusy(busy);
           onAiBusyChange?.(busy);
         }}
+        showBuildButtonSpinner={false}
+        initialConcept={autoRunAiConcept}
+        initialConceptKey={autoRunSessionKey}
+        autoSubmitKey={autoRunAiConcept?.trim() ? autoRunSessionKey : undefined}
+        onPendingConsumed={onAutoRunAiConceptConsumed}
       />
 
       <div className="relative">
@@ -659,7 +672,9 @@ export function CharacterForm({ value, onChange, onAiBusyChange }) {
                 <span className="text-sm text-dh-muted">Building character…</span>
                 <button
                   type="button"
-                  onClick={() => aiStripRef.current?.cancel()}
+                    onClick={() => {
+                      aiStripRef.current?.cancel();
+                    }}
                   className="text-sm font-medium px-2.5 py-1 rounded-md border border-dh-border text-dh hover:bg-dh-raised transition-colors"
                 >
                   Cancel

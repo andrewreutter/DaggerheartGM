@@ -4,6 +4,7 @@ import { generateId } from '../../lib/helpers.js';
 
 export function ExperiencesInput({ experiences, onChange, highlightedId }) {
   const highlightedRef = useRef(null);
+  const list = experiences ?? [];
 
   useEffect(() => {
     if (highlightedId && highlightedRef.current) {
@@ -11,9 +12,9 @@ export function ExperiencesInput({ experiences, onChange, highlightedId }) {
     }
   }, [highlightedId]);
 
-  const addExperience = () => onChange([...experiences, { id: generateId(), name: '', modifier: 1 }]);
-  const updateExperience = (id, key, val) => onChange(experiences.map(e => e.id === id ? { ...e, [key]: val } : e));
-  const removeExperience = (id) => onChange(experiences.filter(e => e.id !== id));
+  const addExperience = () => onChange([...list, { id: generateId(), name: '', modifier: 1 }]);
+  const updateExperience = (id, key, val) => onChange(list.map(e => e.id === id ? { ...e, [key]: val } : e));
+  const removeExperience = (id) => onChange(list.filter(e => e.id !== id));
 
   return (
     <div className="mt-6 border-t border-dh-border pt-4">
@@ -22,7 +23,7 @@ export function ExperiencesInput({ experiences, onChange, highlightedId }) {
         <button type="button" onClick={addExperience} className="text-xs bg-dh-raised hover:bg-dh-hover text-dh px-2 py-1 rounded flex items-center gap-1"><Plus size={12} /> Add</button>
       </div>
       <div className="space-y-3">
-        {experiences.map(exp => (
+        {list.map(exp => (
           <div
             key={exp.id}
             ref={exp.id === highlightedId ? highlightedRef : null}

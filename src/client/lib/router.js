@@ -64,6 +64,13 @@ function parseGmTableParts(parts) {
   return { tableId, modalCollection, modalItemId };
 }
 
+/** Pathname without ?query (for route segment parsing). */
+export function pathnameOnly(fullPath) {
+  if (fullPath == null || fullPath === '') return '';
+  const q = fullPath.indexOf('?');
+  return q >= 0 ? fullPath.slice(0, q) : fullPath;
+}
+
 /**
  * Parses a pathname into a structured route descriptor.
  *
@@ -72,6 +79,7 @@ function parseGmTableParts(parts) {
  *   /library                        -> { view: 'library', tab: DEFAULT_LIBRARY_TAB (all), itemId: null }
  *   /library/:tab                  -> { view: 'library', tab, itemId: null }
  *   /library/:tab/new              -> { view: 'library', tab, itemId: 'new' }
+ *   /library/all/new?c=:collection — merged All tab: new item type via `libraryNewCollection`
  *   /library/:tab/:id              -> { view: 'library', tab, itemId }
  *   /table/:tableId                -> { view: 'table', tableId }
  *   /table/:tableId/:collection/:id -> table + modal deep-link
@@ -79,8 +87,21 @@ function parseGmTableParts(parts) {
  *
  * Note: /library/:tab/:id/edit is no longer a route — item editing is now
  * handled entirely within the ItemDetailModal overlay.
+ *
+ * @param {string} pathWithOptionalQuery — `location.pathname` or pathname + optional `?…` (as stored by `navigate`)
  */
-export function parseRoute(pathname) {
+export function parseRoute(pathWithOptionalQuery) {
+  const full = pathWithOptionalQuery || '';
+  const qIdx = full.indexOf('?');
+  const pathname = qIdx >= 0 ? full.slice(0, qIdx) : full;
+  const embeddedSearch = qIdx >= 0 ? full.slice(qIdx + 1) : '';
+  const searchParams =
+    embeddedSearch !== ''
+      ? new URLSearchParams(embeddedSearch)
+      : typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search.slice(1))
+        : new URLSearchParams();
+
   const parts = pathname.replace(/^\//, '').split('/').filter(Boolean);
 
   if (parts.length === 0 || parts[0] === '') {
@@ -102,20 +123,24 @@ export function parseRoute(pathname) {
   if (parts[0] === 'library') {
     const tab = VALID_TABS.has(parts[1]) ? parts[1] : DEFAULT_LIBRARY_TAB;
     const itemId = parts[2] || null;
-    return { view: 'library', tab, itemId };
+    const cParam = searchParams.get('c');
+    const libraryNewCollection =
+      tab === 'all' && itemId === 'new' && cParam && VALID_COLLECTIONS.has(cParam) ? cParam : null;
+    return { view: 'library', tab, itemId, libraryNewCollection };
   }
 
   return { view: 'home', tab: null, itemId: null };
 }
 
-function getInitialPathname() {
+function getInitialPath() {
   const p = window.location.pathname;
+  const search = window.location.search || '';
   const canon = legacyGmTableToCanonical(p, null);
   if (canon && canon !== p) {
-    window.history.replaceState(null, '', canon);
-    return canon;
+    window.history.replaceState(null, '', canon + search);
+    return canon + search;
   }
-  return p;
+  return p + search;
 }
 
 /**
@@ -125,15 +150,17 @@ function getInitialPathname() {
  *   navigate(to, opts) — pushes or replaces a history entry and updates route
  */
 export function useRouter() {
-  const [path, setPath] = useState(() => getInitialPathname());
+  const [path, setPath] = useState(() => getInitialPath());
 
   useEffect(() => {
     const onPopState = () => {
-      const next = window.location.pathname;
-      const canon = legacyGmTableToCanonical(next, null);
-      if (canon && canon !== next) {
-        window.history.replaceState(null, '', canon);
-        setPath(canon);
+      const nextPath = window.location.pathname;
+      const search = window.location.search || '';
+      const next = nextPath + search;
+      const canon = legacyGmTableToCanonical(nextPath, null);
+      if (canon && canon !== nextPath) {
+        window.history.replaceState(null, '', canon + search);
+        setPath(canon + search);
       } else {
         setPath(next);
       }
@@ -143,10 +170,12 @@ export function useRouter() {
   }, []);
 
   useEffect(() => {
-    const canon = legacyGmTableToCanonical(path, null);
-    if (canon && canon !== path) {
-      window.history.replaceState(null, '', canon);
-      setPath(canon);
+    const pathOnly = pathnameOnly(path);
+    const canon = legacyGmTableToCanonical(pathOnly, null);
+    if (canon && canon !== pathOnly) {
+      const search = path.includes('?') ? path.slice(path.indexOf('?')) : window.location.search || '';
+      window.history.replaceState(null, '', canon + search);
+      setPath(canon + search);
     }
   }, [path]);
 

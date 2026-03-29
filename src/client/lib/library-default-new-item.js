@@ -12,5 +12,9 @@ export function buildDefaultNewSrdLibraryItem(collection) {
   const out = { name: '', description: '' };
   if (cfg.rankMode === 'tier') out.tier = 1;
   if (cfg.rankMode === 'level') out.level = 1;
+  if (collection === 'environments') {
+    out.type = 'exploration';
+    out.difficulty = 10;
+  }
   return out;
 }

@@ -11,6 +11,7 @@ import { CharacterForm } from '../forms/CharacterForm.jsx';
 import { GenericSrdLibraryForm } from '../forms/GenericSrdLibraryForm.jsx';
 import { SOURCE_BADGE, isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from '../../lib/constants.js';
 import { generateId } from '../../lib/helpers.js';
+import { ensureEditorListIds } from '../../lib/ensure-editor-list-ids.js';
 import { getBaselineStats, getUnscaledAdversary, computeScaledStats } from '../../lib/adversary-defaults.js';
 import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 import {
@@ -108,6 +109,12 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   presentation = 'center',
   rightDrawerPortalTo,
   onCharacterDrawerChromeSync,
+  pendingCharacterAiConcept,
+  onPendingCharacterAiConceptConsumed,
+  pendingAdversaryAiConcept,
+  onPendingAdversaryAiConceptConsumed,
+  pendingEnvironmentAiConcept,
+  onPendingEnvironmentAiConceptConsumed,
 }, ref) {
   const isNew = !item?.id;
   const isRightDrawer = presentation === 'rightDrawer';
@@ -120,7 +127,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   const [charAutosaveHintDismissed, setCharAutosaveHintDismissed] = useState(isCharacterEditorAutosaveHintDismissed);
   const overlayRef = useRef(null);
   const [drawerEntered, setDrawerEntered] = useState(false);
-  const [aiCharacterBusy, setAiCharacterBusy] = useState(false);
+  const [aiConceptBusy, setAiConceptBusy] = useState(false);
 
   useEffect(() => {
     const onReset = () => setCharAutosaveHintDismissed(isCharacterEditorAutosaveHintDismissed());
@@ -148,7 +155,6 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   const initialRef = useRef(null);
   if (!initialRef.current) {
     const raw = item || {};
-    const ensureIds = (arr) => (arr || []).map(entry => entry.id ? entry : { ...entry, id: generateId() });
     let defaultsForNew = {};
     if (!raw.id) {
       if (collection === 'adversaries') {
@@ -173,21 +179,27 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
         defaultsForNew = buildDefaultNewSrdLibraryItem(collection);
       }
     }
+    const experiencesSource =
+      raw.experiences !== undefined
+        ? raw.experiences
+        : defaultsForNew.experiences !== undefined
+          ? defaultsForNew.experiences
+          : [];
     initialRef.current = {
       ...defaultsForNew,
       ...raw,
       // Assign a stable client-generated ID for new items so every auto-save
       // upserts the same row instead of creating a new one on each debounce fire.
       id: raw.id || generateId(),
-      features: ensureIds(raw.features),
-      ...(raw.experiences ? { experiences: ensureIds(raw.experiences) } : {}),
+      features: ensureEditorListIds(raw.features),
+      experiences: ensureEditorListIds(experiencesSource),
     };
   }
 
   const editorSessionKey = item?.id ?? initialRef.current?.id ?? collection;
 
   useEffect(() => {
-    setAiCharacterBusy(false);
+    setAiConceptBusy(false);
   }, [editorSessionKey]);
 
   useLayoutEffect(() => {
@@ -251,12 +263,12 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       else if (mod && (e.key === 'Z' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
       else if (e.key === 'Escape') {
         if (lightboxUrl) setLightboxUrl(null);
-        else if (!aiCharacterBusy) onClose();
+        else if (!aiConceptBusy) onClose();
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [undo, redo, onClose, lightboxUrl, setLightboxUrl, aiCharacterBusy]);
+  }, [undo, redo, onClose, lightboxUrl, setLightboxUrl, aiConceptBusy]);
 
   const handleClone = async () => {
     if (!onClone) return;
@@ -272,7 +284,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   };
 
   const handleOverlayClick = (e) => {
-    if (e.target === overlayRef.current && !aiCharacterBusy) onClose();
+    if (e.target === overlayRef.current && !aiConceptBusy) onClose();
   };
 
   const baseDisplayItem = editable ? formData : item;
@@ -400,7 +412,30 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       characters,
       onImageSaved: item?.id && saveImage ? (url, opts) => saveImage(collection, item.id, url, opts) : undefined,
       onMergeAdversary,
-      ...(collection === 'characters' ? { onAiBusyChange: setAiCharacterBusy } : {}),
+      ...(['characters', 'adversaries', 'environments'].includes(collection)
+        ? { onAiBusyChange: setAiConceptBusy }
+        : {}),
+      ...(collection === 'characters' && pendingCharacterAiConcept
+        ? {
+            autoRunAiConcept: pendingCharacterAiConcept,
+            onAutoRunAiConceptConsumed: onPendingCharacterAiConceptConsumed,
+            autoRunSessionKey: editorSessionKey,
+          }
+        : {}),
+      ...(collection === 'adversaries' && pendingAdversaryAiConcept
+        ? {
+            autoRunAiConcept: pendingAdversaryAiConcept,
+            onAutoRunAiConceptConsumed: onPendingAdversaryAiConceptConsumed,
+            autoRunSessionKey: editorSessionKey,
+          }
+        : {}),
+      ...(collection === 'environments' && pendingEnvironmentAiConcept
+        ? {
+            autoRunAiConcept: pendingEnvironmentAiConcept,
+            onAutoRunAiConceptConsumed: onPendingEnvironmentAiConceptConsumed,
+            autoRunSessionKey: editorSessionKey,
+          }
+        : {}),
     };
 
     const formScrollClass = `flex-1 min-h-0 overflow-y-auto p-4 ${isRightDrawer ? '[scrollbar-gutter:stable]' : ''}`;
@@ -524,7 +559,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       savedFlash,
       canUndo,
       canRedo,
-      aiCharacterBusy,
+      aiConceptBusy,
     });
   }, [
     hidePortaledCharacterHeader,
@@ -536,7 +571,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
     savedFlash,
     canUndo,
     canRedo,
-    aiCharacterBusy,
+    aiConceptBusy,
   ]);
 
   const mainCardBody = (
@@ -604,8 +639,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                   <button
                     type="button"
                     onClick={onClose}
-                    disabled={aiCharacterBusy}
-                    title={aiCharacterBusy ? 'Cancel AI build or wait to close' : undefined}
+                    disabled={aiConceptBusy}
+                    title={aiConceptBusy ? 'Cancel AI build or wait to close' : undefined}
                     className="text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Done
@@ -700,8 +735,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               <button
                 type="button"
                 onClick={onClose}
-                disabled={aiCharacterBusy}
-                title={aiCharacterBusy ? 'Cancel AI build or wait to close' : undefined}
+                disabled={aiConceptBusy}
+                title={aiConceptBusy ? 'Cancel AI build or wait to close' : undefined}
                 className={
                   isRightDrawer
                     ? 'text-xs font-medium dh-text-spellcast-header px-2 py-1 rounded-md border border-dh-strong/40 hover:bg-dh-raised/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
@@ -807,7 +842,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
         <div
           className="fixed inset-0 z-[80] bg-black/50"
           aria-hidden
-          onClick={aiCharacterBusy ? undefined : onClose}
+          onClick={aiConceptBusy ? undefined : onClose}
         />
         <div
           className={`fixed z-[81] flex flex-col transition-transform duration-300 ease-out will-change-transform ${slideClass}`}

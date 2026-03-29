@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { Sparkles } from 'lucide-react';
 import { generateImage, editImage, imageGenEnabled } from '../lib/api.js';
+import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
+import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { buildImagePrompt } from '../lib/ai-image-prompts.js';
 import { imageSrcToDataUrlForApi } from '../lib/map-image-data-url.js';
 import { AiImageWorkbench } from './AiImageWorkbench.jsx';
@@ -14,6 +16,7 @@ import { AiImageWorkbench } from './AiImageWorkbench.jsx';
  *   onImageGenerated(dataUrl) — called with the result data URL to set formData.imageUrl
  */
 export function ImageGenerator({ formData, collection, onImageGenerated, inline = false }) {
+  const { hideAiUi } = useAiUiPreference();
   const [open, setOpen] = useState(false);
   const [lastPrompt, setLastPrompt] = useState(null);
   const [editedPrompt, setEditedPrompt] = useState('');
@@ -83,7 +86,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
     setOpen(false);
   };
 
-  if (!imageGenEnabled) return null;
+  if (!shouldShowImageGenAiUi(imageGenEnabled, hideAiUi)) return null;
 
   const buttonEl = (
     <button

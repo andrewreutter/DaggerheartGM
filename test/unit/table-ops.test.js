@@ -164,20 +164,59 @@ describe('applyTableOp', () => {
       role: 'bruiser', tier: 2, hp_max: 10, features: [{ name: 'Smash' }],
     });
     const state = { activeElements: [el] };
-    const newBaseData = { id: 'adv-1', role: 'skulk', tier: 3, hp_max: 15, features: [{ name: 'Sneak' }] };
+    const newBaseData = {
+      id: 'adv-1',
+      name: 'Skulk',
+      role: 'skulk',
+      tier: 3,
+      hp_max: 15,
+      features: [{ name: 'Sneak' }],
+    };
     const result = applyTableOp({ op: 'update-base-data', elementId: 'adv-1', newBaseData }, state);
     const updated = result.activeElements[0];
     expect(updated.role).toBe('skulk');
     expect(updated.hp_max).toBe(15);
     expect(updated.features[0].name).toBe('Sneak');
-    // Runtime keys preserved
+    // Runtime keys preserved (HP, conditions); library fields come from newBaseData (not stale name/tier)
     expect(updated.instanceId).toBe('inst-1');
     expect(updated.elementType).toBe('adversary');
-    expect(updated.name).toBe('Goblin');
+    expect(updated.name).toBe('Skulk');
     expect(updated.currentHp).toBe(3);
     expect(updated.currentStress).toBe(1);
     expect(updated.conditions).toBe('poisoned');
+    expect(updated.tier).toBe(3);
+  });
+
+  it('update-base-data replaces stale empty stub name/tier with saved library data', () => {
+    const el = mkElement({
+      name: '',
+      tier: 1,
+      role: 'standard',
+      currentHp: 4,
+      currentStress: 0,
+    });
+    const state = { activeElements: [el] };
+    const newBaseData = {
+      id: 'adv-1',
+      name: 'Ash Wraith',
+      tier: 2,
+      role: 'skulk',
+      hp_max: 12,
+      features: [],
+    };
+    const result = applyTableOp({ op: 'update-base-data', elementId: 'adv-1', newBaseData }, state);
+    const updated = result.activeElements[0];
+    expect(updated.name).toBe('Ash Wraith');
     expect(updated.tier).toBe(2);
+    expect(updated.currentHp).toBe(4);
+  });
+
+  it('update-base-data preserves _-prefixed keys from the element', () => {
+    const el = mkElement({ _scaledFromTier: 1, tier: 3, name: 'Scaled' });
+    const state = { activeElements: [el] };
+    const newBaseData = { id: 'adv-1', name: 'Scaled', tier: 3, role: 'standard', features: [] };
+    const result = applyTableOp({ op: 'update-base-data', elementId: 'adv-1', newBaseData }, state);
+    expect(result.activeElements[0]._scaledFromTier).toBe(1);
   });
 
   it('update-base-data does not affect non-matching elements', () => {

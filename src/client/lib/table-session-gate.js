@@ -85,6 +85,8 @@ export function gateTableOpForPrepMode(state, op) {
       return { ok: true, op };
     case 'add-elements':
     case 'remove-element':
+    /** Sync saved library row onto a table element (adversary/environment base data). Prep-safe — not play mechanics. */
+    case 'update-base-data':
     case 'set-map':
     case 'set-map-view':
     case 'set-map-free-explore':

@@ -2,19 +2,19 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled } from './lib/api.js';
+import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { generateId } from './lib/helpers.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
-import { RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
+import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
-import { postDebugLog } from './lib/debug-log.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
@@ -32,6 +32,26 @@ function NavImportBtn() {
   if (!enabled) return null;
   return (
     <NavBtn icon={<Upload size={16} />} label="Import" active={false} onClick={() => openImport()} />
+  );
+}
+
+function UserMenuAiTurnOn({ onPicked }) {
+  const { hideAiUi, turnOnAiUi } = useAiUiPreference();
+  if (!(conceptAiEnabled || imageGenEnabled) || !hideAiUi) return null;
+  return (
+    <>
+      <div className="border-t border-dh-strong my-1" />
+      <button
+        type="button"
+        onClick={() => {
+          onPicked();
+          void turnOnAiUi().catch((e) => console.error(e));
+        }}
+        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors"
+      >
+        <Bot size={15} /> Turn on AI Feature
+      </button>
+    </>
   );
 }
 
@@ -119,6 +139,8 @@ function App() {
   const charLoadResolversRef = useRef([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
+  /** When true, hide concept-AI and image-gen AI entry points (persisted via `PUT /api/me/preferences`). */
+  const [hideAiUi, setHideAiUi] = useState(false);
   const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName }] — tables user is invited to
   const [myTables, setMyTables] = useState([]); // [{ id, name }] — tables user owns
   const [connectedPlayers, setConnectedPlayers] = useState([]); // [{ uid, name, email, photoURL }]
@@ -392,11 +414,17 @@ function App() {
         if (window.location.pathname === '/' || window.location.pathname === '') {
           navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
         }
-        fetchMe().then(({ isAdmin: admin }) => setIsAdmin(admin)).catch(() => {});
+        fetchMe()
+          .then(({ isAdmin: admin, preferences }) => {
+            setIsAdmin(admin);
+            setHideAiUi(!!preferences?.hideAiUi);
+          })
+          .catch(() => {});
         fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
         fetchMyTables().then(tables => { setMyTables(tables || []); myTablesFetchedRef.current = true; }).catch(() => { myTablesFetchedRef.current = true; });
       } else {
         myTablesFetchedRef.current = false;
+        setHideAiUi(false);
       }
     });
     return () => unsubscribe();
@@ -988,6 +1016,17 @@ function App() {
           return result.activeElements ?? prev;
         });
       }
+      // Same idea as characters: merge authoritative library row into table elements by id (Encounter panel
+      // reads activeElements, not data.adversaries). Uses server `saved`, not client form payload.
+      if ((collectionName === 'adversaries' || collectionName === 'environments') && saved?.id) {
+        setActiveElements(prev => {
+          const result = applyTableOp(
+            { op: 'update-base-data', elementId: saved.id, newBaseData: saved },
+            { activeElements: prev },
+          );
+          return result.activeElements ?? prev;
+        });
+      }
       return saved;
     } catch (err) {
       console.error(`saveItem(${collectionName}) failed:`, err);
@@ -1018,7 +1057,8 @@ function App() {
     setActiveElements(prev => prev.map(el => {
       if (!predicate(el)) return el;
       const runtime = {};
-      RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+      UPDATE_BASE_DATA_RUNTIME_KEYS.forEach(k => { if (k in el) runtime[k] = el[k]; });
+      Object.keys(el).forEach(k => { if (k.startsWith('_') && k in el) runtime[k] = el[k]; });
       return { ...newBaseData, ...runtime };
     }));
   };
@@ -1210,46 +1250,6 @@ function App() {
   const sessionStarted = tableTop == null ? true : tableTop.sessionStarted !== false;
   const sessionPaused = tableTop?.sessionPaused === true;
 
-  // #region agent log
-  useEffect(() => {
-    if (route.view !== 'table' || !user) return;
-    const portalGate = route.view === 'table' && !!user && !sessionPlayAllowed;
-    postDebugLog({
-      _debugSessionId: '7dabc3',
-      sessionId: '7dabc3',
-      location: 'app.jsx:tableSessionPortalGate',
-      message: 'table session + SessionBlockedBanner portal gate',
-      hypothesisId: 'H1-H2-H4-H5',
-      data: {
-        portalGate,
-        sessionPlayAllowed,
-        sessionStarted,
-        sessionPaused,
-        tableTopNull: tableTop == null,
-        topSessionStarted: tableTop?.sessionStarted,
-        topSessionPaused: tableTop?.sessionPaused,
-        isPlayer,
-        effectiveIsPlayer,
-        isPreviewMode: !isPlayer && !!previewAsPlayerEmail && route.view === 'table',
-        routeTableId: route.tableId,
-      },
-      timestamp: Date.now(),
-      runId: 'pre-fix',
-    });
-  }, [
-    route.view,
-    route.tableId,
-    user,
-    sessionPlayAllowed,
-    sessionStarted,
-    sessionPaused,
-    tableTop,
-    isPlayer,
-    effectiveIsPlayer,
-    previewAsPlayerEmail,
-  ]);
-  // #endregion
-
   const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
     if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
@@ -1316,7 +1316,11 @@ function App() {
 
   const sendUpdateActiveElementsBaseData = (predicate, newBaseData) => {
     const matching = activeElements.find(predicate);
-    if (matching) postTableOp({ op: 'update-base-data', elementId: matching.id, newBaseData }, tableId);
+    if (!matching) return;
+    // Optimistic merge (same rules as server applyTableOp update-base-data) so Encounter panel
+    // updates immediately; SSE snapshot may follow.
+    updateActiveElementsBaseData(predicate, newBaseData);
+    postTableOp({ op: 'update-base-data', elementId: matching.id, newBaseData }, tableId);
   };
 
   const sendSetMapConfig = (newConfig, resetTokenPositions = false) => {
@@ -1549,6 +1553,7 @@ function App() {
       partyTier={partyTier}
       mapViewportAspect={battleMapViewportAspect}
     >
+    <AiUiPreferenceProvider hideAiUi={hideAiUi} setHideAiUi={setHideAiUi}>
     <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
       {typeof document !== 'undefined' && route.view === 'table' && user && !sessionPlayAllowed && createPortal(
         <SessionBlockedBanner isPlayer={effectiveIsPlayer} sessionStarted={sessionStarted} />,
@@ -1653,6 +1658,7 @@ function App() {
                       </button>
                     </div>
                   </div>
+                  <UserMenuAiTurnOn onPicked={() => setUserMenuOpen(false)} />
                   <button
                     type="button"
                     onClick={() => {
@@ -1968,6 +1974,7 @@ function App() {
         document.body
       )}
     </div>
+    </AiUiPreferenceProvider>
     </UnifiedImportProvider>
   );
 }

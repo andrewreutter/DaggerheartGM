@@ -49,9 +49,13 @@ import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
 import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
+import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
+import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
+import { MapAiImageBuilderPanel } from './MapAiImageBuilderPanel.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
+import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
 import {
   findPendingManualTrackBanner,
@@ -646,7 +650,18 @@ function TokenDotRing({ size, groups }) {
 
 // ─── MapConfigToolbar ────────────────────────────────────────────────────────
 
-function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSelect, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable }) {
+function MapConfigToolbar({
+  mapConfig,
+  onMapConfigChange,
+  isUploading,
+  onFileSelect,
+  tableName = '',
+  tableStateReady = false,
+  onTableNameChange,
+  onDeleteTable,
+  onMapAiGenerationPreviewChange,
+  showImageGenAiUi = false,
+}) {
   const { mapDimension = 'width', mapSizeFt = 100, mapImageUrl, mapAiImagePrompt } = mapConfig ?? {};
   const [sizeInput, setSizeInput] = useState(String(mapSizeFt));
   const [aiMapOpen, setAiMapOpen] = useState(false);
@@ -772,7 +787,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
           />
         </label>
 
-        {imageGenEnabled ? (
+        {showImageGenAiUi ? (
           <>
             <button
               type="button"
@@ -790,6 +805,7 @@ function MapConfigToolbar({ mapConfig, onMapConfigChange, isUploading, onFileSel
               mapImageUrl={mapImageUrl}
               savedMapAiImagePrompt={mapAiImagePrompt}
               onMapConfigChange={onMapConfigChange}
+              onGenerationPreviewChange={onMapAiGenerationPreviewChange}
             />
           </>
         ) : null}
@@ -1234,6 +1250,8 @@ export function BattleMap({
   /** Live map viewport width/height ratio (scroll wrapper) — for import map camera rectangles matching the table. */
   onViewportAspectChange,
 }) {
+  const { hideAiUi } = useAiUiPreference();
+  const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
   const scrollWrapperRef = useRef(null);
   const scrollContainerRef = useRef(null);
   /** GM right-drag map pan: { pointerId, startX, startY, startPanLeft, startPanTop } */
@@ -1265,6 +1283,10 @@ export function BattleMap({
   const frozenBullseyeRef = useRef(null);
   // Second bullseye that follows the dragged token during drag (only when frozen bullseye is set)
   const [followBullseyeFt, setFollowBullseyeFt] = useState(null);
+  /** AI map editor: show selected generation on the table map before Save (data URL or hosted URL). */
+  const [mapAiGenPreviewUrl, setMapAiGenPreviewUrl] = useState(null);
+  const mapAiGenPreviewUrlRef = useRef(null);
+  mapAiGenPreviewUrlRef.current = mapAiGenPreviewUrl;
 
   // Track scroll area size for pxPerFt and display zoom bounds
   useLayoutEffect(() => {
@@ -1428,6 +1450,12 @@ export function BattleMap({
   mapPanLeftRef.current = mapPanLeft;
   mapPanTopRef.current = mapPanTop;
 
+  /** AI preview: show full map at min zoom visually; real `mapZoom` / pan state unchanged. */
+  const mapAiPreviewActive = !!mapAiGenPreviewUrl;
+  const viewZoom = mapAiPreviewActive ? minZoom : mapZoom;
+  const viewPanLeft = mapAiPreviewActive ? 0 : mapPanLeft;
+  const viewPanTop = mapAiPreviewActive ? 0 : mapPanTop;
+
   /** Clips map to shared `mapViewVisibleNorm` rect (players / saved cameras); null for GM live view. */
   const [mapLetterboxClipPx, setMapLetterboxClipPx] = useState(null);
 
@@ -1470,9 +1498,9 @@ export function BattleMap({
     syncFireworksViewport();
   }, [
     syncFireworksViewport,
-    mapZoom,
-    mapPanLeft,
-    mapPanTop,
+    viewZoom,
+    viewPanLeft,
+    viewPanTop,
     renderedWidthPx,
     renderedHeightPx,
     containerWidth,
@@ -2020,6 +2048,7 @@ export function BattleMap({
   const centerMapOnPlacedActor = useCallback(
     (element) => {
       if (!canControlMapView) return;
+      if (mapAiGenPreviewUrlRef.current) return;
       const wrap = scrollContainerRef.current;
       if (!wrap) return;
       const vw = wrap.clientWidth;
@@ -2053,6 +2082,7 @@ export function BattleMap({
 
   const applyZoomToFitActors = useCallback(() => {
     if (!canControlMapView) return;
+    if (mapAiGenPreviewUrlRef.current) return;
     const wrap = scrollContainerRef.current;
     if (!wrap) return;
     const vw = wrap.clientWidth;
@@ -2106,6 +2136,7 @@ export function BattleMap({
     if (!el) return;
 
     const onWheel = (e) => {
+      if (mapAiGenPreviewUrlRef.current) return;
       const vw = el.clientWidth;
       const vh = el.clientHeight;
       if (vw <= 0 || vh <= 0) return;
@@ -2234,10 +2265,10 @@ export function BattleMap({
     const container = scrollContainerRef.current;
     if (!container) return null;
     const rect = container.getBoundingClientRect();
-    const mapX = (clientX - rect.left + mapPanLeft) / mapZoom;
-    const mapY = (clientY - rect.top + mapPanTop) / mapZoom;
+    const mapX = (clientX - rect.left + viewPanLeft) / viewZoom;
+    const mapY = (clientY - rect.top + viewPanTop) / viewZoom;
     return { x: mapX / pxPerFt, y: mapY / pxPerFt };
-  }, [pxPerFt, mapZoom, mapPanLeft, mapPanTop]);
+  }, [pxPerFt, viewZoom, viewPanLeft, viewPanTop]);
 
   const handleGmSetActiveView = useCallback(
     (viewId) => {
@@ -3132,6 +3163,7 @@ export function BattleMap({
       if (!pointers.has(e.pointerId)) return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (!mapPinchActiveRef.current || pointers.size < 2) return;
+      if (mapAiGenPreviewUrlRef.current) return;
 
       const vw = el.clientWidth;
       const vh = el.clientHeight;
@@ -3230,15 +3262,15 @@ export function BattleMap({
   const scribbleCanvasZ =
     showDrawPaintCanvas && drawTool !== 'scribble' ? 19 : 21;
   /** Brush radius in screen pixels (matches stroke width at current zoom). */
-  const brushRadiusPreviewScreenPx = drawBrushRadiusClampedFt * pxPerFt * mapZoom;
+  const brushRadiusPreviewScreenPx = drawBrushRadiusClampedFt * pxPerFt * viewZoom;
 
   // Find a placed token whose bounding box contains the given client point
   const findTokenAtClient = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
     const rect = container.getBoundingClientRect();
-    const mapX = (clientX - rect.left + mapPanLeft) / mapZoom;
-    const mapY = (clientY - rect.top + mapPanTop) / mapZoom;
+    const mapX = (clientX - rect.left + viewPanLeft) / viewZoom;
+    const mapY = (clientY - rect.top + viewPanTop) / viewZoom;
     const halfToken = tokenSizePx / 2;
     for (const { element } of allMapTokens) {
       if (element.tokenX == null) continue;
@@ -3249,7 +3281,7 @@ export function BattleMap({
       }
     }
     return null;
-  }, [allMapTokens, pxPerFt, tokenSizePx, mapZoom, mapPanLeft, mapPanTop]);
+  }, [allMapTokens, pxPerFt, tokenSizePx, viewZoom, viewPanLeft, viewPanTop]);
 
   // Handle pointer move over the map canvas area (not trays)
   const handleMapPointerMove = useCallback((e) => {
@@ -3388,8 +3420,8 @@ export function BattleMap({
       const container = scrollContainerRef.current;
       if (container) {
         const rect = container.getBoundingClientRect();
-        const tokenClientX = element.tokenX * pxPerFt * mapZoom - mapPanLeft + rect.left;
-        const tokenClientY = element.tokenY * pxPerFt * mapZoom - mapPanTop + rect.top;
+        const tokenClientX = element.tokenX * pxPerFt * viewZoom - viewPanLeft + rect.left;
+        const tokenClientY = element.tokenY * pxPerFt * viewZoom - viewPanTop + rect.top;
         grabOffsetX = Math.max(0, Math.min(tokenSize, e.clientX - tokenClientX));
         grabOffsetY = Math.max(0, Math.min(tokenSize, e.clientY - tokenClientY));
       }
@@ -3413,7 +3445,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, mapZoom, mapPanLeft, mapPanTop]);
+  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, viewZoom, viewPanLeft, viewPanTop]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -3513,9 +3545,9 @@ export function BattleMap({
       // Subtract grab offset so the token's top-left lands where the ghost was,
       // not where the raw cursor was.
       const mapX =
-        (e.clientX - rect.left + mapPanLeft) / mapZoom - (ds.grabOffsetX ?? ds.tokenSize / 2);
+        (e.clientX - rect.left + viewPanLeft) / viewZoom - (ds.grabOffsetX ?? ds.tokenSize / 2);
       const mapY =
-        (e.clientY - rect.top + mapPanTop) / mapZoom - (ds.grabOffsetY ?? ds.tokenSize / 2);
+        (e.clientY - rect.top + viewPanTop) / viewZoom - (ds.grabOffsetY ?? ds.tokenSize / 2);
       const ftX = mapX / pxPerFt;
       const ftY = mapY / pxPerFt;
 
@@ -3545,7 +3577,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, mapZoom, mapPanLeft, mapPanTop, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, viewZoom, viewPanLeft, viewPanTop, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved]);
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {
@@ -3559,6 +3591,7 @@ export function BattleMap({
   const handleRightPanPointerDown = useCallback(
     (e) => {
       if (!canControlMapView) return;
+      if (mapAiGenPreviewUrlRef.current) return;
       if (!canPanMap) return;
       if (e.button !== 2) return;
       e.preventDefault();
@@ -3663,18 +3696,26 @@ export function BattleMap({
     onToggleDiceVisibility ||
     (typeof onCancelAllBanners === 'function' && pendingBannerCount > 0);
 
+  const hasMapArt = mapConfigHasImage(mapConfig);
+  const displayMapImageUrl = mapAiGenPreviewUrl ?? mapConfig?.mapImageUrl ?? null;
   const gmEmptyMapHint =
     !isPlayer &&
-    !mapConfigHasImage(mapConfig) &&
-    charTrayTokens.length === 0 &&
-    advTrayTokens.length === 0 &&
-    charMapTokens.length === 0 &&
-    advMapTokens.length === 0;
+    getGmTotMEmptyMapHint({
+      tableStateReady,
+      mapConfigHasImage: hasMapArt,
+      characterCount: characters.length,
+      adversaryCount: adversaries.length,
+    });
   const playerEmptyMapHint =
     isPlayer &&
-    !mapConfigHasImage(mapConfig) &&
-    charMapTokens.length === 0 &&
-    advMapTokens.length === 0;
+    getPlayerTotMEmptyMapHint({
+      tableStateReady,
+      mapConfigHasImage: hasMapArt,
+      characterCount: characters.length,
+      adversaryCount: adversaries.length,
+    });
+
+  const showTotmOverlay = !hasMapArt && (gmEmptyMapHint || playerEmptyMapHint);
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -3689,6 +3730,8 @@ export function BattleMap({
           tableStateReady={tableStateReady}
           onTableNameChange={onTableNameChange}
           onDeleteTable={onDeleteTable}
+          onMapAiGenerationPreviewChange={setMapAiGenPreviewUrl}
+          showImageGenAiUi={showImageGenAiUi}
         />
       )}
       {!isPlayer && maps.length > 0 && onSetActiveView && onMapFreeExplore && (
@@ -3973,7 +4016,7 @@ export function BattleMap({
                 <button
                   type="button"
                   onClick={applyZoomToFitActors}
-                  disabled={!hasPlacedActorsOnMap}
+                  disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
                   className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
                   aria-label="Zoom to Actors"
                 >
@@ -4056,7 +4099,7 @@ export function BattleMap({
                   <button
                     type="button"
                     onClick={applyZoomToFitActors}
-                    disabled={!hasPlacedActorsOnMap}
+                    disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
                     className="w-full max-w-full min-w-0 flex flex-col items-center justify-center gap-0.5 rounded px-1 py-1 text-[10px] leading-tight text-center text-violet-200/95 border border-violet-500/35 bg-violet-950/25 hover:bg-violet-900/35 disabled:opacity-40 disabled:pointer-events-none box-border"
                     aria-label="Zoom to Actors"
                   >
@@ -4350,7 +4393,7 @@ export function BattleMap({
                 ? 'cursor-crosshair'
                 : !isPlayer && (drawTool === 'rect' || drawTool === 'oval')
                   ? 'cursor-crosshair'
-                  : canControlMapView && (canPanMap || rightPanDragging)
+                  : canControlMapView && !mapAiPreviewActive && (canPanMap || rightPanDragging)
                     ? (rightPanDragging ? 'cursor-grabbing' : 'cursor-grab')
                     : ''
             }`}
@@ -4378,9 +4421,9 @@ export function BattleMap({
             <div
               className="relative shrink-0 will-change-transform"
               style={{
-                transform: `translate(${-mapPanLeft}px, ${-mapPanTop}px)`,
-                width: renderedWidthPx * mapZoom,
-                height: renderedHeightPx * mapZoom,
+                transform: `translate(${-viewPanLeft}px, ${-viewPanTop}px)`,
+                width: renderedWidthPx * viewZoom,
+                height: renderedHeightPx * viewZoom,
               }}
             >
               <div
@@ -4388,18 +4431,18 @@ export function BattleMap({
                 style={{
                   width: renderedWidthPx,
                   height: renderedHeightPx,
-                  transform: `scale(${mapZoom})`,
+                  transform: `scale(${viewZoom})`,
                 }}
                 onPointerDown={handleMapPingPointerDown}
                 onPointerMove={handleMapPointerMove}
                 onPointerLeave={handleMapPointerLeave}
               >
               {/* Map image or blank white canvas (tokens and drag/drop work either way) */}
-              {mapConfig?.mapImageUrl ? (
+              {displayMapImageUrl ? (
                 <img
                   ref={mapImageRef}
                   crossOrigin="anonymous"
-                  src={mapConfig.mapImageUrl}
+                  src={displayMapImageUrl}
                   alt="Battle map"
                   className="absolute inset-0 w-full h-full object-fill pointer-events-none select-none"
                   draggable={false}
@@ -4725,12 +4768,19 @@ export function BattleMap({
               </div>
             ) : null}
           </div>
-          {!mapConfigHasImage(mapConfig) && (gmEmptyMapHint || playerEmptyMapHint) ? (
+          {mapAiPreviewActive ? (
             <div
-              className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4"
+              className="absolute inset-0 z-[8] bg-transparent"
+              aria-hidden
+              style={{ pointerEvents: 'auto' }}
+            />
+          ) : null}
+          {showTotmOverlay ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-10 flex items-start justify-center px-4 overflow-y-auto py-8"
               role="status"
             >
-              <div className="text-dh-muted text-sm text-center max-w-sm space-y-2">
+              <div className="text-dh-muted text-sm text-center max-w-3xl w-full space-y-2">
                 <MapIcon size={32} className="mx-auto mb-1 opacity-50" aria-hidden />
                 {gmEmptyMapHint ? (
                   <>
@@ -4738,6 +4788,27 @@ export function BattleMap({
                     <p className="leading-snug">Drag tokens here and use relative positioning</p>
                     <div className="text-dh-muted/90 text-xs font-medium py-0.5">OR</div>
                     <p className="leading-snug">Drag / paste an image here and use a map</p>
+                    {showImageGenAiUi ? (
+                      <>
+                        <div className="text-dh-muted/90 text-xs font-medium py-0.5">OR</div>
+                        <div className="pointer-events-auto mt-1 text-left w-full rounded-lg border border-purple-800/40 bg-dh-canvas/50 p-3 shadow-sm">
+                          <div className="text-dh font-medium text-sm mb-2 flex items-center gap-1.5 justify-center">
+                            <Sparkles size={14} className="text-purple-300 shrink-0" aria-hidden />
+                            Generate battle map (AI)
+                          </div>
+                          <MapAiImageBuilderPanel
+                            mapSizeFt={mapConfig?.mapSizeFt ?? 100}
+                            mapImageUrl={mapConfig?.mapImageUrl}
+                            savedMapAiImagePrompt={mapConfig?.mapAiImagePrompt}
+                            onMapConfigChange={handleMapConfigChange}
+                            onGenerationPreviewChange={setMapAiGenPreviewUrl}
+                            compact
+                            showCancel={false}
+                            className="max-h-[min(60vh,520px)]"
+                          />
+                        </div>
+                      </>
+                    ) : null}
                   </>
                 ) : (
                   <p className="leading-snug">No map loaded</p>
@@ -4756,7 +4827,7 @@ export function BattleMap({
                   type="button"
                   aria-label="Zoom to Actors"
                   onClick={applyZoomToFitActors}
-                  disabled={!hasPlacedActorsOnMap}
+                  disabled={!hasPlacedActorsOnMap || mapAiPreviewActive}
                   className="pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover text-dh-muted hover:text-dh disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Focus size={14} />
@@ -4802,7 +4873,7 @@ export function BattleMap({
               size={
                 dragGhost.fromTray
                   ? (dragGhost.tokenSize ?? trayTokenSizePx)
-                  : Math.round((dragGhost.tokenSize ?? tokenSizePx) * mapZoom)
+                  : Math.round((dragGhost.tokenSize ?? tokenSizePx) * viewZoom)
               }
               instanceNum={dragGhost.instanceNum}
               isMyCharacter={dragGhost.isMyChar}

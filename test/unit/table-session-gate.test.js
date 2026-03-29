@@ -32,6 +32,26 @@ describe('table-session-gate', () => {
     expect(g.ok).toBe(true);
   });
 
+  it('allows update-base-data during prep (library save → table element sync)', () => {
+    const g = gateTableOpForPrepMode(prepState, {
+      op: 'update-base-data',
+      elementId: 'adv-1',
+      newBaseData: { name: 'Goblin', tier: 1, role: 'Standard' },
+    });
+    expect(g.ok).toBe(true);
+  });
+
+  it('allows update-base-data during idle session pause', () => {
+    const paused = { top: { sessionStarted: true, sessionPaused: true } };
+    expect(isTablePlayAllowed(paused)).toBe(false);
+    const g = gateTableOpForPrepMode(paused, {
+      op: 'update-base-data',
+      elementId: 'adv-1',
+      newBaseData: { name: 'Goblin' },
+    });
+    expect(g.ok).toBe(true);
+  });
+
   it('bypassPrepGate allows a single blocked update without changing session state in the gate', () => {
     const g = gateTableOpForPrepMode(prepState, {
       op: 'update-element',

@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ShieldAlert,
@@ -6,6 +7,7 @@ import {
   Play,
   BookOpen,
   Plus,
+  ChevronDown,
   User,
   X,
   Sparkles,
@@ -123,6 +125,13 @@ const LIBRARY_NAV_HIDDEN_IDS = new Set(['characters', 'scenes', 'adventures']);
 const LIBRARY_NAV_TABS = TABS.filter(t => !LIBRARY_NAV_HIDDEN_IDS.has(t.id));
 const LIBRARY_NAV_SIDEBAR = [{ id: 'all', label: 'All', Icon: LayoutGrid }, ...LIBRARY_NAV_TABS];
 
+/** Sidebar order — every id is in `LIBRARY_USER_EDITABLE_COLLECTIONS`. */
+const NEW_ITEM_COLLECTION_ORDER = TABS.map(t => t.id);
+const TAB_LABEL_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t.label]));
+
+/** Portaled “New” type menu — must be excluded from outside-dismiss (menu is not under `newItemMenuWrapRef`). */
+const NEW_ITEM_MENU_SELECTOR = '[data-library-new-item-menu]';
+
 /** Unified paginated API (Mine + SRD + …) */
 const SRD_FILTER_TABS = new Set(SRD_UNIFIED_COLLECTIONS);
 
@@ -184,7 +193,10 @@ export function LibraryView({
     setLibraryCardHeight(readStoredLibraryCardHeight(userUid, activeTab));
   }, [userUid, activeTab]);
 
-  const canCreateNew = LIBRARY_USER_EDITABLE_COLLECTIONS.has(activeTab);
+  const showLibraryNewControls = activeTab === 'all' || LIBRARY_USER_EDITABLE_COLLECTIONS.has(activeTab);
+  const [newItemMenuOpen, setNewItemMenuOpen] = useState(false);
+  const [newItemMenuPos, setNewItemMenuPos] = useState(null);
+  const newItemMenuWrapRef = useRef(null);
   const filterDefaults = useMemo(() => {
     const c = getLibraryFilterConfig(activeTab === 'all' ? 'abilities' : activeTab);
     return { sort: c.defaultSort || 'popularity' };
@@ -399,11 +411,12 @@ export function LibraryView({
     : modalState?.item;
 
   const modalCollection = (resolvedModalItem && resolvedModalItem._collection) ? resolvedModalItem._collection : activeTab;
+  const canEditInModal = LIBRARY_USER_EDITABLE_COLLECTIONS.has(modalCollection);
 
   const modalItemIsOwn = resolvedModalItem && isOwnItem(resolvedModalItem);
 
   // Handle deep-link routes: /library/:tab/:id opens the modal.
-  const { itemId, action } = route;
+  const { itemId, action, libraryNewCollection } = route;
   const deepLinkProcessedRef = useRef(false);
 
   useEffect(() => {
@@ -412,6 +425,14 @@ export function LibraryView({
 
     if (itemId === 'new') {
       deepLinkProcessedRef.current = true;
+      if (activeTab === 'all') {
+        if (libraryNewCollection && LIBRARY_USER_EDITABLE_COLLECTIONS.has(libraryNewCollection)) {
+          setModalState({ item: { _collection: libraryNewCollection }, isNew: true });
+          return;
+        }
+        navigate('/library/all', { replace: true });
+        return;
+      }
       setModalState({ item: {}, isNew: true });
       // Keep URL as /library/:tab/new so the close effect doesn't fire (it closes when itemId becomes null)
       return;
@@ -432,7 +453,7 @@ export function LibraryView({
       // Item not found (e.g. deleted) — clear URL to avoid stuck state
       navigate(`/library/${activeTab}`, { replace: true });
     }
-  }, [itemId, items, isPaginatedTab, search.loading, nonPaginatedLoading, activeTab, navigate, action, modalState]);
+  }, [itemId, items, isPaginatedTab, search.loading, nonPaginatedLoading, activeTab, navigate, action, modalState, libraryNewCollection]);
 
   // Reset deep-link flag when tab or route changes.
   useEffect(() => {
@@ -459,10 +480,61 @@ export function LibraryView({
     }
   };
 
-  const openNew = () => {
+  const openNew = useCallback(() => {
+    setNewItemMenuOpen(false);
+    setNewItemMenuPos(null);
     navigate(`/library/${activeTab}/new`);
-    setModalState({ item: {}, isNew: true });
-  };
+  }, [activeTab, navigate]);
+
+  const openNewForCollection = useCallback(
+    (col) => {
+      setNewItemMenuOpen(false);
+      setNewItemMenuPos(null);
+      if (activeTab === 'all') {
+        navigate(`/library/all/new?c=${encodeURIComponent(col)}`);
+        return;
+      }
+      if (col === activeTab) {
+        navigate(`/library/${activeTab}/new`);
+        return;
+      }
+      navigate(`/library/${col}/new`);
+    },
+    [activeTab, navigate]
+  );
+
+  const toggleNewItemMenu = useCallback(() => {
+    setNewItemMenuOpen((o) => {
+      if (o) {
+        setNewItemMenuPos(null);
+        return false;
+      }
+      setNewItemMenuPos(newItemMenuWrapRef.current?.getBoundingClientRect() ?? null);
+      return true;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!newItemMenuOpen) return;
+    const onDoc = (e) => {
+      if (newItemMenuWrapRef.current?.contains(e.target)) return;
+      if (typeof e.target?.closest === 'function' && e.target.closest(NEW_ITEM_MENU_SELECTOR)) return;
+      setNewItemMenuOpen(false);
+      setNewItemMenuPos(null);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setNewItemMenuOpen(false);
+        setNewItemMenuPos(null);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [newItemMenuOpen]);
 
   const closeModal = () => {
     navigate(`/library/${activeTab}`, { replace: true });
@@ -747,7 +819,7 @@ export function LibraryView({
           item={resolvedModalItem}
           collection={modalCollection}
           data={data}
-          editable={(modalState.isNew || modalItemIsOwn) && canCreateNew}
+          editable={(modalState.isNew || modalItemIsOwn) && canEditInModal}
           enriching={!!modalState.enriching}
           onSave={handleSave}
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
@@ -826,14 +898,81 @@ export function LibraryView({
                   Import from Daggerstack
                 </button>
               )}
-              {canCreateNew && (
-                <button
-                  type="button"
-                  onClick={openNew}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center gap-2 text-sm font-medium ml-2"
-                >
-                  <Plus size={16} /> New {SINGULAR_NAMES[activeTab]}
-                </button>
+              {showLibraryNewControls && (
+                <>
+                  <div className="relative ml-2 flex items-stretch" ref={newItemMenuWrapRef}>
+                    {activeTab === 'all' ? (
+                      <button
+                        type="button"
+                        onClick={toggleNewItemMenu}
+                        aria-haspopup="menu"
+                        aria-expanded={newItemMenuOpen}
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center gap-2 text-sm font-medium"
+                      >
+                        <Plus size={16} aria-hidden /> New <ChevronDown size={16} className="opacity-90 shrink-0" aria-hidden />
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={openNew}
+                          className="bg-red-600 hover:bg-red-700 text-white pl-4 pr-3 py-2 rounded-l flex items-center gap-2 text-sm font-medium border border-red-700 border-r-red-800/80"
+                        >
+                          <Plus size={16} aria-hidden /> New {SINGULAR_NAMES[activeTab]}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleNewItemMenu}
+                          aria-label="Create other item types"
+                          aria-haspopup="menu"
+                          aria-expanded={newItemMenuOpen}
+                          className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-2 rounded-r flex items-center justify-center border border-l-0 border-red-700"
+                        >
+                          <ChevronDown size={16} className="shrink-0 opacity-90" aria-hidden />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {newItemMenuOpen && newItemMenuPos &&
+                    createPortal(
+                      <>
+                        <div
+                          className="fixed inset-0 z-[60]"
+                          aria-hidden
+                          onClick={() => {
+                            setNewItemMenuOpen(false);
+                            setNewItemMenuPos(null);
+                          }}
+                        />
+                        <div
+                          role="menu"
+                          data-library-new-item-menu=""
+                          className="fixed z-[61] bg-dh-surface border border-dh-border rounded-lg shadow-xl py-1 max-h-[min(70vh,420px)] overflow-y-auto min-w-[220px]"
+                          style={{
+                            top: newItemMenuPos.bottom + 4,
+                            left: Math.max(8, Math.min(newItemMenuPos.left, window.innerWidth - 232)),
+                          }}
+                        >
+                          {NEW_ITEM_COLLECTION_ORDER.map((col) => (
+                            <button
+                              key={col}
+                              type="button"
+                              role="menuitem"
+                              className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                                col === activeTab && activeTab !== 'all'
+                                  ? 'bg-dh-raised/80 text-red-300'
+                                  : 'text-dh hover:bg-dh-hover'
+                              }`}
+                              onClick={() => openNewForCollection(col)}
+                            >
+                              {TAB_LABEL_BY_ID[col] ?? col}
+                            </button>
+                          ))}
+                        </div>
+                      </>,
+                      document.body
+                    )}
+                </>
               )}
             </div>
           </div>

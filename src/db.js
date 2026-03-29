@@ -1212,3 +1212,32 @@ export async function updateDiceRollData(appId, gmUid, id, dataPatch) {
   );
   return true;
 }
+
+/** Per-user JSON preferences (e.g. hide AI UI). */
+export async function getUserPreferences(appId, userId) {
+  if (!process.env.DATABASE_URL) {
+    return { hideAiUi: false };
+  }
+  const db = getPool();
+  const { rows } = await db.query(
+    'SELECT data FROM user_preferences WHERE app_id = $1 AND user_id = $2',
+    [appId, userId]
+  );
+  if (!rows.length) return { hideAiUi: false };
+  const d = rows[0].data || {};
+  return { hideAiUi: !!d.hideAiUi };
+}
+
+/** Merge `patch` into stored JSON (`data = data || patch`). */
+export async function upsertUserPreferences(appId, userId, patch) {
+  if (!process.env.DATABASE_URL) return;
+  const db = getPool();
+  await db.query(
+    `INSERT INTO user_preferences (app_id, user_id, data, updated_at)
+     VALUES ($1, $2, $3::jsonb, now())
+     ON CONFLICT (app_id, user_id) DO UPDATE SET
+       data = user_preferences.data || EXCLUDED.data,
+       updated_at = now()`,
+    [appId, userId, JSON.stringify(patch)]
+  );
+}

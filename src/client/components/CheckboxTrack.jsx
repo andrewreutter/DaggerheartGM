@@ -70,6 +70,7 @@ export function isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled) {
  *
  * @param {object} props
  * @param {CheckboxTrackKind} [props.trackKind] — icon + color palette.
+ * @param {boolean} [props.slotTypeTooltip] — when true, each slot shows `label` in the native tooltip (Characters panel); default leaves other surfaces unchanged.
  */
 export function CheckboxTrack({
   total,
@@ -87,6 +88,7 @@ export function CheckboxTrack({
   fillRow = false,
   className: rowClassName = '',
   itemClassName = '',
+  slotTypeTooltip = false,
 }) {
   const [pulsing, setPulsing] = useState(false);
   const [hoverIndex, setHoverIndex] = useState(null);
@@ -132,7 +134,8 @@ export function CheckboxTrack({
       ? Math.abs(targetToAbsolute(targetValue) - currentAbsoluteValue)
       : Math.abs(targetValue - filled);
     let title = '';
-    if (label && delta > 0) {
+    // Verb / delta hints only when slots are clickable — passive tracks (e.g. Characters panel) use label-only tooltips.
+    if (onSetFilled && label && delta > 0) {
       if (verbs) {
         const verb = (currentAbsoluteValue != null && typeof targetToAbsolute === 'function'
           ? targetToAbsolute(targetValue) < currentAbsoluteValue
@@ -142,8 +145,17 @@ export function CheckboxTrack({
         title = `${label} → ${targetValue + valueOffset}`;
       }
     }
-    if (isPendingClear) title = title ? `${title} (pending GM ack)` : 'Pending GM ack';
-    else if (isPending) title = title ? `${title} (pending GM ack)` : 'Pending GM ack';
+    if (isPendingClear) {
+      title = title
+        ? `${title} (pending GM ack)`
+        : (slotTypeTooltip && label ? `${label} (pending GM ack)` : 'Pending GM ack');
+    } else if (isPending) {
+      title = title
+        ? `${title} (pending GM ack)`
+        : (slotTypeTooltip && label ? `${label} (pending GM ack)` : 'Pending GM ack');
+    } else if (slotTypeTooltip && !title && label) {
+      title = label;
+    }
 
     const El = onSetFilled ? 'button' : 'div';
     const isHovered = !!onSetFilled && hoverIndex === i;
@@ -194,7 +206,11 @@ export function CheckboxTrack({
         type={El === 'button' ? 'button' : undefined}
         onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
         onMouseEnter={onSetFilled ? () => setHoverIndex(i) : undefined}
-        title={onSetFilled || isPending || isPendingClear ? title : undefined}
+        title={
+          slotTypeTooltip
+            ? (title || undefined)
+            : (onSetFilled || isPending || isPendingClear ? title : undefined)
+        }
         className={`checkbox-track-item ${fillRow ? 'flex-1 min-w-0 min-h-5 rounded-sm' : 'w-4 h-4 rounded-sm flex-shrink-0'} inline-flex items-center justify-center ${onSetFilled ? 'cursor-pointer' : ''} ${itemClassName} ${borderClass} ${hoverOutline} transition-[box-shadow,border-color,opacity]`}
       >
         <Icon
