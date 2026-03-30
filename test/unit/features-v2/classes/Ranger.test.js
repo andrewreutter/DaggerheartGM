@@ -190,6 +190,17 @@ describe("Ranger's Focus", () => {
         payload: { instanceId: 'adv-1', focusedBy: 'Aria' },
       })
     );
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: "Ranger's Focus",
+          key: 'rangerFocusStressTargetId',
+          value: 'adv-1',
+          cardValue: 'Focus: Test Adversary',
+        }),
+      })
+    );
   });
 
   it('onReviewAction still spends Hope when the attack fails (attempt was made)', () => {

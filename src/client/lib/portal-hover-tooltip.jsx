@@ -102,17 +102,27 @@ export function usePortalHoverTooltip() {
   useLayoutEffect(() => {
     if (!tooltip) return undefined;
 
+    let resizeRafId = null;
     const applyClamp = () => {
       const el = tooltipRef.current;
       if (!el) return;
-      const { height } = el.getBoundingClientRect();
+      const height = Math.round(el.getBoundingClientRect().height);
       if (height <= 0) return;
       const innerH = window.innerHeight;
       const pad = PORTAL_HOVER_TOOLTIP_BOTTOM_PAD;
       setTooltip((t) => {
         if (!t) return t;
-        const nextY = clampPortalHoverTooltipY(t.y, height, innerH, pad);
-        return Math.abs(nextY - t.y) > 0.5 ? { ...t, y: nextY } : t;
+        const curY = Math.round(t.y);
+        const nextY = Math.round(clampPortalHoverTooltipY(curY, height, innerH, pad));
+        return nextY !== curY ? { ...t, y: nextY } : t;
+      });
+    };
+
+    const scheduleClampFromResize = () => {
+      if (resizeRafId != null) return;
+      resizeRafId = requestAnimationFrame(() => {
+        resizeRafId = null;
+        applyClamp();
       });
     };
 
@@ -123,15 +133,19 @@ export function usePortalHoverTooltip() {
 
     const node = tooltipRef.current;
     if (typeof ResizeObserver === 'undefined' || !node) {
-      return () => cancelAnimationFrame(raf);
+      return () => {
+        cancelAnimationFrame(raf);
+        if (resizeRafId != null) cancelAnimationFrame(resizeRafId);
+      };
     }
 
     const ro = new ResizeObserver(() => {
-      applyClamp();
+      scheduleClampFromResize();
     });
     ro.observe(node);
     return () => {
       cancelAnimationFrame(raf);
+      if (resizeRafId != null) cancelAnimationFrame(resizeRafId);
       ro.disconnect();
     };
   }, [tooltip]);

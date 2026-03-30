@@ -179,19 +179,35 @@ function buildActor(element, gameState, mutations) {
   const isChar = element.elementType === 'character';
   const isAdversary = !isChar;
 
+  /** Match roll `action.actorInstanceId` to runtime `instanceId` or library `id` when both exist (VTT may send either). */
+  const aid = gameState.action?.actorInstanceId;
+  let isActing = false;
+  if (aid != null && aid !== '') {
+    const a = String(aid);
+    if (element.instanceId != null && element.instanceId !== '' && a === String(element.instanceId)) {
+      isActing = true;
+    } else if (element.id != null && element.id !== '' && a === String(element.id)) {
+      isActing = true;
+    }
+  }
+
   return {
     name: element.name || 'Unknown',
     instanceId,
     isCharacter: isChar,
     isAdversary,
-    isActing: instanceId === (gameState.action?.actorInstanceId),
+    isActing,
 
     // Resources
     currentHP: element.currentHp ?? element.currentHP ?? null,
     maxHP: element.maxHp ?? element.maxHP ?? null,
     currentStress: element.currentStress ?? null,
     maxStress: element.maxStress ?? null,
-    hope: element.hope ?? null,
+    // Remaining Hope: unset/null/undefined means "full pool" (same as CharacterHoverCard /
+    // CheckboxTrack). Otherwise V2 chip costs see 0 Hope and disable Spend buttons incorrectly.
+    hope: isChar
+      ? (element.hope != null ? Math.max(0, Number(element.hope) || 0) : (element.maxHope ?? 6))
+      : (element.hope ?? null),
     maxHope: element.maxHope ?? null,
     armor: element.currentArmor ?? null,
     maxArmor: element.maxArmor ?? null,
@@ -959,12 +975,22 @@ function buildRollObject(rollData, mutations, rollKey) {
 // ---------------------------------------------------------------------------
 
 function buildFeatureStore(featureKey, featureState, mutations, ownerInstanceId) {
+  function queue(featureKeyArg, key, value, manual, cardValue) {
+    const payload = { featureKey: featureKeyArg, key, value, manual };
+    if (cardValue !== undefined) payload.cardValue = cardValue;
+    if (ownerInstanceId != null && ownerInstanceId !== '') {
+      payload.instanceId = String(ownerInstanceId);
+    }
+    addMutation(mutations, 'setFeatureState', payload);
+  }
+
   if (!featureState) {
     return {
       get() {
         return undefined;
       },
       set() {},
+      setInternal() {},
     };
   }
   if (!featureState[featureKey]) {
@@ -976,13 +1002,27 @@ function buildFeatureStore(featureKey, featureState, mutations, ownerInstanceId)
     get(key) {
       return state[key];
     },
-    set(key, value) {
+    /**
+     * Persists and marks the key as manually declared (Game Table Feature State sidebar).
+     * @param {string} key
+     * @param {*} value
+     * @param {{ cardValue?: string | null }} [options] — optional human-readable line for compact character cards (`Feature: cardValue`). `null` clears. Omit to leave prior display unchanged.
+     */
+    set(key, value, options) {
       state[key] = value;
-      const payload = { featureKey, key, value };
-      if (ownerInstanceId != null && ownerInstanceId !== '') {
-        payload.instanceId = String(ownerInstanceId);
-      }
-      addMutation(mutations, 'setFeatureState', payload);
+      const cv =
+        options && typeof options === 'object' && 'cardValue' in options ? options.cardValue : undefined;
+      queue(featureKey, key, value, true, cv);
+    },
+    /**
+     * Persists without marking as manually declared (framework / mechanical state).
+     * @param {{ cardValue?: string | null }} [options] — same as {@link #set}.
+     */
+    setInternal(key, value, options) {
+      state[key] = value;
+      const cv =
+        options && typeof options === 'object' && 'cardValue' in options ? options.cardValue : undefined;
+      queue(featureKey, key, value, false, cv);
     },
   };
 }
@@ -1229,10 +1269,30 @@ function buildSourceFacade(sourceObject, sourceScopeKey, gameState, store) {
     get(key) {
       return gameState.featureState[sourceScopeKey]?.[key];
     },
-    set(key, value) {
+    /**
+     * Persists and marks the key as manually declared (Game Table Feature State sidebar).
+     * @param {{ cardValue?: string | null }} [options] — optional human-readable line for compact character cards (`Feature: cardValue`). `null` clears. Omit to leave prior display unchanged.
+     */
+    set(key, value, options) {
       if (!gameState.featureState[sourceScopeKey]) gameState.featureState[sourceScopeKey] = {};
       gameState.featureState[sourceScopeKey][key] = value;
-      const p = { featureKey: sourceScopeKey, key, value };
+      const p = { featureKey: sourceScopeKey, key, value, manual: true };
+      if (options && typeof options === 'object' && 'cardValue' in options) {
+        p.cardValue = options.cardValue;
+      }
+      if (gameState._ownerInstanceId != null && gameState._ownerInstanceId !== '') {
+        p.instanceId = String(gameState._ownerInstanceId);
+      }
+      addMutation(store, 'setFeatureState', p);
+    },
+    /** Persists without marking as manually declared (framework / mechanical state). */
+    setInternal(key, value, options) {
+      if (!gameState.featureState[sourceScopeKey]) gameState.featureState[sourceScopeKey] = {};
+      gameState.featureState[sourceScopeKey][key] = value;
+      const p = { featureKey: sourceScopeKey, key, value, manual: false };
+      if (options && typeof options === 'object' && 'cardValue' in options) {
+        p.cardValue = options.cardValue;
+      }
       if (gameState._ownerInstanceId != null && gameState._ownerInstanceId !== '') {
         p.instanceId = String(gameState._ownerInstanceId);
       }
@@ -1342,7 +1402,8 @@ export function buildTableSnapshot(gameState = {}) {
     /**
      * Source row (class, subclass, weapon, …) for the active feature when applicable.
      * When the registry option defines `sourceScopeKey` (or the feature sets `_sourceScopeKey`),
-     * this object also has **`get(key)`** / **`set(key, value)`** for shared option-level state
+     * this object also has **`get`**, **`set`** (marks the key for the Game Table Feature state sidebar),
+     * and **`setInternal`** (framework / mechanical persistence only) for shared option-level state
      * (`featureState[sourceScopeKey]`), so subclass features can share one bag without
      * `queueInternalMutation(..., 'setFeatureState', { featureKey: ... })` boilerplate.
      */
@@ -1397,7 +1458,7 @@ export function buildTableSnapshot(gameState = {}) {
     /**
      * Read-only view of `gameState.featureState` for merging into declarative
      * character rendering (`applyDeclarativeFeatures`). Same reference as the
-     * live game state bag; do not mutate — use `table.feature.set` at runtime.
+     * live game state bag; do not mutate — use `table.feature.set` / `setInternal` at runtime.
      */
     featureState: gameState.featureState ?? {},
 

@@ -24,7 +24,7 @@ import {
 } from '../../features-v2/engine/chip-system.js';
 import {
   RANGE_BANDS_FT,
-  getAdversariesWithinRangeFt,
+  distanceFtToRangeBandName,
   tokenDistanceFt,
 } from './map-range.js';
 import { buildV2RegistryWithSrdItems, expandSrdAncestryIdsToV2Keys } from './v2-declarative-sheet.js';
@@ -1602,15 +1602,25 @@ export function computeV2DamageBannerAckNotices(opts) {
         return true;
       })();
       if (isMeleeHit) {
-        // Match Elemental Incarnation hook: other adversaries within Very Close of the **struck** target (not the attacker).
-        const veryCloseAdvs = getAdversariesWithinRangeFt(
-          activeElements,
-          selectedDamageTargetId,
-          RANGE_BANDS_FT.VERY_CLOSE,
-        ).filter((a) => a.instanceId !== selectedDamageTargetId);
+        const struck = activeElements.find((e) => e.instanceId === selectedDamageTargetId);
+        const veryCloseAdvs = [];
+        if (
+          struck?.tokenX != null &&
+          struck?.tokenY != null &&
+          (struck.elementType === 'adversary' || struck.type === 'adversary')
+        ) {
+          for (const el of activeElements) {
+            if (el.elementType !== 'adversary' && el.type !== 'adversary') continue;
+            if (String(el.instanceId) === String(selectedDamageTargetId)) continue;
+            if (el.tokenX == null || el.tokenY == null) continue;
+            const d = tokenDistanceFt(struck.tokenX, struck.tokenY, el.tokenX, el.tokenY);
+            if (distanceFtToRangeBandName(d) === 'Very Close') {
+              veryCloseAdvs.push({ instanceId: el.instanceId, name: el.name });
+            }
+          }
+        }
         if (veryCloseAdvs.length > 0) {
-          const names = veryCloseAdvs
-            .map((a) => activeElements.find((e) => e.instanceId === a.instanceId)?.name || 'Unknown');
+          const names = veryCloseAdvs.map((a) => a.name || 'Unknown');
           notes.push(`💧 Water: ${names.join(', ')} will mark Stress.`);
         }
       }

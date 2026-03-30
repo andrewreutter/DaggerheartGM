@@ -97,7 +97,13 @@ export const Evolution = {
         const id = chip.get('selectedId');
         if (!id) return;
         clearOtherBeastformPath(table, 'Evolution');
-        table.source.set('activeBeastform', { beastformId: id, viaEvolution: true });
+        const picked = druidBeastformSelectRows(table).find((o) => o && o.id === id);
+        const displayName = picked?.name != null ? String(picked.name) : null;
+        table.source.set(
+          'activeBeastform',
+          { beastformId: id, viaEvolution: true },
+          displayName ? { cardValue: displayName } : undefined,
+        );
         const traitKey = chip.get('evolutionTraitKey');
         if (traitKey) table.source.set('evolutionTraitKey', traitKey);
       },
@@ -117,6 +123,8 @@ function beastformFeatureDisplayName(table) {
 
 export const Beastform = {
   name: 'Beastform',
+  /** Compact character panel: show `displayName: beastform name` under chips when `table.source.set(..., { cardValue })` is used. */
+  cardValueDisplayKey: 'activeBeastform',
   displayName: beastformFeatureDisplayName,
   description: BEASTFORM_DESCRIPTION,
   /** Natural attack from the active beastform SRD row — only while `table.me.inBeastform`. */
@@ -142,7 +150,13 @@ export const Beastform = {
         const id = chip.get('selectedId');
         if (!id) return;
         clearOtherBeastformPath(table, 'Beastform');
-        table.source.set('activeBeastform', { beastformId: id, viaEvolution: false });
+        const picked = druidBeastformSelectRows(table).find((o) => o && o.id === id);
+        const displayName = picked?.name != null ? String(picked.name) : null;
+        table.source.set(
+          'activeBeastform',
+          { beastformId: id, viaEvolution: false },
+          displayName ? { cardValue: displayName } : undefined,
+        );
       },
     },
     /** Only collected while transformed — same as auto-drop at 0 HP. */

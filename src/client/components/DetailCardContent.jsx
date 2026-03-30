@@ -277,8 +277,9 @@ export function EnvironmentCardContent({
  *   instances        – array of live instance objects; when provided, renders
  *                      interactive HP/stress/conditions rows
  *   updateFn         – (instanceId, updates) => void, required when instances provided
- *   showInstanceRemove – boolean; show X button per row (used by Game Table)
- *   removeInstanceFn – (instanceId) => void, required when showInstanceRemove true
+ *   allowResourceTrackEdits — when false, HP/stress tracks are read-only (Game Table players); default true (library / GM)
+ *   showInstanceRemove — boolean; show X button per row (used by Game Table)
+ *   removeInstanceFn — (instanceId) => void, required when showInstanceRemove true
  */
 export function AdversaryCardContent({
   element: el,
@@ -287,6 +288,7 @@ export function AdversaryCardContent({
   count = 1,
   instances,
   updateFn,
+  allowResourceTrackEdits = true,
   showInstanceRemove = false,
   removeInstanceFn,
   featureCountdowns,
@@ -297,6 +299,7 @@ export function AdversaryCardContent({
   onScaledToggle,
   suppressTierBadge = false,
 }) {
+  const trackInteractive = updateFn && allowResourceTrackEdits;
   // damageBoost: 'd4' | 'static' | null — when set, visually appends +1d4 or +2 to all damage.
   const dmgBoost = damageBoost || el._damageBoost || null;
   const advTierLine = suppressTierBadge
@@ -385,7 +388,9 @@ export function AdversaryCardContent({
                       <CheckboxTrack
                         total={el.hp_max || 0}
                         filled={hpDamage}
-                        onSetFilled={(dmg) => updateFn(inst.instanceId, { currentHp: (el.hp_max || 0) - dmg })}
+                        onSetFilled={trackInteractive
+                          ? (dmg) => updateFn(inst.instanceId, { currentHp: (el.hp_max || 0) - dmg })
+                          : undefined}
                         trackKind="hp"
                         label="HP"
                         verbs={['Mark', 'Clear']}
@@ -397,7 +402,9 @@ export function AdversaryCardContent({
                         <CheckboxTrack
                           total={el.stress_max || 0}
                           filled={inst.currentStress || 0}
-                          onSetFilled={(s) => updateFn(inst.instanceId, { currentStress: s })}
+                          onSetFilled={trackInteractive
+                            ? (s) => updateFn(inst.instanceId, { currentStress: s })
+                            : undefined}
                           trackKind="stressPurple"
                           label="Stress"
                           verbs={['Mark', 'Clear']}

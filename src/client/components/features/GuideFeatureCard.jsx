@@ -22,12 +22,11 @@ import {
   getSheetOwnerKey,
   V2_TABLE_STUB_NO_INSTANCE_ID,
 } from '../../lib/build-feature-card-model.js';
-import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../../lib/frequency-cycle-ui.jsx';
+import { FrequencyCycleChipSuffix } from '../../lib/frequency-cycle-ui.jsx';
 import { FeatureResourceCostIcons } from '../FeatureResourceCostIcons.jsx';
 import { v2OriginFeatureDescriptorsByName } from '../../lib/v2-origin-feature-descriptors.js';
 import {
   readPersistedToggleIsOn,
-  resolveChipDisabled,
   getChipDisableHint,
 } from '../../../features-v2/engine/chip-system.js';
 import {
@@ -55,8 +54,12 @@ import {
   mergeOptionAndFeatureTooltipMarkdown,
 } from '../../lib/guide-feature-card-tip-text.js';
 import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../../lib/portal-hover-tooltip.jsx';
-import { getSheetSourceChipPalette, resolveSheetSourcePaletteKey } from '../../lib/sheet-source-chip-styles.js';
-import { shouldMoveV2ActionChipToUnusableSubsection } from '../../lib/v2-action-chip-strip.js';
+import {
+  getSheetSourceChipPalette,
+  intrinsicWidthActionsStripPalette,
+  resolveSheetSourcePaletteKey,
+} from '../../lib/sheet-source-chip-styles.js';
+import { computeActionChipUnusableState } from '../../lib/v2-action-chip-strip.js';
 
 const ELEMENT_ICONS = { fire: Flame, earth: Mountain, water: Droplets, air: Wind, Fire: Flame, Earth: Mountain, Water: Droplets, Air: Wind };
 
@@ -71,6 +74,23 @@ function PreviewModeTooltipBody({ children }) {
     </>
   );
 }
+
+/** Disabled reason line + feature/chip markdown — Actions strip “unusable” subsection. */
+function UnusableChipTooltipBody({ primaryLine, markdownBody }) {
+  return (
+    <div className="space-y-2">
+      {primaryLine ? (
+        <p className="text-[11px] font-semibold text-dh-muted leading-snug border-b border-dh-border/60 pb-1.5">
+          {primaryLine}
+        </p>
+      ) : null}
+      <MarkdownText text={String(markdownBody || '')} className="text-[11px] leading-relaxed dh-md" />
+    </div>
+  );
+}
+
+const ACTIONS_STRIP_UNUSABLE_BTN =
+  'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-80 cursor-not-allowed';
 
 /** Resource costs for the card title bar (lifted single-chip header or legacy parse). */
 function buildTitleCostAction(model, legacy) {
@@ -112,6 +132,7 @@ function getSelectOptions(chip, featRow, el, v2TableContext) {
 /** Segmented `selectTargets` row — portaled option tooltips (same as inline isSelect). */
 function GuideFeatureSegmentedSelectTargetsRow({
   actionsStripLayout,
+  actionsStripIntrinsicWidth = false,
   titleTooltipPlacement = 'bottom',
   closedName,
   chipForEngine,
@@ -128,11 +149,21 @@ function GuideFeatureSegmentedSelectTargetsRow({
   tipText,
   preview,
   sourcePalette,
+  unusableStripMode = false,
+  primaryUnusableLine = null,
 }) {
   const segmentBankAnchorRef = useRef(null);
   const portalHover = usePortalHoverTooltip();
   const targetsChipTipMd = tipText || closedName;
-  const targetsChipTipContent = preview ? (
+  const targetsChipTipContent = unusableStripMode ? (
+    preview ? (
+      <PreviewModeTooltipBody>
+        <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={targetsChipTipMd} />
+      </PreviewModeTooltipBody>
+    ) : (
+      <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={targetsChipTipMd} />
+    )
+  ) : preview ? (
     <PreviewModeTooltipBody>
       <MarkdownText text={targetsChipTipMd} className="text-[11px] leading-relaxed dh-md" />
     </PreviewModeTooltipBody>
@@ -146,20 +177,34 @@ function GuideFeatureSegmentedSelectTargetsRow({
         ? featRow.description.trim()
         : '';
 
+  const stripOuter =
+    actionsStripLayout && actionsStripIntrinsicWidth
+      ? 'max-w-full min-w-0 shrink w-auto'
+      : actionsStripLayout
+        ? 'w-full min-w-0 basis-full'
+        : 'w-full min-w-0';
+  const titleBlock = actionsStripIntrinsicWidth ? 'relative block max-w-full min-w-0' : 'relative block w-full min-w-0';
+  const segBankCls = actionsStripIntrinsicWidth ? 'max-w-full min-w-0 w-auto' : 'w-full min-w-0';
+
   return (
-    <div
-      className={actionsStripLayout ? 'w-full min-w-0 basis-full' : 'w-full min-w-0'}
-    >
-      <div className={sourcePalette.groupOuter} role="group" aria-label={`${closedName} targets`}>
-        <Tooltip content={targetsChipTipContent} placement={titleTooltipPlacement} className="relative block w-full min-w-0">
+    <div className={stripOuter}>
+      <div
+        className={`${sourcePalette.groupOuter}${unusableStripMode ? ` ${ACTIONS_STRIP_UNUSABLE_BTN}` : ''}`}
+        role="group"
+        aria-label={`${closedName} targets`}
+      >
+        <Tooltip content={targetsChipTipContent} placement={titleTooltipPlacement} className={titleBlock}>
           <div className={V2_INLINE_GROUP_TITLE_ROW}>
             <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{closedName}</span>
             <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
             {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
           </div>
         </Tooltip>
-        <div ref={segmentBankAnchorRef} className="w-full min-w-0">
-          <V2SegmentedRowWrap key={`${closedName}-${ci}-stseg-${n}`}>
+        <div ref={segmentBankAnchorRef} className={segBankCls}>
+          <V2SegmentedRowWrap
+            key={`${closedName}-${ci}-stseg-${n}`}
+            intrinsicWidth={actionsStripLayout && actionsStripIntrinsicWidth}
+          >
           {selectTargetOpts.map((o) => {
             const tid = o.instanceId ?? o.id;
             if (tid == null || tid === '') return null;
@@ -173,8 +218,14 @@ function GuideFeatureSegmentedSelectTargetsRow({
                 tabIndex={targetPickDisabled ? -1 : undefined}
                 aria-disabled={targetPickDisabled}
                 onMouseEnter={(e) => {
-                  if (!tDesc) return;
-                  const tgtTipMd = mergeOptionAndFeatureTooltipMarkdown(tDesc, targetFeatureDescForMerge);
+                  if (!tDesc && !unusableStripMode) return;
+                  const merged = tDesc
+                    ? mergeOptionAndFeatureTooltipMarkdown(tDesc, targetFeatureDescForMerge)
+                    : '';
+                  const tgtTipMd =
+                    unusableStripMode && primaryUnusableLine
+                      ? `${primaryUnusableLine}\n\n${merged || targetsChipTipMd}`
+                      : merged;
                   if (!tgtTipMd) return;
                   if (preview) {
                     portalHover.showFromPointerEvent(e, {
@@ -211,7 +262,7 @@ function GuideFeatureSegmentedSelectTargetsRow({
                   bumpIsSelect(ci);
                 }}
                 className={`${V2_INLINE_SEG_TARGET_BTN} ${sourcePalette.segmentOff} ${
-                  targetPickDisabled ? 'opacity-50 pointer-events-auto' : ''
+                  targetPickDisabled || unusableStripMode ? `${ACTIONS_STRIP_UNUSABLE_BTN} opacity-100` : ''
                 }`}
               >
                 <span className="break-words">{name}</span>
@@ -234,6 +285,7 @@ function GuideFeatureSegmentedSelectTargetsRow({
 /** Single-select isSelect: title + icons + wrapping option buttons inside the chip shell. */
 function GuideFeatureIsSelectInline({
   actionsStripLayout,
+  actionsStripIntrinsicWidth = false,
   titleTooltipPlacement = 'bottom',
   closedName,
   chipForEngine,
@@ -252,11 +304,21 @@ function GuideFeatureIsSelectInline({
   groupOuterClass = V2_INLINE_GROUP_OUTER,
   segmentOffClass = V2_INLINE_SEG_OFF,
   tooltipWide = false,
+  unusableStripMode = false,
+  primaryUnusableLine = null,
 }) {
   const segmentBankAnchorRef = useRef(null);
   const portalHover = usePortalHoverTooltip();
   const chipTipMd = featureTipMarkdown || closedName;
-  const chipTipContent = preview ? (
+  const chipTipContent = unusableStripMode ? (
+    preview ? (
+      <PreviewModeTooltipBody>
+        <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={chipTipMd} />
+      </PreviewModeTooltipBody>
+    ) : (
+      <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={chipTipMd} />
+    )
+  ) : preview ? (
     <PreviewModeTooltipBody>
       <MarkdownText text={chipTipMd} className="text-[11px] leading-relaxed dh-md" />
     </PreviewModeTooltipBody>
@@ -270,18 +332,34 @@ function GuideFeatureIsSelectInline({
         ? featRow.description.trim()
         : '';
 
+  const stripOuter =
+    actionsStripLayout && actionsStripIntrinsicWidth
+      ? 'max-w-full min-w-0 shrink w-auto'
+      : actionsStripLayout
+        ? 'w-full min-w-0 basis-full'
+        : 'w-full min-w-0';
+  const titleBlock = actionsStripIntrinsicWidth ? 'relative block max-w-full min-w-0' : 'relative block w-full min-w-0';
+  const segBankCls = actionsStripIntrinsicWidth ? 'max-w-full min-w-0 w-auto' : 'w-full min-w-0';
+
   return (
-    <div className={actionsStripLayout ? 'w-full min-w-0 basis-full' : 'w-full min-w-0'}>
-      <div className={groupOuterClass} role="group" aria-label={String(closedName)}>
-        <Tooltip content={chipTipContent} placement={titleTooltipPlacement} className="relative block w-full min-w-0">
+    <div className={stripOuter}>
+      <div
+        className={`${groupOuterClass}${unusableStripMode ? ` ${ACTIONS_STRIP_UNUSABLE_BTN}` : ''}`}
+        role="group"
+        aria-label={String(closedName)}
+      >
+        <Tooltip content={chipTipContent} placement={titleTooltipPlacement} className={titleBlock}>
           <div className={V2_INLINE_GROUP_TITLE_ROW}>
             <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{closedName}</span>
             <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
             {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
           </div>
         </Tooltip>
-        <div ref={segmentBankAnchorRef} className="w-full min-w-0">
-          <V2SegmentedRowWrap key={`${effectiveKey}-${ci}-isseg-${n}`}>
+        <div ref={segmentBankAnchorRef} className={segBankCls}>
+          <V2SegmentedRowWrap
+            key={`${effectiveKey}-${ci}-isseg-${n}`}
+            intrinsicWidth={actionsStripLayout && actionsStripIntrinsicWidth}
+          >
           {selectOpts.map((o) => {
             const id = o.id ?? o.name;
             const idStr = id != null ? String(id) : '';
@@ -295,8 +373,14 @@ function GuideFeatureIsSelectInline({
                 tabIndex={selectDisabled ? -1 : undefined}
                 aria-disabled={selectDisabled}
                 onMouseEnter={(e) => {
-                  if (!rawDesc) return;
-                  const optTipMd = mergeOptionAndFeatureTooltipMarkdown(rawDesc, featureDescForMerge);
+                  if (!rawDesc && !unusableStripMode) return;
+                  const merged = rawDesc
+                    ? mergeOptionAndFeatureTooltipMarkdown(rawDesc, featureDescForMerge)
+                    : '';
+                  const optTipMd =
+                    unusableStripMode && primaryUnusableLine
+                      ? `${primaryUnusableLine}\n\n${merged || chipTipMd}`
+                      : merged;
                   if (!optTipMd) return;
                   if (preview) {
                     portalHover.showFromPointerEvent(e, {
@@ -333,7 +417,7 @@ function GuideFeatureIsSelectInline({
                   bumpIsSelect(ci);
                 }}
                 className={`${V2_INLINE_SEG_BTN_BASE} ${segmentOffClass} ${
-                  selectDisabled ? 'opacity-50 pointer-events-auto' : ''
+                  selectDisabled || unusableStripMode ? `${ACTIONS_STRIP_UNUSABLE_BTN} opacity-100` : ''
                 }`}
               >
                 <span className="break-words">{name}</span>
@@ -372,7 +456,7 @@ export function GuideFeatureCardChips({
   stressMaxed,
   /** Dense sheet Actions strip: no per-feature chrome; CustomSelect uses feature name + ellipsis, full width */
   actionsStripLayout = false,
-  /** When true, only render chips with `isToggle` (e.g. compact Game Table character panel). */
+  /** When true, only render `isToggle` chips plus `selectPresentation: 'iconGrid'` selects (compact Game Table character panel). */
   onlyIsToggle = false,
   /** Pending action banners — tentative on/off for deferred toggles (`gameTableDeferUntilBannerAck`) until GM ack. */
   pendingBanners,
@@ -384,6 +468,10 @@ export function GuideFeatureCardChips({
   stripSlot = 'full',
   /** Prefix for stable keys when `stripSlot="unusableOnly"` merges rows. */
   stripKeyPrefix,
+  /** Sheet Actions strip: dim this feature's chips when LOADOUT highlight hides non-selected sources. */
+  dimmed = false,
+  /** Master Actions strip: hug content width (no full-width shells / basis-full). */
+  actionsStripIntrinsicWidth = false,
 }) {
   const [isSelectNonce, setIsSelectNonce] = useState({});
   const bumpIsSelect = (ci) => {
@@ -399,119 +487,178 @@ export function GuideFeatureCardChips({
   const effectiveKey = featureKey || model.name;
   const isUsed = !!(el?.featureUsage?.[effectiveKey]?.used);
   if (!model.cardChips?.length) return null;
-  if (onlyIsToggle && !(model.cardChips || []).some((c) => c?.isToggle)) return null;
+  if (
+    onlyIsToggle &&
+    !(model.cardChips || []).some(
+      (c) =>
+        c &&
+        (c.isToggle || (typeof c.isSelect === 'function' && c.selectPresentation === 'iconGrid')),
+    )
+  ) {
+    return null;
+  }
 
   const sourcePalette = getSheetSourceChipPalette(resolveSheetSourcePaletteKey(featRow, model.sourceType));
+  const stripPalette =
+    actionsStripLayout && actionsStripIntrinsicWidth
+      ? intrinsicWidthActionsStripPalette(sourcePalette)
+      : sourcePalette;
 
   const chipElements = model.cardChips.map((chip, ci) => {
-        if (onlyIsToggle && !chip.isToggle) return null;
-        const baseName = chip.name || model.displayName;
-        const resolvedName = typeof baseName === 'function' ? baseName(tableForChips) : baseName;
-        const chipForEngine = { ...chip, name: resolvedName };
-        const logicDisabled = resolveChipDisabled(chipForEngine, tableForChips);
-        const resourceUnaffordable = !!chipForEngine.resourceUnaffordable;
+        const selectOpts = getSelectOptions(chip, featRow, el, v2TableContext);
+        if (onlyIsToggle) {
+          const isIconGridStripChip =
+            typeof chip.isSelect === 'function' &&
+            chip.selectPresentation === 'iconGrid' &&
+            selectOpts.length >= 2;
+          if (!chip.isToggle && !isIconGridStripChip) return null;
+        }
+        const {
+          chipForEngine,
+          resolvedName,
+          logicDisabled,
+          resourceUnaffordable,
+          chipUsed,
+          moveToUnusable,
+          usedHint,
+          primaryUnusableLine,
+        } = computeActionChipUnusableState(chip, model, tableForChips, el, effectiveKey);
         const chipDisabled = logicDisabled || resourceUnaffordable;
         const engineDisableHint = chip.disableHint ?? getChipDisableHint(chipForEngine, tableForChips);
-        const chipUsed = !!(chip.frequency && isUsed);
-        const moveToUnusable = shouldMoveV2ActionChipToUnusableSubsection({
-          usedThisCycle: chipUsed,
-          resourceUnaffordable,
-        });
-        const usedHint = chipUsed
-          ? `Already used (${getFrequencyCycleWord(chip.frequency) || chip.frequency}).`
-          : null;
+        /** Sheet unusable row (`unusableOnly`) or expanded card’s lower chip row (`full` + moved). */
+        const unusableStripMode = stripSlot === 'unusableOnly' || (stripSlot === 'full' && moveToUnusable);
         const cardDisableReason =
           preview ? null : !canInteract ? null : usedHint || (chipDisabled ? engineDisableHint : null);
-        const hideDisableTooltipBecauseSubsection = stripSlot === 'unusableOnly' && moveToUnusable;
-        const cardDisableReasonForTooltip = hideDisableTooltipBecauseSubsection ? null : cardDisableReason;
+        const cardDisableReasonForTooltip = unusableStripMode && !preview ? null : cardDisableReason;
         const label = chipForEngine.name;
         const tipText = buildGuideCardChipTipText(chipForEngine, featRow, label);
         const tipContent = (
           <MarkdownText text={String(tipText || '')} className="text-[11px] leading-relaxed dh-md" />
         );
         const isToggle = !!chip.isToggle;
-        const selectOpts = getSelectOptions(chip, featRow, el, v2TableContext);
         const isSelect = typeof chip.isSelect === 'function' && selectOpts.length > 0;
 
         if (isSelect && selectOpts.length >= 2 && chip.selectPresentation === 'iconGrid') {
+          const featureDescForMergeEl =
+            typeof chipForEngine?.description === 'string' && chipForEngine.description.trim()
+              ? chipForEngine.description.trim()
+              : typeof featRow?.description === 'string' && featRow.description.trim()
+                ? featRow.description.trim()
+                : '';
+          const iconGridStripOuter =
+            actionsStripLayout && actionsStripIntrinsicWidth
+              ? 'max-w-full min-w-0 shrink w-auto'
+              : actionsStripLayout
+                ? 'w-full min-w-0 basis-full'
+                : 'w-full min-w-0';
+          const iconGridTitleBlock = actionsStripIntrinsicWidth
+            ? 'relative block max-w-full min-w-0'
+            : 'relative block w-full min-w-0';
+          const iconGridSegBankCls = actionsStripIntrinsicWidth
+            ? 'max-w-full min-w-0 w-auto'
+            : 'w-full min-w-0';
           return {
             element: (
-            <div
-              key={ci}
-              className={
-                actionsStripLayout
-                  ? 'inline-flex flex-wrap gap-1.5 items-center align-middle max-w-full'
-                  : 'flex flex-wrap gap-1.5'
-              }
-            >
-              {selectOpts.map((opt) => {
-                const id = opt.id || opt.name;
-                const Icon = ELEMENT_ICONS[id] || ELEMENT_ICONS[String(id).toLowerCase()] || Zap;
-                const isActive = !!activeChanneledElement && String(id).toLowerCase() === String(activeChanneledElement).toLowerCase();
-                const cantUse = isUsed || (stressMaxed && !isActive);
-                let elementalTip = null;
-                if (!preview) {
-                  if (hideDisableTooltipBecauseSubsection) elementalTip = null;
-                  else if (!canInteract) elementalTip = null;
-                  else if (chipDisabled) elementalTip = engineDisableHint;
-                  else if (cantUse) {
-                    if (isUsed && chip.frequency) elementalTip = usedHint;
-                    else if (stressMaxed && !activeChanneledElement) elementalTip = 'Stress is full; cannot channel a new element.';
-                  }
-                }
-                const chipBtn = (
-                  <button
-                    type="button"
-                    disabled={preview || cantUse || !canInteract || chipDisabled}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (preview || cantUse || !canInteract || chipDisabled) return;
-                      onV2CardChip({
-                        featRow,
-                        chip: chipForEngine,
-                        featureKey: effectiveKey,
-                        selectOpts: { selectedId: id },
-                        ...chipPayloadExtras,
-                      });
-                    }}
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium border transition-all shrink-0 ${
-                      isActive
-                        ? sourcePalette.actionActive
-                        : cantUse || preview
-                          ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-60 cursor-not-allowed'
-                          : `${sourcePalette.actionDefault} cursor-pointer`
-                    }`}
-                    aria-label={opt.name || id}
+            <div key={ci} className={iconGridStripOuter}>
+              <div
+                className={`${stripPalette.groupOuter}${
+                  unusableStripMode ? ` ${ACTIONS_STRIP_UNUSABLE_BTN}` : ''
+                }`}
+                role="group"
+                aria-label={String(label)}
+              >
+                <Tooltip content={tipContent} placement={titleRowTipPlacement} className={iconGridTitleBlock}>
+                  <div className={V2_INLINE_GROUP_TITLE_ROW}>
+                    <span className="font-semibold text-[11px] text-dh min-w-0 shrink break-words">{label}</span>
+                    <FeatureResourceCostIcons action={chipForEngine} iconSize={9} className="shrink-0" />
+                    {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
+                  </div>
+                </Tooltip>
+                <div className={iconGridSegBankCls}>
+                  <V2SegmentedRowWrap
+                    intrinsicWidth={actionsStripLayout && actionsStripIntrinsicWidth}
+                    className={actionsStripLayout ? 'items-start' : ''}
                   >
-                    <Icon size={12} className="shrink-0" />
-                    <span>{opt.name || id}</span>
-                  </button>
-                );
-                const optMarkdown = (
-                  <MarkdownText text={String(opt.description || '')} className="text-[11px] leading-relaxed dh-md" />
-                );
-                return (
-                  <Tooltip
-                    key={String(id)}
-                    label={elementalTip || undefined}
-                    content={
-                      preview ? (
-                        <PreviewModeTooltipBody>{optMarkdown}</PreviewModeTooltipBody>
-                      ) : !elementalTip ? (
-                        optMarkdown
-                      ) : undefined
+                {selectOpts.map((opt) => {
+                  const id = opt.id || opt.name;
+                  const Icon = ELEMENT_ICONS[id] || ELEMENT_ICONS[String(id).toLowerCase()] || Zap;
+                  const isActive = !!activeChanneledElement && String(id).toLowerCase() === String(activeChanneledElement).toLowerCase();
+                  const cantUse = isUsed || (stressMaxed && !isActive);
+                  let elementalTip = null;
+                  if (!preview && !unusableStripMode) {
+                    if (!canInteract) elementalTip = null;
+                    else if (chipDisabled) elementalTip = engineDisableHint;
+                    else if (cantUse) {
+                      if (isUsed && chip.frequency) elementalTip = usedHint;
+                      else if (stressMaxed && !activeChanneledElement) elementalTip = 'Stress is full; cannot channel a new element.';
                     }
-                    placement={chipTipPlacement ?? 'bottom'}
-                  >
-                    {chipBtn}
-                  </Tooltip>
-                );
-              })}
-              {stressMaxed && !activeChanneledElement && (
-                <span className="text-[9px] text-orange-500/70 italic whitespace-nowrap shrink-0">
-                  Stress full — cannot channel
-                </span>
-              )}
+                  }
+                  const rawOptDesc = typeof opt.description === 'string' ? opt.description.trim() : '';
+                  const mergedOptMd =
+                    mergeOptionAndFeatureTooltipMarkdown(rawOptDesc, featureDescForMergeEl) || String(tipText || '');
+                  const optMarkdown = (
+                    <MarkdownText text={String(opt.description || '')} className="text-[11px] leading-relaxed dh-md" />
+                  );
+                  const chipBtn = (
+                    <button
+                      type="button"
+                      disabled={preview || cantUse || !canInteract || chipDisabled}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (preview || cantUse || !canInteract || chipDisabled) return;
+                        onV2CardChip({
+                          featRow,
+                          chip: chipForEngine,
+                          featureKey: effectiveKey,
+                          selectOpts: { selectedId: id },
+                          ...chipPayloadExtras,
+                        });
+                      }}
+                      className={`${V2_INLINE_SEG_BTN_BASE} ${
+                        isActive ? stripPalette.segmentOn : stripPalette.segmentOff
+                      } ${unusableStripMode ? `${ACTIONS_STRIP_UNUSABLE_BTN} opacity-100` : ''} ${
+                        !isActive && (cantUse || preview) ? 'opacity-60 cursor-not-allowed' : ''
+                      } inline-flex items-center gap-1`}
+                      aria-label={opt.name || id}
+                      aria-pressed={isActive}
+                    >
+                      <Icon size={12} className="shrink-0" />
+                      <span>{opt.name || id}</span>
+                    </button>
+                  );
+                  return (
+                    <Tooltip
+                      key={String(id)}
+                      label={unusableStripMode ? undefined : elementalTip || undefined}
+                      content={
+                        unusableStripMode ? (
+                          preview ? (
+                            <PreviewModeTooltipBody>
+                              <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={mergedOptMd} />
+                            </PreviewModeTooltipBody>
+                          ) : (
+                            <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={mergedOptMd} />
+                          )
+                        ) : preview ? (
+                          <PreviewModeTooltipBody>{optMarkdown}</PreviewModeTooltipBody>
+                        ) : !elementalTip ? (
+                          optMarkdown
+                        ) : undefined
+                      }
+                      placement={chipTipPlacement ?? 'bottom'}
+                    >
+                      {chipBtn}
+                    </Tooltip>
+                  );
+                })}
+                  </V2SegmentedRowWrap>
+                </div>
+                {stressMaxed && !activeChanneledElement && (
+                  <span className="text-[9px] text-orange-500/70 italic whitespace-nowrap shrink-0 px-0.5">
+                    Stress full — cannot channel
+                  </span>
+                )}
+              </div>
             </div>
             ),
             moveToUnusable,
@@ -520,7 +667,11 @@ export function GuideFeatureCardChips({
 
         if (isSelect && selectOpts.length > 0 && chip.selectPresentation !== 'iconGrid') {
           const n = isSelectNonce[ci] ?? 0;
-          const selectCls = actionsStripLayout ? 'text-xs w-full' : 'text-xs';
+          const selectCls = actionsStripLayout
+            ? actionsStripIntrinsicWidth
+              ? 'text-xs w-auto max-w-full'
+              : 'text-xs w-full'
+            : 'text-xs';
           /** Actions strip: chip name (e.g. "Prayer Die — Action"); expanded card: chip name. */
           const closedName = label;
           const selectDisabled = preview || !canInteract || chipDisabled || chipUsed;
@@ -531,6 +682,7 @@ export function GuideFeatureCardChips({
               <GuideFeatureIsSelectInline
                 key={`${ci}-isseg-${n}`}
                 actionsStripLayout={actionsStripLayout}
+                actionsStripIntrinsicWidth={actionsStripIntrinsicWidth}
                 titleTooltipPlacement={titleRowTipPlacement}
                 closedName={closedName}
                 chipForEngine={chipForEngine}
@@ -546,18 +698,25 @@ export function GuideFeatureCardChips({
                 n={n}
                 featureTipMarkdown={tipText}
                 preview={preview}
-                groupOuterClass={sourcePalette.groupOuter}
-                segmentOffClass={sourcePalette.segmentOff}
+                groupOuterClass={stripPalette.groupOuter}
+                segmentOffClass={stripPalette.segmentOff}
                 tooltipWide={model.name === 'Beastform' || model.name === 'Evolution'}
+                unusableStripMode={unusableStripMode}
+                primaryUnusableLine={primaryUnusableLine}
               />
             ),
             moveToUnusable,
             };
           }
 
-          return {
-            element: (
-            <div key={`${ci}-${n}`} className={actionsStripLayout ? 'w-full min-w-0 basis-full' : undefined}>
+          const selectWrapClass =
+            actionsStripLayout
+              ? actionsStripIntrinsicWidth
+                ? 'w-auto max-w-full min-w-0'
+                : 'w-full min-w-0 basis-full'
+              : undefined;
+          const selectBlock = (
+            <div key={`${ci}-${n}`} className={selectWrapClass}>
               <CustomSelect
                 key={`isselect-${ci}-${n}`}
                 value={null}
@@ -582,8 +741,8 @@ export function GuideFeatureCardChips({
                     ? undefined
                     : !canInteract
                       ? undefined
-                      : hideDisableTooltipBecauseSubsection
-                        ? undefined
+                      : unusableStripMode
+                        ? primaryUnusableLine || undefined
                         : usedHint || (chipDisabled ? engineDisableHint : undefined)
                 }
                 disabledTooltipContent={
@@ -594,7 +753,11 @@ export function GuideFeatureCardChips({
                   ) : undefined
                 }
                 className={selectCls}
-                triggerClassName={sourcePalette.triggerClosed}
+                triggerClassName={
+                  unusableStripMode
+                    ? `${stripPalette.triggerClosed} ${ACTIONS_STRIP_UNUSABLE_BTN}`
+                    : stripPalette.triggerClosed
+                }
                 onChange={(opt) => {
                   if (opt == null || !canInteract || chipDisabled || chipUsed) return;
                   const id = opt.id ?? opt.name;
@@ -610,7 +773,25 @@ export function GuideFeatureCardChips({
                 }}
               />
             </div>
-            ),
+          );
+          return {
+            element: unusableStripMode ? (
+                <Tooltip
+                  key={`${ci}-${n}-uwrap`}
+                  content={(
+                    <UnusableChipTooltipBody
+                      primaryLine={primaryUnusableLine}
+                      markdownBody={String(tipText || '')}
+                    />
+                  )}
+                  placement="bottom"
+                  className={selectWrapClass ? `relative flex flex-col min-w-0 ${selectWrapClass}` : 'relative flex w-full min-w-0'}
+                >
+                  {selectBlock}
+                </Tooltip>
+              ) : (
+                selectBlock
+              ),
             moveToUnusable,
           };
         }
@@ -634,6 +815,7 @@ export function GuideFeatureCardChips({
             <GuideFeatureSegmentedSelectTargetsRow
               key={`${ci}-stseg-${n}`}
               actionsStripLayout={actionsStripLayout}
+              actionsStripIntrinsicWidth={actionsStripIntrinsicWidth}
               titleTooltipPlacement={titleRowTipPlacement}
               closedName={closedName}
               chipForEngine={chipForEngine}
@@ -649,7 +831,9 @@ export function GuideFeatureCardChips({
               n={n}
               tipText={tipText}
               preview={preview}
-              sourcePalette={sourcePalette}
+              sourcePalette={stripPalette}
+              unusableStripMode={unusableStripMode}
+              primaryUnusableLine={primaryUnusableLine}
             />
             ),
             moveToUnusable,
@@ -678,10 +862,18 @@ export function GuideFeatureCardChips({
             element: (
             <Tooltip
               key={ci}
-              label={preview ? undefined : cardDisableReasonForTooltip || undefined}
+              label={preview || unusableStripMode ? undefined : cardDisableReasonForTooltip || undefined}
               content={
                 preview ? (
-                  <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+                  unusableStripMode ? (
+                    <PreviewModeTooltipBody>
+                      <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={String(tipText || '')} />
+                    </PreviewModeTooltipBody>
+                  ) : (
+                    <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+                  )
+                ) : unusableStripMode ? (
+                  <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={String(tipText || '')} />
                 ) : !cardDisableReasonForTooltip ? (
                   toggleDeferAwait ? (
                     <div>
@@ -709,9 +901,9 @@ export function GuideFeatureCardChips({
                   preview || !canInteract || chipDisabled || toggleDeferAwait
                     ? 'border-dh-border/50 bg-dh-raised/30 text-dh-muted opacity-70 cursor-not-allowed'
                     : active
-                      ? sourcePalette.actionActive
-                      : sourcePalette.actionDefault
-                } ${toggleDeferAwait ? `animate-pulse ${sourcePalette.toggleDeferRing}` : ''}`}
+                      ? stripPalette.actionActive
+                      : stripPalette.actionDefault
+                } ${toggleDeferAwait ? `animate-pulse ${stripPalette.toggleDeferRing}` : ''}`}
                 aria-pressed={active}
                 aria-busy={toggleDeferAwait || undefined}
               >
@@ -732,7 +924,7 @@ export function GuideFeatureCardChips({
         const narrativeActivatable = canInteract || canShareNarrative;
         const narrativeDisableReason =
           preview ? null : !narrativeActivatable ? null : usedHint || (chipDisabled ? engineDisableHint : null);
-        const narrativeDisableReasonForTooltip = hideDisableTooltipBecauseSubsection ? null : narrativeDisableReason;
+        const narrativeDisableReasonForTooltip = unusableStripMode && !preview ? null : narrativeDisableReason;
         const defaultChipInactive =
           preview || chipUsed || (narrativeOnly ? !narrativeActivatable : !canInteract) || chipDisabled;
         return {
@@ -740,7 +932,7 @@ export function GuideFeatureCardChips({
           <Tooltip
             key={ci}
             label={
-              preview
+              preview || unusableStripMode
                 ? undefined
                 : narrativeOnly
                   ? narrativeDisableReasonForTooltip || undefined
@@ -748,7 +940,15 @@ export function GuideFeatureCardChips({
             }
             content={
               preview ? (
-                <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+                unusableStripMode ? (
+                  <PreviewModeTooltipBody>
+                    <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={String(tipText || '')} />
+                  </PreviewModeTooltipBody>
+                ) : (
+                  <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+                )
+              ) : unusableStripMode ? (
+                <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={String(tipText || '')} />
               ) : narrativeOnly ? (
                 !narrativeDisableReasonForTooltip ? (
                   tipContent
@@ -780,15 +980,11 @@ export function GuideFeatureCardChips({
               className={`inline-flex flex-col items-stretch gap-1 max-w-full rounded px-1.5 py-1 text-left border transition-colors ${
                 defaultChipInactive
                   ? 'border-dh-border bg-dh-raised/50 text-dh-muted cursor-not-allowed'
-                  : narrativeOnly
-                    ? 'dh-sheet-clickable-chip border-dh-border/60 bg-dh-raised/50 text-dh-muted hover:bg-dh-hover/40 hover:border-dh-strong/70 hover:text-dh'
-                    : sourcePalette.actionDefault
+                  : stripPalette.actionDefault
               }`}
             >
               <span className="flex items-start gap-1.5 min-w-0">
-                <span
-                  className={`min-w-0 flex-1 truncate font-semibold leading-tight ${narrativeOnly ? 'text-[11px] font-normal' : 'text-sm'}`}
-                >
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight">
                   {label}
                 </span>
                 <span className="inline-flex flex-wrap items-center gap-1 shrink-0 justify-end">
@@ -808,9 +1004,18 @@ export function GuideFeatureCardChips({
 
   if (stripSlot === 'activeOnly') {
     if (actionsStripLayout) {
-      return activeEls.length > 0 ? (
-        <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">{activeEls}</WidthSortedFlexWrap>
-      ) : null;
+      if (!activeEls.length) return null;
+      const keyed = activeEls.map((chipEl, i) =>
+        cloneElement(chipEl, { key: `${stripKeyPrefix ?? 'chip'}-${i}` }),
+      );
+      if (dimmed) {
+        return keyed.map((el, i) => (
+          <div key={`${stripKeyPrefix ?? 'chip'}-dim-${i}`} className={SHEET_SOURCE_DIM_CLASS}>
+            {el}
+          </div>
+        ));
+      }
+      return keyed;
     }
     return activeEls.length > 0 ? <div className="flex flex-col gap-1.5">{activeEls}</div> : null;
   }
@@ -827,7 +1032,9 @@ export function GuideFeatureCardChips({
       <div
         className={`space-y-1 min-w-0 ${activeEls.length > 0 ? 'pt-1.5 mt-0.5 border-t border-dh-border/50' : ''}`}
       >
-        <p className="text-[9px] tracking-widest text-dh-muted/90 font-semibold uppercase">Used or too costly</p>
+        <p className="text-[9px] tracking-widest text-dh-muted/90 font-semibold uppercase">
+          Used, inapplicable, or too costly
+        </p>
         {actionsStripLayout ? (
           <WidthSortedFlexWrap className="flex flex-wrap gap-1.5 items-center content-start">
             {unusableEls}

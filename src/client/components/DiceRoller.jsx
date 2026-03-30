@@ -36,6 +36,10 @@ import {
   V2_INLINE_SEG_ON,
 } from '../lib/v2-inline-select-ui.js';
 import { V2SegmentedRowWrap } from './V2SegmentedRowWrap.jsx';
+import {
+  getInitialV2ReviewTargetSelection,
+  primaryDamageTargetIsInPickList,
+} from '../lib/v2-review-chip-target-selection.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
 
@@ -793,17 +797,31 @@ function V2ReviewChipRow({
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedTargetIds, setSelectedTargetIds] = useState([]);
 
+  // Reset picker state only when this banner row identity changes — not on every `roll` object
+  // reference from SSE (that was clearing multi-target picks, e.g. Hold Them Off extras).
   useEffect(() => {
     setSelectedIds([]);
     const p = resolveV2ReviewChipPicker?.(chip, roll);
     const pickTargets = Array.isArray(p?.selectTargets) ? p.selectTargets : [];
-    const validIds = new Set(pickTargets.map((t) => t.instanceId ?? t.id).filter(Boolean));
-    if (needsTargets && primaryDamageTargetId && validIds.has(primaryDamageTargetId)) {
-      setSelectedTargetIds([primaryDamageTargetId]);
-    } else {
-      setSelectedTargetIds([]);
-    }
-  }, [stableKey, roll._rollDbId, primaryDamageTargetId, needsTargets, chip, roll, resolveV2ReviewChipPicker]);
+    setSelectedTargetIds(
+      getInitialV2ReviewTargetSelection(pickTargets, { needsTargets, primaryDamageTargetId })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only stableKey+_rollDbId (omit roll ref, picker fn, primary — avoids SSE/table churn resetting picks)
+  }, [stableKey, roll._rollDbId]);
+
+  // When the primary damage target becomes available and it is one of this chip's pickable targets,
+  // seed selection (chips that exclude the primary, e.g. Hold Them Off, skip via validIds check).
+  useEffect(() => {
+    if (!needsTargets || !primaryDamageTargetId) return;
+    const p = resolveV2ReviewChipPicker?.(chip, roll);
+    const pickTargets = Array.isArray(p?.selectTargets) ? p.selectTargets : [];
+    if (!primaryDamageTargetIsInPickList(pickTargets, primaryDamageTargetId)) return;
+    setSelectedTargetIds((prev) => {
+      if (prev.length > 0) return prev;
+      return [primaryDamageTargetId];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- narrow deps; picker must stay fresh via closure without resetting on activeElements churn
+  }, [primaryDamageTargetId, stableKey, roll._rollDbId]);
 
   const maxSel = Math.max(1, Math.min(99, picker?.maxSelections ?? 1));
   const options = Array.isArray(picker?.isSelectOptions) ? picker.isSelectOptions : [];

@@ -18,6 +18,10 @@ import { filterCardPhaseChips } from './card-phase-chips.js';
 import { parsePassiveStats } from './feature-actions.js';
 import { deriveFeatureActionFromV2Row } from './v2-derive-feature-action.js';
 import { resolveLoadoutAbilityFeatRow } from './guide-feature-entries.js';
+import {
+  getSheetSourceChipPalette,
+  resolveSheetSourcePaletteKey,
+} from './sheet-source-chip-styles.js';
 
 /**
  * Safe `table.me` for sheet preview when there is no owner id (library / new character).
@@ -615,7 +619,58 @@ export function resolveAbilityFeatRowForSheet(el, ability) {
 }
 
 /**
- * Feature rows on a character that expose at least one `isToggle` card chip (V2 engine).
+ * Read-only value chips for compact character cards: persisted `_cardValues[key]` for features that declare
+ * `cardValueDisplayKey` on the merged activeFeatures row. Looks up `featureState[sourceScopeKey]` (e.g. Druid
+ * **`table.source.set`**) and, if missing, `featureState[feature.name]` (per-feature **`table.feature.set`**).
+ * Styled with the same source palette as sheet Actions (`actionDefault`).
+ *
+ * @param {object} el — merged display character
+ * @param {{ activeElements?: object[], fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, registry?: object } | null | undefined} v2TableContext
+ * @returns {{ value: string, chipClassName: string }[]}
+ */
+export function collectV2FeatureCardValueDisplayLines(el, v2TableContext) {
+  const af = Array.isArray(el.activeFeatures) ? el.activeFeatures : [];
+  const out = [];
+  const seen = new Set();
+  for (const row of af) {
+    if (!row || typeof row !== 'object') continue;
+    const dk = row.cardValueDisplayKey;
+    if (typeof dk !== 'string' || !dk.trim()) continue;
+    const scope = row._sourceScopeKey;
+    if (typeof scope !== 'string' || !scope) continue;
+    const dedupe = `${scope}\0${dk}`;
+    if (seen.has(dedupe)) continue;
+    const featName = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : '';
+    let raw = el.featureState?.[scope]?._cardValues?.[dk];
+    if (raw == null || String(raw).trim() === '') {
+      raw =
+        featName && featName !== scope ? el.featureState?.[featName]?._cardValues?.[dk] : undefined;
+    }
+    if (raw == null || String(raw).trim() === '') {
+      const resolver = row.cardValueDisplayResolve;
+      if (typeof resolver !== 'function') continue;
+      try {
+        raw = resolver(el, v2TableContext);
+      } catch {
+        raw = undefined;
+      }
+    }
+    if (raw == null || String(raw).trim() === '') continue;
+    seen.add(dedupe);
+    const { model } = buildFeatureCardModelForCharacter(row, el, v2TableContext);
+    const pk = resolveSheetSourcePaletteKey(row, model.sourceType);
+    const palette = getSheetSourceChipPalette(pk);
+    out.push({
+      value: String(raw),
+      chipClassName: palette.actionDefault,
+    });
+  }
+  return out;
+}
+
+/**
+ * Feature rows on a character that expose at least one `isToggle` card chip **or** an
+ * `iconGrid` select chip (`selectPresentation: 'iconGrid'`, e.g. Elemental Incarnation).
  * Dedupes by `_sourceScopeKey` or `type:name`. Used by the Game Table character panel.
  *
  * @param {object} el — merged display character (`recompute` + `mergeV2DeclarativeSheetOverlay`)
@@ -629,8 +684,12 @@ export function collectV2IsToggleCardFeatureGroups(el, v2TableContext) {
   for (const row of af) {
     if (!row || typeof row !== 'object' || row.name == null) continue;
     const { model, table } = buildFeatureCardModelForCharacter(row, el, v2TableContext);
-    const hasToggle = (model.cardChips || []).some((c) => c && c.isToggle);
-    if (!hasToggle) continue;
+    const chips = model.cardChips || [];
+    const hasToggle = chips.some((c) => c && c.isToggle);
+    const hasIconGrid = chips.some(
+      (c) => c && typeof c.isSelect === 'function' && c.selectPresentation === 'iconGrid',
+    );
+    if (!hasToggle && !hasIconGrid) continue;
     const dedupe = row._sourceScopeKey || `${row.type || 'x'}:${row.name}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);

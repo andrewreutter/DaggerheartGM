@@ -3,6 +3,7 @@ import {
   entryHasUnusableActionChipsForSheet,
   hasAnyUnusableActionChipsForSheet,
   shouldMoveV2ActionChipToUnusableSubsection,
+  shouldUseIntrinsicWidthForActionsStripSlot,
 } from '../../src/client/lib/v2-action-chip-strip.js';
 
 describe('shouldMoveV2ActionChipToUnusableSubsection', () => {
@@ -18,8 +19,31 @@ describe('shouldMoveV2ActionChipToUnusableSubsection', () => {
   });
   it('is false when neither applies', () => {
     expect(
-      shouldMoveV2ActionChipToUnusableSubsection({ usedThisCycle: false, resourceUnaffordable: false }),
+      shouldMoveV2ActionChipToUnusableSubsection({
+        usedThisCycle: false,
+        resourceUnaffordable: false,
+        logicDisabled: false,
+      }),
     ).toBe(false);
+  });
+  it('is true when logic-disabled / inapplicable', () => {
+    expect(
+      shouldMoveV2ActionChipToUnusableSubsection({
+        usedThisCycle: false,
+        resourceUnaffordable: false,
+        logicDisabled: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('shouldUseIntrinsicWidthForActionsStripSlot', () => {
+  it('is true for sheet active and unusable subsections (matching segmented chip width)', () => {
+    expect(shouldUseIntrinsicWidthForActionsStripSlot('activeOnly')).toBe(true);
+    expect(shouldUseIntrinsicWidthForActionsStripSlot('unusableOnly')).toBe(true);
+  });
+  it('is false for full strip mode (expanded card / non-sheet)', () => {
+    expect(shouldUseIntrinsicWidthForActionsStripSlot('full')).toBe(false);
   });
 });
 

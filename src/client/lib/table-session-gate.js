@@ -51,6 +51,14 @@ export function characterSheetTableInteractionFlags(sessionPlayAllowed, isPlayer
 }
 
 /**
+ * Game Table: only the GM may manually mark Hope / Stress / Armor / HP on PCs, or HP / Stress on adversaries,
+ * via resource {@link CheckboxTrack} slots. Assigned players keep rolls, features, and conditions; not manual track boxes.
+ */
+export function gmResourceTrackCheckboxEditsAllowed(isPlayer) {
+  return !isPlayer;
+}
+
+/**
  * `DiceRoller` persistent portaled banner when play is blocked (prep or idle pause).
  * Matches {@link isTablePlayAllowed} for `table_state.top` shapes that use the same flags as `app.jsx`.
  */

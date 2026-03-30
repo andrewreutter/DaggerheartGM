@@ -1,7 +1,15 @@
 /**
- * Manual HP / Stress / Hope / Armor (and companion stress) edits on the Game Table are queued as
- * `_action` banners; the GM acknowledges to apply server state (same pattern as V2 `actionLoop` notices).
+ * Manual HP / Stress / Hope / Armor (and companion stress) edits on the Game Table apply to server
+ * state immediately; an `_action` banner is posted for the log and Acknowledge only dismisses it.
+ *
+ * Adversary HP/stress CheckboxTracks apply immediately without a manual-track banner — character
+ * lifecycle hooks are character-only; see GMTableView Encounter panel + BattleMap token detail panel.
  */
+
+/** @param {string|undefined} elementType */
+export function shouldQueueManualTrackBannerForElementType(elementType) {
+  return elementType !== 'adversary';
+}
 
 /**
  * @param {object[]|null|undefined} pendingBanners
@@ -47,19 +55,19 @@ function copyHp(before, after, maxHp) {
   const healed = after - before;
   if (lost > 0) {
     return {
-      title: `Mark ${lost} damage`,
-      body: `HP marked will change from ${dmgBefore} to ${dmgAfter}`,
+      title: `Marked ${lost} damage`,
+      body: `HP marked changed from ${dmgBefore} to ${dmgAfter}`,
     };
   }
   if (healed > 0) {
     return {
-      title: `Clear ${healed} damage`,
-      body: `HP marked will change from ${dmgBefore} to ${dmgAfter}`,
+      title: `Cleared ${healed} damage`,
+      body: `HP marked changed from ${dmgBefore} to ${dmgAfter}`,
     };
   }
   return {
     title: 'HP',
-    body: `HP marked will change from ${dmgBefore} to ${dmgAfter}`,
+    body: `HP marked changed from ${dmgBefore} to ${dmgAfter}`,
   };
 }
 
@@ -68,19 +76,19 @@ function copyStress(before, after) {
   const cleared = before - after;
   if (marked > 0) {
     return {
-      title: `Mark ${marked} stress`,
-      body: `Stress marked will change from ${before} to ${after}`,
+      title: `Marked ${marked} stress`,
+      body: `Stress marked changed from ${before} to ${after}`,
     };
   }
   if (cleared > 0) {
     return {
-      title: `Clear ${cleared} stress`,
-      body: `Stress marked will change from ${before} to ${after}`,
+      title: `Cleared ${cleared} stress`,
+      body: `Stress marked changed from ${before} to ${after}`,
     };
   }
   return {
     title: 'Stress',
-    body: `Stress marked will change from ${before} to ${after}`,
+    body: `Stress marked changed from ${before} to ${after}`,
   };
 }
 
@@ -93,19 +101,19 @@ function copyHope(before, after, maxHope) {
   const spent = before - after;
   if (gained > 0) {
     return {
-      title: `Gain ${gained} Hope`,
-      body: `Hope marked will change from ${spentBefore} to ${spentAfter}`,
+      title: `Gained ${gained} Hope`,
+      body: `Hope marked changed from ${spentBefore} to ${spentAfter}`,
     };
   }
   if (spent > 0) {
     return {
-      title: `Spend ${spent} Hope`,
-      body: `Hope marked will change from ${spentBefore} to ${spentAfter}`,
+      title: `Spent ${spent} Hope`,
+      body: `Hope marked changed from ${spentBefore} to ${spentAfter}`,
     };
   }
   return {
     title: 'Hope',
-    body: `Hope marked will change from ${spentBefore} to ${spentAfter}`,
+    body: `Hope marked changed from ${spentBefore} to ${spentAfter}`,
   };
 }
 
@@ -114,19 +122,19 @@ function copyArmor(before, after) {
   const cleared = before - after;
   if (marked > 0) {
     return {
-      title: `Mark ${marked} armor`,
-      body: `Armor marked will change from ${before} to ${after}`,
+      title: `Marked ${marked} armor`,
+      body: `Armor marked changed from ${before} to ${after}`,
     };
   }
   if (cleared > 0) {
     return {
-      title: `Clear ${cleared} armor`,
-      body: `Armor marked will change from ${before} to ${after}`,
+      title: `Cleared ${cleared} armor`,
+      body: `Armor marked changed from ${before} to ${after}`,
     };
   }
   return {
     title: 'Armor',
-    body: `Armor marked will change from ${before} to ${after}`,
+    body: `Armor marked changed from ${before} to ${after}`,
   };
 }
 
@@ -135,19 +143,19 @@ function copyCompanionStress(before, after) {
   const cleared = before - after;
   if (marked > 0) {
     return {
-      title: `Mark ${marked} companion stress`,
-      body: `Companion stress marked will change from ${before} to ${after}`,
+      title: `Marked ${marked} companion stress`,
+      body: `Companion stress marked changed from ${before} to ${after}`,
     };
   }
   if (cleared > 0) {
     return {
-      title: `Clear ${cleared} companion stress`,
-      body: `Companion stress marked will change from ${before} to ${after}`,
+      title: `Cleared ${cleared} companion stress`,
+      body: `Companion stress marked changed from ${before} to ${after}`,
     };
   }
   return {
     title: 'Companion stress',
-    body: `Companion stress marked will change from ${before} to ${after}`,
+    body: `Companion stress marked changed from ${before} to ${after}`,
   };
 }
 
@@ -199,8 +207,8 @@ export function buildManualTrackActionRoll(targetEl, updates) {
     bodies.push(body);
   }
 
-  const actionText = bodies.length ? bodies.join('\n') : 'Pending resource change';
-  const actionName = titles.length ? titles.join(' · ') : 'Resource change';
+  const actionText = bodies.length ? bodies.join('\n') : 'Resource updated.';
+  const actionName = titles.length ? titles.join(' · ') : 'Resource updated';
 
   return {
     _action: true,
@@ -228,7 +236,8 @@ export function getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelect
 }
 
 /**
- * Deltas between server `el` and merged manual-track preview — drives dashed pending UI until GM ack.
+ * Deltas between server `el` and merged manual-track preview — drives dashed pending UI when the
+ * banner’s target values are not yet reflected in `el` (e.g. before SSE catches up).
  */
 export function getPendingManualTrackAckDeltas(el, pendingRoll) {
   const empty = {

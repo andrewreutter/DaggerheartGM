@@ -57,6 +57,11 @@ export const CHARACTER_RUNTIME_KEYS = [
    * optional table-level `featureState` in `mergeDeclarativeFeatureState` (see `src/features-v2/engine/feature-loader.js`).
    */
   'featureState',
+  /**
+   * Keys under `featureState[featureKey]` that were written via `table.feature.set` / `table.source.set`
+   * (`manual: true` mutations) — used for the Game Table **Feature state** sidebar only.
+   */
+  'featureStateDeclared',
   /** Seraph — session Prayer Dice pool (`{ pool: number[] }`); must persist for V2 card/review chips. */
   'prayerDice',
   /** V2: pending map move for a banner (`move()` mutation); includes `conditionMet`; cleared on banner ack/cancel. */
@@ -883,7 +888,7 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
 
     switch (type) {
       case 'setFeatureState': {
-        const { featureKey, key, value, instanceId: payloadInstanceId } = payload;
+        const { featureKey, key, value, instanceId: payloadInstanceId, manual, cardValue } = payload;
         // Prefer outer owner (banner / chip activation) when set; else payload.instanceId from
         // engine `table.feature.set` (e.g. lifecycle hooks when applyV2LifecycleMutations has no owner).
         const targetOwner =
@@ -900,11 +905,34 @@ function runV2BannerMutationLoop(mutations, activeElements, ownerInstanceId, onO
         const fs = { ...(el.featureState || {}) };
         const bag = { ...(fs[featureKey] || {}) };
         bag[key] = value;
+        const nextCv = { ...(bag._cardValues || {}) };
+        if (cardValue !== undefined) {
+          if (cardValue === null || cardValue === '') {
+            delete nextCv[key];
+          } else {
+            nextCv[key] = String(cardValue);
+          }
+        } else if (value == null) {
+          delete nextCv[key];
+        }
+        if (Object.keys(nextCv).length === 0) {
+          delete bag._cardValues;
+        } else {
+          bag._cardValues = nextCv;
+        }
         if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
           bag.evolutionTraitKey = null;
         }
         fs[featureKey] = bag;
-        merge(targetOwner, { featureState: fs });
+        const mergePatch = { featureState: fs };
+        if (manual === true) {
+          const fd = { ...(el.featureStateDeclared || {}) };
+          const declBag = { ...(fd[featureKey] || {}) };
+          declBag[key] = true;
+          fd[featureKey] = declBag;
+          mergePatch.featureStateDeclared = fd;
+        }
+        merge(targetOwner, mergePatch);
         if (featureKey === SRD_CLASS_DRUID_SCOPE_KEY && key === 'activeBeastform' && value == null) {
           merge(targetOwner, { activeBeastform: null, selectedBeastformAdvantage: null });
         }
@@ -1436,6 +1464,15 @@ export function partitionV2BannerChipMutations(mutations) {
     }
     if (type === 'addDamageRoll') {
       serverFollowups.push({ kind: 'addDamage', payload, mutation: m });
+      continue;
+    }
+    /** `move()` from V2 chips — interim: action banner only (no v2PendingMove / map lock). */
+    if (type === 'move') {
+      serverFollowups.push({
+        kind: 'forcedMovementNotice',
+        payload: payload && typeof payload === 'object' ? { ...payload } : {},
+        mutation: m,
+      });
       continue;
     }
     localMutations.push(m);

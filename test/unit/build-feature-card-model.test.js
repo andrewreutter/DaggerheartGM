@@ -10,6 +10,7 @@ import {
   hasHiddenConditionalPhaseChips,
   V2_TABLE_STUB_NO_INSTANCE_ID,
   collectV2IsToggleCardFeatureGroups,
+  collectV2FeatureCardValueDisplayLines,
 } from '../../src/client/lib/build-feature-card-model.js';
 import { resolveChipDisabled } from '../../src/features-v2/engine/chip-system.js';
 import { ElementalIncarnation } from '../../src/features-v2/subclasses/WardenOfTheElements.js';
@@ -374,6 +375,160 @@ describe('buildFeatureCardModel', () => {
   });
 });
 
+describe('collectV2FeatureCardValueDisplayLines', () => {
+  it('returns label: value when featureState has _cardValues for cardValueDisplayKey', () => {
+    const row = {
+      ...Beastform,
+      type: 'class',
+      _sourceScopeKey: SRD_CLASS_DRUID_SCOPE_KEY,
+    };
+    const el = {
+      instanceId: 'pc1',
+      elementType: 'character',
+      activeFeatures: [row],
+      featureState: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
+          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+          _cardValues: { activeBeastform: 'Agile Scout' },
+        },
+      },
+      featureUsage: {},
+    };
+    const ctx = {
+      registry,
+      activeElements: [el],
+      fearCount: 0,
+      mapConfig: null,
+      tableFeatureState: {},
+    };
+    const lines = collectV2FeatureCardValueDisplayLines(el, ctx);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].value).toBe('Agile Scout');
+    expect(lines[0].chipClassName).toContain('dh-sheet-clickable-chip');
+  });
+
+  it('returns empty when _cardValues is missing or empty for the key', () => {
+    const row = {
+      ...Beastform,
+      type: 'class',
+      _sourceScopeKey: SRD_CLASS_DRUID_SCOPE_KEY,
+    };
+    const el = {
+      instanceId: 'pc1',
+      elementType: 'character',
+      activeFeatures: [row],
+      featureState: {
+        [SRD_CLASS_DRUID_SCOPE_KEY]: {
+          activeBeastform: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+        },
+      },
+      featureUsage: {},
+    };
+    const ctx = {
+      registry,
+      activeElements: [el],
+      fearCount: 0,
+      mapConfig: null,
+      tableFeatureState: {},
+    };
+    expect(collectV2FeatureCardValueDisplayLines(el, ctx)).toEqual([]);
+  });
+
+  it("reads _cardValues from the per-feature name bag (table.feature.set) when source scope bag lacks them", () => {
+    const row = {
+      ...RangersFocus,
+      type: 'class',
+      _sourceScopeKey: 'classes:srd-cls-ranger',
+    };
+    const el = {
+      instanceId: 'pc1',
+      elementType: 'character',
+      activeFeatures: [row],
+      featureState: {
+        'classes:srd-cls-ranger': {},
+        [RangersFocus.name]: {
+          rangerFocusStressTargetId: 'adv-1',
+          _cardValues: { rangerFocusStressTargetId: 'Focus: Goblin' },
+        },
+      },
+      featureUsage: {},
+    };
+    const ctx = {
+      registry,
+      activeElements: [el],
+      fearCount: 0,
+      mapConfig: null,
+      tableFeatureState: {},
+    };
+    const lines = collectV2FeatureCardValueDisplayLines(el, ctx);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].value).toBe('Focus: Goblin');
+  });
+
+  it("resolves Ranger's Focus via cardValueDisplayResolve when featureState has no Ranger bag", () => {
+    const row = {
+      ...RangersFocus,
+      type: 'class',
+      _sourceScopeKey: 'classes:srd-cls-ranger',
+    };
+    const adv = {
+      instanceId: 'adv-1',
+      elementType: 'adversary',
+      name: 'Goblin Skirmisher',
+    };
+    const el = {
+      instanceId: 'pc1',
+      elementType: 'character',
+      activeFeatures: [row],
+      focusTargetInstanceId: 'adv-1',
+      featureState: {},
+      featureUsage: {},
+    };
+    const ctx = {
+      registry,
+      activeElements: [el, adv],
+      fearCount: 0,
+      mapConfig: null,
+      tableFeatureState: {},
+    };
+    const lines = collectV2FeatureCardValueDisplayLines(el, ctx);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].value).toBe('Focus: Goblin Skirmisher');
+  });
+
+  it("resolves Ranger's Focus via adversary focusedBy when PC focus ids are unset (weapon path)", () => {
+    const row = {
+      ...RangersFocus,
+      type: 'class',
+      _sourceScopeKey: 'classes:srd-cls-ranger',
+    };
+    const ranger = {
+      instanceId: 'pc1',
+      elementType: 'character',
+      name: 'Aria',
+      activeFeatures: [row],
+      featureState: {},
+      featureUsage: {},
+    };
+    const adv = {
+      instanceId: 'adv-1',
+      elementType: 'adversary',
+      name: 'Shadow Beast',
+      focusedBy: 'Aria',
+    };
+    const ctx = {
+      registry,
+      activeElements: [ranger, adv],
+      fearCount: 0,
+      mapConfig: null,
+      tableFeatureState: {},
+    };
+    const lines = collectV2FeatureCardValueDisplayLines(ranger, ctx);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].value).toBe('Focus: Shadow Beast');
+  });
+});
+
 describe('collectV2IsToggleCardFeatureGroups', () => {
   it('returns merged feature rows that expose an isToggle card chip', () => {
     const row = {
@@ -399,5 +554,31 @@ describe('collectV2IsToggleCardFeatureGroups', () => {
     const groups = collectV2IsToggleCardFeatureGroups(el, ctx);
     expect(groups.length).toBe(1);
     expect(groups[0].model.cardChips.some((c) => c.isToggle)).toBe(true);
+  });
+
+  it('includes features with iconGrid card chips (no isToggle)', () => {
+    const row = {
+      ...ElementalIncarnation,
+      type: 'subclass',
+      name: ElementalIncarnation.name,
+      description: ElementalIncarnation.description,
+      _sourceScopeKey: 'subclass:warden-ei',
+    };
+    const el = {
+      instanceId: 'pc1',
+      elementType: 'character',
+      activeFeatures: [row],
+      featureUsage: {},
+    };
+    const ctx = {
+      registry,
+      activeElements: [el],
+      fearCount: 0,
+      mapConfig: null,
+      tableFeatureState: {},
+    };
+    const groups = collectV2IsToggleCardFeatureGroups(el, ctx);
+    expect(groups.length).toBe(1);
+    expect(groups[0].model.cardChips.some((c) => c.selectPresentation === 'iconGrid')).toBe(true);
   });
 });

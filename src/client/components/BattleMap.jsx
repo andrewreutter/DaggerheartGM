@@ -48,12 +48,14 @@ import {
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
-import { getAuthToken, postMapPing, postMapScribble, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
+import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
+import { gmResourceTrackCheckboxEditsAllowed } from '../lib/table-session-gate.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
 import Fireworks from 'fireworks-js';
 import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
+import { buildCharacterTrayTokenEntries } from '../lib/character-tray-tokens.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
@@ -853,7 +855,20 @@ function MapConfigToolbar({
 
 // ─── TokenCircle ─────────────────────────────────────────────────────────────
 
-function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDragging, isGhost, isPinned, isProxy, rangeBand, rangeBandGlowScale }) {
+function TokenCircle({
+  element,
+  size,
+  instanceNum,
+  isMyCharacter,
+  isPlayer,
+  isDragging,
+  isGhost,
+  isPinned,
+  isProxy,
+  isOtherMapShelf,
+  rangeBand,
+  rangeBandGlowScale,
+}) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
 
@@ -908,7 +923,7 @@ function TokenCircle({ element, size, instanceNum, isMyCharacter, isPlayer, isDr
         ${bgClass}
         ${isDragging ? 'opacity-30' : ''}
         ${isGhost ? 'opacity-90 pointer-events-none' : ''}
-        ${isProxy ? 'opacity-20' : ''}
+        ${isProxy ? (isOtherMapShelf ? 'opacity-[0.38]' : 'opacity-20') : ''}
         ${isPinned ? 'ring-2 ring-white ring-offset-1 ring-offset-dh-surface' : ''}
       `}
       style={{
@@ -957,18 +972,38 @@ function TokenDetailPanel({
   onClose,
   anchorX,
   anchorY,
+  tableId,
 }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
   const canEdit = !isPlayer || isMyCharacter;
   const canEditAdv = !isPlayer; // only GM edits adversaries
+  /** Hope/Stress/Armor/HP slot clicks — GM only (players may still edit conditions on their PC). */
+  const gmResourceTracks = gmResourceTrackCheckboxEditsAllowed(isPlayer);
   const pendingManual = findPendingManualTrackBanner(pendingBanners ?? [], element.instanceId);
   const displayEl = mergeManualTrackDisplay(element, pendingManual);
   const manualAck = getPendingManualTrackAckDeltas(element, pendingManual);
   const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, element.instanceId);
-  const applyResource = queueManualTrackEdit
-    ? (upd) => queueManualTrackEdit(element, upd)
-    : (upd) => updateActiveElement(element.instanceId, upd);
+  const applyResource = (upd) => {
+    if (isAdv) {
+      void (async () => {
+        if (queueManualTrackEdit && tableId) {
+          for (const r of pendingBanners || []) {
+            if (r._manualTrackEdit && r._targetInstanceId === element.instanceId && r._rollDbId != null) {
+              await postBannerAck(r._rollDbId, 'cancel', { tableId }).catch(() => {});
+            }
+          }
+        }
+        updateActiveElement(element.instanceId, upd);
+      })();
+      return;
+    }
+    if (queueManualTrackEdit) {
+      void queueManualTrackEdit(element, upd);
+      return;
+    }
+    updateActiveElement(element.instanceId, upd);
+  };
 
   // Clamp position to viewport
   const panelRef = useRef(null);
@@ -1041,12 +1076,12 @@ function TokenDetailPanel({
           <CheckboxTrack
             total={hpMax}
             filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
-            pendingFilled={manualAck.hpDamageAdd}
-            pendingClearFilled={manualAck.hpHealSlots + lsHeal}
+            pendingFilled={isAdv ? 0 : manualAck.hpDamageAdd}
+            pendingClearFilled={isAdv ? 0 : manualAck.hpHealSlots + lsHeal}
             trackKind="hp"
-            onSetFilled={canEdit || canEditAdv
-              ? (dmg) => applyResource({ currentHp: hpMax - dmg })
-              : undefined}
+            onSetFilled={isAdv
+              ? (canEditAdv ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined)
+              : (gmResourceTracks ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined)}
           />
         </div>
       )}
@@ -1058,17 +1093,17 @@ function TokenDetailPanel({
           <CheckboxTrack
             total={stressMax}
             filled={element.currentStress ?? 0}
-            pendingFilled={(pendingResourceCosts[element.instanceId]?.stress ?? 0) + manualAck.stressAdd}
-            pendingClearFilled={manualAck.stressClear}
+            pendingFilled={(pendingResourceCosts[element.instanceId]?.stress ?? 0) + (isAdv ? 0 : manualAck.stressAdd)}
+            pendingClearFilled={isAdv ? 0 : manualAck.stressClear}
             trackKind="stress"
-            onSetFilled={canEdit || canEditAdv
-              ? (v) => applyResource({ currentStress: v })
-              : undefined}
+            onSetFilled={isAdv
+              ? (canEditAdv ? (v) => applyResource({ currentStress: v }) : undefined)
+              : (gmResourceTracks ? (v) => applyResource({ currentStress: v }) : undefined)}
           />
         </div>
       )}
 
-      {/* Hope (characters only) — server baseline + dashed pending (rolls + manual GM-ack queue) */}
+      {/* Hope (characters only) — server baseline + dashed pending (rolls + brief lag before SSE on manual edits) */}
       {isChar && (element.maxHope ?? 6) > 0 && (() => {
         const maxH = element.maxHope ?? 6;
         const hopePending = pendingResourceCosts[element.instanceId]?.hope ?? 0;
@@ -1085,7 +1120,7 @@ function TokenDetailPanel({
               label="Hope"
               verbs={['Gain', 'Spend']}
               pulseOnDecreaseOnly
-              onSetFilled={canEdit ? (v) => applyResource({ hope: v }) : undefined}
+              onSetFilled={gmResourceTracks ? (v) => applyResource({ hope: v }) : undefined}
             />
           </div>
         );
@@ -1099,7 +1134,7 @@ function TokenDetailPanel({
             total={element.maxArmor ?? 0}
             filled={displayEl.currentArmor ?? element.maxArmor ?? 0}
             trackKind="armor"
-            onSetFilled={canEdit ? (v) => {
+            onSetFilled={gmResourceTracks ? (v) => {
               const upd = { currentArmor: v };
               if (element.reinforcedActive && v < (element.currentArmor ?? element.maxArmor ?? 0)) upd.reinforcedActive = false;
               applyResource(upd);
@@ -1147,7 +1182,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
         ${isHighlighted ? 'bg-amber-900/30' : 'bg-dh-surface/60'}`}
       style={{ width: tokenSizePx + 16, minHeight: 0 }}
     >
-      {tokens.map(({ element, instanceNum, isMyCharacter, isProxy }) => (
+      {tokens.map(({ element, instanceNum, isMyCharacter, isProxy, isOtherMapShelf }) => (
         <div
           key={element.instanceId}
           style={{ touchAction: 'none' }}
@@ -1163,6 +1198,7 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
             isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
             isPinned={pinnedInstanceId === element.instanceId}
             isProxy={isProxy}
+            isOtherMapShelf={isOtherMapShelf}
           />
         </div>
       ))}
@@ -1195,7 +1231,7 @@ export function BattleMap({
   className = '',
   /** V2 Phase 4: called after a token drag commits (map or tray), with pre/post positions for `dispatchTokenMoveHooks` */
   onTokenDragEnd,
-  /** Game Table: queue manual HP/stress/hope/armor edits for GM ack */
+  /** Game Table: manual HP/stress/hope/armor — applies immediately, banner for log */
   queueManualTrackEdit,
   pendingBanners,
   pendingResourceCosts = {},
@@ -1254,6 +1290,8 @@ export function BattleMap({
   const leftTrayRef = useRef(null);
   const rightTrayRef = useRef(null);
   const dragRef = useRef(null);
+  /** After shelf click switches map, center the viewport on that character once `activeMapIdResolved` matches. */
+  const pendingShelfNavigateCenterInstanceIdRef = useRef(null);
   const mapPingTapRef = useRef(null);
   const mapPingPointerUpRef = useRef(null);
   /** In-map anchor for measuring where to place the portaled fireworks layer (above DiceRoller z-15). */
@@ -2077,6 +2115,19 @@ export function BattleMap({
     [canControlMapView, onMapViewSync, pxPerFt, schedulePersistView, schedulePersistPlayerViewport, isPlayer, activeMapIdResolved],
   );
 
+  useEffect(() => {
+    const id = pendingShelfNavigateCenterInstanceIdRef.current;
+    if (!id) return;
+    const el = activeElements.find((e) => e.instanceId === id);
+    if (!el || el.tokenX == null) {
+      pendingShelfNavigateCenterInstanceIdRef.current = null;
+      return;
+    }
+    if (effectiveTokenMapId(el.mapId) !== activeMapIdResolved) return;
+    pendingShelfNavigateCenterInstanceIdRef.current = null;
+    centerMapOnPlacedActor(el);
+  }, [activeMapIdResolved, activeElements, centerMapOnPlacedActor]);
+
   const applyZoomToFitActors = useCallback(() => {
     if (!canControlMapView) return;
     if (mapAiGenPreviewUrlRef.current) return;
@@ -2209,13 +2260,11 @@ export function BattleMap({
     return isMyCharacter(el);
   }, [isPlayer, isMyCharacter]);
 
-  // Tray: all characters — in-tray first, then dim proxies for those on the active map
-  const charTrayTokens = useMemo(() => {
-    const onActive = (el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved;
-    const inTray = characters.filter(el => el.tokenX == null).map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el), isProxy: false }));
-    const onMap = characters.filter(onActive).map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el), isProxy: true }));
-    return [...inTray, ...onMap];
-  }, [characters, isMyCharacter, activeMapIdResolved]);
+  // Tray: all characters — unplaced, then active-map proxies, then other-map proxies (click switches map)
+  const charTrayTokens = useMemo(
+    () => buildCharacterTrayTokenEntries(characters, activeMapIdResolved, isMyCharacter),
+    [characters, isMyCharacter, activeMapIdResolved],
+  );
 
   // Players don't see adversary tray. All adversaries — in-tray first, then dim proxies for those on the active map.
   const advTrayTokens = useMemo(() => {
@@ -2289,6 +2338,30 @@ export function BattleMap({
       onSetActiveMap?.(mapId);
     },
     [onSetActiveMap],
+  );
+
+  /** Player or GM: jump table view to the map where a shelf token lives (used for other-map character proxies). */
+  const navigateShelfToCharacterMap = useCallback(
+    (mapId) => {
+      const mid = effectiveTokenMapId(mapId);
+      if (!isPlayer) {
+        onSetActiveMap?.(mid);
+        return true;
+      }
+      const viewsOnMap = mapViews.filter((v) => v.mapId === mid);
+      const broadcastView = viewsOnMap.find((v) => v.broadcastToPlayers);
+      if (broadcastView) {
+        onPlayerSelectView?.(broadcastView.id);
+        return true;
+      }
+      const mapRow = maps.find((m) => m.id === mid);
+      if (mapRow && mapRow.shareWithPlayers !== false) {
+        onPlayerEnterMapFreeExplore?.(mid);
+        return true;
+      }
+      return false;
+    },
+    [isPlayer, onSetActiveMap, mapViews, onPlayerSelectView, maps, onPlayerEnterMapFreeExplore],
   );
 
   const drawEditContext = useMemo(() => {
@@ -3502,8 +3575,17 @@ export function BattleMap({
     if (!ds) return;
 
     if (!ds.isDragging) {
-      if (canControlMapView && ds.fromTray && ds.element.tokenX != null && ds.element.tokenY != null) {
-        centerMapOnPlacedActor(ds.element);
+      if (ds.fromTray && ds.element.tokenX != null && ds.element.tokenY != null) {
+        const tokenMap = effectiveTokenMapId(ds.element.mapId);
+        if (tokenMap !== activeMapIdResolved) {
+          if (navigateShelfToCharacterMap(ds.element.mapId)) {
+            pendingShelfNavigateCenterInstanceIdRef.current = ds.element.instanceId;
+          }
+          return;
+        }
+        if (canControlMapView) {
+          centerMapOnPlacedActor(ds.element);
+        }
       }
       // Click: toggle pin
       setPinnedToken(prev => {
@@ -3574,7 +3656,7 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, viewZoom, viewPanLeft, viewPanTop, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, viewZoom, viewPanLeft, viewPanTop, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap]);
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {
@@ -4899,6 +4981,7 @@ export function BattleMap({
             onClose={() => setPinnedToken(null)}
             anchorX={pinnedToken.anchorX}
             anchorY={pinnedToken.anchorY}
+            tableId={tableId}
           />
         );
       })()}

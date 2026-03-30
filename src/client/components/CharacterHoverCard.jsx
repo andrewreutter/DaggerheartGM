@@ -247,6 +247,9 @@ export function CharacterHoverCard({
   /** When true, identity header is omitted (Game Table shared title bar above sheet + editor). */
   omitHeader = false,
 }) {
+  /** Manual Hope/Stress/Armor/HP tracks — GM only on Game Table (players keep `updateFn` for rolls, features, etc.). */
+  const gmResourceTrackCheckboxEdits = !isPlayer;
+
   const [showDebug, setShowDebug] = useState(false);
   const [devastatingActive, setDevastatingActive] = useState(false);
   const [selectedRollModIndex, setSelectedRollModIndex] = useState(null);
@@ -279,9 +282,9 @@ export function CharacterHoverCard({
     [pendingBanners, lifeSupportSelections, el.instanceId]
   );
 
-  /** Wires DEFENSE stat-block CheckboxTracks — mirrors the Resources section (pending GM ack, reinforced clear, etc.). */
+  /** Wires DEFENSE stat-block CheckboxTracks — mirrors the Resources section (manual edits apply immediately; reinforced clear, etc.). */
   const defenseTrackInteraction = useMemo(() => {
-    if (!updateFn) return null;
+    if (!updateFn || !gmResourceTrackCheckboxEdits) return null;
     const id = el.instanceId;
     const pr = pendingResourceCosts[id] ?? {};
     const out = { stress: undefined, armor: undefined, hp: undefined };
@@ -339,11 +342,12 @@ export function CharacterHoverCard({
     lifeSupportHealSlots,
     queueManualTrackEdit,
     consumePendingStressForManualMark,
+    gmResourceTrackCheckboxEdits,
   ]);
 
   /** Header Hope row — same pending/ack semantics as Resources Hope {@link CheckboxTrack}. */
   const hopeTrackInteraction = useMemo(() => {
-    if (!updateFn) return null;
+    if (!updateFn || !gmResourceTrackCheckboxEdits) return null;
     const id = el.instanceId;
     const maxHope = el.maxHope ?? 6;
     if (maxHope <= 0) return null;
@@ -361,7 +365,7 @@ export function CharacterHoverCard({
       verbs: ['Gain', 'Spend'],
       pulseOnDecreaseOnly: true,
     };
-  }, [updateFn, el, pendingResourceCosts, manualAck, queueManualTrackEdit]);
+  }, [updateFn, el, pendingResourceCosts, manualAck, queueManualTrackEdit, gmResourceTrackCheckboxEdits]);
 
   const openTargetMenu = (value) => {
     setTargetMenuPending(value);
@@ -1327,6 +1331,7 @@ export function CharacterHoverCard({
                   ? 'interactive'
                   : 'preview'
               }
+              gmResourceTrackCheckboxEdits={gmResourceTrackCheckboxEdits}
             />
             <CharacterAbilityList
               el={displayEl}
@@ -1362,9 +1367,11 @@ export function CharacterHoverCard({
                           filled={Math.max(0, remainingServer - hopePending)}
                           pendingFilled={hopePending + manualAck.hopeGain}
                           pendingClearFilled={manualAck.hopeSpend}
-                          onSetFilled={queueManualTrackEdit
-                            ? (h) => queueManualTrackEdit(el, { hope: h })
-                            : (h) => updateFn(el.instanceId, { hope: h })}
+                          onSetFilled={gmResourceTrackCheckboxEdits
+                            ? (queueManualTrackEdit
+                              ? (h) => queueManualTrackEdit(el, { hope: h })
+                              : (h) => updateFn(el.instanceId, { hope: h }))
+                            : undefined}
                           trackKind="hope"
                           label="Hope"
                           verbs={['Gain', 'Spend']}
@@ -1385,17 +1392,19 @@ export function CharacterHoverCard({
                         filled={el.currentArmor || 0}
                         pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
                         pendingClearFilled={manualAck.armorClear}
-                        onSetFilled={queueManualTrackEdit
-                          ? (v) => {
-                              const upd = { currentArmor: v };
-                              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                              queueManualTrackEdit(el, upd);
-                            }
-                          : (v) => {
-                              const upd = { currentArmor: v };
-                              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                              updateFn(el.instanceId, upd);
-                            }}
+                        onSetFilled={gmResourceTrackCheckboxEdits
+                          ? (queueManualTrackEdit
+                            ? (v) => {
+                                const upd = { currentArmor: v };
+                                if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                                queueManualTrackEdit(el, upd);
+                              }
+                            : (v) => {
+                                const upd = { currentArmor: v };
+                                if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                                updateFn(el.instanceId, upd);
+                              })
+                          : undefined}
                         trackKind="armor"
                         label="Armor"
                         verbs={['Mark', 'Clear']}
@@ -1411,9 +1420,11 @@ export function CharacterHoverCard({
                         filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
                         pendingFilled={manualAck.hpDamageAdd}
                         pendingClearFilled={manualAck.hpHealSlots + lifeSupportHealSlots}
-                        onSetFilled={queueManualTrackEdit
-                          ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
-                          : (dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })}
+                        onSetFilled={gmResourceTrackCheckboxEdits
+                          ? (queueManualTrackEdit
+                            ? (dmg) => queueManualTrackEdit(el, { currentHp: (el.maxHp || 0) - dmg })
+                            : (dmg) => updateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg }))
+                          : undefined}
                         trackKind="hp"
                         label="HP"
                         verbs={['Mark', 'Clear']}
@@ -1429,13 +1440,15 @@ export function CharacterHoverCard({
                         filled={el.currentStress || 0}
                         pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
                         pendingClearFilled={manualAck.stressClear}
-                        onSetFilled={queueManualTrackEdit
-                          ? (s) => queueManualTrackEdit(el, { currentStress: s })
-                          : (s) => {
-                              const prev = el.currentStress ?? 0;
-                              if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
-                              updateFn(el.instanceId, { currentStress: s });
-                            }}
+                        onSetFilled={gmResourceTrackCheckboxEdits
+                          ? (queueManualTrackEdit
+                            ? (s) => queueManualTrackEdit(el, { currentStress: s })
+                            : (s) => {
+                                const prev = el.currentStress ?? 0;
+                                if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
+                                updateFn(el.instanceId, { currentStress: s });
+                              })
+                          : undefined}
                         trackKind="stress"
                         label="Stress"
                         verbs={['Mark', 'Clear']}

@@ -13,8 +13,40 @@ function sameIndicesByRow(a, b) {
   return a.every((row, i) => row.length === b[i].length && row.every((v, j) => v === b[i][j]));
 }
 
+/** Matches “selected” sky fills from {@link V2_INLINE_SEG_ON} / sheet palettes before merge. */
 function isSegmentOn(className) {
-  return typeof className === 'string' && /\bbg-sky-950\b/.test(className);
+  if (typeof className !== 'string') return false;
+  return (
+    /\bbg-sky-950\b/.test(className) ||
+    /\bbg-sky-500\b/.test(className) ||
+    /\bbg-sky-600\b/.test(className)
+  );
+}
+
+/** Walks Tooltip wrappers; prefers explicit `aria-pressed` (e.g. iconGrid current selection) over class heuristics. */
+function findButtonAriaPressed(el) {
+  if (!el || typeof el !== 'object') return undefined;
+  if (el.type === 'button') {
+    const p = el.props?.['aria-pressed'];
+    if (p === true) return true;
+    if (p === false) return false;
+    return undefined;
+  }
+  const ch = el.props?.children;
+  if (ch == null) return undefined;
+  for (const c of Children.toArray(ch)) {
+    const r = findButtonAriaPressed(c);
+    if (r !== undefined) return r;
+  }
+  return undefined;
+}
+
+function resolveSegmentOn(child) {
+  const origClass = findButtonClassName(child);
+  const pressed = findButtonAriaPressed(child);
+  if (pressed === true) return true;
+  if (pressed === false) return false;
+  return isSegmentOn(origClass);
 }
 
 /** Inject data attributes on the inner native <button> (e.g. inside Tooltip). */
@@ -62,7 +94,7 @@ function cloneApplySegmentBtn(el, mergedClass) {
  * After flex-wrap layout settles, groups option buttons that share a row into segmented
  * controls (joined borders / divide-x).
  */
-export function V2SegmentedRowWrap({ children, className = '' }) {
+export function V2SegmentedRowWrap({ children, className = '', intrinsicWidth = false }) {
   const containerRef = useRef(null);
   const measureRef = useRef(null);
   const widthRef = useRef(0);
@@ -116,10 +148,12 @@ export function V2SegmentedRowWrap({ children, className = '' }) {
 
   if (n === 0) return null;
 
+  const widthCls = intrinsicWidth ? 'w-auto max-w-full min-w-0' : 'w-full min-w-0';
+
   if (indicesByRow === null) {
     return (
-      <div ref={containerRef} className="w-full min-w-0">
-        <div ref={measureRef} className={`flex flex-wrap gap-1 w-full min-w-0 ${className}`}>
+      <div ref={containerRef} className={widthCls}>
+        <div ref={measureRef} className={`flex flex-wrap gap-1 ${widthCls} ${className}`}>
           {Children.map(children, (child, i) =>
             cloneElement(cloneMeasureMarkers(child, i), { key: child.key ?? i })
           )}
@@ -129,14 +163,13 @@ export function V2SegmentedRowWrap({ children, className = '' }) {
   }
 
   return (
-    <div ref={containerRef} className={`flex flex-col gap-1 w-full min-w-0 ${className}`}>
+    <div ref={containerRef} className={`flex flex-col gap-1 ${widthCls} ${className}`}>
       {indicesByRow.map((row, ri) => (
         <div key={ri} className={V2_SEGMENT_ROW_OUTER}>
           {row.map((idx) => {
             const child = childArray[idx];
             if (!child) return null;
-            const origClass = findButtonClassName(child);
-            const on = isSegmentOn(origClass);
+            const on = resolveSegmentOn(child);
             const merged = `${V2_SEGMENT_BTN_BASE} ${on ? V2_INLINE_SEG_ON : V2_INLINE_SEG_OFF}`;
             return cloneElement(cloneApplySegmentBtn(child, merged), { key: child.key ?? idx });
           })}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   characterSheetTableInteractionFlags,
+  gmResourceTrackCheckboxEditsAllowed,
   showSessionBlockedDiceBanner,
   gateTableOpForPrepMode,
   isPrepModeElementUpdateBlocked,
@@ -100,6 +101,22 @@ describe('table-session-gate', () => {
       const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(false, true, true);
       expect(sheetOwner).toBe(true);
       expect(allowPlayMechanics).toBe(false);
+    });
+
+    it('assigned player with active session: same flags as CharacterHoverCard / sidebar character card tracks', () => {
+      const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(true, true, true);
+      expect(sheetOwner).toBe(true);
+      expect(allowPlayMechanics).toBe(true);
+    });
+  });
+
+  describe('gmResourceTrackCheckboxEditsAllowed', () => {
+    it('is true for GM session', () => {
+      expect(gmResourceTrackCheckboxEditsAllowed(false)).toBe(true);
+    });
+
+    it('is false for player session (manual Hope/HP/Stress/Armor marks are GM-only in UI)', () => {
+      expect(gmResourceTrackCheckboxEditsAllowed(true)).toBe(false);
     });
   });
 

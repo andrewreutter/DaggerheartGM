@@ -1547,6 +1547,7 @@ function App() {
   if (loading) return <div className="min-h-screen bg-dh-surface flex items-center justify-center text-dh">Loading...</div>;
 
   return (
+    <AiUiPreferenceProvider hideAiUi={hideAiUi} setHideAiUi={setHideAiUi}>
     <UnifiedImportProvider
       enabled={!!user && !effectiveIsPlayer}
       saveItem={saveItem}
@@ -1562,7 +1563,6 @@ function App() {
       partyTier={partyTier}
       mapViewportAspect={battleMapViewportAspect}
     >
-    <AiUiPreferenceProvider hideAiUi={hideAiUi} setHideAiUi={setHideAiUi}>
     <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
       {typeof document !== 'undefined' && route.view === 'table' && user && !sessionPlayAllowed && createPortal(
         <SessionBlockedBanner isPlayer={effectiveIsPlayer} sessionStarted={sessionStarted} />,
@@ -1983,8 +1983,8 @@ function App() {
         document.body
       )}
     </div>
-    </AiUiPreferenceProvider>
     </UnifiedImportProvider>
+    </AiUiPreferenceProvider>
   );
 }
 

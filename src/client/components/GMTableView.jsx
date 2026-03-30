@@ -56,6 +56,7 @@ import { AiDismissBuildWithAiLink } from './AiDismissBuildWithAiLink.jsx';
 import {
   characterSheetTableInteractionFlags,
   gateTableOpForPrepMode,
+  gmResourceTrackCheckboxEditsAllowed,
   isPrepModeElementUpdateBlocked,
 } from '../lib/table-session-gate.js';
 import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE, ROLES, TIERS, ENV_TYPES } from '../lib/constants.js';
@@ -83,10 +84,12 @@ import {
 } from './CharacterSheetSourceHighlight.jsx';
 import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
 import { TRAIT_FULL } from './CharacterDisplay.jsx';
-import { getFeatureGetSetStateLines } from '../lib/feature-get-set-state-display.js';
 import { GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
 import { WidthSortedFlexWrap } from './WidthSortedFlexWrap.jsx';
-import { collectV2IsToggleCardFeatureGroups } from '../lib/build-feature-card-model.js';
+import {
+  collectV2FeatureCardValueDisplayLines,
+  collectV2IsToggleCardFeatureGroups,
+} from '../lib/build-feature-card-model.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
@@ -108,6 +111,7 @@ import {
   buildRollBaseBannerNarrationParts,
 } from '../lib/game-table-mechanics.js';
 import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-preroll.js';
+import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
@@ -161,7 +165,6 @@ import {
   applyDevastatingDamageRewriteToRollText,
 } from '../lib/weapon-roll-text.js';
 import {
-  registerV2PendingMapMove,
   clearV2PendingMoveElementsForRoll,
   collectV2PendingMapMoveReEvalUpdates,
   evaluateV2PendingMapMovesForMover,
@@ -169,6 +172,7 @@ import {
   getV2PendingMoveBlockInfo as getV2PendingMoveBlockInfoFromElements,
   migrateV2PendingMapRollId,
 } from '../lib/v2-pending-map-move.js';
+import { buildForcedMovementActionNotification } from '../lib/v2-forced-movement-banner.js';
 import { getExperienceModifierForCharacter, insertExperienceIntoRollText } from '../lib/experience-roll.js';
 import { computeRestBannerRefreshPreview } from '../lib/rest-banner-refresh-preview.js';
 import { runBeforeMarkStress, runBeforeMarkHP, runBeforeMarkArmor } from '../lib/origin-lifecycle.js';
@@ -1560,21 +1564,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     postActionNotification(notification, tableId).catch(() => {});
   };
 
-  /** Manual HP/Stress/Hope/Armor (and companion stress): queue action banner; GM ack applies to table state. */
-  const queueManualTrackEdit = useCallback(
-    async (targetEl, updates) => {
-      if (!targetEl?.instanceId || !updates || Object.keys(updates).length === 0) return;
+  /** Adversary HP/stress: apply immediately (no GM-ack banner). Cancels stale manual-track banners for this instance. */
+  const applyAdversaryManualTrackDirect = useCallback(
+    async (instanceId, updates) => {
+      if (!instanceId || !updates || Object.keys(updates).length === 0) return;
       dismissAllHoverCards();
       for (const r of pendingBanners || []) {
-        if (r._manualTrackEdit && r._targetInstanceId === targetEl.instanceId && r._rollDbId != null) {
+        if (r._manualTrackEdit && r._targetInstanceId === instanceId && r._rollDbId != null) {
           await postBannerAck(r._rollDbId, 'cancel', { tableId }).catch(() => {});
         }
       }
-      const payload = buildManualTrackActionRoll(targetEl, updates);
-      if (isPlayer) handlePlayerActionNotification(payload);
-      else handleActionNotification(payload);
+      updateActiveElement(instanceId, updates);
     },
-    [pendingBanners, tableId, isPlayer]
+    [pendingBanners, tableId, updateActiveElement]
   );
 
   // Concussive (weapon): spend 1 Hope to knock the damage target to Far range (50 ft from attacker).
@@ -1727,6 +1729,102 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     notifier({ _action: true, rollUser: charEl?.name ?? 'Character', actionName, actionText });
   };
 
+  /**
+   * Manual HP/Stress/Hope/Armor (and companion stress): apply to table state immediately, then post
+   * an action banner for the log; Acknowledge only dismisses the banner.
+   */
+  const applyManualTrackUpdatesNow = useCallback(
+    async (targetEl, u) => {
+      const tid = targetEl?.instanceId;
+      if (!tid || !u || Object.keys(u).length === 0) return { ok: false };
+      const el = activeElements.find((e) => e.instanceId === tid);
+      if (!el) return { ok: false };
+
+      const uKeys = Object.keys(u);
+      if (uKeys.length === 1 && uKeys[0] === 'companion' && u.companion != null && el.companion != null) {
+        updateActiveElement(tid, { companion: { ...el.companion, ...u.companion } });
+        return { ok: true };
+      }
+
+      if (u.currentHp !== undefined && el.elementType === 'character') {
+        const prevHp = el.currentHp ?? el.maxHp ?? 0;
+        const nextHp = u.currentHp;
+        if (nextHp < prevHp) {
+          const dmg = prevHp - nextHp;
+          const hpCancel = runBeforeMarkHP(el, dmg, 'manual-track', updateActiveElement, { characters: wrappedPartyCharacters, system });
+          if (hpCancel.cancel) return { ok: false };
+        }
+      }
+
+      if (u.currentArmor !== undefined && el.elementType === 'character') {
+        const prevA = el.currentArmor ?? 0;
+        const nextA = u.currentArmor;
+        if (nextA > prevA) {
+          const armorCancel = runBeforeMarkArmor(el, nextA - prevA, 'manual-track', updateActiveElement, { characters: wrappedPartyCharacters, system });
+          if (armorCancel.cancel) return { ok: false };
+        }
+      }
+
+      let finalUpdates = { ...u };
+      if (u.currentStress !== undefined && el.elementType === 'character') {
+        const prevS = el.currentStress ?? 0;
+        const nextS = u.currentStress;
+        if (nextS > prevS) {
+          const stressCancel = await runBeforeMarkStress(el, nextS - prevS, 'manual-track', updateActiveElement, {
+            postRollSilent,
+            gmUid: isPlayer ? tableId : null,
+            postAction: postActionForStress,
+            characters: wrappedPartyCharacters,
+            system,
+          });
+          if (stressCancel.cancel) return { ok: false };
+          const effective = nextS - prevS - (stressCancel.reduceBy ?? 0);
+          const maxS = el.maxStress ?? 6;
+          finalUpdates.currentStress = Math.min(prevS + Math.max(0, effective), maxS);
+          const appliedDelta = finalUpdates.currentStress - prevS;
+          if (appliedDelta > 0) {
+            setPendingResourceCosts((prev) => reducePendingStressAfterManualMark(prev, tid, appliedDelta));
+          }
+        }
+      }
+
+      if (el.reinforcedActive && u.currentArmor != null && u.currentArmor < (el.currentArmor ?? 0)) {
+        finalUpdates.reinforcedActive = false;
+      }
+
+      updateActiveElement(tid, finalUpdates);
+      return { ok: true };
+    },
+    [
+      activeElements,
+      updateActiveElement,
+      wrappedPartyCharacters,
+      system,
+      postRollSilent,
+      isPlayer,
+      tableId,
+      postActionForStress,
+    ]
+  );
+
+  const queueManualTrackEdit = useCallback(
+    async (targetEl, updates) => {
+      if (!targetEl?.instanceId || !updates || Object.keys(updates).length === 0) return;
+      dismissAllHoverCards();
+      for (const r of pendingBanners || []) {
+        if (r._manualTrackEdit && r._targetInstanceId === targetEl.instanceId && r._rollDbId != null) {
+          await postBannerAck(r._rollDbId, 'cancel', { tableId }).catch(() => {});
+        }
+      }
+      const payload = buildManualTrackActionRoll(targetEl, updates);
+      const { ok } = await applyManualTrackUpdatesNow(targetEl, updates);
+      if (!ok) return;
+      if (isPlayer) handlePlayerActionNotification(payload);
+      else handleActionNotification(payload);
+    },
+    [pendingBanners, tableId, isPlayer, applyManualTrackUpdatesNow]
+  );
+
   // Retracting Claws (Katari): apply Vulnerable to the selected adversary (no damage).
   const handleApplyVulnerable = (target) => {
     if (target?.type !== 'adversary') return;
@@ -1847,71 +1945,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     }
 
-    // Manual resource track edit (queued CheckboxTrack change) — apply on GM ack with origin lifecycle hooks.
+    // Manual resource track edit: state was applied when the edit was made; ack only dismisses.
     if (roll._manualTrackEdit && roll._targetInstanceId && roll._manualUpdates) {
-      const tid = roll._targetInstanceId;
-      const u = roll._manualUpdates;
-      const targetEl = activeElements.find((e) => e.instanceId === tid);
-      if (!targetEl) {
-        if (roll._rollDbId) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
-        return;
-      }
-      const applyOne = (updates) => sendOp({ op: 'update-element', instanceId: tid, updates });
-
-      const uKeys = Object.keys(u);
-      if (uKeys.length === 1 && uKeys[0] === 'companion' && u.companion != null && targetEl.companion != null) {
-        applyOne({ companion: { ...targetEl.companion, ...u.companion } });
-        if (roll._rollDbId) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
-        return;
-      }
-
-      if (u.currentHp !== undefined && targetEl.elementType === 'character') {
-        const prevHp = targetEl.currentHp ?? targetEl.maxHp ?? 0;
-        const nextHp = u.currentHp;
-        if (nextHp < prevHp) {
-          const dmg = prevHp - nextHp;
-          const hpCancel = runBeforeMarkHP(targetEl, dmg, 'manual-track', updateActiveElement, { characters: wrappedPartyCharacters, system });
-          if (hpCancel.cancel) return;
-        }
-      }
-
-      if (u.currentArmor !== undefined && targetEl.elementType === 'character') {
-        const prevA = targetEl.currentArmor ?? 0;
-        const nextA = u.currentArmor;
-        if (nextA > prevA) {
-          const armorCancel = runBeforeMarkArmor(targetEl, nextA - prevA, 'manual-track', updateActiveElement, { characters: wrappedPartyCharacters, system });
-          if (armorCancel.cancel) return;
-        }
-      }
-
-      let finalUpdates = { ...u };
-      if (u.currentStress !== undefined && targetEl.elementType === 'character') {
-        const prevS = targetEl.currentStress ?? 0;
-        const nextS = u.currentStress;
-        if (nextS > prevS) {
-          const stressCancel = await runBeforeMarkStress(targetEl, nextS - prevS, 'manual-track', updateActiveElement, {
-            postRollSilent,
-            gmUid: isPlayer ? tableId : null,
-            postAction: postActionForStress,
-            characters: wrappedPartyCharacters,
-            system,
-          });
-          if (stressCancel.cancel) return;
-          const effective = nextS - prevS - (stressCancel.reduceBy ?? 0);
-          const maxS = targetEl.maxStress ?? 6;
-          finalUpdates.currentStress = Math.min(prevS + Math.max(0, effective), maxS);
-          const appliedDelta = finalUpdates.currentStress - prevS;
-          if (appliedDelta > 0) {
-            setPendingResourceCosts((prev) => reducePendingStressAfterManualMark(prev, tid, appliedDelta));
-          }
-        }
-      }
-
-      if (targetEl.reinforcedActive && u.currentArmor != null && u.currentArmor < (targetEl.currentArmor ?? 0)) {
-        finalUpdates.reinforcedActive = false;
-      }
-
-      sendOp({ op: 'update-element', instanceId: tid, updates: finalUpdates });
       if (roll._rollDbId) postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
       return;
     }
@@ -3795,6 +3830,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         if (chip._featureName === 'Persuasive') {
           rollWrapper.addRollBonus(2);
         }
+        {
+          const { pendingMeta, displayName } = applyRangerFocusV2IntentToPending({
+            pendingMeta: pending.meta,
+            displayName: pending.displayName,
+            chip,
+          });
+          pending.meta = pendingMeta;
+          pending.displayName = displayName;
+        }
         const line = chip.label || chip.name || chip._featureName || 'Feature';
         const costBits = [];
         if (chip.hopeCost) costBits.push(`${chip.hopeCost} Hope`);
@@ -4306,27 +4350,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         sendOp({ op: 'update-elements', updates });
       }
 
-      for (const m of localMutations) {
-        if (
-          m.type === 'move' &&
-          m.payload?.rollDbId != null &&
-          typeof m.payload.conditionFn === 'function'
-        ) {
-          registerV2PendingMapMove({
-            rollDbId: m.payload.rollDbId,
-            moverInstanceId: m.payload.instanceId,
-            conditionFn: m.payload.conditionFn,
-            desiredCondition: m.payload.desiredCondition,
-            description: m.payload.description,
-            chipStub: {
-              _featureName: chip._featureName,
-              _ownerInstanceId: chip._ownerInstanceId,
-              _crossSheetViewerInstanceId: chip._crossSheetViewerInstanceId,
-            },
-          });
-        }
-      }
-
       // Fearless / engine: setRollOutcome('hope') — same as Phase 1 roll.setWithHope() + chipHopeConvertedIds ack path.
       if (roll._rollDbId != null && Array.isArray(engineRollDisplayOnly)) {
         for (const m of engineRollDisplayOnly) {
@@ -4353,6 +4376,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               extraDamage: dice,
               extraDamageLabel,
               suppressAncestryFeature: chip._featureName,
+              tableId,
             });
             if (newRoll?._rollDbId != null) {
               currentBannerId = newRoll._rollDbId;
@@ -4414,6 +4438,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           } catch (e) {
             console.warn('[V2] postBannerActionAddStatic failed:', e);
           }
+        } else if (f.kind === 'forcedMovementNotice') {
+          const p = f.payload || f.mutation?.payload;
+          if (p) {
+            const notice = buildForcedMovementActionNotification(p, activeElements);
+            if (chip?._featureName) notice.actionName = String(chip._featureName).slice(0, 120);
+            handleActionNotification(notice);
+          }
         }
       }
 
@@ -4424,7 +4455,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
       setV2BannerConsumedOnUseByRollDbId((prev) => recordV2BannerConsumedOnUse(currentBannerId, chip, prev));
     },
-    [isPlayer, activeElements, srdData, fearCount, mapConfig, tableFeatureState, sendOp, tableId]
+    [
+      isPlayer,
+      activeElements,
+      srdData,
+      fearCount,
+      mapConfig,
+      tableFeatureState,
+      sendOp,
+      tableId,
+      handleActionNotification,
+    ]
   );
 
   const handlePlayerV2ReviewChip = useCallback(
@@ -5112,10 +5153,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
             const isMyCharacter = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
+            const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
+              sessionPlayAllowed,
+              isPlayer,
+              isMyCharacter,
+            );
+            const gmTrackCheckbox = gmResourceTrackCheckboxEditsAllowed(isPlayer);
+            const cardTrackUpdateFn = sheetOwner && gmTrackCheckbox ? updateActiveElement : undefined;
+            const cardQueueManualTracks = allowPlayMechanics && gmTrackCheckbox ? queueManualTrackEdit : undefined;
             const pendingManual = findPendingManualTrackBanner(pendingBanners, el.instanceId);
             const manualAck = getPendingManualTrackAckDeltas(el, pendingManual);
             const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, el.instanceId);
-            const featureGetSetLines = getFeatureGetSetStateLines(el);
             const displayChar = characterDisplayByInstanceId.get(el.instanceId) ?? el;
             const charComplete = isCharacterComplete(el);
             const isIncomplete = !charComplete.complete;
@@ -5193,7 +5241,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 </div>
               )}
 
-              {/* Stat block */}
+              {/* Stat block — same CheckboxTrack wiring as CharacterHoverCard Resources */}
               <div className="p-2 space-y-1.5 rounded-b-lg">
                 {/* Hope track */}
                 {(() => {
@@ -5207,11 +5255,17 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                         filled={Math.max(0, currentHope - hopePending)}
                         pendingFilled={hopePending + manualAck.hopeGain}
                         pendingClearFilled={manualAck.hopeSpend}
+                        onSetFilled={cardQueueManualTracks
+                          ? (h) => cardQueueManualTracks(el, { hope: h })
+                          : cardTrackUpdateFn
+                            ? (h) => cardTrackUpdateFn(el.instanceId, { hope: h })
+                            : undefined}
                         trackKind="hope"
                         label="Hope"
                         verbs={['Gain', 'Spend']}
                         pulseOnDecreaseOnly
                         slotTypeTooltip
+                        stopSlotClickPropagation
                       />
                     </div>
                   );
@@ -5261,10 +5315,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       filled={el.currentArmor || 0}
                       pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
                       pendingClearFilled={manualAck.armorClear}
+                      onSetFilled={cardQueueManualTracks
+                        ? (v) => {
+                            const upd = { currentArmor: v };
+                            if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                            cardQueueManualTracks(el, upd);
+                          }
+                        : cardTrackUpdateFn
+                          ? (v) => {
+                              const upd = { currentArmor: v };
+                              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
+                              cardTrackUpdateFn(el.instanceId, upd);
+                            }
+                          : undefined}
                       trackKind="armor"
                       label="Armor"
                       verbs={['Mark', 'Clear']}
                       slotTypeTooltip
+                      stopSlotClickPropagation
                     />
                   </div>
                 )}
@@ -5276,10 +5344,16 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
                       pendingFilled={manualAck.hpDamageAdd}
                       pendingClearFilled={manualAck.hpHealSlots + lsHeal}
+                      onSetFilled={cardQueueManualTracks
+                        ? (dmg) => cardQueueManualTracks(el, { currentHp: (el.maxHp || 0) - dmg })
+                        : cardTrackUpdateFn
+                          ? (dmg) => cardTrackUpdateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })
+                          : undefined}
                       trackKind="hp"
                       label="HP"
                       verbs={['Mark', 'Clear']}
                       slotTypeTooltip
+                      stopSlotClickPropagation
                     />
                   </div>
                 )}
@@ -5291,10 +5365,20 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                       filled={el.currentStress || 0}
                       pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
                       pendingClearFilled={manualAck.stressClear}
+                      onSetFilled={cardQueueManualTracks
+                        ? (s) => cardQueueManualTracks(el, { currentStress: s })
+                        : cardTrackUpdateFn
+                          ? (s) => {
+                              const prev = el.currentStress ?? 0;
+                              if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
+                              cardTrackUpdateFn(el.instanceId, { currentStress: s });
+                            }
+                          : undefined}
                       trackKind="stress"
                       label="Stress"
                       verbs={['Mark', 'Clear']}
                       slotTypeTooltip
+                      stopSlotClickPropagation
                     />
                   </div>
                 )}
@@ -5304,57 +5388,62 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     {el.conditions}
                   </div>
                 )}
-                {/* V2 isToggle card chips — same chip row styling as sheet Actions (`actionsStripLayout`). GM only. */}
+                {/* V2 compact strip: isToggle chips + iconGrid selects — same styling as sheet Actions (`actionsStripLayout`). GM only. */}
                 {!isPlayer && v2Registry && srdData && (() => {
                   const displayElPanel = characterDisplayByInstanceId.get(el.instanceId) ?? el;
                   const toggleGroups = collectV2IsToggleCardFeatureGroups(displayElPanel, v2TableContextForPanels);
-                  if (toggleGroups.length === 0) return null;
+                  const cardValueLines = collectV2FeatureCardValueDisplayLines(
+                    displayElPanel,
+                    v2TableContextForPanels,
+                  );
+                  if (toggleGroups.length === 0 && cardValueLines.length === 0) return null;
                   const channeled = displayElPanel.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement ?? null;
                   return (
                     <div className="pt-1.5 mt-1 border-t border-dh-border/80 min-w-0">
-                      <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
-                        {toggleGroups.map((g, gi) => (
-                          <GuideFeatureCardChips
-                            key={`${g.featRow._sourceScopeKey || g.featRow.name}-${g.featRow.type}-${gi}`}
-                            model={g.model}
-                            tableForChips={g.table}
-                            featRow={g.featRow}
-                            el={displayElPanel}
-                            featureKey={g.featRow._sourceScopeKey || g.featRow.name}
-                            v2TableContext={v2TableContextForPanels}
-                            interactionMode="interactive"
-                            onlyIsToggle
-                            actionsStripLayout
-                            stripKeyPrefix={g.featRow._sourceScopeKey || g.featRow.name}
-                            activeChanneledElement={g.featRow.name === 'Elemental Incarnation' ? channeled : undefined}
-                            stressMaxed={
-                              g.featRow.name === 'Elemental Incarnation'
-                                ? (el.currentStress ?? 0) >= (el.maxStress ?? 6)
-                                : undefined
-                            }
-                            onV2CardChip={handleCharacterPanelV2CardChip(el, displayElPanel)}
-                            pendingBanners={pendingBanners}
-                            chipTooltipPlacement="right"
-                          />
-                        ))}
-                      </WidthSortedFlexWrap>
+                      {toggleGroups.length > 0 && (
+                        <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
+                          {toggleGroups.map((g, gi) => (
+                            <GuideFeatureCardChips
+                              key={`${g.featRow._sourceScopeKey || g.featRow.name}-${g.featRow.type}-${gi}`}
+                              model={g.model}
+                              tableForChips={g.table}
+                              featRow={g.featRow}
+                              el={displayElPanel}
+                              featureKey={g.featRow._sourceScopeKey || g.featRow.name}
+                              v2TableContext={v2TableContextForPanels}
+                              interactionMode="interactive"
+                              onlyIsToggle
+                              actionsStripLayout
+                              stripKeyPrefix={g.featRow._sourceScopeKey || g.featRow.name}
+                              activeChanneledElement={g.featRow.name === 'Elemental Incarnation' ? channeled : undefined}
+                              stressMaxed={
+                                g.featRow.name === 'Elemental Incarnation'
+                                  ? (el.currentStress ?? 0) >= (el.maxStress ?? 6)
+                                  : undefined
+                              }
+                              onV2CardChip={handleCharacterPanelV2CardChip(el, displayElPanel)}
+                              pendingBanners={pendingBanners}
+                              chipTooltipPlacement="right"
+                            />
+                          ))}
+                        </WidthSortedFlexWrap>
+                      )}
+                      {cardValueLines.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start min-w-0">
+                          {cardValueLines.map((ln, cvi) => (
+                            <span
+                              key={`${ln.value}-${cvi}`}
+                              className={`inline-flex max-w-full min-w-0 items-center rounded px-1.5 py-1 text-left border transition-colors ${ln.chipClassName}`}
+                              title={ln.value}
+                            >
+                              <span className="text-sm font-semibold leading-tight min-w-0 truncate">{ln.value}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
-                {featureGetSetLines.length > 0 && (
-                  <div className="pt-1.5 mt-1 border-t border-dh-border/80 min-w-0">
-                    <p className="text-[9px] font-semibold text-dh-muted uppercase tracking-wide mb-0.5">
-                      Feature state
-                    </p>
-                    <div className="font-mono text-[9px] text-dh leading-snug space-y-0.5 break-all">
-                      {featureGetSetLines.map(({ lineKey, value }) => (
-                        <div key={lineKey}>
-                          <span className="text-dh-muted">{lineKey}:</span> {value}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
               </>
               )}
@@ -6399,9 +6488,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 )}
                 <div className="p-2 space-y-2">
                   {instances.map((inst, idx) => {
-                    const pendingManualAdv = findPendingManualTrackBanner(pendingBanners, inst.instanceId);
-                    const manualAckAdv = getPendingManualTrackAckDeltas(inst, pendingManualAdv);
-                    const advTargetEl = { ...inst, name: displayEl.name, hp_max: displayEl.hp_max, stress_max: displayEl.stress_max, elementType: 'adversary' };
                     const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
                     return (
                       <div
@@ -6470,9 +6556,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                             <CheckboxTrack
                               total={displayEl.hp_max || 0}
                               filled={hpDamage}
-                              pendingFilled={manualAckAdv.hpDamageAdd}
-                              pendingClearFilled={manualAckAdv.hpHealSlots}
-                              onSetFilled={(dmg) => queueManualTrackEdit(advTargetEl, { currentHp: (displayEl.hp_max || 0) - dmg })}
+                              onSetFilled={gmResourceTrackCheckboxEditsAllowed(isPlayer)
+                                ? (dmg) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentHp: (displayEl.hp_max || 0) - dmg })
+                                : undefined}
                               trackKind="hp"
                               label="HP"
                               verbs={['Mark', 'Clear']}
@@ -6491,9 +6577,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                             <CheckboxTrack
                               total={displayEl.stress_max || 0}
                               filled={inst.currentStress || 0}
-                              pendingFilled={manualAckAdv.stressAdd}
-                              pendingClearFilled={manualAckAdv.stressClear}
-                              onSetFilled={(s) => queueManualTrackEdit(advTargetEl, { currentStress: s })}
+                              onSetFilled={gmResourceTrackCheckboxEditsAllowed(isPlayer)
+                                ? (s) => void applyAdversaryManualTrackDirect(inst.instanceId, { currentStress: s })
+                                : undefined}
                               trackKind="stress"
                               label="Stress"
                               verbs={['Mark', 'Clear']}
@@ -7255,6 +7341,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     count={liveInstances.length}
                     instances={liveInstances}
                     updateFn={updateActiveElement}
+                    allowResourceTrackEdits={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
                     showInstanceRemove={false}
                     featureCountdowns={featureCountdowns}
                     updateCountdown={null}
@@ -7379,6 +7466,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   count={displayElement.instances.length}
                   instances={displayElement.instances}
                   updateFn={updateActiveElement}
+                  allowResourceTrackEdits={gmResourceTrackCheckboxEditsAllowed(isPlayer)}
                   showInstanceRemove={false}
                   featureCountdowns={featureCountdowns}
                   updateCountdown={null}

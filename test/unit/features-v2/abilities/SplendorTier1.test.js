@@ -43,48 +43,212 @@ describe('Splendor Tier 1 — Bolt Beacon', () => {
   });
 });
 
+function mendingTouchTable(casterId, allyId) {
+  return buildTableSnapshot(
+    mockGameState({
+      activeElements: [
+        mockCharacter({
+          instanceId: casterId,
+          hope: 4,
+          spellcastTrait: 'presence',
+          traits: { presence: 2 },
+        }),
+        mockCharacter({
+          instanceId: allyId,
+          currentHp: 2,
+          maxHp: 6,
+          currentStress: 3,
+          maxStress: 6,
+        }),
+      ],
+      _ownerInstanceId: casterId,
+      _featureKey: 'Mending Touch',
+      action: {
+        type: 'free',
+        actorInstanceId: casterId,
+        targetInstanceIds: [],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: undefined,
+    })
+  );
+}
+
+function mendingTouchTableThree(casterId, allyDamagedId, allyFullId) {
+  return buildTableSnapshot(
+    mockGameState({
+      activeElements: [
+        mockCharacter({
+          instanceId: casterId,
+          hope: 4,
+          spellcastTrait: 'presence',
+          traits: { presence: 2 },
+        }),
+        mockCharacter({
+          instanceId: allyDamagedId,
+          currentHp: 3,
+          maxHp: 6,
+          currentStress: 2,
+          maxStress: 6,
+        }),
+        mockCharacter({
+          instanceId: allyFullId,
+          currentHp: 6,
+          maxHp: 6,
+          currentStress: 0,
+          maxStress: 6,
+        }),
+      ],
+      _ownerInstanceId: casterId,
+      _featureKey: 'Mending Touch',
+      action: {
+        type: 'free',
+        actorInstanceId: casterId,
+        targetInstanceIds: [],
+        effects: [],
+        appliedEffects: [],
+      },
+      rolls: undefined,
+    })
+  );
+}
+
 describe('Splendor Tier 1 — Mending Touch', () => {
-  it('main card costs 2 Hope and queues actionLoop', () => {
-    const tbl = freeActionTable('m1', 'Mending Touch');
+  it('selectTargets lists other PCs only, not self', () => {
+    const tbl = mendingTouchTable('m-cast', 'm-ally');
+    const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'm-cast' }], 'card', tbl);
+    const clearStress = chips.find((c) => c.name === 'Mending Touch — 1 Stress');
+    const targets = clearStress?.selectTargets?.(tbl) ?? [];
+    const ids = targets.map((t) => t.instanceId);
+    expect(ids).toContain('m-ally');
+    expect(ids).not.toContain('m-cast');
+  });
+
+  it('Clear Hit Point selectTargets omits allies at full HP (no marked HP)', () => {
+    const tbl = mendingTouchTableThree('cast-hp', 'ally-hurt', 'ally-full');
+    const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'cast-hp' }], 'card', tbl);
+    const chip = chips.find((c) => c.name === 'Mending Touch — 1 HP');
+    const ids = (chip?.selectTargets?.(tbl) ?? []).map((t) => t.instanceId);
+    expect(ids).toContain('ally-hurt');
+    expect(ids).not.toContain('ally-full');
+  });
+
+  it('Clear Stress selectTargets omits allies with no marked Stress', () => {
+    const tbl = mendingTouchTableThree('cast-st', 'ally-hurt', 'ally-full');
+    const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'cast-st' }], 'card', tbl);
+    const chip = chips.find((c) => c.name === 'Mending Touch — 1 Stress');
+    const ids = (chip?.selectTargets?.(tbl) ?? []).map((t) => t.instanceId);
+    expect(ids).toContain('ally-hurt');
+    expect(ids).not.toContain('ally-full');
+  });
+
+  it('Deeper Clear Hit Points selectTargets requires at least 2 marked HP', () => {
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [
+          mockCharacter({ instanceId: 'cast-d', hope: 4, spellcastTrait: 'presence', traits: { presence: 2 } }),
+          mockCharacter({
+            instanceId: 'ally-1hp',
+            currentHp: 5,
+            maxHp: 6,
+            currentStress: 0,
+            maxStress: 6,
+          }),
+        ],
+        _ownerInstanceId: 'cast-d',
+        _featureKey: 'Mending Touch',
+        action: {
+          type: 'free',
+          actorInstanceId: 'cast-d',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+    const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'cast-d' }], 'card', tbl);
+    const chip = chips.find((c) => c.name === 'Deeper Understanding — 2 HP');
+    const ids = (chip?.selectTargets?.(tbl) ?? []).map((t) => t.instanceId);
+    expect(ids).toHaveLength(0);
+  });
+
+  it('Clear Stress spends 2 Hope and clears 1 Stress on chosen ally', () => {
+    const tbl = mendingTouchTable('m1', 'ally-1');
     const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'm1' }], 'card', tbl);
-    const main = chips.find((c) => c.name === 'Mending Touch');
-    expect(main?.hopeCost).toBe(2);
-    const m = activateChip(main, tbl, makeChipState());
-    deductChipCosts(main, tbl);
+    const chip = chips.find((c) => c.name === 'Mending Touch — 1 Stress');
+    expect(chip?.hopeCost).toBe(2);
+    const m = activateChip(chip, tbl, makeChipState(), { selectedTargetIds: ['ally-1'] });
+    deductChipCosts(chip, tbl);
     const fromCost = applyMutations(tbl);
-    expect([...m, ...fromCost]).toContainEqual(
+    const all = [...m, ...fromCost];
+    expect(all).toContainEqual(
       expect.objectContaining({
         type: 'spendHope',
         payload: expect.objectContaining({ instanceId: 'm1', amount: 2 }),
       })
     );
-    expect(m).toContainEqual(
+    expect(all).toContainEqual(
       expect.objectContaining({
-        type: 'actionLoop',
-        payload: expect.objectContaining({ title: 'Mending Touch' }),
+        type: 'clearStress',
+        payload: { instanceId: 'ally-1', amount: 1 },
       })
     );
   });
 
-  it('Deeper Understanding sub-card is once per long rest, costs 2 Hope, queues actionLoop', () => {
-    const tbl = freeActionTable('m2', 'Mending Touch');
+  it('Clear Hit Point spends 2 Hope and clears 1 HP on chosen ally', () => {
+    const tbl = mendingTouchTable('m2', 'ally-2');
     const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'm2' }], 'card', tbl);
-    const sub = chips.find((c) => c.name === 'Mending Touch — Deeper Understanding');
-    expect(sub?.frequency).toBe('longRest');
-    expect(sub?.hopeCost).toBe(2);
-    const m = activateChip(sub, tbl, makeChipState());
-    deductChipCosts(sub, tbl);
+    const chip = chips.find((c) => c.name === 'Mending Touch — 1 HP');
+    const m = activateChip(chip, tbl, makeChipState(), { selectedTargetIds: ['ally-2'] });
+    deductChipCosts(chip, tbl);
     const fromCost = applyMutations(tbl);
-    expect([...m, ...fromCost]).toContainEqual(
+    const all = [...m, ...fromCost];
+    expect(all).toContainEqual(
       expect.objectContaining({
         type: 'spendHope',
         payload: expect.objectContaining({ instanceId: 'm2', amount: 2 }),
       })
     );
-    expect(m).toContainEqual(
+    expect(all).toContainEqual(
       expect.objectContaining({
-        type: 'actionLoop',
-        payload: expect.objectContaining({ title: 'Mending Touch — Deeper Understanding' }),
+        type: 'clearHP',
+        payload: { instanceId: 'ally-2', amount: 1 },
+      })
+    );
+  });
+
+  it('Deeper Understanding — Clear Stress is long rest, spends 2 Hope, clears 2 Stress', () => {
+    const tbl = mendingTouchTable('m3', 'ally-3');
+    const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'm3' }], 'card', tbl);
+    const chip = chips.find((c) => c.name === 'Deeper Understanding — 2 Stress');
+    expect(chip?.frequency).toBe('longRest');
+    expect(chip?.hopeCost).toBe(2);
+    const m = activateChip(chip, tbl, makeChipState(), { selectedTargetIds: ['ally-3'] });
+    deductChipCosts(chip, tbl);
+    const fromCost = applyMutations(tbl);
+    const all = [...m, ...fromCost];
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'clearStress',
+        payload: { instanceId: 'ally-3', amount: 2 },
+      })
+    );
+  });
+
+  it('Deeper Understanding — Clear Hit Points clears 2 HP', () => {
+    const tbl = mendingTouchTable('m4', 'ally-4');
+    const chips = collectChips([{ ...MendingTouch, _ownerInstanceId: 'm4' }], 'card', tbl);
+    const chip = chips.find((c) => c.name === 'Deeper Understanding — 2 HP');
+    const m = activateChip(chip, tbl, makeChipState(), { selectedTargetIds: ['ally-4'] });
+    deductChipCosts(chip, tbl);
+    const fromCost = applyMutations(tbl);
+    const all = [...m, ...fromCost];
+    expect(all).toContainEqual(
+      expect.objectContaining({
+        type: 'clearHP',
+        payload: { instanceId: 'ally-4', amount: 2 },
       })
     );
   });

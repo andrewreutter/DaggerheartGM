@@ -71,6 +71,7 @@ export function isCheckboxTrackPreviewSlotChanged(i, filled, effectiveFilled) {
  * @param {object} props
  * @param {CheckboxTrackKind} [props.trackKind] — icon + color palette.
  * @param {boolean} [props.slotTypeTooltip] — when true, each slot shows `label` in the native tooltip (Characters panel); default leaves other surfaces unchanged.
+ * @param {boolean} [props.stopSlotClickPropagation] — when true and slots are buttons, `click` stops propagation (e.g. Game Table character card opens sheet on card click; only slot icons should not bubble).
  */
 export function CheckboxTrack({
   total,
@@ -89,6 +90,7 @@ export function CheckboxTrack({
   className: rowClassName = '',
   itemClassName = '',
   slotTypeTooltip = false,
+  stopSlotClickPropagation = false,
 }) {
   const [pulsing, setPulsing] = useState(false);
   const [hoverIndex, setHoverIndex] = useState(null);
@@ -204,7 +206,14 @@ export function CheckboxTrack({
       <El
         key={i}
         type={El === 'button' ? 'button' : undefined}
-        onClick={onSetFilled ? () => onSetFilled(targetValue) : undefined}
+        onClick={
+          onSetFilled
+            ? (e) => {
+                if (stopSlotClickPropagation) e.stopPropagation();
+                onSetFilled(targetValue);
+              }
+            : undefined
+        }
         onMouseEnter={onSetFilled ? () => setHoverIndex(i) : undefined}
         title={
           slotTypeTooltip

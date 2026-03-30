@@ -512,6 +512,11 @@ export function readPersistedToggleIsOn(chip, table, featureForScope) {
   return bag.get(key) === true;
 }
 
+function writeToggleToBag(bag, key, isOn) {
+  if (!bag || typeof bag.setInternal !== 'function') return;
+  bag.setInternal(key, isOn === true);
+}
+
 /** Predicate helper: is this card toggle currently on? */
 export function toggleIsOn(table, feature, chip) {
   return readPersistedToggleIsOn(chip, table, feature);
@@ -525,8 +530,8 @@ function persistToggleToBag(chip, table, isOn) {
   const key = getV2ToggleStateKey(feature, chip, table);
   const scope = inferToggleScope(chip, feature, table);
   const bag = getToggleBag(table, scope);
-  if (!bag || typeof bag.set !== 'function') return;
-  bag.set(key, isOn === true);
+  if (!bag || typeof bag.setInternal !== 'function') return;
+  writeToggleToBag(bag, key, isOn);
 }
 
 // ---------------------------------------------------------------------------
@@ -552,10 +557,11 @@ function persistToggleToBag(chip, table, isOn) {
  * IDs the UI should allow; the engine does not validate counts.
  *
  * **Persisted toggles:** For `isToggle` chips, the framework writes on/off under a deterministic
- * key (see {@link getV2ToggleStateKey}) in `table.source` (subclass) or `table.feature` (default).
+ * key (see {@link getV2ToggleStateKey}) via **`setInternal`** in `table.source` (subclass) or
+ * `table.feature` (default).
  * Set **`persistToggle: false`** when the toggle is UI-only and must not persist (e.g. one-shot
- * review chips). Authors should not call `table.source.set` / `table.feature.set` for boolean
- * toggle state — use side-effect-only `onUse` when needed.
+ * review chips). Authors should not call `set` / `setInternal` manually for boolean toggle state —
+ * use side-effect-only `onUse` when needed.
  *
  * @param {object} chip                  — chip descriptor (from collectChips)
  * @param {object} table                 — current Game Table Snapshot

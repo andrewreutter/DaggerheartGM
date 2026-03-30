@@ -222,7 +222,7 @@ Nested scene chips display in **blue** on `ItemCard` in the Scenes library tab.
 
 ### Unified import (stat blocks, maps, notes)
 
-GM sessions use **`UnifiedImportModal`** (`src/client/components/modals/UnifiedImportModal.jsx`) behind **`UnifiedImportProvider`** (`src/client/lib/unified-import-context.jsx`). Open from the nav **Import** button, the Library **Import** button, **drop** images on the app (outside import UI), **paste** images from the clipboard, or from the battle map **Upload** / drop when on the Game Table as GM.
+GM sessions use **`UnifiedImportModal`** (`src/client/components/modals/UnifiedImportModal.jsx`) behind **`UnifiedImportProvider`** (`src/client/lib/unified-import-context.jsx`). In `app.jsx`, **`AiUiPreferenceProvider` wraps `UnifiedImportProvider`** so the modal (and embedded **Generate with AI** controls) receives the same AI visibility prefs as the rest of the app. Open from the nav **Import** button, the Library **Import** button, **drop** images on the app (outside import UI), **paste** images from the clipboard, or from the battle map **Upload** / drop when on the Game Table as GM.
 
 **Flow**: load images (client-side page layout + optional **Crop…** via `PageLayoutPreviewModal`), merge OCR text with always-visible **Additional text**, choose type per slice (adversary / environment / map / note), preview and edit via `ImportPreviewCard`, then **Import**. On the Game Table, **Add to table** defaults on for adversaries, environments, maps, and notes. Server parsing uses `POST /api/import/parse` (OCR + `detectCollection()` with `src/import-type-hotwords.js` heuristics). Notes (and text-first adversary/environment refinement) use `POST /api/import/encounter-parse-text`.
 

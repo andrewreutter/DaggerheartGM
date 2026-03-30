@@ -409,7 +409,7 @@ There are **no** community features that are display-only; all nine community fe
 | Grace    | 21        | Display |
 | Midnight | 21        | Partial — Tier 1 domain cards in V2 `abilities/Midnight/` (see GitHub `v2-migration` Issues / `docs/v2-migration-tracker-snapshot.md` for Done vs Unclaimed) |
 | Sage     | 21        | Partial — Tier 1 Sage cards in V2 `abilities/Sage/` (see GitHub `v2-migration` Issues / `docs/v2-migration-tracker-snapshot.md`) |
-| Splendor | 21        | Partial — Tier 1 Splendor cards in V2 `abilities/Splendor/` (see GitHub `v2-migration` Issues / `docs/v2-migration-tracker-snapshot.md` for Done vs Unclaimed) |
+| Splendor | 21        | Partial — Tier 1 Splendor cards in V2 `abilities/Splendor/` (e.g. **Mending Touch**: other-PC `selectTargets`, Hope 2, `clearHP` / `clearStress`); see GitHub `v2-migration` Issues / `docs/v2-migration-tracker-snapshot.md` for Done vs Unclaimed |
 | Valor    | 21        | Display |
 
 

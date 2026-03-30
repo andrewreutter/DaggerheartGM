@@ -24,7 +24,14 @@ export function runCharacterHook(activeFeatures, hookName, context) {
         const featureBag = current[name] ?? {};
         const next = { ...current, [name]: { ...featureBag, [key]: value } };
         charEl._originFeatureState = next;
-        context.updateActiveElement(charEl.instanceId, { _originFeatureState: next });
+        const curDecl = charEl._originFeatureStateDeclared ?? {};
+        const declBag = { ...(curDecl[name] || {}), [key]: true };
+        const nextDecl = { ...curDecl, [name]: declBag };
+        charEl._originFeatureStateDeclared = nextDecl;
+        context.updateActiveElement(charEl.instanceId, {
+          _originFeatureState: next,
+          _originFeatureStateDeclared: nextDecl,
+        });
       };
       featureForHook = { ...feature, get, set };
     }

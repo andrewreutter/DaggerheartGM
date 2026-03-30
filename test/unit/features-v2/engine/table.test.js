@@ -192,6 +192,26 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.isActing).toBe(true);
   });
 
+  it('marks isActing when action.actorInstanceId matches library id while instanceId differs', () => {
+    const char = mockCharacter({
+      instanceId: 'runtime-table-id',
+      id: 'lib-char-id',
+    });
+    const state = mockGameState({
+      activeElements: [char],
+      _ownerInstanceId: 'runtime-table-id',
+      action: {
+        type: 'attack',
+        actorInstanceId: 'lib-char-id',
+        targetInstanceIds: [],
+        effects: [],
+        appliedEffects: [],
+      },
+    });
+    const table = buildTableSnapshot(state);
+    expect(table.me?.isActing).toBe(true);
+  });
+
   it('populates action subdocument with actor and targets', () => {
     const char = mockCharacter({ instanceId: 'char-1' });
     const adv = mockAdversary({ instanceId: 'adv-1' });
@@ -1081,14 +1101,56 @@ describe('table.feature (local state)', () => {
     expect(table.feature.get('timesUsed')).toBe(3);
   });
 
-  it('set queues a setFeatureState mutation', () => {
+  it('set queues a setFeatureState mutation with manual: true', () => {
     const table = buildTableSnapshot(mockGameState({ _featureKey: 'MyFeature' }));
     table.feature.set('pushActive', true);
     const mutations = applyMutations(table);
     expect(mutations).toContainEqual(
       expect.objectContaining({
         type: 'setFeatureState',
-        payload: { featureKey: 'MyFeature', key: 'pushActive', value: true, instanceId: 'char-1' },
+        payload: {
+          featureKey: 'MyFeature',
+          key: 'pushActive',
+          value: true,
+          manual: true,
+          instanceId: 'char-1',
+        },
+      })
+    );
+  });
+
+  it('setInternal queues setFeatureState with manual: false', () => {
+    const table = buildTableSnapshot(mockGameState({ _featureKey: 'MyFeature' }));
+    table.feature.setInternal('toggleNoise', true);
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: {
+          featureKey: 'MyFeature',
+          key: 'toggleNoise',
+          value: true,
+          manual: false,
+          instanceId: 'char-1',
+        },
+      })
+    );
+  });
+
+  it('set optional third arg includes cardValue on the mutation payload', () => {
+    const table = buildTableSnapshot(mockGameState({ _featureKey: 'MyFeature' }));
+    table.feature.set('widget', 'w1', { cardValue: 'Widget name' });
+    const mutations = applyMutations(table);
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        type: 'setFeatureState',
+        payload: expect.objectContaining({
+          featureKey: 'MyFeature',
+          key: 'widget',
+          value: 'w1',
+          manual: true,
+          cardValue: 'Widget name',
+        }),
       })
     );
   });
@@ -1139,6 +1201,7 @@ describe('table.source (shared option state)', () => {
           featureKey: 'WardenOfTheElements',
           key: 'channeledElement',
           value: 'air',
+          manual: true,
           instanceId: 'char-1',
         },
       })

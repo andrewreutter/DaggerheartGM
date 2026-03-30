@@ -127,8 +127,8 @@ export const ElementalIncarnation = {
         const meleeBand = table.me.rangeFrom(tgt);
         if (meleeBand != null && meleeBand !== 'melee') return;
         for (const a of table.adversaries) {
-          if (a.instanceId === tgt.instanceId) continue;
-          if (tgt.rangeFrom(a) === 'veryClose') {
+          if (String(a.instanceId) === String(tgt.instanceId)) continue;
+          if (['veryClose', 'melee'].includes(table.me.rangeFrom(a))) {
             a.markStress(1);
           }
         }

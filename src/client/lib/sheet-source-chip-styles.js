@@ -45,8 +45,7 @@ const PALETTES = {
     segmentScrollOuter:
       'flex w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto overflow-y-hidden rounded-md border border-sky-700/50 bg-sky-950/25 dh-sheet-clickable-chip p-1',
     segmentOff: 'text-dh hover:bg-sky-900/35 hover:border-sky-600/60',
-    segmentOn:
-      'bg-sky-950/55 text-dh border-sky-500/45 ring-1 ring-sky-500/35 shadow-sm z-[1]',
+    segmentOn: V2_INLINE_SEG_ON,
     actionDefault:
       'dh-sheet-clickable-chip border-sky-700/50 bg-sky-950/35 text-sky-200 hover:bg-sky-900/45 hover:border-sky-600/70',
     actionActive:
@@ -145,4 +144,18 @@ export function getSheetSourceChipPalette(sourceType) {
   if (sourceType === 'domain' || sourceType === 'ability') return PALETTES.class;
   const p = PALETTES[sourceType];
   return p || PALETTES.default;
+}
+
+/**
+ * Sheet Actions master strip: grouped chip shells should hug content (not stretch full column width).
+ * @param {SheetSourceChipPalette} palette
+ * @returns {SheetSourceChipPalette}
+ */
+export function intrinsicWidthActionsStripPalette(palette) {
+  if (!palette || typeof palette !== 'object') return palette;
+  return {
+    ...palette,
+    groupOuter: palette.groupOuter.replace(/\bflex w-full\b/g, 'flex w-auto max-w-full'),
+    segmentScrollOuter: palette.segmentScrollOuter.replace(/\bflex w-full\b/g, 'flex w-auto max-w-full'),
+  };
 }

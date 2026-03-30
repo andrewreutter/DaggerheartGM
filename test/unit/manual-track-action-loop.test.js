@@ -5,9 +5,15 @@ import {
   buildManualTrackActionRoll,
   getPendingManualTrackAckDeltas,
   getLifeSupportPendingHealSlots,
+  shouldQueueManualTrackBannerForElementType,
 } from '../../src/client/lib/manual-track-action-loop.js';
 
 describe('manual-track-action-loop', () => {
+  it('shouldQueueManualTrackBannerForElementType is false for adversaries (immediate apply on table)', () => {
+    expect(shouldQueueManualTrackBannerForElementType('adversary')).toBe(false);
+    expect(shouldQueueManualTrackBannerForElementType('character')).toBe(true);
+  });
+
   it('findPendingManualTrackBanner returns latest matching roll', () => {
     const pending = [
       { _rollDbId: 1, _manualTrackEdit: true, _targetInstanceId: 'a', _manualUpdates: { hope: 2 } },
@@ -54,12 +60,12 @@ describe('manual-track-action-loop', () => {
     expect(r._manualTrackEdit).toBe(true);
     expect(r._targetInstanceId).toBe('i');
     expect(r._manualUpdates.currentHp).toBe(5);
-    expect(r.actionName).toContain('Mark 5 damage');
-    expect(r.actionName).toContain('Spend 2 Hope');
-    expect(r.actionName).toContain('Mark 2 armor');
-    expect(r.actionText).toContain('HP marked will change from 0 to 5');
-    expect(r.actionText).toContain('Hope marked will change from 1 to 3');
-    expect(r.actionText).toContain('Armor marked will change from 0 to 2');
+    expect(r.actionName).toContain('Marked 5 damage');
+    expect(r.actionName).toContain('Spent 2 Hope');
+    expect(r.actionName).toContain('Marked 2 armor');
+    expect(r.actionText).toContain('HP marked changed from 0 to 5');
+    expect(r.actionText).toContain('Hope marked changed from 1 to 3');
+    expect(r.actionText).toContain('Armor marked changed from 0 to 2');
   });
 
   it('getPendingManualTrackAckDeltas returns stress and HP deltas vs server el', () => {
@@ -86,6 +92,19 @@ describe('manual-track-action-loop', () => {
     const dg = getPendingManualTrackAckDeltas(gainEl, gainPending);
     expect(dg.hopeGain).toBe(3);
     expect(dg.hopeSpend).toBe(0);
+  });
+
+  it('when server el already matches pending manual updates, ack deltas are zero (immediate apply)', () => {
+    const el = { instanceId: 'c1', maxHp: 10, currentHp: 5, currentStress: 2, maxStress: 6, maxHope: 6, hope: 3, currentArmor: 1 };
+    const pending = {
+      _manualTrackEdit: true,
+      _manualUpdates: { currentHp: 5, currentStress: 2, hope: 3, currentArmor: 1 },
+    };
+    const d = getPendingManualTrackAckDeltas(el, pending);
+    expect(d.stressAdd).toBe(0);
+    expect(d.hpDamageAdd).toBe(0);
+    expect(d.hopeSpend).toBe(0);
+    expect(d.armorMarkAdd).toBe(0);
   });
 
   it('getLifeSupportPendingHealSlots returns 1 when ally is selected for pending Life Support banner', () => {

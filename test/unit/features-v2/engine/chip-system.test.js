@@ -306,6 +306,16 @@ describe('canPayChipCosts()', () => {
     expect(canPayChipCosts({ hopeCost: 99 }, table)).toBe(true);
   });
 
+  it('treats missing character hope as full pool (matches sheet / spend-on-ack semantics)', () => {
+    const char = mockCharacter({ instanceId: 'char-1', maxHope: 6 });
+    delete char.hope;
+    const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });
+    const table = buildTableSnapshot(state);
+    expect(table.me.hope).toBe(6);
+    expect(canPayChipCosts({ hopeCost: 3 }, table)).toBe(true);
+    expect(canPayChipCosts({ hopeCost: 2 }, table)).toBe(true);
+  });
+
   it('evaluates function-valued costs', () => {
     const char = mockCharacter({ instanceId: 'char-1', hope: 2 });
     const state = mockGameState({ activeElements: [char], _ownerInstanceId: 'char-1' });

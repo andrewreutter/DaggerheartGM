@@ -70,6 +70,7 @@ describe('Druid — Beastform', () => {
           featureKey: SRD_CLASS_DRUID_SCOPE_KEY,
           key: 'activeBeastform',
           value: { beastformId: 'srd-bst-agile-scout', viaEvolution: false },
+          cardValue: 'Agile Scout',
         }),
       })
     );
@@ -132,7 +133,8 @@ describe('Druid — Beastform', () => {
           m.type === 'setFeatureState' &&
           m.payload?.featureKey === SRD_CLASS_DRUID_SCOPE_KEY &&
           m.payload?.key === 'activeBeastform' &&
-          m.payload?.value?.beastformId === 'srd-bst-pack-predator'
+          m.payload?.value?.beastformId === 'srd-bst-pack-predator' &&
+          m.payload?.cardValue === 'Pack Predator'
       )
     ).toBe(true);
   });
@@ -215,6 +217,7 @@ describe('Druid — Evolution', () => {
           featureKey: SRD_CLASS_DRUID_SCOPE_KEY,
           key: 'activeBeastform',
           value: { beastformId: 'srd-bst-agile-scout', viaEvolution: true },
+          cardValue: 'Agile Scout',
         }),
       })
     );

@@ -116,6 +116,8 @@ function enrichActiveFeaturesWithEngineRows(activeFeatures, engine, char) {
       _consumableId: e._consumableId ?? row._consumableId,
       _beastformId: e._beastformId ?? row._beastformId,
       _weaponFeatureText: e._weaponFeatureText ?? row._weaponFeatureText,
+      cardValueDisplayKey: e.cardValueDisplayKey ?? row.cardValueDisplayKey,
+      cardValueDisplayResolve: e.cardValueDisplayResolve ?? row.cardValueDisplayResolve,
     };
   });
 }

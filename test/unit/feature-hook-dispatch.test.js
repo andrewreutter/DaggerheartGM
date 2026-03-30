@@ -26,6 +26,7 @@ describe('runCharacterHook', () => {
     expect(addRollBonus).toHaveBeenCalledWith(1);
     expect(updateActiveElement).toHaveBeenCalledWith('pc-1', {
       _originFeatureState: { TestFeature: { flag: true } },
+      _originFeatureStateDeclared: { TestFeature: { flag: true } },
     });
   });
 

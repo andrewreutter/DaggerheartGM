@@ -45,6 +45,13 @@ describe('clampPortalHoverTooltipY', () => {
     const usable = innerH - 2 * pad;
     expect(clampPortalHoverTooltipY(400, usable + 50, innerH, pad)).toBe(pad);
   });
+
+  it('clamps from a rounded top (subpixel trigger positions map to one clamp path)', () => {
+    const h = 200;
+    const a = Math.round(clampPortalHoverTooltipY(Math.round(100.4), h, innerH, pad));
+    const b = Math.round(clampPortalHoverTooltipY(Math.round(100.45), h, innerH, pad));
+    expect(a).toBe(b);
+  });
 });
 
 describe('computePortalHoverTooltipPositionBelow', () => {

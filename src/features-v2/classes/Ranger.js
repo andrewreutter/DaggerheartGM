@@ -86,6 +86,41 @@ export const HoldThemOff = {
 
 export const RangersFocus = {
   name: "Ranger's Focus",
+  /** Compact character card: `table.feature.set(..., { cardValue })` stores under this feature's name bag. */
+  cardValueDisplayKey: 'rangerFocusStressTargetId',
+  /**
+   * When `_cardValues` is missing on the synced element (common — `onReviewAction` bags may not round-trip),
+   * derive the label from `focusTargetInstanceId` / `focusTargetId`, or — matching Game Table parity —
+   * from the adversary whose `focusedBy` is this character's **name** (some attack paths only set that).
+   * @param {object} el
+   * @param {{ activeElements?: object[] } | null | undefined} v2TableContext
+   */
+  cardValueDisplayResolve(el, v2TableContext) {
+    const raw = v2TableContext?.activeElements ?? [];
+    const list = Array.isArray(raw) ? raw : [];
+    const labelForName = (nm) =>
+      nm != null && String(nm).trim() !== '' ? `Focus: ${String(nm)}` : 'Focus';
+
+    const id = el.focusTargetInstanceId ?? el.focusTargetId;
+    if (id != null && id !== '') {
+      for (const e of list) {
+        const iid = e.instanceId ?? e.id;
+        if (iid != null && String(iid) === String(id)) {
+          return labelForName(e.name);
+        }
+      }
+    }
+
+    const pcName = el.name;
+    if (pcName == null || String(pcName).trim() === '') return null;
+    for (const e of list) {
+      if (e.elementType !== 'adversary') continue;
+      if (e.focusedBy != null && String(e.focusedBy) === String(pcName)) {
+        return labelForName(e.name);
+      }
+    }
+    return null;
+  },
   description:
     'Spend a Hope and make an attack against a target. On a success, deal your attack\'s normal damage and temporarily make the attack\'s target your Focus. Until this feature ends or you make a different creature your Focus, you gain the following benefits against your Focus:\n\n- You know precisely what direction they are in.\n- When you deal damage to them, they must mark a Stress.\n- When you fail an attack against them, you can end your Ranger\'s Focus feature to reroll your Duality Dice.',
   chips: [
@@ -128,7 +163,12 @@ export const RangersFocus = {
         table.me.setFocusTarget(tid);
         if (tid && table.action.target?.isAdversary) {
           syncFocusedByOnHit(table);
-          table.feature.set('rangerFocusStressTargetId', tid);
+          const nm = table.action.target?.name;
+          const label =
+            nm != null && String(nm).trim() !== ''
+              ? `Focus: ${String(nm)}`
+              : 'Focus';
+          table.feature.set('rangerFocusStressTargetId', tid, { cardValue: label });
         }
       }
     }),

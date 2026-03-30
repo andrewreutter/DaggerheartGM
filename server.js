@@ -41,6 +41,7 @@ import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
 import { buildEnvironmentAiFromConcept } from './src/llm-environment-builder.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
+import { buildForcedMovementActionNotification } from './src/client/lib/v2-forced-movement-banner.js';
 import { attachDerivedMapConfig } from './src/client/lib/map-table-state.js';
 import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
@@ -3363,6 +3364,14 @@ app.post('/api/room/:tableId/v2-review-chip', requireAuth, async (req, res) => {
         }
         const ok = await updateDiceRollData(APP_ID, gmUid, currentBannerId, patch);
         if (ok) subscriptionManager.notifyChange('banners', gmUid);
+      } else if (f.kind === 'forcedMovementNotice') {
+        const p = f.payload || f.mutation?.payload;
+        if (p) {
+          const notice = buildForcedMovementActionNotification(p, elsForMigrate);
+          if (chip?._featureName) notice.actionName = String(chip._featureName).slice(0, 120);
+          notice._initiatorUid = req.uid;
+          await appendRollLog(gmUid, notice);
+        }
       }
     }
 

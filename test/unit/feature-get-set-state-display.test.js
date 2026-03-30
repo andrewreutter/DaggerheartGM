@@ -7,7 +7,7 @@ describe('getFeatureGetSetStateLines', () => {
     expect(getFeatureGetSetStateLines({})).toEqual([]);
   });
 
-  it('flattens V2 featureState (table.source) and legacy _originFeatureState', () => {
+  it('when featureStateDeclared is absent, flattens V2 featureState but skips _v2t: and legacy WingedSentinel.flying', () => {
     const el = {
       featureState: {
         WardenOfTheElements: { channeledElement: 'srd-bf-wolf', auraActive: true },
@@ -36,6 +36,35 @@ describe('getFeatureGetSetStateLines', () => {
     });
   });
 
+  it('legacy fallback omits setInternal toggle keys (_v2t:) from V2 bags', () => {
+    const el = {
+      featureState: {
+        WingedSentinel: {
+          powerOfTheGodsMastery: true,
+          '_v2t:Wings of Light::Flying::card': true,
+          flying: false,
+        },
+      },
+    };
+    const keys = getFeatureGetSetStateLines(el).map((l) => l.lineKey).sort();
+    expect(keys).toEqual(['WingedSentinel.powerOfTheGodsMastery']);
+  });
+
+  it('with featureStateDeclared, only lists keys marked declared for V2', () => {
+    const el = {
+      featureState: {
+        WardenOfTheElements: { channeledElement: 'srd-bf-wolf', auraActive: true },
+        Rally: { partyDice: [1, 2] },
+      },
+      featureStateDeclared: {
+        WardenOfTheElements: { channeledElement: true },
+        Rally: { partyDice: true },
+      },
+    };
+    const keys = getFeatureGetSetStateLines(el).map((l) => l.lineKey).sort();
+    expect(keys).toEqual(['Rally.partyDice', 'WardenOfTheElements.channeledElement']);
+  });
+
   it('prefers V2 featureState when the same scope.key exists in both', () => {
     const el = {
       featureState: { Foo: { x: 1 } },
@@ -51,5 +80,18 @@ describe('getFeatureGetSetStateLines', () => {
       _originFeatureState: { B: { b: 2 } },
     };
     expect(getFeatureGetSetStateLines(el).map((l) => l.lineKey).sort()).toEqual(['A.a', 'B.b']);
+  });
+
+  it('with _originFeatureStateDeclared, only lists declared legacy keys', () => {
+    const el = {
+      _originFeatureState: {
+        Seaborne: { tideTokens: 2, other: 0 },
+      },
+      _originFeatureStateDeclared: {
+        Seaborne: { tideTokens: true },
+      },
+    };
+    const lines = getFeatureGetSetStateLines(el);
+    expect(lines.map((l) => l.lineKey)).toEqual(['Seaborne.tideTokens']);
   });
 });

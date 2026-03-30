@@ -1239,6 +1239,70 @@ describe('applyV2BannerMutations', () => {
     );
     expect(skipped).toHaveLength(0);
     expect(updates[0].updates.featureState.Rally).toEqual({ granted: true });
+    expect(updates[0].updates.featureStateDeclared).toBeUndefined();
+  });
+
+  it('records featureStateDeclared when setFeatureState has manual: true', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', featureState: {} }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [
+        {
+          type: 'setFeatureState',
+          payload: { featureKey: 'Rally', key: 'granted', value: true, manual: true },
+        },
+      ],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.featureStateDeclared.Rally.granted).toBe(true);
+  });
+
+  it('merges featureState _cardValues when setFeatureState includes cardValue', () => {
+    const activeElements = [{ instanceId: 'c1', elementType: 'character', featureState: {} }];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [
+        {
+          type: 'setFeatureState',
+          payload: {
+            featureKey: 'Rally',
+            key: 'granted',
+            value: true,
+            manual: true,
+            cardValue: 'Party buff',
+          },
+        },
+      ],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.featureState.Rally).toEqual({
+      granted: true,
+      _cardValues: { granted: 'Party buff' },
+    });
+  });
+
+  it('removes _cardValues[key] when setFeatureState cardValue is null', () => {
+    const activeElements = [
+      {
+        instanceId: 'c1',
+        elementType: 'character',
+        featureState: { Rally: { granted: true, _cardValues: { granted: 'Old' } } },
+      },
+    ];
+    const { updates, skipped } = applyV2BannerMutations(
+      activeElements,
+      [
+        {
+          type: 'setFeatureState',
+          payload: { featureKey: 'Rally', key: 'granted', value: true, manual: true, cardValue: null },
+        },
+      ],
+      'c1'
+    );
+    expect(skipped).toHaveLength(0);
+    expect(updates[0].updates.featureState.Rally).toEqual({ granted: true });
   });
 
   it('clears legacy element activeBeastform when Druid scoped activeBeastform is set to null', () => {
@@ -1637,6 +1701,29 @@ describe('partitionV2BannerChipMutations', () => {
     expect(serverFollowups).toEqual([]);
     expect(engineRollDisplayOnly).toHaveLength(1);
     expect(engineRollDisplayOnly[0].payload.rollKey).toBe('other');
+  });
+
+  it('routes move to forcedMovementNotice (interim banner; no local table patch)', () => {
+    const { localMutations, serverFollowups } = partitionV2BannerChipMutations([
+      {
+        type: 'move',
+        payload: {
+          instanceId: 'adv-1',
+          rollDbId: 9,
+          desiredCondition: 'Very Close',
+          description: 'Kick: knock back.',
+        },
+      },
+    ]);
+    expect(localMutations).toEqual([]);
+    expect(serverFollowups).toHaveLength(1);
+    expect(serverFollowups[0].kind).toBe('forcedMovementNotice');
+    expect(serverFollowups[0].payload).toMatchObject({
+      instanceId: 'adv-1',
+      rollDbId: 9,
+      desiredCondition: 'Very Close',
+      description: 'Kick: knock back.',
+    });
   });
 });
 
