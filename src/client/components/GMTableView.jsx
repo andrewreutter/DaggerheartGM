@@ -18,6 +18,7 @@ import { RoleSelect } from './forms/RoleSelect.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
+import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
 import { buildSystemContext } from '../lib/feature-context.js';
 import {
   postRoll as postRollToServer,
@@ -49,7 +50,12 @@ import {
   requestGoogleContactsAccess,
   searchGoogleContacts,
   conceptAiEnabled,
+  imageGenEnabled,
+  postEncounterAiBuild,
+  postAdversaryAiBuild,
+  postEnvironmentAiBuild,
 } from '../lib/api.js';
+import { generateAndApplyBattleMapQuietly } from '../lib/quiet-battle-map-generate.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
 import { AiDismissBuildWithAiLink } from './AiDismissBuildWithAiLink.jsx';
@@ -65,7 +71,7 @@ import {
   shouldSuppressCharacterOverlayOutsideDismiss,
 } from '../lib/character-drawer-edit-mismatch.js';
 import { resolveGameTableCharacterEditMode } from '../lib/game-table-character-modal-url.js';
-import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod } from '../lib/battle-points.js';
+import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod, computeBudget } from '../lib/battle-points.js';
 import { getUnscaledAdversary, getBaselineStats } from '../lib/adversary-defaults.js';
 import { ensureEditorListIds } from '../lib/ensure-editor-list-ids.js';
 import { coerceEnvironmentType, coerceEnvironmentTier } from '../lib/environment-coerce.js';
@@ -114,6 +120,7 @@ import { buildAdvantageTriggerPrerollChips } from '../lib/advantage-trigger-prer
 import { applyRangerFocusV2IntentToPending } from '../lib/ranger-focus-v2-intent.js';
 import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
+import { mapConfigHasImage } from '../lib/map-table-state.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
@@ -541,7 +548,7 @@ const ENV_TYPE_LABEL = {
   event: 'Event',
 };
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
   onSetMapOverlay,
@@ -681,8 +688,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [encounterEnvAiTier, setEncounterEnvAiTier] = useState(1);
   const [encounterEnvAiType, setEncounterEnvAiType] = useState('exploration');
   const [encounterEnvAiConcept, setEncounterEnvAiConcept] = useState('');
-  /** Encounter panel AI strip: which builder is shown (Adversary vs Environment). */
-  const [encounterAiBuilderKind, setEncounterAiBuilderKind] = useState('adversary');
+  /** Encounter panel AI strip: Encounter vs Adversary vs Environment. */
+  const [encounterAiBuilderKind, setEncounterAiBuilderKind] = useState('encounter');
+  const [encounterAiConcept, setEncounterAiConcept] = useState('');
+  /** null = use adjusted budget from BP card math */
+  const [encounterAiBudgetUser, setEncounterAiBudgetUser] = useState(null);
+  const [encounterAiCountCurrent, setEncounterAiCountCurrent] = useState(true);
+  const [encounterAiIncludePublic, setEncounterAiIncludePublic] = useState(false);
+  const [encounterAiGenerateMap, setEncounterAiGenerateMap] = useState(false);
+  const [encounterAiBuilding, setEncounterAiBuilding] = useState(false);
+  /** 'plan' | 'resolving' | null — shown under Build with AI while the encounter LLM / homebrew pipeline runs. */
+  const [encounterAiBuildPhase, setEncounterAiBuildPhase] = useState(null);
+  /** After Build with AI: summary = plan copy; notes = technical warnings (catalog trims, BP checks). */
+  const [encounterAiBuildFeedback, setEncounterAiBuildFeedback] = useState(null);
+  const encounterAiInitKindRef = useRef(false);
+  /** Once per table + ready: default "Generate a new battle map" from whether the active map has art. */
+  const encounterAiGenerateMapInitRef = useRef(false);
   /** Viewport anchor for programmatic character sheet open (Add Character → create / pick). */
   const addCharacterAnchorRef = useRef(null);
 
@@ -4236,6 +4257,195 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const tableAutoMods = computeAutoModifiers(tableAdvSummary, partyTier);
   const totalMod = computeTotalBudgetMod(tableAutoMods, effectiveMods);
   const adjustedBudget = tableBudget + totalMod;
+  const encounterAiTargetBudget = encounterAiBudgetUser != null ? encounterAiBudgetUser : adjustedBudget;
+  const encounterAiRemainingBattlePoints = Math.max(
+    0,
+    encounterAiTargetBudget - (encounterAiCountCurrent ? tableBP : 0),
+  );
+
+  useEffect(() => {
+    if (encounterAiInitKindRef.current || !tableStateReady) return;
+    const hasAdv = activeElements.some(e => e.elementType === 'adversary');
+    const hasEnv = activeElements.some(e => e.elementType === 'environment');
+    let kind = 'encounter';
+    if (hasAdv && !hasEnv) kind = 'environment';
+    else if (!hasAdv && hasEnv) kind = 'adversary';
+    setEncounterAiBuilderKind(kind);
+    encounterAiInitKindRef.current = true;
+  }, [tableStateReady, activeElements]);
+
+  useEffect(() => {
+    encounterAiGenerateMapInitRef.current = false;
+  }, [tableId]);
+
+  useEffect(() => {
+    if (!tableStateReady || encounterAiGenerateMapInitRef.current) return;
+    encounterAiGenerateMapInitRef.current = true;
+    setEncounterAiGenerateMap(!mapConfigHasImage(mapConfig));
+  }, [tableStateReady, mapConfig, tableId]);
+
+  const runEncounterAiBuild = useCallback(async () => {
+    const q = encounterAiConcept.trim();
+    if (!q || !sendDoAddToTable || encounterAiBuilding) return;
+    setEncounterAiBuilding(true);
+    setEncounterAiBuildPhase('plan');
+    setEncounterAiBuildFeedback(null);
+    let mapPromise = Promise.resolve();
+    try {
+      mapPromise =
+        encounterAiGenerateMap && imageGenEnabled && onMapConfigChange
+          ? generateAndApplyBattleMapQuietly(mapConfig, q, onMapConfigChange).catch((err) => {
+              console.warn('Quiet battle map generation failed:', err);
+            })
+          : Promise.resolve();
+
+      const hasEnv = activeElements.some(e => e.elementType === 'environment');
+      const baseOpts = {
+        partySize,
+        partyTier,
+        remainingBattlePoints: encounterAiRemainingBattlePoints,
+        includePublic: encounterAiIncludePublic,
+        hasEnvironmentOnTable: hasEnv,
+        tableAdversarySummary: tableAdvSummary,
+      };
+
+      let plan = await postEncounterAiBuild(q, { ...baseOpts, step: 'plan' });
+      if (plan.requiresFinish) {
+        setEncounterAiBuildPhase('resolving');
+        plan = await postEncounterAiBuild(q, {
+          ...baseOpts,
+          step: 'finish',
+          encounterPlan: plan.encounterPlan,
+        });
+      }
+      setEncounterAiBuildPhase('applying');
+
+      const notes = (plan.warnings || []).filter(Boolean);
+      const summary = typeof plan.justification === 'string' ? plan.justification.trim() : '';
+      const hbReport = Array.isArray(plan.homebrewReport) ? plan.homebrewReport : [];
+      const hbLines = hbReport
+        .filter((r) => r.via === 'homebrew' || r.label === 'homebrew')
+        .map((r) => {
+          if (r.kind === 'adversary') {
+            const tail =
+              r.fromId != null
+                ? ` — replaced unknown id ${r.fromId}`
+                : r.source === 'llm_synthetic' && r.concept
+                  ? ` — ${r.concept}`
+                  : '';
+            return `Homebrew adversary (${r.role}, tier ${r.tier})${tail}`;
+          }
+          if (r.kind === 'environment') {
+            const tail =
+              r.fromId != null
+                ? ` — replaced unknown id ${r.fromId}`
+                : r.source === 'llm_synthetic' && r.concept
+                  ? ` — ${r.concept}`
+                  : '';
+            return `Homebrew environment (${r.type}, tier ${r.tier})${tail}`;
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (hbLines.length) notes.unshift(hbLines.join(' · '));
+
+      const advIds = [...new Set((plan.adversaryAdds || []).map((a) => a.id))];
+      const envIds = [...new Set((plan.environmentAdds || []).map((e) => e.id))];
+      if (advIds.length || envIds.length) {
+        const resolved = await resolveItems({ adversaries: advIds, environments: envIds }, { adopt: true });
+        const advById = indexResolvedItemsByRequestId(resolved.adversaries);
+        const envById = indexResolvedItemsByRequestId(resolved.environments);
+        for (const row of plan.adversaryAdds || []) {
+          const item = advById[row.id];
+          if (!item) continue;
+          for (let i = 0; i < row.count; i++) {
+            await sendDoAddToTable(item, 'adversaries', tableId);
+          }
+        }
+        for (const row of plan.environmentAdds || []) {
+          const item = envById[row.id];
+          if (!item) continue;
+          for (let i = 0; i < row.count; i++) {
+            await sendDoAddToTable(item, 'environments', tableId);
+          }
+        }
+      }
+
+      if (plan.homebrewAdversaryPatches?.length) {
+        for (const spec of plan.homebrewAdversaryPatches) {
+          const stub = buildGameTableNewAdversaryStub(spec.tier, spec.role);
+          const merged = { ...stub, ...spec.patch };
+          const saved = await saveItem('adversaries', merged);
+          if (!saved) continue;
+          const n = spec.count || 1;
+          for (let i = 0; i < n; i++) {
+            await sendDoAddToTable(saved, 'adversaries', tableId);
+          }
+        }
+      } else {
+        for (const spec of plan.needsSyntheticAdversaries || []) {
+          const { patch } = await postAdversaryAiBuild(spec.concept, { tier: spec.tier, role: spec.role });
+          const stub = buildGameTableNewAdversaryStub(spec.tier, spec.role);
+          const merged = { ...stub, ...patch };
+          const saved = await saveItem('adversaries', merged);
+          if (!saved) continue;
+          const n = spec.count || 1;
+          for (let i = 0; i < n; i++) {
+            await sendDoAddToTable(saved, 'adversaries', tableId);
+          }
+        }
+      }
+
+      if (plan.homebrewEnvironmentPatch) {
+        const ne = plan.homebrewEnvironmentPatch;
+        const stub = buildGameTableNewEnvironmentStub(ne.tier, ne.type);
+        const merged = { ...stub, ...ne.patch };
+        const saved = await saveItem('environments', merged);
+        if (saved) await sendDoAddToTable(saved, 'environments', tableId);
+      } else if (plan.needsSyntheticEnvironment) {
+        const ne = plan.needsSyntheticEnvironment;
+        const { patch } = await postEnvironmentAiBuild(ne.concept, { tier: ne.tier, type: ne.type });
+        const stub = buildGameTableNewEnvironmentStub(ne.tier, ne.type);
+        const merged = { ...stub, ...patch };
+        const saved = await saveItem('environments', merged);
+        if (saved) await sendDoAddToTable(saved, 'environments', tableId);
+      }
+
+      setEncounterAiBuildFeedback(
+        summary || notes.length
+          ? {
+              summary: summary || null,
+              notes: notes.length ? notes.join(' · ') : null,
+            }
+          : null,
+      );
+      setEncounterAiConcept('');
+    } catch (e) {
+      console.error(e);
+      setEncounterAiBuildFeedback({ summary: null, notes: e?.message || 'Encounter build failed' });
+    } finally {
+      await mapPromise.catch(() => {});
+      setEncounterAiBuildPhase(null);
+      setEncounterAiBuilding(false);
+    }
+  }, [
+    encounterAiConcept,
+    encounterAiGenerateMap,
+    sendDoAddToTable,
+    encounterAiBuilding,
+    activeElements,
+    partySize,
+    partyTier,
+    encounterAiRemainingBattlePoints,
+    encounterAiIncludePublic,
+    tableAdvSummary,
+    tableId,
+    saveItem,
+    mapConfig,
+    onMapConfigChange,
+    imageGenEnabled,
+  ]);
+
   const tableDiff = tableBP - adjustedBudget;
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-dh-muted';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
@@ -6623,8 +6833,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               <div className="flex rounded-lg border border-violet-800/50 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => setEncounterAiBuilderKind('adversary')}
+                  onClick={() => setEncounterAiBuilderKind('encounter')}
                   className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+                    encounterAiBuilderKind === 'encounter'
+                      ? 'bg-violet-900/50 text-violet-100'
+                      : 'bg-dh-raised text-dh-muted hover:text-dh'
+                  }`}
+                >
+                  Encounter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEncounterAiBuilderKind('adversary')}
+                  className={`flex-1 py-1.5 text-xs font-semibold border-l border-violet-800/50 transition-colors ${
                     encounterAiBuilderKind === 'adversary'
                       ? 'bg-violet-900/50 text-violet-100'
                       : 'bg-dh-raised text-dh-muted hover:text-dh'
@@ -6644,7 +6865,112 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   Environment
                 </button>
               </div>
-              {encounterAiBuilderKind === 'adversary' ? (
+              {encounterAiBuilderKind === 'encounter' ? (
+                <div className="space-y-1.5">
+                  <div>
+                    <span className="text-[10px] text-dh-muted block mb-0.5">BP budget (target)</span>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="number"
+                        min={0}
+                        max={200}
+                        value={encounterAiTargetBudget}
+                        onChange={(e) => setEncounterAiBudgetUser(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                        className="flex-1 min-w-0 bg-dh-raised border border-dh-border rounded px-2 py-1 text-xs text-dh"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEncounterAiBudgetUser(null)}
+                        className="shrink-0 text-[10px] text-violet-300/90 hover:underline"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-dh-muted leading-snug">
+                    Base {computeBudget(partySize)} + table modifiers → target {adjustedBudget}. Remaining to spend:{' '}
+                    <span className="text-violet-200 font-medium">{encounterAiRemainingBattlePoints}</span> BP
+                  </div>
+                  <label className="flex items-center gap-2 text-[10px] text-dh cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={encounterAiCountCurrent}
+                      onChange={(e) => setEncounterAiCountCurrent(e.target.checked)}
+                      className="rounded border-dh-border"
+                    />
+                    Count current toward budget
+                  </label>
+                  <label className="flex items-center gap-2 text-[10px] text-dh cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={encounterAiIncludePublic}
+                      onChange={(e) => setEncounterAiIncludePublic(e.target.checked)}
+                      className="rounded border-dh-border"
+                    />
+                    Include public Library entries
+                  </label>
+                  <label
+                    className={`flex items-center gap-2 text-[10px] cursor-pointer ${imageGenEnabled ? 'text-dh' : 'text-dh-muted cursor-not-allowed'}`}
+                    title={!imageGenEnabled ? 'Image generation is not configured (HF_TOKEN).' : undefined}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={encounterAiGenerateMap}
+                      disabled={!imageGenEnabled}
+                      onChange={(e) => setEncounterAiGenerateMap(e.target.checked)}
+                      className="rounded border-dh-border"
+                    />
+                    Generate a new battle map
+                  </label>
+                  <textarea
+                    value={encounterAiConcept}
+                    onChange={(e) => setEncounterAiConcept(e.target.value)}
+                    onKeyDown={(e) =>
+                      handleAiConceptTextareaKeyDown(e, {
+                        canSubmit: !!encounterAiConcept.trim() && !encounterAiBuilding,
+                        onSubmit: () => void runEncounterAiBuild(),
+                      })
+                    }
+                    rows={3}
+                    className="w-full min-h-[4.5rem] bg-dh-raised border border-dh-border rounded px-2 py-1 text-xs text-dh focus:border-violet-500 focus:outline-none resize-y"
+                    placeholder="Describe the encounter you want (foes, tone, terrain)…"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void runEncounterAiBuild()}
+                    disabled={!encounterAiConcept.trim() || encounterAiBuilding || !sendDoAddToTable}
+                    className="w-full py-1.5 rounded-md text-xs font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {encounterAiBuilding
+                      ? encounterAiBuildPhase === 'resolving'
+                        ? 'Building homebrew…'
+                        : encounterAiBuildPhase === 'applying'
+                          ? 'Adding to table…'
+                          : 'Planning encounter…'
+                      : 'Build with AI'}
+                  </button>
+                  {encounterAiBuilding && encounterAiBuildPhase ? (
+                    <p className="text-[10px] text-violet-300/90 leading-snug">
+                      {encounterAiBuildPhase === 'resolving'
+                        ? 'Resolving catalog matches and running internal AI builders…'
+                        : encounterAiBuildPhase === 'applying'
+                          ? 'Resolving library items and applying the encounter…'
+                          : 'Planning encounter with AI…'}
+                    </p>
+                  ) : null}
+                  {encounterAiBuildFeedback ? (
+                    <div className="space-y-1">
+                      {encounterAiBuildFeedback.summary ? (
+                        <p className="text-[10px] text-dh leading-snug">{encounterAiBuildFeedback.summary}</p>
+                      ) : null}
+                      {encounterAiBuildFeedback.notes ? (
+                        <p className="text-[10px] text-dh-muted leading-snug">{encounterAiBuildFeedback.notes}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <AiDismissBuildWithAiLink />
+                </div>
+              ) : encounterAiBuilderKind === 'adversary' ? (
                 <div className="space-y-1.5">
                   <div className="grid grid-cols-2 gap-2">
                     <div>

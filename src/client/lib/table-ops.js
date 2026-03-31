@@ -187,11 +187,15 @@ export function applyTableOp(op, state) {
     case 'set-map': {
       const base = normalizeMapState(state);
       const targetMapId = op.mapId ?? base.activeMapId;
+      const targetMapBefore = base.maps.find(m => m.id === targetMapId);
+      const prevImageUrl = targetMapBefore?.mapImageUrl;
+      let imageUrlChanged = false;
       const maps = base.maps.map(m => {
         if (m.id !== targetMapId) return m;
         const merged = { ...m };
         if (op.mapImageUrl !== undefined) {
           merged.mapImageUrl = op.mapImageUrl;
+          imageUrlChanged = String(op.mapImageUrl ?? '') !== String(prevImageUrl ?? '');
           if (op.mapImageUrl !== undefined && (op.mapImageUrl === null || op.mapImageUrl === '')) {
             merged.mapAiImagePrompt = null;
           }
@@ -205,7 +209,8 @@ export function applyTableOp(op, state) {
         return merged;
       });
       let mapViews = base.mapViews.map(v => ({ ...v }));
-      if (op.resetTokenPositions) {
+      const shouldResetMapView = op.resetTokenPositions || imageUrlChanged;
+      if (shouldResetMapView) {
         mapViews = mapViews.map(v =>
           v.mapId === targetMapId
             ? { ...v, mapViewZoomRatio: null, mapViewPanNorm: null, mapViewVisibleNorm: null }
@@ -213,6 +218,14 @@ export function applyTableOp(op, state) {
         );
       }
       const nextState = { ...base, maps, mapViews };
+      if (shouldResetMapView && nextState.gmMapView?.mapId === targetMapId) {
+        nextState.gmMapView = {
+          ...nextState.gmMapView,
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          mapViewVisibleNorm: null,
+        };
+      }
       syncGmMapViewFromActiveView(nextState);
       const mapConfig = deriveMapConfigFromState(nextState);
       let nextEls = activeElements;

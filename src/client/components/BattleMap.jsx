@@ -54,7 +54,7 @@ import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
 import Fireworks from 'fireworks-js';
-import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID } from '../lib/map-table-state.js';
+import { effectiveTokenMapId, DEFAULT_LEGACY_MAP_ID, mapConfigHasImage } from '../lib/map-table-state.js';
 import { buildCharacterTrayTokenEntries } from '../lib/character-tray-tokens.js';
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
@@ -101,10 +101,6 @@ const DRAG_THRESHOLD_PX = 8;
 /** Approx. time for fireworks-js rocket to reach target (no API hook); tuned for default trace speed. */
 const MAP_PING_FIREWORK_LAND_MS = 800;
 const MAP_PING_LABEL_FADE_MS = 5000;
-function mapConfigHasImage(mc) {
-  const u = mc?.mapImageUrl;
-  return typeof u === 'string' && u.trim().length > 0;
-}
 
 function rgbBytesToHex(r, g, b) {
   return `#${[r, g, b]
@@ -1706,22 +1702,27 @@ export function BattleMap({
     if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
     mapViewPersistTimerRef.current = setTimeout(() => {
       mapViewPersistTimerRef.current = null;
-      const wrap = scrollWrapperRef.current;
-      const vw = wrap?.clientWidth ?? 0;
-      const vh = wrap?.clientHeight ?? 0;
-      if (vw <= 0 || vh <= 0) return;
-      const encoded = encodeMapViewState({
-        mapZoom: mapZoomRef.current,
-        scrollLeft: mapPanLeftRef.current,
-        scrollTop: mapPanTopRef.current,
-        minZoom: minZoomRef.current,
-        maxZoom: maxZoomRef.current,
-        renderedWidthPx: renderedWRef.current,
-        renderedHeightPx: renderedHRef.current,
-        viewportW: vw,
-        viewportH: vh,
+      // Double rAF: let layout settle after viewport resize before measuring vw/vh and reading pan refs.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const wrap = scrollWrapperRef.current;
+          const vw = wrap?.clientWidth ?? 0;
+          const vh = wrap?.clientHeight ?? 0;
+          if (vw <= 0 || vh <= 0) return;
+          const encoded = encodeMapViewState({
+            mapZoom: mapZoomRef.current,
+            scrollLeft: mapPanLeftRef.current,
+            scrollTop: mapPanTopRef.current,
+            minZoom: minZoomRef.current,
+            maxZoom: maxZoomRef.current,
+            renderedWidthPx: renderedWRef.current,
+            renderedHeightPx: renderedHRef.current,
+            viewportW: vw,
+            viewportH: vh,
+          });
+          onMapViewSync(encoded.mapViewZoomRatio, encoded.mapViewPanNorm, encoded.mapViewVisibleNorm);
+        });
       });
-      onMapViewSync(encoded.mapViewZoomRatio, encoded.mapViewPanNorm, encoded.mapViewVisibleNorm);
     }, 120);
   }, [onMapViewSync]);
 
@@ -1867,7 +1868,8 @@ export function BattleMap({
 
   useLayoutEffect(() => {
     if (onMapViewSync || !tableStateReady) return;
-    if (!shouldApplyRemotePlayerMapView(isPlayer, playerFreeMapExplore)) return;
+    const applyRemote = shouldApplyRemotePlayerMapView(isPlayer, playerFreeMapExplore);
+    if (!applyRemote) return;
     if (containerWidth <= 0 || containerHeight <= 0) return;
     const d = decodeMapViewState(mapConfig, {
       minZoom,
@@ -1876,6 +1878,8 @@ export function BattleMap({
       renderedHeightPx,
       viewportW: containerWidth,
       viewportH: containerHeight,
+      /** Match GM’s viewport to the top of the player viewport — centering adds a scroll-scaled gap above the shared frame. */
+      decodeAlign: shouldApplyPlayerFollowClip ? 'topLeft' : 'center',
     });
     if (!d) return;
     mapZoomRef.current = d.mapZoom;

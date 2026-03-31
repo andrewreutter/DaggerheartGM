@@ -1782,6 +1782,7 @@ function App() {
                 saveItem={effectiveIsPlayer ? (col, item) => col === 'characters' ? saveItem(col, item) : undefined : saveItem}
                 saveImage={effectiveIsPlayer ? (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, opts) : undefined : saveImage}
                 addToTable={effectiveIsPlayer ? () => {} : sendAddToTable}
+                sendDoAddToTable={effectiveIsPlayer ? undefined : sendDoAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
                 user={user}
                 ensureScenesLoaded={ensureScenesLoaded}

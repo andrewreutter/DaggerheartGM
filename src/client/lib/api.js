@@ -712,6 +712,56 @@ export const postEnvironmentAiBuild = async (concept, options = {}) => {
 };
 
 /**
+ * LLM encounter plan: library ids + optional synthetic fallbacks.
+ * @param {string} concept
+ * @param {{
+ *   signal?: AbortSignal,
+ *   partySize: number,
+ *   partyTier: number,
+ *   remainingBattlePoints: number,
+ *   includePublic: boolean,
+ *   hasEnvironmentOnTable: boolean,
+ *   tableAdversarySummary: { role: string, tier: number, count: number, name?: string }[],
+ *   step?: 'plan' | 'finish' | 'full',
+ *   encounterPlan?: object,
+ * }} options
+ */
+export const postEncounterAiBuild = async (concept, options = {}) => {
+  const {
+    signal,
+    partySize,
+    partyTier,
+    remainingBattlePoints,
+    includePublic,
+    hasEnvironmentOnTable,
+    tableAdversarySummary,
+    step,
+    encounterPlan,
+  } = options;
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/encounter-ai-build', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({
+      concept,
+      partySize,
+      partyTier,
+      remainingBattlePoints,
+      includePublic,
+      hasEnvironmentOnTable,
+      tableAdversarySummary,
+      ...(step ? { step } : {}),
+      ...(encounterPlan && typeof encounterPlan === 'object' ? { encounterPlan } : {}),
+    }),
+    signal,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
+/**
  * Generate an image from a text prompt via the Hugging Face Inference API.
  * Returns { imageUrl } where imageUrl is a base64 data URL.
  */

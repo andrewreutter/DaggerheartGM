@@ -374,6 +374,47 @@ describe('applyTableOp', () => {
     expect(result.activeElements[0].tokenY).toBeNull();
   });
 
+  it('set-map with a new mapImageUrl clears zoom/pan without resetTokenPositions', () => {
+    const state = {
+      maps: [
+        {
+          id: 'm-default',
+          name: 'Map 1',
+          mapImageUrl: 'https://x/old.png',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'm-default',
+          name: 'Main',
+          mapViewZoomRatio: 0.75,
+          mapViewPanNorm: { x: 0.1, y: 0.2 },
+          mapViewVisibleNorm: { x: 0, y: 0, w: 0.5, h: 0.5 },
+          broadcastToPlayers: true,
+        },
+      ],
+      activeMapId: 'm-default',
+      gmActiveViewId: 'v1',
+      activeElements: [mkElement({ tokenX: 10, tokenY: 20, mapId: 'm-default' })],
+    };
+    const result = applyTableOp(
+      { op: 'set-map', mapImageUrl: 'https://x/new.png', mapId: 'm-default' },
+      state
+    );
+    expect(result.mapConfig.mapImageUrl).toBe('https://x/new.png');
+    expect(result.mapConfig.mapViewZoomRatio).toBeNull();
+    expect(result.mapConfig.mapViewPanNorm).toBeNull();
+    expect(result.mapConfig.mapViewVisibleNorm).toBeNull();
+    expect(result.activeElements).toBeUndefined();
+    expect(state.activeElements[0].tokenX).toBe(10);
+  });
+
   it('set-map-view merges view fields into mapConfig', () => {
     const state = {
       mapConfig: {

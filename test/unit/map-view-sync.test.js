@@ -128,6 +128,53 @@ describe('map-view-sync', () => {
     expect(reEncoded.mapViewPanNorm.y).toBeCloseTo(encoded.mapViewPanNorm.y, 5);
   });
 
+  it('decodeAlign topLeft pins the shared rect top edge to the viewport top (avoids centering slack above the GM frame)', () => {
+    const ctx = {
+      minZoom: 0.5,
+      maxZoom: 3,
+      renderedWidthPx: 1000,
+      renderedHeightPx: 1000,
+      viewportW: 800,
+      viewportH: 600,
+      decodeAlign: 'topLeft',
+    };
+    const stored = {
+      mapViewVisibleNorm: { x: 0.1, y: 0.2, w: 0.4, h: 0.3 },
+    };
+    const d = decodeMapViewState(stored, ctx);
+    expect(d).not.toBeNull();
+    const vn = stored.mapViewVisibleNorm;
+    const topInnerPx = vn.y * ctx.renderedHeightPx;
+    const rTop = topInnerPx * d.mapZoom - d.scrollTop;
+    expect(rTop).toBeCloseTo(0, 4);
+  });
+
+  it('same mapZoom but different scrollTop produces different mapViewVisibleNorm.y (stale zero-scroll must not broadcast as equivalent framing)', () => {
+    const ctx = {
+      minZoom: 0.39141414141414144,
+      maxZoom: 23.484848484848484,
+      renderedWidthPx: 1980,
+      renderedHeightPx: 1980,
+      viewportW: 775,
+      viewportH: 1130,
+    };
+    const z = 2.1283454647062383;
+    const panned = encodeMapViewState({
+      mapZoom: z,
+      scrollLeft: 1513.2896740572658,
+      scrollTop: 1162.8577661431063,
+      ...ctx,
+    });
+    const topOrigin = encodeMapViewState({
+      mapZoom: z,
+      scrollLeft: 1513.2896740572658,
+      scrollTop: 0,
+      ...ctx,
+    });
+    expect(panned.mapViewZoomRatio).toBeCloseTo(topOrigin.mapViewZoomRatio, 5);
+    expect(panned.mapViewVisibleNorm.y).not.toBeCloseTo(topOrigin.mapViewVisibleNorm.y, 2);
+  });
+
   it('handles minZoom === maxZoom without NaN', () => {
     const flat = { ...base, minZoom: 1, maxZoom: 1 };
     const e = encodeMapViewState({
