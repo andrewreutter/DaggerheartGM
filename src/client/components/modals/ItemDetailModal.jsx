@@ -593,6 +593,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                     <>
                       <button
                         type="button"
+                        tabIndex={0}
                         onClick={undo}
                         disabled={!canUndo}
                         title="Undo (Ctrl+Z)"
@@ -602,6 +603,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                       </button>
                       <button
                         type="button"
+                        tabIndex={0}
                         onClick={redo}
                         disabled={!canRedo}
                         title="Redo (Ctrl+Shift+Z)"
@@ -638,6 +640,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                   {v2LibrarySourcePath ? <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="header" /> : null}
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={onClose}
                     disabled={aiConceptBusy}
                     title={aiConceptBusy ? 'Cancel AI build or wait to close' : undefined}
@@ -656,6 +659,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               {editable && (
                 <>
                   <button
+                    type="button"
+                    tabIndex={0}
                     onClick={undo}
                     disabled={!canUndo}
                     title="Undo (Ctrl+Z)"
@@ -668,6 +673,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
                     <Undo2 size={isRightDrawer ? 14 : 16} />
                   </button>
                   <button
+                    type="button"
+                    tabIndex={0}
                     onClick={redo}
                     disabled={!canRedo}
                     title="Redo (Ctrl+Shift+Z)"
@@ -734,6 +741,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               {v2LibrarySourcePath ? <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="header" /> : null}
               <button
                 type="button"
+                tabIndex={0}
                 onClick={onClose}
                 disabled={aiConceptBusy}
                 title={aiConceptBusy ? 'Cancel AI build or wait to close' : undefined}
@@ -758,6 +766,7 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
               </p>
               <button
                 type="button"
+                tabIndex={0}
                 onClick={dismissCharAutosaveHint}
                 className="text-sm font-medium shrink-0 px-2.5 py-1 rounded-md bg-sky-900/80 hover:bg-sky-800 text-sky-100 border border-sky-700/60 transition-colors"
               >
@@ -800,6 +809,8 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
       onClick={() => setLightboxUrl(null)}
     >
       <button
+        type="button"
+        tabIndex={0}
         className="absolute top-4 right-4 p-2 rounded-full bg-dh-raised/80 text-dh hover:text-dh hover:bg-dh-hover transition-colors"
         onClick={() => setLightboxUrl(null)}
       >

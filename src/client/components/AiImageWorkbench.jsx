@@ -69,6 +69,7 @@ export function AiImageWorkbench({
           {onRebuildPrompt ? (
             <button
               type="button"
+              tabIndex={0}
               onClick={onRebuildPrompt}
               disabled={rebuildDisabled || generating}
               className="flex items-center gap-1 text-xs text-dh-muted hover:text-dh transition-colors disabled:opacity-50"
@@ -111,6 +112,7 @@ export function AiImageWorkbench({
                 <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-2">
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={() => onHistoryIndexChange(i => i - 1)}
                     disabled={!canGoBack}
                     className="flex items-center justify-center w-6 h-6 rounded-full bg-black/60 hover:bg-black/80 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -122,6 +124,7 @@ export function AiImageWorkbench({
                   </span>
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={() => onHistoryIndexChange(i => i + 1)}
                     disabled={!canGoForward}
                     className="flex items-center justify-center w-6 h-6 rounded-full bg-black/60 hover:bg-black/80 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -136,6 +139,7 @@ export function AiImageWorkbench({
               {showUseButton && onUse ? (
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={onUse}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-emerald-700 hover:bg-emerald-600 text-white transition-colors"
                 >
@@ -145,6 +149,7 @@ export function AiImageWorkbench({
               ) : null}
               <button
                 type="button"
+                tabIndex={0}
                 onClick={onGenerate}
                 disabled={generating || !editedPrompt.trim()}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-purple-700 hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
@@ -163,6 +168,7 @@ export function AiImageWorkbench({
               </button>
               <button
                 type="button"
+                tabIndex={0}
                 onClick={() => onEditOpenChange(o => !o)}
                 disabled={generating}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-dh-hover hover:bg-dh-hover disabled:opacity-50 disabled:cursor-not-allowed text-dh transition-colors"
@@ -189,6 +195,7 @@ export function AiImageWorkbench({
                 />
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={onEdit}
                   disabled={generating || !editInstruction.trim()}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-purple-700 hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors whitespace-nowrap"
@@ -211,6 +218,7 @@ export function AiImageWorkbench({
         ) : (
           <button
             type="button"
+            tabIndex={0}
             onClick={onGenerate}
             disabled={generating || !editedPrompt.trim()}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded bg-purple-700 hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed text-white transition-colors"
@@ -237,6 +245,7 @@ export function AiImageWorkbench({
         >
           <button
             type="button"
+            tabIndex={0}
             onClick={(e) => { e.stopPropagation(); onLightboxOpenChange(false); }}
             className="absolute top-4 right-4 z-10 text-white/70 hover:text-white bg-black/40 hover:bg-black/60 rounded-full p-1.5 transition-colors"
           >
@@ -255,6 +264,7 @@ export function AiImageWorkbench({
               <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-2 pointer-events-auto">
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={e => { e.stopPropagation(); onHistoryIndexChange(i => i - 1); }}
                   disabled={!canGoBack}
                   className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -267,6 +277,7 @@ export function AiImageWorkbench({
                 </span>
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={e => { e.stopPropagation(); onHistoryIndexChange(i => i + 1); }}
                   disabled={!canGoForward}
                   className="flex items-center justify-center w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"

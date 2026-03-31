@@ -50,7 +50,7 @@ export function ImportModalShell({ title, onClose, children, footer }) {
       >
         <div className="flex items-center justify-between p-5 border-b border-dh-border">
           <h2 className="text-xl font-bold text-white">{title}</h2>
-          <button onClick={onClose} className="text-dh-muted hover:text-white"><X size={20} /></button>
+          <button type="button" tabIndex={0} onClick={onClose} className="text-dh-muted hover:text-white"><X size={20} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-5">
           {children}
@@ -76,6 +76,8 @@ export function ImportSuccessStep({ importedItems, onImportSuccess, onClose, col
       <div className="space-y-2">
         {importedItems.map(item => (
           <button
+            type="button"
+            tabIndex={0}
             key={`${item.collection}-${item.id}`}
             onClick={() => { onImportSuccess(item.collection, item.id); onClose(); }}
             className="w-full text-left bg-dh-inset border border-dh-border hover:border-dh-strong rounded-lg p-3 flex items-center justify-between group transition-colors"

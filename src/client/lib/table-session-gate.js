@@ -91,6 +91,12 @@ export function gateTableOpForPrepMode(state, op) {
       return { ok: true, op };
     case 'set-fear':
       return { ok: true, op };
+    case 'set-countdown':
+    case 'session-countdown-upsert':
+    case 'session-countdown-remove':
+    case 'session-countdown-patch':
+    case 'session-countdown-batch':
+      return { ok: true, op };
     case 'add-elements':
     case 'remove-element':
     /** Sync saved library row onto a table element (adversary/environment base data). Prep-safe — not play mechanics. */

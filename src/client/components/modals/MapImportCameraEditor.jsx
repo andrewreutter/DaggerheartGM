@@ -139,6 +139,7 @@ export function MapImportCameraEditor({
               Camera {i + 2}
               <button
                 type="button"
+                tabIndex={0}
                 className="rounded p-0.5 text-red-400 hover:bg-dh-hover"
                 aria-label={`Remove camera ${i + 2}`}
                 onClick={() => onRectsChange(rectsNorm.filter((_, j) => j !== i))}

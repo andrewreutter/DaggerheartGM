@@ -19,8 +19,12 @@
 
 import pg from 'pg';
 import { getPendingBanners, getResolvedTableState } from './db.js';
+import { redactTableStateForPlayerAudience } from './client/lib/session-countdowns.js';
 
 const { Client } = pg;
+
+/** @type {WeakMap<import('http').ServerResponse, 'gm' | 'player'>} */
+const tableStateAudienceByResponse = new WeakMap();
 
 const DEBOUNCE_MS = 50;
 
@@ -110,8 +114,14 @@ class SubscriptionManager {
   /**
    * Subscribe an SSE response object to a channel.
    * Immediately pushes the current snapshot so the client doesn't miss initial state.
+   * @param {{ tableStateAudience?: 'gm' | 'player' }} [meta] — for `table_state`, controls GM-only redaction (countdowns + encounter notes)
    */
-  subscribe(channelName, key, res) {
+  subscribe(channelName, key, res, meta = {}) {
+    if (meta.tableStateAudience === 'player') {
+      tableStateAudienceByResponse.set(res, 'player');
+    } else if (meta.tableStateAudience === 'gm') {
+      tableStateAudienceByResponse.set(res, 'gm');
+    }
     if (!this._subs.has(channelName)) this._subs.set(channelName, new Map());
     const keyMap = this._subs.get(channelName);
     if (!keyMap.has(key)) keyMap.set(key, new Set());
@@ -163,13 +173,16 @@ class SubscriptionManager {
       return;
     }
 
-    const payload = `event: ${channelName}\ndata: ${JSON.stringify(snapshot)}\n\n`;
     for (const res of responses) {
       try {
-        if (!res.writableEnded) {
-          res.write(payload);
-          res.flush?.();
+        if (res.writableEnded) continue;
+        let data = snapshot;
+        if (channelName === 'table_state' && tableStateAudienceByResponse.get(res) === 'player') {
+          data = redactTableStateForPlayerAudience(snapshot);
         }
+        const payload = `event: ${channelName}\ndata: ${JSON.stringify(data)}\n\n`;
+        res.write(payload);
+        res.flush?.();
       } catch {
         // Client already disconnected — will be cleaned up on 'close'
       }

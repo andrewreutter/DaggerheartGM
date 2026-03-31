@@ -91,6 +91,7 @@ export function ImageGenerator({ formData, collection, onImageGenerated, inline 
   const buttonEl = (
     <button
       type="button"
+      tabIndex={0}
       onClick={openPanel}
       className={`flex items-center justify-center gap-1.5 text-xs transition-colors shrink-0 cursor-pointer ${
         inline

@@ -147,6 +147,7 @@ export function ItemPickerModal({
       <div className="flex rounded-lg border border-dh-border overflow-hidden">
         <button
           type="button"
+          tabIndex={0}
           onClick={() => setPickerSubMode('browse')}
           className={`flex-1 py-2 text-xs font-semibold transition-colors ${
             mode === 'browse' ? 'bg-violet-900/50 text-violet-100' : 'bg-dh-raised text-dh-muted hover:text-dh'
@@ -156,6 +157,7 @@ export function ItemPickerModal({
         </button>
         <button
           type="button"
+          tabIndex={0}
           onClick={() => setPickerSubMode('ai')}
           className={`flex-1 py-2 text-xs font-semibold transition-colors border-l border-dh-border ${
             mode === 'ai' ? 'bg-violet-900/50 text-violet-100' : 'bg-dh-raised text-dh-muted hover:text-dh'
@@ -184,7 +186,7 @@ export function ItemPickerModal({
               </span>
             )}
           </div>
-          <button onClick={onClose} className="text-dh-muted hover:text-white transition-colors">
+          <button type="button" tabIndex={0} onClick={onClose} className="text-dh-muted hover:text-white transition-colors">
             <X size={18} />
           </button>
         </div>
@@ -193,6 +195,7 @@ export function ItemPickerModal({
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <button
               type="button"
+              tabIndex={0}
               onClick={() => {
                 onCreateNew();
                 onClose();
@@ -209,6 +212,7 @@ export function ItemPickerModal({
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <button
               type="button"
+              tabIndex={0}
               onClick={() => {
                 onCreateNew();
                 onClose();
@@ -225,6 +229,7 @@ export function ItemPickerModal({
           <div className="px-5 py-3 border-b border-dh-border shrink-0">
             <button
               type="button"
+              tabIndex={0}
               onClick={() => {
                 onCreateNew();
                 onClose();
@@ -262,6 +267,7 @@ export function ItemPickerModal({
                 />
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={() => {
                     const q = charAiConcept.trim();
                     if (!q) return;
@@ -320,6 +326,7 @@ export function ItemPickerModal({
                 />
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={() => {
                     const q = advAiConcept.trim();
                     if (!q) return;
@@ -384,6 +391,7 @@ export function ItemPickerModal({
                 />
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={() => {
                     const q = envAiConcept.trim();
                     if (!q) return;
@@ -406,6 +414,7 @@ export function ItemPickerModal({
           <div className="border-b border-dh-border shrink-0">
             <button
               type="button"
+              tabIndex={0}
               onClick={() => setDaggerstackOpen(prev => !prev)}
               className="w-full px-5 py-2.5 flex items-center gap-2 text-left text-dh hover:text-white hover:bg-dh-raised/50 transition-colors"
             >
@@ -476,6 +485,8 @@ export function ItemPickerModal({
             const incomplete = charCheck && !charCheck.complete;
             return (
               <button
+                type="button"
+                tabIndex={0}
                 key={item.id}
                 onClick={() => {
                   onSelect(item);

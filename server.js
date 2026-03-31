@@ -14,6 +14,7 @@ import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js'
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
+import { redactTableStateForPlayerAudience } from './src/client/lib/session-countdowns.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
 import { unifiedListConfig } from './src/unified-list-config.js';
 import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
@@ -1120,9 +1121,12 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
           return res.status(403).json({ error: 'Not your table' });
         }
         // Must match SSE `table_state` snapshots from `getResolvedTableState` (idle pause, activity seed).
-        const resolvedState = await getResolvedTableState(APP_ID, tableId);
+        let resolvedState = await getResolvedTableState(APP_ID, tableId);
         if (!resolvedState) {
           return res.status(404).json({ error: 'Table not found' });
+        }
+        if (!isOwner && isPlayer) {
+          resolvedState = redactTableStateForPlayerAudience(resolvedState);
         }
         const resolved = [{ ...resolvedState, _source: 'own', id: tableId, ownerUid: row.userId }];
         return res.json({ items: resolved, totalCount: 1, dbCount: 1 });
@@ -2089,7 +2093,7 @@ app.get('/api/room/my/players', async (req, res) => {
   res.flush?.();
 
   subscriptionManager.subscribe('banners', user.uid, res);
-  subscriptionManager.subscribe('table_state', tableId, res);
+  subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'gm' });
 
   // Send any current pending player intent so GM sees it on reconnect
   const existingIntent = pendingIntents.get(tableId);
@@ -2147,7 +2151,7 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
     res.flush?.();
 
     subscriptionManager.subscribe('banners', gmUid, res);
-    subscriptionManager.subscribe('table_state', tableId, res);
+    subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'player' });
 
     broadcastPresenceToTable(tableId);
 

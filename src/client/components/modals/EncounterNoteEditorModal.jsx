@@ -1,28 +1,40 @@
-import { useEffect, useState } from 'react';
-import { StickyNote } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { StickyNote, Eye, EyeOff } from 'lucide-react';
 import { FullPageOverlay, FullPageOverlayHeader } from '../FullPageOverlay.jsx';
 import { MarkdownText } from '../../lib/markdown.js';
 import { MarkdownHelpTooltip } from '../MarkdownHelpTooltip.jsx';
 
 /**
  * Edit an encounter note (table-only markdown text + optional attached image).
+ * @param {'players' | 'gm'} [props.visibility] — `'gm'` = GM only (hidden from players), default players-visible
  */
 export function EncounterNoteEditorModal({
   open,
   name: initialName,
   body: initialBody,
   imageUrl: initialImageUrl,
+  visibility: initialVisibility,
   onSave,
   onClose,
 }) {
   const [name, setName] = useState(initialName || '');
   const [body, setBody] = useState(initialBody || '');
+  const [visibility, setVisibility] = useState(initialVisibility === 'gm' ? 'gm' : 'players');
+  const titleInputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     setName(initialName || '');
     setBody(initialBody || '');
-  }, [open, initialName, initialBody]);
+    setVisibility(initialVisibility === 'gm' ? 'gm' : 'players');
+    const id = window.setTimeout(() => {
+      const el = titleInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    }, 0);
+    return () => clearTimeout(id);
+  }, [open, initialName, initialBody, initialVisibility]);
 
   return (
     <FullPageOverlay
@@ -48,6 +60,7 @@ export function EncounterNoteEditorModal({
         <label className="block shrink-0">
           <span className="text-xs font-semibold text-dh-muted">Title</span>
           <input
+            ref={titleInputRef}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -73,9 +86,21 @@ export function EncounterNoteEditorModal({
             </div>
           </div>
         </div>
+
+        <button
+          type="button"
+          tabIndex={0}
+          onClick={() => setVisibility(visibility === 'gm' ? 'players' : 'gm')}
+          className="flex shrink-0 items-center gap-2 rounded-lg border border-dh-border bg-dh-raised/60 px-3 py-2 text-left text-sm text-dh hover:bg-dh-hover/60"
+        >
+          {visibility === 'gm' ? <EyeOff size={18} className="text-dh-muted shrink-0" /> : <Eye size={18} className="text-dh-muted shrink-0" />}
+          <span>{visibility === 'gm' ? 'GM only (hidden from players)' : 'Visible to players'}</span>
+        </button>
+
         <div className="flex shrink-0 justify-end gap-2 border-t border-dh-border pt-3">
           <button
             type="button"
+            tabIndex={0}
             onClick={onClose}
             className="rounded-lg border border-dh-strong px-4 py-2 text-sm text-dh hover:bg-dh-hover"
           >
@@ -83,7 +108,8 @@ export function EncounterNoteEditorModal({
           </button>
           <button
             type="button"
-            onClick={() => onSave?.({ name: name.trim() || 'Note', body })}
+            tabIndex={0}
+            onClick={() => onSave?.({ name: name.trim() || 'Note', body, visibility })}
             className="rounded-lg border border-sky-700 bg-sky-900/40 px-4 py-2 text-sm font-medium text-sky-200 hover:bg-sky-900/60"
           >
             Save

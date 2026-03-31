@@ -10,13 +10,15 @@ export function EditChoiceDialog({ itemName, contextLabel, canEditOriginal, forc
       <div className="bg-dh-surface border border-dh-border rounded-xl shadow-2xl w-full max-w-sm p-6">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-base font-bold text-white truncate pr-2">Edit "{itemName}"</h2>
-          <button onClick={onClose} className="text-dh-muted hover:text-white flex-shrink-0"><X size={18} /></button>
+          <button type="button" tabIndex={0} onClick={onClose} className="text-dh-muted hover:text-white flex-shrink-0"><X size={18} /></button>
         </div>
         <p className="text-dh-muted text-sm mb-5">
           This item is referenced from your library. How would you like to edit it?
         </p>
         <div className="flex flex-col gap-3">
           <button
+            type="button"
+            tabIndex={0}
             onClick={onEditCopy}
             className="w-full px-4 py-3 bg-dh-raised hover:bg-dh-hover border border-dh-strong hover:border-dh-strong text-dh rounded-lg text-left transition-colors"
           >
@@ -27,6 +29,8 @@ export function EditChoiceDialog({ itemName, contextLabel, canEditOriginal, forc
           </button>
           {canEditOriginal ? (
             <button
+              type="button"
+              tabIndex={0}
               onClick={onEditOriginal}
               className="w-full px-4 py-3 bg-blue-900/40 hover:bg-blue-900/60 border border-blue-700/50 hover:border-blue-600/60 text-blue-200 rounded-lg text-left transition-colors"
             >

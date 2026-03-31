@@ -796,6 +796,7 @@ export function ImageRegionsEditor({
               <Tooltip label="Zoom to selected region">
                 <button
                   type="button"
+                  tabIndex={0}
                   aria-label="Zoom to selected region"
                   disabled={!selected}
                   onClick={applyZoomToFitSelection}
@@ -817,6 +818,7 @@ export function ImageRegionsEditor({
                   <button
                     key={reg.id}
                     type="button"
+                    tabIndex={0}
                     onClick={() => setSelectedId(reg.id)}
                     className={`rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
                       isSel ? 'border-sky-500/60 bg-sky-950/35 text-dh' : 'border-dh-border bg-dh-raised/50 text-dh-muted hover:bg-dh-hover'
@@ -832,6 +834,7 @@ export function ImageRegionsEditor({
             </div>
             <button
               type="button"
+              tabIndex={0}
               onClick={addFullImageRegion}
               className="inline-flex items-center gap-1 self-stretch justify-center rounded-md border border-dh-border bg-dh-raised/80 px-2 py-1.5 text-[11px] text-dh hover:bg-dh-hover"
             >
@@ -839,6 +842,7 @@ export function ImageRegionsEditor({
             </button>
             <button
               type="button"
+              tabIndex={0}
               disabled={!selectedId || regions.length <= 1}
               onClick={removeSelected}
               className="inline-flex items-center gap-1 self-stretch justify-center rounded-md border border-red-900/50 bg-red-950/20 px-2 py-1.5 text-[11px] text-red-300 hover:bg-red-950/40 disabled:opacity-35"
@@ -848,6 +852,7 @@ export function ImageRegionsEditor({
             <div className="mt-auto border-t border-dh-border pt-2">
               <button
                 type="button"
+                tabIndex={0}
                 onClick={onClose}
                 className="w-full rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-500"
               >

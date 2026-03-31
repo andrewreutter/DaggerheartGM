@@ -62,11 +62,13 @@ describe('applyTableOp', () => {
         mkElement({ instanceId: 'env-1', elementType: 'environment', name: 'Forest' }),
       ],
       featureCountdowns: { 'some|key|0': 2 },
+      sessionCountdowns: [{ id: 'sc1', label: 'X', current: 3 }],
     };
     const result = applyTableOp({ op: 'clear-table' }, state);
     expect(result.activeElements).toHaveLength(1);
     expect(result.activeElements[0].elementType).toBe('character');
     expect(result.featureCountdowns).toEqual({});
+    expect(result.sessionCountdowns).toEqual([]);
   });
 
   it('set-fear sets fearCount', () => {
@@ -78,6 +80,43 @@ describe('applyTableOp', () => {
     const state = { featureCountdowns: { 'a|b|0': 1 } };
     const result = applyTableOp({ op: 'set-countdown', key: 'c|d|0', value: 3 }, state);
     expect(result.featureCountdowns).toEqual({ 'a|b|0': 1, 'c|d|0': 3 });
+  });
+
+  it('set-countdown dual-writes matching session countdown row by legacy key', () => {
+    const state = {
+      featureCountdowns: { 'adv|feat|0': 5 },
+      sessionCountdowns: [
+        {
+          id: 'sc1',
+          label: 'Count',
+          current: 5,
+          sourceRef: { cardKey: 'adv', featureKey: 'feat', cdIdx: 0 },
+        },
+      ],
+    };
+    const result = applyTableOp({ op: 'set-countdown', key: 'adv|feat|0', value: 2 }, state);
+    expect(result.featureCountdowns['adv|feat|0']).toBe(2);
+    expect(result.sessionCountdowns).toHaveLength(1);
+    expect(result.sessionCountdowns[0].current).toBe(2);
+  });
+
+  it('session-countdown-batch updates rows and syncs featureCountdowns for sourceRef rows', () => {
+    const state = {
+      featureCountdowns: { 'k|f|0': 10 },
+      sessionCountdowns: [
+        {
+          id: 'row-a',
+          current: 10,
+          sourceRef: { cardKey: 'k', featureKey: 'f', cdIdx: 0 },
+        },
+      ],
+    };
+    const result = applyTableOp(
+      { op: 'session-countdown-batch', updates: [{ id: 'row-a', current: 7 }] },
+      state
+    );
+    expect(result.sessionCountdowns[0].current).toBe(7);
+    expect(result.featureCountdowns['k|f|0']).toBe(7);
   });
 
   it('set-battle-mods replaces battle mods', () => {

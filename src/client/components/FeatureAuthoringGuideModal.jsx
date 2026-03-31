@@ -64,6 +64,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                 <li>
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={() => scrollToId('guide-intro')}
                     className="w-full px-3 py-1.5 text-left text-dh hover:bg-dh-hover hover:text-dh"
                   >
@@ -75,6 +76,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                 <li key={sec.id}>
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={() => scrollToId(sec.id)}
                     className="w-full px-3 py-1.5 text-left font-medium text-dh hover:bg-dh-hover hover:text-dh"
                   >
@@ -86,6 +88,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                         <li key={sub.id}>
                           <button
                             type="button"
+                            tabIndex={0}
                             onClick={() => scrollToId(sub.id)}
                             className="w-full py-1 text-left text-xs text-dh-muted hover:bg-dh-hover hover:text-dh"
                           >
@@ -97,6 +100,7 @@ export function FeatureAuthoringGuideModal({ open, onClose }) {
                                 <li key={subSub.id}>
                                   <button
                                     type="button"
+                                    tabIndex={0}
                                     onClick={() => scrollToId(subSub.id)}
                                     className="w-full py-0.5 text-left text-[10px] text-dh-muted hover:bg-dh-hover hover:text-dh"
                                   >

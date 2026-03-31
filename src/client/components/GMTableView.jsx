@@ -6,6 +6,8 @@ import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords,
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { ActionLog } from './ActionLog.jsx';
 import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
+import { findSessionCountdownBySource } from '../lib/session-countdowns.js';
+import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinkedPairFromFeatureCountdowns } from './SessionCountdownsPanel.jsx';
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
@@ -13,8 +15,6 @@ import { getCheckboxTrackPreset } from './CheckboxTrack.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
-import { CustomSelect } from './forms/CustomSelect.jsx';
-import { RoleSelect } from './forms/RoleSelect.jsx';
 import { EncounterNoteEditorModal } from './modals/EncounterNoteEditorModal.jsx';
 import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
@@ -65,7 +65,7 @@ import {
   gmResourceTrackCheckboxEditsAllowed,
   isPrepModeElementUpdateBlocked,
 } from '../lib/table-session-gate.js';
-import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE, ROLES, TIERS, ENV_TYPES } from '../lib/constants.js';
+import { isOwnItem, ROLE_BP_COST, DEFAULT_CHARACTER_STARTING_HOPE, ROLES } from '../lib/constants.js';
 import {
   characterDrawerEditMismatch as computeCharacterDrawerEditMismatch,
   shouldSuppressCharacterOverlayOutsideDismiss,
@@ -327,7 +327,7 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
       <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-dh flex items-center gap-2"><Camera size={18} /> Capture Table as Scene</h2>
-          <button onClick={onClose} className="text-dh-muted hover:text-dh"><X size={18} /></button>
+          <button type="button" tabIndex={0} onClick={onClose} className="text-dh-muted hover:text-dh"><X size={18} /></button>
         </div>
 
         <p className="text-sm text-dh-muted mb-5">Save the current table contents as a reusable Scene, including all adversaries and environments.</p>
@@ -344,8 +344,10 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
         />
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-dh-muted hover:text-dh bg-dh-raised border border-dh-strong hover:border-dh-strong transition-colors">Cancel</button>
+          <button type="button" tabIndex={0} onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-dh-muted hover:text-dh bg-dh-raised border border-dh-strong hover:border-dh-strong transition-colors">Cancel</button>
           <button
+            type="button"
+            tabIndex={0}
             onClick={handleSave}
             disabled={!name.trim() || saving}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -541,14 +543,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-const ENV_TYPE_LABEL = {
-  traversal: 'Traversal',
-  exploration: 'Exploration',
-  social: 'Social',
-  event: 'Event',
-};
-
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
   onSetMapOverlay,
@@ -608,6 +603,30 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       postTableOp(op, tableId);
     },
     [tableId, playBlockedAllowAllEdits, sessionPlayAllowed, tableStateForGate]
+  );
+
+  const trackSessionCountdownFromGmMove = useCallback(
+    (feature, cd, cdIdx) => {
+      if (findSessionCountdownBySource(sessionCountdowns, feature.cardKey, feature.featureKey, cdIdx)) return;
+      const entry = buildTrackedSessionEntryFromFeature({
+        feature,
+        cd,
+        cdIdx,
+        sourceName: feature.sourceName,
+      });
+      sendOp({ op: 'session-countdown-upsert', entry });
+    },
+    [sessionCountdowns, sendOp]
+  );
+
+  const trackLinkedPairFromGmMove = useCallback(
+    (feature, cds) => {
+      const entries = buildLinkedPairFromFeatureCountdowns({ feature, cds, sourceName: feature.sourceName });
+      for (const entry of entries) {
+        sendOp({ op: 'session-countdown-upsert', entry });
+      }
+    },
+    [sendOp]
   );
 
   const updateActiveElement = useCallback((instanceId, updates) => {
@@ -682,14 +701,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [lightboxUrl, setLightboxUrl] = useState(null);
   const [modalOpen, setModalOpen] = useState(null); // null | 'adversaries' | 'environments' | 'scenes'
   const [characterPanelAiConcept, setCharacterPanelAiConcept] = useState('');
-  const [encounterAdvAiTier, setEncounterAdvAiTier] = useState(1);
-  const [encounterAdvAiRole, setEncounterAdvAiRole] = useState('standard');
-  const [encounterAdvAiConcept, setEncounterAdvAiConcept] = useState('');
-  const [encounterEnvAiTier, setEncounterEnvAiTier] = useState(1);
-  const [encounterEnvAiType, setEncounterEnvAiType] = useState('exploration');
-  const [encounterEnvAiConcept, setEncounterEnvAiConcept] = useState('');
-  /** Encounter panel AI strip: Encounter vs Adversary vs Environment. */
-  const [encounterAiBuilderKind, setEncounterAiBuilderKind] = useState('encounter');
   const [encounterAiConcept, setEncounterAiConcept] = useState('');
   /** null = use adjusted budget from BP card math */
   const [encounterAiBudgetUser, setEncounterAiBudgetUser] = useState(null);
@@ -701,7 +712,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [encounterAiBuildPhase, setEncounterAiBuildPhase] = useState(null);
   /** After Build with AI: summary = plan copy; notes = technical warnings (catalog trims, BP checks). */
   const [encounterAiBuildFeedback, setEncounterAiBuildFeedback] = useState(null);
-  const encounterAiInitKindRef = useRef(false);
   /** Once per table + ready: default "Generate a new battle map" from whether the active map has art. */
   const encounterAiGenerateMapInitRef = useRef(false);
   /** Viewport anchor for programmatic character sheet open (Add Character → create / pick). */
@@ -782,9 +792,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, [adversaryTargetMenu]);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [budgetCardOpen, setBudgetCardOpen] = useState(false);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [diceCanvasHidden, setDiceCanvasHidden] = useState(false);
-  const addMenuRef = useRef(null);
 
   // Action banners with adversary target: { [rollDbId]: selectedAdversaryInstanceId } — pre-populated from player's in-place pick, cleared on ack
   const [actionAdversarySelections, setActionAdversarySelections] = useState({});
@@ -2879,21 +2887,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   });
 
   useEffect(() => {
-    if (!addMenuOpen) return;
-    const handler = (e) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) {
-        setAddMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    document.addEventListener('touchstart', handler, { passive: true });
-    return () => {
-      document.removeEventListener('mousedown', handler);
-      document.removeEventListener('touchstart', handler);
-    };
-  }, [addMenuOpen]);
-
-  useEffect(() => {
     if (!gmMovesOverlay.isOpen) {
       setHoveredFeature(null);
       gmMovesPortalTooltip.hide();
@@ -2950,7 +2943,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const gameTableBasePath = tableId ? `/table/${tableId}` : '/table';
 
   const handleAddEmptyNote = useCallback(() => {
-    setAddMenuOpen(false);
     const id = generateId();
     void (async () => {
       const newEls = await addToTable({ id, name: 'Note', body: '' }, 'notes');
@@ -3093,6 +3085,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           name: baseElement.name || 'Note',
           body: baseElement.body || '',
           imageUrl: baseElement.imageUrl || '',
+          visibility: baseElement.visibility === 'gm' ? 'gm' : 'players',
         },
         baseElement,
       });
@@ -4264,17 +4257,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   );
 
   useEffect(() => {
-    if (encounterAiInitKindRef.current || !tableStateReady) return;
-    const hasAdv = activeElements.some(e => e.elementType === 'adversary');
-    const hasEnv = activeElements.some(e => e.elementType === 'environment');
-    let kind = 'encounter';
-    if (hasAdv && !hasEnv) kind = 'environment';
-    else if (!hasAdv && hasEnv) kind = 'adversary';
-    setEncounterAiBuilderKind(kind);
-    encounterAiInitKindRef.current = true;
-  }, [tableStateReady, activeElements]);
-
-  useEffect(() => {
     encounterAiGenerateMapInitRef.current = false;
   }, [tableId]);
 
@@ -5100,6 +5082,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   </div>
                 </div>
               ))}
+              {!isPlayer && (
+                <div className="w-full flex flex-wrap items-center gap-1 mt-1">
+                  {allCds.map((cd, cdIdx) => {
+                    const tracked = findSessionCountdownBySource(sessionCountdowns, feature.cardKey, feature.featureKey, cdIdx);
+                    return (
+                      <button
+                        key={`track-${cdIdx}`}
+                        type="button"
+                        onClick={() => !tracked && trackSessionCountdownFromGmMove(feature, cd, cdIdx)}
+                        disabled={!!tracked}
+                        className={`text-[9px] px-1.5 py-0.5 rounded border ${tracked ? 'border-emerald-800/50 text-emerald-400/80 cursor-default' : 'border-dh-border text-dh-muted hover:text-dh-hope hover:border-dh-hope/40'}`}
+                      >
+                        {tracked ? 'On table' : 'Add to table'}
+                      </button>
+                    );
+                  })}
+                  {allCds.length >= 2 && (
+                    <button
+                      type="button"
+                      onClick={() => trackLinkedPairFromGmMove(feature, allCds)}
+                      className="text-[9px] px-1.5 py-0.5 rounded border border-dh-border text-dh-muted hover:text-sky-400 hover:border-sky-500/40"
+                    >
+                      Track linked pair
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -6199,6 +6208,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               <div className="flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
+                  tabIndex={0}
                   className="px-3 py-1.5 rounded-lg text-sm border border-dh-strong bg-dh-raised text-dh hover:bg-dh-hover"
                   onClick={cancelPlayBlockedDialog}
                 >
@@ -6206,6 +6216,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 </button>
                 <button
                   type="button"
+                  tabIndex={0}
                   title="Until page reload"
                   className="px-3 py-1.5 rounded-lg text-sm border border-sky-700/70 bg-sky-950/50 text-sky-100 hover:bg-sky-900/60"
                   onClick={allowAllEditsAndConfirmPending}
@@ -6214,6 +6225,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 </button>
                 <button
                   type="button"
+                  tabIndex={0}
                   className="px-3 py-1.5 rounded-lg text-sm font-medium border border-amber-700/80 bg-amber-900/50 text-amber-100 hover:bg-amber-800/60"
                   onClick={() => confirmPlayBlockedDialog(playBlockedDialog)}
                 >
@@ -6470,6 +6482,145 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               return count > 0 ? <span className="text-[10px] text-dh-muted tabular-nums">{count}</span> : null;
             })()}
           </div>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
+          <div className="border-t border-dh-border" role="separator" />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
+            <button
+              type="button"
+              onClick={() => handleAddEmptyNote()}
+              title="Add note"
+              className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
+            >
+              + Add
+            </button>
+          </div>
+          {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
+            const el = item.element;
+            const noteBodyTrimmed = String(el.body || '').trim();
+            const noteTitleOnly = !noteBodyTrimmed && !el.imageUrl;
+            return (
+              <div
+                key={el.instanceId}
+                className={`flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40 ${noteTitleOnly ? 'py-1.5' : 'py-2'}`}
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateActiveElement(el.instanceId, {
+                      visibility: el.visibility === 'gm' ? 'players' : 'gm',
+                    })
+                  }
+                  className="shrink-0 self-start rounded p-0.5 text-dh-muted hover:bg-dh-hover/60 hover:text-dh"
+                  title={
+                    el.visibility === 'gm'
+                      ? 'GM only — click to show players'
+                      : 'Visible to players — click for GM only'
+                  }
+                  aria-label={el.visibility === 'gm' ? 'Show to players' : 'GM only'}
+                  aria-pressed={el.visibility === 'gm'}
+                >
+                  {el.visibility === 'gm' ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(`${gameTableBasePath}/notes/${el.id}`);
+                    setEditState({
+                      step: 'note',
+                      item: {
+                        id: el.id,
+                        name: el.name || 'Note',
+                        body: el.body || '',
+                        imageUrl: el.imageUrl || '',
+                        visibility: el.visibility === 'gm' ? 'gm' : 'players',
+                      },
+                      baseElement: el,
+                    });
+                  }}
+                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                >
+                  {el.imageUrl ? (
+                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
+                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
+                    </span>
+                  ) : (
+                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-amber-100/90">{el.name || 'Note'}</div>
+                    {noteBodyTrimmed ? (
+                      <div className="mt-1 max-h-24 overflow-hidden text-left">
+                        <MarkdownText text={noteBodyTrimmed} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
+                      </div>
+                    ) : null}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeActiveElement(el.instanceId)}
+                  className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
+                  title="Remove note"
+                ><X size={12} /></button>
+              </div>
+            );
+          })}
+
+          <div className="border-t border-dh-border" role="separator" />
+          <SessionCountdownsPanel
+            variant="section"
+            sectionTitle="Countdowns"
+            sessionCountdowns={sessionCountdowns}
+            isGm
+            onTableOp={sendOp}
+          />
+
+          <div className="border-t border-dh-border" role="separator" />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Environments</p>
+            <button
+              type="button"
+              onClick={() => setModalOpen('environments')}
+              title="Add environment"
+              className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
+            >
+              + Add
+            </button>
+          </div>
+          {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
+            const el = item.element;
+            return (
+              <div
+                key={el.instanceId}
+                className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
+                {...trackerOverlay.triggerProps(e => ({ kind: 'environment', element: item.element, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
+              >
+                <div className="px-2.5 py-1.5 flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
+                  <button
+                    onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
+                    className="hidden group-hover/env:block text-dh-muted hover:text-red-400 transition-colors shrink-0"
+                    title="Remove from table"
+                  ><X size={12} /></button>
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="border-t border-dh-border" role="separator" />
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Adversaries</p>
+            <button
+              type="button"
+              onClick={() => setModalOpen('adversaries')}
+              title="Add adversary"
+              className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold text-dh-muted hover:text-dh hover:bg-dh-hover/60 transition-colors"
+            >
+              + Add
+            </button>
+          </div>
           {/* Battle Budget card */}
           <div className="rounded-lg bg-dh-surface border border-dh-border overflow-hidden">
             <button
@@ -6494,7 +6645,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </button>
             {budgetCardOpen && (
               <div className="border-t border-dh-border px-2.5 py-2.5 space-y-3">
-                {/* Budget formula */}
                 <div className="text-xs">
                   <span className="text-dh-muted">({partySize} PCs × 3) + 2 = </span>
                   <span className="font-bold text-dh tabular-nums">{tableBudget}</span>
@@ -6510,7 +6660,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   <span className="text-dh-muted"> BP</span>
                 </div>
 
-                {/* Auto-detected modifiers */}
                 {activeAutoMods.length > 0 && (
                   <div className="space-y-1">
                     <p className="text-[10px] text-dh-muted uppercase tracking-wide">Auto-detected</p>
@@ -6548,7 +6697,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   </div>
                 )}
 
-                {/* Difficulty / Length dropdown */}
                 <div className="space-y-1">
                   <p className="text-[10px] text-dh-muted uppercase tracking-wide">Difficulty / Length</p>
                   <select
@@ -6563,7 +6711,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   </select>
                 </div>
 
-                {/* Damage Boost dropdown */}
                 <div className="space-y-1">
                   <p className="text-[10px] text-dh-muted uppercase tracking-wide">Damage Boost</p>
                   <select
@@ -6586,63 +6733,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               </div>
             )}
           </div>
-          {/* + Add menu (Adversary, Environment, Scene, Note) */}
-          <div
-            className="relative"
-            ref={addMenuRef}
-            onMouseLeave={() => { if (!isTouch) setAddMenuOpen(false); }}
-          >
-            <button
-              onClick={() => setAddMenuOpen(p => !p)}
-              className={`w-full rounded-lg border border-dashed px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors ${addMenuOpen ? 'border-dh-strong bg-dh-raised/60' : 'border-dh-strong bg-dh-surface/50 hover:border-dh-strong'}`}
-            >
-              <Plus size={12} className="text-dh-muted" />
-              <span className="text-xs font-semibold text-dh-muted">Add...</span>
-            </button>
-            {addMenuOpen && (
-              <div className="absolute left-0 right-0 top-full z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-xl overflow-hidden">
-                {[
-                  { col: 'adversaries', label: 'Adversary' },
-                  { col: 'environments', label: 'Environment' },
-                  { col: 'scenes', label: 'Scene' },
-                  { col: '__note', label: 'Note' },
-                ].map(({ col, label }) => (
-                  <button
-                    key={col}
-                    onClick={() => {
-                      if (col === '__note') handleAddEmptyNote();
-                      else { setModalOpen(col); setAddMenuOpen(false); }
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs text-dh hover:bg-dh-hover hover:text-dh transition-colors"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
-          {consolidatedElements.filter(item => item.kind === 'environment').map((item) => {
-            const el = item.element;
-            return (
-              <div
-                key={el.instanceId}
-                className="rounded-lg bg-emerald-950/30 border border-emerald-900/40 overflow-hidden group/env"
-                {...trackerOverlay.triggerProps(e => ({ kind: 'environment', element: item.element, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
-              >
-                <div className="px-2.5 py-1.5 flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-emerald-300/80 truncate flex-1">{el.name}</span>
-                  <button
-                    onClick={() => { removeActiveElement(el.instanceId); trackerOverlay.close(); }}
-                    className="hidden group-hover/env:block text-dh-muted hover:text-red-400 transition-colors shrink-0"
-                    title="Remove from table"
-                  ><X size={12} /></button>
-                </div>
-              </div>
-            );
-          })}
           {consolidatedElements.filter(item => item.kind === 'adversary-group').map((item) => {
             const { baseElement: el, instances } = item;
             const count = instances.length;
@@ -6830,43 +6921,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           })}
           {showConceptAiUi && (
             <div className="rounded-lg border border-violet-800/45 bg-violet-950/20 p-2 space-y-2">
-              <div className="flex rounded-lg border border-violet-800/50 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setEncounterAiBuilderKind('encounter')}
-                  className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
-                    encounterAiBuilderKind === 'encounter'
-                      ? 'bg-violet-900/50 text-violet-100'
-                      : 'bg-dh-raised text-dh-muted hover:text-dh'
-                  }`}
-                >
-                  Encounter
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEncounterAiBuilderKind('adversary')}
-                  className={`flex-1 py-1.5 text-xs font-semibold border-l border-violet-800/50 transition-colors ${
-                    encounterAiBuilderKind === 'adversary'
-                      ? 'bg-violet-900/50 text-violet-100'
-                      : 'bg-dh-raised text-dh-muted hover:text-dh'
-                  }`}
-                >
-                  Adversary
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEncounterAiBuilderKind('environment')}
-                  className={`flex-1 py-1.5 text-xs font-semibold border-l border-violet-800/50 transition-colors ${
-                    encounterAiBuilderKind === 'environment'
-                      ? 'bg-violet-900/50 text-violet-100'
-                      : 'bg-dh-raised text-dh-muted hover:text-dh'
-                  }`}
-                >
-                  Environment
-                </button>
-              </div>
-              {encounterAiBuilderKind === 'encounter' ? (
-                <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Encounter builder</p>
+              <div className="space-y-1.5">
                   <div>
                     <span className="text-[10px] text-dh-muted block mb-0.5">BP budget (target)</span>
                     <div className="flex gap-2 items-center">
@@ -6969,185 +7025,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     </div>
                   ) : null}
                   <AiDismissBuildWithAiLink />
-                </div>
-              ) : encounterAiBuilderKind === 'adversary' ? (
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="text-[10px] text-dh-muted block mb-0.5">Tier</span>
-                      <CustomSelect
-                        value={encounterAdvAiTier}
-                        onChange={setEncounterAdvAiTier}
-                        options={TIERS}
-                        getOptionLabel={(t) => String(t)}
-                        className="w-full"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-dh-muted block mb-0.5">Role</span>
-                      <RoleSelect value={encounterAdvAiRole} onChange={setEncounterAdvAiRole} className="w-full" />
-                    </div>
-                  </div>
-                  <textarea
-                    value={encounterAdvAiConcept}
-                    onChange={(e) => setEncounterAdvAiConcept(e.target.value)}
-                    onKeyDown={(e) =>
-                      handleAiConceptTextareaKeyDown(e, {
-                        canSubmit: !!encounterAdvAiConcept.trim(),
-                        onSubmit: () => {
-                          const q = encounterAdvAiConcept.trim();
-                          if (!q) return;
-                          void openNewAdversaryEditor({
-                            pendingAiConcept: q,
-                            tier: encounterAdvAiTier,
-                            role: encounterAdvAiRole,
-                          });
-                          setEncounterAdvAiConcept('');
-                        },
-                      })
-                    }
-                    rows={3}
-                    className="w-full min-h-[4.5rem] bg-dh-raised border border-dh-border rounded px-2 py-1 text-xs text-dh focus:border-violet-500 focus:outline-none resize-y"
-                    placeholder="Describe an adversary concept…"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const q = encounterAdvAiConcept.trim();
-                      if (!q) return;
-                      void openNewAdversaryEditor({
-                        pendingAiConcept: q,
-                        tier: encounterAdvAiTier,
-                        role: encounterAdvAiRole,
-                      });
-                      setEncounterAdvAiConcept('');
-                    }}
-                    disabled={!encounterAdvAiConcept.trim()}
-                    className="w-full py-1.5 rounded-md text-xs font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Build with AI
-                  </button>
-                  <AiDismissBuildWithAiLink />
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="text-[10px] text-dh-muted block mb-0.5">Tier</span>
-                      <CustomSelect
-                        value={encounterEnvAiTier}
-                        onChange={setEncounterEnvAiTier}
-                        options={TIERS}
-                        getOptionLabel={(t) => String(t)}
-                        className="w-full"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-dh-muted block mb-0.5">Type</span>
-                      <CustomSelect
-                        value={encounterEnvAiType}
-                        onChange={setEncounterEnvAiType}
-                        options={ENV_TYPES}
-                        getOptionLabel={(t) => ENV_TYPE_LABEL[t] ?? t}
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                  <textarea
-                    value={encounterEnvAiConcept}
-                    onChange={(e) => setEncounterEnvAiConcept(e.target.value)}
-                    onKeyDown={(e) =>
-                      handleAiConceptTextareaKeyDown(e, {
-                        canSubmit: !!encounterEnvAiConcept.trim(),
-                        onSubmit: () => {
-                          const q = encounterEnvAiConcept.trim();
-                          if (!q) return;
-                          void openNewEnvironmentEditor({
-                            pendingAiConcept: q,
-                            tier: encounterEnvAiTier,
-                            type: encounterEnvAiType,
-                          });
-                          setEncounterEnvAiConcept('');
-                        },
-                      })
-                    }
-                    rows={3}
-                    className="w-full min-h-[4.5rem] bg-dh-raised border border-dh-border rounded px-2 py-1 text-xs text-dh focus:border-violet-500 focus:outline-none resize-y"
-                    placeholder="Describe an environment concept…"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const q = encounterEnvAiConcept.trim();
-                      if (!q) return;
-                      void openNewEnvironmentEditor({
-                        pendingAiConcept: q,
-                        tier: encounterEnvAiTier,
-                        type: encounterEnvAiType,
-                      });
-                      setEncounterEnvAiConcept('');
-                    }}
-                    disabled={!encounterEnvAiConcept.trim()}
-                    className="w-full py-1.5 rounded-md text-xs font-medium border border-violet-700/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Build with AI
-                  </button>
-                  <AiDismissBuildWithAiLink />
-                </div>
-              )}
-            </div>
-          )}
-          {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
-            const el = item.element;
-            return (
-              <div
-                key={el.instanceId}
-                className="flex gap-1 rounded-lg border border-amber-900/50 bg-amber-950/25 px-2 py-2 transition-colors hover:border-amber-700/60 hover:bg-amber-950/40"
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigate(`${gameTableBasePath}/notes/${el.id}`);
-                    setEditState({
-                      step: 'note',
-                      item: {
-                        id: el.id,
-                        name: el.name || 'Note',
-                        body: el.body || '',
-                        imageUrl: el.imageUrl || '',
-                      },
-                      baseElement: el,
-                    });
-                  }}
-                  className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                >
-                  {el.imageUrl ? (
-                    <span className="mt-0.5 h-10 w-10 shrink-0 overflow-hidden rounded border border-amber-800/50 bg-dh-inset">
-                      <img src={el.imageUrl} alt="" className="h-full w-full object-cover" />
-                    </span>
-                  ) : (
-                    <StickyNote size={14} className="mt-0.5 shrink-0 text-amber-400/90" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-amber-100/90 truncate">{el.name || 'Note'}</div>
-                    <div className="mt-1 max-h-24 overflow-hidden text-left">
-                      <MarkdownText text={el.body || '—'} className="dh-md text-[11px] leading-snug text-dh-muted line-clamp-6" />
-                    </div>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeActiveElement(el.instanceId)}
-                  className="shrink-0 self-start text-dh-muted hover:text-red-400 transition-colors p-0.5"
-                  title="Remove note"
-                ><X size={12} /></button>
               </div>
-            );
-          })}
-          {consolidatedElements.filter(item => item.kind === 'environment').length === 0
-            && consolidatedElements.filter(item => item.kind === 'adversary-group').length === 0 && (
-            <div className="text-center text-dh-muted text-xs py-6">
-              No adversaries or environments on table.
             </div>
           )}
         </div>
@@ -7195,18 +7073,35 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             </div>
           </div>
 
-          {consolidatedElements.some(item => item.kind === 'note') && (
+          {consolidatedElements.some(item => item.kind === 'note' && item.element.visibility !== 'gm') && (
             <div className="space-y-2 border-b border-dh-border px-2 pb-2">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted">Notes</p>
-              {consolidatedElements.filter(item => item.kind === 'note').map((item) => {
+              {consolidatedElements.filter(item => item.kind === 'note' && item.element.visibility !== 'gm').map((item) => {
                 const el = item.element;
+                const noteBodyTrimmed = String(el.body || '').trim();
                 return (
-                  <div key={el.instanceId} className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-2.5 py-2">
+                  <div
+                    key={el.instanceId}
+                    className={`rounded-lg border border-amber-900/40 bg-amber-950/20 px-2.5 ${noteBodyTrimmed ? 'py-2' : 'py-1.5'}`}
+                  >
                     <div className="text-xs font-semibold text-amber-100/90 truncate">{el.name || 'Note'}</div>
-                    <MarkdownText text={el.body || '—'} className="dh-md mt-1 text-[11px] leading-snug text-dh-muted" />
+                    {noteBodyTrimmed ? (
+                      <MarkdownText text={noteBodyTrimmed} className="dh-md mt-1 text-[11px] leading-snug text-dh-muted" />
+                    ) : null}
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {Array.isArray(sessionCountdowns) && sessionCountdowns.length > 0 && (
+            <div className="border-t border-dh-border px-2 pb-2">
+              <SessionCountdownsPanel
+                variant="section"
+                sectionTitle="Countdowns"
+                sessionCountdowns={sessionCountdowns}
+                isGm={false}
+              />
             </div>
           )}
 
@@ -7320,16 +7215,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           void openNewCharacterEditor();
         } : modalOpen === 'adversaries' ? () => {
           setModalOpen(null);
-          const q = encounterAdvAiConcept.trim();
-          void openNewAdversaryEditor(
-            q ? { pendingAiConcept: q, tier: encounterAdvAiTier, role: encounterAdvAiRole } : {},
-          );
+          void openNewAdversaryEditor({});
         } : modalOpen === 'environments' ? () => {
           setModalOpen(null);
-          const q = encounterEnvAiConcept.trim();
-          void openNewEnvironmentEditor(
-            q ? { pendingAiConcept: q, tier: encounterEnvAiTier, type: encounterEnvAiType } : {},
-          );
+          void openNewEnvironmentEditor({});
         } : undefined}
         onCharacterAiConceptSubmit={modalOpen === 'characters' ? (concept) => {
           setModalOpen(null);
@@ -7498,12 +7387,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         name={editState.item.name}
         body={editState.item.body}
         imageUrl={editState.item.imageUrl || editState.baseElement.imageUrl}
+        visibility={editState.item.visibility}
         onClose={closeEditModal}
-        onSave={({ name, body }) => {
+        onSave={({ name, body, visibility }) => {
           const img = editState.item.imageUrl ?? editState.baseElement.imageUrl;
           updateActiveElement(editState.baseElement.instanceId, {
             name,
             body,
+            visibility,
             ...(img ? { imageUrl: img } : {}),
           });
           closeEditModal();
@@ -7887,6 +7778,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           </div>
           <button
             type="button"
+            tabIndex={0}
             onClick={() => setAdversaryTargetMenu(null)}
             className="text-[11px] text-dh-muted hover:text-dh transition-colors w-full text-center"
           >
@@ -7903,6 +7795,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         onClick={() => setLightboxUrl(null)}
       >
         <button
+          type="button"
+          tabIndex={0}
           className="absolute top-4 right-4 p-2 rounded-full bg-dh-raised/80 text-dh hover:text-dh hover:bg-dh-hover transition-colors"
           onClick={() => setLightboxUrl(null)}
         >

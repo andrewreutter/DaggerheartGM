@@ -650,6 +650,7 @@ export function PageLayoutPreviewModal({
                 <Tooltip label="Zoom to crop">
                   <button
                     type="button"
+                    tabIndex={0}
                     aria-label="Zoom to crop"
                     onClick={applyZoomToFitSlice}
                     className="pointer-events-auto shrink-0 p-1.5 rounded border border-dh-strong bg-dh-raised/90 shadow-md hover:bg-dh-hover text-dh-muted hover:text-dh"
@@ -719,6 +720,7 @@ export function PageLayoutPreviewModal({
                 <div className="flex justify-end">
                   <button
                     type="button"
+                    tabIndex={0}
                     disabled={buttonsDisabled}
                     onClick={() => void runApply(onCropOnlyApply)}
                     className="rounded-lg border border-sky-600/60 bg-sky-950/40 px-4 py-2 text-sm font-medium text-sky-200 hover:bg-sky-900/50 disabled:opacity-45"
@@ -798,6 +800,7 @@ function ActionImportButton({ kind, suggested, icon: Icon, label, subtitle, disa
   return (
     <button
       type="button"
+      tabIndex={0}
       disabled={disabled}
       onClick={onClick}
       title={suggested ? 'Suggested for this slice' : undefined}
