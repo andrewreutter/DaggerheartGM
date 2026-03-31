@@ -286,7 +286,9 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
 
   const out = [];
   for (const el of activeElements || []) {
-    if (el.elementType !== 'character' && el.elementType !== 'adversary') continue;
+    if (el.elementType !== 'character' && el.elementType !== 'adversary' && el.elementType !== 'boardToken') {
+      continue;
+    }
     if (el.tokenX == null || el.tokenY == null) continue;
     if (effectiveTokenMapId(el.mapId) !== stripMapId) continue;
 
@@ -301,18 +303,20 @@ function getThumbViewportTokenProxies(mapRow, viewState, activeElements, stripMa
     if (sR < visL || sL > visR || sB < visT || sT > visB) continue;
 
     const isAdv = el.elementType === 'adversary';
+    const isBoard = el.elementType === 'boardToken';
     const defeated = isAdv && isAdversaryDefeated(el);
     out.push({
       key: el.instanceId,
-      abbrev: tokenAbbrev(el.name),
-      name: el.name || '',
-      kind: isAdv ? 'adversary' : 'character',
+      abbrev: tokenAbbrev(isBoard ? (el.label || el.name) : el.name),
+      name: isBoard ? (el.label || el.name || '') : el.name || '',
+      kind: isBoard ? 'board' : isAdv ? 'adversary' : 'character',
       defeated,
     });
   }
 
   out.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'character' ? -1 : 1;
+    const rank = (k) => (k === 'character' ? 0 : k === 'board' ? 1 : 2);
+    if (a.kind !== b.kind) return rank(a.kind) - rank(b.kind);
     return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
   });
   return out;
@@ -335,9 +339,11 @@ function ThumbViewportTokenProxies({ tokens }) {
           className={`flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded-full border border-black/70 px-0.5 text-[7px] font-bold leading-none text-white shadow-sm ${
             t.kind === 'character'
               ? 'bg-sky-700'
-              : t.defeated
-                ? 'bg-black'
-                : 'bg-amber-800'
+              : t.kind === 'board'
+                ? 'bg-emerald-800'
+                : t.defeated
+                  ? 'bg-black'
+                  : 'bg-amber-800'
           }`}
         >
           {t.abbrev}
@@ -867,13 +873,18 @@ function TokenCircle({
 }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
+  const isBoard = element.elementType === 'boardToken';
 
-  const label = tokenAbbrev(element.name);
+  const label = tokenAbbrev(
+    isBoard ? (element.label != null ? String(element.label) : element.name) : element.name,
+  );
   const instLabel = isAdv && instanceNum != null ? `#${instanceNum}` : null;
 
   // Build dot groups for border ring indicator
   const dotGroups = [];
-  if (isChar) {
+  if (isBoard) {
+    // Stress lives on the parent character sheet — ring optional later
+  } else if (isChar) {
     const hpMax = element.maxHp || 0;
     const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
     if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
@@ -907,9 +918,11 @@ function TokenCircle({
     : {};
 
   const advDefeated = isAdv && isAdversaryDefeated(element);
-  const bgClass = isChar
-    ? (isMyCharacter ? 'bg-green-700' : 'bg-sky-700')
-    : (advDefeated ? 'bg-black' : 'bg-amber-800');
+  const bgClass = isBoard
+    ? 'bg-emerald-900 ring-2 ring-emerald-400/90'
+    : isChar
+      ? (isMyCharacter ? 'bg-green-700' : 'bg-sky-700')
+      : (advDefeated ? 'bg-black' : 'bg-amber-800');
 
   return (
     <div
@@ -930,7 +943,7 @@ function TokenCircle({
         userSelect: 'none',
         ...glowStyle,
       }}
-      title={element.name}
+      title={isBoard ? (element.label || element.name || 'Token') : element.name}
     >
       <TokenDotRing size={size} groups={dotGroups} />
       <div className="relative z-10 flex flex-col items-center justify-center leading-none pointer-events-none">
@@ -972,15 +985,19 @@ function TokenDetailPanel({
 }) {
   const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
+  const isBoard = element.elementType === 'boardToken';
   const canEdit = !isPlayer || isMyCharacter;
   const canEditAdv = !isPlayer; // only GM edits adversaries
   /** Hope/Stress/Armor/HP slot clicks — GM only (players may still edit conditions on their PC). */
   const gmResourceTracks = gmResourceTrackCheckboxEditsAllowed(isPlayer);
-  const pendingManual = findPendingManualTrackBanner(pendingBanners ?? [], element.instanceId);
-  const displayEl = mergeManualTrackDisplay(element, pendingManual);
-  const manualAck = getPendingManualTrackAckDeltas(element, pendingManual);
-  const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, element.instanceId);
+  const pendingManual = isBoard
+    ? null
+    : findPendingManualTrackBanner(pendingBanners ?? [], element.instanceId);
+  const displayEl = isBoard ? element : mergeManualTrackDisplay(element, pendingManual);
+  const manualAck = isBoard ? {} : getPendingManualTrackAckDeltas(element, pendingManual);
+  const lsHeal = isBoard ? 0 : getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, element.instanceId);
   const applyResource = (upd) => {
+    if (isBoard) return;
     if (isAdv) {
       void (async () => {
         if (queueManualTrackEdit && tableId) {
@@ -1027,6 +1044,41 @@ function TokenDetailPanel({
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
+
+  if (isBoard) {
+    return (
+      <div
+        ref={panelRef}
+        className="fixed z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[160px] max-w-[220px]"
+        style={{ left: pos.left, top: pos.top }}
+        onPointerDown={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div className="min-w-0">
+            <div className="font-semibold text-white text-sm truncate">
+              {element.label || element.name || 'Companion'}
+            </div>
+            <div className="text-xs text-dh-muted">Companion token</div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {onRemoveFromMap && (
+              <button
+                type="button"
+                onClick={onRemoveFromMap}
+                className="p-1 rounded text-dh-muted hover:text-amber-400 transition-colors"
+                title="Remove from map (return to tray)"
+              >
+                <ArrowLeftToLine size={13} />
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="p-1 rounded text-dh-muted hover:text-white transition-colors">
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const hpMax = isChar ? element.maxHp : element.hp_max;
   const stressMax = isChar ? element.maxStress : element.stress_max;
@@ -2145,7 +2197,9 @@ export function BattleMap({
     let maxX = -Infinity;
     let maxY = -Infinity;
     for (const el of activeElements) {
-      if (el.elementType !== 'character' && el.elementType !== 'adversary') continue;
+      if (el.elementType !== 'character' && el.elementType !== 'adversary' && el.elementType !== 'boardToken') {
+        continue;
+      }
       if (el.tokenX == null || el.tokenY == null) continue;
       if (effectiveTokenMapId(el.mapId) !== activeMapIdResolved) continue;
       const left = el.tokenX * pxPerFt;
@@ -2232,6 +2286,17 @@ export function BattleMap({
   // Categorize elements
   const characters = useMemo(() => activeElements.filter(el => el.elementType === 'character'), [activeElements]);
   const adversaries = useMemo(() => activeElements.filter(el => el.elementType === 'adversary'), [activeElements]);
+  const boardTokens = useMemo(
+    () => activeElements.filter((el) => el.elementType === 'boardToken'),
+    [activeElements],
+  );
+  const parentByInstanceId = useMemo(() => {
+    const m = new Map();
+    for (const el of activeElements) {
+      if (el.instanceId) m.set(el.instanceId, el);
+    }
+    return m;
+  }, [activeElements]);
 
   // Build adversary instance numbers (1-based per unique id)
   const instanceNumbers = useMemo(() => {
@@ -2255,19 +2320,49 @@ export function BattleMap({
     return el.assignedPlayerUid === user.uid || el.assignedPlayerEmail === user.email;
   }, [user?.uid, user?.email]);
 
-  const canDrag = useCallback((el) => {
-    const moveLocked =
-      (el.moveDisabledSources?.length > 0) || (el.elementType === 'character' && el.retractedActive);
-    if (moveLocked) return false;
-    if (!isPlayer) return true; // GM can drag anything else
-    if (el.elementType === 'adversary') return false; // players can't drag adversaries
-    return isMyCharacter(el);
-  }, [isPlayer, isMyCharacter]);
+  const canDrag = useCallback(
+    (el) => {
+      if (el.elementType === 'boardToken') {
+        const parent = parentByInstanceId.get(el.parentInstanceId);
+        if (!parent) return false;
+        const moveLocked =
+          (parent.moveDisabledSources?.length > 0) || (parent.elementType === 'character' && parent.retractedActive);
+        if (moveLocked) return false;
+        if (!isPlayer) return true;
+        return isMyCharacter(parent);
+      }
+      const moveLocked =
+        (el.moveDisabledSources?.length > 0) || (el.elementType === 'character' && el.retractedActive);
+      if (moveLocked) return false;
+      if (!isPlayer) return true; // GM can drag anything else
+      if (el.elementType === 'adversary') return false; // players can't drag adversaries
+      return isMyCharacter(el);
+    },
+    [isPlayer, isMyCharacter, parentByInstanceId],
+  );
 
   // Tray: all characters — unplaced, then active-map proxies, then other-map proxies (click switches map)
   const charTrayTokens = useMemo(
     () => buildCharacterTrayTokenEntries(characters, activeMapIdResolved, isMyCharacter),
     [characters, isMyCharacter, activeMapIdResolved],
+  );
+
+  const boardTrayTokens = useMemo(
+    () =>
+      boardTokens
+        .filter((el) => el.tokenX == null)
+        .map((el) => ({
+          element: el,
+          instanceNum: null,
+          isMyCharacter: isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
+          isProxy: false,
+        })),
+    [boardTokens, parentByInstanceId, isMyCharacter],
+  );
+
+  const charTrayTokensMerged = useMemo(
+    () => [...charTrayTokens, ...boardTrayTokens],
+    [charTrayTokens, boardTrayTokens],
   );
 
   // Players don't see adversary tray. All adversaries — in-tray first, then dim proxies for those on the active map.
@@ -2286,6 +2381,18 @@ export function BattleMap({
       .map(el => ({ element: el, instanceNum: null, isMyCharacter: isMyCharacter(el) })),
     [characters, isMyCharacter, activeMapIdResolved]);
 
+  const boardMapTokens = useMemo(
+    () =>
+      boardTokens
+        .filter((el) => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
+        .map((el) => ({
+          element: el,
+          instanceNum: null,
+          isMyCharacter: isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {}),
+        })),
+    [boardTokens, isMyCharacter, parentByInstanceId, activeMapIdResolved],
+  );
+
   const advMapTokens = useMemo(() =>
     adversaries
       .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
@@ -2293,16 +2400,18 @@ export function BattleMap({
     [adversaries, instanceNumbers, activeMapIdResolved]);
 
   // All placed tokens for snap detection and range band computation
-  const allMapTokens = useMemo(() => [
-    ...charMapTokens,
-    ...advMapTokens,
-  ], [charMapTokens, advMapTokens]);
+  const allMapTokens = useMemo(
+    () => [...charMapTokens, ...boardMapTokens, ...advMapTokens],
+    [charMapTokens, boardMapTokens, advMapTokens],
+  );
 
   const hasPlacedActorsOnMap = useMemo(
     () =>
       activeElements.some(
-        el =>
-          (el.elementType === 'character' || el.elementType === 'adversary') &&
+        (el) =>
+          (el.elementType === 'character' ||
+            el.elementType === 'adversary' ||
+            el.elementType === 'boardToken') &&
           el.tokenX != null &&
           el.tokenY != null &&
           effectiveTokenMapId(el.mapId) === activeMapIdResolved,
@@ -3501,6 +3610,10 @@ export function BattleMap({
       }
     }
 
+    const myChar =
+      element.elementType === 'boardToken'
+        ? isMyCharacter(parentByInstanceId.get(element.parentInstanceId) || {})
+        : isMyCharacter(element);
     dragRef.current = {
       instanceId: element.instanceId,
       element,
@@ -3510,7 +3623,7 @@ export function BattleMap({
       isDragging: false,
       pointerId: e.pointerId,
       instanceNum: instanceNumbers[element.instanceId],
-      myChar: isMyCharacter(element),
+      myChar,
       tokenSize,
       grabOffsetX,
       grabOffsetY,
@@ -3519,7 +3632,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, viewZoom, viewPanLeft, viewPanTop]);
+  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, viewZoom, viewPanLeft, viewPanTop, parentByInstanceId]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -3762,8 +3875,15 @@ export function BattleMap({
     if (scale != null && scale !== 1) {
       // Rescale placed tokens on the active map proportionally
       const scaledElements = activeElements
-        .filter(el => el.tokenX != null && effectiveTokenMapId(el.mapId) === activeMapIdResolved)
-        .map(el => ({ instanceId: el.instanceId, tokenX: el.tokenX * scale, tokenY: el.tokenY * scale }));
+        .filter(
+          (el) =>
+            el.tokenX != null &&
+            effectiveTokenMapId(el.mapId) === activeMapIdResolved &&
+            (el.elementType === 'character' ||
+              el.elementType === 'adversary' ||
+              el.elementType === 'boardToken'),
+        )
+        .map((el) => ({ instanceId: el.instanceId, tokenX: el.tokenX * scale, tokenY: el.tokenY * scale }));
       scaledElements.forEach(({ instanceId, tokenX, tokenY }) => updateActiveElement(instanceId, { tokenX, tokenY }));
     }
     onMapConfigChange(patch, resetTokenPositions);
@@ -3772,7 +3892,9 @@ export function BattleMap({
   // ─── Render ─────────────────────────────────────────────────────────────
 
   const showLeftTray =
-    characters.length > 0 || (!isPlayer && pendingBannerCount > 0);
+    characters.length > 0 ||
+    boardTrayTokens.length > 0 ||
+    (!isPlayer && pendingBannerCount > 0);
   const showRightTray = !isPlayer && adversaries.length > 0;
   const showDiceTrayControls =
     onClearDice ||
@@ -4203,7 +4325,7 @@ export function BattleMap({
           >
             <div className="flex-1 min-h-0 overflow-hidden">
               <TrayColumn
-                tokens={charTrayTokens}
+                tokens={charTrayTokensMerged}
                 side="left"
                 isHighlighted={highlightLeftTray}
                 trayRef={null}
@@ -4774,6 +4896,43 @@ export function BattleMap({
                 );
               })}
 
+              {/* Placed companion / board tokens — above characters, below adversaries */}
+              {boardMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
+                const bandIdx = tokenRangeBands[element.instanceId];
+                const rangeBand = bandIdx != null && bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
+                const p = MAP_TOKEN_HIT_PADDING_PX;
+                return (
+                  <div
+                    key={element.instanceId}
+                    className="absolute"
+                    style={{
+                      left: element.tokenX * pxPerFt - p,
+                      top: element.tokenY * pxPerFt - p,
+                      padding: p,
+                      width: tokenSizePx + 2 * p,
+                      height: tokenSizePx + 2 * p,
+                      boxSizing: 'border-box',
+                      touchAction: 'none',
+                      zIndex: 10 + charMapTokens.length + stackIdx,
+                    }}
+                    onPointerDown={(e) => handlePointerDown(e, element, false)}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                  >
+                    <TokenCircle
+                      element={element}
+                      size={tokenSizePx}
+                      instanceNum={null}
+                      isMyCharacter={myChar}
+                      isPlayer={isPlayer}
+                      isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
+                      isPinned={pinnedToken?.element.instanceId === element.instanceId}
+                      rangeBand={rangeBand}
+                    />
+                  </div>
+                );
+              })}
+
               {/* Placed adversary tokens — after characters so adversaries stay above; later instances stack higher */}
               {advMapTokens.map(({ element, instanceNum }, advIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
@@ -4791,7 +4950,7 @@ export function BattleMap({
                     height: tokenSizePx + 2 * p,
                     boxSizing: 'border-box',
                     touchAction: 'none',
-                    zIndex: 10 + charMapTokens.length + advIdx,
+                    zIndex: 10 + charMapTokens.length + boardMapTokens.length + advIdx,
                   }}
                   onPointerDown={e => handlePointerDown(e, element, false)}
                   onPointerMove={handlePointerMove}
@@ -4966,7 +5125,10 @@ export function BattleMap({
       {pinnedToken && (() => {
         const el = activeElements.find(e => e.instanceId === pinnedToken.element.instanceId);
         if (!el) return null;
-        const myChar = isMyCharacter(el);
+        const myChar =
+          el.elementType === 'boardToken'
+            ? isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {})
+            : isMyCharacter(el);
         const canRemove = !isPlayer || myChar;
         return (
           <TokenDetailPanel
@@ -4979,7 +5141,7 @@ export function BattleMap({
             pendingResourceCosts={pendingResourceCosts}
             lifeSupportSelections={lifeSupportSelections}
             onRemoveFromMap={canRemove ? () => {
-              updateActiveElement(el.instanceId, { tokenX: null, tokenY: null });
+              updateActiveElement(el.instanceId, { tokenX: null, tokenY: null, mapId: null });
               setPinnedToken(null);
             } : undefined}
             onClose={() => setPinnedToken(null)}

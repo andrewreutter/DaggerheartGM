@@ -54,21 +54,49 @@ describe('applyTableOp', () => {
     expect(result.activeElements[0].instanceId).toBe('inst-2');
   });
 
-  it('clear-table keeps only characters and resets featureCountdowns', () => {
+  it('clear-table keeps characters, attached boardTokens, and resets featureCountdowns', () => {
     const state = {
       activeElements: [
         mkElement(),
         mkElement({ instanceId: 'char-1', elementType: 'character', name: 'Hero' }),
         mkElement({ instanceId: 'env-1', elementType: 'environment', name: 'Forest' }),
+        {
+          instanceId: 'bt-1',
+          elementType: 'boardToken',
+          parentInstanceId: 'char-1',
+          tokenKind: 'companion',
+          label: 'Wolf',
+          tokenX: 1,
+          tokenY: 2,
+          mapId: null,
+        },
       ],
       featureCountdowns: { 'some|key|0': 2 },
       sessionCountdowns: [{ id: 'sc1', label: 'X', current: 3 }],
     };
     const result = applyTableOp({ op: 'clear-table' }, state);
-    expect(result.activeElements).toHaveLength(1);
-    expect(result.activeElements[0].elementType).toBe('character');
+    expect(result.activeElements).toHaveLength(2);
+    expect(result.activeElements.map((e) => e.elementType)).toEqual(['character', 'boardToken']);
+    expect(result.activeElements[1].instanceId).toBe('bt-1');
     expect(result.featureCountdowns).toEqual({});
     expect(result.sessionCountdowns).toEqual([]);
+  });
+
+  it('remove-element removes boardToken children when removing a character', () => {
+    const state = {
+      activeElements: [
+        mkElement({ instanceId: 'char-1', elementType: 'character', name: 'Hero' }),
+        {
+          instanceId: 'bt-1',
+          elementType: 'boardToken',
+          parentInstanceId: 'char-1',
+          tokenKind: 'companion',
+          label: 'Wolf',
+        },
+      ],
+    };
+    const result = applyTableOp({ op: 'remove-element', instanceId: 'char-1' }, state);
+    expect(result.activeElements).toHaveLength(0);
   });
 
   it('set-fear sets fearCount', () => {

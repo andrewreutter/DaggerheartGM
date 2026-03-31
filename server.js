@@ -3118,10 +3118,15 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
   const { tableId, gmUid, tableState } = ctx;
   const { instanceId, updates } = req.body;
   try {
-    const character = (tableState.elements || []).find(e => e.instanceId === instanceId);
-    if (!character) return res.status(404).json({ error: 'Character not found' });
+    const el = (tableState.elements || []).find(e => e.instanceId === instanceId);
+    if (!el) return res.status(404).json({ error: 'Character not found' });
     if (req.uid !== gmUid) {
-      if (character.assignedPlayerEmail !== req.email) {
+      if (el.elementType === 'boardToken') {
+        const parent = (tableState.elements || []).find((e) => e.instanceId === el.parentInstanceId);
+        if (!parent || parent.assignedPlayerEmail !== req.email) {
+          return res.status(403).json({ error: 'Not assigned to this character' });
+        }
+      } else if (el.assignedPlayerEmail !== req.email) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
     }

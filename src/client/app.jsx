@@ -1288,7 +1288,12 @@ function App() {
   const sessionPaused = tableTop?.sessionPaused === true;
 
   const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
-    if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
+    if (
+      'tokenX' in updates ||
+      'tokenY' in updates ||
+      'mapId' in updates ||
+      'conditions' in updates
+    ) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     const op = { op: 'update-element', instanceId, updates };
@@ -1525,7 +1530,12 @@ function App() {
     if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
       return;
     }
-    if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
+    if (
+      'tokenX' in updates ||
+      'tokenY' in updates ||
+      'mapId' in updates ||
+      'conditions' in updates
+    ) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     try {

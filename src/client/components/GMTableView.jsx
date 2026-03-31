@@ -125,6 +125,10 @@ import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
 import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
 import {
+  collectMissingCompanionBoardTokenElements,
+  hasCompanionBoardToken,
+} from '../lib/board-token-utils.js';
+import {
   applyDeferredV2ToggleOnAckFromRoll,
   applyV2OwnedCardChipEngineResultToTable,
   runV2OwnedCardChipTableAction,
@@ -1524,6 +1528,33 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     },
     [srdData, pendingBanners, activeElements, fearCount, mapConfig, tableFeatureState, tableId]
   );
+
+  /** Beastbound companion `boardToken`: auto-add when missing (GM only); ref avoids duplicate add-elements before SSE. */
+  const autoCompanionBoardTokenPendingRef = useRef(new Set());
+  useEffect(() => {
+    if (isPlayer || !tableId) return;
+    const charIds = new Set(
+      activeElements.filter((e) => e.elementType === 'character').map((e) => e.instanceId),
+    );
+    for (const id of [...autoCompanionBoardTokenPendingRef.current]) {
+      if (!charIds.has(id)) autoCompanionBoardTokenPendingRef.current.delete(id);
+    }
+    for (const el of activeElements) {
+      if (el.elementType === 'character' && hasCompanionBoardToken(activeElements, el.instanceId)) {
+        autoCompanionBoardTokenPendingRef.current.delete(el.instanceId);
+      }
+    }
+    const missing = collectMissingCompanionBoardTokenElements(activeElements);
+    const toSend = [];
+    for (const row of missing) {
+      const pid = row.parentInstanceId;
+      if (autoCompanionBoardTokenPendingRef.current.has(pid)) continue;
+      autoCompanionBoardTokenPendingRef.current.add(pid);
+      toSend.push(row);
+    }
+    if (toSend.length === 0) return;
+    sendOp({ op: 'add-elements', elements: toSend });
+  }, [activeElements, isPlayer, tableId, sendOp]);
 
   /** V2 Phase 4: token move hooks (e.g. Cloaked, Attack of Opportunity) after map drag commit. */
   const handleTokenDragEnd = useCallback(

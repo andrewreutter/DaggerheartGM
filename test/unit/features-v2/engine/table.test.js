@@ -78,7 +78,29 @@ describe('buildTableSnapshot()', () => {
     expect(table.me?.instanceId).toBe('runtime-table-id');
   });
 
-  it('table.adversaries and table.characters do not duplicate when an element has both instanceId and library id', () => {
+    it('exposes placedBoardTokensForMe for placed boardToken elements owned by table.me', () => {
+      const char = mockCharacter({ instanceId: 'c1', tokenX: 10, tokenY: 10 });
+      const bt = {
+        elementType: 'boardToken',
+        instanceId: 'bt1',
+        parentInstanceId: 'c1',
+        tokenKind: 'companion',
+        virtualTokenId: 'beastbound-companion',
+        label: 'Wolf',
+        tokenX: 17,
+        tokenY: 10,
+        mapId: null,
+      };
+      const table = buildTableSnapshot(
+        mockGameState({ activeElements: [char, bt], _ownerInstanceId: 'c1' }),
+      );
+      expect(table.placedBoardTokensForMe).toHaveLength(1);
+      expect(table.placedBoardTokensForMe[0].isBoardToken).toBe(true);
+      expect(table.placedBoardTokensForMe[0].tokenKind).toBe('companion');
+      expect(table.me.rangeFrom(table.placedBoardTokensForMe[0])).toBe('melee');
+    });
+
+    it('table.adversaries and table.characters do not duplicate when an element has both instanceId and library id', () => {
     const pc = mockCharacter({ instanceId: 'c1', id: 'lib-char-1', name: 'PC' });
     const adv = mockAdversary({
       instanceId: 'adv-runtime',

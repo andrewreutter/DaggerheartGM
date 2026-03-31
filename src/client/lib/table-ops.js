@@ -84,6 +84,19 @@ export const CHARACTER_RUNTIME_KEYS = [
  */
 export const TABLE_STATE_V2_ROOT_KEYS = ['featureState'];
 
+/** Persisted fields for `elementType: 'boardToken'` (companion token, etc.). */
+export const BOARD_TOKEN_RUNTIME_KEYS = [
+  'instanceId',
+  'elementType',
+  'parentInstanceId',
+  'virtualTokenId',
+  'tokenKind',
+  'label',
+  'tokenX',
+  'tokenY',
+  'mapId',
+];
+
 export const RUNTIME_KEYS = [
   'instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope',
   'playerName', 'maxHp', 'maxStress', 'name',
@@ -148,14 +161,34 @@ export function applyTableOp(op, state) {
     }
     case 'add-elements':
       return { activeElements: [...activeElements, ...op.elements] };
-    case 'remove-element':
-      return { activeElements: activeElements.filter(el => el.instanceId !== op.instanceId) };
-    case 'clear-table':
+    case 'remove-element': {
+      const removed = activeElements.find((el) => el.instanceId === op.instanceId);
       return {
-        activeElements: activeElements.filter(el => el.elementType === 'character'),
+        activeElements: activeElements.filter((el) => {
+          if (el.instanceId === op.instanceId) return false;
+          if (
+            removed?.elementType === 'character' &&
+            el.elementType === 'boardToken' &&
+            el.parentInstanceId === removed.instanceId
+          ) {
+            return false;
+          }
+          return true;
+        }),
+      };
+    }
+    case 'clear-table': {
+      const chars = activeElements.filter((el) => el.elementType === 'character');
+      const charIds = new Set(chars.map((c) => c.instanceId));
+      const boardKept = activeElements.filter(
+        (el) => el.elementType === 'boardToken' && charIds.has(el.parentInstanceId),
+      );
+      return {
+        activeElements: [...chars, ...boardKept],
         featureCountdowns: {},
         sessionCountdowns: [],
       };
+    }
     case 'set-fear':
       return { fearCount: op.fearCount };
     case 'set-countdown': {

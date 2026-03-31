@@ -527,7 +527,7 @@ function applyBeastformDeclarativeOverlay({
  * @param {object}   character  — raw character data
  * @param {object}   tableBase  — optional base snapshot (fear/map); per-feature `table` is rebuilt so `table.source` / `table.activeFeature` are set
  * @param {object}   [registry] — optional V2 registry (for `registry.beastforms` id lookup); defaults to generated SRD beastform map
- * @returns {{ stats: object, virtualWeapons: object[], advantageTriggers: object[], damageAffinities: object, rangeOverrides: object, weaponTraitOverrides: Record<string, string>, substituteArmorForHope: boolean, weaponRenderHints: object, extraTagTeamInitiationsPerSession: number, tagTeamPartnerHopeDiscount: number, domainLoadoutDisabled: boolean, contactsEverywhereSessionUses: number, shadowStepperVeryFarUnlocked: boolean, virtualFeaturesExpanded: object[], mergedFeatures: object[] }}
+ * @returns {{ stats: object, virtualWeapons: object[], virtualTokens: object[], advantageTriggers: object[], damageAffinities: object, rangeOverrides: object, weaponTraitOverrides: Record<string, string>, substituteArmorForHope: boolean, weaponRenderHints: object, extraTagTeamInitiationsPerSession: number, tagTeamPartnerHopeDiscount: number, domainLoadoutDisabled: boolean, contactsEverywhereSessionUses: number, shadowStepperVeryFarUnlocked: boolean, virtualFeaturesExpanded: object[], mergedFeatures: object[] }}
  *          **`virtualFeaturesExpanded`** — rows from **`virtualSource` / `virtualSources`** (registry refs only).
  */
 export function applyDeclarativeFeatures(features, character, tableBase, registry) {
@@ -555,6 +555,8 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
   };
 
   const virtualWeapons = [];
+  /** Declarative attached map tokens (companion, etc.) — merged onto the character element by the client. */
+  const virtualTokens = [];
   const advantageTriggers = [];
   const damageAffinities = { resistances: [], immunities: [], vulnerabilities: [] };
   const rangeOverrides = {}; // { [sourceRange]: effectiveRange } — e.g. { melee: 'veryClose' }
@@ -746,6 +748,24 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
     }
     if (Array.isArray(vWeapons)) virtualWeapons.push(...vWeapons);
 
+    // virtualToken / virtualTokens — authoring descriptors for optional `boardToken` rows (host reconciles).
+    const vtOne = unwrap(feature.virtualToken, table);
+    if (vtOne != null) {
+      let resolved = vtOne;
+      if (typeof resolved === 'function') {
+        resolved = resolved(table, feature, character, declarativeVirtualCtx);
+      }
+      if (resolved != null) {
+        if (Array.isArray(resolved)) virtualTokens.push(...resolved);
+        else virtualTokens.push(resolved);
+      }
+    }
+    let vTok = unwrapAll(feature.virtualTokens, table);
+    if (typeof vTok === 'function') {
+      vTok = vTok(table, feature, character, declarativeVirtualCtx);
+    }
+    if (Array.isArray(vTok)) virtualTokens.push(...vTok);
+
     // advantageTriggers
     const triggers = unwrapAll(feature.advantageTriggers, table);
     if (Array.isArray(triggers)) advantageTriggers.push(...triggers);
@@ -811,6 +831,7 @@ export function applyDeclarativeFeatures(features, character, tableBase, registr
   return {
     stats,
     virtualWeapons,
+    virtualTokens,
     advantageTriggers,
     damageAffinities,
     rangeOverrides,

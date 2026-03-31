@@ -386,5 +386,7 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     contactsEverywhereSessionUses: decl.contactsEverywhereSessionUses ?? 1,
     shadowStepperVeryFarUnlocked: decl.shadowStepperVeryFarUnlocked === true,
     activeBeastform: activeBeastformOut,
+    /** Optional map token descriptors (companion, etc.) — host may add matching `boardToken` elements. */
+    virtualTokens: Array.isArray(decl.virtualTokens) ? decl.virtualTokens : [],
   };
 }
