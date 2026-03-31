@@ -20,6 +20,12 @@ export function newViewId() {
   return `v-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** True when `mapConfig` (or equivalent) has a non-empty `mapImageUrl` string. */
+export function mapConfigHasImage(mc) {
+  const u = mc?.mapImageUrl;
+  return typeof u === 'string' && u.trim().length > 0;
+}
+
 function defaultMapRow(mc, id, name) {
   return {
     id,

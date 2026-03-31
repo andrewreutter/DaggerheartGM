@@ -14,6 +14,7 @@ import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js'
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
 import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './src/srd/parser.js';
+import { redactTableStateForPlayerAudience } from './src/client/lib/session-countdowns.js';
 import { filterFeatureCatalog, getFeatureCatalogById } from './src/v2-feature-catalog.js';
 import { unifiedListConfig } from './src/unified-list-config.js';
 import { runFullSync, runSyncSource, isSyncInProgress } from './src/external-sync.js';
@@ -40,6 +41,7 @@ import { computePlayerV2ReviewChipApply, loadSrdDataForV2Engine } from './src/se
 import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
 import { buildEnvironmentAiFromConcept } from './src/llm-environment-builder.js';
+import { buildEncounterAiFromConcept } from './src/llm-encounter-builder.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
 import { buildForcedMovementActionNotification } from './src/client/lib/v2-forced-movement-banner.js';
 import { attachDerivedMapConfig } from './src/client/lib/map-table-state.js';
@@ -47,6 +49,7 @@ import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
 import { DEFAULT_CHARACTER_STARTING_HOPE, ROLES, ENV_TYPES } from './src/game-constants.js';
+import { parseHttpBooleanLoose } from './src/parse-http-bool.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
@@ -1118,9 +1121,12 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
           return res.status(403).json({ error: 'Not your table' });
         }
         // Must match SSE `table_state` snapshots from `getResolvedTableState` (idle pause, activity seed).
-        const resolvedState = await getResolvedTableState(APP_ID, tableId);
+        let resolvedState = await getResolvedTableState(APP_ID, tableId);
         if (!resolvedState) {
           return res.status(404).json({ error: 'Table not found' });
+        }
+        if (!isOwner && isPlayer) {
+          resolvedState = redactTableStateForPlayerAudience(resolvedState);
         }
         const resolved = [{ ...resolvedState, _source: 'own', id: tableId, ownerUid: row.userId }];
         return res.json({ items: resolved, totalCount: 1, dbCount: 1 });
@@ -1557,6 +1563,57 @@ app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
     }
     console.error('POST /api/environment-ai-build error:', err);
     res.status(500).json({ error: err.message || 'Environment AI failed' });
+  }
+});
+
+/** Encounter plan from a concept (OpenAI). Body: concept, partySize, partyTier, remainingBattlePoints, includePublic, hasEnvironmentOnTable, tableAdversarySummary */
+app.post('/api/encounter-ai-build', requireAuth, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'Concept AI is not configured' });
+  }
+  const concept = req.body?.concept;
+  if (typeof concept !== 'string' || !concept.trim()) {
+    return res.status(400).json({ error: 'concept (non-empty string) is required' });
+  }
+  const partySize = parseInt(String(req.body?.partySize ?? ''), 10);
+  const partyTier = parseInt(String(req.body?.partyTier ?? ''), 10);
+  const remainingBattlePoints = parseInt(String(req.body?.remainingBattlePoints ?? ''), 10);
+  if (Number.isNaN(partySize) || partySize < 1 || partySize > 12) {
+    return res.status(400).json({ error: 'partySize (1–12) is required' });
+  }
+  if (Number.isNaN(partyTier) || partyTier < 1 || partyTier > 4) {
+    return res.status(400).json({ error: 'partyTier (1–4) is required' });
+  }
+  if (Number.isNaN(remainingBattlePoints) || remainingBattlePoints < 0) {
+    return res.status(400).json({ error: 'remainingBattlePoints (non-negative integer) is required' });
+  }
+  const includePublic = parseHttpBooleanLoose(req.body?.includePublic, false);
+  const hasEnvironmentOnTable = !!req.body?.hasEnvironmentOnTable;
+  const tableAdversarySummary = Array.isArray(req.body?.tableAdversarySummary) ? req.body.tableAdversarySummary : [];
+  const stepRaw = req.body?.step;
+  const step = stepRaw === 'finish' ? 'finish' : stepRaw === 'plan' ? 'plan' : 'full';
+  const encounterPlan = req.body?.encounterPlan;
+  try {
+    const result = await buildEncounterAiFromConcept(concept.trim(), {
+      appId: APP_ID,
+      userId: req.uid,
+      partySize,
+      partyTier,
+      remainingBattlePoints,
+      includePublic,
+      hasEnvironmentOnTable,
+      tableAdversarySummary,
+      step,
+      encounterPlan,
+    });
+    const { _debug, ...rest } = result;
+    res.json(rest);
+  } catch (err) {
+    if (err?.code === 'BAD_REQUEST') {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('POST /api/encounter-ai-build error:', err);
+    res.status(500).json({ error: err.message || 'Encounter AI failed' });
   }
 });
 
@@ -2036,7 +2093,7 @@ app.get('/api/room/my/players', async (req, res) => {
   res.flush?.();
 
   subscriptionManager.subscribe('banners', user.uid, res);
-  subscriptionManager.subscribe('table_state', tableId, res);
+  subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'gm' });
 
   // Send any current pending player intent so GM sees it on reconnect
   const existingIntent = pendingIntents.get(tableId);
@@ -2094,7 +2151,7 @@ app.get('/api/room/:tableId/stream', async (req, res) => {
     res.flush?.();
 
     subscriptionManager.subscribe('banners', gmUid, res);
-    subscriptionManager.subscribe('table_state', tableId, res);
+    subscriptionManager.subscribe('table_state', tableId, res, { tableStateAudience: 'player' });
 
     broadcastPresenceToTable(tableId);
 
@@ -3061,10 +3118,15 @@ app.post('/api/room/:tableId/character-update', requireAuth, async (req, res) =>
   const { tableId, gmUid, tableState } = ctx;
   const { instanceId, updates } = req.body;
   try {
-    const character = (tableState.elements || []).find(e => e.instanceId === instanceId);
-    if (!character) return res.status(404).json({ error: 'Character not found' });
+    const el = (tableState.elements || []).find(e => e.instanceId === instanceId);
+    if (!el) return res.status(404).json({ error: 'Character not found' });
     if (req.uid !== gmUid) {
-      if (character.assignedPlayerEmail !== req.email) {
+      if (el.elementType === 'boardToken') {
+        const parent = (tableState.elements || []).find((e) => e.instanceId === el.parentInstanceId);
+        if (!parent || parent.assignedPlayerEmail !== req.email) {
+          return res.status(403).json({ error: 'Not assigned to this character' });
+        }
+      } else if (el.assignedPlayerEmail !== req.email) {
         return res.status(403).json({ error: 'Not assigned to this character' });
       }
     }

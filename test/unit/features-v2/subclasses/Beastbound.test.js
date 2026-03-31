@@ -56,6 +56,21 @@ describe('Beastbound — Companion / training / Loyal Friend (narrative)', () =>
     );
     expect(out.stats).toBeDefined();
   });
+
+  it('Companion emits virtualTokens when companion data exists', () => {
+    const char = mockCharacter({
+      instanceId: 'b1',
+      companion: {
+        name: 'Fang',
+        species: 'wolf',
+        experiences: [{ name: 'Scent', score: 2 }, { name: 'Pack', score: 2 }],
+      },
+    });
+    const out = applyDeclarativeFeatures([{ ...Companion, _ownerInstanceId: 'b1' }], char, {});
+    expect(
+      out.virtualTokens.some((t) => t.id === 'beastbound-companion' && t.tokenKind === 'companion'),
+    ).toBe(true);
+  });
 });
 
 describe('Beastbound — Battle-Bonded', () => {
@@ -104,5 +119,33 @@ describe('Beastbound — Battle-Bonded', () => {
     );
 
     expect(mutations.filter((m) => m.type === 'addTemporaryStatMod')).toHaveLength(0);
+  });
+
+  it('uses a placed companion board token for Melee (not the ranger position)', () => {
+    const ranger = mockCharacter({ instanceId: 'char-1', tokenX: 0, tokenY: 0 });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 50, tokenY: 0 });
+    const bt = {
+      elementType: 'boardToken',
+      instanceId: 'bt1',
+      parentInstanceId: 'char-1',
+      tokenKind: 'companion',
+      virtualTokenId: 'beastbound-companion',
+      label: 'Wolf',
+      tokenX: 49,
+      tokenY: 0,
+      mapId: null,
+    };
+    const { mutations } = runIntent(
+      { ...BattleBonded, _ownerInstanceId: 'char-1' },
+      {
+        activeElements: [ranger, adv, bt],
+        action: mockAction({
+          type: 'attack',
+          actorInstanceId: 'adv-1',
+          targetInstanceIds: ['char-1'],
+        }),
+      }
+    );
+    expect(mutations.some((m) => m.type === 'addTemporaryStatMod')).toBe(true);
   });
 });

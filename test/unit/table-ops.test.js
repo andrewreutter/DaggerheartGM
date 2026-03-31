@@ -54,19 +54,49 @@ describe('applyTableOp', () => {
     expect(result.activeElements[0].instanceId).toBe('inst-2');
   });
 
-  it('clear-table keeps only characters and resets featureCountdowns', () => {
+  it('clear-table keeps characters, attached boardTokens, and resets featureCountdowns', () => {
     const state = {
       activeElements: [
         mkElement(),
         mkElement({ instanceId: 'char-1', elementType: 'character', name: 'Hero' }),
         mkElement({ instanceId: 'env-1', elementType: 'environment', name: 'Forest' }),
+        {
+          instanceId: 'bt-1',
+          elementType: 'boardToken',
+          parentInstanceId: 'char-1',
+          tokenKind: 'companion',
+          label: 'Wolf',
+          tokenX: 1,
+          tokenY: 2,
+          mapId: null,
+        },
       ],
       featureCountdowns: { 'some|key|0': 2 },
+      sessionCountdowns: [{ id: 'sc1', label: 'X', current: 3 }],
     };
     const result = applyTableOp({ op: 'clear-table' }, state);
-    expect(result.activeElements).toHaveLength(1);
-    expect(result.activeElements[0].elementType).toBe('character');
+    expect(result.activeElements).toHaveLength(2);
+    expect(result.activeElements.map((e) => e.elementType)).toEqual(['character', 'boardToken']);
+    expect(result.activeElements[1].instanceId).toBe('bt-1');
     expect(result.featureCountdowns).toEqual({});
+    expect(result.sessionCountdowns).toEqual([]);
+  });
+
+  it('remove-element removes boardToken children when removing a character', () => {
+    const state = {
+      activeElements: [
+        mkElement({ instanceId: 'char-1', elementType: 'character', name: 'Hero' }),
+        {
+          instanceId: 'bt-1',
+          elementType: 'boardToken',
+          parentInstanceId: 'char-1',
+          tokenKind: 'companion',
+          label: 'Wolf',
+        },
+      ],
+    };
+    const result = applyTableOp({ op: 'remove-element', instanceId: 'char-1' }, state);
+    expect(result.activeElements).toHaveLength(0);
   });
 
   it('set-fear sets fearCount', () => {
@@ -78,6 +108,43 @@ describe('applyTableOp', () => {
     const state = { featureCountdowns: { 'a|b|0': 1 } };
     const result = applyTableOp({ op: 'set-countdown', key: 'c|d|0', value: 3 }, state);
     expect(result.featureCountdowns).toEqual({ 'a|b|0': 1, 'c|d|0': 3 });
+  });
+
+  it('set-countdown dual-writes matching session countdown row by legacy key', () => {
+    const state = {
+      featureCountdowns: { 'adv|feat|0': 5 },
+      sessionCountdowns: [
+        {
+          id: 'sc1',
+          label: 'Count',
+          current: 5,
+          sourceRef: { cardKey: 'adv', featureKey: 'feat', cdIdx: 0 },
+        },
+      ],
+    };
+    const result = applyTableOp({ op: 'set-countdown', key: 'adv|feat|0', value: 2 }, state);
+    expect(result.featureCountdowns['adv|feat|0']).toBe(2);
+    expect(result.sessionCountdowns).toHaveLength(1);
+    expect(result.sessionCountdowns[0].current).toBe(2);
+  });
+
+  it('session-countdown-batch updates rows and syncs featureCountdowns for sourceRef rows', () => {
+    const state = {
+      featureCountdowns: { 'k|f|0': 10 },
+      sessionCountdowns: [
+        {
+          id: 'row-a',
+          current: 10,
+          sourceRef: { cardKey: 'k', featureKey: 'f', cdIdx: 0 },
+        },
+      ],
+    };
+    const result = applyTableOp(
+      { op: 'session-countdown-batch', updates: [{ id: 'row-a', current: 7 }] },
+      state
+    );
+    expect(result.sessionCountdowns[0].current).toBe(7);
+    expect(result.featureCountdowns['k|f|0']).toBe(7);
   });
 
   it('set-battle-mods replaces battle mods', () => {
@@ -372,6 +439,47 @@ describe('applyTableOp', () => {
     expect(result.mapConfig.mapViewPanNorm).toBeNull();
     expect(result.activeElements[0].tokenX).toBeNull();
     expect(result.activeElements[0].tokenY).toBeNull();
+  });
+
+  it('set-map with a new mapImageUrl clears zoom/pan without resetTokenPositions', () => {
+    const state = {
+      maps: [
+        {
+          id: 'm-default',
+          name: 'Map 1',
+          mapImageUrl: 'https://x/old.png',
+          mapDimension: 'width',
+          mapSizeFt: 100,
+          mapImageNaturalWidth: null,
+          mapImageNaturalHeight: null,
+          shareWithPlayers: true,
+        },
+      ],
+      mapViews: [
+        {
+          id: 'v1',
+          mapId: 'm-default',
+          name: 'Main',
+          mapViewZoomRatio: 0.75,
+          mapViewPanNorm: { x: 0.1, y: 0.2 },
+          mapViewVisibleNorm: { x: 0, y: 0, w: 0.5, h: 0.5 },
+          broadcastToPlayers: true,
+        },
+      ],
+      activeMapId: 'm-default',
+      gmActiveViewId: 'v1',
+      activeElements: [mkElement({ tokenX: 10, tokenY: 20, mapId: 'm-default' })],
+    };
+    const result = applyTableOp(
+      { op: 'set-map', mapImageUrl: 'https://x/new.png', mapId: 'm-default' },
+      state
+    );
+    expect(result.mapConfig.mapImageUrl).toBe('https://x/new.png');
+    expect(result.mapConfig.mapViewZoomRatio).toBeNull();
+    expect(result.mapConfig.mapViewPanNorm).toBeNull();
+    expect(result.mapConfig.mapViewVisibleNorm).toBeNull();
+    expect(result.activeElements).toBeUndefined();
+    expect(state.activeElements[0].tokenX).toBe(10);
   });
 
   it('set-map-view merges view fields into mapConfig', () => {

@@ -172,10 +172,76 @@ function buildWeaponView(w, rangeOverrides, weaponRenderHints) {
 // Actor builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Attached map token (`elementType: 'boardToken'`) — positional actor for range hooks; not a PC stat block.
+ */
+function buildBoardTokenActor(element, gameState, mutations, instanceId) {
+  const name =
+    element.label != null
+      ? String(element.label)
+      : element.name != null
+        ? String(element.name)
+        : 'Token';
+  const virtualTokenId = element.virtualTokenId ?? element.id ?? null;
+  const tokenKind = element.tokenKind ?? null;
+  const parentInstanceId = element.parentInstanceId ?? null;
+
+  return {
+    name,
+    instanceId,
+    isCharacter: false,
+    isAdversary: false,
+    isBoardToken: true,
+    parentInstanceId,
+    virtualTokenId,
+    tokenKind,
+    isActing: false,
+
+    tokenX: element.tokenX ?? null,
+    tokenY: element.tokenY ?? null,
+    mapId: element.mapId ?? null,
+
+    rangeFrom(otherActor) {
+      return rangeBetween(element.tokenX, element.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+    },
+    get rangeFromTarget() {
+      const targets = gameState.action?.targetInstanceIds || [];
+      if (!targets.length) return null;
+      const targetEl = gameState.activeElements?.find(
+        (e) => (e.instanceId || e.id) === targets[0],
+      );
+      if (!targetEl) return null;
+      return rangeBetween(element.tokenX, element.tokenY, targetEl.tokenX, targetEl.tokenY);
+    },
+    get lastPosition() {
+      const prev = gameState._previousPositions?.[instanceId];
+      if (!prev || prev.tokenX == null) return null;
+      return {
+        get rangeFromTarget() {
+          const targets = gameState.action?.targetInstanceIds || [];
+          if (!targets.length) return null;
+          const targetEl = gameState.activeElements?.find(
+            (e) => (e.instanceId || e.id) === targets[0],
+          );
+          if (!targetEl) return null;
+          return rangeBetween(prev.tokenX, prev.tokenY, targetEl.tokenX, targetEl.tokenY);
+        },
+        rangeFrom(otherActor) {
+          return rangeBetween(prev.tokenX, prev.tokenY, otherActor?.tokenX, otherActor?.tokenY);
+        },
+      };
+    },
+  };
+}
+
 function buildActor(element, gameState, mutations) {
   if (!element) return null;
 
   const instanceId = element.instanceId || element.id;
+  if (element.elementType === 'boardToken') {
+    return buildBoardTokenActor(element, gameState, mutations, instanceId);
+  }
+
   const isChar = element.elementType === 'character';
   const isAdversary = !isChar;
 
@@ -1435,6 +1501,23 @@ export function buildTableSnapshot(gameState = {}) {
     // The feature owner (engine sets _ownerInstanceId before each feature)
     get me() {
       return ownerActor;
+    },
+
+    /**
+     * Placed **`boardToken`** actors tied to **`table.me`** (positions set). Empty when none or unplaced.
+     * Hooks use this for range without scanning raw `activeElements`.
+     */
+    get placedBoardTokensForMe() {
+      const oid = ownerKey;
+      if (!oid) return [];
+      const out = [];
+      for (const e of gameState.activeElements || []) {
+        if (e.elementType !== 'boardToken' || String(e.parentInstanceId) !== oid) continue;
+        if (e.tokenX == null || e.tokenY == null) continue;
+        const a = actorMap.get(String(e.instanceId));
+        if (a) out.push(a);
+      }
+      return out;
     },
 
     // Action context (undefined outside of an action loop)

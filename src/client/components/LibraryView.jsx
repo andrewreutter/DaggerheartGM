@@ -789,6 +789,8 @@ export function LibraryView({
         <div className="fixed inset-0 z-[53] flex items-center justify-center bg-black/70">
           <div className="bg-dh-surface border border-dh-strong rounded-xl shadow-2xl w-full max-w-md mx-4 p-5 relative">
             <button
+              type="button"
+              tabIndex={0}
               onClick={() => setShowDaggerstackImport(false)}
               className="absolute top-3 right-3 text-dh-muted hover:text-dh transition-colors"
             >
@@ -957,6 +959,7 @@ export function LibraryView({
                             <button
                               key={col}
                               type="button"
+                              tabIndex={0}
                               role="menuitem"
                               className={`w-full text-left px-3 py-2 text-sm transition-colors ${
                                 col === activeTab && activeTab !== 'all'

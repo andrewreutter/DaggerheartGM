@@ -19,6 +19,7 @@ export function V2SourceInspectButton({ relativePath, variant = 'card' }) {
       <Tooltip content="View implementation source" placement="top">
         <button
           type="button"
+          tabIndex={0}
           onClick={(e) => {
             e.stopPropagation();
             setOpen(true);

@@ -7,6 +7,7 @@ import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled } from './lib/api.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { generateId } from './lib/helpers.js';
+import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
 import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
@@ -49,7 +50,7 @@ function UserMenuAiTurnOn({ onPicked }) {
         }}
         className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors"
       >
-        <Bot size={15} /> Turn on AI Feature
+        <Bot size={15} /> Turn on AI Features
       </button>
     </>
   );
@@ -76,6 +77,7 @@ function App() {
   const [activeElements, setActiveElements] = useState([]);
   const [playerEmails, setPlayerEmails] = useState([]); // GM's invited player emails
   const [featureCountdowns, setFeatureCountdowns] = useState({});
+  const [sessionCountdowns, setSessionCountdowns] = useState([]);
 
   // Server snapshots arrive pre-resolved (characters merged with library data), so
   // activeElements is the single source of truth for both GM and player views.
@@ -160,6 +162,8 @@ function App() {
   // Track which _rollDbIds are already in the action log to avoid duplicates when
   // the pendingBanners effect races with roll-history seeding on reconnect.
   const seenLogDbIdsRef = useRef(new Set());
+  /** Dedupe session countdown automation per roll id (pending banner). */
+  const sessionCountdownAutomationRollsRef = useRef(new Set());
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -650,6 +654,7 @@ function App() {
       setActiveElements([]);
       setFearCount(0);
       setFeatureCountdowns({});
+      setSessionCountdowns([]);
       setTableBattleMods({});
       setPlayerEmails([]);
       setTableName('');
@@ -684,6 +689,7 @@ function App() {
         setTableOwnerUid(null);
         setActiveElements([]);
         setFeatureCountdowns({});
+        setSessionCountdowns([]);
         setTableBattleMods(DEFAULT_BATTLE_MODS);
         setFearCount(0);
         setPlayerEmails([]);
@@ -707,6 +713,7 @@ function App() {
       setTableOwnerUid(tableState.ownerUid ?? null);
       if (Array.isArray(tableState.elements)) setActiveElements(tableState.elements);
       setFeatureCountdowns(tableState.featureCountdowns || {});
+      setSessionCountdowns(Array.isArray(tableState.sessionCountdowns) ? tableState.sessionCountdowns : []);
       if (tableState.tableBattleMods) setTableBattleMods(tableState.tableBattleMods);
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
@@ -771,6 +778,7 @@ function App() {
         if (Array.isArray(state.elements)) setActiveElements(state.elements);
         if (state.fearCount != null) setFearCount(state.fearCount);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
+        if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.tableName != null) {
@@ -865,6 +873,7 @@ function App() {
         if (Array.isArray(state.elements)) setActiveElements(state.elements);
         if (state.fearCount != null) setFearCount(state.fearCount);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
+        if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
         if (state.tableBattleMods != null) setTableBattleMods(state.tableBattleMods);
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.tableName != null) setTableName(state.tableName);
@@ -954,6 +963,25 @@ function App() {
       setActionLog(prev => [...prev.slice(-49), { ...banner, _logId: `ban-${id}` }]);
     }
   }, [pendingBanners]);
+
+  useEffect(() => {
+    sessionCountdownAutomationRollsRef.current.clear();
+  }, [route.tableId]);
+
+  // GM: auto-advance session countdowns (standard + dynamic) when a PC action roll lands in pending banners.
+  useEffect(() => {
+    if (effectiveIsPlayer || route.view !== 'table') return;
+    const tid = route.tableId || user?.uid;
+    if (!tid || !pendingBanners?.length) return;
+    for (const roll of pendingBanners) {
+      const rid = roll._rollDbId;
+      if (!rid || sessionCountdownAutomationRollsRef.current.has(rid)) continue;
+      const batch = computeSessionCountdownUpdatesFromRoll(sessionCountdowns, roll, activeElements);
+      if (!batch?.updates?.length) continue;
+      sessionCountdownAutomationRollsRef.current.add(rid);
+      postTableOp({ op: 'session-countdown-batch', updates: batch.updates }, tid);
+    }
+  }, [pendingBanners, sessionCountdowns, activeElements, effectiveIsPlayer, route.view, route.tableId, user?.uid]);
 
   // Remember last library tab so we can return there when navigating back from Game Table
   useEffect(() => {
@@ -1260,7 +1288,12 @@ function App() {
   const sessionPaused = tableTop?.sessionPaused === true;
 
   const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
-    if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
+    if (
+      'tokenX' in updates ||
+      'tokenY' in updates ||
+      'mapId' in updates ||
+      'conditions' in updates
+    ) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     const op = { op: 'update-element', instanceId, updates };
@@ -1497,7 +1530,12 @@ function App() {
     if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
       return;
     }
-    if ('tokenX' in updates || 'tokenY' in updates || 'conditions' in updates) {
+    if (
+      'tokenX' in updates ||
+      'tokenY' in updates ||
+      'mapId' in updates ||
+      'conditions' in updates
+    ) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     try {
@@ -1782,6 +1820,7 @@ function App() {
                 saveItem={effectiveIsPlayer ? (col, item) => col === 'characters' ? saveItem(col, item) : undefined : saveItem}
                 saveImage={effectiveIsPlayer ? (col, id, url, opts) => col === 'characters' ? saveImage(col, id, url, opts) : undefined : saveImage}
                 addToTable={effectiveIsPlayer ? () => {} : sendAddToTable}
+                sendDoAddToTable={effectiveIsPlayer ? undefined : sendDoAddToTable}
                 onMergeAdversary={mergeAdversaryIntoData}
                 user={user}
                 ensureScenesLoaded={ensureScenesLoaded}
@@ -1790,6 +1829,7 @@ function App() {
                 route={route}
                 navigate={navigate}
                 featureCountdowns={featureCountdowns}
+                sessionCountdowns={sessionCountdowns}
                 updateCountdown={effectiveIsPlayer ? () => {} : sendUpdateCountdown}
                 partySize={partySize}
                 partyTier={partyTier}
@@ -1949,6 +1989,7 @@ function App() {
             <div className="flex justify-end gap-2">
               <button
                 type="button"
+                tabIndex={0}
                 onClick={() => { setDeleteTablePending(null); setDeleteConfirmInput(''); }}
                 className="px-4 py-2 rounded-md bg-dh-hover text-dh hover:opacity-90 transition-colors"
               >
@@ -1956,6 +1997,7 @@ function App() {
               </button>
               <button
                 type="button"
+                tabIndex={0}
                 disabled={deleteConfirmInput !== 'DELETE'}
                 onClick={async () => {
                   const { id } = deleteTablePending;

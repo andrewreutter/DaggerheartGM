@@ -4,10 +4,24 @@ import {
   attachDerivedMapConfig,
   deriveMapConfigFromState,
   effectiveTokenMapId,
+  mapConfigHasImage,
   normalizeMapState,
 } from '../../src/client/lib/map-table-state.js';
 
 describe('map-table-state', () => {
+  it('mapConfigHasImage is false for missing, empty, or non-string urls', () => {
+    expect(mapConfigHasImage(null)).toBe(false);
+    expect(mapConfigHasImage(undefined)).toBe(false);
+    expect(mapConfigHasImage({})).toBe(false);
+    expect(mapConfigHasImage({ mapImageUrl: '' })).toBe(false);
+    expect(mapConfigHasImage({ mapImageUrl: '   ' })).toBe(false);
+  });
+
+  it('mapConfigHasImage is true for non-empty mapImageUrl', () => {
+    expect(mapConfigHasImage({ mapImageUrl: 'https://x/map.png' })).toBe(true);
+    expect(mapConfigHasImage({ mapImageUrl: ' data:,' })).toBe(true);
+  });
+
   it('effectiveTokenMapId maps null/undefined to default legacy id', () => {
     expect(effectiveTokenMapId(null)).toBe(DEFAULT_LEGACY_MAP_ID);
     expect(effectiveTokenMapId(undefined)).toBe(DEFAULT_LEGACY_MAP_ID);

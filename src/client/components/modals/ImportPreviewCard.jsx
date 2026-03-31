@@ -137,6 +137,8 @@ export function ImportPreviewCard({
                     onClick={e => e.stopPropagation()}
                   >
                     <button
+                      type="button"
+                      tabIndex={0}
                       onClick={() => replaceMode && onToggleReplace()}
                       className={`px-2 py-0.5 transition-colors ${
                         !replaceMode
@@ -147,6 +149,8 @@ export function ImportPreviewCard({
                       Add as new
                     </button>
                     <button
+                      type="button"
+                      tabIndex={0}
                       onClick={() => !replaceMode && onToggleReplace()}
                       className={`px-2 py-0.5 border-l border-dh-border transition-colors ${
                         replaceMode
@@ -171,6 +175,8 @@ export function ImportPreviewCard({
         </div>
 
         <button
+          type="button"
+          tabIndex={0}
           onClick={() => setExpanded(v => !v)}
           className="text-dh-muted hover:text-dh flex-shrink-0 mt-0.5"
           title={expanded ? 'Collapse' : 'Expand to edit'}
@@ -222,6 +228,8 @@ export function ImportPreviewCard({
               )}
               <div className="flex justify-end">
                 <button
+                  type="button"
+                  tabIndex={0}
                   onClick={() => setExpanded(false)}
                   className="px-3 py-1.5 text-xs text-dh-muted hover:text-white"
                 >

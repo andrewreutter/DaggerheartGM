@@ -136,6 +136,7 @@ export function isValidMapViewVisibleNorm(vn) {
  * @param {number} ctx.renderedHeightPx
  * @param {number} ctx.viewportW
  * @param {number} ctx.viewportH
+ * @param {'center'|'topLeft'} [ctx.decodeAlign] — `center` (default): fit GM’s rect in the viewport with equal slack. `topLeft`: align the rect’s top-left to the viewport’s top-left (better when the player viewport is taller than the shared frame — avoids a growing gap under the GM’s view).
  * @returns {{ mapZoom: number, scrollLeft: number, scrollTop: number, letterboxClipPx: { top: number, right: number, bottom: number, left: number } | null } | null}
  */
 export function decodeMapViewFromVisibleNorm(stored, ctx) {
@@ -143,6 +144,7 @@ export function decodeMapViewFromVisibleNorm(stored, ctx) {
   if (!isValidMapViewVisibleNorm(vn)) return null;
 
   const { minZoom, maxZoom, renderedWidthPx, renderedHeightPx, viewportW, viewportH } = ctx;
+  const align = ctx.decodeAlign === 'topLeft' ? 'topLeft' : 'center';
   const rw = renderedWidthPx > 0 ? renderedWidthPx : 1;
   const rh = renderedHeightPx > 0 ? renderedHeightPx : 1;
 
@@ -157,8 +159,15 @@ export function decodeMapViewFromVisibleNorm(stored, ctx) {
   const zUncapped = Math.min(viewportW / w, viewportH / h);
   let mapZoom = clampMapZoom(zUncapped, minZoom, maxZoom);
 
-  let scrollLeft = (left + w / 2) * mapZoom - viewportW / 2;
-  let scrollTop = (top + h / 2) * mapZoom - viewportH / 2;
+  let scrollLeft;
+  let scrollTop;
+  if (align === 'topLeft') {
+    scrollLeft = left * mapZoom;
+    scrollTop = top * mapZoom;
+  } else {
+    scrollLeft = (left + w / 2) * mapZoom - viewportW / 2;
+    scrollTop = (top + h / 2) * mapZoom - viewportH / 2;
+  }
 
   const c = clampPanScroll(scrollLeft, scrollTop, {
     mapZoom,
@@ -198,6 +207,7 @@ export function decodeMapViewFromVisibleNorm(stored, ctx) {
  * @param {number} ctx.renderedHeightPx
  * @param {number} ctx.viewportW
  * @param {number} ctx.viewportH
+ * @param {'center'|'topLeft'} [ctx.decodeAlign] — passed through when decoding `mapViewVisibleNorm` (see `decodeMapViewFromVisibleNorm`).
  * @returns {{ mapZoom: number, scrollLeft: number, scrollTop: number, letterboxClipPx?: { top: number, right: number, bottom: number, left: number } | null } | null} null when nothing to apply
  */
 export function decodeMapViewState(stored, ctx) {

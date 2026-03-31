@@ -59,18 +59,24 @@ export function SceneAdoptDialog({ scene, tableHref, currentTableMods, onApply, 
 
         <div className="flex flex-col gap-2 pt-1">
           <button
+            type="button"
+            tabIndex={0}
             onClick={onApply}
             className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
             Apply Scene Factors to Table
           </button>
           <button
+            type="button"
+            tabIndex={0}
             onClick={onKeep}
             className="w-full bg-dh-hover hover:bg-dh-hover text-dh rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
             Keep Current Table Factors
           </button>
           <button
+            type="button"
+            tabIndex={0}
             onClick={onCancel}
             className="text-dh-muted hover:text-dh text-xs py-1 transition-colors"
           >

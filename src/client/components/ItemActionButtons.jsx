@@ -126,6 +126,7 @@ export function ItemActionButtons({
       <button
         ref={triggerRef}
         type="button"
+        tabIndex={0}
         onClick={e => {
           e.stopPropagation();
           setMenuOpen(o => !o);
@@ -142,6 +143,7 @@ export function ItemActionButtons({
     <Tooltip label="Add to Game Table">
       <button
         type="button"
+        tabIndex={0}
         onClick={e => {
           e.stopPropagation();
           handleAddToTable();
@@ -205,6 +207,8 @@ export function ItemActionButtons({
       {onClone && (
         <Tooltip label={cloningStatus || 'Clone to My Library'}>
           <button
+            type="button"
+            tabIndex={0}
             onClick={handleClone}
             disabled={!!cloningStatus}
             aria-label={cloningStatus || 'Clone to My Library'}
@@ -217,6 +221,8 @@ export function ItemActionButtons({
       {isOwn && onEdit && (
         <Tooltip label="Edit">
           <button
+            type="button"
+            tabIndex={0}
             onClick={onEdit}
             aria-label="Edit"
             className={`${base} ${cardIconWrap} ${editClass} transition-colors`}
@@ -228,6 +234,8 @@ export function ItemActionButtons({
       {isOwn && onDelete && (
         <Tooltip label="Delete">
           <button
+            type="button"
+            tabIndex={0}
             onClick={handleDelete}
             aria-label="Delete"
             className={`${base} ${cardIconWrap} ${deleteClass} transition-colors`}

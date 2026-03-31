@@ -245,6 +245,7 @@ export function FeatureSourceModal({ open, relativePath, onClose, isAdmin: isAdm
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="submit"
+                  tabIndex={0}
                   disabled={submitting}
                   className="rounded bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
                 >

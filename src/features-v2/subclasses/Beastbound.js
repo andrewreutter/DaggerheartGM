@@ -90,13 +90,23 @@ export function srdifyRangerCompanion(companion) {
 }
 
 /**
- * Adversary attack vs the ranger where the adversary is in **Melee** range of the ranger’s position.
- * Treats the companion as sharing the ranger’s space when the companion has no separate map token
- * (see **Battle-Bonded** SRD: attacker must be within the companion’s Melee range).
+ * Adversary attack vs the ranger: **Melee** of the companion’s position.
+ * When a linked `boardToken` is placed, measure from that token; otherwise the companion shares the ranger’s space.
  */
 function adversaryInMeleeOfSharedCompanionSpace(table) {
   const actor = table.action?.actor;
   if (!actor || actor.isAdversary !== true) return false;
+  const placed = table.placedBoardTokensForMe || [];
+  const companionTok = placed.find(
+    (a) =>
+      a?.isBoardToken &&
+      a.tokenX != null &&
+      a.tokenY != null &&
+      (a.tokenKind === 'companion' || a.virtualTokenId === 'beastbound-companion'),
+  );
+  if (companionTok) {
+    return actor.rangeFrom(companionTok) === 'melee';
+  }
   return table.me?.rangeFrom(actor) === 'melee';
 }
 
@@ -104,6 +114,22 @@ export const Companion = {
   name: 'Companion',
   description:
     "You have an animal companion of your choice (at the GM's discretion). They stay by your side unless you tell them otherwise.\n\nTake the Ranger Companion sheet. When you level up your character, choose a level-up option for your companion from this sheet as well.",
+  /**
+   * Optional `boardToken` row (host) — stable `id` matches `element.virtualTokenId` on the table.
+   * @see `src/client/lib/board-token-utils.js` (`BEASTBOUND_COMPANION_VIRTUAL_TOKEN_ID`)
+   */
+  virtualToken: when(
+    (t) => t.me?.companion != null,
+    (table) => ({
+      id: 'beastbound-companion',
+      tokenKind: 'companion',
+      bind: { kind: 'character', path: 'companion' },
+      label:
+        table.me?.companion?.name != null && String(table.me.companion.name).trim() !== ''
+          ? String(table.me.companion.name)
+          : 'Companion',
+    }),
+  ),
   /** Declarative cards: sheet (runtime data) + editor (bind-only shell). */
   cards: [
     {

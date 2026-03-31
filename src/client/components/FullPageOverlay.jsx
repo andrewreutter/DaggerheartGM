@@ -51,7 +51,13 @@ export function FullPageOverlay({
       aria-labelledby={ariaLabelledBy}
       aria-label={ariaLabel}
     >
-      <button type="button" className={`absolute inset-0 ${overlayClassName}`} aria-label="Close" onClick={onClose} />
+      <button
+        type="button"
+        tabIndex={-1}
+        className={`absolute inset-0 ${overlayClassName}`}
+        aria-label="Close"
+        onClick={onClose}
+      />
       <div
         className={`relative z-10 flex w-full ${heightClass} ${maxWidthClass} flex-col overflow-hidden rounded-xl border border-dh-strong bg-dh-surface shadow-2xl ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
@@ -92,6 +98,7 @@ export function FullPageOverlayHeader({
       </div>
       <button
         type="button"
+        tabIndex={0}
         onClick={onClose}
         className="shrink-0 rounded-md p-2 text-dh-muted hover:bg-dh-raised hover:text-dh"
         aria-label="Close"

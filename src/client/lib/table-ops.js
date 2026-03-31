@@ -1,4 +1,9 @@
 import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
+import {
+  legacyKeyFromSourceRef,
+  normalizeSessionCountdownEntry,
+  sessionCountdownMatchesLegacyKey,
+} from './session-countdowns.js';
 import { normalizeConditionsToList, serializeConditionsList } from './conditions-utils.js';
 import {
   DEFAULT_LEGACY_MAP_ID,
@@ -79,6 +84,19 @@ export const CHARACTER_RUNTIME_KEYS = [
  */
 export const TABLE_STATE_V2_ROOT_KEYS = ['featureState'];
 
+/** Persisted fields for `elementType: 'boardToken'` (companion token, etc.). */
+export const BOARD_TOKEN_RUNTIME_KEYS = [
+  'instanceId',
+  'elementType',
+  'parentInstanceId',
+  'virtualTokenId',
+  'tokenKind',
+  'label',
+  'tokenX',
+  'tokenY',
+  'mapId',
+];
+
 export const RUNTIME_KEYS = [
   'instanceId', 'elementType', 'currentHp', 'currentStress', 'conditions', 'hope', 'maxHope',
   'playerName', 'maxHp', 'maxStress', 'name',
@@ -128,7 +146,8 @@ export const UPDATE_BASE_DATA_RUNTIME_KEYS = [
  * Returns an object containing only the state keys that changed.
  */
 export function applyTableOp(op, state) {
-  const { activeElements = [], featureCountdowns = {} } = state;
+  const { activeElements = [], featureCountdowns = {}, sessionCountdowns: sessionCountdownsRaw = [] } = state;
+  const sessionCountdowns = Array.isArray(sessionCountdownsRaw) ? sessionCountdownsRaw : [];
   switch (op.op) {
     case 'update-element':
       return { activeElements: activeElements.map(el => el.instanceId === op.instanceId ? { ...el, ...op.updates } : el) };
@@ -142,14 +161,102 @@ export function applyTableOp(op, state) {
     }
     case 'add-elements':
       return { activeElements: [...activeElements, ...op.elements] };
-    case 'remove-element':
-      return { activeElements: activeElements.filter(el => el.instanceId !== op.instanceId) };
-    case 'clear-table':
-      return { activeElements: activeElements.filter(el => el.elementType === 'character'), featureCountdowns: {} };
+    case 'remove-element': {
+      const removed = activeElements.find((el) => el.instanceId === op.instanceId);
+      return {
+        activeElements: activeElements.filter((el) => {
+          if (el.instanceId === op.instanceId) return false;
+          if (
+            removed?.elementType === 'character' &&
+            el.elementType === 'boardToken' &&
+            el.parentInstanceId === removed.instanceId
+          ) {
+            return false;
+          }
+          return true;
+        }),
+      };
+    }
+    case 'clear-table': {
+      const chars = activeElements.filter((el) => el.elementType === 'character');
+      const charIds = new Set(chars.map((c) => c.instanceId));
+      const boardKept = activeElements.filter(
+        (el) => el.elementType === 'boardToken' && charIds.has(el.parentInstanceId),
+      );
+      return {
+        activeElements: [...chars, ...boardKept],
+        featureCountdowns: {},
+        sessionCountdowns: [],
+      };
+    }
     case 'set-fear':
       return { fearCount: op.fearCount };
-    case 'set-countdown':
-      return { featureCountdowns: { ...featureCountdowns, [op.key]: op.value } };
+    case 'set-countdown': {
+      const key = op.key;
+      const value = op.value;
+      const nextFc = { ...featureCountdowns, [key]: value };
+      let touched = false;
+      const nextSession = sessionCountdowns.map((sc) => {
+        if (!sessionCountdownMatchesLegacyKey(sc, key)) return sc;
+        touched = true;
+        return normalizeSessionCountdownEntry({ ...sc, current: value });
+      });
+      if (!touched) return { featureCountdowns: nextFc };
+      return { featureCountdowns: nextFc, sessionCountdowns: nextSession };
+    }
+    case 'session-countdown-upsert': {
+      const entry = normalizeSessionCountdownEntry(op.entry || {});
+      if (!entry.id) return {};
+      const list = [...sessionCountdowns];
+      const idx = list.findIndex((x) => x.id === entry.id);
+      if (idx >= 0) list[idx] = { ...list[idx], ...entry };
+      else list.push(entry);
+      const out = { sessionCountdowns: list };
+      if (entry.sourceRef) {
+        const lk = legacyKeyFromSourceRef(entry.sourceRef);
+        out.featureCountdowns = { ...featureCountdowns, [lk]: entry.current };
+      }
+      return out;
+    }
+    case 'session-countdown-remove': {
+      const id = op.id;
+      if (!id) return {};
+      return { sessionCountdowns: sessionCountdowns.filter((c) => c.id !== id) };
+    }
+    case 'session-countdown-patch': {
+      const id = op.id;
+      const patch = op.patch || {};
+      if (!id) return {};
+      const list = sessionCountdowns.map((c) => {
+        if (c.id !== id) return c;
+        return normalizeSessionCountdownEntry({ ...c, ...patch });
+      });
+      const out = { sessionCountdowns: list };
+      const row = list.find((c) => c.id === id);
+      if (row?.sourceRef && patch.current !== undefined) {
+        out.featureCountdowns = {
+          ...featureCountdowns,
+          [legacyKeyFromSourceRef(row.sourceRef)]: row.current,
+        };
+      }
+      return out;
+    }
+    case 'session-countdown-batch': {
+      const updates = op.updates;
+      if (!Array.isArray(updates) || updates.length === 0) return {};
+      const map = new Map(updates.map((u) => [u.id, u.current]));
+      const list = sessionCountdowns.map((c) => {
+        if (!map.has(c.id)) return c;
+        return normalizeSessionCountdownEntry({ ...c, current: map.get(c.id) });
+      });
+      const fc = { ...featureCountdowns };
+      for (const c of list) {
+        if (c.sourceRef && map.has(c.id)) {
+          fc[legacyKeyFromSourceRef(c.sourceRef)] = c.current;
+        }
+      }
+      return { sessionCountdowns: list, featureCountdowns: fc };
+    }
     case 'set-battle-mods':
       return { tableBattleMods: op.tableBattleMods };
     case 'set-player-emails':
@@ -187,11 +294,15 @@ export function applyTableOp(op, state) {
     case 'set-map': {
       const base = normalizeMapState(state);
       const targetMapId = op.mapId ?? base.activeMapId;
+      const targetMapBefore = base.maps.find(m => m.id === targetMapId);
+      const prevImageUrl = targetMapBefore?.mapImageUrl;
+      let imageUrlChanged = false;
       const maps = base.maps.map(m => {
         if (m.id !== targetMapId) return m;
         const merged = { ...m };
         if (op.mapImageUrl !== undefined) {
           merged.mapImageUrl = op.mapImageUrl;
+          imageUrlChanged = String(op.mapImageUrl ?? '') !== String(prevImageUrl ?? '');
           if (op.mapImageUrl !== undefined && (op.mapImageUrl === null || op.mapImageUrl === '')) {
             merged.mapAiImagePrompt = null;
           }
@@ -205,7 +316,8 @@ export function applyTableOp(op, state) {
         return merged;
       });
       let mapViews = base.mapViews.map(v => ({ ...v }));
-      if (op.resetTokenPositions) {
+      const shouldResetMapView = op.resetTokenPositions || imageUrlChanged;
+      if (shouldResetMapView) {
         mapViews = mapViews.map(v =>
           v.mapId === targetMapId
             ? { ...v, mapViewZoomRatio: null, mapViewPanNorm: null, mapViewVisibleNorm: null }
@@ -213,6 +325,14 @@ export function applyTableOp(op, state) {
         );
       }
       const nextState = { ...base, maps, mapViews };
+      if (shouldResetMapView && nextState.gmMapView?.mapId === targetMapId) {
+        nextState.gmMapView = {
+          ...nextState.gmMapView,
+          mapViewZoomRatio: null,
+          mapViewPanNorm: null,
+          mapViewVisibleNorm: null,
+        };
+      }
       syncGmMapViewFromActiveView(nextState);
       const mapConfig = deriveMapConfigFromState(nextState);
       let nextEls = activeElements;

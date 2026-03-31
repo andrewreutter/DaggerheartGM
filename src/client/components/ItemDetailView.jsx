@@ -388,6 +388,8 @@ export function ExpandedTablePreview({ item, tab, data, onSaveElement, isOwn, da
           onClick={() => setLightboxUrl(null)}
         >
           <button
+            type="button"
+            tabIndex={0}
             className="absolute top-4 right-4 p-2 rounded-full bg-dh-raised/80 text-dh hover:text-dh hover:bg-dh-hover transition-colors"
             onClick={() => setLightboxUrl(null)}
           >

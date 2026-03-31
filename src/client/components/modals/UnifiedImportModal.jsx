@@ -674,6 +674,7 @@ export function UnifiedImportModal({
     <button
       key={value}
       type="button"
+      tabIndex={0}
       onClick={() => setImportDestination(value)}
       className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
         importDestination === value
@@ -716,6 +717,7 @@ export function UnifiedImportModal({
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
+            tabIndex={0}
             onClick={shellClose}
             className="px-4 py-2 rounded-lg border border-dh-border text-dh-muted hover:bg-dh-hover"
           >
@@ -723,6 +725,7 @@ export function UnifiedImportModal({
           </button>
           <button
             type="button"
+            tabIndex={0}
             disabled={!canImport}
             onClick={() => void handleCommit()}
             className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-medium disabled:opacity-40"
@@ -753,6 +756,7 @@ export function UnifiedImportModal({
           <h2 className="text-xl font-bold text-dh">Import</h2>
           <button
             type="button"
+            tabIndex={0}
             onClick={shellClose}
             className="rounded-lg p-2 text-dh-muted hover:text-dh hover:bg-dh-hover"
             aria-label="Close"
@@ -798,6 +802,7 @@ export function UnifiedImportModal({
                   />
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={() => fileInputRef.current?.click()}
                     className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-dh-raised border border-dh-border text-sm w-full"
                   >
@@ -808,6 +813,7 @@ export function UnifiedImportModal({
                   </p>
                   <button
                     type="button"
+                    tabIndex={0}
                     onClick={() => {
                       setAddTextDraft('');
                       setAddTextModalOpen(true);
@@ -826,6 +832,7 @@ export function UnifiedImportModal({
                         <div key={a.id} className="relative flex flex-col items-center gap-1 w-[92px] shrink-0">
                           <button
                             type="button"
+                            tabIndex={0}
                             onClick={() => setRegionsEditorAssetId(a.id)}
                             className={`relative rounded-lg border overflow-hidden bg-dh-canvas focus:outline-none focus:ring-2 focus:ring-sky-500/60 ${
                               regionsEditorAssetId === a.id ? 'ring-2 ring-sky-400' : 'border-dh-border hover:border-dh-strong'
@@ -837,6 +844,7 @@ export function UnifiedImportModal({
                           </button>
                           <button
                             type="button"
+                            tabIndex={0}
                             onClick={(e) => {
                               e.stopPropagation();
                               removeImageAsset(a.id);
@@ -855,6 +863,7 @@ export function UnifiedImportModal({
                         <div key={t.id} className="relative flex flex-col items-center gap-1 w-[92px] shrink-0">
                           <button
                             type="button"
+                            tabIndex={0}
                             onClick={() => setTextEditorAssetId(t.id)}
                             className={`flex flex-col items-stretch justify-between rounded-lg border p-1.5 text-left bg-dh-raised/50 focus:outline-none focus:ring-2 focus:ring-sky-500/60 ${
                               textEditorAssetId === t.id ? 'ring-2 ring-sky-400' : 'border-dh-border hover:border-dh-strong'
@@ -867,6 +876,7 @@ export function UnifiedImportModal({
                           </button>
                           <button
                             type="button"
+                            tabIndex={0}
                             onClick={(e) => {
                               e.stopPropagation();
                               removeTextAsset(t.id);
@@ -898,6 +908,7 @@ export function UnifiedImportModal({
                       <div className="relative">
                         <button
                           type="button"
+                          tabIndex={0}
                           onClick={() => setSelectedSliceId(row.id)}
                           className={`relative flex flex-col items-center gap-0 w-full rounded-lg p-0 border bg-dh-raised/30 focus:outline-none focus:ring-2 focus:ring-amber-500/50 ${
                             isGroup ? 'ring-2 ring-amber-500 border-amber-600/50' : 'border-dh-border hover:border-dh-strong'
@@ -919,6 +930,7 @@ export function UnifiedImportModal({
                         </button>
                         <button
                           type="button"
+                          tabIndex={0}
                           onClick={(e) => {
                             e.stopPropagation();
                             removeSliceRow(row);
@@ -1026,6 +1038,7 @@ export function UnifiedImportModal({
           <div className="shrink-0 flex items-center justify-end gap-2 border-t border-dh-strong px-4 py-3">
             <button
               type="button"
+              tabIndex={0}
               onClick={() => {
                 setAddTextModalOpen(false);
                 setAddTextDraft('');
@@ -1036,6 +1049,7 @@ export function UnifiedImportModal({
             </button>
             <button
               type="button"
+              tabIndex={0}
               disabled={!addTextDraft.trim()}
               onClick={saveAddTextModal}
               className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium disabled:opacity-40"
@@ -1094,6 +1108,7 @@ export function UnifiedImportModal({
             <div className="shrink-0 flex items-center justify-between gap-2 border-t border-dh-strong px-4 py-3">
               <button
                 type="button"
+                tabIndex={0}
                 onClick={() => {
                   removeTextAsset(textEditorAsset.id);
                   setTextEditorAssetId(null);
@@ -1105,6 +1120,7 @@ export function UnifiedImportModal({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={() => setTextEditorAssetId(null)}
                   className="px-4 py-2 rounded-lg border border-dh-border text-dh-muted hover:bg-dh-hover text-sm"
                 >
@@ -1112,6 +1128,7 @@ export function UnifiedImportModal({
                 </button>
                 <button
                   type="button"
+                  tabIndex={0}
                   onClick={() => setTextEditorAssetId(null)}
                   className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium"
                 >

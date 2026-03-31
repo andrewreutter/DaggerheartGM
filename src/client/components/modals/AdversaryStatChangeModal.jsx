@@ -68,7 +68,7 @@ export function AdversaryStatChangeModal({
             <h2 className="text-lg font-bold text-white">{title}</h2>
             <p className="text-dh-muted text-sm mt-1">{subtitle}</p>
           </div>
-          <button onClick={onClose} className="text-dh-muted hover:text-white shrink-0 ml-2">
+          <button type="button" tabIndex={0} onClick={onClose} className="text-dh-muted hover:text-white shrink-0 ml-2">
             <X size={18} />
           </button>
         </div>
@@ -105,12 +105,16 @@ export function AdversaryStatChangeModal({
 
         <div className="flex flex-col gap-2 p-5 pt-2">
           <button
+            type="button"
+            tabIndex={0}
             onClick={onApply}
             className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
             Apply These Changes
           </button>
           <button
+            type="button"
+            tabIndex={0}
             onClick={onKeepCurrent}
             className="w-full bg-dh-hover hover:bg-dh-hover text-dh rounded-lg px-4 py-2.5 text-sm transition-colors"
           >
