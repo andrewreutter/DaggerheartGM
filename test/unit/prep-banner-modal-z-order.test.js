@@ -11,6 +11,15 @@ const root = join(__dirname, '..', '..');
  * overlays (and AI flows inside them) are not covered.
  */
 describe('prep banner vs modal z-order', () => {
+  it('SessionBlockedBanner exposes GM idle-pause resume as a button', () => {
+    const banner = readFileSync(join(root, 'src/client/components/SessionBlockedBanner.jsx'), 'utf8');
+    expect(banner).toMatch(/type="button"/);
+    expect(banner).toMatch(/onClick=\{onResume\}/);
+    const app = readFileSync(join(root, 'src/client/app.jsx'), 'utf8');
+    expect(app).toMatch(/onResume=\{!effectiveIsPlayer && sessionPaused \? handleSessionBannerResume/);
+    expect(app).toMatch(/set-table-top.*sessionPaused: false/s);
+  });
+
   it('SessionBlockedBanner stacks below standard modal backdrops', () => {
     const banner = readFileSync(join(root, 'src/client/components/SessionBlockedBanner.jsx'), 'utf8');
     expect(banner).toMatch(/z-\[52\]/);

@@ -160,6 +160,21 @@ describe('SubscriptionManager', () => {
     expect(res.writes[0]).toContain(JSON.stringify(snapshot));
   });
 
+  it('broadcastBannersChannelEvent sends a custom event to all banners subscribers', async () => {
+    getPendingBanners.mockResolvedValue([]);
+    const res1 = makeFakeRes();
+    const res2 = makeFakeRes();
+    manager.subscribe('banners', 'gm-bcast', res1);
+    manager.subscribe('banners', 'gm-bcast', res2);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    const payload = { roll: { _rollDbId: 42, _action: true } };
+    manager.broadcastBannersChannelEvent('gm-bcast', 'roll-log-append', payload);
+    expect(res1.writes.some(w => w.includes('roll-log-append'))).toBe(true);
+    expect(res2.writes.some(w => w.includes('roll-log-append'))).toBe(true);
+    expect(res1.writes.some(w => w.includes(JSON.stringify(payload)))).toBe(true);
+  });
+
   it('table_state notifyChange delivers updated snapshot to all subscribers', async () => {
     const snapshot1 = { elements: [], fearCount: 0 };
     const snapshot2 = { elements: [{ instanceId: 'x', elementType: 'adversary' }], fearCount: 1 };

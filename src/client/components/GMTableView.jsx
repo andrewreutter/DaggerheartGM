@@ -2,10 +2,12 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, User, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, ArrowLeftToLine } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
+import { GameTableCharacterListCard } from './GameTableCharacterListCard.jsx';
+import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { ActionLog } from './ActionLog.jsx';
-import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, getEvasionModifierTotal, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
+import { parseFeatureCategory, parseAllCountdownValues, generateId, effectiveThresholds, effectiveEvasion, computeHpLoss, isAdversaryDefeated, getDifficultyLabel, parseBeastformBonus, isWingsOfLightFlying, extractGmFeatureWhenClause } from '../lib/helpers.js';
 import { findSessionCountdownBySource } from '../lib/session-countdowns.js';
 import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinkedPairFromFeatureCountdowns } from './SessionCountdownsPanel.jsx';
 import { FeatureDescription } from './FeatureDescription.jsx';
@@ -20,6 +22,7 @@ import { MarkdownText } from '../lib/markdown.js';
 import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
 import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
 import { buildSystemContext } from '../lib/feature-context.js';
+import { withActionBannerSuppression } from '../lib/action-notification-banner.js';
 import {
   postRoll as postRollToServer,
   postTableOp,
@@ -90,12 +93,6 @@ import {
 } from './CharacterSheetSourceHighlight.jsx';
 import { resolveV2LibraryItemSourcePath } from '../../features-v2/resolve-feature-source-path.js';
 import { TRAIT_FULL } from './CharacterDisplay.jsx';
-import { GuideFeatureCardChips } from './features/GuideFeatureCard.jsx';
-import { WidthSortedFlexWrap } from './WidthSortedFlexWrap.jsx';
-import {
-  collectV2FeatureCardValueDisplayLines,
-  collectV2IsToggleCardFeatureGroups,
-} from '../lib/build-feature-card-model.js';
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { FrequencyCycleChipSuffix, getFrequencyCycleWord } from '../lib/frequency-cycle-ui.jsx';
 import { DiceRoller } from './DiceRoller.jsx';
@@ -165,7 +162,6 @@ import { buildTableSnapshot, applyMutations } from '../../features-v2/engine/tab
 import { dispatchSessionEndHooks } from '../../features-v2/engine/action-loop.js';
 import { RALLY_FEATURE_STATE_BAG_KEY, RALLY_SESSION_VOLATILE_KEYS } from '../../features-v2/classes/Bard.js';
 import { ROGUE_CLASS_FEATURE_STATE_SCOPE } from '../../features-v2/classes/Rogue.js';
-import { WARDEN_OF_THE_ELEMENTS_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 import { SHIFTING_DISADVANTAGE_SOURCE_ID } from '../../features-v2/armor_properties/Shifting.js';
 import { stripConsumableRestBonusPending } from '../../features-v2/engine/consumable-rest-bonus.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../lib/v2-class-subclass-feature-descriptors.js';
@@ -828,7 +824,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (!portaledChar) setCharacterDrawerChromeSync(null);
   }, [editState?.step, editState?.presentation, editState?.collection]);
 
-  const [characterCardExpanded, setCharacterCardExpanded] = useState(() => new Set());
   const [scaledToggleState, setScaledToggleState] = useState({});
   const trackerKey = trackerOverlay.data
     ? (trackerOverlay.data.kind === 'environment' ? trackerOverlay.data.element.instanceId : trackerOverlay.data.baseElement.id)
@@ -921,6 +916,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   }, [pendingBanners]);
   // ── Damage application state ─────────────────────────────────────────────
   const diceRollerRef = useRef(null);
+  /** Latest action-banner adversary picker list — for withActionBannerSuppression (defined before useMemo). */
+  const actionAdversaryTargetsRef = useRef([]);
   const pendingDamageRef = useRef(null); // stash applied damage for ack broadcast
 
   // Pending resource costs: shown as "halfway" on Hope/Stress/Armor until GM acks (or banner dismissed).
@@ -1127,18 +1124,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           p.affectedSummary && String(p.affectedSummary).trim()
             ? `${baseDesc}\n${p.affectedSummary}`
             : baseDesc;
-        postActionNotification({
-          _action: true,
-          rollUser: 'Table',
-          actionName: p.title,
-          actionText,
-          _v2ActionLoop: true,
-          _reactorInstanceId: p.instanceId,
-          ...v2RollDieExtrasFromActionLoopPayload(p),
-          ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
-            ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
-            : {}),
-        }).catch(() => {});
+        postActionNotification(
+          withActionBannerSuppression(
+            {
+              _action: true,
+              rollUser: 'Table',
+              actionName: p.title,
+              actionText,
+              _v2ActionLoop: true,
+              _reactorInstanceId: p.instanceId,
+              ...v2RollDieExtrasFromActionLoopPayload(p),
+              ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+                ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+                : {}),
+            },
+            { actionAdversaryTargets: actionAdversaryTargetsRef.current }
+          )
+        ).catch(() => {});
       }
       if (typeof v2DamageOutcome.adjustedHpLoss === 'number') {
         hpLossToApply = v2DamageOutcome.adjustedHpLoss;
@@ -1452,44 +1454,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   // Action notification (e.g. Startling, session-cycle banners): fire-and-forget broadcast.
   // Defined before handleConcussiveKnock so it can be listed in that useCallback's dependency array.
   const handleActionNotification = (notification) => {
-    if (!sessionPlayAllowed && !notification._sessionStart) {
+    const payload = withActionBannerSuppression(notification, {
+      actionAdversaryTargets: actionAdversaryTargetsRef.current,
+    });
+    if (!sessionPlayAllowed && !payload._sessionStart) {
       if (!isPlayer) {
         if (playBlockedAllowAllEdits) {
           dismissAllHoverCards();
-          postActionNotification(notification, tableId, { bypassPrepGate: true }).catch(() => {});
+          postActionNotification(payload, tableId, { bypassPrepGate: true }).catch(() => {});
           return;
         }
-        setPlayBlockedDialog({ kind: 'action', notification });
+        setPlayBlockedDialog({ kind: 'action', notification: payload });
       }
       return;
     }
     dismissAllHoverCards();
-    postActionNotification(notification, tableId).catch(() => {});
+    postActionNotification(payload, tableId).catch(() => {});
   };
-
-  /** V2 `isToggle` card chips on sidebar character cards (GM only — same path as hover sheet Actions). */
-  const handleCharacterPanelV2CardChip = useCallback(
-    (characterEl, displayEl) => (payload) => {
-      if (isPlayer || !tableId || !v2Registry) return;
-      void runV2OwnedCardChipTableAction({
-        featRow: payload.featRow,
-        chip: payload.chip,
-        passedFeatureKey: payload.featureKey,
-        selectOpts: payload.selectOpts,
-        placementShape: payload.placementShape,
-        displayEl,
-        el: characterEl,
-        activeElementsForV2Snapshots: activeElements,
-        v2Registry,
-        tableFeatureState,
-        fearCount,
-        mapConfig,
-        tableId,
-        onActionLoopNotification: handleActionNotification,
-      });
-    },
-    [isPlayer, tableId, v2Registry, activeElements, tableFeatureState, fearCount, mapConfig, handleActionNotification]
-  );
 
   const handleRestBannerV2Chip = useCallback(
     (rawChip, characterEl, isPlayerSession) => {
@@ -1583,18 +1564,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               p.affectedSummary && String(p.affectedSummary).trim()
                 ? `${baseDesc}\n${p.affectedSummary}`
                 : baseDesc;
-            postActionNotification({
-              _action: true,
-              rollUser: 'Table',
-              actionName: p.title,
-              actionText,
-              _v2ActionLoop: true,
-              _reactorInstanceId: p.instanceId,
-              ...v2RollDieExtrasFromActionLoopPayload(p),
-              ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
-                ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
-                : {}),
-            }, tableId).catch(() => {});
+            postActionNotification(
+              withActionBannerSuppression(
+                {
+                  _action: true,
+                  rollUser: 'Table',
+                  actionName: p.title,
+                  actionText,
+                  _v2ActionLoop: true,
+                  _reactorInstanceId: p.instanceId,
+                  ...v2RollDieExtrasFromActionLoopPayload(p),
+                  ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+                    ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+                    : {}),
+                },
+                { actionAdversaryTargets: actionAdversaryTargetsRef.current }
+              ),
+              tableId
+            ).catch(() => {});
           }
         }
       }
@@ -1617,11 +1604,14 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
   // Player action notification — fire-and-forget broadcast to GM room.
   const handlePlayerActionNotification = (notification) => {
-    if (!sessionPlayAllowed && !notification._sessionStart) {
+    const payload = withActionBannerSuppression(notification, {
+      actionAdversaryTargets: actionAdversaryTargetsRef.current,
+    });
+    if (!sessionPlayAllowed && !payload._sessionStart) {
       return;
     }
     dismissAllHoverCards();
-    postActionNotification(notification, tableId).catch(() => {});
+    postActionNotification(payload, tableId).catch(() => {});
   };
 
   /** Adversary HP/stress: apply immediately (no GM-ack banner). Cancels stale manual-track banners for this instance. */
@@ -2624,18 +2614,23 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             p.affectedSummary && String(p.affectedSummary).trim()
               ? `${baseDesc}\n${p.affectedSummary}`
               : baseDesc;
-          postActionNotification({
-            _action: true,
-            rollUser: 'Table',
-            actionName: p.title || 'Session start',
-            actionText,
-            _v2ActionLoop: true,
-            _reactorInstanceId: p.instanceId,
-            ...v2RollDieExtrasFromActionLoopPayload(p),
-            ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
-              ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
-              : {}),
-          }).catch(() => {});
+          postActionNotification(
+            withActionBannerSuppression(
+              {
+                _action: true,
+                rollUser: 'Table',
+                actionName: p.title || 'Session start',
+                actionText,
+                _v2ActionLoop: true,
+                _reactorInstanceId: p.instanceId,
+                ...v2RollDieExtrasFromActionLoopPayload(p),
+                ...(Array.isArray(p.affectedNames) && p.affectedNames.length > 0
+                  ? { _affectedNames: p.affectedNames, _affectedInstanceIds: p.affectedInstanceIds }
+                  : {}),
+              },
+              { actionAdversaryTargets: actionAdversaryTargetsRef.current }
+            )
+          ).catch(() => {});
         }
       };
 
@@ -3335,7 +3330,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       }
     } else if (dlg.kind === 'action') {
       dismissAllHoverCards();
-      postActionNotification(dlg.notification, tableId, { bypassPrepGate: true }).catch(() => {});
+      postActionNotification(
+        withActionBannerSuppression(dlg.notification, {
+          actionAdversaryTargets: actionAdversaryTargetsRef.current,
+        }),
+        tableId,
+        { bypassPrepGate: true }
+      ).catch(() => {});
     }
   }, [pushTableElementUpdate, postRollToServer, postActionNotification, dismissAllHoverCards]);
 
@@ -3732,6 +3733,67 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
   };
 
+  /** V2 `isToggle` card chips on sidebar character cards (GM; assigned players on their own card — same path as hover sheet). */
+  const handleCharacterPanelV2CardChip = useCallback(
+    (characterEl, displayEl) => (payload) => {
+      if (!tableId || !v2Registry) return;
+      const isOwner =
+        !isPlayer ||
+        (playerEmail != null && characterEl?.assignedPlayerEmail === playerEmail) ||
+        (user?.uid != null && characterEl?.assignedPlayerUid === user.uid);
+      if (!isOwner) return;
+      const isMyCharacter = playerEmail != null && characterEl?.assignedPlayerEmail === playerEmail;
+      const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
+        sessionPlayAllowed,
+        isPlayer,
+        !isPlayer ? true : isMyCharacter,
+      );
+      if (!sheetOwner) return;
+      const usePlayerTablePath = isPlayer;
+      void runV2OwnedCardChipTableAction({
+        featRow: payload.featRow,
+        chip: payload.chip,
+        passedFeatureKey: payload.featureKey,
+        selectOpts: payload.selectOpts,
+        placementShape: payload.placementShape,
+        displayEl,
+        el: characterEl,
+        activeElementsForV2Snapshots: activeElements,
+        v2Registry,
+        tableFeatureState,
+        fearCount,
+        mapConfig,
+        tableId,
+        onActionLoopNotification: usePlayerTablePath ? handlePlayerActionNotification : handleActionNotification,
+        onRoll: allowPlayMechanics
+          ? (rollPayload) =>
+              handlePlayerOwnRoll(
+                rollPayload.rollText,
+                rollPayload.displayName || characterEl?.name,
+                rollPayload.rollMeta || {},
+                { characterEl }
+              )
+          : undefined,
+        isPlayer: usePlayerTablePath,
+      });
+    },
+    [
+      isPlayer,
+      playerEmail,
+      user?.uid,
+      sessionPlayAllowed,
+      tableId,
+      v2Registry,
+      activeElements,
+      tableFeatureState,
+      fearCount,
+      mapConfig,
+      handleActionNotification,
+      handlePlayerActionNotification,
+      handlePlayerOwnRoll,
+    ]
+  );
+
   const clearPreRollBanner = () => {
     setPreRollBanner(null);
     setSelectedPreRollChips([]);
@@ -3991,17 +4053,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return m;
   }, [consolidatedElements]);
 
-  // Seed character card expanded state: complete characters start expanded, incomplete start collapsed.
-  useEffect(() => {
-    setCharacterCardExpanded(prev => {
-      let next = prev;
-      for (const { element: el } of consolidatedElements.filter(i => i.kind === 'character')) {
-        if (isCharacterComplete(el).complete && !prev.has(el.instanceId)) next = new Set(next).add(el.instanceId);
-      }
-      return next;
-    });
-  }, [consolidatedElements]);
-
   // Find the consolidated element whose cardKey matches the hovered feature (for overlay).
   const hoveredElement = useMemo(() => {
     if (!hoveredFeature) return null;
@@ -4036,6 +4087,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           }))
       ),
     [consolidatedElements]);
+  actionAdversaryTargetsRef.current = actionAdversaryTargets;
 
   // Flat list of all hittable targets for the damage banner: characters + adversary instances.
   const damageTargets = useMemo(() => {
@@ -4493,6 +4545,113 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     return map;
   }, [srdData, tableCharacters, fearCount, mapConfig, tableFeatureState]);
+
+  const renderPinnedCharacterPanel = useCallback(
+    ({ element, anchorX, anchorY, onClose, onRemoveFromMap }) => {
+      const el = activeElements.find((e) => e.instanceId === element.instanceId) || element;
+      if (el.elementType !== 'character') return null;
+      const isMyChar = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
+      const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
+        sessionPlayAllowed,
+        isPlayer,
+        isMyChar,
+      );
+      const gmTrackCheckbox = gmResourceTrackCheckboxEditsAllowed(isPlayer);
+      const cardTrackUpdateFn = sheetOwner && gmTrackCheckbox ? updateActiveElement : undefined;
+      const cardQueueManualTracks = allowPlayMechanics && gmTrackCheckbox ? queueManualTrackEdit : undefined;
+      const pendingManual = findPendingManualTrackBanner(pendingBanners, el.instanceId);
+      const manualAck = getPendingManualTrackAckDeltas(el, pendingManual);
+      const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, el.instanceId);
+      const displayChar = characterDisplayByInstanceId.get(el.instanceId) ?? el;
+      const charComplete = isCharacterComplete(el);
+      return (
+        <AnchoredFloatingPanel
+          anchorX={anchorX}
+          anchorY={anchorY}
+          onEscape={onClose}
+          className="w-56 min-w-0 max-w-[min(18rem,92vw)]"
+        >
+          <GameTableCharacterListCard
+            el={el}
+            displayChar={displayChar}
+            isMyCharacter={isMyChar}
+            isPlayer={isPlayer}
+            sheetTriggerProps={characterOverlay.triggerProps((e) => ({
+              element: el,
+              top: e.currentTarget.getBoundingClientRect().top,
+              bottom: e.currentTarget.getBoundingClientRect().bottom,
+            }))}
+            charComplete={charComplete}
+            pendingResourceCosts={pendingResourceCosts}
+            manualAck={manualAck}
+            lsHeal={lsHeal}
+            cardTrackUpdateFn={cardTrackUpdateFn}
+            cardQueueManualTracks={cardQueueManualTracks}
+            consumePendingStressForManualMark={consumePendingStressForManualMark}
+            playerEmails={playerEmails}
+            connectedPlayers={connectedPlayers}
+            onAssignPlayerEmail={(instanceId, email) => updateActiveElement(instanceId, { assignedPlayerEmail: email })}
+            onRemoveFromTable={
+              !isPlayer
+                ? (instanceId) => {
+                    const row = activeElements.find((e) => e.instanceId === instanceId);
+                    if (window.confirm(`Remove ${row?.name || 'Unnamed'} from the table?`)) removeActiveElement(instanceId);
+                  }
+                : undefined
+            }
+            cardRootProps={{}}
+            trailingHeaderActions={
+              <>
+                {onRemoveFromMap && (
+                  <button
+                    type="button"
+                    onClick={onRemoveFromMap}
+                    className="p-1 rounded text-dh-muted hover:text-amber-400 transition-colors"
+                    title="Remove from map (return to tray)"
+                  >
+                    <ArrowLeftToLine size={13} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-1 rounded text-dh-muted hover:text-white transition-colors"
+                  title="Close"
+                >
+                  <X size={13} />
+                </button>
+              </>
+            }
+            v2Registry={srdData ? v2Registry : null}
+            v2TableContext={v2TableContextForPanels}
+            onV2CardChipFactory={handleCharacterPanelV2CardChip}
+            pendingBanners={pendingBanners}
+          />
+        </AnchoredFloatingPanel>
+      );
+    },
+    [
+      activeElements,
+      characterDisplayByInstanceId,
+      characterOverlay.triggerProps,
+      pendingResourceCosts,
+      pendingBanners,
+      lifeSupportSelections,
+      queueManualTrackEdit,
+      updateActiveElement,
+      removeActiveElement,
+      playerEmails,
+      connectedPlayers,
+      isPlayer,
+      playerEmail,
+      sessionPlayAllowed,
+      consumePendingStressForManualMark,
+      srdData,
+      v2Registry,
+      v2TableContextForPanels,
+      handleCharacterPanelV2CardChip,
+    ],
+  );
 
   /** V2 engine `reviewAction` chips for pending banners (Phase 2 — keyed by `_rollDbId`). */
   const v2ReviewChipsByRollDbId = useMemo(() => {
@@ -5416,289 +5575,43 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             const lsHeal = getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, el.instanceId);
             const displayChar = characterDisplayByInstanceId.get(el.instanceId) ?? el;
             const charComplete = isCharacterComplete(el);
-            const isIncomplete = !charComplete.complete;
-            const isExpanded = characterCardExpanded.has(el.instanceId);
             return (
-            <div
-              key={el.instanceId}
-              className={`rounded-lg border overflow-hidden group/char transition-colors bg-dh-surface cursor-pointer ${isMyCharacter ? 'border-emerald-500/45' : 'border-dh-border'}`}
-              {...characterOverlay.triggerProps(e => ({ element: el, top: e.currentTarget.getBoundingClientRect().top, bottom: e.currentTarget.getBoundingClientRect().bottom }))}
-            >
-              <div
-                className="px-2.5 py-1.5 border-b border-dh-border flex items-center gap-1.5 hover:bg-dh-hover transition-colors"
-              >
-                <button
-                  type="button"
-                  className="p-0.5 -m-0.5 rounded text-dh-muted hover:text-dh hover:bg-dh-raised/80 shrink-0"
-                  title={isExpanded ? 'Collapse' : 'Expand'}
-                  aria-expanded={isExpanded}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCharacterCardExpanded((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(el.instanceId)) next.delete(el.instanceId);
-                      else next.add(el.instanceId);
-                      return next;
-                    });
-                  }}
-                >
-                  {isExpanded ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
-                </button>
-                <User size={10} className={isMyCharacter ? 'text-emerald-500 shrink-0' : 'text-sky-500 shrink-0'} />
-                <span className="text-xs font-semibold text-dh truncate flex-1">{el.name || 'Unnamed'}</span>
-                {isIncomplete && (
-                  <span className="flex items-center gap-0.5 text-orange-400 shrink-0" title={`Missing: ${charComplete.missing?.join(', ') ?? ''}`}>
-                    <AlertTriangle size={10} />
-                    <span className="text-[10px]">Incomplete</span>
-                  </span>
-                )}
-                <span className="text-[10px] font-bold text-sky-500 bg-dh-raised border border-dh-strong rounded px-1 shrink-0 group-hover/char:hidden" title="Tier">T{el.tier ?? 1}</span>
-                {el.playerName && (
-                  <span className="text-[10px] text-dh-muted truncate max-w-[5rem] group-hover/char:hidden">{el.playerName}</span>
-                )}
-                {/* GM: remove from table (edit lives on the character sheet header) */}
-                {!isPlayer && (
-                  <div className="hidden group-hover/char:flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      onClick={() => { if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) removeActiveElement(el.instanceId); }}
-                      className="text-dh-muted hover:text-red-400 transition-colors"
-                      title="Remove from table"
-                    ><X size={11} /></button>
-                  </div>
-                )}
-              </div>
-              {isExpanded && (
-              <>
-              {/* GM: player assignment dropdown */}
-              {!isPlayer && playerEmails.length > 0 && (
-                <div
-                  className="px-2 pt-1 pb-0.5 border-b border-dh-border cursor-default"
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <select
-                    value={el.assignedPlayerEmail || ''}
-                    onChange={e => updateActiveElement(el.instanceId, { assignedPlayerEmail: e.target.value || undefined })}
-                    className="w-full bg-dh-surface border border-dh-strong rounded px-1.5 py-0.5 text-[10px] text-dh outline-none focus:border-sky-500"
-                  >
-                    <option value="">Unassigned</option>
-                    {playerEmails.map(email => {
-                      const connected = connectedPlayers.find(p => p.email === email);
-                      return <option key={email} value={email}>{connected?.name || email}</option>;
-                    })}
-                  </select>
-                </div>
-              )}
-
-              {/* Stat block — same CheckboxTrack wiring as CharacterHoverCard Resources */}
-              <div className="p-2 space-y-1.5 rounded-b-lg">
-                {/* Hope track */}
-                {(() => {
-                  const maxHope = el.maxHope ?? 6;
-                  const hopePending = pendingResourceCosts[el.instanceId]?.hope ?? 0;
-                  const currentHope = el.hope ?? maxHope;
-                  return maxHope > 0 && (
-                    <div className="flex items-center gap-1">
-                      <CheckboxTrack
-                        total={maxHope}
-                        filled={Math.max(0, currentHope - hopePending)}
-                        pendingFilled={hopePending + manualAck.hopeGain}
-                        pendingClearFilled={manualAck.hopeSpend}
-                        onSetFilled={cardQueueManualTracks
-                          ? (h) => cardQueueManualTracks(el, { hope: h })
-                          : cardTrackUpdateFn
-                            ? (h) => cardTrackUpdateFn(el.instanceId, { hope: h })
-                            : undefined}
-                        trackKind="hope"
-                        label="Hope"
-                        verbs={['Gain', 'Spend']}
-                        pulseOnDecreaseOnly
-                        slotTypeTooltip
-                        stopSlotClickPropagation
-                      />
-                    </div>
-                  );
-                })()}
-                {/* Evasion + Damage Thresholds (displayChar so ancestry mods e.g. Simiah Nimble show correctly) */}
-                {(displayChar.evasion != null || displayChar.armorThresholds) && (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {displayChar.evasion != null && (() => {
-                      const evModTotal = getEvasionModifierTotal(displayChar);
-                      return (
-                        <Tooltip
-                          content="Evasion"
-                          className={`inline-flex items-center gap-0.5 text-[10px] font-bold tabular-nums bg-cyan-900/50 border border-cyan-800/50 rounded px-1 ${evModTotal ? 'text-sky-300' : 'text-cyan-400/70'}`}
-                          placement="right"
-                        >
-                          <span>EVA {displayChar.evasion}</span>
-                          {evModTotal !== 0 ? (
-                            <span className={`text-[9px] font-semibold text-sky-400 dh-light:text-sky-800`}>
-                              ({evModTotal > 0 ? '+' : ''}{evModTotal})
-                            </span>
-                          ) : null}
-                        </Tooltip>
-                      );
-                    })()}
-                    {(() => {
-                      const t = effectiveThresholds(displayChar);
-                      if (!t) return null;
-                      const eb = displayChar._v2MajorThresholdBonus ?? 0;
-                      return (
-                        <span className="text-[10px] text-dh-muted" title="Damage thresholds">
-                          Thresholds{' '}
-                          {eb > 0 ? <><span className="font-bold text-dh-muted">{t.major - eb}</span><span className="text-dh-muted"> +{eb} =</span>{' '}</> : null}
-                          <span className="font-bold text-dh">{t.major}</span>
-                          <span className="text-dh-muted"> / </span>
-                          {eb > 0 ? <><span className="font-bold text-red-300/50">{t.severe - eb}</span><span className="text-dh-muted"> +{eb} =</span>{' '}</> : null}
-                          <span className="font-bold text-red-300">{t.severe}</span>
-                        </span>
-                      );
-                    })()}
-                  </div>
-                )}
-                {/* Armor track */}
-                {(el.maxArmor || 0) > 0 && (
-                  <div className="flex items-center gap-1">
-                    <CheckboxTrack
-                      total={el.maxArmor || 0}
-                      filled={el.currentArmor || 0}
-                      pendingFilled={(pendingResourceCosts[el.instanceId]?.armorMark ?? 0) + manualAck.armorMarkAdd}
-                      pendingClearFilled={manualAck.armorClear}
-                      onSetFilled={cardQueueManualTracks
-                        ? (v) => {
-                            const upd = { currentArmor: v };
-                            if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                            cardQueueManualTracks(el, upd);
-                          }
-                        : cardTrackUpdateFn
-                          ? (v) => {
-                              const upd = { currentArmor: v };
-                              if (el.reinforcedActive && v < (el.currentArmor || 0)) upd.reinforcedActive = false;
-                              cardTrackUpdateFn(el.instanceId, upd);
-                            }
-                          : undefined}
-                      trackKind="armor"
-                      label="Armor"
-                      verbs={['Mark', 'Clear']}
-                      slotTypeTooltip
-                      stopSlotClickPropagation
-                    />
-                  </div>
-                )}
-                {/* HP track */}
-                {(el.maxHp || 0) > 0 && (
-                  <div className="flex items-center gap-1">
-                    <CheckboxTrack
-                      total={el.maxHp || 0}
-                      filled={(el.maxHp || 0) - (el.currentHp ?? el.maxHp ?? 0)}
-                      pendingFilled={manualAck.hpDamageAdd}
-                      pendingClearFilled={manualAck.hpHealSlots + lsHeal}
-                      onSetFilled={cardQueueManualTracks
-                        ? (dmg) => cardQueueManualTracks(el, { currentHp: (el.maxHp || 0) - dmg })
-                        : cardTrackUpdateFn
-                          ? (dmg) => cardTrackUpdateFn(el.instanceId, { currentHp: (el.maxHp || 0) - dmg })
-                          : undefined}
-                      trackKind="hp"
-                      label="HP"
-                      verbs={['Mark', 'Clear']}
-                      slotTypeTooltip
-                      stopSlotClickPropagation
-                    />
-                  </div>
-                )}
-                {/* Stress track */}
-                {(el.maxStress || 0) > 0 && (
-                  <div className="flex items-center gap-1">
-                    <CheckboxTrack
-                      total={el.maxStress || 0}
-                      filled={el.currentStress || 0}
-                      pendingFilled={(pendingResourceCosts[el.instanceId]?.stress ?? 0) + manualAck.stressAdd}
-                      pendingClearFilled={manualAck.stressClear}
-                      onSetFilled={cardQueueManualTracks
-                        ? (s) => cardQueueManualTracks(el, { currentStress: s })
-                        : cardTrackUpdateFn
-                          ? (s) => {
-                              const prev = el.currentStress ?? 0;
-                              if (s > prev) consumePendingStressForManualMark?.(el.instanceId, s - prev);
-                              cardTrackUpdateFn(el.instanceId, { currentStress: s });
-                            }
-                          : undefined}
-                      trackKind="stress"
-                      label="Stress"
-                      verbs={['Mark', 'Clear']}
-                      slotTypeTooltip
-                      stopSlotClickPropagation
-                    />
-                  </div>
-                )}
-                {el.conditions && (
-                  <div className="text-[10px] text-dh leading-snug">
-                    <span className="font-semibold text-dh-muted">Conditions: </span>
-                    {el.conditions}
-                  </div>
-                )}
-                {/* V2 compact strip: isToggle chips + iconGrid selects — same styling as sheet Actions (`actionsStripLayout`). GM only. */}
-                {!isPlayer && v2Registry && srdData && (() => {
-                  const displayElPanel = characterDisplayByInstanceId.get(el.instanceId) ?? el;
-                  const toggleGroups = collectV2IsToggleCardFeatureGroups(displayElPanel, v2TableContextForPanels);
-                  const cardValueLines = collectV2FeatureCardValueDisplayLines(
-                    displayElPanel,
-                    v2TableContextForPanels,
-                  );
-                  if (toggleGroups.length === 0 && cardValueLines.length === 0) return null;
-                  const channeled = displayElPanel.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement ?? null;
-                  return (
-                    <div className="pt-1.5 mt-1 border-t border-dh-border/80 min-w-0">
-                      {toggleGroups.length > 0 && (
-                        <WidthSortedFlexWrap className="flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start">
-                          {toggleGroups.map((g, gi) => (
-                            <GuideFeatureCardChips
-                              key={`${g.featRow._sourceScopeKey || g.featRow.name}-${g.featRow.type}-${gi}`}
-                              model={g.model}
-                              tableForChips={g.table}
-                              featRow={g.featRow}
-                              el={displayElPanel}
-                              featureKey={g.featRow._sourceScopeKey || g.featRow.name}
-                              v2TableContext={v2TableContextForPanels}
-                              interactionMode="interactive"
-                              onlyIsToggle
-                              actionsStripLayout
-                              stripKeyPrefix={g.featRow._sourceScopeKey || g.featRow.name}
-                              activeChanneledElement={g.featRow.name === 'Elemental Incarnation' ? channeled : undefined}
-                              stressMaxed={
-                                g.featRow.name === 'Elemental Incarnation'
-                                  ? (el.currentStress ?? 0) >= (el.maxStress ?? 6)
-                                  : undefined
-                              }
-                              onV2CardChip={handleCharacterPanelV2CardChip(el, displayElPanel)}
-                              pendingBanners={pendingBanners}
-                              chipTooltipPlacement="right"
-                            />
-                          ))}
-                        </WidthSortedFlexWrap>
-                      )}
-                      {cardValueLines.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-x-1.5 gap-y-1.5 items-center content-start min-w-0">
-                          {cardValueLines.map((ln, cvi) => (
-                            <span
-                              key={`${ln.value}-${cvi}`}
-                              className={`inline-flex max-w-full min-w-0 items-center rounded px-1.5 py-1 text-left border transition-colors ${ln.chipClassName}`}
-                              title={ln.value}
-                            >
-                              <span className="text-sm font-semibold leading-tight min-w-0 truncate">{ln.value}</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-              </>
-              )}
-            </div>
-          );
+              <GameTableCharacterListCard
+                key={el.instanceId}
+                el={el}
+                displayChar={displayChar}
+                isMyCharacter={isMyCharacter}
+                isPlayer={isPlayer}
+                sheetTriggerProps={characterOverlay.triggerProps((e) => ({
+                  element: el,
+                  top: e.currentTarget.getBoundingClientRect().top,
+                  bottom: e.currentTarget.getBoundingClientRect().bottom,
+                }))}
+                charComplete={charComplete}
+                pendingResourceCosts={pendingResourceCosts}
+                manualAck={manualAck}
+                lsHeal={lsHeal}
+                cardTrackUpdateFn={cardTrackUpdateFn}
+                cardQueueManualTracks={cardQueueManualTracks}
+                consumePendingStressForManualMark={consumePendingStressForManualMark}
+                playerEmails={playerEmails}
+                connectedPlayers={connectedPlayers}
+                onAssignPlayerEmail={(instanceId, email) => updateActiveElement(instanceId, { assignedPlayerEmail: email })}
+                onRemoveFromTable={
+                  !isPlayer
+                    ? (instanceId) => {
+                        const row = activeElements.find((e) => e.instanceId === instanceId);
+                        if (window.confirm(`Remove ${row?.name || 'Unnamed'} from the table?`)) removeActiveElement(instanceId);
+                      }
+                    : undefined
+                }
+                cardRootProps={{}}
+                v2Registry={srdData ? v2Registry : null}
+                v2TableContext={v2TableContextForPanels}
+                onV2CardChipFactory={handleCharacterPanelV2CardChip}
+                pendingBanners={pendingBanners}
+              />
+            );
           })}
 
           {consolidatedElements.filter(item => item.kind === 'character').length === 0 && (
@@ -6394,6 +6307,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onSetMapViewOverlay={onSetMapViewOverlay}
             onViewportAspectChange={onBattleMapViewportAspectChange}
             className="flex-1 min-h-0"
+            renderPinnedCharacterPanel={renderPinnedCharacterPanel}
           />
         </div>
         {/* Action log footer — collapsed title bar; click to open overlay with roll/action history */}

@@ -131,6 +131,36 @@ class SubscriptionManager {
     this._pushSnapshot(channelName, key, [res]);
   }
 
+  /**
+   * Send a one-off SSE event to all subscribers of `banners` for this gmUid key
+   * (e.g. roll-log-append for acknowledged-only action rows that skip the pending banner queue).
+   * @param {string} key — gmUid (same key as banners subscription)
+   * @param {string} eventName — SSE event name (not `banners`)
+   * @param {unknown} data — JSON-serializable payload
+   */
+  broadcastBannersChannelEvent(key, eventName, data) {
+    const keyMap = this._subs.get('banners');
+    if (!keyMap) return;
+    const resSet = keyMap.get(key);
+    if (!resSet || resSet.size === 0) return;
+    let body;
+    try {
+      body = JSON.stringify(data);
+    } catch {
+      return;
+    }
+    const msg = `event: ${eventName}\ndata: ${body}\n\n`;
+    for (const res of resSet) {
+      try {
+        if (res.writableEnded) continue;
+        res.write(msg);
+        res.flush?.();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   /** Unsubscribe an SSE response object from a channel. */
   unsubscribe(channelName, key, res) {
     const keyMap = this._subs.get(channelName);

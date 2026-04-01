@@ -25,6 +25,7 @@ import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
 import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
+import { computeActionAckTouchesTableState } from '../lib/action-notification-banner.js';
 import {
   V2_REVIEW_CHIP_INLINE_OPTION_MAX,
   V2_INLINE_GROUP_OUTER,
@@ -558,17 +559,7 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
 
   // Hide Cancel when Ack would not change table state (mirrors GMTableView handleBannerAcknowledge for _action).
   // V2 actionLoop notices (mutations already applied) and other informational actions only need Acknowledge.
-  const actionAckTouchesTableState =
-    !!roll._manualTrackEdit ||
-    !!roll._featureUse ||
-    !!roll._cardToggle ||
-    (roll._v2DeferUntilBannerAck === true && typeof roll._v2DeferToggleNext === 'boolean') ||
-    roll._wingsOfLightFlightDefer === true ||
-    !!roll._prayerDieGainHope ||
-    (Array.isArray(roll._rousingSpeechTargets) && roll._rousingSpeechTargets.length > 0) ||
-    needsLifeSupportSelection ||
-    needsActionAdversarySelection ||
-    ((roll.tags || []).length > 0 && roll._attackerInstanceId);
+  const actionAckTouchesTableState = computeActionAckTouchesTableState(roll, { actionAdversaryTargets });
   const showActionBannerCancel = onCancel != null && actionAckTouchesTableState;
 
   const handleAcknowledge = () => {

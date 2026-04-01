@@ -715,17 +715,30 @@ function getOrCreateRoom(tableId) {
 }
 
 async function appendRollLog(gmUid, rollData) {
+  const suppressBanner = rollData._suppressActionBanner === true;
+  const toStore = { ...rollData };
+  delete toStore._suppressActionBanner;
+  delete rollData._suppressActionBanner;
+
   if (!gmRollLogs.has(gmUid)) gmRollLogs.set(gmUid, []);
   const log = gmRollLogs.get(gmUid);
-  log.push(rollData);
+  log.push(toStore);
   if (log.length > ROLL_LOG_SIZE) log.shift();
   try {
-    const dbId = await appendDiceRoll(APP_ID, gmUid, rollData);
+    const dbId = await appendDiceRoll(APP_ID, gmUid, toStore, {
+      status: suppressBanner ? 'acknowledged' : 'pending',
+    });
+    toStore._rollDbId = dbId;
     rollData._rollDbId = dbId;
   } catch (err) {
     console.error('[dice] DB write failed:', err.message);
   }
   subscriptionManager.notifyChange('banners', gmUid);
+  if (suppressBanner && toStore._rollDbId != null) {
+    subscriptionManager.broadcastBannersChannelEvent(gmUid, 'roll-log-append', {
+      roll: { ...toStore, _rollDbId: toStore._rollDbId },
+    });
+  }
 }
 
 function broadcastPresenceToTable(tableId) {

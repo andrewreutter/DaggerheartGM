@@ -92,20 +92,28 @@ function CompoundRoll({ subItems }) {
   );
 }
 
-function LogEntry({ roll }) {
+function LogEntry({ roll, compact }) {
   const isAction = !!roll._action;
   const isCompound = Array.isArray(roll.subItems) && roll.subItems.length > 0;
   const time = roll.timestamp ? new Date(roll.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
-    <div className="px-2 py-1 rounded bg-dh-raised/60 flex items-baseline gap-2">
-      <div className="flex-1 font-mono text-xs min-w-0">
+    <div
+      className={
+        compact
+          ? 'px-2 py-1 rounded bg-dh-raised/60 flex items-center gap-2 max-w-[min(20rem,55vw)] shrink-0 min-w-0'
+          : 'px-2 py-1 rounded bg-dh-raised/60 flex items-baseline gap-2'
+      }
+    >
+      <div
+        className={`flex-1 font-mono text-xs min-w-0 ${compact ? 'truncate whitespace-nowrap overflow-hidden' : ''}`}
+      >
         {isAction && (
           <span>
             <span className="text-dh">{(roll.rollUser || roll.characterName || '').trim() || '—'}</span>
             <span className="text-dh-muted">: </span>
             <span className="text-dh font-medium">{roll.actionName || 'Action'}</span>
-            {roll.actionText && (
+            {roll.actionText && !compact && (
               <span className="block text-[10px] text-dh-muted mt-0.5 max-w-full whitespace-pre-line break-words">
                 {roll.actionText.length > 120 ? roll.actionText.slice(0, 120) + '…' : roll.actionText}
               </span>
@@ -125,20 +133,32 @@ function LogEntry({ roll }) {
  * rolls — array of roll and action notification objects (maintained by GMTableView)
  * rollBuilder — optional { onRoll(rollText, displayName), displayName }; when present, shows dice builder (GM and players)
  */
+const STRIP_MAX_ROLLS = 16;
+
 export function ActionLog({ rolls = [], rollBuilder }) {
   const [open, setOpen] = useState(false);
   const scrollRef = useRef(null);
+  const stripScrollRef = useRef(null);
   const overlayRef = useRef(null);
   const [dualityOn, setDualityOn] = useState(true);
   const [counts, setCounts] = useState(() =>
     Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, 0]))
   );
 
+  const stripRolls = rolls.slice(-STRIP_MAX_ROLLS);
+
   // Auto-scroll to bottom when overlay opens or new entries arrive while open
   useEffect(() => {
     if (!open || !scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [rolls, open]);
+
+  // Collapsed strip: keep the viewport pinned to the newest entries (right side)
+  useEffect(() => {
+    const el = stripScrollRef.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth - el.clientWidth;
+  }, [rolls]);
 
   // Close overlay when clicking outside of it
   useEffect(() => {
@@ -151,12 +171,6 @@ export function ActionLog({ rolls = [], rollBuilder }) {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
-
-  const latest = rolls[rolls.length - 1];
-  const isLatestAction = latest && (latest._action || (latest.actionName != null && latest.total == null));
-  const footerPreview = latest && (isLatestAction
-    ? `${(latest.rollUser || latest.characterName || '').trim() || '—'}: ${latest.actionName || 'Action'}`
-    : `${latest.rollUser ? `${latest.rollUser}: ` : ''}${latest.total != null ? latest.total : ''}`);
 
   return (
     // Wrapper is relative so the overlay can anchor over the bar
@@ -240,22 +254,51 @@ export function ActionLog({ rolls = [], rollBuilder }) {
         </div>
       )}
 
-      {/* Collapsed footer bar — always visible (hidden behind overlay when open) */}
+      {/* Collapsed footer — one row; same LogEntry styling as overlay, horizontal scroll */}
       <button
+        type="button"
+        aria-expanded={open}
+        aria-label="Action log and dice roller"
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 border-t border-dh-border bg-dh-canvas hover:bg-dh-surface transition-colors cursor-pointer group"
+        className="w-full flex items-center gap-2 pl-2 pr-3 py-1.5 border-t border-dh-border bg-dh-canvas hover:bg-dh-surface transition-colors cursor-pointer group text-left min-h-0"
       >
-        <Dices size={11} className="text-red-400 shrink-0" />
-        <span className="text-[11px] font-medium text-dh-muted group-hover:text-dh flex-1 text-left">Action Log and Dice Roller</span>
-        {rolls.length > 0 && footerPreview && (
-          <span className="text-[10px] text-dh-muted truncate max-w-[40%] font-mono">
-            {footerPreview}
-          </span>
-        )}
-        <span className="text-[10px] text-dh-muted shrink-0">{rolls.length} entr{rolls.length === 1 ? 'y' : 'ies'}</span>
+        <Dices size={12} className="text-red-400 shrink-0" aria-hidden />
+        <span className="text-[10px] font-semibold text-dh-muted group-hover:text-dh shrink-0 hidden sm:inline">
+          Log
+        </span>
+        <div
+          ref={stripScrollRef}
+          className="flex-1 min-w-0 overflow-x-auto overflow-y-hidden"
+        >
+          <div
+            className={
+              rolls.length === 0
+                ? 'flex w-full min-w-full justify-center py-0.5'
+                : 'inline-flex w-max min-w-full flex-nowrap items-center justify-end gap-1 py-0.5'
+            }
+          >
+            {rolls.length === 0 ? (
+              <div className="text-[10px] italic text-dh-muted/80 px-2 py-1 rounded bg-dh-raised/40">
+                No actions yet this session
+              </div>
+            ) : (
+              stripRolls.map((roll, i) => (
+                <LogEntry
+                  key={roll._logId != null ? `${roll._logId}-strip-${i}` : `strip-${i}`}
+                  roll={roll}
+                  compact
+                />
+              ))
+            )}
+          </div>
+        </div>
+        <span className="text-[10px] text-dh-muted shrink-0 tabular-nums">
+          {rolls.length} entr{rolls.length === 1 ? 'y' : 'ies'}
+        </span>
         <ChevronUp
-          size={11}
+          size={12}
           className={`text-dh-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          aria-hidden
         />
       </button>
     </div>

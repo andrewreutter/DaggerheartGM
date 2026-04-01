@@ -48,8 +48,8 @@ import {
 import { Tooltip } from './Tooltip.jsx';
 import { CheckboxTrack } from './DetailCardContent.jsx';
 import { ConditionsTextInput } from './ConditionsTextInput.jsx';
+import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { getAuthToken, postMapPing, postMapScribble, postBannerAck, CLIENT_ID, imageGenEnabled } from '../lib/api.js';
-import { gmResourceTrackCheckboxEditsAllowed } from '../lib/table-session-gate.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowImageGenAiUi } from '../lib/ai-ui-visibility.js';
 import { MapAiImageDialog } from './MapAiImageDialog.jsx';
@@ -59,12 +59,6 @@ import { buildCharacterTrayTokenEntries } from '../lib/character-tray-tokens.js'
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
-import {
-  findPendingManualTrackBanner,
-  mergeManualTrackDisplay,
-  getPendingManualTrackAckDeltas,
-  getLifeSupportPendingHealSlots,
-} from '../lib/manual-track-action-loop.js';
 import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
 import {
   computeMapDrawCanvasSize,
@@ -983,74 +977,29 @@ function TokenDetailPanel({
   anchorY,
   tableId,
 }) {
-  const isChar = element.elementType === 'character';
   const isAdv = element.elementType === 'adversary';
   const isBoard = element.elementType === 'boardToken';
   const canEdit = !isPlayer || isMyCharacter;
   const canEditAdv = !isPlayer; // only GM edits adversaries
-  /** Hope/Stress/Armor/HP slot clicks — GM only (players may still edit conditions on their PC). */
-  const gmResourceTracks = gmResourceTrackCheckboxEditsAllowed(isPlayer);
-  const pendingManual = isBoard
-    ? null
-    : findPendingManualTrackBanner(pendingBanners ?? [], element.instanceId);
-  const displayEl = isBoard ? element : mergeManualTrackDisplay(element, pendingManual);
-  const manualAck = isBoard ? {} : getPendingManualTrackAckDeltas(element, pendingManual);
-  const lsHeal = isBoard ? 0 : getLifeSupportPendingHealSlots(pendingBanners, lifeSupportSelections, element.instanceId);
   const applyResource = (upd) => {
     if (isBoard) return;
-    if (isAdv) {
-      void (async () => {
-        if (queueManualTrackEdit && tableId) {
-          for (const r of pendingBanners || []) {
-            if (r._manualTrackEdit && r._targetInstanceId === element.instanceId && r._rollDbId != null) {
-              await postBannerAck(r._rollDbId, 'cancel', { tableId }).catch(() => {});
-            }
+    void (async () => {
+      if (queueManualTrackEdit && tableId) {
+        for (const r of pendingBanners || []) {
+          if (r._manualTrackEdit && r._targetInstanceId === element.instanceId && r._rollDbId != null) {
+            await postBannerAck(r._rollDbId, 'cancel', { tableId }).catch(() => {});
           }
         }
-        updateActiveElement(element.instanceId, upd);
-      })();
-      return;
-    }
-    if (queueManualTrackEdit) {
-      void queueManualTrackEdit(element, upd);
-      return;
-    }
-    updateActiveElement(element.instanceId, upd);
+      }
+      updateActiveElement(element.instanceId, upd);
+    })();
   };
-
-  // Clamp position to viewport
-  const panelRef = useRef(null);
-  const [pos, setPos] = useState({ left: anchorX + 12, top: anchorY - 20 });
-  useLayoutEffect(() => {
-    const el = panelRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    let { left, top } = pos;
-    // Flip to left if panel would overflow right
-    if (left + rect.width > vw - 8) left = anchorX - rect.width - 12;
-    // Clamp vertical
-    top = Math.max(8, Math.min(vh - rect.height - 8, top));
-    // Clamp left
-    left = Math.max(8, left);
-    setPos({ left, top });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Dismiss on Escape
-  useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
 
   if (isBoard) {
     return (
+      <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
       <div
-        ref={panelRef}
-        className="fixed z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[160px] max-w-[220px]"
-        style={{ left: pos.left, top: pos.top }}
+        className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[160px] max-w-[220px]"
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-2 mb-1">
@@ -1077,26 +1026,23 @@ function TokenDetailPanel({
           </div>
         </div>
       </div>
+      </AnchoredFloatingPanel>
     );
   }
 
-  const hpMax = isChar ? element.maxHp : element.hp_max;
-  const stressMax = isChar ? element.maxStress : element.stress_max;
+  const hpMax = element.hp_max;
+  const stressMax = element.stress_max;
 
   return (
+    <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
     <div
-      ref={panelRef}
-      className="fixed z-50 bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] max-w-[240px]"
-      style={{ left: pos.left, top: pos.top }}
+      className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] max-w-[240px]"
       onPointerDown={e => e.stopPropagation()}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0">
           <div className="font-semibold text-white text-sm truncate">{element.name}</div>
-          {isChar && element.playerName && (
-            <div className="text-xs text-dh-muted truncate">{element.playerName}</div>
-          )}
           {isAdv && (
             <div className="text-xs text-dh-muted capitalize">{element.role || ''} {element.tier ? `T${element.tier}` : ''}</div>
           )}
@@ -1124,12 +1070,10 @@ function TokenDetailPanel({
           <CheckboxTrack
             total={hpMax}
             filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
-            pendingFilled={isAdv ? 0 : manualAck.hpDamageAdd}
-            pendingClearFilled={isAdv ? 0 : manualAck.hpHealSlots + lsHeal}
+            pendingFilled={0}
+            pendingClearFilled={0}
             trackKind="hp"
-            onSetFilled={isAdv
-              ? (canEditAdv ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined)
-              : (gmResourceTracks ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined)}
+            onSetFilled={canEditAdv ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined}
           />
         </div>
       )}
@@ -1141,52 +1085,10 @@ function TokenDetailPanel({
           <CheckboxTrack
             total={stressMax}
             filled={element.currentStress ?? 0}
-            pendingFilled={(pendingResourceCosts[element.instanceId]?.stress ?? 0) + (isAdv ? 0 : manualAck.stressAdd)}
-            pendingClearFilled={isAdv ? 0 : manualAck.stressClear}
+            pendingFilled={pendingResourceCosts[element.instanceId]?.stress ?? 0}
+            pendingClearFilled={0}
             trackKind="stress"
-            onSetFilled={isAdv
-              ? (canEditAdv ? (v) => applyResource({ currentStress: v }) : undefined)
-              : (gmResourceTracks ? (v) => applyResource({ currentStress: v }) : undefined)}
-          />
-        </div>
-      )}
-
-      {/* Hope (characters only) — server baseline + dashed pending (rolls + brief lag before SSE on manual edits) */}
-      {isChar && (element.maxHope ?? 6) > 0 && (() => {
-        const maxH = element.maxHope ?? 6;
-        const hopePending = pendingResourceCosts[element.instanceId]?.hope ?? 0;
-        const remaining = element.hope ?? maxH;
-        return (
-          <div className="mb-1.5">
-            <div className="text-xs text-dh-muted mb-0.5">Hope {remaining}/{maxH}</div>
-            <CheckboxTrack
-              total={maxH}
-              filled={Math.max(0, remaining - hopePending)}
-              pendingFilled={hopePending + manualAck.hopeGain}
-              pendingClearFilled={manualAck.hopeSpend}
-              trackKind="hope"
-              label="Hope"
-              verbs={['Gain', 'Spend']}
-              pulseOnDecreaseOnly
-              onSetFilled={gmResourceTracks ? (v) => applyResource({ hope: v }) : undefined}
-            />
-          </div>
-        );
-      })()}
-
-      {/* Armor (Daggerstack characters) */}
-      {isChar && (element.maxArmor ?? 0) > 0 && (
-        <div className="mb-1.5">
-          <div className="text-xs text-dh-muted mb-0.5">Armor {displayEl.currentArmor ?? element.maxArmor ?? 0}/{element.maxArmor ?? 0}</div>
-          <CheckboxTrack
-            total={element.maxArmor ?? 0}
-            filled={displayEl.currentArmor ?? element.maxArmor ?? 0}
-            trackKind="armor"
-            onSetFilled={gmResourceTracks ? (v) => {
-              const upd = { currentArmor: v };
-              if (element.reinforcedActive && v < (element.currentArmor ?? element.maxArmor ?? 0)) upd.reinforcedActive = false;
-              applyResource(upd);
-            } : undefined}
+            onSetFilled={canEditAdv ? (v) => applyResource({ currentStress: v }) : undefined}
           />
         </div>
       )}
@@ -1212,6 +1114,7 @@ function TokenDetailPanel({
         </div>
       )}
     </div>
+    </AnchoredFloatingPanel>
   );
 }
 
@@ -1328,6 +1231,11 @@ export function BattleMap({
   onSetMapViewOverlay,
   /** Live map viewport width/height ratio (scroll wrapper) — for import map camera rectangles matching the table. */
   onViewportAspectChange,
+  /**
+   * When set, clicking a placed character token opens this panel instead of the compact `TokenDetailPanel`.
+   * Uses `GameTableCharacterListCard` (same as the Characters sidebar); sheet open is wired via `sheetTriggerProps` on that card.
+   */
+  renderPinnedCharacterPanel,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -5130,6 +5038,21 @@ export function BattleMap({
             ? isMyCharacter(parentByInstanceId.get(el.parentInstanceId) || {})
             : isMyCharacter(el);
         const canRemove = !isPlayer || myChar;
+        if (el.elementType === 'character' && typeof renderPinnedCharacterPanel === 'function') {
+          return renderPinnedCharacterPanel({
+            element: el,
+            anchorX: pinnedToken.anchorX,
+            anchorY: pinnedToken.anchorY,
+            onClose: () => setPinnedToken(null),
+            updateActiveElement,
+            onRemoveFromMap: canRemove
+              ? () => {
+                  updateActiveElement(el.instanceId, { tokenX: null, tokenY: null, mapId: null });
+                  setPinnedToken(null);
+                }
+              : undefined,
+          });
+        }
         return (
           <TokenDetailPanel
             element={el}

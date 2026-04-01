@@ -1140,11 +1140,12 @@ export async function getResolvedTableState(appId, tableId) {
   return attachDerivedMapConfig({ ...stateData, elements: resolved });
 }
 
-export async function appendDiceRoll(appId, gmUid, rollData) {
+export async function appendDiceRoll(appId, gmUid, rollData, opts = {}) {
+  const status = opts.status ?? 'pending';
   const db = getPool();
   const { rows } = await db.query(
-    'INSERT INTO dice_rolls (app_id, gm_uid, data) VALUES ($1, $2, $3) RETURNING id',
-    [appId, gmUid, JSON.stringify(rollData)]
+    'INSERT INTO dice_rolls (app_id, gm_uid, data, status) VALUES ($1, $2, $3, $4) RETURNING id',
+    [appId, gmUid, JSON.stringify(rollData), status]
   );
   return rows[0].id;
 }

@@ -832,6 +832,15 @@ function App() {
         const data = JSON.parse(e.data);
         setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
       });
+      es.addEventListener('roll-log-append', (e) => {
+        try {
+          const { roll } = JSON.parse(e.data);
+          const id = roll?._rollDbId;
+          if (!id || seenLogDbIdsRef.current.has(id)) return;
+          seenLogDbIdsRef.current.add(id);
+          setActionLog(prev => [...prev.slice(-49), { ...normalizeRoll(roll), _logId: `log-${id}` }]);
+        } catch { /* ignore */ }
+      });
       es.addEventListener('intent', (e) => {
         const intent = JSON.parse(e.data);
         setPendingPlayerIntent(intent); // null clears the banner
@@ -932,6 +941,15 @@ function App() {
         const data = JSON.parse(e.data);
         setPendingBanners(Array.isArray(data) ? data.map(normalizeRoll) : data);
       });
+      es.addEventListener('roll-log-append', (e) => {
+        try {
+          const { roll } = JSON.parse(e.data);
+          const id = roll?._rollDbId;
+          if (!id || seenLogDbIdsRef.current.has(id)) return;
+          seenLogDbIdsRef.current.add(id);
+          setActionLog(prev => [...prev.slice(-49), { ...normalizeRoll(roll), _logId: `log-${id}` }]);
+        } catch { /* ignore */ }
+      });
       es.addEventListener('map_ping', (e) => {
         try {
           const p = JSON.parse(e.data);
@@ -952,7 +970,8 @@ function App() {
     return () => { es?.close(); if (reconnectTimer) clearTimeout(reconnectTimer); };
   }, [isPlayer, user?.uid, route.tableId, tableOwnerUid, appendMapPing, appendMapScribble]);
 
-  // Drive Action Log live updates from the pendingBanners subscription channel.
+  // Drive Action Log live updates from the pendingBanners subscription channel and
+  // roll-log-append (acknowledged-only action rows that skip the pending banner queue).
   // roll-history seeds seenLogDbIdsRef on connect; here we append any newly-arriving
   // banners that have not yet been added to the log.
   useEffect(() => {
@@ -1287,6 +1306,14 @@ function App() {
   const sessionStarted = tableTop == null ? true : tableTop.sessionStarted !== false;
   const sessionPaused = tableTop?.sessionPaused === true;
 
+  const handleSessionBannerResume = useCallback(() => {
+    if (effectiveIsPlayer || !sessionPaused) return;
+    postTableOp(
+      { op: 'set-table-top', top: { sessionPaused: false, lastPlayActivityAt: Date.now() } },
+      tableId,
+    );
+  }, [effectiveIsPlayer, sessionPaused, tableId]);
+
   const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
     if (
       'tokenX' in updates ||
@@ -1603,7 +1630,11 @@ function App() {
     >
     <div className="h-[100dvh] bg-dh-surface text-dh font-sans flex flex-col overflow-hidden">
       {typeof document !== 'undefined' && route.view === 'table' && user && !sessionPlayAllowed && createPortal(
-        <SessionBlockedBanner isPlayer={effectiveIsPlayer} sessionStarted={sessionStarted} />,
+        <SessionBlockedBanner
+          isPlayer={effectiveIsPlayer}
+          sessionStarted={sessionStarted}
+          onResume={!effectiveIsPlayer && sessionPaused ? handleSessionBannerResume : undefined}
+        />,
         document.body
       )}
       {user && (
