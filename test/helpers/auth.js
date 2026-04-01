@@ -50,7 +50,17 @@ export function onAuthStateChanged(_auth, callback) {
 }
 
 export class GoogleAuthProvider {}
+GoogleAuthProvider.credentialFromError = function () { return null; };
+GoogleAuthProvider.credentialFromResult = function () { return { accessToken: null }; };
 export async function signInWithPopup() { return { user: mockUser }; }
+export async function linkWithPopup() { return { user: mockUser }; }
+export async function reauthenticateWithPopup() { return { user: mockUser }; }
+export async function createUserWithEmailAndPassword() { return { user: mockUser }; }
+export async function signInWithEmailAndPassword() { return { user: mockUser }; }
+export async function sendPasswordResetEmail() {}
+export async function fetchSignInMethodsForEmail() { return []; }
+export async function linkWithCredential() { return { user: mockUser }; }
+export async function updateProfile() {}
 export async function signOut() {}
 `;
 

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
-import { signInWithPopup, signOut, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, Users, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot } from 'lucide-react';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled } from './lib/api.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
@@ -27,6 +27,7 @@ import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideMo
 import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
+import { AuthLanding } from './components/AuthLanding.jsx';
 
 function NavImportBtn() {
   const { openImport, enabled } = useUnifiedImport();
@@ -201,16 +202,6 @@ function App() {
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [deleteTablePending]);
-
-  const handleGoogleSignIn = async () => {
-    if (!auth) { console.error('Firebase auth not initialized — check .env credentials'); return; }
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (err) {
-      console.error('Google Sign-In Error:', err);
-    }
-  };
 
   const handleSignOut = async () => {
     setUserMenuOpen(false);
@@ -1791,12 +1782,7 @@ function App() {
             <Swords size={64} className="text-red-500 mb-6" />
             <h1 className="text-4xl font-bold text-dh mb-2">Daggertop</h1>
             <p className="text-dh-muted mb-8 text-center max-w-md">Build adversaries, environments, and run your encounters seamlessly with integrated action tracking.</p>
-            <button
-              onClick={handleGoogleSignIn}
-              className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-red-900/20"
-            >
-              <Users size={20} /> Sign In with Google
-            </button>
+            <AuthLanding />
           </div>
         ) : (
           <>

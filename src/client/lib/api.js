@@ -1,6 +1,6 @@
 import { buildLibraryAllSearchParams } from './library-all-api-params.js';
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, linkWithPopup, reauthenticateWithPopup } from 'firebase/auth';
 
 /** Headers to add when running behind ngrok (bypasses browser warning interstitial). */
 function apiHeaders(extra = {}) {
@@ -1452,7 +1452,15 @@ export const requestGoogleContactsAccess = async () => {
     if (currentUser?.email) {
       provider.setCustomParameters({ login_hint: currentUser.email });
     }
-    const result = await signInWithPopup(auth, provider);
+    const hasGoogle = currentUser?.providerData?.some((p) => p.providerId === 'google.com');
+    let result;
+    if (currentUser && !hasGoogle) {
+      result = await linkWithPopup(currentUser, provider);
+    } else if (currentUser && hasGoogle) {
+      result = await reauthenticateWithPopup(currentUser, provider);
+    } else {
+      result = await signInWithPopup(auth, provider);
+    }
     const credential = GoogleAuthProvider.credentialFromResult(result);
     return credential?.accessToken ?? null;
   } catch (err) {
