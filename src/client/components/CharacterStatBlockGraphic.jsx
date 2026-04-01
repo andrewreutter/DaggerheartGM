@@ -679,17 +679,27 @@ export function CharacterStatBlockGraphic({
 /**
  * Same shell as the defense stat block: large title + gradient card (Traits / Offense / Experiences).
  */
-export function CharacterSheetEmphasisCard({ title, subtitle, children, compact = false }) {
+export function CharacterSheetEmphasisCard({ title, subtitle, titleRight, children, compact = false }) {
   const pad = compact ? 'p-2' : 'p-2.5';
+  const hasBody = children != null && children !== false;
   return (
-    <div className={`rounded-xl bg-gradient-to-b from-dh-surface to-dh-raised/80 border border-dh-border ${pad} space-y-2 min-w-0`}>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 min-w-0">
-        <span className="text-sm font-semibold text-dh-muted uppercase tracking-wider">{title}</span>
-        {subtitle ? (
-          <span className="text-[10px] font-semibold text-dh-muted/90 uppercase tracking-wider">{subtitle}</span>
+    <div
+      className={`rounded-xl bg-gradient-to-b from-dh-surface to-dh-raised/80 border border-dh-border ${pad} min-w-0 ${
+        hasBody ? 'space-y-2' : ''
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 min-w-0 shrink">
+          <span className="text-sm font-semibold text-dh-muted uppercase tracking-wider">{title}</span>
+          {subtitle ? (
+            <span className="text-[10px] font-semibold text-dh-muted/90 uppercase tracking-wider">{subtitle}</span>
+          ) : null}
+        </div>
+        {titleRight != null && titleRight !== '' ? (
+          <span className="text-[9px] text-dh-muted leading-snug text-right max-w-[min(14rem,58%)] shrink-0">{titleRight}</span>
         ) : null}
       </div>
-      <div className="min-w-0">{children}</div>
+      {hasBody ? <div className="min-w-0">{children}</div> : null}
     </div>
   );
 }

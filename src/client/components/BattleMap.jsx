@@ -59,6 +59,8 @@ import { buildCharacterTrayTokenEntries } from '../lib/character-tray-tokens.js'
 import { getMapDimensionsFt as getMapDimensions, MAP_SIZE_FT_MIN, MAP_SIZE_FT_MAX } from '../lib/map-dimensions-ft.js';
 import { getGmTotMEmptyMapHint, getPlayerTotMEmptyMapHint } from '../lib/battle-map-totm-hint.js';
 import { isAdversaryDefeated } from '../lib/helpers.js';
+import { EncounterAdversaryMarkedSummary } from './EncounterAdversaryMarkedSummary.jsx';
+import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
 import { getRangeBandIndexForDistanceFt } from '../lib/map-range.js';
 import {
   computeMapDrawCanvasSize,
@@ -976,6 +978,9 @@ function TokenDetailPanel({
   anchorX,
   anchorY,
   tableId,
+  /** Adversary pin: Encounter-panel-style marked stats + party target aid (replaces HP/Stress checkbox tracks). */
+  adversaryTargetAid = null,
+  adversaryPinInstanceNum = null,
 }) {
   const isAdv = element.elementType === 'adversary';
   const isBoard = element.elementType === 'boardToken';
@@ -1032,11 +1037,14 @@ function TokenDetailPanel({
 
   const hpMax = element.hp_max;
   const stressMax = element.stress_max;
+  const encounterStyleAdvPin = isAdv && adversaryTargetAid != null;
 
   return (
     <AnchoredFloatingPanel anchorX={anchorX} anchorY={anchorY} onEscape={onClose}>
     <div
-      className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] max-w-[240px]"
+      className={`bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 min-w-[180px] ${
+        encounterStyleAdvPin ? 'max-w-[min(22rem,94vw)] max-h-[min(72vh,560px)] overflow-y-auto overflow-x-hidden' : 'max-w-[240px]'
+      }`}
       onPointerDown={e => e.stopPropagation()}
     >
       {/* Header */}
@@ -1063,55 +1071,75 @@ function TokenDetailPanel({
         </div>
       </div>
 
-      {/* HP — filled = damage taken (matches sidebar & token dots) */}
-      {hpMax > 0 && (
-        <div className="mb-1.5">
-          <div className="text-xs text-dh-muted mb-0.5">HP {element.currentHp ?? hpMax}/{hpMax}</div>
-          <CheckboxTrack
-            total={hpMax}
-            filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
-            pendingFilled={0}
-            pendingClearFilled={0}
-            trackKind="hp"
-            onSetFilled={canEditAdv ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined}
-          />
-        </div>
-      )}
+      {encounterStyleAdvPin ? (
+        <>
+          {(!isPlayer || playerEncounterInstanceRowVisible(element, element)) && (
+            <div className="mb-2 space-y-1.5">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-dh-muted">Encounter</p>
+              <EncounterAdversaryMarkedSummary
+                audience={isPlayer ? 'player' : 'gm'}
+                displayEl={element}
+                inst={element}
+                showInstanceNum={adversaryPinInstanceNum != null}
+                instanceNum={adversaryPinInstanceNum}
+              />
+            </div>
+          )}
+          {adversaryTargetAid}
+        </>
+      ) : (
+        <>
+          {/* HP — filled = damage taken (matches sidebar & token dots) */}
+          {hpMax > 0 && (
+            <div className="mb-1.5">
+              <div className="text-xs text-dh-muted mb-0.5">HP {element.currentHp ?? hpMax}/{hpMax}</div>
+              <CheckboxTrack
+                total={hpMax}
+                filled={Math.max(0, hpMax - (element.currentHp ?? hpMax))}
+                pendingFilled={0}
+                pendingClearFilled={0}
+                trackKind="hp"
+                onSetFilled={canEditAdv ? (dmg) => applyResource({ currentHp: hpMax - dmg }) : undefined}
+              />
+            </div>
+          )}
 
-      {/* Stress */}
-      {stressMax > 0 && (
-        <div className="mb-1.5">
-          <div className="text-xs text-dh-muted mb-0.5">Stress {element.currentStress ?? 0}/{stressMax}</div>
-          <CheckboxTrack
-            total={stressMax}
-            filled={element.currentStress ?? 0}
-            pendingFilled={pendingResourceCosts[element.instanceId]?.stress ?? 0}
-            pendingClearFilled={0}
-            trackKind="stress"
-            onSetFilled={canEditAdv ? (v) => applyResource({ currentStress: v }) : undefined}
-          />
-        </div>
-      )}
+          {/* Stress */}
+          {stressMax > 0 && (
+            <div className="mb-1.5">
+              <div className="text-xs text-dh-muted mb-0.5">Stress {element.currentStress ?? 0}/{stressMax}</div>
+              <CheckboxTrack
+                total={stressMax}
+                filled={element.currentStress ?? 0}
+                pendingFilled={pendingResourceCosts[element.instanceId]?.stress ?? 0}
+                pendingClearFilled={0}
+                trackKind="stress"
+                onSetFilled={canEditAdv ? (v) => applyResource({ currentStress: v }) : undefined}
+              />
+            </div>
+          )}
 
-      {/* Conditions */}
-      {(canEdit || canEditAdv) && (
-        <div>
-          <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
-          <ConditionsTextInput
-            instanceId={element.instanceId}
-            value={element.conditions ?? ''}
-            onCommit={(v) => updateActiveElement(element.instanceId, { conditions: v })}
-            placeholder="none"
-            className="w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus:outline-none focus:border-sky-500"
-          />
-        </div>
-      )}
-      {/* Read-only conditions for player on enemy */}
-      {isPlayer && isAdv && element.conditions && (
-        <div>
-          <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
-          <div className="text-xs text-dh">{element.conditions}</div>
-        </div>
+          {/* Conditions */}
+          {(canEdit || canEditAdv) && (
+            <div>
+              <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
+              <ConditionsTextInput
+                instanceId={element.instanceId}
+                value={element.conditions ?? ''}
+                onCommit={(v) => updateActiveElement(element.instanceId, { conditions: v })}
+                placeholder="none"
+                className="w-full px-1.5 py-0.5 rounded bg-dh-hover border border-dh-strong text-dh text-xs focus:outline-none focus:border-sky-500"
+              />
+            </div>
+          )}
+          {/* Read-only conditions for player on enemy */}
+          {isPlayer && isAdv && element.conditions && (
+            <div>
+              <div className="text-xs text-dh-muted mb-0.5">Conditions</div>
+              <div className="text-xs text-dh">{element.conditions}</div>
+            </div>
+          )}
+        </>
       )}
     </div>
     </AnchoredFloatingPanel>
@@ -1236,6 +1264,8 @@ export function BattleMap({
    * Uses `GameTableCharacterListCard` (same as the Characters sidebar); sheet open is wired via `sheetTriggerProps` on that card.
    */
   renderPinnedCharacterPanel,
+  /** Adversary pin — party target aid + offense (built in GMTableView). */
+  renderAdversaryTargetAid,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showImageGenAiUi = shouldShowImageGenAiUi(imageGenEnabled, hideAiUi);
@@ -3492,7 +3522,13 @@ export function BattleMap({
 
   const handlePointerDown = useCallback((e, element, fromTray) => {
     if (e.button !== 0) return;
-    if (!canDrag(element)) {
+    /** Players can't drag adversaries, but they should still click-to-pin the token detail panel. */
+    const pinOnly =
+      !fromTray &&
+      isPlayer &&
+      element.elementType === 'adversary' &&
+      !canDrag(element);
+    if (!canDrag(element) && !pinOnly) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -3529,6 +3565,7 @@ export function BattleMap({
       startX: e.clientX,
       startY: e.clientY,
       isDragging: false,
+      pinOnly: !!pinOnly,
       pointerId: e.pointerId,
       instanceNum: instanceNumbers[element.instanceId],
       myChar,
@@ -3540,11 +3577,12 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, trayTokenSizePx, tokenSizePx, pxPerFt, viewZoom, viewPanLeft, viewPanTop, parentByInstanceId]);
+  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, trayTokenSizePx, tokenSizePx, pxPerFt, viewZoom, viewPanLeft, viewPanTop, parentByInstanceId]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
     if (!ds) return;
+    if (ds.pinOnly) return;
     const dx = e.clientX - ds.startX;
     const dy = e.clientY - ds.startY;
     if (!ds.isDragging && (dx * dx + dy * dy) >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
@@ -5053,6 +5091,7 @@ export function BattleMap({
               : undefined,
           });
         }
+        const advPinInstanceNum = el.elementType === 'adversary' ? instanceNumbers[el.instanceId] : null;
         return (
           <TokenDetailPanel
             element={el}
@@ -5071,6 +5110,12 @@ export function BattleMap({
             anchorX={pinnedToken.anchorX}
             anchorY={pinnedToken.anchorY}
             tableId={tableId}
+            adversaryTargetAid={
+              el.elementType === 'adversary' && typeof renderAdversaryTargetAid === 'function'
+                ? renderAdversaryTargetAid(el)
+                : null
+            }
+            adversaryPinInstanceNum={advPinInstanceNum}
           />
         );
       })()}

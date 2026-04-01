@@ -282,6 +282,95 @@ function GuideFeatureSegmentedSelectTargetsRow({
   );
 }
 
+/**
+ * Adversary map pin: single-target `selectTargets` actions as one chip (pinned adversary is implicit).
+ * Multi-target (`multiSelect: true`) still uses {@link GuideFeatureSegmentedSelectTargetsRow}.
+ */
+function GuideFeaturePinSelectTargetSingleChip({
+  label,
+  chipForEngine,
+  chip,
+  featRow,
+  effectiveKey,
+  chipPayloadExtras,
+  pinnedOpt,
+  pinId,
+  tipText,
+  tipContent,
+  preview,
+  chipTipPlacement,
+  unusableStripMode,
+  primaryUnusableLine,
+  stripPalette,
+  targetPickDisabled,
+  onV2CardChip,
+  bumpIsSelect,
+  ci,
+}) {
+  const targetName =
+    pinnedOpt && (pinnedOpt.name != null && String(pinnedOpt.name).trim() !== '')
+      ? String(pinnedOpt.name).trim()
+      : null;
+  const pinClickDisabled = targetPickDisabled || unusableStripMode || !pinnedOpt;
+  const defaultChipInactive = pinClickDisabled;
+
+  return (
+    <Tooltip
+      content={
+        preview ? (
+          unusableStripMode ? (
+            <PreviewModeTooltipBody>
+              <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={String(tipText || '')} />
+            </PreviewModeTooltipBody>
+          ) : (
+            <PreviewModeTooltipBody>{tipContent}</PreviewModeTooltipBody>
+          )
+        ) : unusableStripMode ? (
+          <UnusableChipTooltipBody primaryLine={primaryUnusableLine} markdownBody={String(tipText || '')} />
+        ) : (
+          tipContent
+        )
+      }
+      placement={chipTipPlacement ?? 'top'}
+    >
+      <button
+        type="button"
+        disabled={defaultChipInactive}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (pinClickDisabled || !pinnedOpt) return;
+          onV2CardChip({
+            featRow,
+            chip: chipForEngine,
+            featureKey: effectiveKey,
+            selectOpts: { selectedTargetIds: [pinId] },
+            ...chipPayloadExtras,
+          });
+          bumpIsSelect(ci);
+        }}
+        className={`inline-flex flex-col items-stretch gap-0.5 max-w-full rounded px-1.5 py-1 text-left border transition-colors ${
+          defaultChipInactive
+            ? `border-dh-border bg-dh-raised/50 text-dh-muted cursor-not-allowed${unusableStripMode ? ` ${ACTIONS_STRIP_UNUSABLE_BTN}` : ''}`
+            : stripPalette.actionDefault
+        }`}
+      >
+        <span className="flex items-start gap-1.5 min-w-0">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight">{label}</span>
+          <span className="inline-flex flex-wrap items-center gap-1 shrink-0 justify-end">
+            <FeatureResourceCostIcons action={chipForEngine} iconSize={9} />
+            {chip.frequency ? <FrequencyCycleChipSuffix frequency={chip.frequency} iconSize={9} /> : null}
+          </span>
+        </span>
+        {targetName ? (
+          <span className="text-[10px] text-dh-muted leading-tight truncate pl-0.5" title={targetName}>
+            → {targetName}
+          </span>
+        ) : null}
+      </button>
+    </Tooltip>
+  );
+}
+
 /** Single-select isSelect: title + icons + wrapping option buttons inside the chip shell. */
 function GuideFeatureIsSelectInline({
   actionsStripLayout,
@@ -472,6 +561,11 @@ export function GuideFeatureCardChips({
   dimmed = false,
   /** Master Actions strip: hug content width (no full-width shells / basis-full). */
   actionsStripIntrinsicWidth = false,
+  /**
+   * Adversary map pin: when set, single-target `selectTargets` chips render as one button with this
+   * adversary as the implicit target (see {@link GuideFeaturePinSelectTargetSingleChip}). Omit on sheet.
+   */
+  pinSelectTargetInstanceId = null,
 }) {
   const [isSelectNonce, setIsSelectNonce] = useState({});
   const bumpIsSelect = (ci) => {
@@ -804,6 +898,49 @@ export function GuideFeatureCardChips({
           } catch {
             selectTargetOpts = [];
           }
+        }
+
+        const pinTargetId =
+          pinSelectTargetInstanceId != null && pinSelectTargetInstanceId !== ''
+            ? String(pinSelectTargetInstanceId)
+            : null;
+        const usePinSingleTargetChip =
+          !!pinTargetId &&
+          needsSelectTargets &&
+          selectTargetOpts.length > 0 &&
+          chip.multiSelect !== true;
+
+        if (usePinSingleTargetChip) {
+          const pinnedOpt = selectTargetOpts.find((o) => String(o.instanceId ?? o.id) === pinTargetId);
+          const n = isSelectNonce[ci] ?? 0;
+          const targetPickDisabled = preview || !canInteract || chipDisabled || chipUsed;
+          return {
+            element: (
+              <GuideFeaturePinSelectTargetSingleChip
+                key={`${ci}-pin-st-${n}`}
+                label={label}
+                chipForEngine={chipForEngine}
+                chip={chip}
+                featRow={featRow}
+                effectiveKey={effectiveKey}
+                chipPayloadExtras={chipPayloadExtras}
+                pinnedOpt={pinnedOpt}
+                pinId={pinTargetId}
+                tipText={tipText}
+                tipContent={tipContent}
+                preview={preview}
+                chipTipPlacement={chipTipPlacement}
+                unusableStripMode={unusableStripMode}
+                primaryUnusableLine={primaryUnusableLine}
+                stripPalette={stripPalette}
+                targetPickDisabled={targetPickDisabled}
+                onV2CardChip={onV2CardChip}
+                bumpIsSelect={bumpIsSelect}
+                ci={ci}
+              />
+            ),
+            moveToUnusable,
+          };
         }
 
         if (needsSelectTargets && selectTargetOpts.length > 0) {

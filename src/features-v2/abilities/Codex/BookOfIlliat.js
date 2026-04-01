@@ -3,7 +3,13 @@
  * SRD: daggerheart-srd/.build/03_json/abilities.json
  */
 
+import { attackerAndTargetAreWithinRangeBand } from '../../engine/when.js';
 import { spellcastTraitLabel } from './spellcast-label.js';
+
+/** SRD "within Close range": Melee, Very Close, or Close bands (not Far / Very Far). */
+function adversariesWithinClose(table) {
+  return table.adversaries.filter((a) => attackerAndTargetAreWithinRangeBand(table.me, a, 'close'));
+}
 
 export const BookOfIlliat = {
   name: 'Book of Illiat',
@@ -30,11 +36,23 @@ export const BookOfIlliat = {
       frequency: 'rest',
       description:
         'Once per rest: spend any number of Hope; roll that many d6s as magic damage to one target within Close range.',
-      onUse(table) {
+      multiSelect: false,
+      selectTargets: (table) => adversariesWithinClose(table),
+      isDisabled: (table) =>
+        adversariesWithinClose(table).length === 0
+          ? 'No adversary within Close range (Melee–Close).'
+          : false,
+      onUse(table, chipState) {
+        const targetInstanceId = (chipState.get('selectedTargetIds') || [])[0];
+        if (!targetInstanceId) return;
+        const adv = table.adversaries.find((a) => a.instanceId === targetInstanceId);
+        if (!adv) return;
+        if (!attackerAndTargetAreWithinRangeBand(table.me, adv, 'close')) return;
         const trait = spellcastTraitLabel(table);
+        const targetName = adv.name != null && String(adv.name).trim() !== '' ? String(adv.name) : 'target';
         table.me.actionLoop(
           'Book of Illiat — Arcane Barrage',
-          `Once per rest: spend any number of Hope, then roll that many d6s and deal the total as magic damage to a target of your choice within Close range (Spellcast ${trait} as needed for the table).`,
+          `Once per rest: spend any number of Hope, then roll that many d6s and deal the total as magic damage to **${targetName}** within Close range (Spellcast ${trait} as needed for the table).`,
           { trait }
         );
       },

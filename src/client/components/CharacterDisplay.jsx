@@ -35,7 +35,8 @@ import {
 import { omitShapeId } from '../lib/json-schema-dh.js';
 import { RoguesDodge } from '../../features-v2/classes/Rogue.js';
 import { DeclarativeSchemaSheetCard } from './DeclarativeSchemaCard.jsx';
-import { rangeBandNameToFt } from '../lib/map-range.js';
+import { rangeBandNameToFt, RANGE_BANDS_FT } from '../lib/map-range.js';
+import { weaponMaxRangeFt } from '../lib/player-adversary-target-aid.js';
 import { Tooltip } from './Tooltip.jsx';
 import { TierShieldBadge } from './TierShieldBadge.jsx';
 import { LevelBadge } from './LevelBadge.jsx';
@@ -358,7 +359,7 @@ function SpellcastChip({ onClick }) {
 // ─── Weapon card ──────────────────────────────────────────────────────────────
 
 /** Game Table only: disable when no adversaries are in this weapon's range on the map. */
-function outOfRangeDisableReason(weapon, getValidTargets, instanceId, ancestryFeatures) {
+export function outOfRangeDisableReason(weapon, getValidTargets, instanceId, ancestryFeatures) {
   if (!getValidTargets || !instanceId) return null;
   const rangeStr = getEffectiveWeaponRange(weapon, ancestryFeatures) || weapon.effectiveRange || weapon.range;
   if (!rangeStr || typeof rangeStr !== 'string') return null;
@@ -1204,28 +1205,66 @@ export function CharacterWeaponList({
   getValidTargets,
   omitOuterSection,
   sheetEmphasisTitle,
+  /** When set (Game Table), only list weapons whose max range (ft) is ≥ this distance to the target. */
+  weaponReachMinFt,
+  /** Shown when {@link weaponReachMinFt} filters out all weapons. */
+  emptyReachMessage,
+  /** When true, omit weapons that would render disabled (V2 lock, Pompous, Charged at max Stress, no map targets in range). */
+  filterOutDisabledWeapons = false,
+  /** Adversary map pin: show this text to the right of the title when there are no weapon rows (instead of a paragraph below). */
+  titleRowEmptyMessage,
 }) {
-  const wrapSheetCard = (node) =>
+  const wrapSheetCard = (node, titleRightSlot) =>
     sheetEmphasisTitle ? (
-      <CharacterSheetEmphasisCard title={sheetEmphasisTitle}>{node}</CharacterSheetEmphasisCard>
+      <CharacterSheetEmphasisCard title={sheetEmphasisTitle} titleRight={titleRightSlot}>{node}</CharacterSheetEmphasisCard>
     ) : node;
 
   const ancestryFeatures = el.ancestryFeatures || [];
   // Enrich weapons with effectiveRange at render time (Giant Reach: Melee → Very Close).
   // `recomputeCharacter` seeds `effectiveRange` from `range`, so we must not treat that
   // as final — always derive from ancestry via getEffectiveWeaponRange first.
-  const weapons = (el.weapons || []).map(w => ({
+  const weaponsFull = (el.weapons || []).map(w => ({
     ...w,
     effectiveRange:
       getEffectiveWeaponRange(w, ancestryFeatures) || w.effectiveRange || w.range || '',
   }));
-  const activeBeastform = el.activeBeastform;
+  const weaponsReachFiltered =
+    weaponReachMinFt != null && typeof weaponReachMinFt === 'number'
+      ? weaponsFull.filter((w) => {
+          const ft = weaponMaxRangeFt(w, ancestryFeatures);
+          return ft != null && ft >= weaponReachMinFt;
+        })
+      : weaponsFull;
 
-  // Always run detection so disabled weapons can be shown in beastform mode
   const traits = el.traits || {};
   const isStressMaxed = stressMaxedProp !== undefined
     ? stressMaxedProp
     : (el.currentStress ?? 0) >= (el.maxStress ?? 6);
+  const weaponRenderHints = el.weaponRenderHints;
+  const weaponSlotSrdId = (weapon) => {
+    if (weapon.id === 'wep_0') return el.primaryWeaponId ?? null;
+    if (weapon.id === 'wep_1') return el.secondaryWeaponId ?? null;
+    return null;
+  };
+  const v2HintForWeapon = (weapon) => {
+    const id = weaponSlotSrdId(weapon);
+    return id && weaponRenderHints && typeof weaponRenderHints === 'object'
+      ? weaponRenderHints[id]
+      : undefined;
+  };
+  const weaponFailsDisabledFilter = (weapon) => {
+    const v2Hint = v2HintForWeapon(weapon);
+    if (v2Hint?.isDisabled === true) return true;
+    if (!v2Hint && weapon.feature?.name === 'Pompous' && (traits.presence ?? 0) > 0) return true;
+    if (weapon._charged && isStressMaxed) return true;
+    return !!outOfRangeDisableReason(weapon, getValidTargets, el.instanceId, ancestryFeatures);
+  };
+
+  const weapons = filterOutDisabledWeapons
+    ? weaponsReachFiltered.filter((w) => !weaponFailsDisabledFilter(w))
+    : weaponsReachFiltered;
+
+  const activeBeastform = el.activeBeastform;
 
   const pairing = detectPairedWeapons(weapons);
   let virtualWeapon = null;
@@ -1240,34 +1279,44 @@ export function CharacterWeaponList({
       range: primaryWeapon.effectiveRange || primaryWeapon.range,
       trait: primaryWeapon.trait,
     };
+    if (
+      filterOutDisabledWeapons &&
+      (weaponFailsDisabledFilter(primaryWeapon) || weaponFailsDisabledFilter(pairedWeapon))
+    ) {
+      virtualWeapon = null;
+    }
   }
 
   // Use pre-computed virtual weapons (from recomputeCharacter in builder mode)
   // or compute on-the-fly for Daggerstack-synced characters.
   // Those same VWs are already merged into `weapons` — do not list them again here or Offense shows duplicates.
   const ancestryVirtualWeaponsRaw = el._virtualWeapons || runCharacterRender(el).virtualWeapons;
-  const ancestryVirtualWeapons = (ancestryVirtualWeaponsRaw || []).filter(
-    (vw) => vw?.name && !weapons.some((w) => w.name === vw.name)
-  );
+  const ancestryVirtualWeapons = (ancestryVirtualWeaponsRaw || [])
+    .filter((vw) => vw?.name && !weaponsFull.some((w) => w.name === vw.name))
+    .filter((vw) => {
+      if (weaponReachMinFt == null || typeof weaponReachMinFt !== 'number') return true;
+      const ft = weaponMaxRangeFt(vw, ancestryFeatures);
+      return ft != null && ft >= weaponReachMinFt;
+    })
+    .filter((vw) => {
+      if (!filterOutDisabledWeapons) return true;
+      const vwWeapon = {
+        ...vw,
+        effectiveRange: getEffectiveWeaponRange(vw, ancestryFeatures) || vw.effectiveRange || vw.range || '',
+      };
+      return !weaponFailsDisabledFilter(vwWeapon);
+    });
   const versatilePairs = detectVersatileWeapons(weapons);
   const otherworldlyPairs = detectOtherworldlyWeapons(weapons);
   const chargedPairs = detectChargedWeapons(weapons);
   const otherworldlyOriginals = new Set(otherworldlyPairs.map(o => o.original));
-  const startlingWeapons = weapons.filter(w => w.feature?.name === 'Startling');
-
-  const weaponRenderHints = el.weaponRenderHints;
-
-  const weaponSlotSrdId = (weapon) => {
-    if (weapon.id === 'wep_0') return el.primaryWeaponId ?? null;
-    if (weapon.id === 'wep_1') return el.secondaryWeaponId ?? null;
-    return null;
-  };
-  const v2HintForWeapon = (weapon) => {
-    const id = weaponSlotSrdId(weapon);
-    return id && weaponRenderHints && typeof weaponRenderHints === 'object'
-      ? weaponRenderHints[id]
-      : undefined;
-  };
+  const startlingOk =
+    weaponReachMinFt == null || weaponReachMinFt <= RANGE_BANDS_FT.MELEE;
+  const startlingWeapons = startlingOk
+    ? weapons
+        .filter((w) => w.feature?.name === 'Startling')
+        .filter((w) => !(filterOutDisabledWeapons && isStressMaxed))
+    : [];
 
   const outOfRangeReasonForWeapon = (weapon) => {
     const v2Hint = v2HintForWeapon(weapon);
@@ -1303,12 +1352,22 @@ export function CharacterWeaponList({
   if (activeBeastform) {
     const beastformRangeWord = (activeBeastform.attack || '').trim().split(/\s+/)[0];
     const beastformFt = beastformRangeWord ? rangeBandNameToFt(beastformRangeWord) : null;
+    const beastformReachOk =
+      weaponReachMinFt == null ||
+      (typeof weaponReachMinFt === 'number' && beastformFt != null && beastformFt >= weaponReachMinFt);
+    if (!beastformReachOk) {
+      /* fall through — show normal weapons only when beastform is out of range for this distance filter */
+    } else {
     const beastformNoTargets =
       getValidTargets &&
       beastformFt != null &&
       el.instanceId &&
       (getValidTargets(el.instanceId, { weaponRangeFt: beastformFt }) ?? []).length === 0;
     const beastformDisabledReason = beastformNoTargets ? 'No targets in range' : null;
+    const skipBeastformPinUi = filterOutDisabledWeapons && beastformDisabledReason;
+    if (skipBeastformPinUi) {
+      /* fall through — map pin omits disabled beastform attack */
+    } else {
     const beastformClickable = onBeastformAttack && !beastformDisabledReason;
 
     const beastformCard = (
@@ -1371,9 +1430,23 @@ export function CharacterWeaponList({
       </Section>
     );
     return wrapSheetCard(beastLabeled);
+    }
+    }
   }
 
-  if (!weapons.length && !ancestryVirtualWeapons.length) return null;
+  if (!weapons.length && !ancestryVirtualWeapons.length) {
+    if (titleRowEmptyMessage && sheetEmphasisTitle) {
+      return wrapSheetCard(null, titleRowEmptyMessage);
+    }
+    if (weaponReachMinFt != null) {
+      return wrapSheetCard(
+        <p className="text-[10px] text-dh-muted leading-snug px-0.5">
+          {emptyReachMessage || 'No weapons in range.'}
+        </p>,
+      );
+    }
+    return null;
+  }
 
   const weaponsInner = (
       <div className="space-y-1">
@@ -1406,6 +1479,7 @@ export function CharacterWeaponList({
         {/* Versatile alternate cards */}
         {versatilePairs.map(({ alternate }, i) => {
           const altW = { ...alternate, effectiveRange: getEffectiveWeaponRange(alternate, el.ancestryFeatures) };
+          if (filterOutDisabledWeapons && weaponFailsDisabledFilter(altW)) return null;
           return (
             <WeaponCard
               key={`versatile-${i}`}
@@ -1422,8 +1496,12 @@ export function CharacterWeaponList({
         {otherworldlyPairs.map(({ physicalVariant, magicalVariant }, i) => {
           const phyW = { ...physicalVariant, effectiveRange: getEffectiveWeaponRange(physicalVariant, el.ancestryFeatures) };
           const magW = { ...magicalVariant, effectiveRange: getEffectiveWeaponRange(magicalVariant, el.ancestryFeatures) };
+          const hidePhy = filterOutDisabledWeapons && weaponFailsDisabledFilter(phyW);
+          const hideMag = filterOutDisabledWeapons && weaponFailsDisabledFilter(magW);
+          if (hidePhy && hideMag) return null;
           return (
             <div key={`otherworldly-${i}`} className="space-y-1">
+              {!hidePhy && (
               <WeaponCard
                 weapon={phyW}
                 traitScore={traits[(physicalVariant.trait || '').toLowerCase()] ?? 0}
@@ -1431,6 +1509,8 @@ export function CharacterWeaponList({
                 isVirtual
                 outOfRangeReason={outOfRangeReasonForWeapon(phyW)}
               />
+              )}
+              {!hideMag && (
               <WeaponCard
                 weapon={magW}
                 traitScore={traits[(magicalVariant.trait || '').toLowerCase()] ?? 0}
@@ -1438,12 +1518,14 @@ export function CharacterWeaponList({
                 purple
                 outOfRangeReason={outOfRangeReasonForWeapon(magW)}
               />
+              )}
             </div>
           );
         })}
 
         {/* Charged variant cards */}
         {chargedPairs.map(({ original, chargedVariant }, i) => {
+          if (filterOutDisabledWeapons && isStressMaxed) return null;
           if (v2HintForWeapon(original)?.hideChargedVariantCard) return null;
           const chW = { ...chargedVariant, effectiveRange: getEffectiveWeaponRange(chargedVariant, el.ancestryFeatures) };
           return (
@@ -1550,7 +1632,7 @@ export function CharacterWeaponList({
  * @param {'interactive'|'preview'} [interactionMode] — defaults from presence of handlers
  * @param {object|null} [sheetHighlightAbility] — `el.abilities` row for LOADOUT; enables domain source dimming
  */
-function CharacterFeatureActionsRow({
+export function CharacterFeatureActionsRow({
   entry,
   el,
   v2TableContext,
@@ -1567,6 +1649,8 @@ function CharacterFeatureActionsRow({
   /** When provided, skip rebuilding the feature card model (sheet Actions strip slot list). */
   prefetchedModel = null,
   prefetchedTable = null,
+  /** Adversary map pin: implicit target for single-target `selectTargets` chips (see GuideFeatureCard). */
+  pinSelectTargetInstanceId = null,
 }) {
   const { model: builtModel, table: tableForChips } = useMemo(() => {
     if (prefetchedModel && prefetchedTable) return { model: prefetchedModel, table: prefetchedTable };
@@ -1609,6 +1693,7 @@ function CharacterFeatureActionsRow({
       }
       dimmed={stripSlot === 'activeOnly' && dimmed}
       actionsStripIntrinsicWidth={shouldUseIntrinsicWidthForActionsStripSlot(stripSlot)}
+      pinSelectTargetInstanceId={pinSelectTargetInstanceId}
     />
   );
   if (stripSlot === 'unusableOnly') return chips;

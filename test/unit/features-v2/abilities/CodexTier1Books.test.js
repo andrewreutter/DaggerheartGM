@@ -80,6 +80,74 @@ describe('Codex Tier 1 — Book of Illiat', () => {
     const barrage = chips.find((c) => c.name === 'Arcane Barrage');
     expect(barrage?.frequency).toBe('rest');
   });
+
+  it('Arcane Barrage requires selecting an adversary within Close; activation queues actionLoop naming the target', () => {
+    const pc = mockCharacter({
+      instanceId: 'i1',
+      tokenX: 0,
+      tokenY: 0,
+      spellcastTrait: 'knowledge',
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', name: 'Goblin', tokenX: 5, tokenY: 0 });
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [pc, adv],
+        _ownerInstanceId: 'i1',
+        _featureKey: 'Book of Illiat',
+        action: {
+          type: 'free',
+          actorInstanceId: 'i1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+    const chips = collectChips([{ ...BookOfIlliat, _ownerInstanceId: 'i1' }], 'card', tbl);
+    const barrage = chips.find((c) => c.name === 'Arcane Barrage');
+    expect(barrage?.multiSelect).toBe(false);
+    expect(typeof barrage?.selectTargets).toBe('function');
+    expect(barrage?.selectTargets?.(tbl)).toHaveLength(1);
+    expect(barrage?.disabled).toBe(false);
+
+    const m = activateChip(barrage, tbl, makeChipState(), { selectedTargetIds: ['adv-1'] });
+    expect(m).toContainEqual(
+      expect.objectContaining({
+        type: 'actionLoop',
+        payload: expect.objectContaining({
+          title: 'Book of Illiat — Arcane Barrage',
+          trait: 'Knowledge',
+        }),
+      })
+    );
+    const loop = m.find((x) => x.type === 'actionLoop');
+    expect(String(loop?.payload?.description ?? '')).toContain('Goblin');
+  });
+
+  it('Arcane Barrage is disabled when no adversary is within Close', () => {
+    const pc = mockCharacter({ instanceId: 'i1', tokenX: 0, tokenY: 0, spellcastTrait: 'knowledge' });
+    const adv = mockAdversary({ instanceId: 'adv-1', tokenX: 200, tokenY: 0 });
+    const tbl = buildTableSnapshot(
+      mockGameState({
+        activeElements: [pc, adv],
+        _ownerInstanceId: 'i1',
+        _featureKey: 'Book of Illiat',
+        action: {
+          type: 'free',
+          actorInstanceId: 'i1',
+          targetInstanceIds: [],
+          effects: [],
+          appliedEffects: [],
+        },
+        rolls: undefined,
+      })
+    );
+    const chips = collectChips([{ ...BookOfIlliat, _ownerInstanceId: 'i1' }], 'card', tbl);
+    const barrage = chips.find((c) => c.name === 'Arcane Barrage');
+    expect(barrage?.disabled).toBe(true);
+    expect(barrage?.selectTargets?.(tbl)).toHaveLength(0);
+  });
 });
 
 describe('Codex Tier 1 — Book of Tyfar', () => {

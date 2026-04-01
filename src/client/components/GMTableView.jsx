@@ -4,6 +4,9 @@ import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
 import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, ArrowLeftToLine } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
+import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
+import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
+import { PlayerAdversaryTargetAid } from './PlayerAdversaryTargetAid.jsx';
 import { GameTableCharacterListCard } from './GameTableCharacterListCard.jsx';
 import { AnchoredFloatingPanel } from './AnchoredFloatingPanel.jsx';
 import { ActionLog } from './ActionLog.jsx';
@@ -13,7 +16,6 @@ import { SessionCountdownsPanel, buildTrackedSessionEntryFromFeature, buildLinke
 import { FeatureDescription } from './FeatureDescription.jsx';
 import { EnvironmentCardContent, AdversaryCardContent, CheckboxTrack } from './DetailCardContent.jsx';
 import { CharacterSheetEmphasisCard } from './CharacterStatBlockGraphic.jsx';
-import { getCheckboxTrackPreset } from './CheckboxTrack.jsx';
 import { EditChoiceDialog } from './modals/EditChoiceDialog.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { ItemPickerModal } from './modals/ItemPickerModal.jsx';
@@ -119,7 +121,7 @@ import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
 import { mapConfigHasImage } from '../lib/map-table-state.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
-import { recomputeCharacter, isCharacterComplete } from '../lib/character-calc.js';
+import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
 import {
   collectMissingCompanionBoardTokenElements,
@@ -155,6 +157,7 @@ import {
   expandTableCharactersAncestryForV2Loader,
 } from '../lib/v2-action-loop-bridge.js';
 import { buildV2ChipViewer } from '../lib/v2-chip-session-view.js';
+import { buildWeaponRollText } from '../lib/weapon-roll-text.js';
 import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
 import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
@@ -356,26 +359,6 @@ function CaptureTableModal({ activeElements, saveItem, onClose, navigate }) {
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-
-/** Renders N filled (marked) slots with preset icon-in-border — player Encounter panel summary. */
-function MarkedBoxes({ count, trackKind }) {
-  if (!count || count <= 0) return null;
-  const preset = getCheckboxTrackPreset(trackKind);
-  const { Icon } = preset;
-  return (
-    <div className="flex items-center gap-0.5">
-      {Array.from({ length: count }, (_, i) => (
-        <div
-          key={i}
-          className="w-3 h-3 rounded-sm flex-shrink-0 inline-flex items-center justify-center bg-transparent border-0"
-        >
-          <Icon className={`w-2 h-2 ${preset.icon}`} strokeWidth={2.5} aria-hidden />
-        </div>
-      ))}
     </div>
   );
 }
@@ -3794,6 +3777,66 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     ]
   );
 
+  /** Weapon roll from player adversary map pin — target is the pinned adversary (skips in-sheet target menu). */
+  const handlePlayerAdversaryPinWeaponClick = useCallback(
+    (characterEl, displayChar, adversaryEl, weapon, rollMeta = {}) => {
+      if (!sessionPlayAllowed) return;
+      const el = displayChar;
+      const traits = el.traits || {};
+      const traitKey = (weapon.trait || '').toLowerCase();
+      const baseTrait = traits[traitKey] ?? 0;
+      const bfBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+      const beastExtra = bfBonus?.stat === traitKey ? bfBonus.bonus : 0;
+      const effectiveTrait = baseTrait + beastExtra;
+      const opts = {};
+      if (rollMeta.devastating) opts.devastating = true;
+      if (rollMeta.secondaryDamage) opts.secondaryDamage = rollMeta.secondaryDamage;
+      let damageStr = weapon.damage;
+      if (weapon.damageProficiency && el.proficiency != null) {
+        const base = weapon.damage || 'd8';
+        const prof = el.proficiency ? `+${el.proficiency}` : '';
+        const type = (weapon.damageType || '').toLowerCase();
+        damageStr = `${base}${prof}${type ? ' ' + type : ''}`;
+      }
+      let rollText = buildWeaponRollText(
+        el.name,
+        weapon.name,
+        traitKey,
+        effectiveTrait,
+        null,
+        damageStr,
+        weapon.feature,
+        traits,
+        el.level,
+        opts,
+        rollMeta,
+        el,
+      );
+      const rangeStr = getEffectiveWeaponRange(weapon, el.ancestryFeatures) || weapon.effectiveRange || weapon.range;
+      if (rangeStr) rollText += ` ${rangeStr}`;
+      const displayName = `${el.name} ${weapon.name}`;
+      const meta = {
+        ...rollMeta,
+        _attackerInstanceId: el.instanceId,
+        _traitKey: traitKey,
+        _intentPanelForActionRoll: true,
+        _deferExperienceToPreRoll: true,
+        _selectedTargetInstanceId: adversaryEl.instanceId,
+      };
+      if (rangeStr) {
+        const ft = rangeBandNameToFt(rangeStr);
+        if (ft != null) meta._weaponRangeFt = ft;
+      }
+      if (weapon.id != null) meta._weaponId = weapon.id;
+      if (weapon.multiTarget) {
+        meta._multiTarget = true;
+        if (weapon.multiTargetMax != null) meta._multiTargetMax = weapon.multiTargetMax;
+      }
+      handlePlayerOwnRoll(rollText, displayName, meta, { characterEl: el });
+    },
+    [sessionPlayAllowed, handlePlayerOwnRoll],
+  );
+
   const clearPreRollBanner = () => {
     setPreRollBanner(null);
     setSelectedPreRollChips([]);
@@ -4545,6 +4588,34 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     return map;
   }, [srdData, tableCharacters, fearCount, mapConfig, tableFeatureState]);
+
+  function renderAdversaryTargetAid(adversaryEl) {
+    if (tableCharacters.length === 0) return null;
+    const { allowPlayMechanics } = characterSheetTableInteractionFlags(sessionPlayAllowed, isPlayer, true);
+    return (
+      <PlayerAdversaryTargetAid
+        adversaryInstanceId={adversaryEl.instanceId}
+        adversaryElement={adversaryEl}
+        characterElements={tableCharacters}
+        primaryInstanceId={isPlayer ? playerViewerCharacterInstanceId : null}
+        canInteractWithCharacter={(instanceId) => {
+          if (!isPlayer) return true;
+          if (playerViewerCharacterInstanceId == null || playerViewerCharacterInstanceId === '') return false;
+          return instanceId === playerViewerCharacterInstanceId;
+        }}
+        characterDisplayByInstanceId={characterDisplayByInstanceId}
+        v2TableContext={v2TableContextForPanels}
+        onV2CardChipFactory={handleCharacterPanelV2CardChip}
+        getValidTargets={allowPlayMechanics ? getValidTargets : undefined}
+        onWeaponClick={
+          allowPlayMechanics
+            ? (characterEl, displayChar, weapon, rollMeta) =>
+                handlePlayerAdversaryPinWeaponClick(characterEl, displayChar, adversaryEl, weapon, rollMeta)
+            : undefined
+        }
+      />
+    );
+  }
 
   const renderPinnedCharacterPanel = useCallback(
     ({ element, anchorX, anchorY, onClose, onRemoveFromMap }) => {
@@ -6308,6 +6379,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             onViewportAspectChange={onBattleMapViewportAspectChange}
             className="flex-1 min-h-0"
             renderPinnedCharacterPanel={renderPinnedCharacterPanel}
+            renderAdversaryTargetAid={renderAdversaryTargetAid}
           />
         </div>
         {/* Action log footer — collapsed title bar; click to open overlay with roll/action history */}
@@ -7058,12 +7130,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                 .map(item => {
                   const { baseElement: el, instances } = item;
                   const displayEl = el._scaledFromTier != null && !(scaledToggleState[el.id] ?? true) ? getUnscaledAdversary(el) : el;
-                  const damagedInstances = instances.filter(inst => {
-                    const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
-                    const stressDamage = inst.currentStress || 0;
-                    const hasConditions = inst.vulnerable || (inst.conditions && String(inst.conditions).trim() !== '');
-                    return hpDamage > 0 || stressDamage > 0 || hasConditions;
-                  });
+                  const damagedInstances = instances.filter((inst) =>
+                    playerEncounterInstanceRowVisible(displayEl, inst),
+                  );
                   return { displayEl, instances, damagedInstances };
                 })
                 .filter(g => g.damagedInstances.length > 0);
@@ -7079,45 +7148,19 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     <span className="text-xs font-semibold text-dh truncate block">{displayEl.name}</span>
                   </div>
                   <div className="p-2 space-y-1.5">
-                    {damagedInstances.map((inst, idx) => {
-                      const hpDamage = (displayEl.hp_max || 0) - (inst.currentHp ?? displayEl.hp_max ?? 0);
-                      const stressDamage = inst.currentStress || 0;
-                      return (
-                        <div key={inst.instanceId} className="space-y-1">
-                          {instances.length > 1 && (
-                            <span className="text-[10px] text-dh-muted font-medium">
-                              #{instances.indexOf(inst) + 1}
-                            </span>
-                          )}
-                          {hpDamage > 0 && (
-                            <MarkedBoxes count={hpDamage} trackKind="hp" />
-                          )}
-                          {stressDamage > 0 && (
-                            <MarkedBoxes count={stressDamage} trackKind="stress" />
-                          )}
-                          {inst.vulnerable && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-orange-950/50 border border-orange-700/60 text-orange-200">Vulnerable</span>
-                          )}
-                          {inst.focusedBy && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-900/50 border border-emerald-600/60 text-emerald-200">Focused by {inst.focusedBy}</span>
-                          )}
-                          {inst.difficultyMod != null && inst.difficultyMod !== 0 && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-900/60 border border-red-600/70 text-red-200" title="Difficulty modifier">
-                              {inst.difficultyMod > 0 ? '+' : ''}{inst.difficultyMod} Difficulty
-                            </span>
-                          )}
-                          {isAdversaryDefeated({ hp_max: displayEl.hp_max, currentHp: inst.currentHp }) && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-dh-hover/80 border border-dh-strong text-dh">Defeated</span>
-                          )}
-                          {inst.conditions && (
-                            <p className="text-[10px] text-dh-muted italic ml-3.5">{inst.conditions}</p>
-                          )}
-                          {idx < damagedInstances.length - 1 && (
-                            <div className="border-t border-dh-border mt-1" />
-                          )}
-                        </div>
-                      );
-                    })}
+                    {damagedInstances.map((inst, idx) => (
+                      <div key={inst.instanceId} className="space-y-1">
+                        <EncounterAdversaryInstancePlayerSummary
+                          displayEl={displayEl}
+                          inst={inst}
+                          showInstanceNum={instances.length > 1}
+                          instanceNum={instances.indexOf(inst) + 1}
+                        />
+                        {idx < damagedInstances.length - 1 && (
+                          <div className="border-t border-dh-border mt-1" />
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               ));
