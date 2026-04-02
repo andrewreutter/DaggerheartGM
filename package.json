@@ -37,7 +37,6 @@
   },
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",
-    "@huggingface/inference": "^4.13.14",
     "@supabase/supabase-js": "^2.99.0",
     "@tanstack/react-virtual": "^3.13.0",
     "compression": "^1.8.1",

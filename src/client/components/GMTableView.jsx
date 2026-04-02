@@ -6984,7 +6984,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                   </label>
                   <label
                     className={`flex items-center gap-2 text-[10px] cursor-pointer ${imageGenEnabled ? 'text-dh' : 'text-dh-muted cursor-not-allowed'}`}
-                    title={!imageGenEnabled ? 'Image generation is not configured (HF_TOKEN).' : undefined}
+                    title={!imageGenEnabled ? 'Image generation is not configured on the server.' : undefined}
                   >
                     <input
                       type="checkbox"
