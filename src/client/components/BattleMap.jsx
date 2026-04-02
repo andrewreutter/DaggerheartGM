@@ -785,7 +785,7 @@ function MapConfigToolbar({
               type="button"
               onClick={() => setAiMapOpen(true)}
               className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40 transition-colors"
-              title="Generate map image with AI (Hugging Face)"
+              title="Generate map image with AI (x.ai)"
             >
               <Sparkles size={12} />
               Generate with AI
@@ -4982,7 +4982,7 @@ export function BattleMap({
                             type="button"
                             onClick={() => setAiMapOpen(true)}
                             className="flex items-center gap-1.5 px-2 py-1 rounded border border-purple-800/50 hover:border-purple-600 text-purple-300 hover:text-purple-100 bg-purple-950/30 hover:bg-purple-900/40 transition-colors"
-                            title="Generate map image with AI (Hugging Face)"
+                            title="Generate map image with AI (x.ai)"
                           >
                             <Sparkles size={12} />
                             Generate with AI

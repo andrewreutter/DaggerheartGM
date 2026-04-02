@@ -762,7 +762,7 @@ export const postEncounterAiBuild = async (concept, options = {}) => {
 };
 
 /**
- * Generate an image from a text prompt via the Hugging Face Inference API.
+ * Generate an image from a text prompt via the server (x.ai Grok Imagine).
  * Returns { imageUrl } where imageUrl is a base64 data URL.
  */
 export const generateImage = async (prompt) => {

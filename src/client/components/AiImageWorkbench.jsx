@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Sparkles, Check, RotateCcw, Loader2, X, ChevronLeft, ChevronRight, Wand2 } from 'lucide-react';
 
 /**
- * Shared AI image prompt + preview UI (Hugging Face generate/edit) used by ImageGenerator and MapAiImageDialog.
+ * Shared AI image prompt + preview UI (x.ai Grok Imagine generate/edit) used by ImageGenerator and MapAiImageDialog.
  */
 export function AiImageWorkbench({
   editedPrompt,

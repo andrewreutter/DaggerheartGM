@@ -28,7 +28,7 @@ import {
   parseEncounterDropBuffer,
   parseEncounterDropText,
 } from './src/ocr-parse.js';
-import { generateImage as hfGenerateImage, editImage as hfEditImage, isConfigured as hfIsConfigured } from './src/huggingface-image.js';
+import { generateImage as xaiGenerateImage, editImage as xaiEditImage, isConfigured as xaiIsConfigured } from './src/xai-image.js';
 import { syncDaggerstackCharacter, invalidateSrdLookupCache } from './src/daggerstack-sync.js';
 import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.js';
 import compression from 'compression';
@@ -170,7 +170,7 @@ app.get('/api/config', (req, res) => {
       projectId:  process.env.FIREBASE_PROJECT_ID  || '',
       appId:      process.env.FIREBASE_APP_ID      || '',
     },
-    imageGenEnabled: hfIsConfigured(),
+    imageGenEnabled: xaiIsConfigured(),
     supabaseStorageBase: process.env.SUPABASE_URL
       ? `${process.env.SUPABASE_URL}/storage/v1/object/public`
       : null,
@@ -1672,18 +1672,18 @@ app.post('/api/room/my/map-image', requireAuth, mapImageUpload.single('file'), a
   }
 });
 
-// --- Hugging Face image generation ---
+// --- x.ai Grok Imagine image generation ---
 
 app.post('/api/generate-image', requireAuth, async (req, res) => {
   const { prompt } = req.body || {};
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
-  if (!hfIsConfigured()) {
-    return res.status(503).json({ error: 'Image generation is not configured (HF_TOKEN missing)' });
+  if (!xaiIsConfigured()) {
+    return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
   try {
-    const result = await hfGenerateImage(prompt.trim());
+    const result = await xaiGenerateImage(prompt.trim());
     res.json(result);
   } catch (err) {
     console.error('POST /api/generate-image error:', err);
@@ -1699,11 +1699,11 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
-  if (!hfIsConfigured()) {
-    return res.status(503).json({ error: 'Image generation is not configured (HF_TOKEN missing)' });
+  if (!xaiIsConfigured()) {
+    return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
   try {
-    const result = await hfEditImage(image, prompt.trim());
+    const result = await xaiEditImage(image, prompt.trim());
     res.json(result);
   } catch (err) {
     console.error('POST /api/edit-image error:', err);

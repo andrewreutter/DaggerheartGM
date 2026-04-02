@@ -350,10 +350,11 @@ SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 | `APP_ID` | No | Data namespace key (default: `daggerheart-gm-tool`) |
 | `OPENAI_API_KEY` | No | OpenAI API key — enables **Build with AI** in the character, adversary, and environment editors (`POST /api/character-ai-build`, `/api/adversary-ai-build`, `/api/environment-ai-build`), the Game Table **Encounter** encounter planner (`POST /api/encounter-ai-build`), and exposes `conceptAiEnabled` on `GET /api/config`. Also used as optional LLM fallback for Reddit posts that can't be parsed by regex/OCR. |
 | `OPENAI_CONCEPT_MODEL` | No | OpenAI chat model for concept AI builders (default: `gpt-4o-mini`). |
-| `HF_TOKEN` | No | Hugging Face access token — enables the "Generate with AI" image button in all item editor forms. Without this the button is hidden. Generate one at huggingface.co/settings/tokens (needs "Inference Providers" write permission). |
-| `HF_MODEL` | No | Hugging Face model ID for text-to-image generation (default: `black-forest-labs/FLUX.1-schnell`) |
-| `HF_EDIT_MODEL` | No | Hugging Face model ID for image-to-image editing (default: `black-forest-labs/FLUX.1-Kontext-dev`) |
-| `HF_PROVIDER` | No | Hugging Face inference provider (default: `replicate`). Other options: `fal-ai`, `together`, `novita`, etc. — see huggingface.co/docs/inference-providers |
+| `XAI_API_KEY` | No | x.ai API key — enables the "Generate with AI" image button in item editors and map AI flows (`POST /api/generate-image`, `POST /api/edit-image`). Without this the button is hidden. |
+| `XAI_API_BASE` | No | x.ai API base URL (default: `https://api.x.ai/v1`). |
+| `XAI_IMAGE_MODEL` | No | Image model id (default: `grok-imagine-image`). |
+| `XAI_IMAGE_ASPECT_RATIO` | No | Optional aspect ratio for generate/edit (e.g. `16:9`, `1:1`, `auto`). See x.ai docs. |
+| `XAI_IMAGE_RESOLUTION` | No | Optional `1k` or `2k` output resolution. |
 | `ADMIN_EMAILS` | No | Comma-separated list of email addresses granted admin access (e.g. `alice@example.com,bob@example.com`). |
 | `QA_EMAILS` | No | Same format as `ADMIN_EMAILS`. QA users get the optional **Feature Source** dev-agent footer (queue GitHub issues from the V2 source viewer) but not other admin-only UI. |
 | `SUPABASE_URL` | No | Supabase project URL (e.g. `https://xxxx.supabase.co`). Required for battle map image uploads to Supabase Storage. |
