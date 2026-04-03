@@ -11,6 +11,7 @@ import {
   CheckSquare,
   Share2,
   Search,
+  Sticker,
 } from 'lucide-react';
 import { cloneElement, useMemo, useRef, useState } from 'react';
 import { MarkdownText } from '../../lib/markdown.js';
@@ -48,6 +49,8 @@ import {
 import { V2SegmentedRowWrap } from '../V2SegmentedRowWrap.jsx';
 import { WidthSortedFlexWrap } from '../WidthSortedFlexWrap.jsx';
 import { useCharacterSheetSourceHighlightState } from '../CharacterSheetSourceHighlight.jsx';
+import { getFeatureSheetLabelParts, getAbilitySheetLabelParts } from '../../lib/sheet-display-names.js';
+import { SheetDisplayLabelInline } from '../../lib/sheet-display-label-inline.jsx';
 import { shouldDimFeatOrAbilityRow, SHEET_SOURCE_DIM_CLASS } from '../../lib/source-badge-sheet-highlight.js';
 import {
   buildGuideCardChipTipText,
@@ -1222,6 +1225,7 @@ export function GuideFeatureCardChips({
  * @param {{ fearCount?: number, mapConfig?: object|null, tableFeatureState?: object, activeElements?: object[] }} [props.v2TableContext] — for `isSelect` chips (Druid Beastform, etc.)
  * @param {boolean} [props.hideV2CardChips] — when true, omit the V2 chip row (e.g. chips live in a separate Actions card).
  * @param {object} [props.sheetHighlightAbility] — when set, row is a domain ability from `el.abilities` (source-badge dimming).
+ * @param {function} [props.onSheetDisplayNameEdit] — `({ bucket, key, originalName })` Game Table display name
  */
 export function GuideFeatureCard({
   featRow,
@@ -1242,6 +1246,7 @@ export function GuideFeatureCard({
   pendingBanners,
   hideV2CardChips = false,
   sheetHighlightAbility = null,
+  onSheetDisplayNameEdit,
 }) {
   const [sourceViewer, setSourceViewer] = useState(null);
   const preview = interactionMode === 'preview';
@@ -1257,6 +1262,20 @@ export function GuideFeatureCard({
 
   const effectiveKey = featureKey || model.name;
   const isUsed = !!(el?.featureUsage?.[effectiveKey]?.used);
+
+  const rawFeatName = featRow.name;
+  const enrichedTitle = model.displayName ?? rawFeatName;
+  const hasSheetOverride = sheetHighlightAbility != null
+    ? !!el?.sheetDisplayNames?.abilities?.[effectiveKey]
+    : !!el?.sheetDisplayNames?.features?.[effectiveKey];
+  const sheetTitleParts = sheetHighlightAbility != null
+    ? getAbilitySheetLabelParts(el, effectiveKey, rawFeatName)
+    : getFeatureSheetLabelParts(el, effectiveKey, rawFeatName);
+  const titleLabel = hasSheetOverride
+    ? (sheetTitleParts.parenthetical != null
+      ? `${sheetTitleParts.primary} (${sheetTitleParts.parenthetical})`
+      : sheetTitleParts.primary)
+    : enrichedTitle;
 
   const legacy = model.legacyAction;
   const hasDice = model.hasDice;
@@ -1369,15 +1388,55 @@ export function GuideFeatureCard({
     <div className={cardDimmed ? SHEET_SOURCE_DIM_CLASS : 'transition-opacity duration-150'}>
     <div className={shellClass}>
       <div className="px-2 py-1.5 min-w-0">
+        <div className="relative w-full min-w-0 flex items-start -m-1 p-1 rounded transition-colors group hover:bg-dh-hover/40">
         <button
           type="button"
           onClick={onToggle}
-          className="w-full min-w-0 flex items-start gap-1 text-left transition-colors rounded -m-1 p-1 hover:bg-dh-hover/40"
+          className="min-w-0 flex-1 flex items-start gap-1 text-left rounded p-0 hover:bg-transparent"
         >
           {open ? <ChevronDown size={11} className="text-dh-muted shrink-0 mt-0.5" /> : <ChevronRight size={11} className="text-dh-muted shrink-0 mt-0.5" />}
-          <div className="flex-1 min-w-0 flex flex-col gap-1">
+          <div className="relative min-w-0 flex-1 flex items-start">
+          {typeof onSheetDisplayNameEdit === 'function' && (
+            <button
+              type="button"
+              title="Custom name"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSheetDisplayNameEdit({
+                  bucket: sheetHighlightAbility != null ? 'abilities' : 'features',
+                  key: effectiveKey,
+                  originalName: rawFeatName,
+                });
+              }}
+              className={`absolute left-0 top-0.5 z-10 inline-flex items-center justify-center p-0.5 rounded text-dh-muted hover:text-sky-400 transition-opacity leading-none ${
+                hasSheetOverride
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'
+              }`}
+            >
+              <Sticker size={10} className="block shrink-0" aria-hidden />
+            </button>
+          )}
+          <div
+            className={`min-w-0 flex-1 flex flex-col gap-1 transition-[padding] duration-75 ${
+              typeof onSheetDisplayNameEdit === 'function'
+                ? hasSheetOverride
+                  ? 'pl-5'
+                  : 'pl-0 group-hover:pl-5'
+                : ''
+            }`}
+          >
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 w-full">
-              <span className="text-sm font-semibold text-dh leading-snug min-w-0 shrink-0 max-w-full">{model.displayName}</span>
+              {hasSheetOverride && sheetTitleParts.parenthetical != null ? (
+                <SheetDisplayLabelInline
+                  primary={sheetTitleParts.primary}
+                  parenthetical={sheetTitleParts.parenthetical}
+                  primaryClassName="text-sm font-semibold text-dh leading-snug min-w-0 shrink-0 max-w-full"
+                  parenClassName="text-[9px] font-normal text-dh-muted leading-snug shrink-0"
+                />
+              ) : (
+                <span className="text-sm font-semibold text-dh leading-snug min-w-0 shrink-0 max-w-full">{titleLabel}</span>
+              )}
               {badgeRow ? (
                 <div className="flex flex-wrap items-center gap-1 justify-end min-w-0 flex-1">
                   {(showPhaseIcons || showHiddenPhaseChipsIcon || showPassiveBonusIcon) && (
@@ -1442,7 +1501,9 @@ export function GuideFeatureCard({
             </div>
             {legacyStatusLine ? <div className="min-w-0">{legacyStatusLine}</div> : null}
           </div>
+          </div>
         </button>
+        </div>
       </div>
 
       {showWidgetRow && (

@@ -97,9 +97,7 @@ export function GameTableCharacterListCard({
           <div className="hidden group-hover/char:flex items-center gap-1 shrink-0" onClick={stopSheetOpenFromInteractive} onMouseDown={stopSheetOpenFromInteractive}>
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm(`Remove ${el.name || 'Unnamed'} from the table?`)) onRemoveFromTable(el.instanceId);
-              }}
+              onClick={() => onRemoveFromTable(el.instanceId)}
               className="text-dh-muted hover:text-red-400 transition-colors"
               title="Remove from table"
             >

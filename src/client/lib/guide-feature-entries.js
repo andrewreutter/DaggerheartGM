@@ -28,7 +28,12 @@ export function getOrderedGuideFeatureEntries(el, onV2CardChip) {
    * use the SRD `f` row so sheet `cards` / engine metadata do not duplicate guide copy.
    */
   const findRow = (f, type) => {
-    const afRow = af.find((a) => a.name === f.name && a.type === type);
+    const afRow = af.find((a) => {
+      if (a.name !== f.name || a.type !== type) return false;
+      const fMc = !!(f._multiclass || f._multiclassSubclass);
+      const aMc = !!(a._multiclass || a._multiclassSubclass);
+      return fMc === aMc;
+    });
     if (afRow?.hideFromGuideFeatureList) {
       return {
         ...f,
@@ -38,15 +43,23 @@ export function getOrderedGuideFeatureEntries(el, onV2CardChip) {
         sourceType: f.sourceType,
       };
     }
-    return (
-      afRow || {
+    if (afRow) {
+      return {
         ...f,
+        ...afRow,
         type,
-        description: f.description || '',
-        source: f.source,
-        sourceType: f.sourceType,
-      }
-    );
+        description: afRow.description || f.description || '',
+        source: f.source ?? afRow.source,
+        sourceType: f.sourceType ?? afRow.sourceType,
+      };
+    }
+    return {
+      ...f,
+      type,
+      description: f.description || '',
+      source: f.source,
+      sourceType: f.sourceType,
+    };
   };
   const out = [];
   let idx = 0;

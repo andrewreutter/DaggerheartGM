@@ -6,6 +6,8 @@ import {
   PORTAL_HOVER_TOOLTIP_WIDTH_WIDE,
   PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
   clampPortalHoverTooltipY,
+  isClampPingPong,
+  PORTAL_TOOLTIP_MAX_Y_CLAMPS_PER_SESSION,
   computePortalHoverTooltipPosition,
   computePortalHoverTooltipPositionBelow,
 } from './portal-hover-tooltip-position.js';
@@ -16,6 +18,8 @@ export {
   PORTAL_HOVER_TOOLTIP_GAP,
   PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
   clampPortalHoverTooltipY,
+  isClampPingPong,
+  PORTAL_TOOLTIP_MAX_Y_CLAMPS_PER_SESSION,
   computePortalHoverTooltipPosition,
   computePortalHoverTooltipPositionBelow,
 } from './portal-hover-tooltip-position.js';
@@ -28,6 +32,10 @@ export function usePortalHoverTooltip() {
   const [tooltip, setTooltip] = useState(null);
   const tooltipRef = useRef(null);
   const leaveTimerRef = useRef(null);
+  /** Breaks ResizeObserver ↔ clamp feedback when scrollbar toggling flips measured height (React #185). */
+  const clampPingPongRef = useRef({ from: null, to: null });
+  /** Hard cap per hover session — ping-pong only catches A↔B; longer cycles / layout thrash still need a ceiling. */
+  const yClampSessionCountRef = useRef(0);
 
   const clearLeaveTimer = useCallback(() => {
     if (leaveTimerRef.current != null) {
@@ -43,6 +51,8 @@ export function usePortalHoverTooltip() {
 
   const hide = useCallback(() => {
     clearLeaveTimer();
+    clampPingPongRef.current = { from: null, to: null };
+    yClampSessionCountRef.current = 0;
     setTooltip(null);
   }, [clearLeaveTimer]);
 
@@ -60,6 +70,8 @@ export function usePortalHoverTooltip() {
    */
   const showFromPointerEvent = useCallback((e, payload) => {
     clearLeaveTimer();
+    clampPingPongRef.current = { from: null, to: null };
+    yClampSessionCountRef.current = 0;
     const wide = payload.wide ?? false;
     const anchorEl = payload.anchorRef?.current ?? null;
     const rect = anchorEl ? anchorEl.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
@@ -100,7 +112,11 @@ export function usePortalHoverTooltip() {
   }, [clearLeaveTimer]);
 
   useLayoutEffect(() => {
-    if (!tooltip) return undefined;
+    if (!tooltip) {
+      clampPingPongRef.current = { from: null, to: null };
+      yClampSessionCountRef.current = 0;
+      return undefined;
+    }
 
     let resizeRafId = null;
     const applyClamp = () => {
@@ -112,9 +128,20 @@ export function usePortalHoverTooltip() {
       const pad = PORTAL_HOVER_TOOLTIP_BOTTOM_PAD;
       setTooltip((t) => {
         if (!t) return t;
-        const curY = Math.round(t.y);
+        // Use the portaled node's actual viewport top — not `t.y`. Batched updates can leave
+        // `t.y` stale while `[tooltip]` still changes identity, causing React #185 loops.
+        const curY = Math.round(el.getBoundingClientRect().top);
         const nextY = Math.round(clampPortalHoverTooltipY(curY, height, innerH, pad));
-        return nextY !== curY ? { ...t, y: nextY } : t;
+        if (nextY === curY) return t;
+        if (isClampPingPong(curY, nextY, clampPingPongRef.current)) {
+          return t;
+        }
+        if (yClampSessionCountRef.current >= PORTAL_TOOLTIP_MAX_Y_CLAMPS_PER_SESSION) {
+          return t;
+        }
+        yClampSessionCountRef.current += 1;
+        clampPingPongRef.current = { from: curY, to: nextY };
+        return { ...t, y: nextY };
       });
     };
 
@@ -187,7 +214,7 @@ export function PortalHoverTooltipLayer({ tooltip, tooltipRef, scheduleClose, cl
       onMouseEnter={interactive ? clearLeaveTimer : undefined}
       onMouseLeave={interactive ? scheduleClose : undefined}
     >
-      <div className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 overflow-y-auto max-h-[min(70vh,calc(100vh-32px))]">
+      <div className="bg-dh-raised border border-dh-strong rounded-lg shadow-2xl p-3 overflow-y-auto max-h-[min(70vh,calc(100vh-32px))] [scrollbar-gutter:stable]">
         {tooltip.renderInner != null ? (
           tooltip.renderInner
         ) : (

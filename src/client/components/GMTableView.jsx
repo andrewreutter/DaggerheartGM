@@ -121,8 +121,9 @@ import { extractDetailsValues } from '../lib/dice-utils.js';
 import { getCharactersWithinFarRange, getCharactersWithinCloseRangeWithMarkedHp, getAdversariesWithinMeleeRange, getAdversariesWithinRangeFt, getCharactersWithinRangeFt, getCharactersWithinRangeOfAny, rangeBandNameToFt, rangeFtToLabel, RANGE_BANDS_FT, tokenDistanceFt, positionAtDistanceFt } from '../lib/map-range.js';
 import { mapConfigHasImage } from '../lib/map-table-state.js';
 import { useCharacterSrdData } from '../lib/useCharacterSrdData.js';
-import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange } from '../lib/character-calc.js';
+import { recomputeCharacter, isCharacterComplete, getEffectiveWeaponRange, projectCharacterFormToLevel } from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
+import { shouldAutoOpenCharacterEditorForIncompleteCharacter } from '../lib/game-table-incomplete-character-auto-editor.js';
 import {
   collectMissingCompanionBoardTokenElements,
   hasCompanionBoardToken,
@@ -158,6 +159,7 @@ import {
 } from '../lib/v2-action-loop-bridge.js';
 import { buildV2ChipViewer } from '../lib/v2-chip-session-view.js';
 import { buildWeaponRollText } from '../lib/weapon-roll-text.js';
+import { getWeaponSheetLabel } from '../lib/sheet-display-names.js';
 import { runV2TokenMoveHooks } from '../lib/v2-cross-sheet-lifecycle.js';
 import { applyV2BannerMutations, applyV2LifecycleMutations, partitionV2BannerChipMutations } from '../lib/table-ops.js';
 import { mergeV2TableFeatureState } from '../lib/v2-action-loop-bridge.js';
@@ -169,6 +171,7 @@ import { SHIFTING_DISADVANTAGE_SOURCE_ID } from '../../features-v2/armor_propert
 import { stripConsumableRestBonusPending } from '../../features-v2/engine/consumable-rest-bonus.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../lib/v2-class-subclass-feature-descriptors.js';
 import { getV2OriginFeatureDescriptor } from '../lib/v2-origin-feature-descriptors.js';
+import { buildSessionStartBannerActionText } from '../lib/session-start-preview.js';
 import { v2RollDieExtrasFromActionLoopPayload } from '../lib/v2-action-notification-dice.js';
 import {
   applyChargedProficiencyBonusToRollText,
@@ -794,6 +797,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [characterEditorPortalEl, setCharacterEditorPortalEl] = useState(null);
   /** Live form + save flags from portaled `ItemDetailModal` for the shared Game Table title bar. */
   const [characterDrawerChromeSync, setCharacterDrawerChromeSync] = useState(null);
+  /** 1…saved level; matches form level until the user moves the history preview slider */
+  const [characterEditorLevelPreview, setCharacterEditorLevelPreview] = useState(1);
   const characterTableDetailModalRef = useRef(null);
   // editState: null | { step: 'choice', baseElement, instances, collection }
   //                  | { step: 'form', item, collection, mode, baseElement, instances? }
@@ -806,6 +811,11 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       editState?.collection === 'characters';
     if (!portaledChar) setCharacterDrawerChromeSync(null);
   }, [editState?.step, editState?.presentation, editState?.collection]);
+
+  useEffect(() => {
+    const lv = Number(characterDrawerChromeSync?.formData?.level);
+    if (Number.isFinite(lv)) setCharacterEditorLevelPreview(lv);
+  }, [characterDrawerChromeSync?.formData?.level]);
 
   const [scaledToggleState, setScaledToggleState] = useState({});
   const trackerKey = trackerOverlay.data
@@ -2019,11 +2029,13 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       return;
     }
 
-    // Start Session banner: acknowledge, mark session active on table state, then run session clear + onSessionStart hooks.
-    if (roll._sessionStart && roll._rollDbId) {
-      postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
-      await postTableOp({ op: 'set-table-top', top: { sessionStarted: true, sessionPaused: false, lastPlayActivityAt: Date.now() } }, tableId);
-      runSessionStartClear();
+    // Start Session: exclusive path — never fall through into generic `roll._action` handling (would ack without session start).
+    if (roll._sessionStart) {
+      if (roll._rollDbId) {
+        postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
+        await postTableOp({ op: 'set-table-top', top: { sessionStarted: true, sessionPaused: false, lastPlayActivityAt: Date.now() } }, tableId);
+        runSessionStartClear();
+      }
       return;
     }
 
@@ -2786,8 +2798,12 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       _sessionStart: true,
       rollUser: 'GM',
       actionName: label,
-      actionText:
-        'Start Session — acknowledge to reset **session-frequency feature uses**, clear **session-refresh modifiers** (e.g. Rally die tokens), refresh **Rally** pooled dice, and run **session-start hooks** (e.g. Seraph Prayer Dice pool).',
+      actionText: buildSessionStartBannerActionText(activeElements, {
+        v2Registry,
+        srdData,
+        v2ClassSubclassFeatureDescriptorsByName,
+        getV2OriginFeatureDescriptor,
+      }),
     };
     handleActionNotification(cycleNotification);
   };
@@ -3798,9 +3814,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         const type = (weapon.damageType || '').toLowerCase();
         damageStr = `${base}${prof}${type ? ' ' + type : ''}`;
       }
+      const weaponLabel = getWeaponSheetLabel(el, weapon);
       let rollText = buildWeaponRollText(
         el.name,
-        weapon.name,
+        weaponLabel,
         traitKey,
         effectiveTrait,
         null,
@@ -3814,7 +3831,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       );
       const rangeStr = getEffectiveWeaponRange(weapon, el.ancestryFeatures) || weapon.effectiveRange || weapon.range;
       if (rangeStr) rollText += ` ${rangeStr}`;
-      const displayName = `${el.name} ${weapon.name}`;
+      const displayName = `${el.name} ${weaponLabel}`;
       const meta = {
         ...rollMeta,
         _attackerInstanceId: el.instanceId,
@@ -4588,6 +4605,42 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     }
     return map;
   }, [srdData, tableCharacters, fearCount, mapConfig, tableFeatureState]);
+
+  // Incomplete + editable: open the library editor drawer when the sheet opens (sidebar / map card click).
+  useEffect(() => {
+    if (!characterOverlay.isOpen) return;
+    const el = characterOverlay.data?.element;
+    if (!el || el.elementType !== 'character') return;
+    const viewerCanEditSheet =
+      !isPlayer || (playerEmail != null && el.assignedPlayerEmail === playerEmail);
+    const live = activeElements.find((e) => e.instanceId === el.instanceId) || el;
+    const displayChar = characterDisplayByInstanceId.get(live.instanceId) ?? live;
+    const { complete } = isCharacterComplete(
+      displayChar,
+      srdData ? { srdData } : undefined,
+    );
+    if (
+      !shouldAutoOpenCharacterEditorForIncompleteCharacter({
+        viewerCanEditSheet,
+        isCharacterComplete: complete,
+        editState,
+        characterInstanceId: live.instanceId,
+      })
+    ) {
+      return;
+    }
+    openTableCharacterEditor(live);
+  }, [
+    characterOverlay.isOpen,
+    characterOverlay.data?.element?.instanceId,
+    isPlayer,
+    playerEmail,
+    activeElements,
+    characterDisplayByInstanceId,
+    srdData,
+    editState,
+    openTableCharacterEditor,
+  ]);
 
   function renderAdversaryTargetAid(adversaryEl) {
     if (tableCharacters.length === 0) return null;
@@ -7240,10 +7293,22 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       const isMyCharacter = playerEmail != null && liveEl.assignedPlayerEmail === playerEmail;
       const editDrawerOpen = editState?.step === 'form' && editState?.presentation === 'rightDrawer';
       const effectiveEditDrawerOpen = editDrawerOpen && !characterDrawerEditMismatch;
-      const titleBarEl =
+      const mergedForTitle =
         effectiveEditDrawerOpen && characterDrawerChromeSync?.formData
           ? { ...liveEl, ...characterDrawerChromeSync.formData }
           : liveEl;
+      const storedCharLevel = Number(mergedForTitle.level) || 1;
+      const levelPreviewActive =
+        effectiveEditDrawerOpen &&
+        typeof characterEditorLevelPreview === 'number' &&
+        Number.isFinite(characterEditorLevelPreview) &&
+        characterEditorLevelPreview < storedCharLevel;
+      const titleBarEl = levelPreviewActive
+        ? {
+            ...mergedForTitle,
+            ...projectCharacterFormToLevel(mergedForTitle, Math.max(1, Math.floor(characterEditorLevelPreview))),
+          }
+        : mergedForTitle;
       const libraryCharacterRow = data?.characters?.find(c => c.id === liveEl?.id);
       const itemForTitleBadge =
         effectiveEditDrawerOpen && editState?.collection === 'characters' && editState?.item
@@ -7273,6 +7338,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               el={titleBarEl}
               item={itemForTitleBadge}
               editDrawerOpen={effectiveEditDrawerOpen}
+              levelPreview={characterEditorLevelPreview}
+              onLevelPreviewChange={setCharacterEditorLevelPreview}
+              maxLevelForPreview={storedCharLevel}
               onEdit={(!isPlayer || isMyCharacter) ? () => openTableCharacterEditor(liveEl) : undefined}
               onDone={closeEditModal}
               doneDisabled={!!characterDrawerChromeSync?.aiConceptBusy}
@@ -7402,6 +7470,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     )}
     {editState?.step === 'form' && !characterDrawerEditMismatch && (
       <ItemDetailModal
+        key={`${editState.collection}-${editState.baseElement?.instanceId ?? editState.item?.id ?? 'item'}`}
         ref={characterTableDetailModalRef}
         item={editState.item}
         collection={editState.collection}
@@ -7409,6 +7478,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         editable={true}
         presentation={editState.presentation ?? 'center'}
         onCharacterDrawerChromeSync={setCharacterDrawerChromeSync}
+        characterLevelPreview={editState.collection === 'characters' ? characterEditorLevelPreview : undefined}
+        onCharacterLevelPreviewChange={
+          editState.collection === 'characters' ? setCharacterEditorLevelPreview : undefined
+        }
         rightDrawerPortalTo={
           editState.presentation === 'rightDrawer'
             ? (characterOverlay.isOpen ? characterEditorPortalEl : null)

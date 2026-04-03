@@ -371,6 +371,8 @@ export function mergeV2DeclarativeSheetOverlay(recomputed, rawCharacter, srdData
     },
     // Table/runtime fields must win over recomputed so Game Table patches (e.g. activeModifiers) are visible on the sheet.
     activeModifiers: rawCharacter.activeModifiers ?? recomputed.activeModifiers ?? [],
+    /** Per-table display labels for weapons/features/domain cards (Game Table). */
+    sheetDisplayNames: rawCharacter.sheetDisplayNames ?? recomputed.sheetDisplayNames,
     featureState: rawCharacter.featureState ?? recomputed.featureState,
     /** Declarative V2 threshold deltas (e.g. Earth channel) for `effectiveThresholds` / defense row breakdown. */
     _v2MajorThresholdBonus: v2MajorDelta || undefined,

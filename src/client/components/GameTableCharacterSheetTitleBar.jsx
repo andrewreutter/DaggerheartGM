@@ -37,9 +37,18 @@ export function GameTableCharacterSheetTitleBar({
   editorColumnWidth = CHARACTER_TABLE_EDITOR_DRAWER_WIDTH,
   /** When true, Done is disabled (e.g. character AI build in flight). */
   doneDisabled = false,
+  /** Current slider value (1…maxLevelForPreview); only used when edit drawer open and max > 1 */
+  levelPreview = 1,
+  onLevelPreviewChange,
+  /** Saved character level from the editor (slider max). */
+  maxLevelForPreview = 1,
 }) {
   const nm = el?.name || 'Unnamed Character';
   const badge = item?._source ? (SOURCE_BADGE[item._source] ?? SOURCE_BADGE.own) : null;
+  const maxLv = Math.max(1, Math.floor(Number(maxLevelForPreview) || 1));
+  const showLevelSlider = editDrawerOpen && maxLv > 1 && typeof onLevelPreviewChange === 'function';
+  const sliderVal = Math.min(Math.max(1, Math.floor(Number(levelPreview) || 1)), maxLv);
+  const sliderIsPreview = showLevelSlider && sliderVal < maxLv;
 
   const saveStatus = (() => {
     if (!editDrawerOpen) return null;
@@ -122,7 +131,49 @@ export function GameTableCharacterSheetTitleBar({
           className="flex items-center justify-between gap-3 min-w-0 px-3 py-2.5 border-l border-dh-border/50 shrink-0"
           style={{ width: editorColumnWidth }}
         >
-          <div className="flex items-center gap-0.5 shrink-0 min-w-0">{undoRedo}</div>
+          <div className="flex items-center gap-2 shrink-0 min-w-0">
+            {undoRedo}
+            {showLevelSlider ? (
+              <label
+                className="flex flex-row items-center gap-2 flex-1 min-w-0 max-w-[min(100%,18rem)] text-dh-muted"
+                title="Preview the sheet and editor at a past level (read-only). Slide back to current level to edit."
+              >
+                <span className="flex flex-col gap-0.5 shrink-0 text-left">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-dh leading-none whitespace-nowrap">
+                    Level view
+                  </span>
+                  {/* Fixed slot so “preview” does not shift layout when toggling */}
+                  <span className="text-xs tabular-nums font-semibold leading-tight whitespace-nowrap min-h-[1.125rem]">
+                    {sliderVal} / {maxLv}
+                    <span
+                      className={`font-medium ${sliderIsPreview ? 'text-red-400/90' : 'text-transparent select-none'}`}
+                      aria-hidden={!sliderIsPreview}
+                    >
+                      {' '}
+                      · preview
+                    </span>
+                  </span>
+                </span>
+                <span className="inline-flex min-w-0 max-w-[14rem] flex-1 items-center sm:min-w-[10rem]">
+                  <input
+                    type="range"
+                    min={1}
+                    max={maxLv}
+                    step={1}
+                    value={sliderVal}
+                    onChange={(e) => onLevelPreviewChange(Number(e.target.value))}
+                    className={`relative top-0.5 h-1.5 w-full min-w-[6rem] cursor-pointer appearance-none rounded-full bg-dh-hover ${
+                      sliderIsPreview ? 'accent-red-500' : 'accent-cyan-500'
+                    }`}
+                    aria-valuemin={1}
+                    aria-valuemax={maxLv}
+                    aria-valuenow={sliderVal}
+                    aria-label={`Level preview ${sliderVal} of ${maxLv}`}
+                  />
+                </span>
+              </label>
+            ) : null}
+          </div>
           <div className="flex items-center justify-end gap-1.5 shrink-0 min-w-0">
             {saveStatus}
             {v2LibrarySourcePath ? <V2SourceInspectButton relativePath={v2LibrarySourcePath} variant="header" /> : null}

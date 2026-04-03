@@ -1,6 +1,6 @@
 import {
   User, Shield, AlertCircle, AlertTriangle, Swords, Package,
-  ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind, Sparkles,
+  ChevronDown, ChevronRight, Dices, Zap, X, Flame, Mountain, Droplets, Wind, Sparkles, Sticker,
 } from 'lucide-react';
 import { useState, useMemo, useCallback } from 'react';
 import { MarkdownText } from '../lib/markdown.js';
@@ -28,6 +28,8 @@ import {
   collectShapePlacementChipsForCharacter,
 } from '../lib/build-feature-card-model.js';
 import { getFeatureUsageKeyForGuideFeature } from '../lib/feature-usage-key.js';
+import { getWeaponSheetLabel, getWeaponSheetLabelParts, getWeaponSheetDisplayKey } from '../lib/sheet-display-names.js';
+import { SheetDisplayLabelInline } from '../lib/sheet-display-label-inline.jsx';
 import {
   buildActionChipSlotsForSheet,
   shouldUseIntrinsicWidthForActionsStripSlot,
@@ -369,7 +371,22 @@ export function outOfRangeDisableReason(weapon, getValidTargets, instanceId, anc
   return targets.length === 0 ? 'No targets in range' : null;
 }
 
-function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastating, onDevastatingToggle, pompousWarning, v2DisableReason, outOfRangeReason }) {
+function WeaponCard({
+  weapon,
+  traitScore,
+  onClick,
+  isVirtual,
+  purple,
+  devastating,
+  onDevastatingToggle,
+  pompousWarning,
+  v2DisableReason,
+  outOfRangeReason,
+  sheetDisplayLabel,
+  sheetDisplayParts,
+  hasSheetDisplayOverride,
+  onSheetDisplayNameClick,
+}) {
   const [justRolled, setJustRolled] = useState(false);
   const disableMsg = v2DisableReason || (pompousWarning ? 'Requires Presence ≤ 0' : null) || outOfRangeReason || null;
   const clickable = !!onClick && !disableMsg;
@@ -416,6 +433,10 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
       ? 'border-amber-800/35 bg-amber-950/25 text-dh-hope-soft'
       : 'border-dh-border/60 bg-dh-raised/50 text-dh-muted';
 
+  const nameLine = sheetDisplayLabel ?? weapon.name;
+  const labelParts = sheetDisplayParts ?? null;
+  const showCustomize = typeof onSheetDisplayNameClick === 'function';
+
   const card = (
     <div
       role={clickable ? 'button' : undefined}
@@ -425,11 +446,42 @@ function WeaponCard({ weapon, traitScore, onClick, isVirtual, purple, devastatin
       title={!disableMsg && clickable && traitLabel ? `Roll ${weapon.name} (${TRAIT_FULL[traitKey]})` : undefined}
       className={`w-full min-w-0 rounded border px-2 py-1.5 select-none text-[11px] transition-all
         ${baseBorder}
-        ${clickable ? 'dh-sheet-clickable-chip cursor-pointer hover:brightness-125 hover:border-sky-500/50 group' : ''}`}
+        ${clickable || showCustomize ? 'dh-sheet-clickable-chip cursor-pointer hover:brightness-125 hover:border-sky-500/50 group' : ''}`}
     >
       <div className="flex items-center gap-2 min-w-0">
         <Swords size={11} className={`shrink-0 transition-colors ${iconColor}`} />
-        <span className={`text-sm font-semibold flex-1 min-w-0 truncate ${nameColor}`}>{weapon.name}</span>
+        <div className="relative flex-1 min-w-0 flex items-center">
+          {showCustomize && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onSheetDisplayNameClick(e);
+              }}
+              title="Custom name"
+              className={`absolute left-0 top-1/2 z-10 -translate-y-1/2 p-0.5 rounded text-dh-muted hover:text-sky-400 transition-opacity
+                ${hasSheetDisplayOverride ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'}`}
+            >
+              <Sticker size={10} aria-hidden />
+            </button>
+          )}
+          <span
+            className={`text-sm font-semibold min-w-0 truncate w-full transition-[padding] duration-75 inline-flex items-baseline gap-0.5 ${nameColor}
+              ${showCustomize ? (hasSheetDisplayOverride ? 'pl-5' : 'pl-0 group-hover:pl-5') : ''}`}
+          >
+            {labelParts?.parenthetical != null ? (
+              <SheetDisplayLabelInline
+                primary={labelParts.primary}
+                parenthetical={labelParts.parenthetical}
+                primaryClassName="min-w-0 truncate"
+                parenClassName="text-[9px] font-normal text-dh-muted shrink-0"
+              />
+            ) : (
+              nameLine
+            )}
+          </span>
+        </div>
         {weapon.damageType && (
           <span className={`text-[9px] rounded px-1 py-0.5 border shrink-0 ${damageTypeBadgeClass}`}>
             {weapon.damageType}
@@ -627,6 +679,7 @@ export function CharacterTraitGrid({ el, onTraitClick, onSpellcastRoll, omitOute
   const weaponMods = el.weaponMods || {};
   const armorMods = el.armorMods || {};
   const beastformTraitBonus = parseBeastformBonus(el.activeBeastform?.trait_bonus);
+  /** Resolved in `recomputeCharacter`: single trait for rolls; multiclass compares primary vs multiclass spellcast traits and picks the higher effective score. */
   const spellcastKey = el.spellcastTrait ? el.spellcastTrait.toLowerCase() : null;
   const spellcastInTopRow = !!(spellcastKey && TRAIT_GRID_TOP.includes(spellcastKey));
   const spellcastInBottomRow = !!(spellcastKey && TRAIT_GRID_BOTTOM.includes(spellcastKey));
@@ -1213,7 +1266,20 @@ export function CharacterWeaponList({
   filterOutDisabledWeapons = false,
   /** Adversary map pin: show this text to the right of the title when there are no weapon rows (instead of a paragraph below). */
   titleRowEmptyMessage,
+  /** Game Table: open dialog to set a table-local display name (`{ bucket, key, originalName }`). */
+  onSheetDisplayNameEdit,
 }) {
+  const weaponSheetProps = (w) => {
+    const key = getWeaponSheetDisplayKey(w, el);
+    if (!onSheetDisplayNameEdit || !key) return {};
+    return {
+      sheetDisplayLabel: getWeaponSheetLabel(el, w),
+      sheetDisplayParts: getWeaponSheetLabelParts(el, w),
+      hasSheetDisplayOverride: !!el.sheetDisplayNames?.weapons?.[key],
+      onSheetDisplayNameClick: () => onSheetDisplayNameEdit({ bucket: 'weapons', key, originalName: w.name }),
+    };
+  };
+
   const wrapSheetCard = (node, titleRightSlot) =>
     sheetEmphasisTitle ? (
       <CharacterSheetEmphasisCard title={sheetEmphasisTitle} titleRight={titleRightSlot}>{node}</CharacterSheetEmphasisCard>
@@ -1416,6 +1482,7 @@ export function CharacterWeaponList({
                 key={i}
                 weapon={w}
                 traitScore={traits[(w.trait || '').toLowerCase()] ?? 0}
+                {...weaponSheetProps(w)}
               />
             ))}
           </div>
@@ -1458,6 +1525,7 @@ export function CharacterWeaponList({
             onClick={makeClick(virtualWeapon)}
             isVirtual
             outOfRangeReason={outOfRangeReasonForWeapon(virtualWeapon)}
+            {...weaponSheetProps(virtualWeapon)}
           />
         )}
 
@@ -1472,6 +1540,7 @@ export function CharacterWeaponList({
               onClick={makeClick(vw)}
               isVirtual
               outOfRangeReason={outOfRangeReasonForWeapon(vwWeapon)}
+              {...weaponSheetProps(vwWeapon)}
             />
           );
         })}
@@ -1488,6 +1557,7 @@ export function CharacterWeaponList({
               onClick={makeClick(alternate)}
               isVirtual
               outOfRangeReason={outOfRangeReasonForWeapon(altW)}
+              {...weaponSheetProps(altW)}
             />
           );
         })}
@@ -1508,6 +1578,7 @@ export function CharacterWeaponList({
                 onClick={makeClick(physicalVariant)}
                 isVirtual
                 outOfRangeReason={outOfRangeReasonForWeapon(phyW)}
+                {...weaponSheetProps(phyW)}
               />
               )}
               {!hideMag && (
@@ -1517,6 +1588,7 @@ export function CharacterWeaponList({
                 onClick={makeClick(magicalVariant)}
                 purple
                 outOfRangeReason={outOfRangeReasonForWeapon(magW)}
+                {...weaponSheetProps(magW)}
               />
               )}
             </div>
@@ -1536,6 +1608,7 @@ export function CharacterWeaponList({
               onClick={makeClick(chargedVariant, { _attackerInstanceId: el.instanceId })}
               isVirtual
               outOfRangeReason={outOfRangeReasonForWeapon(chW)}
+              {...weaponSheetProps(chW)}
             />
             {isStressMaxed && (
               <div className="text-[9px] text-dh-muted pl-5 mt-0.5">Stress maxed — cannot use Charged</div>
@@ -1563,6 +1636,7 @@ export function CharacterWeaponList({
               pompousWarning={legacyPompous}
               v2DisableReason={v2DisableReason}
               outOfRangeReason={outOfRangeReasonForWeapon(w)}
+              {...weaponSheetProps(w)}
             />
           );
         })}
@@ -2035,6 +2109,7 @@ export function CharacterFeaturesPanel({
   onRoll,
   omitActions = false,
   omitDeclarativeCards = false,
+  onSheetDisplayNameEdit,
 }) {
   const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
   const hopeFeature = el.hopeFeature || el.hopeAbility;
@@ -2072,6 +2147,7 @@ export function CharacterFeaturesPanel({
     interactionMode,
     v2TableContext,
     pendingBanners,
+    onSheetDisplayNameEdit,
   };
 
   const declarativeProps = {
@@ -2131,6 +2207,7 @@ function CharacterFeatureListContent({
   pendingBanners,
   /** When true, V2 card chips are not rendered on each feature (shown in a separate Actions card). */
   hideV2CardChips = false,
+  onSheetDisplayNameEdit,
 }) {
   const [localExpanded, setLocalExpanded] = useState({});
 
@@ -2342,6 +2419,7 @@ function CharacterFeatureListContent({
               v2TableContext={v2TableContext}
               pendingBanners={pendingBanners}
               hideV2CardChips={hideV2CardChips}
+              onSheetDisplayNameEdit={onSheetDisplayNameEdit}
             />
           );
         })}
@@ -2367,6 +2445,7 @@ export function CharacterFeatureList({
   interactionMode,
   v2TableContext,
   pendingBanners,
+  onSheetDisplayNameEdit,
 }) {
   const orderedEntries = useMemo(() => getOrderedGuideFeatureEntries(el, onV2CardChip), [el, onV2CardChip]);
   const hopeFeature = el.hopeFeature || el.hopeAbility;
@@ -2391,6 +2470,7 @@ export function CharacterFeatureList({
         interactionMode={interactionMode}
         v2TableContext={v2TableContext}
         pendingBanners={pendingBanners}
+        onSheetDisplayNameEdit={onSheetDisplayNameEdit}
       />
     </Section>
   );
@@ -2407,6 +2487,7 @@ export function CharacterAbilityList({
   featureUsage,
   onV2DomainChip,
   v2TableContext,
+  onSheetDisplayNameEdit,
 }) {
   const [localExpanded, setLocalExpanded] = useState({});
   const abilities = el.abilities || [];
@@ -2457,6 +2538,7 @@ export function CharacterAbilityList({
               v2TableContext={v2TableContext}
               sheetHighlightAbility={a}
               hideV2CardChips={hasLoadoutActions}
+              onSheetDisplayNameEdit={onSheetDisplayNameEdit}
             />
           );
         })}
@@ -2472,6 +2554,78 @@ export function CharacterAbilityList({
     );
   }
   return <Section label="LOADOUT">{inner}</Section>;
+}
+
+/**
+ * VAULT — domain cards known but not in the active loadout (same card chrome as LOADOUT, read-only).
+ */
+export function CharacterVaultAbilityList({
+  el,
+  expandedKeys,
+  onToggleFeature,
+  v2TableContext,
+  onSheetDisplayNameEdit,
+}) {
+  const vaultAbilities = el.domainVaultAbilities || [];
+  const [localExpanded, setLocalExpanded] = useState({});
+  const inBeastform = !!el.activeBeastform;
+
+  const hasLoadoutActions = useMemo(
+    () => characterHasLoadoutCardActions(el, v2TableContext),
+    [el, v2TableContext],
+  );
+
+  if (!vaultAbilities.length) return null;
+
+  const isOpen = (key) => {
+    if (expandedKeys !== undefined) return expandedKeys.includes(key);
+    return localExpanded[key] ?? false;
+  };
+  const toggle = (key) => {
+    if (onToggleFeature) onToggleFeature(key);
+    else setLocalExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const inner = (
+    <>
+      <p className="text-[11px] text-dh-muted leading-snug mb-1.5">
+        Inactive until swapped into your loadout. Recall costs apply when you bring a card back.
+      </p>
+      <div className={`space-y-2 ${inBeastform ? 'opacity-30 pointer-events-none select-none' : ''}`}>
+        {vaultAbilities.map((a, i) => {
+          const abilityKey = `ability-${a.id ?? i}`;
+          const key = `vault-ability-${a.id ?? i}`;
+          const featRow = resolveLoadoutAbilityFeatRow(el, a);
+          return (
+            <GuideFeatureCard
+              key={a.id || key}
+              featRow={featRow}
+              featureKey={abilityKey}
+              el={el}
+              open={isOpen(key)}
+              onToggle={() => toggle(key)}
+              interactionMode="preview"
+              onFeatureUse={undefined}
+              onV2CardChip={undefined}
+              v2TableContext={v2TableContext}
+              sheetHighlightAbility={a}
+              hideV2CardChips
+              onSheetDisplayNameEdit={onSheetDisplayNameEdit}
+            />
+          );
+        })}
+      </div>
+    </>
+  );
+
+  if (hasLoadoutActions) {
+    return (
+      <CharacterSheetEmphasisCard title="VAULT">
+        {inner}
+      </CharacterSheetEmphasisCard>
+    );
+  }
+  return <Section label="VAULT">{inner}</Section>;
 }
 
 export function CharacterInventory({ el }) {
@@ -2615,6 +2769,7 @@ export function CharacterDetailPane({ item, srdData, onCharacterRuntimeUpdate })
               <CharacterFeatureActionsEmphasisCard el={el} />
               <CharacterSheetDeclarativeCards el={el} interactionMode="preview" />
               <CharacterAbilityList el={el} />
+              <CharacterVaultAbilityList el={el} />
               <CharacterInventory el={el} />
               {el.background && (
                 <Section label="Background">

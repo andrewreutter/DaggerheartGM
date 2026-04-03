@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   clampPortalHoverTooltipY,
+  isClampPingPong,
   computePortalHoverTooltipPosition,
   computePortalHoverTooltipPositionBelow,
   PORTAL_HOVER_TOOLTIP_WIDTH,
   PORTAL_HOVER_TOOLTIP_GAP,
   PORTAL_HOVER_TOOLTIP_BOTTOM_PAD,
+  PORTAL_TOOLTIP_MAX_Y_CLAMPS_PER_SESSION,
 } from '../../src/client/lib/portal-hover-tooltip-position.js';
 
 describe('computePortalHoverTooltipPosition', () => {
@@ -51,6 +53,39 @@ describe('clampPortalHoverTooltipY', () => {
     const a = Math.round(clampPortalHoverTooltipY(Math.round(100.4), h, innerH, pad));
     const b = Math.round(clampPortalHoverTooltipY(Math.round(100.45), h, innerH, pad));
     expect(a).toBe(b);
+  });
+});
+
+describe('isClampPingPong', () => {
+  it('returns false when there is no prior clamp pair', () => {
+    expect(isClampPingPong(10, 20, { from: null, to: null })).toBe(false);
+  });
+
+  it('detects A→B then B→A oscillation (skip second update)', () => {
+    const last = { from: 100, to: 50 };
+    expect(isClampPingPong(50, 100, last)).toBe(true);
+  });
+
+  it('allows a new clamp when not the reverse of the last pair', () => {
+    const last = { from: 100, to: 50 };
+    expect(isClampPingPong(50, 40, last)).toBe(false);
+  });
+
+  it('does not stop a 3-way y cycle (session cap in hook is required for React #185)', () => {
+    const nextY = (y) => (y === 100 ? 80 : y === 80 ? 60 : 100);
+    let y = 100;
+    let pair = { from: null, to: null };
+    let steps = 0;
+    while (steps < 30) {
+      const n = nextY(y);
+      if (n === y) break;
+      if (isClampPingPong(y, n, pair)) break;
+      pair = { from: y, to: n };
+      y = n;
+      steps++;
+    }
+    expect(steps).toBe(30);
+    expect(PORTAL_TOOLTIP_MAX_Y_CLAMPS_PER_SESSION).toBeLessThan(steps);
   });
 });
 

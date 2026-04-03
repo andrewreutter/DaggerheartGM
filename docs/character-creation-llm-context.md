@@ -14,3 +14,9 @@ Facts the model should respect when proposing a **level 1** player character for
 - **Experience bonus**: some ancestries grant +1 to one experience; the app stores this as `experienceBonusChoices` mapping the **ancestry feature name** to the chosen **experience row id** after experiences are created.
 
 Output ids must match SRD rows from the provided catalog (`srd-*` ids). The server resolver also accepts **names** and maps them to ids when possible.
+
+## Optional multi-level fields (resolver)
+
+Concept AI is **level-1-first**: the default patch uses `level: 1` and `advancements: {}`. If the draft includes **`level`** (1–10), the resolver keeps it and pads **`experiences`** to `expectedExperienceRowCount(level)` (2 base rows + one per tier entry at or below that level: 2, 5, 8). Extra experience rows are trimmed with a warning.
+
+Optional **`advancements`**: a map of **level row** (string `"2"` … `"10"`) to `{ picks?: Array<{ type: string, ... }>, domainCardId?: string }`. Pick `type` values must match the app’s advancement types (`traits`, `hp`, `stress`, `evasion`, `experience`, `proficiency`, `domain_card`, `subclass_upgrade`, `multiclass`). Invalid pick types are dropped with a warning. This shape mirrors `CharacterForm` / `table_state` character library data; full multi-level AI generation is not required.

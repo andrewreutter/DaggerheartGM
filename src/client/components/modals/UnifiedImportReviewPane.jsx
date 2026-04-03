@@ -183,7 +183,13 @@ export function UnifiedImportReviewPane({
   }
 
   if (col === 'characters') {
-    return formWrap(<CharacterForm value={draft} onChange={(next) => replace(next)} />);
+    return formWrap(
+      <CharacterForm
+        value={draft}
+        onChange={(next) => replace(next)}
+        levelingToolsSessionKey={String(selectedRow.id)}
+      />,
+    );
   }
 
   return formWrap(

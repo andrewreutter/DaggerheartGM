@@ -23,6 +23,7 @@ import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-ho
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
+import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
 import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
 import { computeActionAckTouchesTableState } from '../lib/action-notification-banner.js';
@@ -559,8 +560,9 @@ function ActionBanner({ roll, onAcknowledge, onCancel, disableDismiss, lifeSuppo
 
   // Hide Cancel when Ack would not change table state (mirrors GMTableView handleBannerAcknowledge for _action).
   // V2 actionLoop notices (mutations already applied) and other informational actions only need Acknowledge.
+  // Start Session: show Cancel so the GM can dismiss without starting the session (suppression stays off in shouldSuppressActionBanner).
   const actionAckTouchesTableState = computeActionAckTouchesTableState(roll, { actionAdversaryTargets });
-  const showActionBannerCancel = onCancel != null && actionAckTouchesTableState;
+  const showActionBannerCancel = onCancel != null && (roll._sessionStart || actionAckTouchesTableState);
 
   const handleAcknowledge = () => {
     const extra = {};
@@ -1452,9 +1454,13 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const selectedTargetForTitle = selectedTargetIdForTitle
     ? filteredTargets.find(t => t.instanceId === selectedTargetIdForTitle)
     : null;
-  const bannerTitle = isMultiTargetMode && selectedTargetsForTitle.length > 0
-    ? `${displayName} → ${selectedTargetsForTitle.map(t => t.name).join(', ')}`
-    : selectedTargetForTitle ? `${displayName} → ${selectedTargetForTitle.name}` : displayName;
+  const bannerTitleTargetSuffix = isMultiTargetMode && selectedTargetsForTitle.length > 0
+    ? ` → ${selectedTargetsForTitle.map(t => t.name).join(', ')}`
+    : selectedTargetForTitle
+      ? ` → ${selectedTargetForTitle.name}`
+      : '';
+  const bannerTitlePlain =
+    displayName + bannerTitleTargetSuffix;
 
   const canReplayBannerTitle = resolved && onReplayDice && (roll.subItems || []).some(s => s.input && /d\d/i.test(s.input));
   const bannerTitleTooltip = [canReplayBannerTitle ? 'Replay dice animation' : '', gmHelperTooltip].filter(Boolean).join(' — ') || undefined;
@@ -1582,7 +1588,7 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
       <div
         className={`px-5 py-3 rounded-xl shadow-2xl text-center ${scheme.card}`}
       >
-        {bannerTitle && (
+        {bannerTitlePlain && (
           <div
             className={`text-[11px] uppercase tracking-widest opacity-70 mb-1.5 ${canReplayBannerTitle ? 'cursor-pointer hover:opacity-90' : ''}`}
             style={canReplayBannerTitle ? { pointerEvents: 'auto' } : undefined}
@@ -1590,7 +1596,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
             title={bannerTitleTooltip}
             role={canReplayBannerTitle ? 'button' : undefined}
           >
-            {bannerTitle}
+            <BannerSheetDisplayNameLine
+              displayName={displayName}
+              attackerName={attackerEl?.name}
+              targetSuffix={bannerTitleTargetSuffix}
+            />
             {gmHelperSuffix}
           </div>
         )}

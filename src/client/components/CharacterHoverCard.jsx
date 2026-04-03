@@ -18,6 +18,7 @@ import {
   CharacterFeatureActionsEmphasisCard,
   CharacterSheetDeclarativeCards,
   CharacterAbilityList,
+  CharacterVaultAbilityList,
   CharacterInventory,
   DefenseReactionRollGrid,
   TRAIT_FULL,
@@ -36,7 +37,11 @@ import {
   resolveClassFeatureDescriptor,
   resolveAbilityDescriptor,
 } from '../lib/game-table-mechanics.js';
-import { getEffectiveWeaponRange, recomputeCharacter } from '../lib/character-calc.js';
+import {
+  getEffectiveWeaponRange,
+  recomputeCharacter,
+  scaleWeaponDamageByProficiency,
+} from '../lib/character-calc.js';
 import { mergeV2DeclarativeSheetOverlay, buildV2RegistryWithSrdItems } from '../lib/v2-declarative-sheet.js';
 import { mergeDisplayElIntoTableActiveElements } from '../lib/build-feature-card-model.js';
 import { postTableOp, postV2CrossSheetChip } from '../lib/api.js';
@@ -48,6 +53,12 @@ import {
 import { runV2OwnedCardChipTableAction } from '../lib/v2-owned-card-chip-table.js';
 import { v2RollDieExtrasFromActionLoopPayload } from '../lib/v2-action-notification-dice.js';
 import { getFeatureUsageKeyForGuideFeature } from '../lib/feature-usage-key.js';
+import {
+  getWeaponSheetLabel,
+  getFeatureSheetLabel,
+  patchSheetDisplayNames,
+} from '../lib/sheet-display-names.js';
+import { SheetDisplayNameDialog } from './modals/SheetDisplayNameDialog.jsx';
 import { rangeBandNameToFt } from '../lib/map-range.js';
 import { formatTargetSummary } from '../lib/helpers.js';
 import {
@@ -261,6 +272,7 @@ export function CharacterHoverCard({
   // Druid beastform selection (shared by Beastform class feature and Evolution hope ability)
   // In-place target menu before sending roll: { type: 'weapon'|'beastform', rollText, displayName, rollMeta, validTargets, opts?, anchorRect? }
   const [targetMenuPending, setTargetMenuPending] = useState(null);
+  const [sheetNameEdit, setSheetNameEdit] = useState(null);
 
   /** GM or assigned player with `updateFn` — full V2 card chips (Beastform, Evolution, Elemental Incarnation, domain cards). */
   const v2TableScoped = !!(updateFn && tableId);
@@ -536,6 +548,9 @@ export function CharacterHoverCard({
   const buildFeatureRollText = (feature, subFeature, action) => {
     const charName = el.name;
     const featName = subFeature ? subFeature.name : feature.name;
+    const fk = getFeatureUsageKeyForGuideFeature(el, feature.name) ?? feature.name;
+    const parentLabel = getFeatureSheetLabel(el, fk, feature.name);
+    const displayFeatName = subFeature ? `${parentLabel}: ${subFeature.name}` : parentLabel;
     const parts = [];
 
     const frd =
@@ -552,7 +567,7 @@ export function CharacterHoverCard({
       const rollModBonus = getRollModBonus(rollModifiers, activeRollMod, 'spellcast');
       const modBonus = selectedMod?.mode === 'roll' && selectedMod.dice ? 0 : (selectedMod?.bonus ?? 0);
       const effectiveScore = baseScore + beastformBonus + rollModBonus + modBonus;
-      parts.push(`${charName} ${featName} Hope [d12] Fear [d12]`);
+      parts.push(`${charName} ${displayFeatName} Hope [d12] Fear [d12]`);
       if (effectiveScore !== 0) {
         parts.push(`${TRAIT_FULL[traitKey] || traitKey} [${effectiveScore}]`);
       }
@@ -562,9 +577,9 @@ export function CharacterHoverCard({
           : `{${featName}: Spellcast Roll}`,
       );
     } else if (hoverRoll === 'duality') {
-      parts.push(`${charName} ${featName} Hope [d12] Fear [d12]`);
+      parts.push(`${charName} ${displayFeatName} Hope [d12] Fear [d12]`);
     } else if (typeof hoverRoll === 'string' && hoverRoll && hoverRoll !== 'duality') {
-      parts.push(`${charName} ${featName} [${hoverRoll}]`);
+      parts.push(`${charName} ${displayFeatName} [${hoverRoll}]`);
     }
 
     // Append cost tags so the ResultBanner can display them
@@ -613,10 +628,13 @@ export function CharacterHoverCard({
     const action = buildActionForFeatureUse(displayEl, feature, subFeature);
     // Sub-feature cost may come from name, e.g. "Hold Them Off (3 Hope)" — prefer explicit number
     if (subFeature && typeof subFeature.hopeCost === 'number') action.hopeCost = subFeature.hopeCost;
-    const featName = subFeature ? subFeature.name : feature.name;
-
     // Feature-level key for usage tracking — must match Guide `entry.key` (see feature-usage-key.js)
     const featureKey = getFeatureUsageKeyForGuideFeature(el, feature.name) ?? feature.name;
+    const featName = subFeature ? subFeature.name : feature.name;
+    const parentLabelForDisplay = getFeatureSheetLabel(el, featureKey, feature.name);
+    const displayFeatTitle = subFeature
+      ? `${parentLabelForDisplay}: ${subFeature.name}`
+      : parentLabelForDisplay;
 
     // ── Prayer Dice: roll Nd4, chips are created from results on banner dismiss ──
     // Bypass the target-picker path entirely — the description mentions "ally" but
@@ -626,8 +644,9 @@ export function CharacterHoverCard({
         ? el.traits[el.spellcastTrait]
         : 2;
       const diceExprs = Array(Math.max(1, spellcastCount)).fill('[d4]').join(' ');
-      const rollText = `${el.name} Prayer Dice ${diceExprs}`;
-      const displayName = `${el.name} Prayer Dice`;  // shown as banner header
+      const pdLabel = getFeatureSheetLabel(el, featureKey, 'Prayer Dice');
+      const rollText = `${el.name} ${pdLabel} ${diceExprs}`;
+      const displayName = `${el.name} ${pdLabel}`;
       const prayerRollMeta = {
         _featureUse: true,
         _isPrayerDiceRoll: true,
@@ -700,7 +719,7 @@ export function CharacterHoverCard({
       // Dice roll path — experience Hope cost applied on GM ack, not here
       let rollText = buildFeatureRollText(feature, subFeature, action);
       if (!rollText) return;
-      const displayName = subFeature ? `${el.name} ${feature.name}: ${subFeature.name}` : `${el.name} ${feature.name}`;
+      const displayName = `${el.name} ${displayFeatTitle}`;
       onRoll?.(rollText, displayName, rollMeta, { characterEl: el });
       if (selectedMod) setSelectedModId(null);
     } else {
@@ -710,7 +729,7 @@ export function CharacterHoverCard({
       const notification = {
         _action: true,
         rollUser: el.name,
-        actionName: featName,
+        actionName: displayFeatTitle,
         actionText,
         tags: [
           ...(action.hopeCost > 0  ? [{ name: 'HopeCost',  text: `Spend ${action.hopeCost} Hope` }]  : []),
@@ -819,12 +838,13 @@ export function CharacterHoverCard({
     let damageStr = weapon.damage;
     if (weapon.damageProficiency && el.proficiency != null) {
       const base = weapon.damage || 'd8';
-      const prof = el.proficiency ? `+${el.proficiency}` : '';
+      const scaled = scaleWeaponDamageByProficiency(base, el.proficiency);
       const type = (weapon.damageType || '').toLowerCase();
-      damageStr = `${base}${prof}${type ? ' ' + type : ''}`;
+      damageStr = `${scaled}${type ? ' ' + type : ''}`;
     }
+    const weaponLabel = getWeaponSheetLabel(el, weapon);
     let rollText = buildWeaponRollText(
-      el.name, weapon.name, traitKey, effectiveTrait,
+      el.name, weaponLabel, traitKey, effectiveTrait,
       null, damageStr, weapon.feature, traits, el.level, opts, rollMeta, el,
     );
     const rangeStr = getEffectiveWeaponRange(weapon, el.ancestryFeatures) || weapon.effectiveRange || weapon.range;
@@ -832,7 +852,7 @@ export function CharacterHoverCard({
     if (selectedMod?.mode === 'roll' && selectedMod.dice) {
       rollText += ` ${selectedMod.name} [${selectedMod.dice}]`;
     }
-    let displayName = `${el.name} ${weapon.name}`;
+    let displayName = `${el.name} ${weaponLabel}`;
     rollMeta._attackerInstanceId = el.instanceId;
     if (weapon.id != null) rollMeta._weaponId = weapon.id;
     rollMeta._traitKey = (weapon.trait || '').toLowerCase();
@@ -854,7 +874,7 @@ export function CharacterHoverCard({
     if (el.rangerFocusOnNextAttack && updateFn) {
       rollMeta._rangerFocusAttempt = true;
       rollMeta._hopeCost = (rollMeta._hopeCost || 0) + 1;
-      displayName = `${el.name} ${weapon.name} with Ranger's Focus attempt`;
+      displayName = `${el.name} ${weaponLabel} with Ranger's Focus attempt`;
     }
 
     if (getValidTargets && rollMeta._weaponRangeFt != null) {
@@ -948,8 +968,7 @@ export function CharacterHoverCard({
     const bfBonus = parseBeastformBonus(bf.trait_bonus);
     const effectiveScore = traitScore + (bfBonus?.stat === traitKey ? bfBonus.bonus : 0);
     const traitName = TRAIT_FULL[traitKey] || traitKey;
-    const profBonus = el.proficiency ? `+${el.proficiency}` : '';
-    const dmgStr = profBonus ? `${damage}${profBonus}` : damage;
+    const dmgStr = scaleWeaponDamageByProficiency(damage, el.proficiency ?? 1);
     let rollText = `${el.name} ${bf.name} ${traitName} Hope [d12] Fear [d12]`;
     if (effectiveScore !== 0) rollText += ` ${traitName} [${effectiveScore}]`;
     rollText += ` damage [${dmgStr}]`;
@@ -1193,6 +1212,7 @@ export function CharacterHoverCard({
               featureUsage={el.featureUsage}
               currentHope={currentHope}
               updateFn={updateFn}
+              onSheetDisplayNameEdit={updateFn && el.instanceId ? setSheetNameEdit : undefined}
               activeChanneledElement={el.featureState?.[WARDEN_OF_THE_ELEMENTS_SCOPE_KEY]?.channeledElement ?? null}
               prayerDice={(el.activeModifiers || []).filter(m => m.name === 'Prayer Die')}
               onPrayerDieGainHope={onActionNotification ? (mod) => onActionNotification({
@@ -1239,6 +1259,7 @@ export function CharacterHoverCard({
               getValidTargets={getValidTargets}
               omitOuterSection
               sheetEmphasisTitle="Offense"
+              onSheetDisplayNameEdit={updateFn && el.instanceId ? setSheetNameEdit : undefined}
             />
             <CharacterFeatureActionsEmphasisCard
               el={displayEl}
@@ -1351,6 +1372,24 @@ export function CharacterHoverCard({
                     }
                   : undefined
               }
+              onSheetDisplayNameEdit={updateFn && el.instanceId ? setSheetNameEdit : undefined}
+            />
+            <CharacterVaultAbilityList
+              el={displayEl}
+              expandedKeys={expandedKeys}
+              onToggleFeature={onToggleFeature}
+              v2TableContext={
+                v2TableScoped
+                  ? {
+                      fearCount,
+                      mapConfig,
+                      tableFeatureState,
+                      activeElements,
+                      registry: v2Registry ?? undefined,
+                    }
+                  : undefined
+              }
+              onSheetDisplayNameEdit={updateFn && el.instanceId ? setSheetNameEdit : undefined}
             />
             {showResources && (
               <Section label="Resources">
@@ -1489,6 +1528,30 @@ export function CharacterHoverCard({
     )}
 
     {/* ── Feature input overlay (e.g. Sorcerer Channel Raw Power card level) ── */}
+    {sheetNameEdit && updateFn && el.instanceId && (
+      <SheetDisplayNameDialog
+        open
+        originalName={sheetNameEdit.originalName}
+        initialCustom={
+          sheetNameEdit.bucket === 'weapons'
+            ? el.sheetDisplayNames?.weapons?.[sheetNameEdit.key]
+            : sheetNameEdit.bucket === 'features'
+              ? el.sheetDisplayNames?.features?.[sheetNameEdit.key]
+              : el.sheetDisplayNames?.abilities?.[sheetNameEdit.key]
+        }
+        onClose={() => setSheetNameEdit(null)}
+        onSave={(custom) => {
+          const next = patchSheetDisplayNames(
+            el.sheetDisplayNames,
+            sheetNameEdit.bucket,
+            sheetNameEdit.key,
+            custom,
+          );
+          updateFn(el.instanceId, { sheetDisplayNames: next ?? {} });
+        }}
+      />
+    )}
+
     {featureInputPending && (
       <div className="absolute inset-0 z-20 flex items-center justify-center bg-dh-canvas/80 rounded-xl">
         <div className="bg-dh-surface border border-amber-600/60 rounded-lg p-4 shadow-2xl w-56 text-center">
