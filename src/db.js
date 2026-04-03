@@ -1032,6 +1032,7 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
   'featureState', // V2 per-character feature bags (see mergeDeclarativeFeatureState)
   'featureStateDeclared', // keys written via table.feature.set / table.source.set (manual)
   'prayerDice', // Seraph: { pool: number[] } — keep in sync with CHARACTER_RUNTIME_KEYS in table-ops.js
+  'sheetDisplayNames', // optional { weapons, features, abilities } display overrides (Game Table)
   'v2PendingMove',
   'v2MoveLockRollDbId',
   'v2MoveLockSource',

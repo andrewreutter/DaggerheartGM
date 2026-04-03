@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Shield, Swords, Star } from 'lucide-react';
+import { Loader2, Shield, Swords, Star } from 'lucide-react';
 import { FormRow } from './FormRow.jsx';
 import { CustomSelect } from './CustomSelect.jsx';
 import { GuideFeatureCard } from '../features/GuideFeatureCard.jsx';
@@ -7,13 +7,51 @@ import { useCharacterSrdData } from '../../lib/useCharacterSrdData.js';
 import {
   recomputeCharacter, tierFromLevel, TRAIT_KEYS, TRAIT_POOL,
   resolveWeapon, resolveArmor, parseArmorThresholds, getEffectiveWeaponRange,
+  collectOwnedDomainAbilityIds,
+  collectOwnedDomainAbilityIdsThroughCharacterLevel,
+  resolveDomainTradesThroughLevel,
+  normalizeDomainSlotAcquiredLevels,
+  syncDomainSlotAcquiredLevelForAbilityIds,
+  isCharacterComplete,
+  shouldShowCharacterEditorLevelUp,
+  projectCharacterFormToLevel,
 } from '../../lib/character-calc.js';
-import { generateId } from '../../lib/helpers.js';
+import {
+  advancementLevelToBand,
+  maxSelectableDomainCardLevelForRow,
+  isDomainSlotDirectEditLocked,
+  isDomainLevelingToolsUnlocked,
+  buildDomainTradeReplacementOptions,
+  TIER_ENTRY_LEVELS,
+  experienceRowIndexForTierEntryLevel,
+  tierEntryLevelForBand,
+} from '../../lib/advancement-rules.js';
+import { dedupeAbilitiesById, generateId } from '../../lib/helpers.js';
 import { getAncestryExperienceBonus } from '../../lib/ancestry-experience-bonus.js';
 import { v2ClassSubclassFeatureDescriptorsByName } from '../../lib/v2-class-subclass-feature-descriptors.js';
 import { collectEditorCardsForCharacter } from '../../lib/build-feature-card-model.js';
 import { DeclarativeSchemaEditorCard } from '../DeclarativeSchemaCard.jsx';
 import { CharacterAiConceptStrip } from '../CharacterAiConceptStrip.jsx';
+import { AdvancementTierPanels } from './AdvancementTierPanels.jsx';
+
+/** After Level Up: scroll to the tier band and focus tier-exp name (2/5/8) or domain card select (other levels). */
+function focusAdvancementFirstWidgetForNewLevel(rootEl, nextLevel) {
+  if (!rootEl || nextLevel < 2) return;
+  const band = advancementLevelToBand(nextLevel);
+  const panel = rootEl.querySelector(`[data-advancement-tier-band="${band}"]`);
+  if (!panel) return;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  let focusTarget = null;
+  if (TIER_ENTRY_LEVELS.includes(nextLevel)) {
+    focusTarget = panel.querySelector('[data-level-up-first-focus="tier-exp"]');
+  } else {
+    const wrap = panel.querySelector(`[data-advancement-domain-for-level="${nextLevel}"]`);
+    focusTarget = wrap?.querySelector('button');
+  }
+  if (focusTarget && typeof focusTarget.focus === 'function') {
+    focusTarget.focus({ preventScroll: true });
+  }
+}
 
 const TRAIT_LABELS = {
   agility: 'Agility', strength: 'Strength', finesse: 'Finesse',
@@ -41,6 +79,23 @@ function highestTraitNames(traits) {
 function pickRandom(arr) {
   if (!arr?.length) return undefined;
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+/** Muted meta to the right of domain card names: Level · domain · type */
+function formatDomainAbilityMetaLine(ability) {
+  if (!ability) return '';
+  return [`Level ${ability.level}`, ability.domain, ability.type].filter(Boolean).join(' · ');
+}
+
+function DomainAbilityNameMetaRow({ abilityId, srdData }) {
+  const a = abilityId ? srdData?.abilitiesById?.[abilityId] : null;
+  const meta = a ? formatDomainAbilityMetaLine(a) : '';
+  return (
+    <span className="flex w-full min-w-0 items-center justify-between gap-2">
+      <span className="truncate font-medium text-dh">{a?.name || abilityId}</span>
+      {meta ? <span className="shrink-0 text-[10px] text-dh-muted">{meta}</span> : null}
+    </span>
+  );
 }
 
 function WeaponOption({ weapon, isRecommended, showBurden, ancestryFeatures }) {
@@ -259,9 +314,15 @@ function buildMinimalPreviewForm(overrides = {}) {
     experiences: [{ name: '', score: 2, id: 'preview-exp-stub' }],
     abilityIds: [null, null],
     advancements: {},
+    domainLoadoutIds: [],
+    multiclassClassId: null,
+    multiclassSubclassId: null,
+    multiclassDomain: null,
+    spellcastTraitSource: null,
     background: '',
     connectionText: '',
     companion: null,
+    advancementChoicesLockedThroughLevel: 1,
     ...overrides,
   };
 }
@@ -290,17 +351,6 @@ function SrdPreviewFeatureCards({ rows }) {
   );
 }
 
-const ADVANCEMENT_TYPES = [
-  { value: 'traits', label: '+1 to two Traits' },
-  { value: 'hp', label: '+1 Max HP' },
-  { value: 'stress', label: '+1 Max Stress' },
-  { value: 'evasion', label: '+1 Evasion' },
-  { value: 'experience', label: '+1 Experience' },
-  { value: 'proficiency', label: '+1 Proficiency (×2 cost)', doubleCost: true },
-  { value: 'domain_card', label: 'Extra Domain Card' },
-  { value: 'subclass_upgrade', label: 'Subclass Upgrade' },
-];
-
 /**
  * Controlled-mode character builder form.
  * Props: value (full formData) + onChange(newFormData); optional onAiBusyChange(busy) for modal close guards.
@@ -313,6 +363,12 @@ export function CharacterForm({
   autoRunAiConcept,
   onAutoRunAiConceptConsumed,
   autoRunSessionKey = '',
+  /** Resets domain level-up tool baseline when the edited item / import row changes */
+  levelingToolsSessionKey = '',
+  /** When set, overrides session heuristic for removing extra domain slots (vs. baseline level) */
+  domainLevelingToolsUnlocked: domainLevelingToolsUnlockedProp,
+  /** Game Table: slider preview level (1…saved level); rolled-back display when below saved level */
+  levelPreview,
 }) {
   const { srdData, loading: srdLoading } = useCharacterSrdData();
   const isControlled = value !== undefined;
@@ -322,10 +378,17 @@ export function CharacterForm({
     classId: null, subclassId: null, ancestryIds: [], communityId: null,
     baseTraits: {}, armorId: null, primaryWeaponId: null, secondaryWeaponId: null,
     experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
-    abilityIds: [], advancements: {}, background: '', connectionText: '', companion: null,
+    abilityIds: [null, null],
+    domainSlotAcquiredLevel: [1, 1],
+    advancements: {},
+    domainLoadoutIds: [],
+    multiclassClassId: null, multiclassSubclassId: null, multiclassDomain: null, spellcastTraitSource: null,
+    background: '', connectionText: '', companion: null,
+    advancementChoicesLockedThroughLevel: 1,
   });
   const [weaponSortOrder, setWeaponSortOrder] = useState('name');
   const [weaponGroupTraitOptimized, setWeaponGroupTraitOptimized] = useState(true);
+  const advancementSectionRef = useRef(null);
 
   const [aiBusy, setAiBusy] = useState(false);
   const aiStripRef = useRef(null);
@@ -333,6 +396,37 @@ export function CharacterForm({
   const formData = isControlled ? value : localData;
   const formDataRef = useRef(formData);
   formDataRef.current = formData;
+
+  const storedLevelForPreview = Number(formData.level) || 1;
+  const levelPreviewClamped =
+    typeof levelPreview === 'number' && Number.isFinite(levelPreview)
+      ? Math.min(Math.max(1, Math.floor(levelPreview)), storedLevelForPreview)
+      : storedLevelForPreview;
+  const isLevelHistoryPreview =
+    typeof levelPreview === 'number' &&
+    Number.isFinite(levelPreview) &&
+    levelPreviewClamped < storedLevelForPreview;
+  const displayForm = useMemo(
+    () => (isLevelHistoryPreview ? projectCharacterFormToLevel(formData, levelPreviewClamped) : formData),
+    [formData, isLevelHistoryPreview, levelPreviewClamped],
+  );
+  const recoDisplay = useMemo(() => {
+    if (!srdData) return null;
+    return recomputeCharacter(displayForm, srdData);
+  }, [displayForm, srdData]);
+
+  const domainLevelingBaselineRef = useRef(null);
+  const prevLevelingSessionKeyRef = useRef(levelingToolsSessionKey);
+  if (prevLevelingSessionKeyRef.current !== levelingToolsSessionKey) {
+    prevLevelingSessionKeyRef.current = levelingToolsSessionKey;
+    domainLevelingBaselineRef.current = formData.level ?? 1;
+  } else if (domainLevelingBaselineRef.current === null) {
+    domainLevelingBaselineRef.current = formData.level ?? 1;
+  }
+  const domainLevelingToolsUnlocked =
+    typeof domainLevelingToolsUnlockedProp === 'boolean'
+      ? domainLevelingToolsUnlockedProp
+      : isDomainLevelingToolsUnlocked(formData.level ?? 1, domainLevelingBaselineRef.current ?? 1);
 
   const previewRowsCacheRef = useRef({ srd: null, map: new Map() });
   if (previewRowsCacheRef.current.srd !== srdData) {
@@ -429,6 +523,15 @@ export function CharacterForm({
 
   const set = (patch) => update({ ...formData, ...patch });
 
+  function patchExperienceNameAtIndex(i, name) {
+    const exps = [...(formData.experiences || [])];
+    if (i < 0 || i >= exps.length) return;
+    const next = { ...exps[i], name };
+    if (next.tierEntryAuto && String(name).trim()) delete next.tierEntryAuto;
+    exps[i] = next;
+    set({ experiences: exps });
+  }
+
   // When SRD data first loads, recompute so derived stats (evasion, traits, etc.)
   // reflect current equipment even if the DB record predates armor/weapon feature automation.
   const initialRecomputeDone = useRef(false);
@@ -443,12 +546,29 @@ export function CharacterForm({
     }
   }, [srdData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const level = formData.level ?? 1;
+  const level = displayForm.level ?? 1;
   const tier = tierFromLevel(level);
+
+  const showLevelUpButton = useMemo(
+    () => shouldShowCharacterEditorLevelUp(formData, srdData),
+    [formData, srdData],
+  );
+
+  const hiddenTierExperienceRowIndices = useMemo(() => {
+    const lv = Number(level) || 1;
+    const hid = new Set();
+    for (const t of TIER_ENTRY_LEVELS) {
+      if (lv >= t) {
+        const ri = experienceRowIndexForTierEntryLevel(t);
+        if (ri != null) hid.add(ri);
+      }
+    }
+    return hid;
+  }, [level]);
 
   // Class options
   const classOptions = useMemo(() => (srdData?.classes || []).sort((a, b) => a.name.localeCompare(b.name)), [srdData]);
-  const selectedClass = srdData?.classesById?.[formData.classId] || null;
+  const selectedClass = srdData?.classesById?.[displayForm.classId] || null;
 
   // Subclass options filtered by selected class
   const subclassOptions = useMemo(() => {
@@ -456,14 +576,14 @@ export function CharacterForm({
     const subNames = selectedClass.subclasses || [];
     return (srdData.subclasses || []).filter(sc => subNames.includes(sc.name));
   }, [selectedClass, srdData]);
-  const selectedSubclass = srdData?.subclassesById?.[formData.subclassId] || null;
+  const selectedSubclass = srdData?.subclassesById?.[displayForm.subclassId] || null;
 
   const editorCardsAfterSubclass = useMemo(() => {
     if (!srdData) return [];
-    return collectEditorCardsForCharacter(formData).filter(
+    return collectEditorCardsForCharacter(displayForm).filter(
       ({ shape }) => shape?.anchors?.afterSelector === 'subclassId',
     );
-  }, [formData, srdData]);
+    }, [displayForm, srdData]);
 
   // Beastbound companion always has at least two experience slots (two blank rows).
   useEffect(() => {
@@ -494,38 +614,79 @@ export function CharacterForm({
     return (srdData.weapons || []).filter(w => (w.tier || 1) <= tier).sort((a, b) => a.name.localeCompare(b.name));
   }, [srdData, tier]);
 
-  // Domain card options filtered by class domains and level
+  const characterDomains = useMemo(() => {
+    const d = new Set(selectedClass?.domains || []);
+    if (displayForm.multiclassDomain) d.add(displayForm.multiclassDomain);
+    return [...d];
+  }, [selectedClass, displayForm.multiclassDomain]);
+
+  // Domain cards: primary domains use full level cap; multiclass domain uses ceil(level/2) for selection.
   const abilityOptions = useMemo(() => {
     if (!srdData || !selectedClass) return [];
-    const domains = selectedClass.domains || [];
-    return (srdData.abilities || [])
-      .filter(a => domains.includes(a.domain) && (a.level || 1) <= level)
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [srdData, selectedClass, level]);
+    return dedupeAbilitiesById(
+      (srdData.abilities || []).filter((a) => {
+        if (!characterDomains.includes(a.domain)) return false;
+        const cap = maxSelectableDomainCardLevelForRow(level, level, a.domain, displayForm.multiclassDomain);
+        return (a.level || 1) <= cap;
+      }),
+    ).sort((a, b) => a.name.localeCompare(b.name));
+  }, [srdData, selectedClass, level, characterDomains, displayForm.multiclassDomain]);
 
-  // All currently selected domain card IDs across all slots (base + advancements)
+  const abilityOptionsForAdvancementLevel = useCallback((advLvl) => {
+    if (!srdData || !selectedClass) return [];
+    return dedupeAbilitiesById(
+      (srdData.abilities || []).filter((a) => {
+        if (!characterDomains.includes(a.domain)) return false;
+        const cap = maxSelectableDomainCardLevelForRow(level, advLvl, a.domain, displayForm.multiclassDomain);
+        return (a.level || 1) <= cap;
+      }),
+    ).sort((a, b) => a.name.localeCompare(b.name));
+  }, [srdData, selectedClass, level, characterDomains, displayForm.multiclassDomain]);
+
+  const ownedDomainAbilityIds = useMemo(() => collectOwnedDomainAbilityIds(displayForm), [displayForm]);
+
+  const domainSlotAcquiredLevelNorm = useMemo(
+    () => normalizeDomainSlotAcquiredLevels(displayForm),
+    [displayForm.abilityIds, displayForm.domainSlotAcquiredLevel, displayForm.level],
+  );
+
+  const getTradeToOptions = useCallback(
+    (fromId) =>
+      buildDomainTradeReplacementOptions({
+        fromId,
+        srdData,
+        domainsAllowed: characterDomains,
+        characterLevel: level,
+        multiclassDomain: displayForm.multiclassDomain,
+        ownedDomainAbilityIds,
+      }),
+    [srdData, characterDomains, level, displayForm.multiclassDomain, ownedDomainAbilityIds],
+  );
+
+  // Effective domain card IDs (creation slots + per-level row + domain_card advancement picks) for duplicate filtering
   const allSelectedDomainCardIds = useMemo(() => {
+    const resolved = resolveDomainTradesThroughLevel(displayForm, displayForm.level ?? 10);
     const ids = new Set();
-    for (const id of (formData.abilityIds || [])) {
+    for (const id of resolved.abilityIds || []) {
       if (id) ids.add(id);
     }
-    for (const adv of Object.values(formData.advancements || {})) {
+    for (const adv of Object.values(resolved.advancements || {})) {
       if (adv.domainCardId) ids.add(adv.domainCardId);
+      for (const p of adv?.picks || []) {
+        if (p?.type === 'domain_card' && p?.abilityId) ids.add(p.abilityId);
+      }
     }
     return ids;
-  }, [formData.abilityIds, formData.advancements]);
+  }, [displayForm]);
 
   // Trait assignment
-  const baseTraits = formData.baseTraits || {};
+  const baseTraits = displayForm.baseTraits || {};
   const assignedValues = TRAIT_KEYS.map(k => baseTraits[k]).filter(v => v != null);
   const availablePool = [...TRAIT_POOL];
   for (const v of assignedValues) {
     const idx = availablePool.indexOf(v);
     if (idx >= 0) availablePool.splice(idx, 1);
   }
-
-  // Advancement sections state
-  const [openAdvancements, setOpenAdvancements] = useState({});
 
   const handleFillOutAutomatically = useCallback(() => {
     const best = highestTraitNames(formData.traits);
@@ -603,6 +764,7 @@ export function CharacterForm({
       secondaryWeaponId,
       armorId,
       abilityIds,
+      domainSlotAcquiredLevel: syncDomainSlotAcquiredLevelForAbilityIds(formData, abilityIds),
       experiences,
       ...(expBonus ? { experienceBonusChoices } : {}),
       ...(companion != null ? { companion } : {}),
@@ -627,6 +789,14 @@ export function CharacterForm({
       ancestryIds: newAncestry ? [newAncestry.id] : [],
       communityId: newCommunity?.id ?? null,
       abilityIds: [null, null],
+      advancements: {},
+      domainLoadoutIds: [],
+      domainSlotAcquiredLevel: [1, 1],
+      multiclassClassId: null,
+      multiclassSubclassId: null,
+      multiclassDomain: null,
+      spellcastTraitSource: null,
+      advancementChoicesLockedThroughLevel: 1,
       ...(suggestedTraits ? { baseTraits: suggestedTraits } : {}),
     };
     if (newSubclass?.name === 'Beastbound' && formData.companion == null) {
@@ -687,46 +857,53 @@ export function CharacterForm({
             </div>
           </>
         ) : null}
-        <div className={aiBusy ? 'pointer-events-none select-none opacity-[0.68]' : ''}>
+        <div
+          className={
+            aiBusy
+              ? 'pointer-events-none select-none opacity-[0.68]'
+              : isLevelHistoryPreview
+                ? 'pointer-events-none select-none opacity-[0.93]'
+                : ''
+          }
+        >
       {/* ── Name and Identity ── */}
       <FormRow label="Name">
+        <div className="flex items-start gap-3">
+          <input
+            type="text"
+            value={displayForm.name || ''}
+            onChange={e => set({ name: e.target.value })}
+            className="min-w-0 flex-1 bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
+            placeholder="Character name"
+          />
+          <div
+            className="shrink-0 flex flex-col items-end gap-0.5 text-right"
+            title={`Level ${level} · Tier ${tier}`}
+          >
+            <span className="text-[10px] font-medium text-dh-muted leading-none">Level</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-base font-semibold text-dh tabular-nums leading-tight">{level}</span>
+              <span className="text-[10px] font-bold text-sky-400/80 bg-sky-900/50 border border-sky-800/50 rounded px-1.5 py-0.5 leading-none">
+                T{tier}
+              </span>
+            </div>
+          </div>
+        </div>
+      </FormRow>
+
+      <FormRow label="Pronouns">
         <input
           type="text"
-          value={formData.name || ''}
-          onChange={e => set({ name: e.target.value })}
+          value={displayForm.pronouns || ''}
+          onChange={e => set({ pronouns: e.target.value })}
           className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
-          placeholder="Character name"
+          placeholder="they/them"
         />
       </FormRow>
 
-      <div className="grid grid-cols-2 gap-3">
-        <FormRow label="Pronouns">
-          <input
-            type="text"
-            value={formData.pronouns || ''}
-            onChange={e => set({ pronouns: e.target.value })}
-            className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none"
-            placeholder="they/them"
-          />
-        </FormRow>
-        <FormRow label="Level">
-          <div className="flex items-center gap-2">
-            <CustomSelect
-              value={level}
-              onChange={n => set({ level: n })}
-              options={[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
-              getOptionKey={n => String(n)}
-              getOptionLabel={n => String(n)}
-              className="w-20"
-            />
-            <span className="text-[10px] font-bold text-sky-400/70 bg-sky-900/50 border border-sky-800/50 rounded px-1.5 py-0.5">T{tier}</span>
-          </div>
-        </FormRow>
-      </div>
-
       <FormRow label="Description">
         <textarea
-          value={formData.description || ''}
+          value={displayForm.description || ''}
           onChange={e => set({ description: e.target.value })}
           rows={2}
           className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
@@ -747,11 +924,19 @@ export function CharacterForm({
       {/* ── Class ── */}
       <FormRow label="Class">
         <CustomSelect
-          value={formData.classId || null}
+          value={displayForm.classId || null}
           onChange={newClassId => {
             const newClass = newClassId ? srdData?.classesById?.[newClassId] : null;
             const suggestedTraits = newClass ? parseSuggestedTraits(newClass.suggested_traits) : null;
-            const patch = { classId: newClassId, subclassId: null, abilityIds: [null, null] };
+            const patch = {
+              classId: newClassId,
+              subclassId: null,
+              abilityIds: [null, null],
+              advancements: {},
+              domainLoadoutIds: [],
+              domainSlotAcquiredLevel: [1, 1],
+              advancementChoicesLockedThroughLevel: 1,
+            };
             if (suggestedTraits) patch.baseTraits = suggestedTraits;
             set(patch);
           }}
@@ -791,11 +976,11 @@ export function CharacterForm({
       {/* ── Subclass ── */}
       <FormRow label="Subclass">
         <CustomSelect
-          value={formData.subclassId || null}
+          value={displayForm.subclassId || null}
           onChange={id => {
             const newSub = id ? srdData?.subclassesById?.[id] : null;
             const patch = { subclassId: id };
-            if (newSub?.name === 'Beastbound' && (formData.companion == null)) {
+            if (newSub?.name === 'Beastbound' && (displayForm.companion == null)) {
               patch.companion = {
                 name: '', species: '', attackName: '', evasion: 10, maxStress: 3, currentStress: 0,
                 experiences: [{ name: '', score: 2, id: generateId() }, { name: '', score: 2, id: generateId() }],
@@ -828,7 +1013,7 @@ export function CharacterForm({
             featureName={feature.name}
             jsonSchema={shape.jsonSchema}
             bind={shape.bind}
-            formCharacter={formData}
+            formCharacter={displayForm}
             setCharacter={(next) => update(next)}
           />
         </FormRow>
@@ -837,7 +1022,7 @@ export function CharacterForm({
       {/* ── Ancestry ── */}
       <FormRow label="Ancestry">
         <CustomSelect
-          value={formData.ancestryIds?.[0] || null}
+          value={displayForm.ancestryIds?.[0] || null}
           onChange={id => set({ ancestryIds: id ? [id] : [] })}
           options={ancestryOptions.map(a => a.id)}
           getOptionKey={id => id}
@@ -855,7 +1040,7 @@ export function CharacterForm({
       {/* ── Community ── */}
       <FormRow label="Community">
         <CustomSelect
-          value={formData.communityId || null}
+          value={displayForm.communityId || null}
           onChange={id => set({ communityId: id })}
           options={communityOptions.map(c => c.id)}
           getOptionKey={id => id}
@@ -874,8 +1059,8 @@ export function CharacterForm({
         <button
           type="button"
           onClick={handleFillOutAutomatically}
-          disabled={!formData.classId || !formData.subclassId || !formData.ancestryIds?.[0] || !formData.communityId}
-          title={!(formData.classId && formData.subclassId && formData.ancestryIds?.[0] && formData.communityId) ? 'Select class, subclass, ancestry, and community to enable' : undefined}
+          disabled={!displayForm.classId || !displayForm.subclassId || !displayForm.ancestryIds?.[0] || !displayForm.communityId}
+          title={!(displayForm.classId && displayForm.subclassId && displayForm.ancestryIds?.[0] && displayForm.communityId) ? 'Select class, subclass, ancestry, and community to enable' : undefined}
           className="w-full py-2 px-4 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-sky-900/60 border-sky-700 text-sky-200 hover:bg-sky-800 hover:border-sky-600 disabled:hover:bg-sky-900/60 disabled:hover:border-sky-700"
         >
           Random remaining selections
@@ -913,8 +1098,9 @@ export function CharacterForm({
                   placeholder="—"
                   className="flex-1"
                 />
-                {formData.traits?.[trait] != null && formData.traits[trait] !== (baseTraits[trait] ?? 0) && (
-                  <span className="text-[10px] text-sky-400">→ {formData.traits[trait] > 0 ? '+' : ''}{formData.traits[trait]}</span>
+                {recoDisplay?.traits?.[trait] != null &&
+                  recoDisplay.traits[trait] !== (baseTraits[trait] ?? 0) && (
+                  <span className="text-[10px] text-sky-400">→ {recoDisplay.traits[trait] > 0 ? '+' : ''}{recoDisplay.traits[trait]}</span>
                 )}
               </div>
             );
@@ -925,7 +1111,7 @@ export function CharacterForm({
       {/* ── Equipment: Armor ── */}
       <FormRow label="Armor">
         <CustomSelect
-          value={formData.armorId || null}
+          value={displayForm.armorId || null}
           onChange={id => set({ armorId: id })}
           options={[null, ...armorOptions.map(a => a.id)]}
           getOptionKey={id => id || '__none__'}
@@ -943,9 +1129,9 @@ export function CharacterForm({
 
       {/* ── Equipment: Weapons ── */}
       {(() => {
-        const selectedPrimary = srdData?.weaponsById?.[formData.primaryWeaponId];
+        const selectedPrimary = srdData?.weaponsById?.[displayForm.primaryWeaponId];
         const isTwoHanded = selectedPrimary?.burden === 'Two-Handed';
-        const formAncestryFeatures = (formData.ancestryIds || [])
+        const formAncestryFeatures = (displayForm.ancestryIds || [])
           .flatMap(id => (srdData?.ancestriesById?.[id]?.features || []).map(f => ({ name: f.name })));
         return (
           <div className="space-y-2">
@@ -973,7 +1159,7 @@ export function CharacterForm({
             <div className="grid grid-cols-2 gap-3">
               <FormRow label="Primary Weapon">
                 <WeaponSelect
-                  value={formData.primaryWeaponId || null}
+                  value={displayForm.primaryWeaponId || null}
                   onChange={newId => {
                     const newWeapon = newId ? srdData?.weaponsById?.[newId] : null;
                     const patch = { primaryWeaponId: newId };
@@ -981,7 +1167,7 @@ export function CharacterForm({
                     set(patch);
                   }}
                   weapons={weaponOptions.filter(w => w.primary_or_secondary !== 'Secondary')}
-                  traits={formData.traits}
+                  traits={recoDisplay?.traits || displayForm.traits}
                   placeholder="Select primary..."
                   showBurden
                   ancestryFeatures={formAncestryFeatures}
@@ -991,10 +1177,10 @@ export function CharacterForm({
               </FormRow>
               <FormRow label="Secondary Weapon">
                 <WeaponSelect
-                  value={formData.secondaryWeaponId || null}
+                  value={displayForm.secondaryWeaponId || null}
                   onChange={newId => set({ secondaryWeaponId: newId })}
                   weapons={isTwoHanded ? [] : weaponOptions.filter(w => w.primary_or_secondary !== 'Primary')}
-                  traits={formData.traits}
+                  traits={recoDisplay?.traits || displayForm.traits}
                   placeholder={isTwoHanded ? 'N/A (two-handed)' : 'Select secondary...'}
                   disabled={isTwoHanded}
                   ancestryFeatures={formAncestryFeatures}
@@ -1012,47 +1198,37 @@ export function CharacterForm({
 
       {/* ── Experiences ── */}
       {(() => {
-        const ancestryId = formData.ancestryIds?.[0];
+        const ancestryId = displayForm.ancestryIds?.[0];
         const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
         const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
-        const chosenExpId = expBonus ? formData.experienceBonusChoices?.[expBonus.featureName] : null;
+        const chosenExpId = expBonus ? displayForm.experienceBonusChoices?.[expBonus.featureName] : null;
         return (
           <FormRow label="Experiences">
             <div className="space-y-1.5">
-              {(formData.experiences || []).map((exp, i) => {
+              {(displayForm.experiences || [])
+                .map((exp, i) => ({ exp, i }))
+                .filter(({ i }) => !hiddenTierExperienceRowIndices.has(i))
+                .map(({ exp, i }) => {
                 const isChosen = expBonus && exp.id === chosenExpId;
                 // Form data is already recomputed (update() sends recomputeCharacter output); show score as-is to avoid double-adding bonus
                 const displayScore = exp.score ?? 2;
                 return (
-                  <div key={exp.id || i} className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={exp.name || ''}
-                      onChange={e => {
-                        const exps = [...(formData.experiences || [])];
-                        exps[i] = { ...exps[i], name: e.target.value };
-                        set({ experiences: exps });
-                      }}
-                      className="flex-1 bg-dh-raised border border-dh-border rounded px-2 py-1 text-sm text-dh focus:border-sky-500 focus:outline-none"
-                      placeholder="Experience name"
-                    />
-                    <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0" title={isChosen ? `${ancestryName} bonus +${expBonus.amount}` : undefined}>
-                      +{displayScore}
-                    </span>
-                    <button
-                      onClick={() => {
-                        const exps = (formData.experiences || []).filter((_, j) => j !== i);
-                        set({ experiences: exps });
-                      }}
-                      className="text-dh-muted hover:text-red-400 text-sm"
-                    >×</button>
+                  <div key={exp.id || i} className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={exp.name || ''}
+                        onChange={e => patchExperienceNameAtIndex(i, e.target.value)}
+                        className="flex-1 bg-dh-raised border border-dh-border rounded px-2 py-1 text-sm text-dh focus:border-sky-500 focus:outline-none"
+                        placeholder="Experience name"
+                      />
+                      <span className="text-sm font-bold text-sky-400 tabular-nums w-8 text-center shrink-0" title={isChosen ? `${ancestryName} bonus +${expBonus.amount}` : undefined}>
+                        +{displayScore}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
-              <button
-                onClick={() => set({ experiences: [...(formData.experiences || []), { name: '', score: 2, id: generateId() }] })}
-                className="text-xs text-sky-400 hover:text-sky-300"
-              >+ Add Experience</button>
             </div>
           </FormRow>
         );
@@ -1060,19 +1236,23 @@ export function CharacterForm({
 
       {/* ── Experience bonus (ancestry, e.g. Clank Purposeful Design) ── */}
       {(() => {
-        const ancestryId = formData.ancestryIds?.[0];
+        const ancestryId = displayForm.ancestryIds?.[0];
         const ancestryName = ancestryId ? srdData?.ancestriesById?.[ancestryId]?.name : null;
         const expBonus = ancestryName ? getAncestryExperienceBonus(ancestryName) : null;
         if (!expBonus) return null;
         const { amount, featureName } = expBonus;
-        const experiences = formData.experiences || [];
+        const experiences = displayForm.experiences || [];
         const options = experiences.filter(e => e.id).map(e => e.id);
-        const value = formData.experienceBonusChoices?.[featureName] ?? null;
+        const value = displayForm.experienceBonusChoices?.[featureName] ?? null;
         return (
           <FormRow label={`${ancestryName} ${featureName}: which experience gets +${amount}?`}>
             <CustomSelect
               value={value}
-              onChange={id => set({ experienceBonusChoices: { ...(formData.experienceBonusChoices || {}), [featureName]: id ?? null } })}
+              onChange={(id) =>
+                set({
+                  experienceBonusChoices: { ...(formData.experienceBonusChoices || {}), [featureName]: id ?? null },
+                })
+              }
               options={[null, ...options]}
               getOptionKey={id => id ?? '__none__'}
               getOptionLabel={id => id ? (experiences.find(e => e.id === id)?.name || id) : 'Select an experience…'}
@@ -1090,19 +1270,28 @@ export function CharacterForm({
           <div className="space-y-1.5">
             {(() => {
               // Always show at least MIN_DOMAIN_CARD_SLOTS rows when a class is selected.
-              const rawIds = formData.abilityIds || [];
+              const rawIds = displayForm.abilityIds || [];
               const displaySlots = [...rawIds];
               while (displaySlots.length < MIN_DOMAIN_CARD_SLOTS) displaySlots.push(null);
               return displaySlots.map((aId, i) => {
                 const ability = aId ? srdData?.abilitiesById?.[aId] : null;
+                const acquiredAt = domainSlotAcquiredLevelNorm[i] ?? 1;
+                const slotLocked = isDomainSlotDirectEditLocked({
+                  acquiredAtLevel: acquiredAt,
+                  characterLevel: level,
+                  advancements: displayForm.advancements,
+                });
                 return (
                   <div key={i} className="flex items-center gap-2">
                     <CustomSelect
                       value={aId || null}
-                      onChange={id => {
+                      onChange={(id) => {
                         const ids = [...displaySlots];
                         ids[i] = id;
-                        set({ abilityIds: ids });
+                        set({
+                          abilityIds: ids,
+                          domainSlotAcquiredLevel: syncDomainSlotAcquiredLevelForAbilityIds(formData, ids),
+                        });
                       }}
                       options={[null, ...abilityOptions.filter(a => !allSelectedDomainCardIds.has(a.id) || a.id === aId).map(a => a.id)]}
                       getOptionKey={id => id || '__none__'}
@@ -1117,15 +1306,20 @@ export function CharacterForm({
                       }}
                       placeholder="Select a card..."
                       className="flex-1"
+                      disabled={slotLocked}
                     />
                     {ability && (
                       <span className="text-[10px] text-dh-muted shrink-0">{ability.type}</span>
                     )}
-                    {displaySlots.length > MIN_DOMAIN_CARD_SLOTS && (
+                    {domainLevelingToolsUnlocked && displaySlots.length > MIN_DOMAIN_CARD_SLOTS && !slotLocked && (
                       <button
+                        type="button"
                         onClick={() => {
                           const ids = displaySlots.filter((_, j) => j !== i);
-                          set({ abilityIds: ids });
+                          set({
+                            abilityIds: ids,
+                            domainSlotAcquiredLevel: syncDomainSlotAcquiredLevelForAbilityIds(formData, ids),
+                          });
                         }}
                         className="text-dh-muted hover:text-red-400 text-sm"
                       >×</button>
@@ -1134,104 +1328,90 @@ export function CharacterForm({
                 );
               });
             })()}
-            <button
-              onClick={() => {
-                const rawIds = formData.abilityIds || [];
-                const displaySlots = [...rawIds];
-                while (displaySlots.length < MIN_DOMAIN_CARD_SLOTS) displaySlots.push(null);
-                set({ abilityIds: [...displaySlots, null] });
-              }}
-              className="text-xs text-sky-400 hover:text-sky-300"
-            >+ Add Domain Card</button>
           </div>
         </FormRow>
       )}
 
-      {/* ── Advancements (level >= 2) ── */}
+      {selectedClass && ownedDomainAbilityIds.length > 5 && (
+        <>
+          <FormRow label="Domain loadout (5 active)">
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-dh-muted leading-snug">
+                You know more than five domain cards. Choose exactly five for casting and play; use the Vault section below for cards that stay inactive until swapped.
+              </p>
+              {[0, 1, 2, 3, 4].map((i) => {
+                const cur = (displayForm.domainLoadoutIds || [])[i] ?? null;
+                const taken = (displayForm.domainLoadoutIds || []).filter((id, j) => id && j !== i);
+                return (
+                  <CustomSelect
+                    key={i}
+                    value={cur}
+                    onChange={(id) => {
+                      const next = [...(displayForm.domainLoadoutIds || [])];
+                      while (next.length < 5) next.push(null);
+                      next[i] = id ?? null;
+                      set({ domainLoadoutIds: next });
+                    }}
+                    options={ownedDomainAbilityIds.filter((id) => !taken.includes(id) || id === cur)}
+                    getOptionKey={(id) => id}
+                    getOptionLabel={(id) => {
+                      const a = srdData?.abilitiesById?.[id];
+                      return a ? a.name : id;
+                    }}
+                    renderValue={(id) => <DomainAbilityNameMetaRow abilityId={id} srdData={srdData} />}
+                    renderOption={(id) => <DomainAbilityNameMetaRow abilityId={id} srdData={srdData} />}
+                    getOptionDescription={(id) => srdData?.abilitiesById?.[id]?.description}
+                    placeholder="Select a domain card..."
+                    className="text-sm"
+                  />
+                );
+              })}
+            </div>
+          </FormRow>
+          <FormRow label="Vault (inactive)">
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-dh-muted leading-snug">
+                These cards are not in your active loadout. Swap them in via the five slots above when you prepare or during play (recall costs apply).
+              </p>
+              {ownedDomainAbilityIds
+                .filter((id) => !(displayForm.domainLoadoutIds || []).includes(id))
+                .map((id) => (
+                  <div
+                    key={id}
+                    className="w-full rounded border border-dh-border bg-dh-inset p-2 text-left"
+                  >
+                    <DomainAbilityNameMetaRow abilityId={id} srdData={srdData} />
+                  </div>
+                ))}
+            </div>
+          </FormRow>
+        </>
+      )}
+
+      {/* ── Advancements (level >= 2) — sheet-style tier columns (multiclass fields live inline there) ── */}
       {level >= 2 && (
         <FormRow label="Advancements">
-          <div className="space-y-1">
-            {Array.from({ length: level - 1 }, (_, i) => i + 2).map(lvl => {
-              const isTierAchievement = TIER_ACHIEVEMENT_LEVELS.includes(lvl);
-              const advKey = String(lvl);
-              const adv = (formData.advancements || {})[advKey] || { picks: [] };
-              const isOpen = openAdvancements[advKey] ?? false;
-
-              return (
-                <div key={lvl} className="border border-dh-border rounded bg-dh-raised/40 overflow-hidden">
-                  <button
-                    onClick={() => setOpenAdvancements(prev => ({ ...prev, [advKey]: !isOpen }))}
-                    className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-dh-hover/40 transition-colors text-left"
-                  >
-                    {isOpen ? <ChevronDown size={11} className="text-dh-muted" /> : <ChevronRight size={11} className="text-dh-muted" />}
-                    <span className="text-xs font-semibold text-dh">Level {lvl}</span>
-                    {isTierAchievement && (
-                      <span className="text-[9px] bg-amber-900/50 text-amber-300 border border-amber-800/50 rounded px-1">Tier Achievement</span>
-                    )}
-                    <span className="text-[10px] text-dh-muted ml-auto">{(adv.picks || []).length} pick{(adv.picks || []).length !== 1 ? 's' : ''}</span>
-                  </button>
-                  {isOpen && (
-                    <div className="px-2 pb-2 space-y-2 border-t border-dh-border">
-                      {/* Pick 1 */}
-                      <AdvancementPick
-                        label="Pick 1"
-                        pick={(adv.picks || [])[0]}
-                        onChange={pick => {
-                          const picks = [...(adv.picks || [])];
-                          picks[0] = pick;
-                          const newAdvs = { ...(formData.advancements || {}), [advKey]: { ...adv, picks } };
-                          set({ advancements: newAdvs });
-                        }}
-                        tier={tierFromLevel(lvl)}
-                      />
-                      {/* Pick 2 */}
-                      <AdvancementPick
-                        label="Pick 2"
-                        pick={(adv.picks || [])[1]}
-                        onChange={pick => {
-                          const picks = [...(adv.picks || [])];
-                          picks[1] = pick;
-                          const newAdvs = { ...(formData.advancements || {}), [advKey]: { ...adv, picks } };
-                          set({ advancements: newAdvs });
-                        }}
-                        tier={tierFromLevel(lvl)}
-                      />
-                      {/* Domain card for this level */}
-                      <div className="mt-1">
-                        <label className="text-[10px] text-dh-muted block mb-0.5">Domain Card</label>
-                        <CustomSelect
-                          value={adv.domainCardId || null}
-                          onChange={id => {
-                            const newAdvs = { ...(formData.advancements || {}), [advKey]: { ...adv, domainCardId: id } };
-                            set({ advancements: newAdvs });
-                          }}
-                          options={[null, ...abilityOptions.filter(a => !allSelectedDomainCardIds.has(a.id) || a.id === adv.domainCardId).map(a => a.id)]}
-                          getOptionKey={id => id || '__none__'}
-                          getOptionLabel={id => {
-                            if (!id) return 'None';
-                            const a = srdData?.abilitiesById?.[id];
-                            return a ? `${a.name} (Lvl ${a.level}, ${a.domain})` : id;
-                          }}
-                          getOptionDescription={id => {
-                            if (!id) return undefined;
-                            return srdData?.abilitiesById?.[id]?.description;
-                          }}
-                          placeholder="None"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <AdvancementTierPanels
+            ref={advancementSectionRef}
+            formData={displayForm}
+            set={set}
+            srdData={srdData}
+            characterLevel={level}
+            selectedSubclass={selectedSubclass}
+            patchExperienceNameAtIndex={patchExperienceNameAtIndex}
+            abilityOptionsForAdvancementLevel={abilityOptionsForAdvancementLevel}
+            allSelectedDomainCardIds={allSelectedDomainCardIds}
+            collectOwnedDomainAbilityIdsThroughCharacterLevel={collectOwnedDomainAbilityIdsThroughCharacterLevel}
+            getTradeToOptions={getTradeToOptions}
+            traitKeys={TRAIT_KEYS}
+          />
         </FormRow>
       )}
 
       {/* ── Background and Connections ── */}
       <FormRow label="Background">
         <textarea
-          value={formData.background || ''}
+          value={displayForm.background || ''}
           onChange={e => set({ background: e.target.value })}
           rows={3}
           className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
@@ -1240,73 +1420,45 @@ export function CharacterForm({
       </FormRow>
       <FormRow label="Connections">
         <textarea
-          value={formData.connectionText || ''}
+          value={displayForm.connectionText || ''}
           onChange={e => set({ connectionText: e.target.value })}
           rows={2}
           className="w-full bg-dh-raised border border-dh-border rounded px-2 py-1.5 text-sm text-dh focus:border-sky-500 focus:outline-none resize-y"
           placeholder="Connection to other characters..."
         />
       </FormRow>
+
+      {showLevelUpButton && !isLevelHistoryPreview && (
+        <button
+          type="button"
+          onClick={() => {
+            const lv = Number(formData.level) || 1;
+            if (lv >= 10) return;
+            const nextLevel = lv + 1;
+            set({ level: nextLevel });
+            const tryFocus = (attempt = 0) => {
+              const root = advancementSectionRef.current;
+              if (!root) {
+                if (attempt < 60) requestAnimationFrame(() => tryFocus(attempt + 1));
+                return;
+              }
+              const band = advancementLevelToBand(nextLevel);
+              const panel = root.querySelector(`[data-advancement-tier-band="${band}"]`);
+              if (!panel) {
+                if (attempt < 60) requestAnimationFrame(() => tryFocus(attempt + 1));
+                return;
+              }
+              focusAdvancementFirstWidgetForNewLevel(root, nextLevel);
+            };
+            requestAnimationFrame(() => requestAnimationFrame(() => tryFocus()));
+          }}
+          className="w-full py-2 px-4 rounded border text-sm font-medium transition-colors bg-emerald-950/50 border-emerald-800/60 text-emerald-200 hover:bg-emerald-900/50 hover:border-emerald-700"
+        >
+          Level Up
+        </button>
+      )}
         </div>
       </div>
-    </div>
-  );
-}
-
-const TIER_ACHIEVEMENT_LEVELS = [2, 5, 8];
-
-function AdvancementPick({ label, pick, onChange, tier }) {
-  const currentType = pick?.type || null;
-
-  return (
-    <div className="mt-1">
-      <label className="text-[10px] text-dh-muted block mb-0.5">{label}</label>
-      <CustomSelect
-        value={currentType}
-        onChange={type => {
-          if (!type) { onChange(null); return; }
-          const newPick = { type };
-          if (type === 'traits') newPick.traits = [];
-          onChange(newPick);
-        }}
-        options={[null, ...ADVANCEMENT_TYPES.map(at => at.value)]}
-        getOptionKey={v => v || '__none__'}
-        getOptionLabel={v => {
-          if (!v) return 'Select advancement...';
-          const at = ADVANCEMENT_TYPES.find(t => t.value === v);
-          return at ? at.label : v;
-        }}
-        placeholder="Select advancement..."
-      />
-      {currentType === 'traits' && pick && (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {TRAIT_KEYS.map(t => {
-            const selected = (pick.traits || []).includes(t);
-            const canSelect = selected || (pick.traits || []).length < 2;
-            return (
-              <button
-                key={t}
-                onClick={() => {
-                  const traits = selected
-                    ? (pick.traits || []).filter(x => x !== t)
-                    : [...(pick.traits || []), t].slice(0, 2);
-                  onChange({ ...pick, traits });
-                }}
-                disabled={!canSelect && !selected}
-                className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                  selected
-                    ? 'bg-sky-900/60 border-sky-600 text-sky-200'
-                    : canSelect
-                      ? 'bg-dh-raised border-dh-border text-dh-muted hover:border-sky-600'
-                      : 'bg-dh-raised border-dh-border text-dh-muted cursor-not-allowed'
-                }`}
-              >
-                {TRAIT_LABELS[t]}
-              </button>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

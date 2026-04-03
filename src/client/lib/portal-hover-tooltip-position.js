@@ -3,6 +3,9 @@ export const PORTAL_HOVER_TOOLTIP_WIDTH_WIDE = 448;
 export const PORTAL_HOVER_TOOLTIP_GAP = 6;
 export const PORTAL_HOVER_TOOLTIP_BOTTOM_PAD = 16;
 
+/** Enforced in `usePortalHoverTooltip` — breaks ResizeObserver/clamp loops ping-pong cannot (React #185). */
+export const PORTAL_TOOLTIP_MAX_Y_CLAMPS_PER_SESSION = 10;
+
 /**
  * Clamp `position: fixed` `top` so a panel of `height` px stays within the viewport
  * with `pad` margin top and bottom. If taller than the usable viewport, pin to `pad`
@@ -18,6 +21,18 @@ export function clampPortalHoverTooltipY(
   if (height >= usable) return pad;
   const maxTop = innerHeight - pad - height;
   return Math.max(pad, Math.min(top, maxTop));
+}
+
+/**
+ * When the scrollable tooltip's height toggles (e.g. scrollbar reflow), clamp can alternate
+ * between two Y values — skip the update to avoid an infinite setState loop (React #185).
+ * @param {number} curY
+ * @param {number} nextY
+ * @param {{ from: number | null, to: number | null }} lastPair
+ */
+export function isClampPingPong(curY, nextY, lastPair) {
+  if (lastPair.from == null || lastPair.to == null) return false;
+  return lastPair.from === nextY && lastPair.to === curY;
 }
 
 /**

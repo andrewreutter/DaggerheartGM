@@ -69,6 +69,8 @@ export const CHARACTER_RUNTIME_KEYS = [
   'featureStateDeclared',
   /** Seraph — session Prayer Dice pool (`{ pool: number[] }`); must persist for V2 card/review chips. */
   'prayerDice',
+  /** Game Table: optional display labels for weapons/features/domain cards (`{ weapons?, features?, abilities? }`). */
+  'sheetDisplayNames',
   /** V2: pending map move for a banner (`move()` mutation); includes `conditionMet`; cleared on banner ack/cancel. */
   'v2PendingMove',
   /** V2: frozen actor during `move(..., freezeOther)` — pairs with `moveDisabledSources` row for that banner. */
@@ -111,6 +113,7 @@ export const RUNTIME_KEYS = [
   'classId', 'subclassId', 'ancestryIds', 'communityId',
   'armorId', 'primaryWeaponId', 'secondaryWeaponId',
   'abilityIds', 'abilities', 'baseTraits', 'advancements', 'proficiency',
+  'domainLoadoutIds', 'multiclassClassId', 'multiclassSubclassId', 'multiclassDomain', 'spellcastTraitSource',
   'background', 'connectionText', 'hopeFeature',
   'weaponMods', 'armorMods',
   'difficultyMod',     // Make a Scene: cumulative difficulty modifier applied by Bard feature

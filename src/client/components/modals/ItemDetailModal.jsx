@@ -115,6 +115,9 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   onPendingAdversaryAiConceptConsumed,
   pendingEnvironmentAiConcept,
   onPendingEnvironmentAiConceptConsumed,
+  /** Game Table: level history preview slider (1…saved level) */
+  characterLevelPreview,
+  onCharacterLevelPreviewChange,
 }, ref) {
   const isNew = !item?.id;
   const isRightDrawer = presentation === 'rightDrawer';
@@ -153,6 +156,11 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
   // Ensure features/experiences have unique IDs so list editors can key and update by ID.
   // For new items, merge in collection-specific defaults so forms have required shape (e.g. hp_thresholds, attack).
   const initialRef = useRef(null);
+  const prevItemIdForInitialRef = useRef(item?.id);
+  if (prevItemIdForInitialRef.current !== item?.id) {
+    prevItemIdForInitialRef.current = item?.id;
+    initialRef.current = null;
+  }
   if (!initialRef.current) {
     const raw = item || {};
     let defaultsForNew = {};
@@ -436,6 +444,9 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
             autoRunSessionKey: editorSessionKey,
           }
         : {}),
+      ...(collection === 'characters' && characterLevelPreview !== undefined
+        ? { levelPreview: characterLevelPreview }
+        : {}),
     };
 
     const formScrollClass = `flex-1 min-h-0 overflow-y-auto p-4 ${isRightDrawer ? '[scrollbar-gutter:stable]' : ''}`;
@@ -446,7 +457,9 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
         {collection === 'environments' && <EnvironmentForm {...sharedProps} />}
         {collection === 'scenes' && <SceneForm {...sharedProps} />}
         {collection === 'adventures' && <AdventureForm {...sharedProps} />}
-        {collection === 'characters' && <CharacterForm {...sharedProps} />}
+        {collection === 'characters' && (
+          <CharacterForm {...sharedProps} levelingToolsSessionKey={editorSessionKey} />
+        )}
         {!LIBRARY_CUSTOM_DETAIL_COLLECTIONS.has(collection) && (
           <GenericSrdLibraryForm
             value={formData}
@@ -464,23 +477,45 @@ export const ItemDetailModal = forwardRef(function ItemDetailModal({
         formData,
         characterSrdData ? { srdData: characterSrdData } : undefined,
       );
+      const charIncomplete = !charCheck.complete;
       return (
         <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
-          {!charCheck.complete && (
+          {/* Always-on strip so the form does not jump when completion flips; incomplete vs complete share the same slot. */}
+          <div
+            className={`shrink-0 px-4 pt-3 pb-2 border-b ${
+              charIncomplete
+                ? 'border-amber-800/45 bg-amber-950/30'
+                : 'border-emerald-800/40 bg-emerald-950/25'
+            }`}
+            role="status"
+            aria-live="polite"
+          >
             <div
-              className="shrink-0 px-4 pt-3 pb-2 border-b border-amber-800/45 bg-amber-950/30"
-              role="status"
-              aria-live="polite"
+              className={`flex items-start gap-2 px-2.5 py-2 rounded-md border text-[11px] text-dh ${
+                charIncomplete
+                  ? 'border-amber-700/60 bg-amber-950/45'
+                  : 'border-emerald-700/55 bg-emerald-950/40'
+              }`}
             >
-              <div className="flex items-start gap-2 px-2.5 py-2 rounded-md border border-amber-700/60 bg-amber-950/45 text-[11px] text-dh">
-                <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-400" aria-hidden />
-                <p className="min-w-0 leading-relaxed">
-                  <span className="font-semibold text-amber-100/95">Incomplete — </span>
-                  missing: {charCheck.missing.join(', ')}
-                </p>
-              </div>
+              {charIncomplete ? (
+                <>
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5 text-amber-400" aria-hidden />
+                  <p className="min-w-0 leading-relaxed">
+                    <span className="font-semibold text-amber-100/95">Incomplete — </span>
+                    missing: {charCheck.missing.join(', ')}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Check size={14} className="shrink-0 mt-0.5 text-emerald-400" aria-hidden />
+                  <p className="min-w-0 leading-relaxed">
+                    <span className="font-semibold text-emerald-100/95">Complete — </span>
+                    all required fields are filled.
+                  </p>
+                </>
+              )}
             </div>
-          )}
+          </div>
           <div className={formScrollClass}>{genericForm}</div>
         </div>
       );

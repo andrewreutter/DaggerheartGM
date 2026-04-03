@@ -48,7 +48,10 @@ export function CustomSelect({ value, onChange, options, getOptionLabel, getOpti
   // Compute position relative to the browser window (viewport), not any scroll container.
   // Portaled to body so fixed positioning is viewport-relative and the dropdown isn't clipped.
   useLayoutEffect(() => {
-    if (!open || !ref.current) { setDropdownPos(null); return; }
+    if (!open || !ref.current) {
+      setDropdownPos(null);
+      return;
+    }
     const btn = ref.current.querySelector('button');
     if (!btn) return;
     const rect = btn.getBoundingClientRect();

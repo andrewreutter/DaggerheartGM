@@ -11,6 +11,12 @@ const root = join(__dirname, '..', '..');
  * (same widgetry as the GM sees), not only on the hover sheet.
  */
 describe('GameTableCharacterListCard V2 widgetry for players', () => {
+  it('remove from table delegates to onRemoveFromTable without its own confirm (GMTableView confirms)', () => {
+    const card = readFileSync(join(root, 'src/client/components/GameTableCharacterListCard.jsx'), 'utf8');
+    expect(card).not.toMatch(/window\.confirm/);
+    expect(card).toMatch(/onClick=\{\(\)\s*=>\s*onRemoveFromTable\(el\.instanceId\)\}/);
+  });
+
   it('shows V2 toggle/value block when player owns the character', () => {
     const card = readFileSync(join(root, 'src/client/components/GameTableCharacterListCard.jsx'), 'utf8');
     expect(card).toMatch(/\(!isPlayer \|\| isMyCharacter\)\s*&&/);

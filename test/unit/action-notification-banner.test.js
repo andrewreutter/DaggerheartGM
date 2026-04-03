@@ -6,6 +6,19 @@ import {
 } from '../../src/client/lib/action-notification-banner.js';
 
 describe('computeActionAckTouchesTableState', () => {
+  it('Start Session: never suppressed; compute stays false so Ack-only / no Cancel in ActionBanner', () => {
+    const roll = {
+      _action: true,
+      _sessionStart: true,
+      actionName: 'Start Session',
+      actionText: 'Acknowledge to start.',
+    };
+    expect(computeActionAckTouchesTableState(roll, { actionAdversaryTargets: [] })).toBe(false);
+    expect(shouldSuppressActionBanner(roll, { actionAdversaryTargets: [] })).toBe(false);
+    const out = withActionBannerSuppression(roll, { actionAdversaryTargets: [] });
+    expect(out._suppressActionBanner).toBeUndefined();
+  });
+
   it('returns false for informational _v2ActionLoop-only shape', () => {
     const roll = {
       _action: true,

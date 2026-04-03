@@ -5,6 +5,8 @@
 
 import { randomUUID } from 'crypto';
 
+import { expectedExperienceRowCount, isValidAdvancementPickType } from './client/lib/advancement-rules.js';
+
 const TRAIT_KEYS = ['agility', 'strength', 'finesse', 'instinct', 'presence', 'knowledge'];
 const TRAIT_POOL = [2, 1, 1, 0, 0, -1];
 
@@ -136,8 +138,42 @@ function normalizeExperiences(experiences, warn) {
     if (Number.isNaN(score)) score = 2;
     score = Math.max(1, Math.min(5, Math.round(score)));
     const id = typeof e.id === 'string' && e.id.trim() ? e.id.trim() : randomUUID();
-    return { name, score, id };
+    const row = { name, score, id };
+    if (e.tierEntryAuto) row.tierEntryAuto = true;
+    return row;
   });
+}
+
+/**
+ * @param {unknown} raw
+ * @param {(m: string) => void} warn
+ */
+function sanitizeAdvancements(raw, warn) {
+  if (!raw || typeof raw !== 'object') return {};
+  /** @type {Record<string, { picks?: object[], domainCardId?: string }>} */
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const lvl = parseInt(k, 10);
+    if (Number.isNaN(lvl) || lvl < 2 || lvl > 10) continue;
+    if (!v || typeof v !== 'object') continue;
+    /** @type {{ picks: object[], domainCardId?: string }} */
+    const row = { picks: [] };
+    if (typeof v.domainCardId === 'string' && v.domainCardId.trim()) {
+      row.domainCardId = v.domainCardId.trim();
+    }
+    if (Array.isArray(v.picks)) {
+      for (const p of v.picks) {
+        if (!p || typeof p !== 'object' || !p.type) continue;
+        if (!isValidAdvancementPickType(String(p.type))) {
+          warn(`Invalid advancement pick type at level ${lvl} — skipped`);
+          continue;
+        }
+        row.picks.push({ ...p });
+      }
+    }
+    out[String(lvl)] = row;
+  }
+  return out;
 }
 
 /**
@@ -211,9 +247,14 @@ export function resolveCharacterAiDraft(raw, srdData) {
 
   const communityId = resolveToId(draft.communityId ?? draft.community_id, communityMaps, { warn, kind: 'community' });
 
-  const tier = 1;
-  const armorCandidates = (srdData.armor || []).filter((a) => (a.tier || 1) <= tier);
-  const weaponCandidates = (srdData.weapons || []).filter((w) => (w.tier || 1) <= tier);
+  let resolvedLevel = 1;
+  if (draft.level != null && draft.level !== '') {
+    const lv = Math.round(Number(draft.level));
+    if (Number.isFinite(lv) && lv >= 1 && lv <= 10) resolvedLevel = lv;
+    else warn('Invalid level in draft — using level 1');
+  }
+  const armorCandidates = (srdData.armor || []).filter((a) => (a.tier || 1) <= resolvedLevel);
+  const weaponCandidates = (srdData.weapons || []).filter((w) => (w.tier || 1) <= resolvedLevel);
   const armorMapsT1 = buildLookupMaps(armorCandidates);
   const weaponMapsT1 = buildLookupMaps(weaponCandidates);
 
@@ -297,12 +338,18 @@ export function resolveCharacterAiDraft(raw, srdData) {
   }
 
   let experiences = normalizeExperiences(draft.experiences, warn);
-  if (experiences.length > 2) {
-    warn('More than two experiences — keeping the first two');
-    experiences = experiences.slice(0, 2);
+  const expNeeded = expectedExperienceRowCount(resolvedLevel);
+  if (experiences.length > expNeeded) {
+    warn(`Trimmed experiences to ${expNeeded} rows for level ${resolvedLevel}`);
+    experiences = experiences.slice(0, expNeeded);
   }
-  while (experiences.length < 2) {
-    experiences.push({ name: '', score: 2, id: randomUUID() });
+  while (experiences.length < expNeeded) {
+    experiences.push({ name: '', score: 2, id: randomUUID(), tierEntryAuto: true });
+  }
+
+  let advancements = {};
+  if (resolvedLevel >= 2 && draft.advancements != null && typeof draft.advancements === 'object') {
+    advancements = sanitizeAdvancements(draft.advancements, warn);
   }
   const experienceBonusChoices = resolveExperienceBonusChoices(
     draft.experienceBonusChoices ?? draft.experience_bonus_choices,
@@ -356,8 +403,14 @@ export function resolveCharacterAiDraft(raw, srdData) {
   }
 
   const patch = {
-    level: 1,
-    advancements: {},
+    level: resolvedLevel,
+    advancements,
+    advancementChoicesLockedThroughLevel: 1,
+    domainLoadoutIds: [],
+    multiclassClassId: null,
+    multiclassSubclassId: null,
+    multiclassDomain: null,
+    spellcastTraitSource: null,
     name: typeof draft.name === 'string' ? draft.name : '',
     pronouns: typeof draft.pronouns === 'string' ? draft.pronouns : '',
     description: typeof draft.description === 'string' ? draft.description : '',
@@ -377,6 +430,7 @@ export function resolveCharacterAiDraft(raw, srdData) {
     secondaryWeaponId,
     armorId,
     abilityIds: resolvedAbilities,
+    domainSlotAcquiredLevel: resolvedAbilities.map(() => 1),
     experiences,
     experienceBonusChoices,
     companion,

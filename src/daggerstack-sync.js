@@ -14,7 +14,7 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getCollection } from './srd/index.js';
-import { computeWeaponModifiers, computeArmorModifiers } from './client/lib/character-calc.js';
+import { computeWeaponModifiers, computeArmorModifiers, computeProficiency } from './client/lib/character-calc.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -418,8 +418,8 @@ export async function syncDaggerstackCharacter(url, email, password) {
     // Tier (derived from level)
     tier,
 
-    // Proficiency
-    proficiency: 1 + Math.floor((raw.level ?? 1) / 4),
+    // Proficiency — SRD automatic tier entries + empty advancements; `recomputeCharacter` refines if the user adds picks
+    proficiency: computeProficiency({}, raw.level ?? 1),
 
     // Defense (with armor + weapon modifiers applied)
     evasion: baseEvasion + (armorMods.evasion ?? 0) + (weaponMods.evasion ?? 0),
@@ -451,8 +451,8 @@ export async function syncDaggerstackCharacter(url, email, password) {
     // Experiences
     experiences: (raw.experience || []).map(e => ({ name: e.name, score: e.score })),
 
-    // Advancements (not available from Daggerstack)
-    advancements: null,
+    // Advancements (not available from Daggerstack); empty object so form/calc stay consistent
+    advancements: {},
     abilityIds: [],
     abilities: [],
 

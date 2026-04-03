@@ -173,12 +173,32 @@ export function useAutoSaveUndo({ initial, onSave, debounceMs = 800, isNew = fal
     };
   }, []);
 
+  /** Latest `initial` from the caller — used when sessionKey changes so form resets to the new item. */
+  const initialForSessionRef = useRef(initial);
+  initialForSessionRef.current = initial;
+
   const prevSessionKeyRef = useRef(sessionKey);
   useEffect(() => {
     if (prevSessionKeyRef.current === sessionKey) return;
     prevSessionKeyRef.current = sessionKey;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    undoPendingRef.current = null;
+    pendingSaveDataRef.current = null;
+    setFormDataRaw(initialForSessionRef.current || {});
+    setUndoStack([]);
+    setRedoStack([]);
+    setDebouncePending(false);
+    setSavedOnce(!isNew);
+    setSavedFlash(false);
     setPastFirstSuccessfulSave(false);
-  }, [sessionKey]);
+  }, [sessionKey, isNew]);
 
   const showUnsavedDirtyHint = debouncePending && pastFirstSuccessfulSave;
 

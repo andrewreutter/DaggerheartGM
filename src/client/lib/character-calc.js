@@ -13,6 +13,17 @@ import { v2ClassSubclassFeatureDescriptorsByName } from './v2-class-subclass-fea
 import { EXPERIENCE_BONUS_BY_FEATURE_NAME } from './ancestry-experience-bonus.js';
 import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../features-v2/engine/feature-scope-keys.js';
 import { enrichHoverActionMeta } from '../../features-v2/engine/hover-action-enrich.js';
+import {
+  advancementLevelToBand,
+  countAutomaticProficiencyBonuses,
+  dedupeTraitPicksAcrossLevelRow,
+  deriveSubclassUnlockSteps,
+  normalizeDomainLoadoutIds,
+  expectedExperienceRowCount,
+  missingLevelAdvancementChoices,
+  hasAdvancementChoicesLockField,
+  isAdvancementLockedThroughCurrentLevel,
+} from './advancement-rules.js';
 
 const TIER_LEVELS = [1, 2, 5, 8]; // level thresholds for tiers 1–4
 
@@ -122,6 +133,61 @@ export function tierFromLevel(level) {
 const TRAIT_POOL = [2, 1, 1, 0, 0, -1];
 const TRAIT_KEYS = ['agility', 'strength', 'finesse', 'instinct', 'presence', 'knowledge'];
 
+/** Bumped when `migrateCharacterLevelingData` applies a new normalization pass. */
+export const LEVELING_SCHEMA_VERSION = 2;
+
+/**
+ * Map SRD subclass `spellcast_trait` string (e.g. "Presence") to a trait key, or null.
+ */
+export function spellcastTraitNameToKey(name) {
+  if (name == null || String(name).trim() === '') return null;
+  const k = String(name).trim().toLowerCase();
+  return TRAIT_KEYS.includes(k) ? k : null;
+}
+
+/** Same contract as `parseBeastformBonus` in helpers (avoid circular import helpers → character-calc). */
+function parseBeastformTraitBonusLocal(str) {
+  if (!str) return null;
+  const m = str.trim().match(/^(\w+)\s*([+-]\d+)$/i);
+  if (!m) return null;
+  return { stat: m[1].toLowerCase(), bonus: parseInt(m[2], 10) };
+}
+
+function effectiveTraitScoreForSpellcastCompare(el, traitKey) {
+  const traits = el.traits || {};
+  const score = traits[traitKey] ?? 0;
+  const wMod = el.weaponMods?.traits?.[traitKey] ?? 0;
+  const aMod = el.armorMods?.traits?.[traitKey] ?? 0;
+  const beastformTraitBonus = parseBeastformTraitBonusLocal(el.activeBeastform?.trait_bonus);
+  const bfMod = beastformTraitBonus?.stat === traitKey ? beastformTraitBonus.bonus : 0;
+  return score + wMod + aMod + bfMod;
+}
+
+/**
+ * When both primary and multiclass subclasses define a Spellcast trait, pick the one with the higher **effective**
+ * sheet score (base + advancement + weapon/armor/beastform modifiers). Tie → primary subclass.
+ */
+export function resolveSpellcastTraitFromTraitScores({
+  primaryTraitName,
+  multiclassTraitName,
+  traits,
+  weaponMods,
+  armorMods,
+  activeBeastform,
+}) {
+  const pk = spellcastTraitNameToKey(primaryTraitName);
+  const mk = spellcastTraitNameToKey(multiclassTraitName);
+  if (!pk && !mk) return null;
+  if (pk && !mk) return pk;
+  if (!pk && mk) return mk;
+  const el = { traits, weaponMods, armorMods, activeBeastform };
+  const ep = effectiveTraitScoreForSpellcastCompare(el, pk);
+  const em = effectiveTraitScoreForSpellcastCompare(el, mk);
+  if (ep > em) return pk;
+  if (em > ep) return mk;
+  return pk;
+}
+
 export function isTraitAssignmentComplete(baseTraits) {
   if (!baseTraits) return false;
   const assigned = TRAIT_KEYS.map(k => baseTraits[k]).filter(v => v != null);
@@ -153,6 +219,7 @@ export function computeTraits(baseTraits, advancements, level) {
       const adv = advancements[String(lvl)];
       if (!adv?.picks) continue;
       for (const pick of adv.picks) {
+        if (!pick) continue;
         if (pick.type === 'traits' && Array.isArray(pick.traits)) {
           for (const t of pick.traits) {
             if (t in result) result[t] += 1;
@@ -174,6 +241,7 @@ export function computeMaxHp(classData, advancements, level) {
       const adv = advancements[String(lvl)];
       if (!adv?.picks) continue;
       for (const pick of adv.picks) {
+        if (!pick) continue;
         if (pick.type === 'hp') hp += 1;
       }
     }
@@ -191,6 +259,7 @@ export function computeMaxStress(advancements, level) {
       const adv = advancements[String(lvl)];
       if (!adv?.picks) continue;
       for (const pick of adv.picks) {
+        if (!pick) continue;
         if (pick.type === 'stress') stress += 1;
       }
     }
@@ -208,6 +277,7 @@ export function computeEvasion(classData, advancements, level) {
       const adv = advancements[String(lvl)];
       if (!adv?.picks) continue;
       for (const pick of adv.picks) {
+        if (!pick) continue;
         if (pick.type === 'evasion') evasion += 1;
       }
     }
@@ -216,20 +286,34 @@ export function computeEvasion(classData, advancements, level) {
 }
 
 /**
- * Compute proficiency from base (1) + advancement proficiency picks.
+ * Compute proficiency: base 1 + automatic +1 at each tier entry (levels 2, 5, 8) + advancement picks.
  */
 export function computeProficiency(advancements, level) {
-  let prof = 1;
+  const lv = level || 1;
+  let prof = 1 + countAutomaticProficiencyBonuses(lv);
   if (advancements) {
-    for (let lvl = 2; lvl <= (level || 1); lvl++) {
+    for (let lvl = 2; lvl <= lv; lvl++) {
       const adv = advancements[String(lvl)];
       if (!adv?.picks) continue;
       for (const pick of adv.picks) {
+        if (!pick) continue;
         if (pick.type === 'proficiency') prof += 1;
       }
     }
   }
   return prof;
+}
+
+/**
+ * Book weapon damage: number of dice equals Proficiency; preserves modifiers / suffix after the die chunk.
+ */
+export function scaleWeaponDamageByProficiency(damageStr, proficiency) {
+  if (damageStr == null || damageStr === '') return damageStr;
+  const p = Number(proficiency);
+  if (!Number.isFinite(p) || p < 1) return damageStr;
+  const m = String(damageStr).trim().match(/^(\d*)(d\d+)(.*)$/i);
+  if (!m) return damageStr;
+  return `${p}${m[2]}${m[3] || ''}`;
 }
 
 /**
@@ -450,15 +534,45 @@ export function getEffectiveWeaponRange(weapon, ancestryFeatures) {
 }
 
 /**
+ * @param {object} f — class feature row from `classFeatures`
+ * @param {object|null} srdClass
+ * @param {object|null} mcClass — multiclass SRD class when `f._multiclass`
+ * @param {object} result — partial recompute result
+ */
+function guideClassFeatureSource(f, srdClass, mcClass, result) {
+  if (f?._multiclass) {
+    if (mcClass && typeof mcClass === 'object') return mcClass;
+    return f.source ?? result.class;
+  }
+  return srdClass ?? result.class;
+}
+
+/**
+ * @param {object} f — subclass feature row from `subclassFeatures`
+ * @param {object|null} srdSubclass
+ * @param {object|null} mcSubclass — multiclass SRD subclass when `f._multiclassSubclass`
+ * @param {object} result
+ */
+function guideSubclassFeatureSource(f, srdSubclass, mcSubclass, result) {
+  if (f?._multiclassSubclass) {
+    if (mcSubclass && typeof mcSubclass === 'object') return mcSubclass;
+    return f.source ?? result.subclass;
+  }
+  return srdSubclass ?? result.subclass;
+}
+
+/**
  * Build the subset of activeFeatures used for onCharacterRender (ancestry + community + class + subclass).
  * Used during recomputeCharacter before weapons/armor are in the full activeFeatures list.
  *
  * @param {object} result - character result with ancestryFeatures, communityFeatures, classFeatures, subclassFeatures
  * @param {object|null} srdClass - resolved class SRD item
  * @param {object|null} srdSubclass - resolved subclass SRD item
+ * @param {object|null} [mcClass] - multiclass SRD class when multiclassing
+ * @param {object|null} [mcSubclass] - multiclass SRD subclass when multiclassing
  * @returns {object[]} activeFeatures (ancestry, community, class, subclass only)
  */
-function buildActiveFeaturesForRender(result, srdClass, srdSubclass) {
+function buildActiveFeaturesForRender(result, srdClass, srdSubclass, mcClass = null, mcSubclass = null) {
   const active = [];
   for (const f of result.ancestryFeatures || []) {
     const hooks = v2OriginFeatureDescriptorsByName[f.name] || {};
@@ -470,11 +584,21 @@ function buildActiveFeaturesForRender(result, srdClass, srdSubclass) {
   }
   for (const f of result.classFeatures || []) {
     const hooks = v2ClassSubclassFeatureDescriptorsByName[f.name] || {};
-    active.push({ ...f, ...hooks, type: 'class', source: srdClass ?? result.class });
+    active.push({
+      ...f,
+      ...hooks,
+      type: 'class',
+      source: guideClassFeatureSource(f, srdClass, mcClass, result),
+    });
   }
   for (const f of result.subclassFeatures || []) {
     const hooks = v2ClassSubclassFeatureDescriptorsByName[f.name] || {};
-    active.push({ ...f, ...hooks, type: 'subclass', source: srdSubclass ?? result.subclass });
+    active.push({
+      ...f,
+      ...hooks,
+      type: 'subclass',
+      source: guideSubclassFeatureSource(f, srdSubclass, mcSubclass, result),
+    });
   }
   return active;
 }
@@ -603,9 +727,11 @@ function resolveFeatures(items, sourceType, sourceName) {
  * @param {object|null} srdClass - resolved class SRD item
  * @param {object|null} srdSubclass - resolved subclass SRD item
  * @param {object|null} srdArmor - resolved armor SRD item
+ * @param {object|null} [mcClass] - multiclass SRD class when multiclassing
+ * @param {object|null} [mcSubclass] - multiclass SRD subclass when multiclassing
  * @returns {object[]} activeFeatures
  */
-function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
+function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor, mcClass = null, mcSubclass = null) {
   const active = [];
 
   for (const f of result.ancestryFeatures || []) {
@@ -634,7 +760,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
       ...f,
       ...hooks,
       type: 'class',
-      source: srdClass ?? result.class,
+      source: guideClassFeatureSource(f, srdClass, mcClass, result),
     });
   }
 
@@ -644,7 +770,7 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
       ...f,
       ...hooks,
       type: 'subclass',
-      source: srdSubclass ?? result.subclass,
+      source: guideSubclassFeatureSource(f, srdSubclass, mcSubclass, result),
     });
   }
 
@@ -693,21 +819,351 @@ function buildActiveFeatures(result, srdClass, srdSubclass, srdArmor) {
 }
 
 /**
- * Collect all domain card ability IDs from level 1 picks + advancements.
+ * Applies stored per-level `advancements[L].domainTrade` (fromId → toId) in level order (2…maxLevel)
+ * on a copy of the character. Raw `abilityIds` / advancement fields keep original picks;
+ * this is used for display, loadout, and duplicate checks.
+ *
+ * @param {object} data — raw character data (may include `advancements[L].domainTrade`)
+ * @param {number} maxLevel — apply trades through this character level (inclusive)
  */
-export function collectAbilityIds(data) {
-  const ids = (data.abilityIds || []).filter(Boolean);
-  if (data.advancements) {
-    for (const [, adv] of Object.entries(data.advancements)) {
-      if (adv.domainCardId) ids.push(adv.domainCardId);
-      if (adv.picks) {
-        for (const pick of adv.picks) {
-          if (pick.type === 'domain_card' && pick.abilityId) ids.push(pick.abilityId);
-        }
-      }
+export function resolveDomainTradesThroughLevel(data, maxLevel) {
+  const cap = Number(maxLevel) || 0;
+  if (!data || cap < 2) return { ...data };
+  let acc = { ...data };
+  for (let lvl = 2; lvl <= cap; lvl++) {
+    const t = data.advancements?.[String(lvl)]?.domainTrade;
+    if (t?.fromId && t?.toId && t.fromId !== t.toId) {
+      acc = replaceDomainAbilityIdEverywhere(acc, t.fromId, t.toId);
     }
   }
-  return [...new Set(ids)];
+  return acc;
+}
+
+/**
+ * All known domain card IDs (starting picks + per-level advancement cards), stable order.
+ * Resolves domain trades through current level.
+ */
+export function collectOwnedDomainAbilityIds(data) {
+  const ids = [];
+  const seen = new Set();
+  const add = (id) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  const maxLv = data.level ?? 1;
+  const resolved = resolveDomainTradesThroughLevel(data, maxLv);
+  for (const id of resolved.abilityIds || []) add(id);
+  for (let lvl = 2; lvl <= maxLv; lvl++) {
+    const adv = resolved.advancements?.[String(lvl)];
+    if (adv?.domainCardId) add(adv.domainCardId);
+    for (const pick of adv?.picks || []) {
+      if (pick?.type === 'domain_card' && pick.abilityId) add(pick.abilityId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Domain card IDs the character had after completing {@link maxCharacterLevel} (inclusive):
+ * creation slots whose {@link domainSlotAcquiredLevel} is ≤ that level, plus advancement rows 2…maxCharacterLevel.
+ * Applies {@link resolveDomainTradesThroughLevel} through `maxCharacterLevel` first, then collects (same as raw
+ * ordering, but IDs reflect trades through that level).
+ *
+ * Used for level-N trade UI: “From” may only list cards owned by end of level N−1.
+ *
+ * @param {object} data
+ * @param {number} maxCharacterLevel — cap (e.g. `advancementLevel - 1` when editing that level’s row)
+ */
+export function collectOwnedDomainAbilityIdsThroughCharacterLevel(data, maxCharacterLevel) {
+  const cap = Number(maxCharacterLevel) || 0;
+  const resolved = resolveDomainTradesThroughLevel(data, cap);
+  const ids = [];
+  const seen = new Set();
+  const add = (id) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  const norm = normalizeDomainSlotAcquiredLevels(data);
+  const abilityIds = resolved.abilityIds || [];
+  for (let i = 0; i < abilityIds.length; i++) {
+    const acquired = norm[i] ?? 1;
+    if (acquired <= cap) add(abilityIds[i]);
+  }
+  for (let lvl = 2; lvl <= cap; lvl++) {
+    const adv = resolved.advancements?.[String(lvl)];
+    if (adv?.domainCardId) add(adv.domainCardId);
+    for (const pick of adv?.picks || []) {
+      if (pick?.type === 'domain_card' && pick.abilityId) add(pick.abilityId);
+    }
+  }
+  return ids;
+}
+
+function hasMulticlassPickThroughLevel(advancements, maxLevel) {
+  const cap = Number(maxLevel) || 1;
+  if (!advancements || typeof advancements !== 'object') return false;
+  for (let lvl = 2; lvl <= cap; lvl++) {
+    const adv = advancements[String(lvl)];
+    for (const p of adv?.picks || []) {
+      if (p?.type === 'multiclass') return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Deep-clone JSON-like character data. `structuredClone` throws on functions / some merged table keys;
+ * JSON round-trip drops non-serializable fields (safe for level projection).
+ */
+function cloneCharacterDataForProjection(data) {
+  try {
+    return JSON.parse(JSON.stringify(data));
+  } catch {
+    return deepClonePlainObjectsOnly(data);
+  }
+}
+
+function deepClonePlainObjectsOnly(v, seen = new WeakMap()) {
+  if (v === null || typeof v !== 'object') return v;
+  if (seen.has(v)) return v;
+  if (Array.isArray(v)) {
+    const out = [];
+    seen.set(v, out);
+    for (let i = 0; i < v.length; i++) {
+      out[i] = deepClonePlainObjectsOnly(v[i], seen);
+    }
+    return out;
+  }
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) {
+    return v;
+  }
+  const o = {};
+  seen.set(v, o);
+  for (const k of Object.keys(v)) {
+    const x = v[k];
+    if (typeof x === 'function' || typeof x === 'symbol') continue;
+    o[k] = deepClonePlainObjectsOnly(x, seen);
+  }
+  return o;
+}
+
+/**
+ * Read-only snapshot of a character at {@link targetLevel} (1…current level) for editor / sheet preview.
+ * Strips per-level {@link advancements} rows above the target, trims experiences, filters domain slots by
+ * {@link domainSlotAcquiredLevel}, reapplies domain trades through the target level, and clears multiclass
+ * when no multiclass pick remains in-range.
+ *
+ * @param {object} data — full library character shape (same as {@link recomputeCharacter} input)
+ * @param {number} targetLevel
+ * @returns {object} cloned + projected character data
+ */
+export function projectCharacterFormToLevel(data, targetLevel) {
+  if (!data || typeof data !== 'object') return data;
+  const maxLv = Number(data.level) || 1;
+  const t = Math.max(1, Math.min(Number(targetLevel) || 1, maxLv));
+  const clone = cloneCharacterDataForProjection(data);
+  if (t >= maxLv) return clone;
+
+  const out = clone;
+  out.level = t;
+  out.tier = tierFromLevel(t);
+
+  if (out.advancements && typeof out.advancements === 'object') {
+    const next = {};
+    for (const k of Object.keys(out.advancements)) {
+      const n = Number(k);
+      if (!Number.isFinite(n) || n < 2) continue;
+      if (n <= t) next[k] = out.advancements[k];
+    }
+    out.advancements = next;
+  }
+
+  const expNeed = expectedExperienceRowCount(t);
+  if (Array.isArray(out.experiences)) {
+    out.experiences = out.experiences.slice(0, expNeed);
+  }
+
+  const norm = normalizeDomainSlotAcquiredLevels(data);
+  const partialForTrades = { ...out, level: t };
+  const traded = resolveDomainTradesThroughLevel(partialForTrades, t);
+  const newIds = [];
+  const newAcq = [];
+  for (let i = 0; i < (traded.abilityIds || []).length; i++) {
+    const acq = norm[i] ?? 1;
+    if (acq <= t) {
+      newIds.push(traded.abilityIds[i]);
+      newAcq.push(acq);
+    }
+  }
+  out.abilityIds = newIds;
+  out.domainSlotAcquiredLevel = newAcq;
+
+  const owned = collectOwnedDomainAbilityIds({ ...out, level: t });
+  out.domainLoadoutIds = normalizeDomainLoadoutIds(owned, out.domainLoadoutIds);
+
+  if (!hasMulticlassPickThroughLevel(out.advancements, t)) {
+    out.multiclassClassId = null;
+    out.multiclassSubclassId = null;
+    out.multiclassDomain = null;
+  }
+
+  const acl = Number(out.advancementChoicesLockedThroughLevel);
+  if (Number.isFinite(acl) && acl > t) {
+    out.advancementChoicesLockedThroughLevel = t;
+  }
+
+  return migrateCharacterLevelingData(out);
+}
+
+/**
+ * One-time normalization for leveling data (idempotent). Strips Tier-2-invalid advancement picks,
+ * dedupes domain loadout, and stamps {@link LEVELING_SCHEMA_VERSION} when changed.
+ */
+export function migrateCharacterLevelingData(data) {
+  if (!data || typeof data !== 'object') return data;
+  let changed = false;
+  const next = { ...data };
+  const lv = Number(data.level) || 1;
+
+  if (next.advancements && typeof next.advancements === 'object') {
+    const advIn = { ...next.advancements };
+    for (let lvl = 2; lvl <= lv; lvl++) {
+      if (advancementLevelToBand(lvl) !== 'A') continue;
+      const key = String(lvl);
+      const row = advIn[key];
+      if (!row?.picks?.length) continue;
+      let rowChanged = false;
+      const picks = row.picks.map((p) => {
+        if (!p) return p;
+        if (p.type === 'subclass_upgrade' || p.type === 'proficiency') {
+          rowChanged = true;
+          return null;
+        }
+        return p;
+      });
+      if (rowChanged) {
+        advIn[key] = { ...row, picks };
+        changed = true;
+      }
+    }
+    for (let lvl = 2; lvl <= lv; lvl++) {
+      const key = String(lvl);
+      const row = advIn[key];
+      if (!row?.picks?.length) continue;
+      const deduped = dedupeTraitPicksAcrossLevelRow(row.picks);
+      const same =
+        deduped.length === row.picks.length &&
+        deduped.every((p, i) => JSON.stringify(p) === JSON.stringify(row.picks[i]));
+      if (!same) {
+        advIn[key] = { ...row, picks: deduped };
+        changed = true;
+      }
+    }
+    next.advancements = advIn;
+  }
+
+  const owned = collectOwnedDomainAbilityIds(next);
+  const normLoad = normalizeDomainLoadoutIds(owned, next.domainLoadoutIds);
+  const prevStr = JSON.stringify(next.domainLoadoutIds || []);
+  const nextStr = JSON.stringify(normLoad);
+  if (prevStr !== nextStr) {
+    next.domainLoadoutIds = normLoad;
+    changed = true;
+  }
+
+  if (changed && (next.levelingSchemaVersion ?? 0) < LEVELING_SCHEMA_VERSION) {
+    next.levelingSchemaVersion = LEVELING_SCHEMA_VERSION;
+  }
+
+  return next;
+}
+
+function newExperienceRowId() {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `exp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/**
+ * Parallel to `abilityIds`: level at which each starting-domain slot was added (1 = creation).
+ */
+export function normalizeDomainSlotAcquiredLevels(data) {
+  const ids = data.abilityIds || [];
+  const raw = data.domainSlotAcquiredLevel;
+  const out = [];
+  for (let i = 0; i < ids.length; i++) {
+    const n = raw?.[i];
+    out.push(Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1);
+  }
+  return out;
+}
+
+/**
+ * When `abilityIds` length changes, extend or trim `domainSlotAcquiredLevel` (new slots = current level).
+ */
+export function syncDomainSlotAcquiredLevelForAbilityIds(prevData, newAbilityIds) {
+  const old = prevData.abilityIds || [];
+  const raw = prevData.domainSlotAcquiredLevel || [];
+  const lv = prevData.level ?? 1;
+  return newAbilityIds.map((_, i) => {
+    if (i < raw.length && Number(raw[i]) >= 1) return Math.floor(Number(raw[i]));
+    if (i < old.length) return 1;
+    return lv;
+  });
+}
+
+/**
+ * Replace one domain ability id everywhere (creation slots, advancement rows, loadout). Immutable.
+ */
+export function replaceDomainAbilityIdEverywhere(data, oldId, newId) {
+  if (!data || !oldId || !newId || oldId === newId) return { ...data };
+  const next = { ...data };
+
+  if (Array.isArray(next.abilityIds)) {
+    next.abilityIds = next.abilityIds.map((id) => (id === oldId ? newId : id));
+  }
+
+  if (Array.isArray(next.domainLoadoutIds)) {
+    next.domainLoadoutIds = next.domainLoadoutIds.map((id) => (id === oldId ? newId : id));
+  }
+
+  const advIn = next.advancements && typeof next.advancements === 'object' ? next.advancements : {};
+  const adv = { ...advIn };
+  for (const k of Object.keys(adv)) {
+    const row = adv[k] && typeof adv[k] === 'object' ? { ...adv[k] } : {};
+    if (row.domainCardId === oldId) row.domainCardId = newId;
+    if (Array.isArray(row.picks)) {
+      row.picks = row.picks.map((p) => {
+        if (!p || p.type !== 'domain_card' || p.abilityId !== oldId) return p;
+        return { ...p, abilityId: newId };
+      });
+    }
+    adv[k] = row;
+  }
+  next.advancements = adv;
+  return next;
+}
+
+/**
+ * Active domain cards for casting / V2 (max five — {@link normalizeDomainLoadoutIds}).
+ */
+export function collectAbilityIds(data) {
+  const owned = collectOwnedDomainAbilityIds(data);
+  return normalizeDomainLoadoutIds(owned, data.domainLoadoutIds);
+}
+
+/**
+ * Domain card IDs the character knows but does not have in the active loadout (only when they know more than five cards).
+ */
+export function collectVaultAbilityIds(data) {
+  const owned = collectOwnedDomainAbilityIds(data);
+  if (owned.length <= 5) return [];
+  const loadout = new Set(collectAbilityIds(data));
+  return owned.filter((id) => !loadout.has(id));
 }
 
 /**
@@ -718,48 +1174,66 @@ export function recomputeCharacter(data, srdData) {
   if (!data) return data;
   if (!srdData) return data;
 
-  const result = { ...data };
-  const level = data.level ?? 1;
+  const charData = migrateCharacterLevelingData(data);
+  const result = { ...charData };
+  const level = charData.level ?? 1;
   result.tier = tierFromLevel(level);
 
   // Resolve class
-  const srdClass = srdData.classesById?.[data.classId] || null;
+  const srdClass = srdData.classesById?.[charData.classId] || null;
+  const mcClassSrd = charData.multiclassClassId ? srdData.classesById?.[charData.multiclassClassId] ?? null : null;
   if (srdClass) {
     result.class = srdClass.name;
     result.domains = srdClass.domains || [];
     result.hopeFeature = srdClass.hope_feature || null;
     result.classFeatures = resolveFeatures(srdClass.class_features, 'class', srdClass.name);
+    if (mcClassSrd) {
+      const extra = resolveFeatures(mcClassSrd.class_features, 'class', mcClassSrd.name).map((f) => ({
+        ...f,
+        _multiclass: true,
+      }));
+      result.classFeatures = [...(result.classFeatures || []), ...extra];
+    }
   } else {
-    result.class = data.class || null;
-    result.domains = data.domains || [];
+    result.class = charData.class || null;
+    result.domains = charData.domains || [];
   }
 
-  // Resolve subclass
-  const srdSubclass = srdData.subclassesById?.[data.subclassId] || null;
+  const srdSubclass = srdData.subclassesById?.[charData.subclassId] || null;
+  const mcSubclass = charData.multiclassSubclassId ? srdData.subclassesById?.[charData.multiclassSubclassId] : null;
   if (srdSubclass) {
     result.subclass = srdSubclass.name;
-    // SRD `spellcast_trait` may be title case; `traits` keys are always lowercase (TRAIT_KEYS).
-    const st = srdSubclass.spellcast_trait;
-    result.spellcastTrait =
-      st != null && String(st).trim() !== '' ? String(st).trim().toLowerCase() : null;
-    const tier = result.tier;
+    const unlockSteps = deriveSubclassUnlockSteps({
+      advancements: charData.advancements,
+      level,
+      tier: result.tier,
+      multiclassClassId: charData.multiclassClassId,
+    });
     const subFeatures = [];
     if (srdSubclass.foundation_features) {
       subFeatures.push(...resolveFeatures(srdSubclass.foundation_features, 'subclass', srdSubclass.name));
     }
-    if (tier >= 2 && srdSubclass.specialization_features) {
+    if (unlockSteps >= 1 && srdSubclass.specialization_features) {
       subFeatures.push(...resolveFeatures(srdSubclass.specialization_features, 'subclass', srdSubclass.name));
     }
-    if (tier >= 3 && srdSubclass.mastery_features) {
+    if (unlockSteps >= 2 && srdSubclass.mastery_features) {
       subFeatures.push(...resolveFeatures(srdSubclass.mastery_features, 'subclass', srdSubclass.name));
+    }
+    if (mcSubclass?.foundation_features) {
+      subFeatures.push(
+        ...resolveFeatures(mcSubclass.foundation_features, 'subclass', mcSubclass.name).map((f) => ({
+          ...f,
+          _multiclassSubclass: true,
+        })),
+      );
     }
     result.subclassFeatures = subFeatures;
   } else {
-    result.subclass = data.subclass || null;
+    result.subclass = charData.subclass || null;
   }
 
   // Resolve ancestries — always from SRD; V2 descriptors merge at render / activeFeatures
-  const ancestryIds = data.ancestryIds || [];
+  const ancestryIds = charData.ancestryIds || [];
   const ancestryNames = [];
   const ancestryFeatures = [];
   for (const aId of ancestryIds) {
@@ -778,41 +1252,46 @@ export function recomputeCharacter(data, srdData) {
   if (ancestryFeatures.length) result.ancestryFeatures = ancestryFeatures;
 
   // Resolve community — always from SRD
-  const srdCommunity = srdData.communitiesById?.[data.communityId] || null;
+  const srdCommunity = srdData.communitiesById?.[charData.communityId] || null;
   if (srdCommunity) {
     result.community = srdCommunity.name;
     const resolved = resolveFeatures(srdCommunity.features, 'community', srdCommunity.name);
     result.communityFeatures = resolved.map(f => ({
       ...f,
-      id: `${data.communityId}-feat-${(f.name || '').toLowerCase().replace(/\s+/g, '-')}`,
+      id: `${charData.communityId}-feat-${(f.name || '').toLowerCase().replace(/\s+/g, '-')}`,
       type: 'community',
       sourceItem: srdCommunity,
     }));
   } else {
-    result.community = data.community || null;
+    result.community = charData.community || null;
   }
 
   // Derived stats
-  result.traits = computeTraits(data.baseTraits, data.advancements, level);
-  result.maxHp = computeMaxHp(srdClass, data.advancements, level);
-  result.maxStress = computeMaxStress(data.advancements, level);
-  result.evasion = computeEvasion(srdClass, data.advancements, level);
-  result.proficiency = computeProficiency(data.advancements, level);
+  result.traits = computeTraits(charData.baseTraits, charData.advancements, level);
+  result.maxHp = computeMaxHp(srdClass, charData.advancements, level);
+  result.maxStress = computeMaxStress(charData.advancements, level);
+  result.evasion = computeEvasion(srdClass, charData.advancements, level);
+  result.proficiency = computeProficiency(charData.advancements, level);
   result.maxHope = 6;
+
+  const ownedDomainAbilityIds = collectOwnedDomainAbilityIds(charData);
+  result._ownedDomainAbilityIds = ownedDomainAbilityIds;
+  result.domainLoadoutIds = normalizeDomainLoadoutIds(ownedDomainAbilityIds, charData.domainLoadoutIds);
+  result.domainSlotAcquiredLevel = normalizeDomainSlotAcquiredLevels(charData);
 
   // Resolve armor — always recompute from armorId so clearing to null removes stale stats
   result.armorScore = 0;
   result.armorName = null;
   result.armorThresholds = null;
   result.maxArmor = 0;
-  const srdArmor = srdData.armorById?.[data.armorId] || null;
+  const srdArmor = srdData.armorById?.[charData.armorId] || null;
   if (srdArmor) {
     const armorStats = resolveArmor(srdArmor);
     Object.assign(result, armorStats);
   }
 
   // Apply armor feature modifiers BEFORE weapon modifiers
-  const gearSheetCtx = { computed: result, raw: data };
+  const gearSheetCtx = { computed: result, raw: charData };
   const armorMods = computeArmorModifiers(srdArmor, gearSheetCtx);
   result.armorMods = armorMods;
   for (const [k, v] of Object.entries(armorMods.traits)) {
@@ -822,8 +1301,8 @@ export function recomputeCharacter(data, srdData) {
 
   // Resolve weapons — always reassign so clearing a weapon ID removes it from the display; assign stable IDs (wep_0, wep_1)
   const weapons = [];
-  const primaryWeapon = srdData.weaponsById?.[data.primaryWeaponId];
-  const secondaryWeapon = srdData.weaponsById?.[data.secondaryWeaponId];
+  const primaryWeapon = srdData.weaponsById?.[charData.primaryWeaponId];
+  const secondaryWeapon = srdData.weaponsById?.[charData.secondaryWeaponId];
   if (primaryWeapon) weapons.push({ ...resolveWeapon(primaryWeapon), id: 'wep_0' });
   if (secondaryWeapon) weapons.push({ ...resolveWeapon(secondaryWeapon), id: 'wep_1' });
   // Set effectiveRange fallback before ancestry render
@@ -833,7 +1312,7 @@ export function recomputeCharacter(data, srdData) {
   result.weapons = weapons;
 
   // Run onCharacterRender and passiveStatMods over ancestry + community + class + subclass (unified loop)
-  const renderFeatures = buildActiveFeaturesForRender(result, srdClass, srdSubclass);
+  const renderFeatures = buildActiveFeaturesForRender(result, srdClass, srdSubclass, mcClassSrd, mcSubclass);
   const characterRenderResult = runCharacterRender(result, renderFeatures, result.weapons.length);
   result.weapons = characterRenderResult.weapons;
   result._virtualWeapons = characterRenderResult.virtualWeapons;
@@ -867,9 +1346,13 @@ export function recomputeCharacter(data, srdData) {
     result.ancestryThresholdBonusSource = characterRenderResult.thresholdBonusSources.join(', ');
   }
   result.ancestryMods = { ...ancestryMods, statMods: characterRenderResult.statMods };
-  // Refresh effectiveRange for weapons mutated by ancestry features
+  // Refresh effectiveRange for weapons mutated by ancestry features; scale damage dice to Proficiency
   for (const w of result.weapons) {
     w.effectiveRange = w.effectiveRange || w.range || '';
+    if (w.damage) w.damage = scaleWeaponDamageByProficiency(w.damage, result.proficiency);
+  }
+  for (const w of result._virtualWeapons || []) {
+    if (w.damage) w.damage = scaleWeaponDamageByProficiency(w.damage, result.proficiency);
   }
 
   // Apply weapon property modifiers (e.g. Cumbersome -1 Finesse, Heavy -1 Evasion)
@@ -890,33 +1373,86 @@ export function recomputeCharacter(data, srdData) {
     };
   }
 
-  // Resolve abilities (domain cards)
-  const allAbilityIds = collectAbilityIds(result);
+  // Spellcast trait: if both primary and multiclass subclasses define one, use the higher effective score (tie → primary).
+  if (srdSubclass || mcSubclass) {
+    result.spellcastTrait = resolveSpellcastTraitFromTraitScores({
+      primaryTraitName: srdSubclass?.spellcast_trait,
+      multiclassTraitName: mcSubclass?.spellcast_trait,
+      traits: result.traits,
+      weaponMods: result.weaponMods,
+      armorMods: result.armorMods,
+      activeBeastform: charData.activeBeastform,
+    });
+  }
+
+  // Resolve abilities (domain cards) — active loadout (≤5) for play
+  const allAbilityIds = collectAbilityIds(charData);
   if (srdData.abilitiesById && allAbilityIds.length) {
     result.abilities = allAbilityIds.map(id => srdData.abilitiesById[id]).filter(Boolean);
   }
 
-  // Ancestry experience bonus (e.g. Clank Purposeful Design): apply to chosen experience for display.
-  // Use base 2 for the chosen experience so we never double-add (saved data may already have score 3).
+  const vaultAbilityIds = collectVaultAbilityIds(charData);
+  if (srdData.abilitiesById && vaultAbilityIds.length) {
+    result.domainVaultAbilities = vaultAbilityIds.map((id) => srdData.abilitiesById[id]).filter(Boolean);
+  } else {
+    result.domainVaultAbilities = [];
+  }
+
   const expBonusFeat = result.ancestryFeatures?.find(
     (f) => typeof EXPERIENCE_BONUS_BY_FEATURE_NAME[f.name] === 'number',
   );
   const expBonus = expBonusFeat
     ? { amount: EXPERIENCE_BONUS_BY_FEATURE_NAME[expBonusFeat.name], featureName: expBonusFeat.name }
     : null;
+
+  const advancementExpBonusById = {};
+  for (let al = 2; al <= level; al++) {
+    const adv = charData.advancements?.[String(al)];
+    for (const pick of adv?.picks || []) {
+      if (pick?.type !== 'experience' || !Array.isArray(pick.experienceIds)) continue;
+      for (const eid of pick.experienceIds) {
+        if (!eid) continue;
+        advancementExpBonusById[eid] = (advancementExpBonusById[eid] || 0) + 1;
+      }
+    }
+  }
+
+  // Experience modifier from level-up picks is applied in the final map below. `CharacterForm` persists
+  // `recomputeCharacter` output, so `exp.score` already includes those bonuses — never seed from it when
+  // this id has advancement picks or we add the same +1 every recompute (any unrelated edit).
+  let experiences = (charData.experiences || []).map((exp) => {
+    const advDelta = advancementExpBonusById[exp.id] || 0;
+    const stored = exp.score ?? 2;
+    const scoreBase = advDelta > 0 ? 2 : stored;
+    return { ...exp, score: scoreBase };
+  });
+  const expNeeded = expectedExperienceRowCount(level);
+  while (experiences.length < expNeeded) {
+    experiences.push({
+      name: '',
+      score: 2,
+      id: newExperienceRowId(),
+      tierEntryAuto: true,
+    });
+  }
   if (expBonus) {
-    const choice = data.experienceBonusChoices?.[expBonus.featureName];
+    const choice = charData.experienceBonusChoices?.[expBonus.featureName];
     const baseScore = 2;
-    result.experiences = (result.experiences || []).map(exp => ({
+    experiences = experiences.map((exp) => ({
       ...exp,
       score: exp.id === choice ? baseScore + expBonus.amount : (exp.score ?? baseScore),
     }));
   }
+  experiences = experiences.map((exp) => ({
+    ...exp,
+    score: (exp.score ?? 2) + (advancementExpBonusById[exp.id] || 0),
+  }));
+  result.experiences = experiences;
 
-  applyActiveBeastformEvasionBonus(result, data, srdData);
-  assignBeastformDisplayFeatures(result, data, srdData);
+  applyActiveBeastformEvasionBonus(result, charData, srdData);
+  assignBeastformDisplayFeatures(result, charData, srdData);
 
-  result.activeFeatures = buildActiveFeatures(result, srdClass, srdSubclass, srdArmor);
+  result.activeFeatures = buildActiveFeatures(result, srdClass, srdSubclass, srdArmor, mcClassSrd, mcSubclass);
 
   return result;
 }
@@ -1128,15 +1664,31 @@ export function isCharacterComplete(data, opts) {
   if (!data.subclassId && !data.subclass) missing.push('Subclass');
   if (!(data.ancestryIds?.length) && !data.ancestry?.length) missing.push('Ancestry');
   if (!data.communityId && !data.community) missing.push('Community');
+  const lv = data.level ?? 1;
+  const expNeeded = expectedExperienceRowCount(lv);
   const experienceCount = (data.experiences || []).filter(e => e.name?.trim()).length;
-  if (experienceCount < 2) missing.push('Experiences (need 2)');
-  const allIds = collectAbilityIds(data);
-  // data.abilities is derived from the same abilityIds by recomputeCharacter, so use Math.max
-  // to avoid double-counting while still supporting Daggerstack characters that store full
-  // ability objects in data.abilities rather than just IDs.
-  const abilityCount = Math.max(allIds.length, (data.abilities || []).length);
+  if (experienceCount < expNeeded) {
+    missing.push(`Experiences (${experienceCount}/${expNeeded} named for level ${lv})`);
+  }
+  if (lv >= 2) {
+    for (const line of missingLevelAdvancementChoices(data, opts?.srdData)) {
+      missing.push(line);
+    }
+    if (hasAdvancementChoicesLockField(data) && !isAdvancementLockedThroughCurrentLevel(data)) {
+      missing.push('Lock level choices (Advancements section)');
+    }
+  }
+  const ownedIds = collectOwnedDomainAbilityIds(data);
+  // data.abilities may list full rows (e.g. Daggerstack); count owned domain IDs for completion.
+  const abilityCount = Math.max(ownedIds.length, (data.abilities || []).length);
 
   if (abilityCount < 2) missing.push('Domain Cards (need 2)');
+  if (ownedIds.length > 5) {
+    const raw = (data.domainLoadoutIds || []).filter(Boolean);
+    if (raw.length !== 5 || new Set(raw).size !== 5) {
+      missing.push('Domain loadout (exactly five distinct active cards when you know more than five)');
+    }
+  }
   // Ancestry experience bonus (e.g. Clank Purposeful Design): require chosen experience
   const ancestryId = data.ancestryIds?.[0];
   const srdAnc = opts?.srdData?.ancestriesById?.[ancestryId];
@@ -1163,4 +1715,21 @@ export function isCharacterComplete(data, opts) {
   return { complete: missing.length === 0, missing };
 }
 
+/** Character editor: show Level Up only when the sheet is complete and not at max level. */
+export function shouldShowCharacterEditorLevelUp(data, srdData) {
+  const lv = Number(data?.level) || 1;
+  if (lv >= 10) return false;
+  return isCharacterComplete(data, srdData ? { srdData } : undefined).complete;
+}
+
 export { TRAIT_KEYS, TRAIT_POOL, TIER_LEVELS, WEAPON_STAT_MAP };
+export {
+  deriveSubclassUnlockSteps,
+  normalizeDomainLoadoutIds,
+  missingLevelAdvancementChoices,
+  getAdvancementIncompleteLevelKeys,
+  isAdvancementPickFullyResolved,
+  hasAdvancementChoicesLockField,
+  isAdvancementLockedThroughCurrentLevel,
+  isCurrentCharacterLevelAdvancementRowEditable,
+} from './advancement-rules.js';

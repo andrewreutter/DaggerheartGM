@@ -378,3 +378,19 @@ export function getPendingV2DeferToggleNext(pendingBanners, instanceId, featureN
 export function getPendingWingsOfLightFlightNext(pendingBanners, instanceId) {
   return getPendingV2DeferToggleNext(pendingBanners, instanceId, WingsOfLight.name, WingsOfLight.chips[0].name);
 }
+
+/**
+ * Domain ability lists from SRD data can contain the same `id` more than once; dropdowns should show each card once.
+ * @param {{ id?: string }[]} abilities
+ * @returns {{ id?: string }[]}
+ */
+export function dedupeAbilitiesById(abilities) {
+  const seen = new Set();
+  const out = [];
+  for (const a of abilities || []) {
+    if (!a?.id || seen.has(a.id)) continue;
+    seen.add(a.id);
+    out.push(a);
+  }
+  return out;
+}

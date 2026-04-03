@@ -7,6 +7,7 @@ import {
   formatArmorChipTooltip,
   formatStatModsTooltip,
   extractGmFeatureWhenClause,
+  dedupeAbilitiesById,
 } from '../../src/client/lib/helpers.js';
 
 describe('isAdversaryDefeated', () => {
@@ -164,5 +165,18 @@ describe('extractGmFeatureWhenClause', () => {
     expect(extractGmFeatureWhenClause('The Burrower can be spotlighted up to three times.')).toBe(
       'The Burrower can be spotlighted up to three times.',
     );
+  });
+});
+
+describe('dedupeAbilitiesById', () => {
+  it('keeps first occurrence per id and drops duplicates', () => {
+    const a = { id: 'x', name: 'First' };
+    const b = { id: 'x', name: 'Dup' };
+    const c = { id: 'y', name: 'Other' };
+    expect(dedupeAbilitiesById([a, b, c])).toEqual([a, c]);
+  });
+
+  it('skips entries without id', () => {
+    expect(dedupeAbilitiesById([{ name: 'No id' }, { id: 'z', name: 'Z' }])).toEqual([{ id: 'z', name: 'Z' }]);
   });
 });

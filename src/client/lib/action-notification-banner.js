@@ -35,6 +35,8 @@ export function computeActionAckTouchesTableState(roll, context = {}) {
  * @returns {boolean}
  */
 export function shouldSuppressActionBanner(roll, context) {
+  /** Pending banner required; ack applies set-table-top + session clears — not "informational" suppression. */
+  if (roll?._sessionStart) return false;
   return !!(roll && roll._action && !computeActionAckTouchesTableState(roll, context));
 }
 

@@ -26,6 +26,25 @@ describe('getOrderedGuideFeatureEntries', () => {
     expect(sub.row.hideFromGuideFeatureList).toBeUndefined();
   });
 
+  it('matches activeFeatures by multiclass when merging class rows with the same name', () => {
+    const el = {
+      classFeatures: [
+        { name: 'FeatA', description: 'Primary SRD', source: 'Bard', id: 'c1' },
+        { name: 'FeatA', description: 'Multiclass SRD', _multiclass: true, source: 'Rogue', id: 'c2' },
+      ],
+      activeFeatures: [
+        { name: 'FeatA', type: 'class', description: 'Merged primary', chips: [] },
+        { name: 'FeatA', type: 'class', description: 'Merged mc', chips: [], _multiclass: true },
+      ],
+    };
+    const entries = getOrderedGuideFeatureEntries(el, () => {});
+    const primary = entries.find((e) => e.key === 'c1');
+    const mc = entries.find((e) => e.key === 'c2');
+    expect(primary.row.description).toBe('Merged primary');
+    expect(mc.row.description).toBe('Merged mc');
+    expect(mc.row.source).toBe('Rogue');
+  });
+
   it('merges subclass row from activeFeatures when present', () => {
     const el = {
       subclassFeatures: [{ name: 'Companion', description: 'SRD', id: 'c1' }],
