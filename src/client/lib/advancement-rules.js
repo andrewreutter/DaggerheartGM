@@ -1361,7 +1361,8 @@ export function randomizeLevelAdvancementChoices({
   }
 
   if (tFirst && !isDoubleSlotAdvancementType(tFirst)) {
-    const tSecond = pickRandomFromArray(typesAvailable(), rng);
+    const secondPool = typesAvailable().filter((t) => !isDoubleSlotAdvancementType(t));
+    const tSecond = pickRandomFromArray(secondPool, rng);
     if (tSecond) {
       const next2 = tryAssignAdvancementPickAtFocusLevel(adv, L, L, tSecond);
       if (next2) adv = next2;

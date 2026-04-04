@@ -718,6 +718,38 @@ describe('advancement-rules', () => {
     expect(out.advancements['3'].domainCardId).toBe('high');
   });
 
+  it('randomizeLevelAdvancementChoices never draws proficiency/multiclass as the second random pick', () => {
+    const L = 6;
+    const formData = {
+      level: L,
+      traits: { agility: 0, strength: 0, finesse: 0, instinct: 0, presence: 0, knowledge: 0 },
+      experiences: [],
+      advancements: {},
+      abilityIds: [],
+    };
+    let rngCalls = 0;
+    const rng = () => {
+      rngCalls += 1;
+      // First two calls: pickRandomFromArray uses floor(rng() * length) → 0 → always first pool entry.
+      if (rngCalls <= 2) return 0;
+      return 0.25;
+    };
+    const out = randomizeLevelAdvancementChoices({
+      formData,
+      characterLevel: L,
+      srdData: { abilitiesById: {} },
+      abilityOptionsForRow: [],
+      occupiedDomainCardIds: new Set(),
+      getTradeReplacementOptions: () => [],
+      tradeFromIds: [],
+      rng,
+    });
+    const picks = out.advancements[String(L)]?.picks || [];
+    expect(picks[0]?.type).toBeTruthy();
+    expect(picks[1]?.type).toBeTruthy();
+    expect(isDoubleSlotAdvancementType(picks[1]?.type)).toBe(false);
+  });
+
   it('randomizeLevelAdvancementChoices names tier-entry experience at level 2', () => {
     const experiences = [
       { id: 'e0', name: 'A', score: 2 },
