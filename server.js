@@ -30,6 +30,11 @@ import {
 } from './src/ocr-parse.js';
 import { generateImage as xaiGenerateImage, editImage as xaiEditImage, isConfigured as xaiIsConfigured } from './src/xai-image.js';
 import { logXaiImageUsage } from './src/ai-usage-log.js';
+import {
+  attachEstimatedCostsToAggregateRows,
+  AI_USAGE_PRICING_TIER,
+  AI_USAGE_PRICING_NOTE,
+} from './src/ai-usage-pricing.js';
 import { syncDaggerstackCharacter, invalidateSrdLookupCache } from './src/daggerstack-sync.js';
 import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.js';
 import compression from 'compression';
@@ -273,8 +278,10 @@ app.get('/api/admin/ai-usage', requireAuth, requireAdmin, async (req, res) => {
       fromInclusive: fromInclusive.toISOString().slice(0, 10),
       toInclusive: new Date(toExclusive.getTime() - 86400000).toISOString().slice(0, 10),
       builder,
-      totals,
-      byDay,
+      pricingTier: AI_USAGE_PRICING_TIER,
+      pricingNote: AI_USAGE_PRICING_NOTE,
+      totals: attachEstimatedCostsToAggregateRows(totals),
+      byDay: attachEstimatedCostsToAggregateRows(byDay),
     });
   } catch (err) {
     console.error('GET /api/admin/ai-usage:', err);
@@ -1574,10 +1581,10 @@ app.post('/api/character-ai-build', requireAuth, async (req, res) => {
     targetLevel = t;
   }
   try {
-    const { patch, justification, warnings } = await buildCharacterAiFromConcept(concept.trim(), {
+    const result = await buildCharacterAiFromConcept(concept.trim(), {
       targetLevel,
     });
-    res.json({ patch, justification, warnings });
+    res.json(result);
   } catch (err) {
     if (err?.code === 'BAD_REQUEST') {
       return res.status(400).json({ error: err.message });

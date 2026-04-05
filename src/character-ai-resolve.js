@@ -116,7 +116,7 @@ export function resolveToId(raw, maps, ctx) {
  */
 function resolveDomainAbilitySlot(slot, legalMaps, fullMaps, srdData, domainSet, warn, idx) {
   const noop = () => {};
-  const kind = `domain ability slot ${idx + 1}`;
+  const kind = `domain ability slot ${idx}`;
   const idLegal = resolveToId(slot, legalMaps, { warn: noop, kind });
   if (idLegal) return idLegal;
 
@@ -125,13 +125,13 @@ function resolveDomainAbilitySlot(slot, legalMaps, fullMaps, srdData, domainSet,
     const ab = srdData.abilitiesById[idFull];
     if (!ab) return null;
     if ((ab.level || 1) > 1) {
-      warn(`Ability "${ab.name}" is above level 1 — slot ${idx + 1} cleared`);
+      warn(`Ability "${ab.name}" is above level 1 — slot ${idx} cleared`);
       return null;
     }
     if (!domainSet.has(ab.domain)) {
       const doms = [...domainSet].join(', ');
       warn(
-        `"${ab.name}" is a ${ab.domain} domain card; this class only uses ${doms} — pick only from that class's level1DomainCards in the catalog — slot ${idx + 1} cleared`,
+        `"${ab.name}" is a ${ab.domain} domain card; this class only uses ${doms} — pick only from that class's level1DomainCards in the catalog — slot ${idx} cleared`,
       );
       return null;
     }
@@ -941,4 +941,249 @@ export function resolveCharacterAiDraft(raw, srdData, opts = {}) {
   patch.advancementChoicesLockedThroughLevel = advGaps.length ? 1 : resolvedLevel;
 
   return { patch, warnings };
+}
+
+function strictIssue(path, code, message) {
+  return { path, code, message };
+}
+
+function pathForResolveKind(kind) {
+  const s = String(kind || '').toLowerCase();
+  if (s === 'class') return 'classId';
+  if (s === 'subclass') return 'subclassId';
+  if (s === 'community') return 'communityId';
+  if (s === 'ancestry') return 'ancestryIds';
+  if (s.startsWith('primary weapon')) return 'primaryWeaponId';
+  if (s.startsWith('secondary weapon')) return 'secondaryWeaponId';
+  if (s.startsWith('armor')) return 'armorId';
+  if (s === 'multiclass class') return 'multiclassClassId';
+  if (s === 'multiclass subclass') return 'multiclassSubclassId';
+  if (s.includes('experiencebonuschoices')) return 'experienceBonusChoices';
+  if (s.includes('experience')) return 'experiences';
+  if (s.includes('domain ability slot 1')) return 'abilityIds.0';
+  if (s.includes('domain ability slot 2')) return 'abilityIds.1';
+  return 'character';
+}
+
+function classifyStrictCharacterAiWarning(warning) {
+  const w = String(warning || '');
+  if (!w) return null;
+
+  if (
+    w.startsWith('Trait spread from the model was invalid') ||
+    w.startsWith('Trimmed experiences to ') ||
+    w.startsWith('sheetDisplayNames.') ||
+    w.startsWith('sheetDisplayNames.features skipped')
+  ) {
+    return { level: 'warning', issue: strictIssue('character', 'normalized_warning', w) };
+  }
+
+  let m = /^Ability "(.+)" is above level 1 — slot (\d+) cleared$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`abilityIds.${Math.max(0, Number(m[2]) - 1)}`, 'starting_ability_above_level_1', w) };
+
+  m = /^".+" is a .+ domain card; .*slot (\d+) cleared$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`abilityIds.${Math.max(0, Number(m[1]) - 1)}`, 'starting_ability_wrong_domain', w) };
+
+  if (w === 'Duplicate domain cards — dropping the second slot') {
+    return { level: 'error', issue: strictIssue('abilityIds.1', 'duplicate_starting_ability', w) };
+  }
+
+  if (w === 'More than two domain card slots were returned — truncated to two') {
+    return { level: 'error', issue: strictIssue('abilityIds', 'too_many_starting_abilities', w) };
+  }
+
+  if (w === 'Multiple ancestries were returned — keeping the first (the editor uses one ancestry)') {
+    return { level: 'error', issue: strictIssue('ancestryIds', 'multiple_ancestries', w) };
+  }
+
+  if (w === 'Secondary weapon removed because primary is two-handed') {
+    return { level: 'error', issue: strictIssue('secondaryWeaponId', 'secondary_with_two_handed_primary', w) };
+  }
+
+  m = /^Level (\d+) domainCardId(?:.*)? — cleared$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}.domainCardId`, 'invalid_domain_card_id', w) };
+
+  m = /^Level (\d+) domainCardId duplicates a card already owned — cleared$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}.domainCardId`, 'duplicate_domain_card_id', w) };
+
+  m = /^Level (\d+) domain_card .* — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}.picks`, 'invalid_domain_card_pick', w) };
+
+  m = /^Level (\d+) traits pick needs two distinct trait keys — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}.picks`, 'invalid_traits_pick', w) };
+
+  m = /^Level (\d+) experience pick needs two distinct experience row ids — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}.picks`, 'invalid_experience_pick', w) };
+
+  m = /^Level (\d+) domainTrade .* — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}.domainTrade`, 'invalid_domain_trade', w) };
+
+  m = /^Advancement "(.+)" not allowed at level (\d+) — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[2]}.picks`, 'disallowed_advancement_type', w) };
+
+  m = /^Advancement pick (\d+) type "(.+)" not allowed at level (\d+) — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[3]}.picks.${Math.max(0, Number(m[1]) - 1)}`, 'disallowed_advancement_pick_type', w) };
+
+  m = /^No remaining slot for "(.+)" at level (\d+) pick (\d+) — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[2]}.picks.${Math.max(0, Number(m[3]) - 1)}`, 'advancement_band_slot_exhausted', w) };
+
+  m = /^No remaining band slot for "(.+)" at level (\d+) — removed$/.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[2]}.picks.0`, 'advancement_band_slot_exhausted', w) };
+
+  m = /^Advancement incomplete: Level (\d+): /.exec(w);
+  if (m) return { level: 'error', issue: strictIssue(`advancements.${m[1]}`, 'advancement_incomplete', w) };
+
+  if (
+    w.includes('not valid for the selected class') ||
+    w.includes('not valid for the multiclass class') ||
+    w === 'Subclass ignored because class did not resolve' ||
+    w === 'Multiclass subclass ignored — multiclass class did not resolve' ||
+    w === 'Multiclass class matches primary class — cleared' ||
+    w.startsWith('Multiclass class has two domains — set multiclassDomain')
+  ) {
+    const path = w.includes('multiclass')
+      ? (w.includes('Domain') ? 'multiclassDomain' : w.includes('class') ? 'multiclassClassId' : 'multiclassSubclassId')
+      : 'subclassId';
+    return { level: 'error', issue: strictIssue(path, 'invalid_class_relationship', w) };
+  }
+
+  if (
+    w.startsWith('multiclassDomain "') ||
+    w.startsWith('Draft level ') ||
+    w === 'Invalid level in draft — using level 1' ||
+    w.startsWith('Primary weapon exceeds tier cap') ||
+    w.startsWith('Secondary weapon exceeds tier cap') ||
+    w.startsWith('Armor exceeds tier cap') ||
+    w.startsWith('Ignored invalid experience at index ')
+  ) {
+    const path = w.startsWith('multiclassDomain "')
+      ? 'multiclassDomain'
+      : w.startsWith('Primary weapon exceeds')
+        ? 'primaryWeaponId'
+        : w.startsWith('Secondary weapon exceeds')
+          ? 'secondaryWeaponId'
+          : w.startsWith('Armor exceeds')
+            ? 'armorId'
+            : w.startsWith('Ignored invalid experience')
+              ? 'experiences'
+              : 'level';
+    return { level: 'error', issue: strictIssue(path, 'normalized_error', w) };
+  }
+
+  m = /^(Could not resolve|Unknown) (.+?)(?: id)? ".*"$/.exec(w);
+  if (m) {
+    return { level: 'error', issue: strictIssue(pathForResolveKind(m[2]), 'unresolved_reference', w) };
+  }
+
+  if (w.includes('looks like a domain ability id')) {
+    const path = w.includes('experienceBonusChoices')
+      ? 'experienceBonusChoices'
+      : w.includes('experience pick')
+        ? 'advancements'
+        : 'experiences';
+    return { level: 'error', issue: strictIssue(path, 'domain_ability_in_experience_field', w) };
+  }
+
+  if (
+    /cleared$/.test(w) ||
+    /removed$/.test(w) ||
+    w.includes('not valid') ||
+    w.includes('duplicates a card') ||
+    w.includes('not on this character') ||
+    w.includes('exceeds max spell level')
+  ) {
+    return { level: 'error', issue: strictIssue('character', 'normalized_error', w) };
+  }
+
+  return { level: 'warning', issue: strictIssue('character', 'normalized_warning', w) };
+}
+
+function dedupeStrictIssues(issues) {
+  const seen = new Set();
+  const out = [];
+  for (const issue of issues || []) {
+    const key = `${issue.path}::${issue.code}::${issue.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(issue);
+  }
+  return out;
+}
+
+export function validateCharacterAiDraftStrict(raw, srdData, opts = {}) {
+  const { patch, warnings: resolverWarnings } = resolveCharacterAiDraft(raw, srdData, opts);
+
+  const errors = [];
+  const warnings = [];
+  for (const entry of resolverWarnings) {
+    const classified = classifyStrictCharacterAiWarning(entry);
+    if (!classified) continue;
+    if (classified.level === 'error') errors.push(classified.issue);
+    else warnings.push(classified.issue);
+  }
+
+  if (!patch.classId) errors.push(strictIssue('classId', 'missing_class', 'Character must resolve to a classId'));
+  if (!patch.subclassId) errors.push(strictIssue('subclassId', 'missing_subclass', 'Character must resolve to a subclassId'));
+  if (!Array.isArray(patch.ancestryIds) || patch.ancestryIds.length !== 1) {
+    errors.push(strictIssue('ancestryIds', 'missing_ancestry', 'Character must resolve to exactly one ancestryId'));
+  }
+  if (!patch.communityId) errors.push(strictIssue('communityId', 'missing_community', 'Character must resolve to a communityId'));
+  if (!patch.primaryWeaponId) {
+    errors.push(strictIssue('primaryWeaponId', 'missing_primary_weapon', 'Character must resolve to a primaryWeaponId'));
+  }
+  if (!patch.armorId) errors.push(strictIssue('armorId', 'missing_armor', 'Character must resolve to an armorId'));
+
+  const resolvedStartingAbilityCount = (patch.abilityIds || []).filter(Boolean).length;
+  if (resolvedStartingAbilityCount !== 2) {
+    errors.push(strictIssue('abilityIds', 'missing_starting_domain_cards', 'Character must resolve to two legal starting domain cards'));
+  }
+
+  const expectedExpRows = expectedExperienceRowCount(patch.level);
+  if ((patch.experiences || []).length !== expectedExpRows) {
+    warnings.push(
+      strictIssue(
+        'experiences',
+        'experience_row_count_adjusted',
+        `Experience rows were normalized to ${expectedExpRows} for level ${patch.level}`,
+      ),
+    );
+  }
+
+  if (patch.multiclassClassId && !patch.multiclassSubclassId) {
+    errors.push(
+      strictIssue(
+        'multiclassSubclassId',
+        'missing_multiclass_subclass',
+        'multiclassSubclassId is required when multiclassClassId is set',
+      ),
+    );
+  }
+  if (patch.multiclassClassId) {
+    const mcClass = srdData.classesById?.[patch.multiclassClassId];
+    const mcDomains = mcClass?.domains || [];
+    if (mcDomains.length > 1 && !patch.multiclassDomain) {
+      errors.push(
+        strictIssue(
+          'multiclassDomain',
+          'missing_multiclass_domain',
+          'multiclassDomain is required when the multiclass class has two domains',
+        ),
+      );
+    }
+  }
+
+  const incompleteRows = missingLevelAdvancementChoices(patch, srdData);
+  for (const row of incompleteRows) {
+    const match = /^Level (\d+): /.exec(row);
+    const path = match ? `advancements.${match[1]}` : 'advancements';
+    errors.push(strictIssue(path, 'advancement_incomplete', row));
+  }
+
+  return {
+    ok: dedupeStrictIssues(errors).length === 0,
+    errors: dedupeStrictIssues(errors),
+    warnings: dedupeStrictIssues(warnings),
+    patch,
+    resolverWarnings,
+  };
 }

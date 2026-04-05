@@ -6,6 +6,7 @@ import {
   resolveToId,
   parseSuggestedTraits,
   isValidTraitAssignment,
+  validateCharacterAiDraftStrict,
 } from '../../src/character-ai-resolve.js';
 
 function miniSrd() {
@@ -421,5 +422,76 @@ describe('character-ai-resolve', () => {
       srd,
     );
     expect(patch.sheetDisplayNames?.abilities?.['ability-srd-abl-4']).toBe('Patch Up+');
+  });
+
+  it('strict validation reports illegal domain cards as errors', () => {
+    const srd = miniSrd();
+    const out = validateCharacterAiDraftStrict(
+      {
+        classId: 'srd-cls-bard',
+        subclassId: 'Wordsmith',
+        ancestryIds: ['srd-anc-faun'],
+        communityId: 'srd-com-highborne',
+        primaryWeaponId: 'srd-wpn-rapier',
+        armorId: 'srd-armor-leather',
+        abilityIds: ['srd-abl-valor', 'srd-abl-2'],
+      },
+      srd,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.errors.some((issue) => issue.path === 'abilityIds.0')).toBe(true);
+  });
+
+  it('strict validation reports incomplete advancements as errors', () => {
+    const srd = miniSrd();
+    const out = validateCharacterAiDraftStrict(
+      {
+        classId: 'srd-cls-bard',
+        subclassId: 'Wordsmith',
+        ancestryIds: ['srd-anc-faun'],
+        communityId: 'srd-com-highborne',
+        primaryWeaponId: 'srd-wpn-rapier',
+        armorId: 'srd-armor-leather',
+        level: 3,
+        abilityIds: ['srd-abl-1', 'srd-abl-2'],
+        experiences: [
+          { id: 'e1', name: 'A', score: 2 },
+          { id: 'e2', name: 'B', score: 2 },
+          { id: 'e3', name: 'C', score: 2 },
+        ],
+        advancements: {
+          '2': {
+            domainCardId: 'srd-abl-4',
+            picks: [{ type: 'hp' }, { type: 'stress' }],
+          },
+        },
+      },
+      srd,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.errors.some((issue) => issue.code === 'advancement_incomplete' && issue.path === 'advancements.3')).toBe(true);
+  });
+
+  it('strict validation keeps nickname cleanup as warnings, not mechanical errors', () => {
+    const srd = miniSrd();
+    const out = validateCharacterAiDraftStrict(
+      {
+        classId: 'srd-cls-bard',
+        subclassId: 'Wordsmith',
+        ancestryIds: ['srd-anc-faun'],
+        communityId: 'srd-com-highborne',
+        primaryWeaponId: 'srd-wpn-rapier',
+        armorId: 'srd-armor-leather',
+        abilityIds: ['srd-abl-1', 'srd-abl-2'],
+        sheetDisplayNames: {
+          features: {
+            'made-up-key': 'Nope',
+          },
+        },
+      },
+      srd,
+    );
+    expect(out.errors.some((issue) => issue.path === 'character' && issue.message.includes('made-up-key'))).toBe(false);
+    expect(out.warnings.some((issue) => issue.message.includes('made-up-key'))).toBe(true);
   });
 });

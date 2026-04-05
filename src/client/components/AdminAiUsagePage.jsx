@@ -22,6 +22,32 @@ function formatNum(n) {
   return Number(n).toLocaleString();
 }
 
+/** @param {number | null | undefined} n */
+function formatUsd(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 6 }).format(
+    Number(n)
+  );
+}
+
+/**
+ * @param {Array<{ estimated_cost_usd?: number | null }>} rows
+ * @returns {{ sum: number, hasNull: boolean }}
+ */
+function sumEstimatedCosts(rows) {
+  let sum = 0;
+  let hasNull = false;
+  for (const r of rows || []) {
+    const v = r?.estimated_cost_usd;
+    if (v == null || Number.isNaN(v)) {
+      hasNull = true;
+    } else {
+      sum += Number(v);
+    }
+  }
+  return { sum, hasNull };
+}
+
 /**
  * @param {{ navigate: (path: string, opts?: object) => void }} props
  */
@@ -61,7 +87,17 @@ export function AdminAiUsagePage({ navigate }) {
           <div>
             <h1 className="text-lg font-semibold">AI usage (admin)</h1>
             <p className="text-xs text-red-200/80">
-              Token totals and call counts — prompts are not stored. Dates are UTC calendar days.
+              Token totals, call counts, and estimated USD (OpenAI Standard tier). Prompts are not stored. Dates are UTC
+              calendar days.{' '}
+              <a
+                href="https://developers.openai.com/api/docs/pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-red-100"
+              >
+                OpenAI pricing
+              </a>
+              .
             </p>
           </div>
         </div>
@@ -116,16 +152,19 @@ export function AdminAiUsagePage({ navigate }) {
         </div>
 
         {data && (
-          <p className="text-xs text-dh-muted">
-            Range: <span className="font-mono text-dh">{data.fromInclusive}</span> –{' '}
-            <span className="font-mono text-dh">{data.toInclusive}</span>
-            {data.builder ? (
-              <>
-                {' '}
-                · builder filter: <span className="font-mono text-dh">{data.builder}</span>
-              </>
-            ) : null}
-          </p>
+          <div className="text-xs text-dh-muted space-y-1">
+            <p>
+              Range: <span className="font-mono text-dh">{data.fromInclusive}</span> –{' '}
+              <span className="font-mono text-dh">{data.toInclusive}</span>
+              {data.builder ? (
+                <>
+                  {' '}
+                  · builder filter: <span className="font-mono text-dh">{data.builder}</span>
+                </>
+              ) : null}
+            </p>
+            {data.pricingNote ? <p>{data.pricingNote}</p> : null}
+          </div>
         )}
 
         {error && (
@@ -136,12 +175,17 @@ export function AdminAiUsagePage({ navigate }) {
 
         {data?.totals?.length > 0 && (
           <div className="border border-dh-border rounded-lg overflow-hidden">
-            <div className="bg-dh-raised px-3 py-2 text-sm font-medium border-b border-dh-border">Totals by builder</div>
+            <div className="bg-dh-raised px-3 py-2 text-sm font-medium border-b border-dh-border">
+              Totals by builder, provider, and model
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-dh-muted border-b border-dh-border bg-dh-surface/50">
                     <th className="px-3 py-2 font-medium">Builder</th>
+                    <th className="px-3 py-2 font-medium">Provider</th>
+                    <th className="px-3 py-2 font-medium">Model</th>
+                    <th className="px-3 py-2 font-medium">Est. cost</th>
                     <th className="px-3 py-2 font-medium">Calls</th>
                     <th className="px-3 py-2 font-medium">Errors</th>
                     <th className="px-3 py-2 font-medium">Prompt tok.</th>
@@ -152,9 +196,15 @@ export function AdminAiUsagePage({ navigate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.totals.map((row) => (
-                    <tr key={row.builder} className="border-b border-dh-border/60 hover:bg-dh-hover/30">
+                  {data.totals.map((row, idx) => (
+                    <tr
+                      key={`${row.builder}-${row.provider}-${row.model ?? 'null'}-${idx}`}
+                      className="border-b border-dh-border/60 hover:bg-dh-hover/30"
+                    >
                       <td className="px-3 py-2 font-mono text-xs">{row.builder}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.provider}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.model ?? '—'}</td>
+                      <td className="px-3 py-2">{formatUsd(row.estimated_cost_usd)}</td>
                       <td className="px-3 py-2">{formatNum(row.calls)}</td>
                       <td className="px-3 py-2">{formatNum(row.errors)}</td>
                       <td className="px-3 py-2">{formatNum(row.prompt_tokens)}</td>
@@ -164,6 +214,21 @@ export function AdminAiUsagePage({ navigate }) {
                       <td className="px-3 py-2">{formatNum(row.latency_ms_sum)}</td>
                     </tr>
                   ))}
+                  {(() => {
+                    const { sum, hasNull } = sumEstimatedCosts(data.totals);
+                    return (
+                      <tr className="bg-dh-surface/80 font-medium border-t border-dh-border">
+                        <td className="px-3 py-2" colSpan={3}>
+                          Total (estimated)
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatUsd(sum)}
+                          {hasNull ? <span className="block text-[10px] font-normal text-dh-muted">Partial — some rows unknown</span> : null}
+                        </td>
+                        <td className="px-3 py-2" colSpan={7} />
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -183,6 +248,9 @@ export function AdminAiUsagePage({ navigate }) {
                   <tr className="text-left text-dh-muted border-b border-dh-border">
                     <th className="px-3 py-2 font-medium">Day</th>
                     <th className="px-3 py-2 font-medium">Builder</th>
+                    <th className="px-3 py-2 font-medium">Provider</th>
+                    <th className="px-3 py-2 font-medium">Model</th>
+                    <th className="px-3 py-2 font-medium">Est. cost</th>
                     <th className="px-3 py-2 font-medium">Calls</th>
                     <th className="px-3 py-2 font-medium">Prompt</th>
                     <th className="px-3 py-2 font-medium">Completion</th>
@@ -193,9 +261,15 @@ export function AdminAiUsagePage({ navigate }) {
                 </thead>
                 <tbody>
                   {data.byDay.map((row, i) => (
-                    <tr key={`${row.day}-${row.builder}-${i}`} className="border-b border-dh-border/60 hover:bg-dh-hover/30">
+                    <tr
+                      key={`${row.day}-${row.builder}-${row.provider}-${row.model ?? 'null'}-${i}`}
+                      className="border-b border-dh-border/60 hover:bg-dh-hover/30"
+                    >
                       <td className="px-3 py-1.5 font-mono text-xs">{row.day}</td>
                       <td className="px-3 py-1.5 font-mono text-xs">{row.builder}</td>
+                      <td className="px-3 py-1.5 font-mono text-xs">{row.provider}</td>
+                      <td className="px-3 py-1.5 font-mono text-xs">{row.model ?? '—'}</td>
+                      <td className="px-3 py-1.5">{formatUsd(row.estimated_cost_usd)}</td>
                       <td className="px-3 py-1.5">{formatNum(row.calls)}</td>
                       <td className="px-3 py-1.5">{formatNum(row.prompt_tokens)}</td>
                       <td className="px-3 py-1.5">{formatNum(row.completion_tokens)}</td>

@@ -672,7 +672,15 @@ export const syncDaggerstackCharacter = async (url, email, password) => {
  * LLM character draft from a concept (levels 1–10). Pass `signal` to cancel (AbortController).
  * @param {string} concept
  * @param {{ signal?: AbortSignal, targetLevel?: number }} [options] — targetLevel 1–10 (default 1)
- * @returns {Promise<{ patch: object, justification: string, warnings: string[] }>}
+ * @returns {Promise<{
+ *   mode?: 'single'|'choice',
+ *   patch?: object,
+ *   justification?: string,
+ *   warnings?: string[],
+ *   candidates?: Array<{ key: string, label: string, reason: string, patch: object, warnings?: string[] }>,
+ *   overlapDiagnostics?: object,
+ *   rankingRationale?: Array<{ abilityId: string, name: string, domain?: string, level?: number, reason: string }>,
+ * }>}
  */
 export const postCharacterAiBuild = async (concept, options = {}) => {
   const { signal, targetLevel } = options;
@@ -1550,4 +1558,3 @@ export const editImage = async (image, prompt) => {
   }
   return res.json();
 };
-

@@ -1288,6 +1288,8 @@ export async function queryAiUsageAggregates(appId, opts) {
   const totalsSql = `
     SELECT
       builder,
+      provider,
+      model,
       COUNT(*)::int AS calls,
       COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
       COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
@@ -1300,14 +1302,16 @@ export async function queryAiUsageAggregates(appId, opts) {
       AND created_at >= $2::timestamptz
       AND created_at < $3::timestamptz
       ${builderFilter}
-    GROUP BY builder
-    ORDER BY builder ASC
+    GROUP BY builder, provider, model
+    ORDER BY builder ASC, provider ASC, model ASC NULLS LAST
   `;
 
   const byDaySql = `
     SELECT
       (created_at AT TIME ZONE 'UTC')::date::text AS day,
       builder,
+      provider,
+      model,
       COUNT(*)::int AS calls,
       COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
       COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
@@ -1319,8 +1323,8 @@ export async function queryAiUsageAggregates(appId, opts) {
       AND created_at >= $2::timestamptz
       AND created_at < $3::timestamptz
       ${builderFilter}
-    GROUP BY 1, builder
-    ORDER BY 1 ASC, builder ASC
+    GROUP BY 1, builder, provider, model
+    ORDER BY 1 ASC, builder ASC, provider ASC, model ASC NULLS LAST
   `;
 
   const [{ rows: totals }, { rows: byDay }] = await Promise.all([
