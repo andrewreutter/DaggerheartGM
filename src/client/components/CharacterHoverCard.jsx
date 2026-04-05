@@ -549,7 +549,9 @@ export function CharacterHoverCard({
     const charName = el.name;
     const featName = subFeature ? subFeature.name : feature.name;
     const fk = getFeatureUsageKeyForGuideFeature(el, feature.name) ?? feature.name;
-    const parentLabel = getFeatureSheetLabel(el, fk, feature.name);
+    const featSourceStr =
+      typeof feature.source === 'string' && feature.source.trim() ? feature.source.trim() : '';
+    const parentLabel = getFeatureSheetLabel(el, fk, feature.name, featSourceStr);
     const displayFeatName = subFeature ? `${parentLabel}: ${subFeature.name}` : parentLabel;
     const parts = [];
 
@@ -631,7 +633,9 @@ export function CharacterHoverCard({
     // Feature-level key for usage tracking — must match Guide `entry.key` (see feature-usage-key.js)
     const featureKey = getFeatureUsageKeyForGuideFeature(el, feature.name) ?? feature.name;
     const featName = subFeature ? subFeature.name : feature.name;
-    const parentLabelForDisplay = getFeatureSheetLabel(el, featureKey, feature.name);
+    const featSourceStrForSheet =
+      typeof feature.source === 'string' && feature.source.trim() ? feature.source.trim() : '';
+    const parentLabelForDisplay = getFeatureSheetLabel(el, featureKey, feature.name, featSourceStrForSheet);
     const displayFeatTitle = subFeature
       ? `${parentLabelForDisplay}: ${subFeature.name}`
       : parentLabelForDisplay;
@@ -644,7 +648,7 @@ export function CharacterHoverCard({
         ? el.traits[el.spellcastTrait]
         : 2;
       const diceExprs = Array(Math.max(1, spellcastCount)).fill('[d4]').join(' ');
-      const pdLabel = getFeatureSheetLabel(el, featureKey, 'Prayer Dice');
+      const pdLabel = getFeatureSheetLabel(el, featureKey, 'Prayer Dice', featSourceStrForSheet);
       const rollText = `${el.name} ${pdLabel} ${diceExprs}`;
       const displayName = `${el.name} ${pdLabel}`;
       const prayerRollMeta = {

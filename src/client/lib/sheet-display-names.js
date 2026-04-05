@@ -4,6 +4,151 @@
  * Roll/banner human-readable text uses {@link formatSheetDisplayLabel}; `{Tag: ...}` blocks stay canonical.
  */
 
+import { getOrderedGuideFeatureEntries } from './guide-feature-entries.js';
+
+/**
+ * Slug segment for {@link makeFeatureSheetDisplayKey} (lowercase alphanumerics + underscores).
+ * @param {string|null|undefined} s
+ */
+export function slugForFeatureSheetKey(s) {
+  if (s == null) return '';
+  return String(s)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+}
+
+/**
+ * Base stable key from SRD source label + feature name (before collision suffix).
+ * Model + resolver use the same prefix; {@link finalizeFeatureSheetDisplayKeys} may append `__hex` when bases collide.
+ *
+ * @param {string|null|undefined} sourceName — class, subclass, ancestry, community, or beastform name string
+ * @param {string|null|undefined} featureName
+ */
+export function makeFeatureSheetDisplayKey(sourceName, featureName) {
+  const a = slugForFeatureSheetKey(sourceName);
+  const b = slugForFeatureSheetKey(featureName);
+  return `feat__${a}__${b}`;
+}
+
+/**
+ * @param {string} a
+ * @param {string} b
+ */
+function shortPairHashHex(a, b) {
+  const s = `${a}\0${b}`;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).slice(0, 6);
+}
+
+/**
+ * Given every guide feature row’s (source, name), produce a map `source\\0name` → final key string.
+ * Unique bases keep {@link makeFeatureSheetDisplayKey}; colliding bases get `__` + hash suffix.
+ *
+ * @param {{ sourceName: string, featureName: string }[]} rows
+ * @returns {Map<string, string>}
+ */
+export function finalizeFeatureSheetDisplayKeys(rows) {
+  /** @type {Map<string, string[]>} */
+  const baseToPairs = new Map();
+  for (const r of rows || []) {
+    const sn = String(r.sourceName ?? '').trim();
+    const fn = String(r.featureName ?? '').trim();
+    if (!fn) continue;
+    const base = makeFeatureSheetDisplayKey(sn, fn);
+    const pk = `${sn}\0${fn}`;
+    if (!baseToPairs.has(base)) baseToPairs.set(base, []);
+    baseToPairs.get(base).push(pk);
+  }
+  const out = new Map();
+  for (const [base, pairKeys] of baseToPairs) {
+    const uniq = [...new Set(pairKeys)];
+    if (uniq.length <= 1) {
+      out.set(uniq[0], base);
+      continue;
+    }
+    for (const pk of uniq) {
+      const [sn, fn] = pk.split('\0');
+      out.set(pk, `${base}__${shortPairHashHex(sn, fn)}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Source string for feature-key slugging (matches SRD `resolveFeatures` / guide rows).
+ * @param {object|null|undefined} row — guide `featRow`
+ */
+export function rowSourceNameForFeatureDisplayKey(row) {
+  if (!row || typeof row !== 'object') return '';
+  if (typeof row.source === 'string' && row.source.trim()) return row.source.trim();
+  if (row.source && typeof row.source === 'object' && row.source.name != null) {
+    return String(row.source.name).trim();
+  }
+  return '';
+}
+
+/**
+ * @param {object} el — character element after `recomputeCharacter` (or equivalent)
+ * @param {() => void} [onV2CardChip]
+ * @returns {{ sourceName: string, featureName: string }[]}
+ */
+export function collectGuideFeatureKeyRows(el, onV2CardChip) {
+  const entries = getOrderedGuideFeatureEntries(el, onV2CardChip ?? (() => {}));
+  return entries
+    .map((e) => ({
+      sourceName: rowSourceNameForFeatureDisplayKey(e.row),
+      featureName: e.row?.name != null ? String(e.row.name) : '',
+    }))
+    .filter((r) => r.featureName);
+}
+
+/**
+ * Guide `entry.key` values plus finalized squashed keys for this sheet.
+ *
+ * @param {object} el
+ * @param {() => void} [onV2CardChip]
+ * @returns {Set<string>}
+ */
+export function buildAllowedFeatureSheetDisplayNameKeys(el, onV2CardChip) {
+  const entries = getOrderedGuideFeatureEntries(el, onV2CardChip ?? (() => {}));
+  const rows = collectGuideFeatureKeyRows(el, onV2CardChip);
+  const pairToKey = finalizeFeatureSheetDisplayKeys(rows);
+  const allowed = new Set();
+  for (const e of entries) {
+    if (e.key) allowed.add(String(e.key));
+  }
+  for (const k of pairToKey.values()) {
+    if (k) allowed.add(k);
+  }
+  return allowed;
+}
+
+/**
+ * @param {Record<string, string>|null|undefined} featuresMap — `el.sheetDisplayNames.features`
+ * @param {string|null|undefined} guideKey
+ * @param {string|null|undefined} sourceName
+ * @param {string|null|undefined} featureName
+ * @param {object|null|undefined} el
+ */
+export function resolveFeatureSheetDisplayCustom(featuresMap, guideKey, sourceName, featureName, el) {
+  if (!featuresMap || typeof featuresMap !== 'object') return undefined;
+  const gk = guideKey && String(guideKey).trim();
+  if (gk && featuresMap[gk]) return featuresMap[gk];
+  if (!el || sourceName == null || featureName == null) return undefined;
+  const rows = collectGuideFeatureKeyRows(el);
+  const pairToKey = finalizeFeatureSheetDisplayKeys(rows);
+  const pk = `${String(sourceName).trim()}\0${String(featureName).trim()}`;
+  const squashed = pairToKey.get(pk);
+  return squashed && featuresMap[squashed] ? featuresMap[squashed] : undefined;
+}
+
 /**
  * @param {string} original
  * @param {string|null|undefined} custom
@@ -92,21 +237,28 @@ export function getWeaponSheetLabel(el, weapon) {
  * @param {object} el
  * @param {string} featureKey — Guide `entry.key`
  * @param {string} originalName
- * @returns {string}
+ * @param {string} [sourceName] — SRD source string on the feature row (class / subclass / ancestry name) for squashed-key lookup
  */
-export function getFeatureSheetLabelParts(el, featureKey, originalName) {
+export function getFeatureSheetLabelParts(el, featureKey, originalName, sourceName) {
   const o = String(originalName ?? '');
-  const custom =
-    featureKey &&
-    el?.sheetDisplayNames?.features &&
-    typeof el.sheetDisplayNames.features === 'object'
-      ? el.sheetDisplayNames.features[featureKey]
-      : undefined;
+  const custom = resolveFeatureSheetDisplayCustom(
+    el?.sheetDisplayNames?.features,
+    featureKey,
+    sourceName,
+    originalName,
+    el,
+  );
   return getSheetDisplayLabelParts(o, custom);
 }
 
-export function getFeatureSheetLabel(el, featureKey, originalName) {
-  const { primary, parenthetical } = getFeatureSheetLabelParts(el, featureKey, originalName);
+/**
+ * @param {object} el
+ * @param {string} featureKey
+ * @param {string} originalName
+ * @param {string} [sourceName]
+ */
+export function getFeatureSheetLabel(el, featureKey, originalName, sourceName) {
+  const { primary, parenthetical } = getFeatureSheetLabelParts(el, featureKey, originalName, sourceName);
   return parenthetical == null ? primary : `${primary} (${parenthetical})`;
 }
 

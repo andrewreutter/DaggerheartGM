@@ -11,8 +11,10 @@
  */
 
 import { ROLES } from './game-constants.js';
+import { logOpenAiChatCompletion } from './ai-usage-log.js';
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
+const REDDIT_PARSE_MODEL = 'gpt-4o';
 
 // ---------------------------------------------------------------------------
 // Schema descriptions embedded in the prompt
@@ -130,7 +132,7 @@ export async function parseRedditPost({ text, imageUrls = [], collection = 'adve
   }
 
   const requestBody = {
-    model: 'gpt-4o',
+    model: REDDIT_PARSE_MODEL,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: contentParts },
@@ -140,6 +142,7 @@ export async function parseRedditPost({ text, imageUrls = [], collection = 'adve
     temperature: 0.1,
   };
 
+  const t0 = Date.now();
   const res = await fetch(OPENAI_CHAT_URL, {
     method: 'POST',
     headers: {
@@ -149,12 +152,20 @@ export async function parseRedditPost({ text, imageUrls = [], collection = 'adve
     body: JSON.stringify(requestBody),
   });
 
+  const latencyMs = Date.now() - t0;
+  const json = await res.json().catch(() => ({}));
+
   if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    throw new Error(`OpenAI API error ${res.status}: ${errBody.error?.message || 'unknown'}`);
+    logOpenAiChatCompletion('reddit_llm_parse', json, {
+      ok: false,
+      errorCode: `http_${res.status}`,
+      model: REDDIT_PARSE_MODEL,
+      latencyMs,
+    });
+    throw new Error(`OpenAI API error ${res.status}: ${json.error?.message || 'unknown'}`);
   }
 
-  const json = await res.json();
+  logOpenAiChatCompletion('reddit_llm_parse', json, { ok: true, model: REDDIT_PARSE_MODEL, latencyMs });
   const rawContent = json.choices?.[0]?.message?.content;
   if (!rawContent) throw new Error('Empty response from OpenAI');
 

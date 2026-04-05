@@ -81,6 +81,7 @@ export function pathnameOnly(fullPath) {
  *   /library/:tab/new              -> { view: 'library', tab, itemId: 'new' }
  *   /library/all/new?c=:collection — merged All tab: new item type via `libraryNewCollection`
  *   /library/:tab/:id              -> { view: 'library', tab, itemId }
+ *   /admin/ai-usage                -> { view: 'adminAiUsage' } (admin-only UI)
  *   /table/:tableId                -> { view: 'table', tableId }
  *   /table/:tableId/:collection/:id -> table + modal deep-link
  *   /gm-table/...                  -> legacy (prefer legacyGmTableToCanonical + redirect)
@@ -106,6 +107,10 @@ export function parseRoute(pathWithOptionalQuery) {
 
   if (parts.length === 0 || parts[0] === '') {
     return { view: 'home', tab: null, itemId: null };
+  }
+
+  if (parts[0] === 'admin' && parts[1] === 'ai-usage') {
+    return { view: 'adminAiUsage', tab: null, itemId: null };
   }
 
   if (parts[0] === 'table') {

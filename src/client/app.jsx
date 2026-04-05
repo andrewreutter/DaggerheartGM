@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot, ShieldOff } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled } from './lib/api.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
@@ -28,6 +28,7 @@ import { SessionBlockedBanner } from './components/SessionBlockedBanner.jsx';
 import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
+import { AdminAiUsagePage } from './components/AdminAiUsagePage.jsx';
 
 function NavImportBtn() {
   const { openImport, enabled } = useUnifiedImport();
@@ -142,6 +143,8 @@ function App() {
   const charLoadResolversRef = useRef([]);
 
   const [isAdmin, setIsAdmin] = useState(false);
+  /** After first `fetchMe` for this session — avoids redirecting admins before `/api/me` returns. */
+  const [adminPrivilegesKnown, setAdminPrivilegesKnown] = useState(false);
   /** When true, hide concept-AI and image-gen AI entry points (persisted via `PUT /api/me/preferences`). */
   const [hideAiUi, setHideAiUi] = useState(false);
   const [myRooms, setMyRooms] = useState([]); // [{ tableId, gmUid, gmName, tableName }] — tables user is invited to
@@ -414,12 +417,15 @@ function App() {
             setIsAdmin(admin);
             setHideAiUi(!!preferences?.hideAiUi);
           })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => setAdminPrivilegesKnown(true));
         fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
         fetchMyTables().then(tables => { setMyTables(tables || []); myTablesFetchedRef.current = true; }).catch(() => { myTablesFetchedRef.current = true; });
       } else {
         myTablesFetchedRef.current = false;
         setHideAiUi(false);
+        setIsAdmin(false);
+        setAdminPrivilegesKnown(false);
       }
     });
     return () => unsubscribe();
@@ -473,6 +479,13 @@ function App() {
       navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
     }
   }, [myTables.length, route.view, user, isPlayer, navigate]);
+
+  useEffect(() => {
+    if (!user || route.view !== 'adminAiUsage' || !adminPrivilegesKnown) return;
+    if (!isAdmin) {
+      navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
+    }
+  }, [user, route.view, isAdmin, adminPrivilegesKnown, navigate]);
 
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'table';
@@ -1745,6 +1758,18 @@ function App() {
                   >
                     <Sparkles size={15} /> Enable onboarding
                   </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        navigate('/admin/ai-usage');
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm bg-red-900/80 hover:bg-red-800 text-red-200 border-y border-red-700 transition-colors"
+                    >
+                      <ShieldOff size={15} /> AI usage metrics
+                    </button>
+                  )}
                   <button
                     onClick={handleExport}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-dh hover:bg-dh-hover hover:text-dh transition-colors"
@@ -1786,6 +1811,13 @@ function App() {
           </div>
         ) : (
           <>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'adminAiUsage' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'adminAiUsage'}
+            >
+              {route.view === 'adminAiUsage' && isAdmin && <AdminAiUsagePage navigate={navigate} />}
+            </div>
             <div
               className="flex-1 overflow-hidden flex flex-col"
               style={{ display: route.view === 'library' ? 'flex' : 'none' }}

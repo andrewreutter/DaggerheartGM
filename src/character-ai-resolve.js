@@ -5,7 +5,22 @@
 
 import { randomUUID } from 'crypto';
 
-import { expectedExperienceRowCount, isValidAdvancementPickType } from './client/lib/advancement-rules.js';
+import {
+  expectedExperienceRowCount,
+  isValidAdvancementPickType,
+  missingLevelAdvancementChoices,
+  maxSelectableDomainCardLevelForRow,
+  buildDomainTradeReplacementOptions,
+  isDoubleSlotAdvancementType,
+  advancementTypesAvailableForLevelRow,
+  remainingSlotsForType,
+} from './client/lib/advancement-rules.js';
+import {
+  collectOwnedDomainAbilityIdsThroughCharacterLevel,
+  collectOwnedDomainAbilityIds,
+  recomputeCharacter,
+} from './client/lib/character-calc.js';
+import { buildAllowedFeatureSheetDisplayNameKeys } from './client/lib/sheet-display-names.js';
 
 const TRAIT_KEYS = ['agility', 'strength', 'finesse', 'instinct', 'presence', 'knowledge'];
 const TRAIT_POOL = [2, 1, 1, 0, 0, -1];
@@ -41,6 +56,32 @@ export function buildLookupMaps(items) {
  * @param {{ byId: Record<string, object>, byName: Map<string, string>, dupNames: Set<string> }} maps
  * @param {{ warn: (m: string) => void, kind: string }} ctx
  */
+/**
+ * Common LLM mistake: putting domain ability ids (`srd-abl-*`) in experience advancement picks or bonus maps.
+ * @param {unknown} raw
+ * @param {(m: string) => void} warn
+ * @param {string} label
+ */
+function warnIfDomainAbilityIdInExperienceField(raw, warn, label) {
+  if (raw == null || raw === '') return;
+  const t = typeof raw === 'number' ? String(raw) : raw;
+  if (typeof t !== 'string') return;
+  const s = t.trim();
+  if (s.startsWith('srd-abl-')) {
+    warn(
+      `${label}: "${s}" looks like a domain ability id — use it in abilityIds, domainCardId, or a domain_card pick, not here. For experience picks and experienceBonusChoices, use two distinct character.experiences row ids or exact experience row names.`,
+    );
+  }
+}
+
+/**
+ * Model output often uses hyphens where the app uses underscores in `feat__…` keys.
+ * @param {string} key
+ */
+function normalizeFeatureSheetDisplayKeyCandidate(key) {
+  return key.replace(/-/g, '_');
+}
+
 export function resolveToId(raw, maps, ctx) {
   const { warn, kind } = ctx;
   if (raw == null || raw === '') return null;
@@ -148,18 +189,24 @@ function normalizeExperiences(experiences, warn) {
  * @param {unknown} raw
  * @param {(m: string) => void} warn
  */
-function sanitizeAdvancements(raw, warn) {
+function sanitizeAdvancements(raw, warn, maxLevel = 10) {
   if (!raw || typeof raw !== 'object') return {};
-  /** @type {Record<string, { picks?: object[], domainCardId?: string }>} */
+  /** @type {Record<string, { picks?: object[], domainCardId?: string, domainTrade?: { fromId?: string, toId?: string } }>} */
   const out = {};
+  const cap = Math.max(1, Math.min(10, Math.round(Number(maxLevel) || 10)));
   for (const [k, v] of Object.entries(raw)) {
     const lvl = parseInt(k, 10);
-    if (Number.isNaN(lvl) || lvl < 2 || lvl > 10) continue;
+    if (Number.isNaN(lvl) || lvl < 2 || lvl > cap) continue;
     if (!v || typeof v !== 'object') continue;
-    /** @type {{ picks: object[], domainCardId?: string }} */
+    /** @type {{ picks: object[], domainCardId?: string, domainTrade?: { fromId: string, toId: string } }} */
     const row = { picks: [] };
     if (typeof v.domainCardId === 'string' && v.domainCardId.trim()) {
       row.domainCardId = v.domainCardId.trim();
+    }
+    if (v.domainTrade && typeof v.domainTrade === 'object') {
+      const fromId = typeof v.domainTrade.fromId === 'string' ? v.domainTrade.fromId.trim() : '';
+      const toId = typeof v.domainTrade.toId === 'string' ? v.domainTrade.toId.trim() : '';
+      if (fromId && toId) row.domainTrade = { fromId, toId };
     }
     if (Array.isArray(v.picks)) {
       for (const p of v.picks) {
@@ -176,6 +223,275 @@ function sanitizeAdvancements(raw, warn) {
   return out;
 }
 
+/** @param {unknown} t */
+function coerceTraitKey(t) {
+  if (typeof t !== 'string') return null;
+  const s = t.trim().toLowerCase();
+  if (TRAIT_KEYS.includes(s)) return s;
+  const nk = normalizeLookupKey(t);
+  for (const k of TRAIT_KEYS) {
+    if (normalizeLookupKey(k) === nk) return k;
+  }
+  return null;
+}
+
+/**
+ * @param {object} srdData
+ * @param {Set<string>} characterDomainsSet
+ * @param {string | null | undefined} multiclassDomainName
+ * @param {(m: string) => void} warn
+ */
+function resolveAbilityIdForCharacterDomains(
+  raw,
+  advLevel,
+  charLevel,
+  srdData,
+  characterDomainsSet,
+  multiclassDomainName,
+  abilityMaps,
+  warn,
+  label,
+) {
+  const noop = () => {};
+  const id = resolveToId(raw, abilityMaps, { warn: noop, kind: label });
+  if (!id) {
+    resolveToId(raw, abilityMaps, { warn, kind: label });
+    return null;
+  }
+  const ab = srdData.abilitiesById[id];
+  if (!ab) {
+    warn(`${label}: unknown ability "${raw}"`);
+    return null;
+  }
+  const dom = String(ab.domain || '').trim();
+  if (!characterDomainsSet.has(dom)) {
+    warn(`${label}: "${ab.name}" (${dom}) is not on this character's domains — cleared`);
+    return null;
+  }
+  const maxLv = maxSelectableDomainCardLevelForRow(charLevel, advLevel, dom, multiclassDomainName);
+  if ((ab.level || 1) > maxLv) {
+    warn(`${label}: "${ab.name}" exceeds max spell level ${maxLv} for level ${advLevel} — cleared`);
+    return null;
+  }
+  return id;
+}
+
+/**
+ * @param {Record<string, object>} advancementsOut
+ * @param {number} L
+ */
+function partialCharacterForOwnedThrough(advancementsOut, L, base) {
+  const adv = {};
+  for (const [k, v] of Object.entries(advancementsOut || {})) {
+    const n = parseInt(k, 10);
+    if (!Number.isNaN(n) && n < L) adv[k] = v;
+  }
+  return { ...base, advancements: adv };
+}
+
+/**
+ * @param {object} ctx
+ */
+function resolveAdvancementsForDraft(ctx) {
+  const {
+    sanitizedDraftAdvancements,
+    resolvedLevel,
+    srdData,
+    classId,
+    subclassId,
+    resolvedAbilities,
+    experiences,
+    multiclassClassId,
+    multiclassSubclassId,
+    multiclassDomain,
+    selectedClass,
+    warn,
+  } = ctx;
+
+  const abilityMaps = buildLookupMaps(srdData.abilities);
+  const expMaps = buildLookupMaps(experiences);
+  const characterDomainsSet = new Set(selectedClass?.domains || []);
+  if (multiclassDomain) characterDomainsSet.add(multiclassDomain);
+
+  const base = {
+    level: resolvedLevel,
+    classId,
+    subclassId,
+    abilityIds: resolvedAbilities,
+    domainSlotAcquiredLevel: resolvedAbilities.map(() => 1),
+    multiclassClassId,
+    multiclassSubclassId,
+    multiclassDomain,
+  };
+
+  /** @type {Record<string, { picks: object[], domainCardId?: string, domainTrade?: { fromId: string, toId: string } }>} */
+  const out = {};
+
+  for (let L = 2; L <= resolvedLevel; L++) {
+    const key = String(L);
+    const rowIn = sanitizedDraftAdvancements[key];
+    if (!rowIn) {
+      out[key] = { picks: [] };
+      continue;
+    }
+
+    const dataThroughLMinus1 = partialCharacterForOwnedThrough(out, L, base);
+    const ownedStartL = collectOwnedDomainAbilityIdsThroughCharacterLevel(dataThroughLMinus1, L - 1);
+    const ownedStartSet = new Set(ownedStartL);
+
+    let domainCardId = null;
+    if (rowIn.domainCardId) {
+      const cand = resolveAbilityIdForCharacterDomains(
+        rowIn.domainCardId,
+        L,
+        resolvedLevel,
+        srdData,
+        characterDomainsSet,
+        multiclassDomain,
+        abilityMaps,
+        warn,
+        `Level ${L} domainCardId`,
+      );
+      if (cand) {
+        if (ownedStartSet.has(cand)) {
+          warn(`Level ${L} domainCardId duplicates a card already owned — cleared`);
+        } else {
+          domainCardId = cand;
+        }
+      }
+    }
+
+    const ownedForDup = new Set(ownedStartSet);
+    if (domainCardId) ownedForDup.add(domainCardId);
+
+    const rawPicks = Array.isArray(rowIn.picks) ? [...rowIn.picks] : [];
+    while (rawPicks.length < 2) rawPicks.push(null);
+    /** @type {(object|null)[]} */
+    const resolvedPicks = [null, null];
+
+    const advWithRowShell = { ...out, [key]: { picks: resolvedPicks, domainCardId } };
+
+    const tryRemaining = (type, pi, tentativePicks) => {
+      const merged = {
+        ...advWithRowShell,
+        [key]: { picks: tentativePicks, domainCardId },
+      };
+      return remainingSlotsForType(merged, resolvedLevel, L, type, L, {
+        picks: tentativePicks,
+        excludePickIndex: pi,
+      });
+    };
+
+    if (rawPicks[0] && isDoubleSlotAdvancementType(String(rawPicks[0].type))) {
+      const t = String(rawPicks[0].type);
+      const allowed = advancementTypesAvailableForLevelRow({ advancementLevel: L, characterLevel: resolvedLevel });
+      if (!allowed.includes(t)) {
+        warn(`Advancement "${t}" not allowed at level ${L} — removed`);
+      } else if (tryRemaining(t, 0, [{ type: t }, null]) <= 0) {
+        warn(`No remaining band slot for "${t}" at level ${L} — removed`);
+      } else {
+        resolvedPicks[0] = { type: t };
+      }
+    } else {
+      for (let pi = 0; pi < 2; pi++) {
+        const rp = rawPicks[pi];
+        if (!rp || !rp.type) continue;
+        if (resolvedPicks[0] && isDoubleSlotAdvancementType(resolvedPicks[0].type)) break;
+        const t = String(rp.type);
+        const allowed = advancementTypesAvailableForLevelRow({ advancementLevel: L, characterLevel: resolvedLevel });
+        if (!allowed.includes(t)) {
+          warn(`Advancement pick ${pi + 1} type "${t}" not allowed at level ${L} — removed`);
+          continue;
+        }
+        const tentative = [...resolvedPicks];
+        if (t === 'traits') {
+          const ts = [];
+          for (const x of rp.traits || []) {
+            const k = coerceTraitKey(x);
+            if (k) ts.push(k);
+          }
+          if (ts.length !== 2 || ts[0] === ts[1]) {
+            warn(`Level ${L} traits pick needs two distinct trait keys — removed`);
+            continue;
+          }
+          tentative[pi] = { type: 'traits', traits: ts };
+        } else if (t === 'experience') {
+          warnIfDomainAbilityIdInExperienceField(rp.experienceIds?.[0], warn, `Level ${L} experience pick (first id)`);
+          warnIfDomainAbilityIdInExperienceField(rp.experienceIds?.[1], warn, `Level ${L} experience pick (second id)`);
+          const a = resolveToId(rp.experienceIds?.[0], expMaps, { warn, kind: `level ${L} experience pick (first id)` });
+          const b = resolveToId(rp.experienceIds?.[1], expMaps, { warn, kind: `level ${L} experience pick (second id)` });
+          if (!a || !b || a === b) {
+            warn(`Level ${L} experience pick needs two distinct experience row ids — removed`);
+            continue;
+          }
+          tentative[pi] = { type: 'experience', experienceIds: [a, b] };
+        } else if (t === 'domain_card') {
+          const aid = resolveAbilityIdForCharacterDomains(
+            rp.abilityId,
+            L,
+            resolvedLevel,
+            srdData,
+            characterDomainsSet,
+            multiclassDomain,
+            abilityMaps,
+            warn,
+            `Level ${L} domain_card pick`,
+          );
+          if (!aid) continue;
+          if (ownedForDup.has(aid)) {
+            warn(`Level ${L} domain_card duplicates an owned card — removed`);
+            continue;
+          }
+          tentative[pi] = { type: 'domain_card', abilityId: aid };
+        } else {
+          tentative[pi] = { type: t };
+        }
+        if (tryRemaining(t, pi, tentative) <= 0) {
+          warn(`No remaining slot for "${t}" at level ${L} pick ${pi + 1} — removed`);
+          continue;
+        }
+        if (t === 'domain_card' && tentative[pi]?.abilityId) {
+          ownedForDup.add(tentative[pi].abilityId);
+        }
+        resolvedPicks[pi] = tentative[pi];
+      }
+    }
+
+    let domainTrade = undefined;
+    if (rowIn.domainTrade?.fromId && rowIn.domainTrade?.toId) {
+      const fromRaw = rowIn.domainTrade.fromId;
+      const toRaw = rowIn.domainTrade.toId;
+      const fromId = resolveToId(fromRaw, abilityMaps, { warn, kind: `level ${L} domainTrade fromId` });
+      const toId = resolveToId(toRaw, abilityMaps, { warn, kind: `level ${L} domainTrade toId` });
+      const tradeOwned = collectOwnedDomainAbilityIdsThroughCharacterLevel(dataThroughLMinus1, L - 1);
+      if (fromId && toId && fromId !== toId) {
+        if (!tradeOwned.includes(fromId)) {
+          warn(`Level ${L} domainTrade fromId is not owned after level ${L - 1} — removed`);
+        } else {
+          const replacements = buildDomainTradeReplacementOptions({
+            fromId,
+            srdData,
+            domainsAllowed: characterDomainsSet,
+            characterLevel: resolvedLevel,
+            multiclassDomain,
+            ownedDomainAbilityIds: tradeOwned,
+          });
+          if (replacements.some((x) => x.id === toId)) {
+            domainTrade = { fromId, toId };
+          } else {
+            warn(`Level ${L} domainTrade toId is not a legal replacement — removed`);
+          }
+        }
+      }
+    }
+
+    out[key] = { picks: resolvedPicks, ...(domainCardId ? { domainCardId } : {}) };
+    if (domainTrade) out[key].domainTrade = domainTrade;
+  }
+
+  return out;
+}
+
 /**
  * Resolve experienceBonusChoices values that may be names or ids.
  * @param {Record<string, unknown>} raw
@@ -188,6 +504,7 @@ function resolveExperienceBonusChoices(raw, experiences, warn) {
   const out = {};
   for (const [featureName, val] of Object.entries(raw)) {
     if (!featureName) continue;
+    warnIfDomainAbilityIdInExperienceField(val, warn, `experienceBonusChoices value (for ${featureName})`);
     const id = resolveToId(val, expMaps, { warn, kind: `experience (for ${featureName})` });
     if (id) out[featureName] = id;
   }
@@ -197,13 +514,16 @@ function resolveExperienceBonusChoices(raw, experiences, warn) {
 /**
  * @param {unknown} raw
  * @param {object} srdData
+ * @param {{ targetLevel?: number }} [opts] — clamps draft level to this max when set (API build target)
  * @returns {{ patch: object, warnings: string[] }}
  */
-export function resolveCharacterAiDraft(raw, srdData) {
+export function resolveCharacterAiDraft(raw, srdData, opts = {}) {
   const warnings = [];
   const warn = (m) => warnings.push(m);
 
   const draft = raw && typeof raw === 'object' ? { ...raw } : {};
+  const apiTargetLevel =
+    opts?.targetLevel != null ? Math.max(1, Math.min(10, Math.round(Number(opts.targetLevel)))) : null;
 
   const classMaps = buildLookupMaps(srdData.classes);
   const subclassMaps = buildLookupMaps(srdData.subclasses);
@@ -253,6 +573,56 @@ export function resolveCharacterAiDraft(raw, srdData) {
     if (Number.isFinite(lv) && lv >= 1 && lv <= 10) resolvedLevel = lv;
     else warn('Invalid level in draft — using level 1');
   }
+  if (apiTargetLevel != null && resolvedLevel > apiTargetLevel) {
+    warn(`Draft level ${resolvedLevel} exceeds requested target ${apiTargetLevel} — clamped`);
+    resolvedLevel = apiTargetLevel;
+  }
+
+  let multiclassClassId = resolveToId(
+    draft.multiclassClassId ?? draft.multiclass_class_id,
+    classMaps,
+    { warn, kind: 'multiclass class' },
+  );
+  if (multiclassClassId && multiclassClassId === classId) {
+    warn('Multiclass class matches primary class — cleared');
+    multiclassClassId = null;
+  }
+  const mcClassRow = multiclassClassId ? srdData.classesById[multiclassClassId] : null;
+  let multiclassSubclassId = resolveToId(
+    draft.multiclassSubclassId ?? draft.multiclass_subclass_id,
+    subclassMaps,
+    { warn, kind: 'multiclass subclass' },
+  );
+  if (multiclassSubclassId && mcClassRow) {
+    const allowedMc = new Set((mcClassRow.subclasses || []).map((n) => normalizeLookupKey(n)));
+    const msc = srdData.subclassesById[multiclassSubclassId];
+    if (!msc || !allowedMc.has(normalizeLookupKey(msc.name))) {
+      warn(`Multiclass subclass "${msc?.name || multiclassSubclassId}" is not valid for the multiclass class — cleared`);
+      multiclassSubclassId = null;
+    }
+  } else if (multiclassSubclassId && !multiclassClassId) {
+    warn('Multiclass subclass ignored — multiclass class did not resolve');
+    multiclassSubclassId = null;
+  }
+  let multiclassDomain = null;
+  const mcDoms = mcClassRow?.domains || [];
+  if (mcClassRow && mcDoms.length > 1) {
+    const rawMcDom = draft.multiclassDomain ?? draft.multiclass_domain;
+    if (rawMcDom == null || rawMcDom === '') {
+      warn('Multiclass class has two domains — set multiclassDomain to one of them');
+    } else {
+      const rd = String(rawMcDom).trim();
+      const match = mcDoms.find((d) => normalizeLookupKey(d) === normalizeLookupKey(rd));
+      if (match) multiclassDomain = match;
+      else warn(`multiclassDomain "${rd}" is not a domain of the multiclass class — cleared`);
+    }
+  }
+  if (!multiclassClassId) {
+    multiclassSubclassId = null;
+    multiclassDomain = null;
+  } else if (!multiclassSubclassId) {
+    multiclassDomain = null;
+  }
   const armorCandidates = (srdData.armor || []).filter((a) => (a.tier || 1) <= resolvedLevel);
   const weaponCandidates = (srdData.weapons || []).filter((w) => (w.tier || 1) <= resolvedLevel);
   const armorMapsT1 = buildLookupMaps(armorCandidates);
@@ -268,7 +638,7 @@ export function resolveCharacterAiDraft(raw, srdData) {
       kind: 'primary weapon (any tier)',
     });
     if (fallback) {
-      warn('Primary weapon was not tier-1 eligible — using match anyway');
+      warn(`Primary weapon exceeds tier cap (≤${resolvedLevel}) — using match anyway`);
       primaryWeaponId = fallback;
     }
   }
@@ -283,7 +653,7 @@ export function resolveCharacterAiDraft(raw, srdData) {
       kind: 'secondary weapon (any tier)',
     });
     if (fallback) {
-      warn('Secondary weapon was not tier-1 eligible — using match anyway');
+      warn(`Secondary weapon exceeds tier cap (≤${resolvedLevel}) — using match anyway`);
       secondaryWeaponId = fallback;
     }
   }
@@ -292,7 +662,7 @@ export function resolveCharacterAiDraft(raw, srdData) {
   if (draft.armorId != null && armorId == null) {
     const fallback = resolveToId(draft.armorId ?? draft.armor_id, armorMaps, { warn, kind: 'armor (any tier)' });
     if (fallback) {
-      warn('Armor was not tier-1 eligible — using match anyway');
+      warn(`Armor exceeds tier cap (≤${resolvedLevel}) — using match anyway`);
       armorId = fallback;
     }
   }
@@ -349,7 +719,21 @@ export function resolveCharacterAiDraft(raw, srdData) {
 
   let advancements = {};
   if (resolvedLevel >= 2 && draft.advancements != null && typeof draft.advancements === 'object') {
-    advancements = sanitizeAdvancements(draft.advancements, warn);
+    const sanitized = sanitizeAdvancements(draft.advancements, warn, resolvedLevel);
+    advancements = resolveAdvancementsForDraft({
+      sanitizedDraftAdvancements: sanitized,
+      resolvedLevel,
+      srdData,
+      classId,
+      subclassId,
+      resolvedAbilities,
+      experiences,
+      multiclassClassId,
+      multiclassSubclassId,
+      multiclassDomain,
+      selectedClass,
+      warn,
+    });
   }
   const experienceBonusChoices = resolveExperienceBonusChoices(
     draft.experienceBonusChoices ?? draft.experience_bonus_choices,
@@ -402,14 +786,121 @@ export function resolveCharacterAiDraft(raw, srdData) {
     };
   }
 
+  /** @type {Record<string, string>} */
+  const sheetWeapons = {};
+  /** @type {Record<string, string>} */
+  const sheetAbilities = {};
+  /** @type {Record<string, string>} */
+  const sheetFeatures = {};
+  const rawSheetNames = draft.sheetDisplayNames ?? draft.sheet_display_names;
+  if (rawSheetNames && typeof rawSheetNames === 'object') {
+    const allowedWeaponKeys = new Set();
+    if (primaryWeaponId) {
+      allowedWeaponKeys.add(primaryWeaponId);
+      allowedWeaponKeys.add(`slot-primary:${primaryWeaponId}`);
+    }
+    if (secondaryWeaponId) {
+      allowedWeaponKeys.add(secondaryWeaponId);
+      allowedWeaponKeys.add(`slot-secondary:${secondaryWeaponId}`);
+    }
+    const wmap = rawSheetNames.weapons;
+    if (wmap && typeof wmap === 'object') {
+      for (const [k, v] of Object.entries(wmap)) {
+        const key = String(k).trim();
+        const label = typeof v === 'string' ? v.trim() : '';
+        if (!key || !label) continue;
+        if (!allowedWeaponKeys.has(key)) {
+          warn(`sheetDisplayNames.weapons key "${key}" ignored — not tied to resolved primary/secondary weapons`);
+          continue;
+        }
+        sheetWeapons[key] = label;
+      }
+    }
+    const previewForOwned = {
+      level: resolvedLevel,
+      classId,
+      subclassId,
+      abilityIds: resolvedAbilities,
+      domainSlotAcquiredLevel: resolvedAbilities.map(() => 1),
+      advancements,
+      multiclassClassId,
+      multiclassSubclassId,
+      multiclassDomain,
+    };
+    const legalAbilityIds = new Set(collectOwnedDomainAbilityIds(previewForOwned));
+    const amap = rawSheetNames.abilities;
+    if (amap && typeof amap === 'object') {
+      for (const [k, v] of Object.entries(amap)) {
+        const key = String(k).trim();
+        const label = typeof v === 'string' ? v.trim() : '';
+        if (!key || !label) continue;
+        const m = /^ability-(.+)$/.exec(key);
+        const abId = m ? m[1] : null;
+        if (!abId || !legalAbilityIds.has(abId)) {
+          warn(`sheetDisplayNames.abilities key "${key}" ignored — not an owned domain card id at this level`);
+          continue;
+        }
+        sheetAbilities[key] = label;
+      }
+    }
+
+    let allowedFeatureKeys = /** @type {Set<string>} */ (new Set());
+    const previewForFeatures = {
+      level: resolvedLevel,
+      classId,
+      subclassId,
+      ancestryIds,
+      communityId,
+      multiclassClassId,
+      multiclassSubclassId,
+      multiclassDomain,
+      abilityIds: resolvedAbilities,
+      domainSlotAcquiredLevel: resolvedAbilities.map(() => 1),
+      advancements,
+      baseTraits,
+      experiences,
+      experienceBonusChoices,
+      primaryWeaponId,
+      secondaryWeaponId,
+      armorId,
+      companion,
+    };
+    try {
+      const elForFeatureKeys = recomputeCharacter(previewForFeatures, srdData);
+      allowedFeatureKeys = buildAllowedFeatureSheetDisplayNameKeys(elForFeatureKeys, () => {});
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      warn(`sheetDisplayNames.features skipped — could not build feature key allowlist (${msg})`);
+    }
+
+    const fmap = rawSheetNames.features;
+    if (fmap && typeof fmap === 'object') {
+      for (const [k, v] of Object.entries(fmap)) {
+        const key = String(k).trim();
+        const label = typeof v === 'string' ? v.trim() : '';
+        if (!key || !label) continue;
+        let lookupKey = key;
+        if (!allowedFeatureKeys.has(lookupKey)) {
+          const alt = normalizeFeatureSheetDisplayKeyCandidate(key);
+          if (alt !== key && allowedFeatureKeys.has(alt)) lookupKey = alt;
+        }
+        if (!allowedFeatureKeys.has(lookupKey)) {
+          warn(`sheetDisplayNames.features key "${key}" ignored — not a guide or stable feature key for this build`);
+          continue;
+        }
+        sheetFeatures[lookupKey] = label;
+      }
+    }
+  }
+
   const patch = {
     level: resolvedLevel,
     advancements,
     advancementChoicesLockedThroughLevel: 1,
     domainLoadoutIds: [],
-    multiclassClassId: null,
-    multiclassSubclassId: null,
-    multiclassDomain: null,
+    multiclassClassId,
+    multiclassSubclassId,
+    multiclassDomain,
     spellcastTraitSource: null,
     name: typeof draft.name === 'string' ? draft.name : '',
     pronouns: typeof draft.pronouns === 'string' ? draft.pronouns : '',
@@ -435,6 +926,19 @@ export function resolveCharacterAiDraft(raw, srdData) {
     experienceBonusChoices,
     companion,
   };
+
+  if (Object.keys(sheetWeapons).length || Object.keys(sheetAbilities).length || Object.keys(sheetFeatures).length) {
+    patch.sheetDisplayNames = {};
+    if (Object.keys(sheetWeapons).length) patch.sheetDisplayNames.weapons = sheetWeapons;
+    if (Object.keys(sheetAbilities).length) patch.sheetDisplayNames.abilities = sheetAbilities;
+    if (Object.keys(sheetFeatures).length) patch.sheetDisplayNames.features = sheetFeatures;
+  }
+
+  const advGaps = missingLevelAdvancementChoices(patch, srdData);
+  for (const line of advGaps) {
+    warn(`Advancement incomplete: ${line}`);
+  }
+  patch.advancementChoicesLockedThroughLevel = advGaps.length ? 1 : resolvedLevel;
 
   return { patch, warnings };
 }

@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences } from './src/db.js';
+import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates } from './src/db.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -29,6 +29,7 @@ import {
   parseEncounterDropText,
 } from './src/ocr-parse.js';
 import { generateImage as xaiGenerateImage, editImage as xaiEditImage, isConfigured as xaiIsConfigured } from './src/xai-image.js';
+import { logXaiImageUsage } from './src/ai-usage-log.js';
 import { syncDaggerstackCharacter, invalidateSrdLookupCache } from './src/daggerstack-sync.js';
 import { refreshDaggerstackUuidMap } from './scripts/refresh-daggerstack-uuids.js';
 import compression from 'compression';
@@ -215,6 +216,71 @@ app.put('/api/me/preferences', requireAuth, async (req, res) => {
 });
 
 registerDevAgentRoutes(app, { requireAuth, requireAdminOrQa });
+
+/** Parse `YYYY-MM-DD` as UTC midnight; invalid → null */
+function parseUtcDateParam(s) {
+  if (!s || typeof s !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo || dt.getUTCDate() !== d) return null;
+  return dt;
+}
+
+/** Inclusive UTC calendar `from` / `to` → `fromInclusive`, `toExclusive` for SQL. */
+function resolveAiUsageRange(query) {
+  const todayUtc = new Date();
+  const toDefaultEnd = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), todayUtc.getUTCDate() + 1));
+  const fromDefault = new Date(toDefaultEnd);
+  fromDefault.setUTCDate(fromDefault.getUTCDate() - 30);
+
+  let toInclusive = parseUtcDateParam(query.to) || new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), todayUtc.getUTCDate()));
+  let fromInclusive = parseUtcDateParam(query.from) || fromDefault;
+
+  if (fromInclusive.getTime() > toInclusive.getTime()) {
+    const t = fromInclusive;
+    fromInclusive = toInclusive;
+    toInclusive = t;
+  }
+
+  const toExclusive = new Date(toInclusive);
+  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+
+  return { fromInclusive, toExclusive };
+}
+
+app.get('/api/admin/ai-usage', requireAuth, requireAdmin, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required for usage metrics' });
+  }
+  try {
+    const { fromInclusive, toExclusive } = resolveAiUsageRange(req.query || {});
+    const builderRaw = req.query?.builder;
+    const builder =
+      typeof builderRaw === 'string' && builderRaw.trim() !== '' ? builderRaw.trim() : null;
+
+    const { totals, byDay } = await queryAiUsageAggregates(APP_ID, {
+      fromInclusive,
+      toExclusive,
+      builder,
+    });
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      fromInclusive: fromInclusive.toISOString().slice(0, 10),
+      toInclusive: new Date(toExclusive.getTime() - 86400000).toISOString().slice(0, 10),
+      builder,
+      totals,
+      byDay,
+    });
+  } catch (err) {
+    console.error('GET /api/admin/ai-usage:', err);
+    res.status(500).json({ error: 'Failed to load AI usage' });
+  }
+});
 
 /** Feature authoring guide — reads `docs/feature-authoring-guide.md` on each request (always current on disk). */
 app.get('/api/docs/feature-authoring-guide', requireAuth, async (req, res) => {
@@ -1490,7 +1556,7 @@ app.post('/api/daggerstack/sync', requireAuth, async (req, res) => {
   }
 });
 
-/** Level-1 character draft from a concept (OpenAI). Resolver maps names → SRD ids. */
+/** Character draft from a concept (OpenAI tool loop + resolver; levels 1–10). */
 app.post('/api/character-ai-build', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
@@ -1499,8 +1565,18 @@ app.post('/api/character-ai-build', requireAuth, async (req, res) => {
   if (typeof concept !== 'string' || !concept.trim()) {
     return res.status(400).json({ error: 'concept (non-empty string) is required' });
   }
+  let targetLevel = 1;
+  if (req.body?.targetLevel != null && req.body?.targetLevel !== '') {
+    const t = Math.round(Number(req.body.targetLevel));
+    if (!Number.isFinite(t) || t < 1 || t > 10) {
+      return res.status(400).json({ error: 'targetLevel must be an integer from 1 to 10' });
+    }
+    targetLevel = t;
+  }
   try {
-    const { patch, justification, warnings } = await buildCharacterAiFromConcept(concept.trim());
+    const { patch, justification, warnings } = await buildCharacterAiFromConcept(concept.trim(), {
+      targetLevel,
+    });
     res.json({ patch, justification, warnings });
   } catch (err) {
     if (err?.code === 'BAD_REQUEST') {
@@ -1682,10 +1758,26 @@ app.post('/api/generate-image', requireAuth, async (req, res) => {
   if (!xaiIsConfigured()) {
     return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
+  const xaiModel = process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
+  const t0 = Date.now();
   try {
     const result = await xaiGenerateImage(prompt.trim());
-    res.json(result);
+    logXaiImageUsage('image_generate', {
+      ok: true,
+      latencyMs: Date.now() - t0,
+      model: xaiModel,
+      usage: result.usage ?? null,
+    });
+    const { imageUrl } = result;
+    res.json({ imageUrl });
   } catch (err) {
+    logXaiImageUsage('image_generate', {
+      ok: false,
+      latencyMs: Date.now() - t0,
+      model: xaiModel,
+      errorCode: 'XAI_ERROR',
+      usage: null,
+    });
     console.error('POST /api/generate-image error:', err);
     res.status(500).json({ error: err.message || 'Image generation failed' });
   }
@@ -1702,10 +1794,26 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
   if (!xaiIsConfigured()) {
     return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
+  const xaiModel = process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
+  const t0 = Date.now();
   try {
     const result = await xaiEditImage(image, prompt.trim());
-    res.json(result);
+    logXaiImageUsage('image_edit', {
+      ok: true,
+      latencyMs: Date.now() - t0,
+      model: xaiModel,
+      usage: result.usage ?? null,
+    });
+    const { imageUrl } = result;
+    res.json({ imageUrl });
   } catch (err) {
+    logXaiImageUsage('image_edit', {
+      ok: false,
+      latencyMs: Date.now() - t0,
+      model: xaiModel,
+      errorCode: 'XAI_ERROR',
+      usage: null,
+    });
     console.error('POST /api/edit-image error:', err);
     res.status(500).json({ error: err.message || 'Image editing failed' });
   }

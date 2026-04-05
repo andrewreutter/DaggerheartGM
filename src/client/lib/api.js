@@ -606,6 +606,26 @@ export const fetchMe = async () => {
   return res.json();
 };
 
+/**
+ * Admin: aggregated LLM / image usage (no prompts). Query: `from`, `to` (YYYY-MM-DD UTC), optional `builder`.
+ * @param {{ from?: string, to?: string, builder?: string }} [query]
+ */
+export const fetchAdminAiUsage = async (query = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams();
+  if (query.from) params.set('from', query.from);
+  if (query.to) params.set('to', query.to);
+  if (query.builder) params.set('builder', query.builder);
+  const qs = params.toString();
+  const res = await fetch(`/api/admin/ai-usage${qs ? `?${qs}` : ''}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
 /** Persist user preferences (server JSON merge). */
 export const putUserPreferences = async (body) => {
   const token = await getAuthToken();
@@ -649,19 +669,24 @@ export const syncDaggerstackCharacter = async (url, email, password) => {
 };
 
 /**
- * LLM level-1 character draft from a concept. Pass `signal` to cancel (AbortController).
+ * LLM character draft from a concept (levels 1–10). Pass `signal` to cancel (AbortController).
  * @param {string} concept
- * @param {{ signal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, targetLevel?: number }} [options] — targetLevel 1–10 (default 1)
  * @returns {Promise<{ patch: object, justification: string, warnings: string[] }>}
  */
 export const postCharacterAiBuild = async (concept, options = {}) => {
-  const { signal } = options;
+  const { signal, targetLevel } = options;
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
+  const payload = { concept };
+  if (targetLevel != null && targetLevel !== '') {
+    const t = Math.round(Number(targetLevel));
+    if (Number.isFinite(t) && t >= 1 && t <= 10) payload.targetLevel = t;
+  }
   const res = await fetch('/api/character-ai-build', {
     method: 'POST',
     headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
-    body: JSON.stringify({ concept }),
+    body: JSON.stringify(payload),
     signal,
   });
   const body = await res.json().catch(() => ({}));

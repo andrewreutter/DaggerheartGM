@@ -1244,3 +1244,89 @@ export async function upsertUserPreferences(appId, userId, patch) {
     [appId, userId, JSON.stringify(patch)]
   );
 }
+
+/** @param {{ appId: string, builder: string, provider: 'openai'|'xai', model?: string|null, promptTokens?: number|null, completionTokens?: number|null, cachedPromptTokens?: number|null, totalTokens?: number|null, latencyMs?: number|null, ok: boolean, errorCode?: string|null, requestId?: string|null }} row */
+export async function insertAiUsageEvent(row) {
+  if (!process.env.DATABASE_URL) return;
+  const db = getPool();
+  await db.query(
+    `INSERT INTO ai_usage_events (
+       app_id, builder, provider, model,
+       prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens,
+       latency_ms, ok, error_code, request_id
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      row.appId,
+      row.builder,
+      row.provider,
+      row.model ?? null,
+      row.promptTokens ?? null,
+      row.completionTokens ?? null,
+      row.cachedPromptTokens ?? null,
+      row.totalTokens ?? null,
+      row.latencyMs ?? null,
+      row.ok,
+      row.errorCode ?? null,
+      row.requestId ?? null,
+    ],
+  );
+}
+
+/**
+ * @param {string} appId
+ * @param {{ fromInclusive: Date, toExclusive: Date, builder?: string|null }} opts
+ */
+export async function queryAiUsageAggregates(appId, opts) {
+  const db = getPool();
+  const { fromInclusive, toExclusive, builder } = opts;
+
+  const builderFilter = builder ? 'AND builder = $4' : '';
+  const params = builder
+    ? [appId, fromInclusive.toISOString(), toExclusive.toISOString(), builder]
+    : [appId, fromInclusive.toISOString(), toExclusive.toISOString()];
+
+  const totalsSql = `
+    SELECT
+      builder,
+      COUNT(*)::int AS calls,
+      COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
+      COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
+      COALESCE(SUM(cached_prompt_tokens), 0)::bigint AS cached_prompt_tokens,
+      COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+      COALESCE(SUM(latency_ms), 0)::bigint AS latency_ms_sum,
+      COUNT(*) FILTER (WHERE ok = false)::int AS errors
+    FROM ai_usage_events
+    WHERE app_id = $1
+      AND created_at >= $2::timestamptz
+      AND created_at < $3::timestamptz
+      ${builderFilter}
+    GROUP BY builder
+    ORDER BY builder ASC
+  `;
+
+  const byDaySql = `
+    SELECT
+      (created_at AT TIME ZONE 'UTC')::date::text AS day,
+      builder,
+      COUNT(*)::int AS calls,
+      COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
+      COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
+      COALESCE(SUM(cached_prompt_tokens), 0)::bigint AS cached_prompt_tokens,
+      COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+      COUNT(*) FILTER (WHERE ok = false)::int AS errors
+    FROM ai_usage_events
+    WHERE app_id = $1
+      AND created_at >= $2::timestamptz
+      AND created_at < $3::timestamptz
+      ${builderFilter}
+    GROUP BY 1, builder
+    ORDER BY 1 ASC, builder ASC
+  `;
+
+  const [{ rows: totals }, { rows: byDay }] = await Promise.all([
+    db.query(totalsSql, params),
+    db.query(byDaySql, params),
+  ]);
+
+  return { totals, byDay };
+}

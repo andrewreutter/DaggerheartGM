@@ -22,6 +22,7 @@ import {
   buildGuideFeatureTableSnapshot,
   getSheetOwnerKey,
   V2_TABLE_STUB_NO_INSTANCE_ID,
+  resolveGuideSourceLabel,
 } from '../../lib/build-feature-card-model.js';
 import { FrequencyCycleChipSuffix } from '../../lib/frequency-cycle-ui.jsx';
 import { FeatureResourceCostIcons } from '../FeatureResourceCostIcons.jsx';
@@ -49,7 +50,11 @@ import {
 import { V2SegmentedRowWrap } from '../V2SegmentedRowWrap.jsx';
 import { WidthSortedFlexWrap } from '../WidthSortedFlexWrap.jsx';
 import { useCharacterSheetSourceHighlightState } from '../CharacterSheetSourceHighlight.jsx';
-import { getFeatureSheetLabelParts, getAbilitySheetLabelParts } from '../../lib/sheet-display-names.js';
+import {
+  getFeatureSheetLabelParts,
+  getAbilitySheetLabelParts,
+  resolveFeatureSheetDisplayCustom,
+} from '../../lib/sheet-display-names.js';
 import { SheetDisplayLabelInline } from '../../lib/sheet-display-label-inline.jsx';
 import { shouldDimFeatOrAbilityRow, SHEET_SOURCE_DIM_CLASS } from '../../lib/source-badge-sheet-highlight.js';
 import {
@@ -1265,12 +1270,23 @@ export function GuideFeatureCard({
 
   const rawFeatName = featRow.name;
   const enrichedTitle = model.displayName ?? rawFeatName;
-  const hasSheetOverride = sheetHighlightAbility != null
-    ? !!el?.sheetDisplayNames?.abilities?.[effectiveKey]
-    : !!el?.sheetDisplayNames?.features?.[effectiveKey];
+  const sourceForFeatureKey =
+    typeof featRow.source === 'string' && featRow.source.trim()
+      ? featRow.source.trim()
+      : resolveGuideSourceLabel(featRow) || '';
+  const hasSheetOverride =
+    sheetHighlightAbility != null
+      ? !!el?.sheetDisplayNames?.abilities?.[effectiveKey]
+      : !!resolveFeatureSheetDisplayCustom(
+          el?.sheetDisplayNames?.features,
+          effectiveKey,
+          sourceForFeatureKey,
+          rawFeatName,
+          el,
+        );
   const sheetTitleParts = sheetHighlightAbility != null
     ? getAbilitySheetLabelParts(el, effectiveKey, rawFeatName)
-    : getFeatureSheetLabelParts(el, effectiveKey, rawFeatName);
+    : getFeatureSheetLabelParts(el, effectiveKey, rawFeatName, sourceForFeatureKey);
   const titleLabel = hasSheetOverride
     ? (sheetTitleParts.parenthetical != null
       ? `${sheetTitleParts.primary} (${sheetTitleParts.parenthetical})`

@@ -54,6 +54,16 @@ describe('parseRoute /library', () => {
   });
 });
 
+describe('parseRoute /admin', () => {
+  it('parses /admin/ai-usage', () => {
+    expect(parseRoute('/admin/ai-usage')).toEqual({
+      view: 'adminAiUsage',
+      tab: null,
+      itemId: null,
+    });
+  });
+});
+
 describe('parseRoute /table', () => {
   const gmUid = '9s3M6tgScJgXhKgYOHZVYAStNQi2';
   const secondaryTableId = 'd6f893df-6a9a-44da-b722-7d4de2c35e97';

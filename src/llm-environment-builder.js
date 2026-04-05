@@ -10,6 +10,7 @@ import { getCollection } from './srd/index.js';
 import { ENV_TYPES } from './game-constants.js';
 import { buildCompactEnvironmentAiCatalog } from './encounter-ai-catalog.js';
 import { resolveEnvironmentAiDraft } from './environment-ai-resolve.js';
+import { logOpenAiChatCompletion } from './ai-usage-log.js';
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -110,6 +111,8 @@ ${ENV_SCHEMA}`;
     temperature: 0.35,
   };
 
+  const modelUsed = process.env.OPENAI_CONCEPT_MODEL || 'gpt-4o-mini';
+  const t0 = Date.now();
   const res = await fetch(OPENAI_CHAT_URL, {
     method: 'POST',
     headers: {
@@ -120,14 +123,22 @@ ${ENV_SCHEMA}`;
     signal: opts.signal,
   });
 
+  const latencyMs = Date.now() - t0;
+  const json = await res.json().catch(() => ({}));
+
   if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    const err = new Error(`OpenAI API error ${res.status}: ${errBody.error?.message || 'unknown'}`);
+    logOpenAiChatCompletion('environment_concept', json, {
+      ok: false,
+      errorCode: `http_${res.status}`,
+      model: modelUsed,
+      latencyMs,
+    });
+    const err = new Error(`OpenAI API error ${res.status}: ${json.error?.message || 'unknown'}`);
     err.code = 'OPENAI_ERROR';
     throw err;
   }
 
-  const json = await res.json();
+  logOpenAiChatCompletion('environment_concept', json, { ok: true, model: modelUsed, latencyMs });
   const rawContent = json.choices?.[0]?.message?.content;
   if (!rawContent) {
     const err = new Error('Empty response from OpenAI');

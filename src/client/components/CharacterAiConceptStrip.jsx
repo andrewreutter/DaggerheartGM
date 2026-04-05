@@ -1,4 +1,4 @@
-import { useCallback, useRef, forwardRef, useImperativeHandle } from 'react';
+import { useCallback, useRef, forwardRef, useImperativeHandle, useState } from 'react';
 import { conceptAiEnabled, postCharacterAiBuild } from '../lib/api.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
@@ -29,6 +29,12 @@ export const CharacterAiConceptStrip = forwardRef(function CharacterAiConceptStr
   const { hideAiUi } = useAiUiPreference();
   const { srdData, loading: srdLoading } = useCharacterSrdData();
   const stripRef = useRef(null);
+  const [aiTargetLevel, setAiTargetLevel] = useState(1);
+
+  const postBuildWithLevel = useCallback(
+    (concept, opts) => postCharacterAiBuild(concept, { ...opts, targetLevel: aiTargetLevel }),
+    [aiTargetLevel],
+  );
 
   useImperativeHandle(ref, () => ({
     cancel: () => stripRef.current?.cancel(),
@@ -42,9 +48,33 @@ export const CharacterAiConceptStrip = forwardRef(function CharacterAiConceptStr
   if (!shouldShowConceptAiUi(conceptAiEnabled, hideAiUi) || srdLoading) return null;
 
   return (
-    <ConceptAiStrip
-      ref={stripRef}
-      postBuild={postCharacterAiBuild}
+    <>
+      <div className="rounded-lg border border-violet-800/35 bg-violet-950/15 px-3 py-2 mb-2 space-y-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-medium text-dh-muted">AI build target level</span>
+          <span className="text-xs tabular-nums text-dh">
+            {aiTargetLevel}
+            <span className="text-dh-muted font-normal"> / 10</span>
+          </span>
+        </div>
+        <input
+          type="range"
+          min={1}
+          max={10}
+          step={1}
+          value={aiTargetLevel}
+          onChange={(e) => setAiTargetLevel(Number(e.target.value))}
+          className="w-full h-1.5 accent-violet-500"
+          aria-label="Target level for AI character build"
+        />
+        <p className="text-[11px] text-dh-muted leading-snug">
+          The model builds toward this level (advancements, experience rows, gear tier). This is not the editor’s
+          level preview slider on the table.
+        </p>
+      </div>
+      <ConceptAiStrip
+        ref={stripRef}
+        postBuild={postBuildWithLevel}
       getMergeBase={getMergeBase}
       transformMerged={transformMerged}
       onComplete={onComplete}
@@ -67,6 +97,7 @@ export const CharacterAiConceptStrip = forwardRef(function CharacterAiConceptStr
         summaryTitle: 'AI picks summary',
       }}
     />
+    </>
   );
 });
 
