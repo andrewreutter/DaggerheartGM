@@ -38,7 +38,7 @@ async function readXaiError(res) {
 
 /**
  * @param {unknown} json
- * @returns {{ imageUrl: string }}
+ * @returns {{ imageUrl: string, usage: unknown }}
  */
 function firstImageToDataUrl(json) {
   const row = json?.data?.[0];
@@ -48,11 +48,11 @@ function firstImageToDataUrl(json) {
     const mime = typeof row.mime_type === 'string' && row.mime_type.startsWith('image/')
       ? row.mime_type
       : 'image/png';
-    return { imageUrl: `data:${mime};base64,${row.b64_json}` };
+    return { imageUrl: `data:${mime};base64,${row.b64_json}`, usage: json?.usage ?? null };
   }
 
   if (row.url && typeof row.url === 'string') {
-    return { imageUrl: row.url };
+    return { imageUrl: row.url, usage: json?.usage ?? null };
   }
 
   throw new Error('x.ai image response has no b64_json or url');
@@ -86,7 +86,8 @@ export async function generateImage(prompt) {
   }
 
   const json = await res.json();
-  return firstImageToDataUrl(json);
+  const { imageUrl, usage } = firstImageToDataUrl(json);
+  return { imageUrl, usage };
 }
 
 /**
@@ -125,5 +126,6 @@ export async function editImage(imageDataUrl, prompt) {
   }
 
   const json = await res.json();
-  return firstImageToDataUrl(json);
+  const { imageUrl, usage } = firstImageToDataUrl(json);
+  return { imageUrl, usage };
 }

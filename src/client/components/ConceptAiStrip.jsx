@@ -11,7 +11,7 @@ import { shouldAttemptConceptAiAutoSubmit } from '../lib/concept-ai-auto-submit.
 /**
  * Generic “describe a concept → Build with AI” strip (character, adversary, environment).
  *
- * @param {(concept: string, opts: { signal?: AbortSignal }) => Promise<{ patch: object, justification?: string, warnings?: string[] }>} postBuild
+ * @param {(concept: string, opts: { signal?: AbortSignal }) => Promise<{ patch?: object, justification?: string, warnings?: string[], mode?: 'single'|'choice', candidates?: Array<{ key: string, label: string, reason: string, patch: object, warnings?: string[] }>, overlapDiagnostics?: object, rankingRationale?: Array<{ abilityId: string, name: string, domain?: string, level?: number, reason: string }> }>} postBuild
  * @param {() => object} getMergeBase
  * @param {(merged: object) => object} [transformMerged] — e.g. recomputeCharacter for PCs
  * @param {(result: object) => void | Promise<void>} onComplete
@@ -61,6 +61,8 @@ export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
   const [aiJustificationOpen, setAiJustificationOpen] = useState(true);
   const [aiError, setAiError] = useState('');
   const [aiResolverNotes, setAiResolverNotes] = useState('');
+  const [aiChoiceResult, setAiChoiceResult] = useState(null);
+  const [aiRankingRationale, setAiRankingRationale] = useState([]);
   const abortControllerRef = useRef(null);
   const getMergeBaseRef = useRef(getMergeBase);
   const transformMergedRef = useRef(transformMerged);
@@ -112,26 +114,50 @@ export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
     setAiError('');
     setAiResolverNotes('');
     setAiJustification('');
+    setAiChoiceResult(null);
+    setAiRankingRationale([]);
     abortControllerRef.current?.abort();
     const ac = new AbortController();
     abortControllerRef.current = ac;
     setAiLoading(true);
     try {
-      const { patch, justification, warnings } = await postBuild(q, { signal: ac.signal });
-      let merged = { ...getMergeBaseRef.current(), ...patch };
-      if (transformMergedRef.current) {
-        merged = transformMergedRef.current(merged);
-      }
-      const j = (justification || '').trim();
+      const result = await postBuild(q, { signal: ac.signal });
+      const patch = result?.patch;
+      const warnings = result?.warnings;
+      const j = (result?.justification || '').trim();
       setAiJustification(j);
       setAiJustificationOpen(!compactJustification);
       setAiResolverNotes(warnings?.length ? warnings.map((w) => `• ${w}`).join('\n') : '');
-      await onComplete(merged);
-      onPendingConsumed?.();
+      setAiRankingRationale(Array.isArray(result?.rankingRationale) ? result.rankingRationale : []);
+      if (result?.mode === 'choice' && Array.isArray(result.candidates) && result.candidates.length > 1) {
+        setAiChoiceResult({
+          candidates: result.candidates,
+          overlapDiagnostics: result.overlapDiagnostics || null,
+        });
+        onPendingConsumed?.();
+      } else if (patch && typeof patch === 'object') {
+        let merged = { ...getMergeBaseRef.current(), ...patch };
+        if (transformMergedRef.current) {
+          merged = transformMergedRef.current(merged);
+        }
+        await onComplete(merged);
+        onPendingConsumed?.();
+      } else if (Array.isArray(result?.candidates) && result.candidates[0]?.patch) {
+        let merged = { ...getMergeBaseRef.current(), ...result.candidates[0].patch };
+        if (transformMergedRef.current) {
+          merged = transformMergedRef.current(merged);
+        }
+        await onComplete(merged);
+        onPendingConsumed?.();
+      } else {
+        throw new Error('AI build response did not include a patch or candidates');
+      }
     } catch (e) {
       if (e?.name === 'AbortError') return;
       setAiError(e?.message || 'Request failed');
       setAiResolverNotes('');
+      setAiChoiceResult(null);
+      setAiRankingRationale([]);
       onPendingConsumed?.();
     } finally {
       if (abortControllerRef.current === ac) abortControllerRef.current = null;
@@ -163,6 +189,21 @@ export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
 
   const compact = variant === 'compact';
   const taRows = textareaRows ?? (compact ? 2 : 3);
+
+  const applyCandidate = useCallback(
+    async (candidate) => {
+      if (!candidate?.patch) return;
+      setAiError('');
+      setAiResolverNotes(candidate.warnings?.length ? candidate.warnings.map((w) => `• ${w}`).join('\n') : aiResolverNotes);
+      let merged = { ...getMergeBaseRef.current(), ...candidate.patch };
+      if (transformMergedRef.current) {
+        merged = transformMergedRef.current(merged);
+      }
+      await onComplete(merged);
+      setAiChoiceResult(null);
+    },
+    [aiResolverNotes, onComplete],
+  );
 
   return (
     <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
@@ -243,6 +284,50 @@ export const ConceptAiStrip = forwardRef(function ConceptAiStrip(
       {aiResolverNotes ? (
         <div className="text-xs text-amber-200/90 whitespace-pre-wrap rounded-md border border-amber-900/40 bg-amber-950/25 px-2 py-1.5">
           {aiResolverNotes}
+        </div>
+      ) : null}
+
+      {aiRankingRationale.length ? (
+        <div className="rounded-md border border-dh-border bg-dh-raised/40 px-2 py-2 space-y-1.5">
+          <div className="text-xs font-semibold text-dh">Why These Cards Fit</div>
+          <div className="space-y-1.5">
+            {aiRankingRationale.map((entry) => (
+              <div key={entry.abilityId} className="text-xs text-dh-muted">
+                <span className="font-medium text-dh">
+                  {entry.name}
+                  {entry.domain ? ` (${entry.domain}${entry.level ? ` ${entry.level}` : ''})` : ''}
+                </span>
+                {': '}
+                {entry.reason}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {aiChoiceResult?.candidates?.length ? (
+        <div className="rounded-md border border-violet-800/40 bg-violet-950/20 p-2.5 space-y-2">
+          <div className="text-sm font-medium text-violet-100">Choose which build to apply</div>
+          {aiChoiceResult.overlapDiagnostics?.primaryPackageTop10 ? (
+            <div className="text-xs text-dh-muted">
+              Top-10 card overlap with the primary package:{' '}
+              {aiChoiceResult.overlapDiagnostics.primaryPackageTop10.matchedCount}/
+              {aiChoiceResult.overlapDiagnostics.primaryPackageTop10.topCount}
+            </div>
+          ) : null}
+          <div className="space-y-2">
+            {aiChoiceResult.candidates.map((candidate) => (
+              <button
+                key={candidate.key || candidate.label}
+                type="button"
+                onClick={() => void applyCandidate(candidate)}
+                className="w-full text-left rounded-md border border-violet-700/50 bg-violet-900/30 hover:bg-violet-800/35 px-3 py-2 transition-colors"
+              >
+                <div className="text-sm font-medium text-violet-100">{candidate.label}</div>
+                <div className="text-xs text-violet-200/80 mt-1">{candidate.reason}</div>
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
