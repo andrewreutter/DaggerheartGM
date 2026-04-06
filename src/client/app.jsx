@@ -21,6 +21,7 @@ const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
 import { NavBtn } from './components/NavBtn.jsx';
 import { LibraryView } from './components/LibraryView.jsx';
+import { LibraryAssistantModal } from './components/LibraryAssistantPanel.jsx';
 import { GMTableView } from './components/GMTableView.jsx';
 import { SceneAdoptDialog } from './components/SceneAdoptDialog.jsx';
 import { FeatureAuthoringGuideModal } from './components/FeatureAuthoringGuideModal.jsx';
@@ -29,6 +30,7 @@ import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
 import { AdminAiUsagePage } from './components/AdminAiUsagePage.jsx';
+import { buildLibraryModalPath } from './lib/library-modal-path.js';
 
 function NavImportBtn() {
   const { openImport, enabled } = useUnifiedImport();
@@ -173,6 +175,7 @@ function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [uiTheme, setUiTheme] = useState(() => getStoredTheme());
   const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
+  const [libraryAssistantOpen, setLibraryAssistantOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
   const [onboardingFlash, setOnboardingFlash] = useState('');
   const [deleteTablePending, setDeleteTablePending] = useState(null); // { id, name } when confirming delete
@@ -1009,7 +1012,7 @@ function App() {
   // Remember last library tab so we can return there when navigating back from Game Table
   useEffect(() => {
     if (route.view === 'library' && route.tab) {
-      lastLibraryPathRef.current = `/library/${route.tab}`;
+      lastLibraryPathRef.current = `${window.location.pathname}${window.location.search || ''}`;
     }
   }, [route.view, route.tab]);
 
@@ -1613,6 +1616,33 @@ function App() {
   };
 
 
+  const getGlobalLibraryAssistantContext = useCallback(() => ({
+    scope: {
+      collection: 'all',
+      includeMine: true,
+      includePublic: true,
+      includeSrd: true,
+      includeHod: false,
+    },
+    browseState: route.view === 'library'
+      ? {
+          activeTab: route.tab || DEFAULT_LIBRARY_TAB,
+          search: route.librarySearchQuery || '',
+          semantic: route.librarySemantic || '',
+        }
+      : {
+          activeTab: 'all',
+          search: '',
+          semantic: '',
+        },
+  }), [route]);
+
+  const openLibraryAssistantReference = useCallback((item) => {
+    const collection = item?._collection || 'all';
+    setLibraryAssistantOpen(false);
+    navigate(buildLibraryModalPath('all', collection, item.id));
+  }, [navigate]);
+
   if (loading) return <div className="min-h-screen bg-dh-surface flex items-center justify-center text-dh">Loading...</div>;
 
   return (
@@ -1650,6 +1680,12 @@ function App() {
             <div className="flex items-center gap-2">
               <NavImportBtn />
               <NavBtn icon={<BookOpen />} label="Library" active={route.view === 'library'} onClick={() => navigate(lastLibraryPathRef.current)} />
+              <NavBtn
+                icon={<Bot />}
+                label="Assistant"
+                active={libraryAssistantOpen}
+                onClick={() => setLibraryAssistantOpen(true)}
+              />
               {myTables.map((t) => (
                 <NavBtn
                   key={t.id}
@@ -1839,6 +1875,8 @@ function App() {
                         view: 'library',
                         tab: (lastLibraryPathRef.current.match(/^\/library\/([^/]+)/)?.[1]) || DEFAULT_LIBRARY_TAB,
                         itemId: null,
+                        librarySemantic: null,
+                        librarySearchQuery: null,
                       }
                 }
                 navigate={navigate}
@@ -1983,6 +2021,18 @@ function App() {
           </>
         )}
       </main>
+
+      <LibraryAssistantModal
+        open={libraryAssistantOpen}
+        onClose={() => setLibraryAssistantOpen(false)}
+        data={data}
+        navigate={navigate}
+        partySize={partySize}
+        partyTier={partyTier}
+        characters={characters}
+        getAssistantContext={getGlobalLibraryAssistantContext}
+        onOpenItem={openLibraryAssistantReference}
+      />
       {user && (
         <FeatureAuthoringGuideModal
           open={featureAuthoringGuideOpen}

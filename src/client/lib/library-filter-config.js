@@ -11,16 +11,30 @@ export const SRD_UNIFIED_COLLECTIONS = [
   'ancestries',
   'armor',
   'beastforms',
+  'campaign_frames',
   'classes',
   'communities',
   'consumables',
   'domains',
   'environments',
   'items',
+  'rules',
   'subclasses',
   'weapons',
   'features',
 ];
+
+/** Read-only SRD collections backed by documents / reference text rather than editable library records. */
+export const LIBRARY_READONLY_SRD_COLLECTIONS = new Set([
+  'campaign_frames',
+  'rules',
+]);
+
+/** Library cards/modals should not offer clone for pure reference / generated collections. */
+export const LIBRARY_NON_CLONEABLE_COLLECTIONS = new Set([
+  'features',
+  ...LIBRARY_READONLY_SRD_COLLECTIONS,
+]);
 
 /** V2 registry buckets for Library `features` tab scope filter */
 export const FEAT_SCOPE_OPTIONS = [
@@ -52,7 +66,7 @@ export function formatFeatScopeLabel(val) {
  * All 13 SRD unified collections plus scenes, adventures, and characters.
  */
 export const LIBRARY_USER_EDITABLE_COLLECTIONS = new Set([
-  ...SRD_UNIFIED_COLLECTIONS,
+  ...SRD_UNIFIED_COLLECTIONS.filter(c => !LIBRARY_READONLY_SRD_COLLECTIONS.has(c)),
   'scenes',
   'adventures',
   'characters',
@@ -132,12 +146,14 @@ export const LIBRARY_FILTER_CONFIG = {
   },
   armor: { typeLabel: '', typeOptions: null, rankMode: 'tier', defaultSort: 'name' },
   beastforms: { typeLabel: '', typeOptions: null, rankMode: 'tier', defaultSort: 'name' },
+  campaign_frames: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   ancestries: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   classes: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   communities: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   consumables: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   domains: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   items: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
+  rules: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   subclasses: { typeLabel: '', typeOptions: null, rankMode: 'none', defaultSort: 'name' },
   features: {
     typeLabel: 'Scope',

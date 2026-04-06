@@ -15,6 +15,8 @@ import { formatSrdCacheStamp } from './srd-sync-state.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRD_ROOT = join(__dirname, '..', 'daggerheart-srd');
 const JSON_DIR = join(SRD_ROOT, '.build', '03_json');
+const SRD_README_PATH = join(SRD_ROOT, 'README.md');
+const SRD_TEXT_CHUNKS_DIR = join(__dirname, '..', 'data', 'srd-text-chunks');
 
 /**
  * Hash all built SRD JSON files so any content change invalidates the cache.
@@ -31,6 +33,17 @@ export async function getSubmoduleHash() {
       for (const f of files) {
         h.update(f);
         h.update(await readFile(join(JSON_DIR, f), 'utf8'));
+      }
+      h.update('README.md');
+      h.update(await readFile(SRD_README_PATH, 'utf8'));
+      try {
+        const chunkFiles = (await readdir(SRD_TEXT_CHUNKS_DIR)).filter(f => f.endsWith('.md')).sort();
+        for (const f of chunkFiles) {
+          h.update(f);
+          h.update(await readFile(join(SRD_TEXT_CHUNKS_DIR, f), 'utf8'));
+        }
+      } catch {
+        /* ignore missing chunk dir in hash fallback */
       }
       return h.digest('hex');
     } catch {

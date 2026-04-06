@@ -48,6 +48,7 @@ import { buildCharacterAiFromConcept } from './src/llm-character-builder.js';
 import { buildAdversaryAiFromConcept } from './src/llm-adversary-builder.js';
 import { buildEnvironmentAiFromConcept } from './src/llm-environment-builder.js';
 import { buildEncounterAiFromConcept } from './src/llm-encounter-builder.js';
+import { answerLibraryQuestion, semanticFilterLibraryItems } from './src/library-ai.js';
 import { migrateV2PendingMapRollId } from './src/client/lib/v2-pending-map-move.js';
 import { buildForcedMovementActionNotification } from './src/client/lib/v2-forced-movement-banner.js';
 import { attachDerivedMapConfig } from './src/client/lib/map-table-state.js';
@@ -1083,6 +1084,7 @@ function parseLibraryAllQuery(req) {
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const includeScaledUp = req.query.includeScaledUp === '1';
+  const semantic = typeof req.query.semantic === 'string' ? req.query.semantic.trim() : '';
 
   const tiersRaw = parseQueryArray(req.query.tier);
   const tiers = tiersRaw.map(t => parseInt(t, 10)).filter(n => !isNaN(n) && n >= 1 && n <= 12);
@@ -1102,6 +1104,7 @@ function parseLibraryAllQuery(req) {
     includeSrd,
     includeHod,
     search,
+    semantic,
     sort,
     offset,
     limit,
@@ -1120,6 +1123,14 @@ function parseLibraryAllQuery(req) {
 /** Per-collection counts for Library nav (same filters as library-all; COUNT only) */
 app.get('/api/data/library-all-counts', requireAuth, async (req, res) => {
   const q = parseLibraryAllQuery(req);
+  if (q.semantic) {
+    return res.json({
+      countsByCollection: null,
+      totalCount: 0,
+      dbCount: 0,
+      semanticApplied: true,
+    });
+  }
   try {
     const result = await getUnifiedLibraryAllBranchCounts(APP_ID, req.uid, {
       includeMine: q.includeMine,
@@ -1153,6 +1164,7 @@ app.get('/api/data/library-all', requireAuth, async (req, res) => {
   const q = parseLibraryAllQuery(req);
 
   try {
+    const semanticCandidateLimit = Math.max(q.limit * 6, 150);
     const result = await getUnifiedLibraryAll(APP_ID, req.uid, {
       includeMine: q.includeMine,
       includePublic: q.includePublic,
@@ -1160,8 +1172,8 @@ app.get('/api/data/library-all', requireAuth, async (req, res) => {
       includeHod: q.includeHod,
       search: q.search,
       sort: q.sort,
-      offset: q.offset,
-      limit: q.limit,
+      offset: q.semantic ? 0 : q.offset,
+      limit: q.semantic ? semanticCandidateLimit : q.limit,
       tiers: q.tiers,
       levels: q.levels,
       advRole: q.advRole,
@@ -1172,6 +1184,17 @@ app.get('/api/data/library-all', requireAuth, async (req, res) => {
       includeScaledUp: q.includeScaledUp,
       featScope: q.featScope,
     });
+    if (q.semantic) {
+      const ranked = await semanticFilterLibraryItems(q.semantic, result.items, 'all', { limit: q.limit });
+      return res.json({
+        items: ranked.items,
+        totalCount: ranked.items.length,
+        dbCount: ranked.items.length,
+        nextOffset: ranked.items.length,
+        countsByCollection: null,
+        semanticApplied: true,
+      });
+    }
     return res.json({
       items: result.items,
       totalCount: result.totalCount,
@@ -1238,6 +1261,7 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   const includePublic = req.query.includePublic === '1';
   const search = req.query.search || '';
   const includeScaledUp = req.query.includeScaledUp === '1';
+  const semantic = typeof req.query.semantic === 'string' ? req.query.semantic.trim() : '';
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const sort = req.query.sort || 'popularity';
@@ -1270,9 +1294,19 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         featScope,
         tiers,
         sort,
-        offset,
-        limit,
+        offset: semantic ? 0 : offset,
+        limit: semantic ? Math.max(limit * 6, 150) : limit,
       });
+      if (semantic) {
+        const ranked = await semanticFilterLibraryItems(semantic, result.items, collection, { limit });
+        return res.json({
+          items: ranked.items,
+          totalCount: ranked.items.length,
+          dbCount: ranked.items.length,
+          nextOffset: ranked.items.length,
+          semanticApplied: true,
+        });
+      }
       return res.json({
         items: result.items,
         totalCount: result.totalCount,
@@ -1298,14 +1332,24 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
         extraTypeValues,
         tierExprSql: cfg.tierExprSql,
         sort,
-        offset,
-        limit,
+        offset: semantic ? 0 : offset,
+        limit: semantic ? Math.max(limit * 6, 150) : limit,
       });
 
       const items = result.items.map(item => ({
         ...item,
         popularity: (item.clone_count || 0) + (item.play_count || 0),
       }));
+      if (semantic) {
+        const ranked = await semanticFilterLibraryItems(semantic, items, collection, { limit });
+        return res.json({
+          items: ranked.items,
+          totalCount: ranked.items.length,
+          dbCount: ranked.items.length,
+          nextOffset: ranked.items.length,
+          semanticApplied: true,
+        });
+      }
 
       return res.json({
         items,
@@ -1325,6 +1369,28 @@ app.get('/api/data/:collection', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(`GET /api/data/${collection} error:`, err);
     res.status(500).json({ error: 'Failed to fetch collection' });
+  }
+});
+
+app.post('/api/library-ai-answer', requireAuth, async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ error: 'Concept AI is not configured' });
+  }
+  const question = req.body?.question;
+  if (typeof question !== 'string' || !question.trim()) {
+    return res.status(400).json({ error: 'question (non-empty string) is required' });
+  }
+
+  try {
+    const result = await answerLibraryQuestion(question.trim(), {
+      appId: APP_ID,
+      userId: req.uid,
+      scope: req.body?.scope && typeof req.body.scope === 'object' ? req.body.scope : {},
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('POST /api/library-ai-answer error:', err);
+    return res.status(500).json({ error: err.message || 'Library assistant failed' });
   }
 });
 

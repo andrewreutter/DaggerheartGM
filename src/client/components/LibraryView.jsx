@@ -23,8 +23,11 @@ import {
   Sword,
   LayoutGrid,
   Puzzle,
+  Bot,
+  ScrollText,
 } from 'lucide-react';
 import { ItemCard } from './ItemCard.jsx';
+import { LibraryAssistantPanel } from './LibraryAssistantPanel.jsx';
 import { ItemDetailModal } from './modals/ItemDetailModal.jsx';
 import { CollectionFilters, LibrarySearchIncludeStrip } from './CollectionFilters.jsx';
 import { LibraryAllFilters } from './LibraryAllFilters.jsx';
@@ -37,10 +40,11 @@ import { isOwnItem, needsHodEnrich } from '../lib/constants.js';
 import { enrichItems, enrichSingleItem, loadLibraryAllCounts } from '../lib/api.js';
 import { generateId } from '../lib/helpers.js';
 import { DEFAULT_LIBRARY_TAB } from '../lib/router.js';
-import { buildLibraryModalPath } from '../lib/library-modal-path.js';
+import { buildLibraryBrowsePath, buildLibraryModalPath } from '../lib/library-modal-path.js';
 import { useUnifiedImport } from '../lib/unified-import-context.jsx';
 import {
   SRD_UNIFIED_COLLECTIONS,
+  LIBRARY_NON_CLONEABLE_COLLECTIONS,
   LIBRARY_USER_EDITABLE_COLLECTIONS,
   LIBRARY_FILTERS_PERSIST_KEY,
   LIBRARY_SEARCH_GLOBAL_KEY,
@@ -90,11 +94,13 @@ const SINGULAR_NAMES = {
   ancestries: 'Ancestry',
   armor: 'Armor',
   beastforms: 'Beastform',
+  campaign_frames: 'Campaign Frame',
   classes: 'Class',
   communities: 'Community',
   consumables: 'Consumable',
   domains: 'Domain',
   items: 'Item',
+  rules: 'Rule',
   subclasses: 'Subclass',
   weapons: 'Weapon',
   features: 'Feature',
@@ -113,9 +119,11 @@ const TABS = [
   { id: 'environments', label: 'Environments', Icon: MapIcon },
   { id: 'abilities', label: 'Abilities', Icon: Sparkles },
   { id: 'beastforms', label: 'Beastforms', Icon: PawPrint },
+  { id: 'campaign_frames', label: 'Campaign Frames', Icon: BookOpen },
   { id: 'consumables', label: 'Consumables', Icon: FlaskConical },
   { id: 'domains', label: 'Domains', Icon: Library },
   { id: 'items', label: 'Items', Icon: Package },
+  { id: 'rules', label: 'Rules', Icon: ScrollText },
   { id: 'features', label: 'Features', Icon: Puzzle },
   { id: 'scenes', label: 'Scenes', Icon: Play },
   { id: 'adventures', label: 'Adventures', Icon: BookOpen },
@@ -123,10 +131,14 @@ const TABS = [
 
 const LIBRARY_NAV_HIDDEN_IDS = new Set(['characters', 'scenes', 'adventures']);
 const LIBRARY_NAV_TABS = TABS.filter(t => !LIBRARY_NAV_HIDDEN_IDS.has(t.id));
-const LIBRARY_NAV_SIDEBAR = [{ id: 'all', label: 'All', Icon: LayoutGrid }, ...LIBRARY_NAV_TABS];
+const LIBRARY_NAV_SIDEBAR = [
+  { id: 'assistant', label: 'Assistant', Icon: Bot },
+  { id: 'all', label: 'All', Icon: LayoutGrid },
+  ...LIBRARY_NAV_TABS,
+];
 
 /** Sidebar order — every id is in `LIBRARY_USER_EDITABLE_COLLECTIONS`. */
-const NEW_ITEM_COLLECTION_ORDER = TABS.map(t => t.id);
+const NEW_ITEM_COLLECTION_ORDER = TABS.map(t => t.id).filter(id => LIBRARY_USER_EDITABLE_COLLECTIONS.has(id));
 const TAB_LABEL_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t.label]));
 
 /** Portaled “New” type menu — must be excluded from outside-dismiss (menu is not under `newItemMenuWrapRef`). */
@@ -137,6 +149,13 @@ const SRD_FILTER_TABS = new Set(SRD_UNIFIED_COLLECTIONS);
 
 /** Game Table can only add these library types */
 const TABLE_ADDABLE_COLLECTIONS = new Set(['adversaries', 'environments', 'scenes', 'adventures', 'characters']);
+const DEFAULT_ASSISTANT_SCOPE = {
+  collection: 'all',
+  includeMine: true,
+  includePublic: true,
+  includeSrd: true,
+  includeHod: false,
+};
 
 export function LibraryView({
   data,
@@ -162,6 +181,7 @@ export function LibraryView({
 }) {
   const { srdData: libraryCharacterSrdData } = useCharacterSrdData();
   const activeTab = route.tab || DEFAULT_LIBRARY_TAB;
+  const isAssistantTab = activeTab === 'assistant';
 
   const ownedTablesForPicker = useMemo(() => {
     if (myTables.length > 0) return myTables;
@@ -184,7 +204,7 @@ export function LibraryView({
     }
   }, [activeTab]);
 
-  const isPaginatedTab = SRD_FILTER_TABS.has(activeTab) || activeTab === 'all';
+  const isPaginatedTab = !isAssistantTab && (SRD_FILTER_TABS.has(activeTab) || activeTab === 'all');
   const collectionSearchCollection = activeTab === 'all' ? lastPaginatedTabRef.current : activeTab;
 
   // Restore card dimensions for this signed-in user and library collection (tab) before paint.
@@ -267,6 +287,7 @@ export function LibraryView({
   });
 
   const search = activeTab === 'all' ? allLibrarySearch : collectionSearch;
+  const semanticFilterActive = isPaginatedTab && !!String(search.filters.semantic || '').trim();
 
   const filterSig = useMemo(
     () => JSON.stringify(loadAllFiltersFromShared(LIBRARY_FILTERS_PERSIST_KEY, LIBRARY_SEARCH_GLOBAL_KEY, LIBRARY_INCLUDES_GLOBAL_KEY)),
@@ -279,6 +300,10 @@ export function LibraryView({
 
   /** Library “All” tab: counts piggyback on list response; cache + fallback when counts not yet loaded. */
   useEffect(() => {
+    if (semanticFilterActive) {
+      setNavCounts(null);
+      return;
+    }
     if (activeTab !== 'all') return;
     if (allLibrarySearch.countsByCollection) {
       const entry = {
@@ -295,10 +320,15 @@ export function LibraryView({
     } else {
       setNavCounts(null);
     }
-  }, [activeTab, filterSig, allLibrarySearch.countsByCollection, allLibrarySearch.totalCount]);
+  }, [activeTab, filterSig, allLibrarySearch.countsByCollection, allLibrarySearch.totalCount, semanticFilterActive]);
 
   /** Other SRD tabs: one debounced `library-all-counts` request per filter change (not per nav item). */
   useEffect(() => {
+    if (semanticFilterActive) {
+      setNavCounts(null);
+      setNavCountsLoading(false);
+      return;
+    }
     if (activeTab === 'all') return;
 
     const merged = loadAllFiltersFromShared(LIBRARY_FILTERS_PERSIST_KEY, LIBRARY_SEARCH_GLOBAL_KEY, LIBRARY_INCLUDES_GLOBAL_KEY);
@@ -332,10 +362,11 @@ export function LibraryView({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [filterSig, activeTab]);
+  }, [filterSig, activeTab, semanticFilterActive]);
 
   const navCountForTab = useCallback(
     (tabId) => {
+      if (tabId === 'assistant') return null;
       if (!navCounts) return null;
       if (tabId === 'all') return navCounts.totalCount ?? 0;
       const n = navCounts.countsByCollection[tabId];
@@ -344,9 +375,11 @@ export function LibraryView({
     [navCounts]
   );
 
-  const navCountLoading = activeTab === 'all'
-    ? allLibrarySearch.loading && !allLibrarySearch.countsByCollection
-    : navCountsLoading;
+  const navCountLoading = semanticFilterActive
+    ? false
+    : activeTab === 'all'
+      ? allLibrarySearch.loading && !allLibrarySearch.countsByCollection
+      : navCountsLoading;
 
   useEffect(() => {
     if (activeTab === 'all') setNavCountsLoading(false);
@@ -399,9 +432,7 @@ export function LibraryView({
   // For paginated tabs, items come from the hook; for non-paginated, from app data.
   const items = isPaginatedTab ? search.items : (data[activeTab] || []);
 
-  const filteredItems = isPaginatedTab
-    ? items.filter(item => !search.filters.search || item.name?.toLowerCase().includes(search.filters.search.toLowerCase()))
-    : items;
+  const filteredItems = items;
 
   const resolvedModalItem = modalState && !modalState.isNew
     ? (items.find(i =>
@@ -418,6 +449,31 @@ export function LibraryView({
   // Handle deep-link routes: /library/:tab/:id opens the modal.
   const { itemId, action, libraryNewCollection } = route;
   const deepLinkProcessedRef = useRef(false);
+  const appliedRouteQuerySigRef = useRef('');
+
+  useEffect(() => {
+    if (!isPaginatedTab) return;
+    if (route.librarySemantic == null && route.librarySearchQuery == null) return;
+    const sig = JSON.stringify({
+      tab: activeTab,
+      search: route.librarySearchQuery ?? null,
+      semantic: route.librarySemantic ?? null,
+    });
+    if (appliedRouteQuerySigRef.current === sig) return;
+    appliedRouteQuerySigRef.current = sig;
+    if (route.librarySearchQuery != null && route.librarySearchQuery !== search.filters.search) {
+      search.setFilter('search', route.librarySearchQuery);
+    }
+    if (route.librarySemantic != null && route.librarySemantic !== search.filters.semantic) {
+      search.setFilter('semantic', route.librarySemantic);
+    }
+  }, [
+    isPaginatedTab,
+    route.librarySemantic,
+    route.librarySearchQuery,
+    activeTab,
+    search,
+  ]);
 
   useEffect(() => {
     if (deepLinkProcessedRef.current) return;
@@ -467,9 +523,17 @@ export function LibraryView({
     }
   }, [itemId, modalState]);
 
+  const currentLibraryRouteOpts = useMemo(
+    () => ({
+      search: search.filters.search || '',
+      semantic: search.filters.semantic || '',
+    }),
+    [search.filters.search, search.filters.semantic]
+  );
+
   const openModal = async (item) => {
     const col = item._collection || activeTab;
-    navigate(buildLibraryModalPath(activeTab, col, item.id || 'new'));
+    navigate(buildLibraryModalPath(activeTab, col, item.id || 'new', currentLibraryRouteOpts));
     if (needsHodEnrich(item)) {
       setModalState({ item, isNew: false, enriching: true });
       const enriched = await enrichSingleItem(col, item);
@@ -537,7 +601,7 @@ export function LibraryView({
   }, [newItemMenuOpen]);
 
   const closeModal = () => {
-    navigate(`/library/${activeTab}`, { replace: true });
+    navigate(buildLibraryBrowsePath(activeTab, currentLibraryRouteOpts), { replace: true });
     setModalState(null);
   };
 
@@ -563,7 +627,7 @@ export function LibraryView({
     closeModal();
     // Open the clone immediately.
     setModalState({ item: cloned, isNew: false });
-    navigate(buildLibraryModalPath(activeTab, modalCollection, cloned.id));
+    navigate(buildLibraryModalPath(activeTab, modalCollection, cloned.id, currentLibraryRouteOpts));
   };
 
   /**
@@ -738,8 +802,12 @@ export function LibraryView({
   }, [isPaginatedTab, rowHeight, rowCount, columnCount, rowVirtualizer]);
 
   const virtualItems = rowVirtualizer.getVirtualItems();
-  const showingRangeText = isPaginatedTab && search.totalCount > 0
-    ? `Showing ${gridItems.length.toLocaleString()} of ${search.totalCount.toLocaleString()}`
+  const showingRangeText = isPaginatedTab
+    ? semanticFilterActive
+      ? `AI-filtered top ${gridItems.length.toLocaleString()} match${gridItems.length === 1 ? '' : 'es'}`
+      : search.totalCount > 0
+        ? `Showing ${gridItems.length.toLocaleString()} of ${search.totalCount.toLocaleString()}`
+        : null
     : null;
 
   const activeFilterEmptyChips = useMemo(
@@ -773,6 +841,25 @@ export function LibraryView({
     ]
   );
 
+  const libraryTitle = activeTab === 'all'
+    ? 'All'
+    : activeTab === 'assistant'
+      ? 'Assistant'
+      : (TAB_LABEL_BY_ID[activeTab] || activeTab);
+
+  const getAssistantContext = useCallback(
+    () => ({
+      scope: DEFAULT_ASSISTANT_SCOPE,
+      browseState: {
+        activeTab,
+        includes: search.filters.includes || [],
+        search: search.filters.search || '',
+        semantic: search.filters.semantic || '',
+      },
+    }),
+    [activeTab, search.filters.includes, search.filters.search, search.filters.semantic]
+  );
+
   return (
     <div className="flex-1 flex min-h-0 flex-col overflow-hidden">
       {isPaginatedTab && (
@@ -781,6 +868,7 @@ export function LibraryView({
             filters={search.filters}
             onFilterChange={search.setFilter}
             collection={activeTab === 'all' ? 'library' : activeTab}
+            showSemantic
           />
         </div>
       )}
@@ -827,7 +915,7 @@ export function LibraryView({
           onSaveElement={activeTab === 'scenes' && modalItemIsOwn ? handleSaveElement : null}
           saveImage={saveImage}
           onDelete={modalItemIsOwn ? () => handleDelete(modalCollection, resolvedModalItem?.id) : null}
-          onClone={modalCollection === 'features' ? undefined : () => handleClone(resolvedModalItem)}
+          onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(modalCollection) ? undefined : () => handleClone(resolvedModalItem)}
           onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && !ownedTablesForPicker.length ? () => addToTable(resolvedModalItem, modalCollection) : undefined}
           addToTableMenu={TABLE_ADDABLE_COLLECTIONS.has(modalCollection) && ownedTablesForPicker.length ? {
             tables: ownedTablesForPicker,
@@ -861,9 +949,11 @@ export function LibraryView({
                 >
                   <tab.Icon size={18} className="shrink-0" />
                   <span className="min-w-0 flex-1">{tab.label}</span>
-                  <span className="ml-auto shrink-0 text-xs tabular-nums text-dh-muted">
-                    {navCounts == null && navCountLoading ? '—' : (navCountForTab(tab.id) ?? '—')}
-                  </span>
+                  {tab.id !== 'assistant' && !semanticFilterActive && (
+                    <span className="ml-auto shrink-0 text-xs tabular-nums text-dh-muted">
+                      {navCounts == null && navCountLoading ? '—' : (navCountForTab(tab.id) ?? '—')}
+                    </span>
+                  )}
                 </button>
                 {tab.id === 'all' && (
                   <div className="border-t border-dh-border mx-3 my-1" aria-hidden />
@@ -879,7 +969,12 @@ export function LibraryView({
         {/* Sticky header */}
         <div className="shrink-0 pl-6 pr-9 pt-3 pb-3 border-b border-dh-border/50 bg-dh-canvas">
           <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
-            <h2 className="text-2xl font-bold text-white capitalize">{activeTab === 'all' ? 'All' : activeTab}</h2>
+            <div>
+              <h2 className="text-2xl font-bold text-white">{libraryTitle}</h2>
+              {semanticFilterActive && (
+                <p className="mt-1 text-xs uppercase tracking-wide text-sky-300">AI-filtered top matches</p>
+              )}
+            </div>
 
             <div className="flex items-center gap-3 flex-wrap">
               {unifiedImportEnabled && (
@@ -988,6 +1083,7 @@ export function LibraryView({
                   filters={search.filters}
                   onFilterChange={search.setFilter}
                   suppressSearchInclude
+                  showSemantic
                   showSort
                   viewSlider={{
                   ...(librarySnapWidths.length > 0
@@ -1023,6 +1119,7 @@ export function LibraryView({
                   onFilterChange={search.setFilter}
                   variant="bar"
                   suppressSearchInclude
+                  showSemantic
                   suppressCompetingStructuralAllHighlight
                   showSort
                   viewSlider={{
@@ -1065,7 +1162,20 @@ export function LibraryView({
 
         {/* Scrollable content: virtualized grid for SRD unified tabs; flex-wrap for scenes/adventures */}
         <div className="flex-1 min-h-0 overflow-hidden px-6 py-4 flex flex-col">
-          {isPaginatedTab ? (
+          {isAssistantTab ? (
+            <LibraryAssistantPanel
+              data={data}
+              navigate={navigate}
+              onOpenItem={openModal}
+              onCloneItem={cloneItem ? handleClone : null}
+              onAddToTableItem={addToTable}
+              ownedTables={ownedTablesForPicker}
+              partySize={partySize}
+              partyTier={partyTier}
+              characters={characters}
+              getAssistantContext={getAssistantContext}
+            />
+          ) : isPaginatedTab ? (
             <div
               ref={scrollRef}
               className="dh-library-grid-scroll flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden pr-4"
@@ -1107,7 +1217,7 @@ export function LibraryView({
                               onView={(i) => openModal(i)}
                               onEdit={isOwnItem(item) ? (i) => openModal(i) : null}
                               onDelete={isOwnItem(item) ? handleDelete : null}
-                              onClone={cardCol === 'features' ? undefined : () => handleClone(item)}
+                              onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(cardCol) ? undefined : () => handleClone(item)}
                               onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? addToTable : undefined}
                               ownedTables={ownedTablesForPicker}
                               partySize={partySize}
@@ -1178,7 +1288,7 @@ export function LibraryView({
                   onView={(item) => openModal(item)}
                   onEdit={isOwnItem(item) ? (item) => openModal(item) : null}
                   onDelete={isOwnItem(item) ? handleDelete : null}
-                  onClone={cardCol === 'features' ? undefined : () => handleClone(item)}
+                  onClone={LIBRARY_NON_CLONEABLE_COLLECTIONS.has(cardCol) ? undefined : () => handleClone(item)}
                   onAddToTable={TABLE_ADDABLE_COLLECTIONS.has(activeTab === 'all' ? item._collection : activeTab) ? addToTable : undefined}
                   ownedTables={ownedTablesForPicker}
                   partySize={partySize}

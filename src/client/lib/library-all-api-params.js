@@ -16,6 +16,7 @@ export function buildLibraryAllApiOpts(filters) {
     wpnPhyMag = [],
     featScope = [],
     search,
+    semantic,
     includeScaledUp,
     sort = 'popularity',
   } = filters;
@@ -26,6 +27,7 @@ export function buildLibraryAllApiOpts(filters) {
     includePublic: isAll || includes.includes('public'),
     includeHod: isAll || includes.includes('hod'),
     search: search || '',
+    semantic: semantic || '',
     tiers,
     levels,
     advRole,
@@ -45,6 +47,7 @@ export function buildLibraryAllSearchParams({
   includePublic = false,
   includeHod = false,
   search = '',
+  semantic = '',
   tiers = [],
   levels = [],
   advRole = [],
@@ -64,6 +67,7 @@ export function buildLibraryAllSearchParams({
   if (includePublic) params.set('includePublic', '1');
   if (includeHod) params.set('includeHod', '1');
   if (search) params.set('search', search);
+  if (semantic) params.set('semantic', semantic);
   if (Array.isArray(tiers) && tiers.length > 0) {
     tiers.forEach(t => params.append('tier', String(t)));
   }

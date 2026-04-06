@@ -38,6 +38,7 @@ const DEFAULT_FILTERS = {
   wpnPhyMag: [],
   featScope: [],
   search: '',
+  semantic: '',
   includeScaledUp: false,
   sort: 'popularity',
 };
@@ -149,7 +150,7 @@ export function useLibraryAllSearch({
     };
 
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(doFetch, filters.search ? debounceMs : 0);
+    debounceRef.current = setTimeout(doFetch, (filters.search || filters.semantic) ? debounceMs : 0);
     return () => {
       clearTimeout(debounceRef.current);
       abortControllerRef.current?.abort();

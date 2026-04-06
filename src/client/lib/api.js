@@ -178,7 +178,7 @@ export const postEncounterDropImport = async (file, kind) => {
  * Load a paginated page of items for a single collection.
  * Returns { items, totalCount, dbCount }
  */
-export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20, id = null } = {}) => {
+export const loadCollection = async (collection, { includeMine = true, includeSrd = false, includePublic = false, includeHod = false, search = '', semantic = '', tier = null, tiers = [], type = null, types = [], extraTypes = [], includeScaledUp = false, sort = 'popularity', offset = 0, limit = 20, id = null } = {}) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
@@ -187,6 +187,7 @@ export const loadCollection = async (collection, { includeMine = true, includeSr
   if (includePublic) params.set('includePublic', '1');
   if (includeHod) params.set('includeHod', '1');
   if (search) params.set('search', search);
+  if (semantic) params.set('semantic', semantic);
   if (collection === 'features' && id) params.set('id', id);
   if (Array.isArray(tiers) && tiers.length > 0) {
     tiers.forEach(t => params.append('tier', String(t)));
@@ -240,6 +241,21 @@ export const loadLibraryAllCounts = async (opts = {}) => {
     headers: apiHeaders({ Authorization: `Bearer ${token}` }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
+
+export const postLibraryAiAnswer = async ({ question, scope = null, browseState = null } = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/library-ai-answer', {
+    method: 'POST',
+    headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ question, scope, browseState }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
   return res.json();
 };
 

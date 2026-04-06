@@ -67,7 +67,7 @@ export function LibraryAllFilters({ filters, onFilterChange, showSort = true, vi
   return (
     <div className="mb-5 space-y-2">
       {!suppressSearchInclude && (
-        <LibrarySearchIncludeStrip filters={filters} onFilterChange={onFilterChange} collection="library" />
+        <LibrarySearchIncludeStrip filters={filters} onFilterChange={onFilterChange} collection="library" showSemantic />
       )}
 
       <p className="text-[10px] text-dh-muted/90 leading-snug max-w-4xl">
