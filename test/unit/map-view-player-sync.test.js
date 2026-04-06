@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   shouldApplyRemotePlayerMapView,
+  isDecodedMapViewAtOrigin,
+  shouldPreferCachedPlayerRemoteView,
   freeMapExploreTargetsUnsharedMap,
   playerCanAccessMapViewSelection,
   countPlayerMapStripTiles,
@@ -16,6 +18,36 @@ describe('map-view-player-sync', () => {
   it('applies remote view to players only when not in map-tile free explore', () => {
     expect(shouldApplyRemotePlayerMapView(true, false)).toBe(true);
     expect(shouldApplyRemotePlayerMapView(true, true)).toBe(false);
+  });
+
+  it('detects when a decoded map view is effectively at the origin', () => {
+    expect(isDecodedMapViewAtOrigin({ scrollLeft: 0, scrollTop: 0 })).toBe(true);
+    expect(isDecodedMapViewAtOrigin({ scrollLeft: 0.2, scrollTop: 0.4 })).toBe(true);
+    expect(isDecodedMapViewAtOrigin({ scrollLeft: 2, scrollTop: 0 })).toBe(false);
+  });
+
+  it('prefers the cached remote view when a return-switch regresses to 0,0', () => {
+    expect(
+      shouldPreferCachedPlayerRemoteView({
+        switchedViews: true,
+        liveDecoded: { scrollLeft: 0, scrollTop: 0 },
+        cachedDecoded: { scrollLeft: 140, scrollTop: 80 },
+      }),
+    ).toBe(true);
+    expect(
+      shouldPreferCachedPlayerRemoteView({
+        switchedViews: true,
+        liveDecoded: { scrollLeft: 140, scrollTop: 80 },
+        cachedDecoded: { scrollLeft: 20, scrollTop: 10 },
+      }),
+    ).toBe(false);
+    expect(
+      shouldPreferCachedPlayerRemoteView({
+        switchedViews: false,
+        liveDecoded: { scrollLeft: 0, scrollTop: 0 },
+        cachedDecoded: { scrollLeft: 140, scrollTop: 80 },
+      }),
+    ).toBe(false);
   });
 
   it('freeMapExploreTargetsUnsharedMap when free explore map is un-shared', () => {

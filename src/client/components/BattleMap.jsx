@@ -18,6 +18,7 @@ import {
 import {
   shouldApplyRemotePlayerMapView,
   freeMapExploreTargetsUnsharedMap,
+  shouldPreferCachedPlayerRemoteView,
   shouldShowPlayerMapViewStrip,
 } from '../lib/map-view-player-sync.js';
 import {
@@ -209,6 +210,15 @@ function hasDecodableView(viewState) {
     Number.isFinite(pan.x) &&
     Number.isFinite(pan.y);
   return hasRatio || hasPan;
+}
+
+function copyMapViewState(viewState) {
+  if (!viewState || typeof viewState !== 'object') return null;
+  return {
+    mapViewZoomRatio: viewState.mapViewZoomRatio ?? null,
+    mapViewPanNorm: viewState.mapViewPanNorm ?? null,
+    mapViewVisibleNorm: viewState.mapViewVisibleNorm ?? null,
+  };
 }
 
 /**
@@ -1370,12 +1380,19 @@ export function BattleMap({
   const tokenSizePx = Math.max(33, Math.round(5 * pxPerFt));
   const trayTokenSizePx = CHARACTER_TRAY_WIDTH_PX - 16; // 36; fixed size for tray tokens
 
+  const defaultPlayerBroadcastViewId = useMemo(() => {
+    if (!isPlayer) return null;
+    return (
+      mapViews.find((v) => v.broadcastToPlayers && maps.some((m) => m.id === v.mapId))?.id ?? null
+    );
+  }, [isPlayer, mapViews, maps]);
+
   const activeViewIdResolved = useMemo(() => {
     if (isPlayer && playerFreeMapExplore) return null;
     if (!isPlayer && gmActiveViewId === null) return null;
     if (!isPlayer) return gmActiveViewId ?? mapViews[0]?.id ?? null;
-    return playerSelectedViewId ?? mapViews[0]?.id ?? null;
-  }, [isPlayer, playerFreeMapExplore, gmActiveViewId, playerSelectedViewId, mapViews]);
+    return playerSelectedViewId ?? defaultPlayerBroadcastViewId ?? null;
+  }, [isPlayer, playerFreeMapExplore, gmActiveViewId, playerSelectedViewId, defaultPlayerBroadcastViewId, mapViews]);
 
   const activeMapIdResolved = useMemo(() => {
     if (isPlayer && playerFreeMapExplore && playerFreeExploreMapId) {
@@ -1594,6 +1611,9 @@ export function BattleMap({
   onMapViewSyncRef.current = onMapViewSync;
   const playerFreeMapPersistTimerRef = useRef(null);
   const playerFreeMapHydratedKeyRef = useRef('');
+  const playerRemoteViewStateCacheRef = useRef(new Map());
+  const playerRemoteViewSwitchPendingRef = useRef(false);
+  const playerRemoteViewKeyRef = useRef('');
   const [drawTool, setDrawTool] = useState('scribble');
   const [rectShapeFilled, setRectShapeFilled] = useState(true);
   const [ovalShapeFilled, setOvalShapeFilled] = useState(true);
@@ -1868,11 +1888,20 @@ export function BattleMap({
   ]);
 
   useLayoutEffect(() => {
+    const nextKey =
+      isPlayer && !playerFreeMapExplore && activeViewIdResolved
+        ? `${tableId ?? ''}:${activeViewIdResolved}:${mapConfig?.mapImageUrl ?? ''}`
+        : '';
+    playerRemoteViewSwitchPendingRef.current = playerRemoteViewKeyRef.current !== nextKey;
+    playerRemoteViewKeyRef.current = nextKey;
+  }, [isPlayer, playerFreeMapExplore, activeViewIdResolved, tableId, mapConfig?.mapImageUrl]);
+
+  useLayoutEffect(() => {
     if (onMapViewSync || !tableStateReady) return;
     const applyRemote = shouldApplyRemotePlayerMapView(isPlayer, playerFreeMapExplore);
     if (!applyRemote) return;
     if (containerWidth <= 0 || containerHeight <= 0) return;
-    const d = decodeMapViewState(mapConfig, {
+    const decodeCtx = {
       minZoom,
       maxZoom,
       renderedWidthPx,
@@ -1881,7 +1910,24 @@ export function BattleMap({
       viewportH: containerHeight,
       /** Match GM’s viewport to the top of the player viewport — centering adds a scroll-scaled gap above the shared frame. */
       decodeAlign: shouldApplyPlayerFollowClip ? 'topLeft' : 'center',
+    };
+    const liveViewState = hasDecodableView(mapConfig) ? copyMapViewState(mapConfig) : null;
+    const liveDecoded = liveViewState ? decodeMapViewState(liveViewState, decodeCtx) : null;
+    const playerRemoteViewKey =
+      isPlayer && activeViewIdResolved
+        ? `${tableId ?? ''}:${activeViewIdResolved}:${mapConfig?.mapImageUrl ?? ''}`
+        : '';
+    const cachedViewState = playerRemoteViewKey
+      ? playerRemoteViewStateCacheRef.current.get(playerRemoteViewKey) ?? null
+      : null;
+    const cachedDecoded = cachedViewState ? decodeMapViewState(cachedViewState, decodeCtx) : null;
+
+    const useCachedView = shouldPreferCachedPlayerRemoteView({
+      switchedViews: playerRemoteViewSwitchPendingRef.current,
+      liveDecoded,
+      cachedDecoded,
     });
+    const d = useCachedView ? cachedDecoded : liveDecoded;
     if (!d) return;
     mapZoomRef.current = d.mapZoom;
     setMapZoom(d.mapZoom);
@@ -1892,11 +1938,18 @@ export function BattleMap({
     setMapLetterboxClipPx(
       shouldApplyPlayerFollowClip && d.letterboxClipPx ? d.letterboxClipPx : null,
     );
+    playerRemoteViewSwitchPendingRef.current = false;
+    if (!useCachedView && playerRemoteViewKey && liveViewState) {
+      playerRemoteViewStateCacheRef.current.set(playerRemoteViewKey, liveViewState);
+    }
   }, [
     onMapViewSync,
     tableStateReady,
     isPlayer,
     playerFreeMapExplore,
+    activeViewIdResolved,
+    tableId,
+    mapConfig?.mapImageUrl,
     mapViewSig,
     shouldApplyPlayerFollowClip,
     minZoom,
