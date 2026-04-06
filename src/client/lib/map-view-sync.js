@@ -269,3 +269,15 @@ export function shouldPersistMapViewToTable({ userUid, tableOwnerUid, effectiveI
   if (userUid == null || tableOwnerUid == null) return false;
   return userUid === tableOwnerUid;
 }
+
+/**
+ * Invokes the latest `onMapViewSync` from a ref so a debounced timer cannot call a stale
+ * `sendMapViewSync` closure (wrong `viewId` while scroll/zoom refs already match another camera).
+ * @param {{ current: ((z: number|null, p: object|null, v: object|null) => void) | null | undefined }} ref
+ * @param {{ mapViewZoomRatio: number|null, mapViewPanNorm: object|null, mapViewVisibleNorm: object|null }} encoded
+ */
+export function callLatestOnMapViewSync(ref, encoded) {
+  const fn = ref?.current;
+  if (typeof fn !== 'function') return;
+  fn(encoded.mapViewZoomRatio, encoded.mapViewPanNorm, encoded.mapViewVisibleNorm);
+}

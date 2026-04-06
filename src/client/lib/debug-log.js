@@ -1,10 +1,9 @@
 /**
- * Browser-side debug instrumentation: POST to same-origin `/api/debug-log`, which relays the
- * payload to the Cursor ingest URL (see `server.js`). Direct `fetch` to `127.0.0.1` from the
- * browser is blocked; this path is not.
+ * Browser-side debug instrumentation: POST to same-origin `/api/debug-log`. In non-production the
+ * server appends NDJSON to `.cursor/debug-{sessionId}.log` and optionally forwards to `_debugUrl`.
+ * Direct `fetch` to `127.0.0.1` from the browser is blocked; this path is not.
  *
- * Body shape: `{ _debugUrl, _debugSessionId?, ...fields }` — server strips `_debugUrl` / `_debugSessionId`
- * and forwards the rest to `_debugUrl` with optional `X-Debug-Session-Id`.
+ * Body shape: `{ _debugUrl?, _debugSessionId?, sessionId?, ...fields }` — `_debugUrl` is optional.
  */
 
 export const DEBUG_LOG_DEFAULT_INGEST =
@@ -15,11 +14,13 @@ export const DEBUG_LOG_DEFAULT_INGEST =
  * @param {string} [ingestUrl] — override default ingest URL (port/path change per session)
  */
 export function postDebugLog(payload, ingestUrl = DEBUG_LOG_DEFAULT_INGEST) {
+  const sid = payload?._debugSessionId ?? payload?.sessionId;
   fetch('/api/debug-log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       _debugUrl: ingestUrl,
+      ...(sid && !payload?._debugSessionId ? { _debugSessionId: sid } : {}),
       ...payload,
     }),
   }).catch(() => {});

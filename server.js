@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
 import { randomInt, randomUUID } from 'crypto';
-import { watchFile, readFileSync } from 'fs';
+import { watchFile, readFileSync, appendFileSync, mkdirSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -359,17 +359,34 @@ if (process.env.NODE_ENV !== 'test') {
   watchFile(join(publicDir, 'index.html'), { interval: 200 }, broadcastReload);
 }
 
-// Debug log relay — forwards client-side log payloads to a localhost debug server.
-// Only active in development (NODE_ENV != production). Used by Cursor debug mode to
-// collect browser-side instrumentation logs via /api/debug-log, bypassing CORS.
-// Client sends: { _debugUrl: "http://127.0.0.1:PORT/ingest/UUID", _debugSessionId: "ID", ...payload }
+// Debug log relay — appends NDJSON under `.cursor/debug-{sessionId}.log` (always), and optionally
+// forwards to a localhost ingest URL. `_debugUrl` is optional so logging works when ingest is down
+// or the URL/port does not match this Cursor session.
+// Client sends: { _debugUrl?: "http://127.0.0.1:PORT/ingest/UUID", _debugSessionId?: "ID", sessionId?, ... }
 if (process.env.NODE_ENV !== 'production') {
   app.post('/api/debug-log', (req, res) => {
-    const { _debugUrl, _debugSessionId, ...payload } = req.body || {};
-    if (!_debugUrl || !_debugUrl.startsWith('http://127.0.0.1:')) return res.status(400).json({ error: 'Invalid debug URL' });
-    const headers = { 'Content-Type': 'application/json' };
-    if (_debugSessionId) headers['X-Debug-Session-Id'] = _debugSessionId;
-    fetch(_debugUrl, { method: 'POST', headers, body: JSON.stringify(payload) }).catch(() => {});
+    const body = req.body || {};
+    const { _debugUrl, _debugSessionId, ...payload } = body;
+    const sidRaw = (typeof payload.sessionId === 'string' && payload.sessionId) || _debugSessionId || 'default';
+    const safeSid = /^[a-zA-Z0-9_-]+$/.test(String(sidRaw)) ? String(sidRaw) : 'default';
+    try {
+      const dir = join(process.cwd(), '.cursor');
+      mkdirSync(dir, { recursive: true });
+      const line =
+        JSON.stringify({
+          ...payload,
+          _debugSessionId: _debugSessionId || undefined,
+          _receivedAt: Date.now(),
+        }) + '\n';
+      appendFileSync(join(dir, `debug-${safeSid}.log`), line, 'utf8');
+    } catch {
+      /* ignore */
+    }
+    if (_debugUrl && typeof _debugUrl === 'string' && _debugUrl.startsWith('http://127.0.0.1:')) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (_debugSessionId) headers['X-Debug-Session-Id'] = _debugSessionId;
+      fetch(_debugUrl, { method: 'POST', headers, body: JSON.stringify(payload) }).catch(() => {});
+    }
     res.json({ ok: true });
   });
 }

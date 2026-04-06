@@ -10,6 +10,7 @@ import {
   scrollAfterZoomTowardPoint,
 } from '../lib/battle-map-zoom.js';
 import {
+  callLatestOnMapViewSync,
   decodeMapViewState,
   encodeMapViewState,
   isValidMapViewVisibleNorm,
@@ -1588,6 +1589,9 @@ export function BattleMap({
 
   const gmViewHydratedRef = useRef(false);
   const mapViewPersistTimerRef = useRef(null);
+  /** Latest `onMapViewSync` — debounced persist must not call a stale closure (wrong camera `viewId`). */
+  const onMapViewSyncRef = useRef(onMapViewSync);
+  onMapViewSyncRef.current = onMapViewSync;
   const playerFreeMapPersistTimerRef = useRef(null);
   const playerFreeMapHydratedKeyRef = useRef('');
   const [drawTool, setDrawTool] = useState('scribble');
@@ -1688,13 +1692,14 @@ export function BattleMap({
   );
 
   const schedulePersistView = useCallback(() => {
-    if (!onMapViewSync) return;
+    if (!onMapViewSyncRef.current) return;
     if (mapViewPersistTimerRef.current) clearTimeout(mapViewPersistTimerRef.current);
     mapViewPersistTimerRef.current = setTimeout(() => {
       mapViewPersistTimerRef.current = null;
       // Double rAF: let layout settle after viewport resize before measuring vw/vh and reading pan refs.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
+          if (!gmViewHydratedRef.current) return;
           const wrap = scrollWrapperRef.current;
           const vw = wrap?.clientWidth ?? 0;
           const vh = wrap?.clientHeight ?? 0;
@@ -1710,11 +1715,11 @@ export function BattleMap({
             viewportW: vw,
             viewportH: vh,
           });
-          onMapViewSync(encoded.mapViewZoomRatio, encoded.mapViewPanNorm, encoded.mapViewVisibleNorm);
+          callLatestOnMapViewSync(onMapViewSyncRef, encoded);
         });
       });
     }, 120);
-  }, [onMapViewSync]);
+  }, []);
 
   const schedulePersistPlayerFreeMap = useCallback(() => {
     if (!isPlayer || !tableId || !playerFreeExploreMapId) return;
@@ -1757,6 +1762,10 @@ export function BattleMap({
 
   /** Must be useLayoutEffect (not useEffect) so this runs before the GM hydrate effect below — otherwise hydration sees gmViewHydratedRef still true and skips applying mapConfig when switching named views. */
   useLayoutEffect(() => {
+    if (mapViewPersistTimerRef.current) {
+      clearTimeout(mapViewPersistTimerRef.current);
+      mapViewPersistTimerRef.current = null;
+    }
     gmViewHydratedRef.current = false;
   }, [mapConfig?.mapImageUrl, gmUid, activeMapIdResolved, gmActiveViewId]);
 
@@ -1844,6 +1853,8 @@ export function BattleMap({
   }, [
     onMapViewSync,
     tableStateReady,
+    /** Must re-run when switching named cameras even if normalized pan/zoom match the previous view. */
+    gmActiveViewId,
     mapConfig?.mapImageUrl,
     mapConfig?.mapViewZoomRatio,
     mapConfig?.mapViewPanNorm,
@@ -1980,8 +1991,9 @@ export function BattleMap({
 
   useLayoutEffect(() => {
     if (containerWidth <= 0 || containerHeight <= 0) return;
+    /** Use ref zoom: GM hydrate / wheel update refs before React state commits; clamping with stale `mapZoom` state after a camera switch corrupts pan and the next `set-map-view` overwrites the wrong camera. */
     const panParams = {
-      mapZoom,
+      mapZoom: mapZoomRef.current,
       renderedWidthPx,
       renderedHeightPx,
       viewportW: containerWidth,

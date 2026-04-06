@@ -15,7 +15,7 @@ fetch('/api/debug-log', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    _debugUrl: 'http://127.0.0.1:PORT/ingest/UUID',
+    _debugUrl: 'http://127.0.0.1:PORT/ingest/UUID', // optional: forward to Cursor ingest when present
     _debugSessionId: 'SESSION_ID',
     sessionId: 'SESSION_ID',
     location: 'file.js:LINE',
@@ -32,4 +32,4 @@ fetch('/api/debug-log', {
 fetch('http://127.0.0.1:7456/ingest/...', { ... });
 ```
 
-The `_debugUrl` must start with `http://127.0.0.1:` and the server's `POST /api/debug-log` handler will forward it. The `X-Debug-Session-Id` header is **not** needed on the `/api/debug-log` call — put `_debugSessionId` in the body instead.
+**Persistence:** In non-production, `POST /api/debug-log` **always appends one NDJSON line** to `.cursor/debug-{sessionId}.log` under the repo (`sessionId` from the body, or `_debugSessionId`, or `default`). `_debugUrl` is **optional**; when present and starts with `http://127.0.0.1:`, the handler also forwards the payload to that ingest URL. The `X-Debug-Session-Id` header is **not** needed on the `/api/debug-log` call — put `_debugSessionId` in the body instead.

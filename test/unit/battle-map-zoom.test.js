@@ -64,6 +64,20 @@ describe('battle-map-zoom', () => {
     expect(clampPanScroll(5000, 5000, p)).toEqual({ scrollLeft: 200, scrollTop: 200 });
   });
 
+  it('clampPanScroll uses mapZoom for content size — stale zoom vs current scroll corrupts pan (GM camera switch)', () => {
+    const renderedWidthPx = 1000;
+    const renderedHeightPx = 800;
+    const viewportW = 400;
+    const viewportH = 300;
+    const zoomPrev = 0.2;
+    const zoomDecoded = 0.45;
+    const scrollLeft = 120;
+    const scrollTop = 40;
+    const pStale = { mapZoom: zoomPrev, renderedWidthPx, renderedHeightPx, viewportW, viewportH };
+    const pOk = { mapZoom: zoomDecoded, renderedWidthPx, renderedHeightPx, viewportW, viewportH };
+    expect(clampPanScroll(scrollLeft, scrollTop, pStale)).not.toEqual(clampPanScroll(scrollLeft, scrollTop, pOk));
+  });
+
   it('normalizeWheelDeltaPixels scales LINE and PAGE modes', () => {
     expect(
       normalizeWheelDeltaPixels({ deltaX: 0, deltaY: 3, deltaMode: 1 }, 800, 600),
