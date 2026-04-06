@@ -289,6 +289,17 @@ function labelizeKey(key) {
   return String(key).replace(/_/g, ' ');
 }
 
+function stripLeadingMarkdownHeading(text, title = '') {
+  const raw = String(text || '');
+  const trimmed = raw.trimStart();
+  const headingMatch = trimmed.match(/^#\s+([^\n]+)\n*/);
+  if (!headingMatch) return raw;
+  const heading = String(headingMatch[1] || '').trim().toLowerCase();
+  const titleNorm = String(title || '').trim().toLowerCase();
+  if (titleNorm && heading !== titleNorm) return raw;
+  return trimmed.slice(headingMatch[0].length).trimStart();
+}
+
 /** Cheap fingerprint so metadata chips remount when any field value changes (uniform width remeasure). */
 function hashFieldEntriesKey(rows) {
   let h = 0;
@@ -434,6 +445,7 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   const renderClassHopeFeature =
     collection === 'classes' && item?.hope_feature && typeof item.hope_feature === 'object' && item.hope_feature.name;
   const renderAttackWeaponCard = coerceLibraryAttack(item?.attack) != null;
+  const isRulesCollection = collection === 'rules';
 
   const hasDomainCardList = collection === 'domains' && Array.isArray(item?.cards) && item.cards.length > 0;
   const abilitiesReady = srdData && Array.isArray(srdData.abilities);
@@ -451,6 +463,7 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
       .filter(([k]) => {
         if (skip.has(k) || tierFieldSkip.has(k) || k.startsWith('_')) return false;
         if (k === 'description') return false;
+        if (isRulesCollection && (k === 'body' || k === 'excerpt' || k === 'breadcrumb' || k === 'breadcrumb_titles' || k === 'source_file')) return false;
         if (collection === 'domains' && k === 'cards' && hasDomainCardList) return false;
         return true;
       })
@@ -481,6 +494,7 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
     featureKeysSig,
     renderClassHopeFeature,
     renderAttackWeaponCard,
+    isRulesCollection,
   ]);
 
   const featureBlocks = (
@@ -513,9 +527,23 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
     ) : null;
 
   /** Full-width prose, no label — always before other generic fields. */
-  const descriptionBlock = item?.description ? (
+  const descriptionBlock = item?.description && !isRulesCollection ? (
     <div className="w-full min-w-0">
       <MarkdownText text={item.description} className="text-sm text-dh dh-md" />
+    </div>
+  ) : null;
+
+  const rulesBodyBlock = isRulesCollection && item?.body ? (
+    <div className="w-full min-w-0 space-y-3">
+      {item?.breadcrumb ? (
+        <div className="text-xs uppercase tracking-wide text-dh-muted">
+          {item.breadcrumb}
+        </div>
+      ) : null}
+      <MarkdownText
+        text={stripLeadingMarkdownHeading(item.body, item.name)}
+        className="text-sm text-dh dh-md"
+      />
     </div>
   ) : null;
 
@@ -539,6 +567,7 @@ function GenericLibraryRecordBody({ item, collection, srdData }) {
   return (
     <div className="space-y-4 pr-1">
       {descriptionBlock}
+      {rulesBodyBlock}
       {tierBlock}
       {chipFieldEntries.length > 0 ? (
         <GenericMetadataFieldChips key={metadataChipsKey} fields={chipFieldEntries} />

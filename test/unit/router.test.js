@@ -14,12 +14,16 @@ describe('parseRoute /library', () => {
       tab: 'all',
       itemId: null,
       libraryNewCollection: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
     });
     expect(parseRoute('/library/all/some-item-id')).toEqual({
       view: 'library',
       tab: 'all',
       itemId: 'some-item-id',
       libraryNewCollection: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
     });
   });
 
@@ -29,12 +33,16 @@ describe('parseRoute /library', () => {
       tab: 'all',
       itemId: 'new',
       libraryNewCollection: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
     });
     expect(parseRoute('/library/all/new?c=adversaries')).toEqual({
       view: 'library',
       tab: 'all',
       itemId: 'new',
       libraryNewCollection: 'adversaries',
+      librarySemantic: null,
+      librarySearchQuery: null,
     });
   });
 
@@ -44,12 +52,35 @@ describe('parseRoute /library', () => {
       tab: 'features',
       itemId: null,
       libraryNewCollection: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
     });
     expect(parseRoute('/library/features/v2feat-classes-srd-cls-bard-rally')).toEqual({
       view: 'library',
       tab: 'features',
       itemId: 'v2feat-classes-srd-cls-bard-rally',
       libraryNewCollection: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+    });
+  });
+
+  it('parses assistant tab and library search query params', () => {
+    expect(parseRoute('/library/assistant')).toEqual({
+      view: 'library',
+      tab: 'assistant',
+      itemId: null,
+      libraryNewCollection: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
+    });
+    expect(parseRoute('/library/all?semantic=comes+from+the+trees&search=wither')).toEqual({
+      view: 'library',
+      tab: 'all',
+      itemId: null,
+      libraryNewCollection: null,
+      librarySemantic: 'comes from the trees',
+      librarySearchQuery: 'wither',
     });
   });
 });
@@ -60,6 +91,8 @@ describe('parseRoute /admin', () => {
       view: 'adminAiUsage',
       tab: null,
       itemId: null,
+      librarySemantic: null,
+      librarySearchQuery: null,
     });
   });
 });

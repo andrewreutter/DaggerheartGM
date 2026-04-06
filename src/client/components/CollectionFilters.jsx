@@ -1,4 +1,4 @@
-import { Search, X, ArrowLeftRight, ArrowUpDown } from 'lucide-react';
+import { Search, X, ArrowLeftRight, ArrowUpDown, Sparkles } from 'lucide-react';
 import { TIERS } from '../lib/constants.js';
 import { TierSelector } from './TierSelector.jsx';
 import { LibraryTierShieldRow } from './LibraryTierShieldRow.jsx';
@@ -30,6 +30,32 @@ export function LibrarySearchField({ collection, value, onChange, className = ''
         <button
           type="button"
           aria-label="Clear search"
+          onClick={() => onChange('')}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-dh-muted hover:text-dh hover:bg-dh-hover/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-dh-strong"
+        >
+          <X size={14} strokeWidth={2.25} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function LibrarySemanticField({ value, onChange, className = '', placeholder = 'AI semantic filter…' }) {
+  const hasValue = String(value ?? '').trim() !== '';
+  return (
+    <div className={`relative min-w-0 flex-1 ${className}`}>
+      <Sparkles size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-violet-300 pointer-events-none" />
+      <input
+        type="text"
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full bg-dh-raised border border-violet-700/50 rounded pl-7 py-1.5 text-xs text-dh placeholder-dh-muted focus:outline-none focus:border-violet-500 transition-colors ${hasValue ? 'pr-8' : 'pr-3'}`}
+      />
+      {hasValue && (
+        <button
+          type="button"
+          aria-label="Clear semantic filter"
           onClick={() => onChange('')}
           className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-dh-muted hover:text-dh hover:bg-dh-hover/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-dh-strong"
         >
@@ -106,8 +132,8 @@ function LibraryTypedFilterPickRow({
  * Search + Include (source) controls — used full-width above Library nav + content.
  * `collection` drives the default search placeholder (`Search ${collection}…`); pass `placeholder` to override.
  */
-export function LibrarySearchIncludeStrip({ filters, onFilterChange, collection, placeholder }) {
-  const { includes = [], search } = filters;
+export function LibrarySearchIncludeStrip({ filters, onFilterChange, collection, placeholder, showSemantic = false }) {
+  const { includes = [], search, semantic = '' } = filters;
   const mode = getLibraryIncludeMode(includes);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -118,6 +144,13 @@ export function LibrarySearchIncludeStrip({ filters, onFilterChange, collection,
         className="min-w-[10rem] max-w-xl flex-1"
         placeholder={placeholder}
       />
+      {showSemantic ? (
+        <LibrarySemanticField
+          value={semantic}
+          onChange={v => onFilterChange('semantic', v)}
+          className="min-w-[10rem] max-w-xl flex-1"
+        />
+      ) : null}
       <div className="inline-flex max-w-full items-center gap-2 flex-nowrap text-xs text-dh-muted">
         <span className={stripHeadingCls}>Include</span>
         <div className={includeSegWrap}>
@@ -170,6 +203,7 @@ export function CollectionFilters({
   showSort = false,
   viewSlider = null,
   suppressSearchInclude = false,
+  showSemantic = false,
   suppressCompetingStructuralAllHighlight = false,
 }) {
   const cfg = getLibraryFilterConfig(collection);
@@ -209,6 +243,7 @@ export function CollectionFilters({
       showSort={showSort}
       viewSlider={viewSlider}
       suppressSearchInclude={suppressSearchInclude}
+      showSemantic={showSemantic}
       suppressCompetingStructuralAllHighlight={suppressCompetingStructuralAllHighlight}
     />
   );
@@ -236,6 +271,7 @@ function BarFilters({
   showSort,
   viewSlider,
   suppressSearchInclude,
+  showSemantic,
   suppressCompetingStructuralAllHighlight = false,
 }) {
   const { includes = [], tiers = [], types = [], extraTypes = [], search, includeScaledUp, sort = 'popularity' } = filters;
@@ -274,6 +310,13 @@ function BarFilters({
             onChange={v => onFilterChange('search', v)}
             className="min-w-[10rem]"
           />
+          {showSemantic ? (
+            <LibrarySemanticField
+              value={filters.semantic}
+              onChange={v => onFilterChange('semantic', v)}
+              className="min-w-[10rem]"
+            />
+          ) : null}
           <div className="inline-flex max-w-full items-center gap-2 flex-nowrap text-xs text-dh-muted">
             <span className={headingCls}>Include</span>
             <div className={includeSegWrap}>
@@ -624,4 +667,3 @@ function PanelFilters({
     </div>
   );
 }
-

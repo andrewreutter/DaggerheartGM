@@ -10,6 +10,8 @@ export const AI_USAGE_BUILDERS = Object.freeze([
   'environment_concept',
   'encounter_plan',
   'reddit_llm_parse',
+  'library_semantic_filter',
+  'library_assistant_answer',
   'image_generate',
   'image_edit',
 ]);

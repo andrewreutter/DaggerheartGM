@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SRD_UNIFIED_COLLECTIONS } from './library-filter-config.js';
 
-const VALID_TABS = new Set(['all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
+const VALID_TABS = new Set(['assistant', 'all', ...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
 const VALID_COLLECTIONS = new Set([...SRD_UNIFIED_COLLECTIONS, 'scenes', 'adventures', 'characters']);
 /** Table deep-link modals only — includes encounter notes (not a library tab). */
 const TABLE_MODAL_COLLECTIONS = new Set([...VALID_COLLECTIONS, 'notes']);
@@ -106,35 +106,37 @@ export function parseRoute(pathWithOptionalQuery) {
   const parts = pathname.replace(/^\//, '').split('/').filter(Boolean);
 
   if (parts.length === 0 || parts[0] === '') {
-    return { view: 'home', tab: null, itemId: null };
+    return { view: 'home', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
   }
 
   if (parts[0] === 'admin' && parts[1] === 'ai-usage') {
-    return { view: 'adminAiUsage', tab: null, itemId: null };
+    return { view: 'adminAiUsage', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
   }
 
   if (parts[0] === 'table') {
     const tableId = parts[1] || null;
     const modalCollection = TABLE_MODAL_COLLECTIONS.has(parts[2]) ? parts[2] : null;
     const modalItemId = modalCollection && parts[3] ? parts[3] : null;
-    return { view: 'table', tableId, tab: null, modalCollection, modalItemId };
+    return { view: 'table', tableId, tab: null, modalCollection, modalItemId, librarySemantic: null, librarySearchQuery: null };
   }
 
   if (parts[0] === 'gm-table') {
     const { tableId, modalCollection, modalItemId } = parseGmTableParts(parts);
-    return { view: 'table', tableId, tab: null, modalCollection, modalItemId };
+    return { view: 'table', tableId, tab: null, modalCollection, modalItemId, librarySemantic: null, librarySearchQuery: null };
   }
 
   if (parts[0] === 'library') {
     const tab = VALID_TABS.has(parts[1]) ? parts[1] : DEFAULT_LIBRARY_TAB;
     const itemId = parts[2] || null;
     const cParam = searchParams.get('c');
+    const librarySemantic = searchParams.get('semantic');
+    const librarySearchQuery = searchParams.get('search');
     const libraryNewCollection =
       tab === 'all' && itemId === 'new' && cParam && VALID_COLLECTIONS.has(cParam) ? cParam : null;
-    return { view: 'library', tab, itemId, libraryNewCollection };
+    return { view: 'library', tab, itemId, libraryNewCollection, librarySemantic, librarySearchQuery };
   }
 
-  return { view: 'home', tab: null, itemId: null };
+  return { view: 'home', tab: null, itemId: null, librarySemantic: null, librarySearchQuery: null };
 }
 
 function getInitialPath() {

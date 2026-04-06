@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { COLLECTION_NAMES as SRD_COLLECTION_NAMES } from './srd/parser.js';
+import { COLLECTION_NAMES as SRD_COLLECTION_NAMES, searchCollection as searchSrdCollection } from './srd/parser.js';
 import { unifiedListConfig } from './unified-list-config.js';
 import {
   resolveLibraryAllBranchTiers,
@@ -20,6 +20,7 @@ const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
 
 /** Stores canonical copies of external (SRD played/cloned, etc.) items for local-first search and popularity tracking. */
 export const MIRROR_USER_ID = '__MIRROR__';
+const DIRECT_SRD_COLLECTIONS = new Set(['campaign_frames', 'rules']);
 
 export { FCG_PUBLIC_USER_ID };
 
@@ -603,6 +604,44 @@ export async function getUnifiedItems(appId, userId, collection, {
   limit = 20,
   countOnly = false,
 } = {}) {
+  if (DIRECT_SRD_COLLECTIONS.has(collection)) {
+    if (!includeSrd) return { items: [], totalCount: 0 };
+
+    const { items: rawItems, totalCount } = await searchSrdCollection(collection, {
+      search,
+      tier: null,
+      tierMax,
+      tiers,
+      type: typeValues[0] || null,
+      types: typeValues,
+      limit: 5000,
+      offset: 0,
+    });
+
+    const items = (rawItems || [])
+      .map((item) => ({
+        ...item,
+        clone_count: 0,
+        play_count: 0,
+        is_public: false,
+        _source: 'srd',
+      }));
+
+    const ordered = [...items];
+    if (sort === 'name' || sort === 'popularity' || sort === 'source' || sort === 'tier' || sort === 'type') {
+      ordered.sort((a, b) => compareLibraryAllItems(
+        { ...a, _collection: collection },
+        { ...b, _collection: collection },
+        sort
+      ));
+    }
+
+    return {
+      items: countOnly ? [] : ordered.slice(offset, offset + limit),
+      totalCount,
+    };
+  }
+
   const db = getPool();
   const parts = [];
   const params = [];

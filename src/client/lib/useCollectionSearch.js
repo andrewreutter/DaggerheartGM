@@ -26,6 +26,7 @@ const DEFAULT_FILTERS = {
   types: [],
   extraTypes: [],
   search: '',
+  semantic: '',
   includeScaledUp: false,
   sort: 'popularity',
 };
@@ -143,7 +144,7 @@ export function useCollectionSearch(collection, {
   }, [collection, persistKey, baseFilters, sharedSearchKey, sharedIncludesKey, sharedLibraryFiltersKey]);
 
   const getLoadOpts = useCallback(() => {
-    const { includes = [], tiers = [], types = [], extraTypes = [], search, includeScaledUp, sort = 'popularity' } = filters;
+    const { includes = [], tiers = [], types = [], extraTypes = [], search, semantic, includeScaledUp, sort = 'popularity' } = filters;
     const singleTier = tiers.length === 1 ? tiers[0] : null;
     const useScaledUp = includeScaledUp && singleTier != null;
     const isAll = includes.length === 0;
@@ -153,6 +154,7 @@ export function useCollectionSearch(collection, {
       includePublic: isAll || includes.includes('public'),
       includeHod: isAll || includes.includes('hod'),
       search: search || '',
+      semantic: semantic || '',
       tier: singleTier,
       tiers,
       type: types.length === 1 ? types[0] : null,
@@ -215,7 +217,7 @@ export function useCollectionSearch(collection, {
     };
 
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(doFetch, filters.search ? debounceMs : 0);
+    debounceRef.current = setTimeout(doFetch, (filters.search || filters.semantic) ? debounceMs : 0);
     return () => {
       clearTimeout(debounceRef.current);
       abortControllerRef.current?.abort();

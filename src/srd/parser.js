@@ -8,7 +8,7 @@
  * ItemCard, forms, etc. continue to work without modification.
  */
 
-import { readFile } from 'fs/promises';
+import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { ROLES } from '../game-constants.js';
@@ -16,11 +16,103 @@ import { slugifySrdListName, makeSrdListId } from './srd-list-ids.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const JSON_DIR = join(__dirname, '..', '..', 'daggerheart-srd', '.build', '03_json');
+const SRD_ROOT = join(__dirname, '..', '..', 'daggerheart-srd');
+const SRD_README_PATH = join(SRD_ROOT, 'README.md');
+const SRD_TEXT_CHUNKS_DIR = join(__dirname, '..', '..', 'data', 'srd-text-chunks');
 
 // --- ID / slug helpers (nested feat/exp ids use same slugify as list rows) ---
 
 const slugify = slugifySrdListName;
 const makeId = makeSrdListId;
+
+function stripMarkdown(raw) {
+  return String(raw || '')
+    .replace(/^---[\s\S]*?---\n*/m, '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/\*\*|__|\*|_/g, '')
+    .replace(/`+/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function excerptText(raw, max = 280) {
+  const text = stripMarkdown(raw);
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}...`;
+}
+
+function normalizeCampaignHeading(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function parseMarkdownFrontmatter(raw) {
+  const text = String(raw || '');
+  const m = text.match(/^---\n([\s\S]*?)\n---\n*/);
+  if (!m) return { frontmatter: {}, body: text };
+
+  const frontmatter = {};
+  const lines = m[1].split('\n');
+  let currentListKey = null;
+  for (const line of lines) {
+    const keyMatch = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
+    if (keyMatch) {
+      const [, key, restRaw] = keyMatch;
+      const rest = restRaw.trim();
+      if (rest === '') {
+        frontmatter[key] = [];
+        currentListKey = key;
+      } else {
+        frontmatter[key] = rest.replace(/^"|"$/g, '').trim();
+        currentListKey = null;
+      }
+      continue;
+    }
+    const listMatch = line.match(/^\s*-\s*(.*)$/);
+    if (listMatch && currentListKey) {
+      frontmatter[currentListKey].push(listMatch[1].replace(/^"|"$/g, '').trim());
+    }
+  }
+
+  return { frontmatter, body: text.slice(m[0].length) };
+}
+
+function collectionSearchText(item, collection) {
+  if (!item) return '';
+  if (collection === 'rules') {
+    return [
+      item.name,
+      item.breadcrumb,
+      item.chapter,
+      item.description,
+      item.body,
+    ].filter(Boolean).join('\n').toLowerCase();
+  }
+  if (collection === 'campaign_frames') {
+    return [
+      item.name,
+      item.description,
+      item.pitch,
+      item.tone,
+      item.themes,
+      item.touchstones,
+      item.overview,
+      item.principles,
+      item.distinctions,
+      item.inciting_incident,
+      item.campaign_mechanics,
+      item.session_zero_questions,
+    ].filter(Boolean).join('\n').toLowerCase();
+  }
+  return String(item.name || '').toLowerCase();
+}
 
 // --- Shared feature parsing ---
 
@@ -304,6 +396,99 @@ function normalizeWeapon(raw) {
   };
 }
 
+async function loadCampaignFramesCollection() {
+  const raw = await readFile(SRD_README_PATH, 'utf8');
+  const start = raw.indexOf('\n#### CAMPAIGN FRAMES');
+  if (start < 0) return [];
+  const nextH2 = raw.slice(start + 1).search(/\n##\s+/);
+  const end = nextH2 >= 0 ? start + 1 + nextH2 : raw.length;
+  const sectionRaw = raw.slice(start, end);
+  const firstFrameHeading = sectionRaw.search(/\n###\s+/);
+  const section = firstFrameHeading >= 0 ? sectionRaw.slice(firstFrameHeading + 1) : sectionRaw;
+  const frameParts = section
+    .split(/^###\s+/m)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => !part.startsWith('CAMPAIGN FRAMES'));
+
+  return frameParts.map((part) => {
+    const lines = part.split('\n');
+    const name = String(lines.shift() || '').trim();
+    const id = makeId('campaign_frames', name);
+    const complexityMatch = part.match(/\*\*COMPLEXITY RATING:\*\*\s*(\d+)/i);
+    const subsectionMap = new Map();
+    const matches = [...part.matchAll(/^#####\s+(.+?)\s*$/gm)];
+    for (let i = 0; i < matches.length; i++) {
+      const heading = matches[i][1].trim();
+      const startIdx = matches[i].index + matches[i][0].length;
+      const endIdx = i + 1 < matches.length ? matches[i + 1].index : part.length;
+      subsectionMap.set(normalizeCampaignHeading(heading), part.slice(startIdx, endIdx).trim());
+    }
+
+    const getSection = (...keys) => {
+      for (const key of keys) {
+        const val = subsectionMap.get(normalizeCampaignHeading(key));
+        if (val) return val;
+      }
+      return '';
+    };
+
+    const pitch = getSection('The Pitch');
+    const overview = getSection('Overview');
+    const principles = [
+      getSection('Player Principles'),
+      getSection('GM Principles'),
+    ].filter(Boolean).join('\n\n');
+    return {
+      id,
+      name,
+      complexity: complexityMatch ? parseInt(complexityMatch[1], 10) : null,
+      description: excerptText(pitch || overview || part, 320),
+      pitch,
+      tone: getSection('Tone & Feel'),
+      themes: getSection('Themes'),
+      touchstones: getSection('Touchstones'),
+      overview,
+      principles,
+      distinctions: getSection('Distinctions'),
+      inciting_incident: getSection('The Inciting Incident', 'Inciting Incident'),
+      campaign_mechanics: getSection('Special Mechanics', 'Campaign Mechanics'),
+      session_zero_questions: getSection('Session Zero Questions', 'Questions to Consider', 'Questions for Session Zero'),
+      source_file: 'daggerheart-srd/README.md',
+      _source: 'srd',
+    };
+  }).filter((item) => item.name);
+}
+
+async function loadRulesCollection() {
+  const files = (await readdir(SRD_TEXT_CHUNKS_DIR))
+    .filter((name) => name.endsWith('.md'))
+    .sort();
+
+  const rows = await Promise.all(files.map(async (filename) => {
+    const raw = await readFile(join(SRD_TEXT_CHUNKS_DIR, filename), 'utf8');
+    const { frontmatter, body } = parseMarkdownFrontmatter(raw);
+    const titleMatch = body.match(/^#\s+(.+?)\s*$/m);
+    const name = String(titleMatch?.[1] || frontmatter.breadcrumb_titles?.at?.(-1) || frontmatter.breadcrumb || filename)
+      .trim();
+    const sourceFile = String(frontmatter.source_file || `data/srd-text-chunks/${filename}`);
+    return {
+      id: makeId('rules', String(frontmatter.breadcrumb || name || filename)),
+      name,
+      description: excerptText(body, 320),
+      breadcrumb: String(frontmatter.breadcrumb || '').trim(),
+      breadcrumb_titles: Array.isArray(frontmatter.breadcrumb_titles) ? frontmatter.breadcrumb_titles : [],
+      chapter: String(frontmatter.chapter || '').trim(),
+      body: body.trim(),
+      excerpt: excerptText(body, 420),
+      source_file: sourceFile,
+      _source: 'srd',
+    };
+  }));
+
+  return rows.filter((row) => row.name);
+}
+
 const NORMALIZERS = {
   abilities:    normalizeAbility,
   adversaries:  normalizeAdversary,
@@ -320,7 +505,12 @@ const NORMALIZERS = {
   weapons:      normalizeWeapon,
 };
 
-export const COLLECTION_NAMES = Object.keys(NORMALIZERS).sort();
+const EXTRA_COLLECTION_LOADERS = {
+  campaign_frames: loadCampaignFramesCollection,
+  rules: loadRulesCollection,
+};
+
+export const COLLECTION_NAMES = [...Object.keys(NORMALIZERS), ...Object.keys(EXTRA_COLLECTION_LOADERS)].sort();
 
 // --- In-memory cache ---
 
@@ -334,8 +524,13 @@ async function readJSON(collection) {
 async function loadAll() {
   const entries = await Promise.all(
     COLLECTION_NAMES.map(async name => {
-      const raw = await readJSON(name);
-      const normalized = raw.map(item => NORMALIZERS[name](item));
+      let normalized;
+      if (EXTRA_COLLECTION_LOADERS[name]) {
+        normalized = await EXTRA_COLLECTION_LOADERS[name]();
+      } else {
+        const raw = await readJSON(name);
+        normalized = raw.map(item => NORMALIZERS[name](item));
+      }
       const byId = new Map(normalized.map(item => [item.id, item]));
       return [name, { items: normalized, byId }];
     })
@@ -388,7 +583,7 @@ export async function searchCollection(collection, {
 
   if (search) {
     const q = search.toLowerCase();
-    items = items.filter(item => item.name.toLowerCase().includes(q));
+    items = items.filter(item => collectionSearchText(item, collection).includes(q));
   }
 
   if (tierMax != null) {
