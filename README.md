@@ -73,7 +73,12 @@ DaggerheartGM/
 │   ├── 022_map_view_visible_norm.sql
 │   ├── 023_drop_personal_map_cameras.sql # removes personal_map_cameras
 │   ├── 024_user_preferences.sql
-│   └── 025_ai_usage_events.sql # LLM/image token metrics for admin dashboard (no prompts)
+│   ├── 025_ai_usage_events.sql # LLM/image token metrics for admin dashboard (no prompts)
+│   ├── 026_ai_usage_events_user_id.sql # T4: user_id column for per-user AI cost tracking
+│   ├── 027_billing_customers.sql # T5/T6: billing_customers (Stripe customer + free trial state)
+│   ├── 028_table_campaign_passes.sql # T21: table_campaign_passes + table_campaign_pass_purchases
+│   ├── 029_character_table_placements.sql # T19: character_table_placements (telemetry only)
+│   └── 030_stripe_processed_events.sql # T7: Stripe webhook event dedup
 ├── public/
 │   ├── index.html              # SPA shell — importmap (React, Firebase, Lucide, marked, @3d-dice/dice-box)
 │   ├── styles.css              # Generated Tailwind output (do not edit by hand)
@@ -87,6 +92,8 @@ DaggerheartGM/
 │   │   │   ├── AuthLanding.jsx        # Home: email/password, forgot password, Google; Firebase account linking when needed
 │   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — parallel banner strip, serial dice animation, imperative API
 │   │   │   ├── SessionBlockedBanner.jsx # Prep / idle-pause hint — portaled from app.jsx when !sessionPlayAllowed
+│   │   │   ├── BugReportButton.jsx    # T13: GM-only, non-blocking "Report a problem" button in the Encounter panel; captures recent action log, active-element summary, current route, and console-error ring buffer; POSTs to POST /api/room/my/bug-report; shows a brief auto-dismiss toast (never a modal)
+│   │   │   ├── SupportTableModal.jsx  # T10: "Support this table" / Gift a Campaign Pass modal; shows billing status + 3/6/12-month picker; also anchors T14 expired banner and T11 session-start error UI
 │   │   │   ├── ActionLog.jsx            # Action/roll history strip above the BattleMap (no polling)
 │   │   │   ├── BattleMap.jsx          # Custom battle map with draggable tokens, trays, and click-to-pin detail panels
 │   │   │   ├── CharacterDisplay.jsx   # Single source of truth for all character sheet display components; exports formatGold, TRAIT_FULL, TRAIT_LABELS, TRAIT_VERBS, WEAPON_TAG_DESCRIPTIONS, Section; all components support optional interactivity props
@@ -117,7 +124,8 @@ DaggerheartGM/
 │   │   ├── parser.js           # Loads .build/03_json/*.json, normalizes 13 collections, caches in memory
 │   │   ├── router.js           # Express Router — GET /api/srd/collections, /:collection, /:collection/:id
 │   │   └── index.js            # Re-exports srdRouter, warmCache, getItem, searchCollection, COLLECTION_NAMES
-│   ├── db.js                   # Postgres pool + migration runner + query helpers (unified query, item_popularity, external cache)
+│   ├── db.js                   # Postgres pool + migration runner + query helpers (unified query, item_popularity, external cache, billing/placement helpers)
+│   ├── stripe.js               # Stripe client (optional; gated on STRIPE_SECRET_KEY); CAMPAIGN_PASS_PRICE_CENTS; constructWebhookEvent for raw-byte HMAC verify
 │   ├── external-sync.js        # Background sync of FCG + HoD (parallel; HoD incremental + weekly full)
 │   ├── srd-loader.js           # Loads all SRD collections into external_item_cache at startup (unified Library API)
 │   ├── external-sources.js     # EXTERNAL_SOURCES for legacy /api/data bulk endpoint
@@ -465,7 +473,11 @@ npm run test:browser  # Playwright only (starts server on port 3457)
 
 **Regression test policy**: every bugfix must include a test that fails without the fix and passes with it. See `.cursor/rules/testing.mdc` for detailed guidance, including how to mock Firebase auth and assert CSS properties for visual bug regressions.
 
-The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase auth bypass for `Authorization: Bearer test-token`. The `test/helpers/auth.js` helper sets up all required route mocks in one call.
+The Playwright test server runs on port 3457 (`NODE_ENV=test`) with a Firebase auth bypass for `Authorization: Bearer test-token`. The `test/helpers/auth.js` helper sets up all required route mocks in one call for single-actor tests.
+
+**Multi-actor tests** (T12): `test/helpers/multi-auth.js` supports 2+ concurrent authenticated identities hitting the **real** server (no route mocking beyond Firebase CDN + `/api/config`). Uses `Bearer test-token:<uid>:<email>` tokens (multi-identity `requireAuth` extension, active only under `NODE_ENV=test`). `test/browser/action-loop-multi-actor.spec.js` covers M1 (roll SSE propagation + element-update SSE), M3 (rest cycle SSE), and M6 (token-position SSE to multiple clients). Requires a real Postgres (`DATABASE_URL`) for the full suite; basic auth extension tests run without DB.
+
+**CI**: both suites run automatically on every push and pull request via `.github/workflows/ci.yml` (Node 22 LTS, `npm ci`, `npm run build`, then `npm run test:unit` followed by `npm run test:browser`). No secrets required — Firebase is mocked in tests and the server runs without `DATABASE_URL`.
 
 First-time setup (Playwright Chromium download):
 ```bash

@@ -1084,6 +1084,12 @@ export const postTableOpAwait = async (op, tableId = null) => {
   if (!res.ok) {
     const err = new Error(data.error || `HTTP ${res.status}`);
     if (data.playBlocked) err.playBlocked = data.playBlocked;
+    if (data.tableNotLive) {
+      err.tableNotLive = true;
+      err.tableNotLiveReason = data.reason ?? null;
+      err.trialEndsAt = data.trialEndsAt ?? null;
+      err.paidThroughAt = data.paidThroughAt ?? null;
+    }
     err.status = res.status;
     throw err;
   }
@@ -1553,6 +1559,42 @@ export const searchGoogleContacts = async (query, accessToken) => {
   } catch {
     return [];
   }
+};
+
+/**
+ * Fetch billing status for a table (trial / active pass / expired).
+ * Returns { isLive, reason, trialEndsAt, paidThroughAt }.
+ * Requester must be the table owner or an invited player.
+ */
+export const fetchTableBillingStatus = async (tableId) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch(`/api/campaign-pass/status?tableId=${encodeURIComponent(tableId)}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+};
+
+/**
+ * Start a Stripe Checkout session for a Campaign Pass.
+ * Returns { checkoutUrl } — redirect the browser to this URL.
+ * months must be 3, 6, or 12.
+ */
+export const postCampaignPassCheckout = async (tableId, months) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/campaign-pass/checkout', {
+    method: 'POST',
+    headers: apiHeaders({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ tableId, months }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
 };
 
 /**

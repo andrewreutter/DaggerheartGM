@@ -23,15 +23,39 @@ const OTHER_GM_UID = 'other-gm-uid';
 
 /**
  * Mock the player SSE stream for a given GM UID.
- * Sends an initial `state` event so playerTableState is populated.
  *
- * Uses `{ times: 1 }` so only the FIRST SSE request is mocked. Subsequent
- * reconnects (EventSource auto-reconnects when the stream closes) fall through
- * to the test server, which returns 401 (test-token can't be verified by
- * Firebase admin). This prevents a re-render loop that would prevent Playwright
- * from clicking elements due to constant DOM detachment.
+ * Also mocks the table_state HTTP endpoint so that ownerUid is set to gmUid,
+ * which causes app.jsx to derive isPlayer=true (tableOwnerUid != user.uid).
+ *
+ * No `{ times: 1 }` cap — the browser's EventSource auto-reconnects a few
+ * seconds after any mocked response body ends (the fake stream sent here
+ * isn't kept open). A cap would let reconnects fall through unmocked to the
+ * real dev server, which can return unrelated/real DB state (or a 403/404
+ * that Playwright's error banner briefly renders) mid-test. Always
+ * re-fulfilling with the same synthetic snapshot keeps every reconnect, and
+ * every test's DOM state, fully deterministic (mirrors the fix applied to
+ * billing-session-gate.spec.js's mockGmStream).
  */
 async function mockPlayerStream(page, gmUid, { elements = [] } = {}) {
+  // Override the table_state mock to include ownerUid so isPlayer=true.
+  // This must be added AFTER authenticate() so LIFO route ordering makes it win.
+  await page.route('/api/data/table_state*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [{
+          id: gmUid,
+          ownerUid: gmUid,
+          playerEmails: [],
+          elements,
+          fearCount: 0,
+          _source: 'own',
+        }],
+        totalCount: 1,
+      }),
+    });
+  });
+
   const tableState = {
     elements,
     featureCountdowns: {},
@@ -45,12 +69,12 @@ async function mockPlayerStream(page, gmUid, { elements = [] } = {}) {
         contentType: 'text/event-stream',
         headers: { 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
         body: [
-          `event: state\ndata: ${JSON.stringify(tableState)}\n\n`,
+          `event: table_state\ndata: ${JSON.stringify({ ...tableState, ownerUid: gmUid, playerEmails: [] })}\n\n`,
+          `event: banners\ndata: []\n\n`,
           `event: presence\ndata: ${JSON.stringify({ players: [] })}\n\n`,
         ].join(''),
       });
     },
-    { times: 1 },
   );
 }
 
@@ -59,24 +83,43 @@ async function mockPlayerStream(page, gmUid, { elements = [] } = {}) {
  * panel shows up and the GM can enter preview mode.
  * Call AFTER authenticate() so the LIFO route order makes this take precedence.
  *
- * The item must be FLAT (like the real server returns after spreading r.data),
- * not nested inside a `data` key. app.jsx reads tableState.playerEmails directly.
+ * Also mocks the GM SSE endpoint so the real server never overrides playerEmails
+ * back to [] via SSE. Without this mock, the server pushes a table_state event
+ * from the DB (which has playerEmails: []) and app.jsx resets playerEmails.
+ * No { times } limit so all SSE reconnects are intercepted and state stays stable.
  */
 async function mockTableStateWithPlayer(page, playerEmail) {
+  const tableStateData = {
+    id: TEST_USER.uid,
+    ownerUid: TEST_USER.uid,
+    playerEmails: [playerEmail],
+    elements: [],
+    fearCount: 0,
+    featureCountdowns: {},
+    tableBattleMods: {},
+    is_public: false,
+    _source: 'own',
+  };
+
   await page.route('/api/data/table_state*', (route) => {
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({
-        items: [{
-          id: 'current',
-          playerEmails: [playerEmail],
-          elements: [],
-          fearCount: 0,
-          is_public: false,
-          _source: 'own',
-        }],
-        totalCount: 1,
-      }),
+      body: JSON.stringify({ items: [tableStateData], totalCount: 1 }),
+    });
+  });
+
+  // Mock GM SSE to send the correct playerEmails on every reconnect.
+  // Without a times limit, the mock handles all reconnects so the real server
+  // never pushes a conflicting table_state event.
+  await page.route('/api/room/my/players*', (route) => {
+    route.fulfill({
+      contentType: 'text/event-stream',
+      headers: { 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' },
+      body: [
+        `event: table_state\ndata: ${JSON.stringify(tableStateData)}\n\n`,
+        `event: banners\ndata: []\n\n`,
+        `event: presence\ndata: ${JSON.stringify({ players: [] })}\n\n`,
+      ].join(''),
     });
   });
 }
@@ -112,7 +155,8 @@ test('player clicking Add Character opens the character dialog', async ({ page }
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 10000 });
   await addBtn.click();
-  await expect(page.locator('input[placeholder="e.g. Thorn"]')).toBeVisible({ timeout: 5000 });
+  // The character picker modal opens with a search input.
+  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
 });
 
 test('player Add Character submits and the new character appears (regression)', async ({ page }) => {
@@ -137,14 +181,49 @@ test('player Add Character submits and the new character appears (regression)', 
     });
   });
 
+  // Mock the characters collection so the picker shows "Aria the Brave"
+  await page.route('/api/data/characters*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [{
+          id: 'test-char-1',
+          name: 'Aria the Brave',
+          tier: 1, level: 1,
+          hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
+          _source: 'own',
+        }],
+        totalCount: 1,
+      }),
+    });
+  });
+
   await page.goto(`/table/${OTHER_GM_UID}`);
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 10000 });
   await addBtn.click();
-  await page.fill('input[placeholder="e.g. Thorn"]', 'Aria the Brave');
-  await page.click('button:has-text("Add to Table")');
 
-  await expect(page.locator('text=Aria the Brave')).toBeVisible({ timeout: 5000 });
+  // The picker opens. Select "Aria the Brave" from the list.
+  // The picker calls onPlayerAddCharacter → postAddCharacter → our mock.
+  // GMTableView then calls characterOverlay.show with the returned character,
+  // making "Aria the Brave" visible in the hover card overlay.
+  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
+
+  // The character list uses plain <button> elements — no data-testid on the container.
+  // Wait for "Aria the Brave" to appear in the picker (characters load asynchronously).
+  const charBtn = page.locator('button', { hasText: 'Aria the Brave' });
+  await expect(charBtn).toBeVisible({ timeout: 5000 });
+
+  // Set up request interceptor before clicking to verify the server call is made.
+  // (Player mode: state updates arrive via SSE, not immediate local mutation.)
+  const addCharRequest = page.waitForRequest(req =>
+    req.url().includes('/add-character') && req.method() === 'POST');
+  await charBtn.click();
+
+  // Picker closes after selection.
+  await expect(page.locator('input[placeholder="Search by name..."]')).not.toBeVisible({ timeout: 5000 });
+  // Server endpoint was called.
+  await addCharRequest;
 });
 
 // ---------------------------------------------------------------------------
@@ -191,23 +270,57 @@ test('GM preview mode: Add Character dialog opens (regression bug fix)', async (
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 5000 });
   await addBtn.click();
-  await expect(page.locator('input[placeholder="e.g. Thorn"]')).toBeVisible({ timeout: 5000 });
+  // The character picker modal opens with a search input.
+  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
 });
 
 test('GM preview mode: Add Character submits and character appears on the table', async ({ page }) => {
   const PLAYER_EMAIL = 'player@example.com';
   await authenticate(page);
   await mockTableStateWithPlayer(page, PLAYER_EMAIL);
-  await page.goto('/table/test-user-uid');
 
+  // Mock the characters collection so the picker shows "Brynn Ashwood"
+  await page.route('/api/data/characters*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        items: [{
+          id: 'test-char-2',
+          name: 'Brynn Ashwood',
+          tier: 1, level: 1,
+          hope: 6, maxHope: 6, maxHp: 6, maxStress: 6,
+          _source: 'own',
+        }],
+        totalCount: 1,
+      }),
+    });
+  });
+
+  // Mock table op endpoint so postTableOp doesn't try to hit a real DB table
+  await page.route('/api/room/my/op', (route) => {
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.goto('/table/test-user-uid');
   await expect(page.locator('button', { hasText: 'Add Character' })).toBeVisible({ timeout: 10000 });
   await enterPreviewMode(page, PLAYER_EMAIL);
 
   const addBtn = page.locator('button', { hasText: 'Add Character' });
   await expect(addBtn).toBeVisible({ timeout: 5000 });
   await addBtn.click();
-  await page.fill('input[placeholder="e.g. Thorn"]', 'Brynn Ashwood');
-  await page.click('button:has-text("Add to Table")');
 
-  await expect(page.locator('text=Brynn Ashwood')).toBeVisible({ timeout: 5000 });
+  // The character picker opens. Select "Brynn Ashwood".
+  // In GM preview mode (isPlayer=false), GMTableView uses handleGmImpersonateAddCharacter
+  // which calls sendAddToTable → doAddToTable → setActiveElements (immediate local update).
+  await expect(page.locator('input[placeholder="Search by name..."]')).toBeVisible({ timeout: 5000 });
+
+  // The character list uses plain <button> elements — no data-testid on the container.
+  const charBtn = page.locator('button', { hasText: 'Brynn Ashwood' });
+  await expect(charBtn).toBeVisible({ timeout: 5000 });
+  await charBtn.click();
+
+  // After selection, the picker closes and the character appears in the Characters panel
+  // (doAddToTable calls setActiveElements immediately — no SSE needed).
+  // Use .first() because the name may appear in both the character card and hover card.
+  await expect(page.locator('text=Brynn Ashwood').first()).toBeVisible({ timeout: 5000 });
 });

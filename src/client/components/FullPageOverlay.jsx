@@ -1,6 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+
+/** Selector for elements a keyboard user can Tab to (mirrors common ARIA dialog focus-trap implementations). */
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * Centered full-viewport modal shell: dimmed backdrop + rounded panel (same geometry as the Feature authoring guide).
@@ -32,6 +36,9 @@ export function FullPageOverlay({
   ariaLabelledBy,
   ariaLabel,
 }) {
+  const panelRef = useRef(null);
+  const previouslyFocusedRef = useRef(null);
+
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
@@ -40,6 +47,42 @@ export function FullPageOverlay({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  // Focus management (T18): move focus into the panel when it opens, trap Tab/Shift+Tab
+  // within it while open (so keyboard users can't tab into the page behind the backdrop),
+  // and restore focus to whatever triggered the overlay once it closes.
+  useEffect(() => {
+    if (!open) return undefined;
+    previouslyFocusedRef.current = document.activeElement;
+
+    const panel = panelRef.current;
+    const focusable = panel ? panel.querySelectorAll(FOCUSABLE_SELECTOR) : [];
+    (focusable[0] || panel)?.focus();
+
+    const onKeyDown = (e) => {
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      const items = Array.from(panelRef.current.querySelectorAll(FOCUSABLE_SELECTOR));
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      const toRestore = previouslyFocusedRef.current;
+      if (toRestore && document.contains(toRestore) && typeof toRestore.focus === 'function') {
+        toRestore.focus();
+      }
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -59,7 +102,9 @@ export function FullPageOverlay({
         onClick={onClose}
       />
       <div
-        className={`relative z-10 flex w-full ${heightClass} ${maxWidthClass} flex-col overflow-hidden rounded-xl border border-dh-strong bg-dh-surface shadow-2xl ${panelClassName}`}
+        ref={panelRef}
+        tabIndex={-1}
+        className={`relative z-10 flex w-full ${heightClass} ${maxWidthClass} flex-col overflow-hidden rounded-xl border border-dh-strong bg-dh-surface shadow-2xl outline-none ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildFeatureCardModel,
   collectActionLoopPhaseFlags,
@@ -19,6 +19,7 @@ import { Beastform } from '../../src/features-v2/classes/Druid.js';
 import { CaprineLeap } from '../../src/features-v2/ancestries/Faun.js';
 import { Retract } from '../../src/features-v2/ancestries/Galapa.js';
 import { PrayerDice } from '../../src/features-v2/classes/Seraph.js';
+import { NaturesTongue } from '../../src/features-v2/abilities/Sage/NaturesTongue.js';
 import { buildTableSnapshot } from '../../src/features-v2/engine/table.js';
 import { SRD_CLASS_DRUID_SCOPE_KEY } from '../../src/features-v2/engine/feature-scope-keys.js';
 import registry from '../../src/features-v2/registry.js';
@@ -580,5 +581,48 @@ describe('collectV2IsToggleCardFeatureGroups', () => {
     const groups = collectV2IsToggleCardFeatureGroups(el, ctx);
     expect(groups.length).toBe(1);
     expect(groups[0].model.cardChips.some((c) => c.selectPresentation === 'iconGrid')).toBe(true);
+  });
+});
+
+describe('RELEASED_ABILITY_TIER_CEILING gate (T20)', () => {
+  // Real domain-card ability with two `placement: ['card']` chips, shaped the way
+  // character-calc.js's activeFeatures merge tags domain cards: `type: 'ability'` + `source.level`.
+  const abilityRow = {
+    ...NaturesTongue,
+    type: 'ability',
+    source: { domain: 'Sage', type: 'spell', level: 1 },
+  };
+
+  it('short-circuits cardChips to [] for a real Tier 1 domain-card row while the ceiling is 0', () => {
+    const model = buildFeatureCardModel(abilityRow);
+    expect(model.cardChips).toEqual([]);
+  });
+
+  it('renders the real card chips once the ceiling constant covers the ability tier', async () => {
+    vi.resetModules();
+    vi.doMock('../../src/game-constants.js', async () => {
+      const actual = await vi.importActual('../../src/game-constants.js');
+      return { ...actual, RELEASED_ABILITY_TIER_CEILING: 1 };
+    });
+    try {
+      const { buildFeatureCardModel: buildWithCeiling1 } = await import(
+        '../../src/client/lib/build-feature-card-model.js'
+      );
+      const model = buildWithCeiling1(abilityRow);
+      expect(model.cardChips.length).toBe(2);
+    } finally {
+      vi.doUnmock('../../src/game-constants.js');
+      vi.resetModules();
+    }
+  });
+
+  it('does not gate rows that are not tagged as ability rows, even with a level field', () => {
+    const model = buildFeatureCardModel({ ...NaturesTongue, level: 6 });
+    expect(model.cardChips.length).toBe(2);
+  });
+
+  it('does not gate ability rows with no resolvable level', () => {
+    const model = buildFeatureCardModel({ ...NaturesTongue, type: 'ability' });
+    expect(model.cardChips.length).toBe(2);
   });
 });

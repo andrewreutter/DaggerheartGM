@@ -9,7 +9,8 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth } from './src/db.js';
+import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
 import { loadSrdIntoDb } from './src/srd-loader.js';
@@ -106,10 +107,24 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Missing auth token' });
   }
   const token = header.slice(7);
-  if (process.env.NODE_ENV === 'test' && token === 'test-token') {
-    req.uid = 'test-user-uid';
-    req.email = 'test@example.com';
-    return next();
+  if (process.env.NODE_ENV === 'test') {
+    // Bare test-token: legacy single-identity bypass (backward-compat with existing tests).
+    if (token === 'test-token') {
+      req.uid = 'test-user-uid';
+      req.email = 'test@example.com';
+      return next();
+    }
+    // Multi-identity pattern: "test-token:<uid>:<email>"  (T12 multi-actor action-loop tests).
+    // Only active under NODE_ENV=test; never reaches production.
+    if (token.startsWith('test-token:')) {
+      const rest = token.slice('test-token:'.length);
+      const colonIdx = rest.indexOf(':');
+      if (colonIdx > 0) {
+        req.uid = rest.slice(0, colonIdx);
+        req.email = rest.slice(colonIdx + 1);
+        return next();
+      }
+    }
   }
   try {
     const decoded = await getAuth().verifyIdToken(token);
@@ -153,6 +168,9 @@ const JSON_LIMIT = 10 * 1024 * 1024;
 app.use((req, res, next) => {
   const ct = req.headers['content-type'];
   if (!ct?.includes('application/json')) return next();
+  // Stripe webhook requires the raw byte buffer for HMAC signature verification.
+  // Skip this global parser for that path; the webhook route uses express.raw() inline.
+  if (req.path === '/api/stripe/webhook') return next();
   const chunks = [];
   let len = 0;
   req.on('data', (c) => { len += c.length; if (len <= JSON_LIMIT) chunks.push(c); });
@@ -783,8 +801,19 @@ const rooms = new Map();
 async function verifyTokenFromQuery(req, res) {
   const { token } = req.query;
   if (!token) { res.status(401).json({ error: 'Missing token' }); return null; }
-  if (process.env.NODE_ENV === 'test' && token === 'test-token') {
-    return { uid: 'test-user-uid', email: 'test@example.com', name: 'Test User', picture: '' };
+  if (process.env.NODE_ENV === 'test') {
+    if (token === 'test-token') {
+      return { uid: 'test-user-uid', email: 'test@example.com', name: 'Test User', picture: '' };
+    }
+    if (token.startsWith('test-token:')) {
+      const rest = token.slice('test-token:'.length);
+      const colonIdx = rest.indexOf(':');
+      if (colonIdx > 0) {
+        const uid = rest.slice(0, colonIdx);
+        const email = rest.slice(colonIdx + 1);
+        return { uid, email, name: email, picture: '' };
+      }
+    }
   }
   try {
     const decoded = await getAuth().verifyIdToken(token);
@@ -1651,6 +1680,10 @@ app.post('/api/character-ai-build', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
+  const capCheck = await checkAiCostCap(req.uid);
+  if (!capCheck.allowed) {
+    return res.status(429).json({ error: 'Monthly AI usage limit reached', used: capCheck.used, cap: capCheck.cap });
+  }
   const concept = req.body?.concept;
   if (typeof concept !== 'string' || !concept.trim()) {
     return res.status(400).json({ error: 'concept (non-empty string) is required' });
@@ -1666,6 +1699,7 @@ app.post('/api/character-ai-build', requireAuth, async (req, res) => {
   try {
     const result = await buildCharacterAiFromConcept(concept.trim(), {
       targetLevel,
+      userId: req.uid,
     });
     res.json(result);
   } catch (err) {
@@ -1698,6 +1732,10 @@ app.post('/api/adversary-ai-build', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
+  const capCheck = await checkAiCostCap(req.uid);
+  if (!capCheck.allowed) {
+    return res.status(429).json({ error: 'Monthly AI usage limit reached', used: capCheck.used, cap: capCheck.cap });
+  }
   const concept = req.body?.concept;
   if (typeof concept !== 'string' || !concept.trim()) {
     return res.status(400).json({ error: 'concept (non-empty string) is required' });
@@ -1708,7 +1746,7 @@ app.post('/api/adversary-ai-build', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'tier (1–4) and role are required' });
   }
   try {
-    const { patch, justification, warnings } = await buildAdversaryAiFromConcept(concept.trim(), { tier, role });
+    const { patch, justification, warnings } = await buildAdversaryAiFromConcept(concept.trim(), { tier, role, userId: req.uid });
     res.json({ patch, justification, warnings });
   } catch (err) {
     if (err?.code === 'BAD_REQUEST') {
@@ -1724,6 +1762,10 @@ app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
   }
+  const capCheck = await checkAiCostCap(req.uid);
+  if (!capCheck.allowed) {
+    return res.status(429).json({ error: 'Monthly AI usage limit reached', used: capCheck.used, cap: capCheck.cap });
+  }
   const concept = req.body?.concept;
   if (typeof concept !== 'string' || !concept.trim()) {
     return res.status(400).json({ error: 'concept (non-empty string) is required' });
@@ -1734,7 +1776,7 @@ app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'tier (1–4) and type are required' });
   }
   try {
-    const { patch, justification, warnings } = await buildEnvironmentAiFromConcept(concept.trim(), { tier, type });
+    const { patch, justification, warnings } = await buildEnvironmentAiFromConcept(concept.trim(), { tier, type, userId: req.uid });
     res.json({ patch, justification, warnings });
   } catch (err) {
     if (err?.code === 'BAD_REQUEST') {
@@ -1749,6 +1791,10 @@ app.post('/api/environment-ai-build', requireAuth, async (req, res) => {
 app.post('/api/encounter-ai-build', requireAuth, async (req, res) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ error: 'Concept AI is not configured' });
+  }
+  const capCheck = await checkAiCostCap(req.uid);
+  if (!capCheck.allowed) {
+    return res.status(429).json({ error: 'Monthly AI usage limit reached', used: capCheck.used, cap: capCheck.cap });
   }
   const concept = req.body?.concept;
   if (typeof concept !== 'string' || !concept.trim()) {
@@ -1848,6 +1894,10 @@ app.post('/api/generate-image', requireAuth, async (req, res) => {
   if (!xaiIsConfigured()) {
     return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
+  const capCheck = await checkAiCostCap(req.uid);
+  if (!capCheck.allowed) {
+    return res.status(429).json({ error: 'Monthly AI usage limit reached', used: capCheck.used, cap: capCheck.cap });
+  }
   const xaiModel = process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
   const t0 = Date.now();
   try {
@@ -1857,6 +1907,7 @@ app.post('/api/generate-image', requireAuth, async (req, res) => {
       latencyMs: Date.now() - t0,
       model: xaiModel,
       usage: result.usage ?? null,
+      userId: req.uid,
     });
     const { imageUrl } = result;
     res.json({ imageUrl });
@@ -1867,6 +1918,7 @@ app.post('/api/generate-image', requireAuth, async (req, res) => {
       model: xaiModel,
       errorCode: 'XAI_ERROR',
       usage: null,
+      userId: req.uid,
     });
     console.error('POST /api/generate-image error:', err);
     res.status(500).json({ error: err.message || 'Image generation failed' });
@@ -1884,6 +1936,10 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
   if (!xaiIsConfigured()) {
     return res.status(503).json({ error: 'Image generation is not configured (XAI_API_KEY missing)' });
   }
+  const capCheck = await checkAiCostCap(req.uid);
+  if (!capCheck.allowed) {
+    return res.status(429).json({ error: 'Monthly AI usage limit reached', used: capCheck.used, cap: capCheck.cap });
+  }
   const xaiModel = process.env.XAI_IMAGE_MODEL || 'grok-imagine-image';
   const t0 = Date.now();
   try {
@@ -1893,6 +1949,7 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
       latencyMs: Date.now() - t0,
       model: xaiModel,
       usage: result.usage ?? null,
+      userId: req.uid,
     });
     const { imageUrl } = result;
     res.json({ imageUrl });
@@ -1903,6 +1960,7 @@ app.post('/api/edit-image', requireAuth, async (req, res) => {
       model: xaiModel,
       errorCode: 'XAI_ERROR',
       usage: null,
+      userId: req.uid,
     });
     console.error('POST /api/edit-image error:', err);
     res.status(500).json({ error: err.message || 'Image editing failed' });
@@ -2272,6 +2330,326 @@ app.post('/api/my-tables', requireAuth, async (req, res) => {
   }
 });
 
+// DELETE /api/my-tables/:id — Owner-only; notifies connected SSE clients before removing row.
+app.delete('/api/my-tables/:id', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+  const tableId = req.params.id;
+  if (!tableId) return res.status(400).json({ error: 'tableId is required' });
+  try {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row) return res.status(404).json({ error: 'Table not found' });
+    if (row.userId !== req.uid) return res.status(403).json({ error: 'Not your table' });
+
+    // Notify connected SSE clients before deletion so they can gracefully handle disconnect.
+    subscriptionManager.notifyChange('table_state', tableId);
+
+    await deleteItem(APP_ID, req.uid, 'table_state', tableId);
+
+    // Free character placement records for this table (telemetry cleanup).
+    try {
+      await removeCharacterTablePlacementsForTable(APP_ID, tableId);
+    } catch (err) {
+      console.error('[billing] removeCharacterTablePlacementsForTable failed:', err.message);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/my-tables/:id error:', err);
+    res.status(500).json({ error: 'Failed to delete table' });
+  }
+});
+
+// ── Per-user AI cost cap helper ────────────────────────────────────────────────
+
+/**
+ * Check whether the user is within their monthly AI call budget.
+ * Returns { allowed: boolean, used: number, cap: number }.
+ * When DATABASE_URL is not set or user_id is unknown, always allows.
+ * Cap is configurable via AI_MONTHLY_CALL_CAP env var (default: 50 calls/month).
+ *
+ * KNOWN RACE (not fixed here — soft cost-control cap, not a security boundary; see security
+ * review notes): this is a check-then-act pattern with no reservation step. The usage row that
+ * actually decrements headroom (see insertAiUsageEvent via src/ai-usage-log.js) is only written
+ * *after* the OpenAI/x.ai call completes, several seconds later, deep inside the per-builder
+ * modules (src/llm-*-builder.js, src/xai-image.js) — not adjacent to this check. A burst of
+ * concurrent requests from the same user can all read "under cap" here before any of them has
+ * recorded usage, letting the burst exceed the intended monthly cap for that window.
+ * A correct fix needs a synchronous reservation (e.g. insert a placeholder ai_usage_events row
+ * inside a transaction guarded by pg_advisory_xact_lock(hashtext(appId||userId||month)) at
+ * check time, then update it with real token/latency data after the call resolves) threaded
+ * through all 6 call sites and their downstream builder modules — not a one-line change, so it
+ * is left as a flagged follow-up rather than a same-PR fix.
+ */
+async function checkAiCostCap(userId) {
+  if (!process.env.DATABASE_URL || !userId) return { allowed: true };
+  const cap = parseInt(process.env.AI_MONTHLY_CALL_CAP || '50', 10);
+  // cap <= 0 (including the documented "set to 0 to disable" convention used elsewhere in this
+  // codebase, e.g. AI_MONTHLY_CALL_CAP=0) means "no cap enforced" — NOT "allow zero calls".
+  // Without this guard, `used >= cap` is true even at used=0 when cap=0, which would block every
+  // call for every user, the opposite of "disabled".
+  if (!Number.isFinite(cap) || cap <= 0) return { allowed: true, used: 0, cap };
+  try {
+    const used = await countUserAiCallsThisMonth(APP_ID, userId);
+    if (used >= cap) return { allowed: false, used, cap };
+    return { allowed: true, used, cap };
+  } catch (err) {
+    console.error('[billing] checkAiCostCap error:', err.message);
+    return { allowed: true }; // fail open: don't block users on DB errors
+  }
+}
+
+// ── Campaign Pass billing status ──────────────────────────────────────────────
+
+// GET /api/campaign-pass/status?tableId= — Return table billing status (trial / pass / expired).
+// Requires auth; requester must be the table owner or an invited player.
+// Returns { isLive, reason, trialEndsAt, paidThroughAt }.
+app.get('/api/campaign-pass/status', requireAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+  const tableId = req.query.tableId;
+  if (!tableId || typeof tableId !== 'string') {
+    return res.status(400).json({ error: 'tableId is required' });
+  }
+  const ctx = await resolveTableAccess(APP_ID, tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+
+  try {
+    const liveness = await checkTableIsLive(APP_ID, tableId, ctx.gmUid || req.uid);
+    return res.json({
+      isLive: liveness.live,
+      reason: liveness.reason,
+      trialEndsAt: liveness.trialEndsAt ?? null,
+      paidThroughAt: liveness.paidThroughAt ?? null,
+    });
+  } catch (err) {
+    console.error('GET /api/campaign-pass/status error:', err);
+    res.status(500).json({ error: 'Failed to fetch billing status' });
+  }
+});
+
+// ── Stripe Checkout ────────────────────────────────────────────────────────────
+
+// POST /api/campaign-pass/checkout — Create a Stripe Checkout Session for a Campaign Pass.
+// Requires: { tableId, months } — months must be 3, 6, or 12.
+// Requester must be the table owner or an invited player (gift purchase allowed).
+// Returns: { checkoutUrl }
+app.post('/api/campaign-pass/checkout', requireAuth, async (req, res) => {
+  if (!isStripeConfigured()) {
+    return res.status(503).json({ error: 'Payment processing is not configured (STRIPE_SECRET_KEY missing)' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required' });
+  }
+
+  const { tableId, months } = req.body || {};
+  if (!tableId || typeof tableId !== 'string') {
+    return res.status(400).json({ error: 'tableId is required' });
+  }
+  const validMonths = [3, 6, 12];
+  if (!validMonths.includes(months)) {
+    return res.status(400).json({ error: 'months must be 3, 6, or 12' });
+  }
+
+  // Validate requester has access to this table (owner or invited player — gifting allowed).
+  const ctx = await resolveTableAccess(APP_ID, tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+
+  const priceId = getCampaignPassPriceId(months);
+  if (!priceId) {
+    return res.status(503).json({
+      error: `Campaign Pass ${months}-month price is not configured (STRIPE_PRICE_CAMPAIGN_PASS_${months}MO missing)`,
+    });
+  }
+
+  const amountCents = CAMPAIGN_PASS_PRICE_CENTS[months];
+  const baseUrl = process.env.APP_BASE_URL || 'https://daggerheart-gm.fly.dev';
+  const successUrl = `${baseUrl}/table/${tableId}?campaign_pass_success=1`;
+  const cancelUrl = `${baseUrl}/table/${tableId}`;
+
+  try {
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: {
+        purchaseType: 'campaign_pass',
+        targetTableId: tableId,
+        months: String(months),
+        purchasedByUserId: req.uid,
+        amountCents: String(amountCents),
+      },
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    });
+    res.json({ checkoutUrl: session.url });
+  } catch (err) {
+    console.error('POST /api/campaign-pass/checkout error:', err);
+    res.status(500).json({ error: err.message || 'Failed to create checkout session' });
+  }
+});
+
+// POST /api/stripe/webhook — Stripe webhook dispatcher.
+// IMPORTANT: Must use express.raw() to capture raw bytes for HMAC signature verification.
+// The global JSON body parser skips this path (see middleware above).
+// All purchase types are keyed on metadata.purchaseType for generic extensibility.
+app.post('/api/stripe/webhook',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    if (!isStripeConfigured()) {
+      return res.status(503).json({ error: 'Stripe not configured' });
+    }
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      return res.status(503).json({ error: 'STRIPE_WEBHOOK_SECRET not configured' });
+    }
+
+    const sig = req.headers['stripe-signature'];
+    if (!sig) return res.status(400).json({ error: 'Missing stripe-signature header' });
+
+    let event;
+    try {
+      event = constructWebhookEvent(req.body, sig);
+    } catch (err) {
+      console.error('[stripe] Webhook signature verification failed:', err.message);
+      return res.status(400).json({ error: `Webhook signature invalid: ${err.message}` });
+    }
+
+    // Dedup: atomically check-and-claim in one statement (see markStripeEventProcessed) so two
+    // concurrent/retried deliveries of the same event can't both pass a "not yet processed" check.
+    if (process.env.DATABASE_URL) {
+      try {
+        const isNewEvent = await markStripeEventProcessed(APP_ID, event.id, event.type);
+        if (!isNewEvent) {
+          return res.json({ received: true, skipped: 'duplicate' });
+        }
+      } catch (err) {
+        console.error('[stripe] Event dedup error (continuing):', err.message);
+        // Fail open: do not drop the event on DB errors; Stripe will retry if we return 5xx.
+        // Note: handleCampaignPassPurchase has its own independent idempotency (unique
+        // stripe_checkout_session_id), so a dedup failure here cannot cause double-fulfillment.
+      }
+    }
+
+    // Dispatch by event type and purchaseType metadata.
+    try {
+      await dispatchStripeEvent(event);
+      res.json({ received: true });
+    } catch (err) {
+      console.error('[stripe] Event dispatch error:', event.type, err.message);
+      // Return 500 so Stripe retries (dedup protects against double-processing).
+      res.status(500).json({ error: 'Event processing failed' });
+    }
+  },
+);
+
+async function dispatchStripeEvent(event) {
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const purchaseType = session.metadata?.purchaseType;
+
+    if (purchaseType === 'campaign_pass') {
+      await handleCampaignPassPurchase(session, event.id);
+    } else if (purchaseType === 'gm_unlimited') {
+      // Future: handle GM Unlimited pass (price/timing TBD per plan §7).
+      console.log('[stripe] gm_unlimited purchase received — not yet implemented, session:', session.id);
+    } else if (purchaseType === 'ai_credits') {
+      // Future: handle AI credits top-up.
+      console.log('[stripe] ai_credits purchase received — not yet implemented, session:', session.id);
+    } else {
+      console.warn('[stripe] Unknown purchaseType in checkout.session.completed:', purchaseType, 'session:', session.id);
+    }
+  } else if (event.type === 'charge.dispute.created' || event.type === 'charge.refunded') {
+    // Explicit logged no-op: Campaign Pass access is irrevocable (plan §3 "Refunds/chargebacks").
+    console.log(`[stripe] ${event.type} — logged no-op; Campaign Pass access is never clawed back.`);
+  }
+  // All other event types are silently ignored.
+}
+
+/**
+ * T9: Reconciliation sweep — queries recent completed Stripe Checkout Sessions and backfills
+ * any campaign pass extensions that were missed (e.g. webhook delivery failures).
+ *
+ * Does NOT gate on stripe_processed_events here: that table is keyed by Stripe *event* IDs
+ * (evt_...), but this sweep lists Checkout *Sessions* (cs_...) directly from the Stripe API —
+ * a session that the webhook already fulfilled would never appear under its own session ID in
+ * that table, so checking it here would be a no-op and every session would be "reconciled" again
+ * on every run. Instead, this relies entirely on handleCampaignPassPurchase's own idempotency
+ * (the unique constraint on stripe_checkout_session_id in table_campaign_pass_purchases), which
+ * is the single source of truth for "has this specific purchase already been fulfilled".
+ */
+async function reconcileStripeCampaignPasses() {
+  if (!process.env.DATABASE_URL) return;
+  const stripe = getStripe();
+  const cutoff = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60; // last 7 days
+  let processed = 0;
+  let skipped = 0;
+
+  // List recently completed sessions (100 per page, one pass is sufficient for daily reconcile).
+  const sessions = await stripe.checkout.sessions.list({
+    limit: 100,
+    created: { gte: cutoff },
+    status: 'complete',
+  });
+
+  for (const session of sessions.data) {
+    if (session.metadata?.purchaseType !== 'campaign_pass') continue;
+    // Build a synthetic event ID for the reconcile pass (not a real Stripe event ID) — stored
+    // only for provenance in table_campaign_pass_purchases.stripe_event_id, not used for dedup.
+    const syntheticEventId = `reconcile_session_${session.id}`;
+    const { applied } = await handleCampaignPassPurchase(session, syntheticEventId);
+    if (applied) processed++; else skipped++;
+  }
+  console.log(`[cron:reconcile] Stripe campaign passes — processed: ${processed}, skipped (already done): ${skipped}`);
+}
+
+/**
+ * Fulfill a campaign_pass checkout.session.completed purchase.
+ *
+ * Idempotent regardless of how many times it's called for the same session (concurrent webhook
+ * redelivery, reconciliation re-scan, manual retry): recordCampaignPassPurchase's unique
+ * constraint on stripe_checkout_session_id is the single source of truth for "already fulfilled",
+ * and extendTableCampaignPass (the entitlement side-effect) is only invoked when that call
+ * reports a genuinely new row. Calling extendTableCampaignPass unconditionally after an
+ * "insert-or-ignore" would double (or triple, ...) the granted pass duration for one payment
+ * every time this function is invoked again for the same session.
+ * @returns {Promise<{ applied: boolean }>} applied=true only when this call newly extended the pass
+ */
+async function handleCampaignPassPurchase(session, eventId) {
+  const { targetTableId, months: monthsStr, purchasedByUserId, amountCents: amountCentsStr } = session.metadata || {};
+
+  if (!targetTableId || !monthsStr) {
+    console.error('[stripe] Missing required metadata in campaign_pass session:', session.id, session.metadata);
+    return { applied: false };
+  }
+
+  const months = parseInt(monthsStr, 10);
+  const amountCents = parseInt(amountCentsStr || '0', 10);
+
+  if (![3, 6, 12].includes(months)) {
+    console.error('[stripe] Invalid months in campaign_pass session:', months, session.id);
+    return { applied: false };
+  }
+
+  if (!process.env.DATABASE_URL) return { applied: false };
+
+  // Idempotent purchase record (unique on stripe_checkout_session_id). Only a genuinely new
+  // insert should trigger the entitlement extension below.
+  const isNewPurchase = await recordCampaignPassPurchase(APP_ID, targetTableId, purchasedByUserId || 'unknown', session.id, eventId, months, amountCents);
+  if (!isNewPurchase) {
+    console.log(`[stripe] Campaign Pass session already fulfilled, skipping duplicate extend: session=${session.id}`);
+    return { applied: false };
+  }
+
+  // Extend paid_through_at: max(now(), current) + N months — consecutive purchases stack.
+  await extendTableCampaignPass(APP_ID, targetTableId, months, amountCents);
+
+  console.log(`[stripe] Campaign Pass fulfilled: table=${targetTableId} +${months}mo $${amountCents / 100} by=${purchasedByUserId}`);
+  return { applied: true };
+}
+
 // GET /api/room/my/players — GM SSE: receive player presence, table state, banners, and dice rolls
 app.get('/api/room/my/players', async (req, res) => {
   const user = await verifyTokenFromQuery(req, res);
@@ -2506,6 +2884,42 @@ app.post('/api/room/my/roll', requireAuth, async (req, res) => {
     }
   }
   res.json(rollData);
+});
+
+// POST /api/room/my/bug-report — GM-only, append-only. Captures a client-side state snapshot
+// (active elements, recent rolls, console errors, current route) for later triage. Never
+// interrupts play: fire-and-forget on the client, no modal or blocking UX required.
+app.post('/api/room/my/bug-report', requireAuth, async (req, res) => {
+  const { tableId: bodyTableId, ...payload } = req.body;
+  const tableId = bodyTableId || req.uid;
+
+  // Ownership check — only the table's GM can file a bug report against it.
+  if (process.env.DATABASE_URL) {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row || row.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
+    try {
+      const db = getPool();
+      const { rows } = await db.query(
+        `INSERT INTO bug_reports (app_id, gm_uid, table_id, payload)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [APP_ID, req.uid, tableId, JSON.stringify({
+          ...payload,
+          _serverTimestamp: new Date().toISOString(),
+          _userAgent: req.headers['user-agent'],
+        })]
+      );
+      return res.json({ ok: true, id: rows[0].id });
+    } catch (err) {
+      console.error('[bug-report] DB insert failed:', err.message);
+      return res.status(500).json({ error: 'Failed to save bug report' });
+    }
+  }
+
+  // When DATABASE_URL is not set (test / local dev without DB), log to server stdout.
+  console.info('[bug-report]', JSON.stringify({ gmUid: req.uid, tableId, ...payload }, null, 2));
+  res.json({ ok: true, id: null });
 });
 
 // POST /api/room/my/action — GM persists an action notification; clients learn of it via the banners subscription.
@@ -3284,7 +3698,64 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Not your table' });
     }
     const { tableId: _t, ...opData } = op;
+
+    // T21: session-start billing gate — fires only when sessionStarted transitions true→false→true,
+    // only when connected players are present, and never mid-session.
+    if (opData.op === 'set-table-top' && opData.top?.sessionStarted === true) {
+      const currentState = row?.data || {};
+      const isTransition = !currentState.top?.sessionStarted; // false/undefined → true
+      if (isTransition) {
+        const room = rooms.get(tableId);
+        const hasConnectedPlayers = (room?.players?.size || 0) > 0;
+        if (hasConnectedPlayers) {
+          // Atomically claim the one-lifetime free trial if not already claimed.
+          try {
+            await stampFreeTrialStart(APP_ID, tableId, req.uid);
+          } catch (err) {
+            console.error('[billing] stampFreeTrialStart error:', err.message);
+          }
+          // Check liveness (campaign pass OR free trial). Block if neither active.
+          try {
+            const liveness = await checkTableIsLive(APP_ID, tableId, req.uid);
+            if (!liveness.live) {
+              return res.status(403).json({
+                error: 'Table not live',
+                tableNotLive: true,
+                reason: liveness.reason,
+                trialEndsAt: liveness.trialEndsAt ?? null,
+                paidThroughAt: liveness.paidThroughAt ?? null,
+              });
+            }
+          } catch (err) {
+            console.error('[billing] checkTableIsLive error:', err.message);
+            // Fail open: don't block sessions on DB errors
+          }
+        }
+      }
+    }
+
     await applyOpToTableState(tableId, opData);
+
+    // T19: Record character table placements (telemetry only — never gates anything).
+    if (process.env.DATABASE_URL && opData.op === 'add-elements' && Array.isArray(opData.elements)) {
+      const charElements = opData.elements.filter(el => el?.elementType === 'character' && el?.id);
+      if (charElements.length > 0) {
+        const charIds = charElements.map(el => el.id);
+        try {
+          const libChars = await getItemsByIds(APP_ID, 'characters', charIds);
+          const charOwnerMap = Object.fromEntries(libChars.map(c => [c.id, c.user_id || req.uid]));
+          await Promise.all(charElements.map(el => {
+            const ownerUid = charOwnerMap[el.id] || req.uid;
+            return recordCharacterTablePlacement(APP_ID, ownerUid, el.id, tableId).catch(err =>
+              console.error('[billing] recordCharacterTablePlacement error:', err.message),
+            );
+          }));
+        } catch (err) {
+          console.error('[billing] character placement recording error:', err.message);
+        }
+      }
+    }
+
     res.json({ ok: true });
   } catch (err) {
     if (err?.statusCode === 400) {
@@ -3731,6 +4202,18 @@ app.post('/api/room/:tableId/add-character', requireAuth, async (req, res) => {
       };
     }
     await applyOpToTableState(tableId, { op: 'add-elements', elements: [character] });
+
+    // T19: Record character table placement (telemetry only — never gates anything).
+    // Resolve character owner from library; fall back to req.uid if not found.
+    if (process.env.DATABASE_URL && charId) {
+      try {
+        const charOwnerUid = character.user_id || req.uid;
+        await recordCharacterTablePlacement(APP_ID, charOwnerUid, charId, tableId);
+      } catch (placErr) {
+        console.error('[billing] recordCharacterTablePlacement error:', placErr.message);
+      }
+    }
+
     res.json({ character });
   } catch (err) {
     console.error('POST /api/room/:tableId/add-character error:', err);
@@ -3864,6 +4347,19 @@ async function startServer() {
         console.log('[cron] Daggerstack UUID map refreshed');
       } catch (err) {
         console.error('[cron] Daggerstack UUID refresh failed:', err.message);
+      }
+    });
+
+    // T9: Stripe reconciliation cron — safety-net sweep for missed/failed webhooks.
+    // Runs daily at 2 AM. Queries recent Stripe Checkout Sessions and backfills any
+    // paid_through_at extensions that were missed (e.g. server was down during webhook delivery).
+    // fly.toml min_machines_running = 1 ensures this always runs.
+    cron.schedule('0 2 * * *', async () => {
+      if (!isStripeConfigured()) return;
+      try {
+        await reconcileStripeCampaignPasses();
+      } catch (err) {
+        console.error('[cron] Stripe reconciliation failed:', err.message);
       }
     });
   } else {

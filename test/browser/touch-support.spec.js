@@ -41,9 +41,15 @@ async function emulateTouch(page) {
 }
 
 // ---------------------------------------------------------------------------
-// Mock the GM SSE stream with { times: 1 } so EventSource reconnects fall
-// through to the test server (which returns 401 for unverifiable tokens),
-// preventing a re-render loop — mirrors the pattern used by player-mode tests.
+// Mock the GM SSE stream (`/api/room/my/players`) for the shared fixed test
+// uid ('test-user-uid'). No `{ times: 1 }` cap — the browser's EventSource
+// auto-reconnects a few seconds after any mocked response body ends (the
+// fake stream sent here isn't kept open). If a cap let reconnects fall
+// through unmocked, they would hit the real dev server, which can inject
+// real leftover DB state for this shared test uid mid-test (see the same
+// fix applied in billing-session-gate.spec.js). Always re-fulfilling with
+// the same synthetic snapshot keeps every reconnect — and every test's DOM
+// state — fully deterministic and isolated from real data.
 // ---------------------------------------------------------------------------
 async function mockGmStream(page) {
   await page.route(
@@ -55,7 +61,6 @@ async function mockGmStream(page) {
         body: `event: presence\ndata: ${JSON.stringify({ players: [] })}\n\n`,
       });
     },
-    { times: 1 },
   );
 }
 

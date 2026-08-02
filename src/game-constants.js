@@ -58,6 +58,14 @@ export const TIERS = [1, 2, 3, 4];
 export const DEFAULT_CHARACTER_STARTING_HOPE = 2;
 
 /**
+ * Global, numeric ceiling on which domain-card (ability) tiers render V2 card chips (interactive
+ * Use/cost UI). Purely structural gate — no per-card or per-domain branching anywhere it's read.
+ * Starts at 0 (no domain-card chips render at all); raise to 1 once Tier 1 automation is complete
+ * across all 9 domains. See docs/plans/productize-daggertop-subscription-decisions.md §3.
+ */
+export const RELEASED_ABILITY_TIER_CEILING = 0;
+
+/**
  * V2 `featureState[scope][key]` — one-time Evasion bonus vs a pending attack (declarative features).
  * Engine mutations and Game Table banner math use this key; feature modules own the scope bag.
  */
