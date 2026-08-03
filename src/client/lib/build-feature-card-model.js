@@ -18,10 +18,44 @@ import { filterCardPhaseChips } from './card-phase-chips.js';
 import { parsePassiveStats } from './feature-actions.js';
 import { deriveFeatureActionFromV2Row } from './v2-derive-feature-action.js';
 import { resolveLoadoutAbilityFeatRow } from './guide-feature-entries.js';
+import { tierFromLevel } from './character-calc.js';
+import { RELEASED_ABILITY_TIER_CEILING } from '../../game-constants.js';
 import {
   getSheetSourceChipPalette,
   resolveSheetSourcePaletteKey,
 } from './sheet-source-chip-styles.js';
+
+/**
+ * Domain-card ability level, read from whichever shape the merged row uses: the V2 engine load
+ * path (`feature-loader.js`) tags `_source: 'ability'` with a top-level `level`; the character-sheet
+ * display path (`character-calc.js`) tags `type: 'ability'` with the SRD row at `source.level`.
+ *
+ * @param {object} row
+ * @returns {number|null}
+ */
+function readAbilityRowLevel(row) {
+  if (!row || typeof row !== 'object') return null;
+  const isAbilityRow = row._source === 'ability' || row.type === 'ability';
+  if (!isAbilityRow) return null;
+  const raw = row.level ?? row.source?.level;
+  if (raw == null || raw === '') return null;
+  const level = Number(raw);
+  return Number.isFinite(level) ? level : null;
+}
+
+/**
+ * Global gate (see {@link RELEASED_ABILITY_TIER_CEILING}): domain-card (ability) rows above the
+ * released tier ceiling render zero card chips, regardless of what the registry module would
+ * otherwise return. Purely numeric/structural — no per-card or per-domain name checks.
+ *
+ * @param {object} row — merged activeFeatures row (or registry feature object)
+ * @returns {boolean}
+ */
+function isAbilityRowAboveReleasedTierCeiling(row) {
+  const level = readAbilityRowLevel(row);
+  if (level == null) return false;
+  return tierFromLevel(level) > RELEASED_ABILITY_TIER_CEILING;
+}
 
 /**
  * Safe `table.me` for sheet preview when there is no owner id (library / new character).
@@ -348,7 +382,9 @@ export function buildFeatureCardModel(row, options = {}) {
   const usageStore = options.usageStore ?? {};
 
   let cardChips;
-  if (table && ownerInstanceId) {
+  if (isAbilityRowAboveReleasedTierCeiling(row)) {
+    cardChips = [];
+  } else if (table && ownerInstanceId) {
     const feature = { ...row, _ownerInstanceId: ownerInstanceId };
     cardChips = collectChips([feature], 'card', table, usageStore);
   } else {

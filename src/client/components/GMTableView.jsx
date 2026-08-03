@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } fr
 import { createPortal } from 'react-dom';
 import { useTouchDevice } from '../lib/useTouchDevice.js';
 import { useHoverOverlay } from '../lib/useHoverOverlay.js';
-import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, ArrowLeftToLine } from 'lucide-react';
+import { Zap, Trash2, Dices, ChevronDown, ChevronRight, X, Plus, Camera, Swords, AlertTriangle, Tag, Flame, Edit, Users, RefreshCw, ExternalLink, Eye, EyeOff, Circle, Square, CheckSquare, StickyNote, ArrowLeftToLine, Heart } from 'lucide-react';
 import { BattleMap, CHARACTER_TRAY_WIDTH_PX } from './BattleMap.jsx';
 import { EncounterAdversaryInstancePlayerSummary } from './EncounterAdversaryMarkedSummary.jsx';
 import { playerEncounterInstanceRowVisible } from '../lib/encounter-adversary-player-summary.js';
@@ -28,6 +28,7 @@ import { withActionBannerSuppression } from '../lib/action-notification-banner.j
 import {
   postRoll as postRollToServer,
   postTableOp,
+  postTableOpAwait,
   postActionNotification,
   postBannerAck,
   postBannerCancel,
@@ -59,7 +60,10 @@ import {
   postEncounterAiBuild,
   postAdversaryAiBuild,
   postEnvironmentAiBuild,
+  fetchTableBillingStatus,
 } from '../lib/api.js';
+import { SupportTableModal } from './SupportTableModal.jsx';
+import { BugReportButton } from './BugReportButton.jsx';
 import { generateAndApplyBattleMapQuietly } from '../lib/quiet-battle-map-generate.js';
 import { useAiUiPreference } from '../lib/ai-ui-preference-context.jsx';
 import { shouldShowConceptAiUi } from '../lib/ai-ui-visibility.js';
@@ -529,7 +533,7 @@ function buildGameTableNewEnvironmentStub(tier = 1, type = 'exploration') {
   };
 }
 
-export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
+export function GMTableView({ tableId, activeElements, updateActiveElement: pushTableElementUpdate, removeActiveElement, updateActiveElementsBaseData, data, saveItem, saveImage, addToTable, sendDoAddToTable, onMergeAdversary, user, route, navigate, featureCountdowns = {}, sessionCountdowns = [], updateCountdown, partySize = 1, partyTier = 1, characters = [], tableBattleMods, setTableBattleMods, fearCount = 0, setFearCount, tableName = '', gmDisplayName = '', tableStateReady = false, onTableNameChange, onDeleteTable, ensureScenesLoaded, ensureAdventuresLoaded, ensureCharactersLoaded, clearTable, isPlayer = false, playerEmail, connectedPlayers = [], playerEmails = [], setPlayerEmails, gmUid, onPlayerAddCharacter, pendingBanners = [], pendingPlayerIntent = null, onFeatureRequestSuccess, onFeatureRequestCancel, rangerFocusRequestedBannerIds, onRangerFocusRerollRequestSuccess, onRangerFocusRerollRequestCancel, previewAsPlayerEmail = null, onPreviewAsPlayer, onExitPreview, actionLog = [], setActionLog, mapConfig, maps = [], activeMapId = null, gmMapView = null, onSetActiveMap, onAddMap, onAddMapWithImage, onRemoveMap, onRenameMap, onMapConfigChange, onMapViewSync, lifeSupportSelections = {}, onLifeSupportSelect, onLifeSupportClear, restMovesSelections = {}, onRestMoveSelect, onRestMoveClear, tableFeatureState = {}, sessionPlayAllowed = true, sessionStarted = true, sessionPaused = false, mapPings = [], onDismissMapPing = () => {}, appendMapPing = () => {},
   mapScribbles = [],
   mapViews = [], gmActiveViewId = null, onSetActiveView, onAddMapViewOp, onRemoveMapView, onRenameMapView, onSetViewBroadcast, onSetMapShare,
   onSetMapOverlay,
@@ -570,6 +574,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const [playBlockedDialog, setPlayBlockedDialog] = useState(null);
   /** Until reload: GM skips prep/pause prompts; blocked ops get `bypassPrepGate` (session flags unchanged). */
   const [playBlockedAllowAllEdits, setPlayBlockedAllowAllEdits] = useState(false);
+
+  /** Set when session-start is blocked because the table's trial/pass has lapsed. */
+  const [tableNotLiveError, setTableNotLiveError] = useState(null); // { reason, trialEndsAt, paidThroughAt } | null
+  /** Controls the "Support this table" / gift a Campaign Pass modal. */
+  const [supportModalOpen, setSupportModalOpen] = useState(false);
+  /** Billing status for this table — used for the T14 downgrade banner. */
+  const [tableBillingStatus, setTableBillingStatus] = useState(null);
+
+  // Fetch billing status once on mount (or when tableId changes) for the downgrade banner.
+  useEffect(() => {
+    if (!tableId) return;
+    fetchTableBillingStatus(tableId)
+      .then(setTableBillingStatus)
+      .catch(() => setTableBillingStatus(null));
+  }, [tableId]);
 
   const sendOp = useCallback(
     (op) => {
@@ -2033,8 +2052,24 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     if (roll._sessionStart) {
       if (roll._rollDbId) {
         postBannerAck(roll._rollDbId, 'acknowledge', { tableId }).catch(() => {});
-        await postTableOp({ op: 'set-table-top', top: { sessionStarted: true, sessionPaused: false, lastPlayActivityAt: Date.now() } }, tableId);
-        runSessionStartClear();
+        try {
+          await postTableOpAwait({ op: 'set-table-top', top: { sessionStarted: true, sessionPaused: false, lastPlayActivityAt: Date.now() } }, tableId);
+          runSessionStartClear();
+        } catch (err) {
+          if (err?.tableNotLive) {
+            // Table trial/pass has lapsed — show the support modal + a non-crashing message.
+            // This ONLY fires at session-start, never mid-session (server enforces this invariant).
+            setTableNotLiveError({
+              reason: err.tableNotLiveReason,
+              trialEndsAt: err.trialEndsAt,
+              paidThroughAt: err.paidThroughAt,
+            });
+          } else if (err?.playBlocked) {
+            // prep/pause gate — silently swallow (existing pattern)
+          } else {
+            console.error('[billing] session-start set-table-top failed:', err);
+          }
+        }
       }
       return;
     }
@@ -5684,6 +5719,50 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <span className="text-xs font-semibold text-dh">Add Character</span>
           </button>
 
+          {/* Support this table — visible to GM and all players */}
+          <button
+            type="button"
+            onClick={() => setSupportModalOpen(true)}
+            className="w-full rounded-lg border border-dh-border bg-dh-surface/40 hover:border-sky-600/40 hover:bg-dh-raised/60 px-2.5 py-1.5 flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <Heart size={11} className="text-sky-500/70" />
+            <span className="text-[11px] font-medium text-dh-muted">Support this table</span>
+          </button>
+
+          {/* Bug report — visible to GM and all players, never interrupts play */}
+          <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} isPlayer={isPlayer} />
+
+          {/* Table-not-live error — shown only when session start is blocked */}
+          {tableNotLiveError && !isPlayer && (
+            <div
+              className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 space-y-1.5"
+              role="status"
+            >
+              <p className="text-[11px] font-semibold text-amber-300">Session cannot start</p>
+              <p className="text-[11px] text-amber-200/80 leading-snug">
+                {tableNotLiveError.reason === 'trial_expired'
+                  ? 'Your free trial has ended.'
+                  : tableNotLiveError.reason === 'pass_expired'
+                    ? 'Your Campaign Pass has expired.'
+                    : 'This table needs a Campaign Pass to start new sessions.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSupportModalOpen(true)}
+                className="-mx-1 rounded px-1 py-1 text-[11px] font-semibold text-sky-400 underline underline-offset-2 hover:text-sky-300 hover:bg-amber-900/30 transition-colors"
+              >
+                Purchase a Campaign Pass →
+              </button>
+              <button
+                type="button"
+                onClick={() => setTableNotLiveError(null)}
+                className="-mx-1 block rounded px-1 py-1 text-[10px] text-dh-muted hover:text-dh hover:bg-amber-900/30 transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {consolidatedElements.filter(item => item.kind === 'character').map(({ element: el }) => {
             const isMyCharacter = isPlayer && playerEmail != null && el.assignedPlayerEmail === playerEmail;
             const { sheetOwner, allowPlayMechanics } = characterSheetTableInteractionFlags(
@@ -5891,6 +5970,27 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
 
       {/* Center Column */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-dh-canvas relative">
+        {/* T14: Read-only / downgrade banner — shown when trial/pass has lapsed */}
+        {tableBillingStatus && !tableBillingStatus.isLive && (
+          <div
+            className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 bg-amber-950/50 border-b border-amber-800/60 text-amber-200 text-[11px]"
+            role="status"
+          >
+            <span>
+              <AlertTriangle size={12} className="inline -mt-0.5 mr-1 text-amber-400" aria-hidden />
+              {tableBillingStatus.reason === 'trial_expired'
+                ? 'Free trial has ended — this table is read-only. New sessions cannot be started.'
+                : 'Campaign Pass has expired — this table is read-only. New sessions cannot be started.'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSupportModalOpen(true)}
+              className="shrink-0 rounded border border-amber-600/60 bg-amber-900/40 px-2 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-800/50 transition-colors"
+            >
+              Get a Pass
+            </button>
+          </div>
+        )}
         {/* Pre-roll banner (onAct chips, e.g. Quick Reactions) — popover overlay */}
         {preRollBanner && (
           <div
@@ -7849,6 +7949,15 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       </>,
       document.body
     )}
+
+    {/* Support this table — gift a Campaign Pass modal */}
+    <SupportTableModal
+      open={supportModalOpen}
+      onClose={() => setSupportModalOpen(false)}
+      tableId={tableId}
+      tableName={tableName}
+      gmDisplayName={gmDisplayName || (user?.displayName || user?.email || 'the GM')}
+    />
 
     {lightboxUrl && (
       <div

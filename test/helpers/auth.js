@@ -100,11 +100,11 @@ export async function authenticate(page) {
     });
   });
 
-  // /api/my-rooms — no rooms
+  // /api/my-rooms — no rooms (real server returns an array, not { rooms: [] })
   await page.route('/api/my-rooms', (route) => {
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ rooms: [] }),
+      body: JSON.stringify([]),
     });
   });
 
@@ -113,6 +113,15 @@ export async function authenticate(page) {
     route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ items: [], totalCount: 0 }),
+    });
+  });
+
+  // /api/my-tables — return one owned table so the app does not redirect away from the
+  // game table when myTablesFetchedRef.current becomes true but myTables is empty.
+  await page.route('/api/my-tables', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([{ id: TEST_USER.uid, name: 'Test Table' }]),
     });
   });
 }

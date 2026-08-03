@@ -19,6 +19,7 @@ export const AI_USAGE_BUILDERS = Object.freeze([
 /**
  * @param {{
  *   appId?: string,
+ *   userId?: string | null,
  *   builder: string,
  *   provider: 'openai' | 'xai',
  *   model?: string | null,
@@ -41,6 +42,7 @@ export function logAiUsage(evt) {
   const appId = evt.appId ?? process.env.APP_ID ?? 'daggerheart-gm-tool';
   const row = {
     appId,
+    userId: evt.userId ?? null,
     builder: evt.builder,
     provider: evt.provider,
     model: evt.model ?? null,
@@ -63,7 +65,7 @@ export function logAiUsage(evt) {
  * Pure shape for tests / inspection (same fields as `logAiUsage` minus appId defaulting).
  * @param {string} builder
  * @param {object | null | undefined} responseJson
- * @param {{ ok?: boolean, errorCode?: string | null, model?: string | null, latencyMs?: number | null, requestId?: string | null }} [opts]
+ * @param {{ ok?: boolean, errorCode?: string | null, model?: string | null, latencyMs?: number | null, requestId?: string | null, userId?: string | null }} [opts]
  */
 export function buildOpenAiChatUsageEvent(builder, responseJson, opts = {}) {
   const usage = responseJson?.usage;
@@ -71,6 +73,7 @@ export function buildOpenAiChatUsageEvent(builder, responseJson, opts = {}) {
   return {
     builder,
     provider: 'openai',
+    userId: opts.userId ?? null,
     model: opts.model ?? responseJson?.model ?? null,
     promptTokens: usage?.prompt_tokens ?? null,
     completionTokens: usage?.completion_tokens ?? null,
@@ -87,7 +90,7 @@ export function buildOpenAiChatUsageEvent(builder, responseJson, opts = {}) {
  * Record one OpenAI Chat Completions response (success or HTTP error body).
  * @param {string} builder
  * @param {object | null | undefined} responseJson — parsed JSON body
- * @param {{ ok?: boolean, errorCode?: string | null, model?: string | null, latencyMs?: number | null, requestId?: string | null }} [opts]
+ * @param {{ ok?: boolean, errorCode?: string | null, model?: string | null, latencyMs?: number | null, requestId?: string | null, userId?: string | null }} [opts]
  */
 export function logOpenAiChatCompletion(builder, responseJson, opts = {}) {
   logAiUsage(buildOpenAiChatUsageEvent(builder, responseJson, opts));
@@ -96,7 +99,7 @@ export function logOpenAiChatCompletion(builder, responseJson, opts = {}) {
 /**
  * x.ai image APIs — token usage is often absent; still log latency + outcome.
  * @param {'image_generate'|'image_edit'} builder
- * @param {{ ok: boolean, latencyMs: number, model?: string | null, errorCode?: string | null, usage?: object | null }} info
+ * @param {{ ok: boolean, latencyMs: number, model?: string | null, errorCode?: string | null, usage?: object | null, userId?: string | null }} info
  */
 export function logXaiImageUsage(builder, info) {
   const u = info.usage && typeof info.usage === 'object' ? info.usage : null;
@@ -106,6 +109,7 @@ export function logXaiImageUsage(builder, info) {
   logAiUsage({
     builder,
     provider: 'xai',
+    userId: info.userId ?? null,
     model: info.model ?? null,
     promptTokens: typeof pt === 'number' ? pt : null,
     completionTokens: typeof ct === 'number' ? ct : null,

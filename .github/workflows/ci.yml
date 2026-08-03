@@ -1,0 +1,66 @@
+# CI: run unit tests and Playwright browser tests on every push and PR.
+#
+# Single job: unit tests (~10 s) run first and gate the Playwright suite.
+# If unit tests fail we skip the browser suite intentionally — fast feedback.
+#
+# Node version: 22 LTS (no .nvmrc / engines field in this repo; 22 LTS supports
+# `--env-file` non-fatally when the file doesn't exist, which matters for the
+# Playwright webServer command that passes `--env-file=.env`).
+#
+# SRD submodule (daggerheart-srd): checked out because `server.js` calls
+# `warmCache()` unconditionally at startup; without the submodule files the
+# server process exits immediately and all browser tests fail.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with daggerheart-srd submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build public/app.js, public/styles.css, and regenerate the V2 feature catalog.
+      # Both app.js and styles.css are gitignored and must exist before the browser
+      # test server starts; the feature catalog is committed but regenerated here for
+      # consistency.
+      - name: Build client bundle and feature catalog
+        run: npm run build
+
+      # The playwright.config.js webServer command uses `node --env-file=.env`.
+      # There is no .env file in CI, so we create an empty one to avoid errors.
+      - name: Create empty .env for Playwright webServer
+        run: touch .env
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Run browser tests
+        run: npm run test:browser
+
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: test-results/
+          retention-days: 7

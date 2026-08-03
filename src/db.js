@@ -1284,18 +1284,19 @@ export async function upsertUserPreferences(appId, userId, patch) {
   );
 }
 
-/** @param {{ appId: string, builder: string, provider: 'openai'|'xai', model?: string|null, promptTokens?: number|null, completionTokens?: number|null, cachedPromptTokens?: number|null, totalTokens?: number|null, latencyMs?: number|null, ok: boolean, errorCode?: string|null, requestId?: string|null }} row */
+/** @param {{ appId: string, userId?: string|null, builder: string, provider: 'openai'|'xai', model?: string|null, promptTokens?: number|null, completionTokens?: number|null, cachedPromptTokens?: number|null, totalTokens?: number|null, latencyMs?: number|null, ok: boolean, errorCode?: string|null, requestId?: string|null }} row */
 export async function insertAiUsageEvent(row) {
   if (!process.env.DATABASE_URL) return;
   const db = getPool();
   await db.query(
     `INSERT INTO ai_usage_events (
-       app_id, builder, provider, model,
+       app_id, user_id, builder, provider, model,
        prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens,
        latency_ms, ok, error_code, request_id
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       row.appId,
+      row.userId ?? null,
       row.builder,
       row.provider,
       row.model ?? null,
@@ -1309,6 +1310,308 @@ export async function insertAiUsageEvent(row) {
       row.requestId ?? null,
     ],
   );
+}
+
+// ── Billing helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Get a billing_customers row for a user. Returns null if not found.
+ * @param {string} appId
+ * @param {string} userId
+ */
+export async function getBillingCustomer(appId, userId) {
+  const db = getPool();
+  const result = await db.query(
+    'SELECT * FROM billing_customers WHERE app_id = $1 AND user_id = $2',
+    [appId, userId],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Atomically claim the one-lifetime free trial for a user on a specific table.
+ * TOCTOU-safe: uses UPDATE ... WHERE free_trial_started_at IS NULL (row-level lock serializes
+ * concurrent claims). The INSERT ensures the row exists first.
+ *
+ * Returns true if the trial was newly claimed by this call, false if already claimed.
+ * @param {string} appId
+ * @param {string} tableId - the table where the trial is being activated
+ * @param {string} userId  - the table owner's user ID
+ * @returns {Promise<boolean>}
+ */
+export async function stampFreeTrialStart(appId, tableId, userId) {
+  const db = getPool();
+  // Ensure the billing_customers row exists (idempotent).
+  await db.query(
+    `INSERT INTO billing_customers (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [appId, userId],
+  );
+  // Atomic claim: only succeeds when free_trial_started_at IS NULL.
+  // Concurrent callers serialize on the row-level lock; only one returns a row.
+  const result = await db.query(
+    `UPDATE billing_customers
+        SET free_trial_started_at = now(),
+            free_trial_table_id   = $3,
+            updated_at            = now()
+      WHERE app_id = $1
+        AND user_id = $2
+        AND free_trial_started_at IS NULL
+      RETURNING *`,
+    [appId, userId, tableId],
+  );
+  return result.rows.length > 0;
+}
+
+/**
+ * Check whether a table is currently "live" (has active entitlement to host sessions).
+ * Returns an object with { live, reason, ... }.
+ *
+ * A table is live when:
+ *   - It has an active Campaign Pass (paid_through_at > now()), OR
+ *   - The table owner has a free trial active for this exact table (within 1 month of start).
+ *
+ * This function only reads; it never stamps the trial. Call stampFreeTrialStart first when needed.
+ *
+ * @param {string} appId
+ * @param {string} tableId
+ * @param {string} ownerUserId - table owner's Firebase uid
+ * @returns {Promise<{ live: boolean, reason: string, trialEndsAt?: string, paidThroughAt?: string }>}
+ */
+export async function checkTableIsLive(appId, tableId, ownerUserId) {
+  const db = getPool();
+  const now = new Date();
+
+  // 1. Check active Campaign Pass (table-scoped, not purchaser-scoped).
+  const passResult = await db.query(
+    'SELECT paid_through_at FROM table_campaign_passes WHERE app_id = $1 AND table_id = $2',
+    [appId, tableId],
+  );
+  if (passResult.rows.length > 0 && passResult.rows[0].paid_through_at) {
+    if (new Date(passResult.rows[0].paid_through_at) > now) {
+      return { live: true, reason: 'campaign_pass', paidThroughAt: passResult.rows[0].paid_through_at };
+    }
+  }
+
+  // 2. Check free trial (owner-scoped, one lifetime, table-scoped to the activation table).
+  // Trial duration (exactly 1 calendar month from activation) is computed in SQL via `interval`
+  // rather than JS `Date.setMonth` — JS month arithmetic silently overflows on short months
+  // (e.g. Jan 31 + 1 "month" rolls into March), which would drift from calendar-month semantics.
+  const billingResult = await db.query(
+    `SELECT free_trial_started_at,
+            free_trial_table_id,
+            (free_trial_started_at + interval '1 month') AS trial_end_at,
+            (now() < (free_trial_started_at + interval '1 month')) AS trial_active
+       FROM billing_customers
+      WHERE app_id = $1 AND user_id = $2`,
+    [appId, ownerUserId],
+  );
+
+  if (!billingResult.rows.length || !billingResult.rows[0].free_trial_started_at) {
+    return { live: false, reason: 'never_started' };
+  }
+
+  const { free_trial_table_id, trial_end_at, trial_active } = billingResult.rows[0];
+
+  // Trial is only valid for the specific table where it was first activated.
+  if (free_trial_table_id !== tableId) {
+    return { live: false, reason: 'trial_used_on_other_table' };
+  }
+
+  const trialEndsAt = new Date(trial_end_at).toISOString();
+  if (trial_active) {
+    return { live: true, reason: 'free_trial', trialEndsAt };
+  }
+
+  return { live: false, reason: 'trial_expired', trialEndsAt };
+}
+
+/**
+ * Get a table_campaign_passes row. Returns null if not found.
+ * @param {string} appId
+ * @param {string} tableId
+ */
+export async function getTableCampaignPass(appId, tableId) {
+  const db = getPool();
+  const result = await db.query(
+    'SELECT * FROM table_campaign_passes WHERE app_id = $1 AND table_id = $2',
+    [appId, tableId],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Extend a table's Campaign Pass expiry.
+ * Consecutive purchases stack: new expiry = max(now(), paid_through_at) + months.
+ * Also accumulates lifetime_cents_total for LTV telemetry.
+ * @param {string} appId
+ * @param {string} tableId
+ * @param {number} months  - 3, 6, or 12
+ * @param {number} amountCents
+ */
+export async function extendTableCampaignPass(appId, tableId, months, amountCents) {
+  const db = getPool();
+  await db.query(
+    `INSERT INTO table_campaign_passes (app_id, table_id, paid_through_at, lifetime_cents_total)
+     VALUES (
+       $1, $2,
+       now() + ($3 || ' months')::interval,
+       $4
+     )
+     ON CONFLICT (app_id, table_id) DO UPDATE SET
+       paid_through_at      = GREATEST(now(), table_campaign_passes.paid_through_at) + ($3 || ' months')::interval,
+       lifetime_cents_total = table_campaign_passes.lifetime_cents_total + EXCLUDED.lifetime_cents_total,
+       updated_at           = now()`,
+    [appId, tableId, String(months), amountCents],
+  );
+}
+
+/**
+ * Record an individual Campaign Pass purchase in the append-only history table.
+ * ON CONFLICT DO NOTHING on stripe_checkout_session_id provides idempotency for webhook retries.
+ *
+ * Returns whether this call actually inserted a new row (true) vs. hit the unique-constraint
+ * conflict because this session was already recorded (false). Callers MUST use this return
+ * value to gate the entitlement side-effect (extendTableCampaignPass) — this is the single
+ * source of truth for "has this specific purchase already been fulfilled", independent of
+ * (and more reliable than) any event-id-based dedup upstream. Without this check, calling this
+ * function twice for the same session (e.g. a racy webhook redelivery, or the reconciliation
+ * cron re-scanning a session already fulfilled by the webhook) would let the caller extend the
+ * pass twice for a single payment.
+ * @param {string} appId
+ * @param {string} tableId
+ * @param {string} purchasedByUserId
+ * @param {string} stripeCheckoutSessionId
+ * @param {string|null} stripeEventId
+ * @param {number} months
+ * @param {number} amountCents
+ * @returns {Promise<boolean>} true when a new purchase row was inserted; false when this session was already recorded
+ */
+export async function recordCampaignPassPurchase(
+  appId, tableId, purchasedByUserId, stripeCheckoutSessionId, stripeEventId, months, amountCents,
+) {
+  const db = getPool();
+  const result = await db.query(
+    `INSERT INTO table_campaign_pass_purchases
+       (app_id, table_id, purchased_by_user_id, stripe_checkout_session_id, stripe_event_id, months, amount_cents)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (stripe_checkout_session_id) DO NOTHING
+     RETURNING id`,
+    [appId, tableId, purchasedByUserId, stripeCheckoutSessionId, stripeEventId ?? null, months, amountCents],
+  );
+  return result.rows.length > 0;
+}
+
+/**
+ * Check whether a Stripe event has already been processed (read-only inspection/telemetry).
+ * NOT safe as a dedup gate on its own — a plain SELECT-then-INSERT has a TOCTOU race between two
+ * concurrent callers. Use markStripeEventProcessed's return value to atomically check-and-claim.
+ * @param {string} appId
+ * @param {string} stripeEventId
+ * @returns {Promise<boolean>}
+ */
+export async function hasStripeEventBeenProcessed(appId, stripeEventId) {
+  const db = getPool();
+  const result = await db.query(
+    'SELECT 1 FROM stripe_processed_events WHERE app_id = $1 AND stripe_event_id = $2',
+    [appId, stripeEventId],
+  );
+  return result.rows.length > 0;
+}
+
+/**
+ * Atomically mark a Stripe event as processed, in a single round trip.
+ * Uses INSERT ... ON CONFLICT DO NOTHING RETURNING so the "check" and the "claim" happen in
+ * one statement — this is what makes the dedup race-free. A separate SELECT-then-INSERT (check
+ * hasStripeEventBeenProcessed, then call this) is NOT safe: two concurrent webhook deliveries for
+ * the same event could both see "not yet processed" before either inserts.
+ * @param {string} appId
+ * @param {string} stripeEventId
+ * @param {string} eventType
+ * @returns {Promise<boolean>} true when this call newly claimed the event (not a duplicate); false when it was already processed
+ */
+export async function markStripeEventProcessed(appId, stripeEventId, eventType) {
+  const db = getPool();
+  const result = await db.query(
+    `INSERT INTO stripe_processed_events (app_id, stripe_event_id, event_type)
+     VALUES ($1, $2, $3)
+     ON CONFLICT DO NOTHING
+     RETURNING stripe_event_id`,
+    [appId, stripeEventId, eventType],
+  );
+  return result.rows.length > 0;
+}
+
+// ── Character table placements ─────────────────────────────────────────────────
+
+/**
+ * Record that a character was placed onto a table (telemetry only — never gates anything).
+ * ON CONFLICT DO NOTHING: re-adding an already-placed character is a no-op.
+ * @param {string} appId
+ * @param {string} userId   - character owner's Firebase uid
+ * @param {string} characterId
+ * @param {string} tableId
+ */
+export async function recordCharacterTablePlacement(appId, userId, characterId, tableId) {
+  const db = getPool();
+  await db.query(
+    `INSERT INTO character_table_placements (app_id, user_id, character_id, table_id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [appId, userId, characterId, tableId],
+  );
+}
+
+/**
+ * Count distinct (character_id, table_id) placements for a user (telemetry).
+ * @param {string} appId
+ * @param {string} userId
+ * @returns {Promise<number>}
+ */
+export async function countCharacterTablePlacements(appId, userId) {
+  const db = getPool();
+  const result = await db.query(
+    `SELECT COUNT(*)::int AS cnt FROM character_table_placements WHERE app_id = $1 AND user_id = $2`,
+    [appId, userId],
+  );
+  return result.rows[0]?.cnt ?? 0;
+}
+
+/**
+ * Remove all character placements for a specific table (called when the table is deleted, T3).
+ * @param {string} appId
+ * @param {string} tableId
+ */
+export async function removeCharacterTablePlacementsForTable(appId, tableId) {
+  const db = getPool();
+  await db.query(
+    'DELETE FROM character_table_placements WHERE app_id = $1 AND table_id = $2',
+    [appId, tableId],
+  );
+}
+
+// ── AI cost cap ────────────────────────────────────────────────────────────────
+
+/**
+ * Count successful AI calls made by a user in the current calendar month.
+ * Used by checkAiCostCap to enforce per-user spending limits.
+ * @param {string} appId
+ * @param {string} userId
+ * @returns {Promise<number>}
+ */
+export async function countUserAiCallsThisMonth(appId, userId) {
+  const db = getPool();
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const result = await db.query(
+    `SELECT COUNT(*)::int AS call_count
+       FROM ai_usage_events
+      WHERE app_id = $1
+        AND user_id = $2
+        AND ok = true
+        AND created_at >= $3`,
+    [appId, userId, monthStart.toISOString()],
+  );
+  return result.rows[0]?.call_count ?? 0;
 }
 
 /**

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot, ShieldOff } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus } from './lib/api.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { generateId } from './lib/helpers.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
@@ -98,6 +98,9 @@ function App() {
   const [tableBattleMods, setTableBattleMods] = useState(DEFAULT_BATTLE_MODS);
   const [fearCount, setFearCount] = useState(0);
   const [tableName, setTableName] = useState('');
+  const [tableGmDisplayName, setTableGmDisplayName] = useState('');
+  /** Billing status for the primary/current table (used by ambient nav indicator). */
+  const [primaryTableBillingStatus, setPrimaryTableBillingStatus] = useState(null);
   const DEFAULT_MAP_CONFIG = {
     mapImageUrl: null,
     mapDimension: 'width',
@@ -423,7 +426,16 @@ function App() {
           .catch(() => {})
           .finally(() => setAdminPrivilegesKnown(true));
         fetchMyRooms().then(rooms => setMyRooms(rooms)).catch(() => {});
-        fetchMyTables().then(tables => { setMyTables(tables || []); myTablesFetchedRef.current = true; }).catch(() => { myTablesFetchedRef.current = true; });
+        fetchMyTables().then(tables => {
+          const list = tables || [];
+          setMyTables(list);
+          myTablesFetchedRef.current = true;
+          // Fetch billing status for the first owned table (ambient nav indicator).
+          const primaryId = list[0]?.id;
+          if (primaryId) {
+            fetchTableBillingStatus(primaryId).then(setPrimaryTableBillingStatus).catch(() => {});
+          }
+        }).catch(() => { myTablesFetchedRef.current = true; });
       } else {
         myTablesFetchedRef.current = false;
         setHideAiUi(false);
@@ -725,6 +737,7 @@ function App() {
       if (tableState.fearCount != null) setFearCount(tableState.fearCount);
       if (Array.isArray(tableState.playerEmails)) setPlayerEmails(tableState.playerEmails);
       if (tableState.tableName != null) setTableName(tableState.tableName);
+      if (tableState.gmDisplayName != null) setTableGmDisplayName(tableState.gmDisplayName);
       if (tableState.mapConfig && typeof tableState.mapConfig === 'object') {
         setMapConfig({ ...DEFAULT_MAP_CONFIG, ...tableState.mapConfig });
       } else {
@@ -792,6 +805,7 @@ function App() {
           setTableName(state.tableName);
           setMyTables(prev => prev.map(t => t.id === tableId ? { ...t, name: state.tableName } : t));
         }
+        if (state.gmDisplayName != null) setTableGmDisplayName(state.gmDisplayName);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
           setMapConfig({ ...DEFAULT_MAP_CONFIG, ...state.mapConfig });
         }
@@ -1737,6 +1751,23 @@ function App() {
                 <div className="flex flex-col items-end">
                   <span className="text-green-500 font-medium">{user.displayName || user.email || 'Signed In'}</span>
                   <span className="text-[10px] opacity-60 font-mono">{user.email}</span>
+                  {primaryTableBillingStatus && (() => {
+                    const bs = primaryTableBillingStatus;
+                    if (bs.isLive && bs.reason === 'campaign_pass' && bs.paidThroughAt) {
+                      const d = new Date(bs.paidThroughAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      return <span className="text-[9px] opacity-50 font-mono text-emerald-400">Covered through {d}</span>;
+                    }
+                    if (bs.isLive && bs.reason === 'free_trial' && bs.trialEndsAt) {
+                      const diff = new Date(bs.trialEndsAt) - Date.now();
+                      const days = Math.max(0, Math.floor(diff / 86400000));
+                      const urgent = days <= 7;
+                      return <span className={`text-[9px] font-mono ${urgent ? 'text-amber-400 opacity-80' : 'opacity-50 text-dh-muted'}`}>Trial: {days === 0 ? 'ends today' : `${days}d left`}</span>;
+                    }
+                    if (!bs.isLive) {
+                      return <span className="text-[9px] font-mono text-red-400 opacity-80">Trial ended</span>;
+                    }
+                    return <span className="text-[9px] opacity-40 font-mono">Free plan</span>;
+                  })()}
                 </div>
                 <ChevronDown size={14} className={`text-dh-muted transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>
@@ -1926,6 +1957,7 @@ function App() {
                 fearCount={fearCount}
                 setFearCount={effectiveIsPlayer ? () => {} : sendSetFearCount}
                 tableName={tableName}
+                gmDisplayName={tableGmDisplayName || (user?.displayName || user?.email || '')}
                 tableStateReady={tableStateReady}
                 onTableNameChange={effectiveIsPlayer ? () => {} : sendSetTableName}
                 onDeleteTable={tableId && !effectiveIsPlayer ? () => {
