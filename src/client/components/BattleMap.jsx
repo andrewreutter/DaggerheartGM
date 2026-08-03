@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, Fragment, memo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   applyViewportWheelPanZoom,
@@ -973,6 +973,158 @@ function TokenCircle({
   );
 }
 
+/**
+ * Shared "did anything the token actually renders change" check for `PlacedToken` / `TrayToken`.
+ * `activeElements` gets new object identities on every SSE `table_state` snapshot even when a given
+ * element's own fields are unchanged, so we compare specific mutable fields instead of relying on
+ * reference equality — this is what lets unrelated tokens skip re-rendering on unrelated updates.
+ */
+function tokenElementFieldsEqual(pE, nE) {
+  if (pE === nE) return true;
+  if (!pE || !nE) return false;
+  return (
+    pE.instanceId === nE.instanceId &&
+    pE.tokenX === nE.tokenX &&
+    pE.tokenY === nE.tokenY &&
+    pE.elementType === nE.elementType &&
+    pE.name === nE.name &&
+    pE.label === nE.label &&
+    pE.currentHp === nE.currentHp &&
+    pE.maxHp === nE.maxHp &&
+    pE.hp_max === nE.hp_max &&
+    pE.currentStress === nE.currentStress &&
+    pE.maxStress === nE.maxStress &&
+    pE.stress_max === nE.stress_max &&
+    pE.currentArmor === nE.currentArmor &&
+    pE.maxArmor === nE.maxArmor
+  );
+}
+
+const placedTokenPropsAreEqual = (prev, next) => {
+  if (
+    prev.zIndex !== next.zIndex ||
+    prev.pxPerFt !== next.pxPerFt ||
+    prev.tokenSizePx !== next.tokenSizePx ||
+    prev.isMyCharacter !== next.isMyCharacter ||
+    prev.isPlayer !== next.isPlayer ||
+    prev.isDragging !== next.isDragging ||
+    prev.isPinned !== next.isPinned ||
+    prev.instanceNum !== next.instanceNum ||
+    prev.rangeBand !== next.rangeBand ||
+    prev.onPointerDown !== next.onPointerDown ||
+    prev.onPointerMove !== next.onPointerMove ||
+    prev.onPointerUp !== next.onPointerUp
+  ) {
+    return false;
+  }
+  return tokenElementFieldsEqual(prev.element, next.element);
+};
+
+/**
+ * Memoized wrapper for a token placed on the map. During map pan/zoom the parent `BattleMap` only
+ * re-renders to translate/scale the shared canvas layer — none of these props change, so React
+ * bails out of diffing/rendering every placed token's subtree entirely.
+ */
+const PlacedToken = memo(function PlacedTokenRaw({
+  element,
+  isMyCharacter,
+  isPlayer,
+  isDragging,
+  isPinned,
+  instanceNum = null,
+  rangeBand,
+  zIndex,
+  pxPerFt,
+  tokenSizePx,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}) {
+  const p = MAP_TOKEN_HIT_PADDING_PX;
+  return (
+    <div
+      className="absolute"
+      style={{
+        left: element.tokenX * pxPerFt - p,
+        top: element.tokenY * pxPerFt - p,
+        padding: p,
+        width: tokenSizePx + 2 * p,
+        height: tokenSizePx + 2 * p,
+        boxSizing: 'border-box',
+        touchAction: 'none',
+        zIndex,
+      }}
+      onPointerDown={(e) => onPointerDown(e, element, false)}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      <TokenCircle
+        element={element}
+        size={tokenSizePx}
+        instanceNum={instanceNum}
+        isMyCharacter={isMyCharacter}
+        isPlayer={isPlayer}
+        isDragging={isDragging}
+        isPinned={isPinned}
+        rangeBand={rangeBand}
+      />
+    </div>
+  );
+}, placedTokenPropsAreEqual);
+
+const trayTokenPropsAreEqual = (prev, next) => {
+  if (
+    prev.tokenSizePx !== next.tokenSizePx ||
+    prev.instanceNum !== next.instanceNum ||
+    prev.isMyCharacter !== next.isMyCharacter ||
+    prev.isDragging !== next.isDragging ||
+    prev.isPinned !== next.isPinned ||
+    prev.isProxy !== next.isProxy ||
+    prev.isOtherMapShelf !== next.isOtherMapShelf ||
+    prev.onPointerDown !== next.onPointerDown ||
+    prev.onPointerMove !== next.onPointerMove ||
+    prev.onPointerUp !== next.onPointerUp
+  ) {
+    return false;
+  }
+  return tokenElementFieldsEqual(prev.element, next.element);
+};
+
+/** Memoized wrapper for a token sitting in the left/right trays (see `PlacedToken`). */
+const TrayToken = memo(function TrayTokenRaw({
+  element,
+  instanceNum,
+  isMyCharacter,
+  isProxy,
+  isOtherMapShelf,
+  isDragging,
+  isPinned,
+  tokenSizePx,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}) {
+  return (
+    <div
+      style={{ touchAction: 'none' }}
+      onPointerDown={(e) => onPointerDown(e, element, true)}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      <TokenCircle
+        element={element}
+        size={tokenSizePx}
+        instanceNum={instanceNum}
+        isMyCharacter={isMyCharacter}
+        isDragging={isDragging}
+        isPinned={isPinned}
+        isProxy={isProxy}
+        isOtherMapShelf={isOtherMapShelf}
+      />
+    </div>
+  );
+}, trayTokenPropsAreEqual);
+
 // ─── TokenDetailPanel ────────────────────────────────────────────────────────
 
 function TokenDetailPanel({
@@ -1173,24 +1325,20 @@ function TrayColumn({ tokens, side, isHighlighted, trayRef, tokenSizePx, dragRef
       style={{ width: tokenSizePx + 16, minHeight: 0 }}
     >
       {tokens.map(({ element, instanceNum, isMyCharacter, isProxy, isOtherMapShelf }) => (
-        <div
+        <TrayToken
           key={element.instanceId}
-          style={{ touchAction: 'none' }}
-          onPointerDown={e => onPointerDown(e, element, true)}
+          element={element}
+          instanceNum={instanceNum}
+          isMyCharacter={isMyCharacter}
+          isProxy={isProxy}
+          isOtherMapShelf={isOtherMapShelf}
+          isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
+          isPinned={pinnedInstanceId === element.instanceId}
+          tokenSizePx={tokenSizePx}
+          onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-        >
-          <TokenCircle
-            element={element}
-            size={tokenSizePx}
-            instanceNum={instanceNum}
-            isMyCharacter={isMyCharacter}
-            isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
-            isPinned={pinnedInstanceId === element.instanceId}
-            isProxy={isProxy}
-            isOtherMapShelf={isOtherMapShelf}
-          />
-        </div>
+        />
       ))}
     </div>
   );
@@ -1287,6 +1435,23 @@ export function BattleMap({
   const leftTrayRef = useRef(null);
   const rightTrayRef = useRef(null);
   const dragRef = useRef(null);
+  /**
+   * Latest drag pointer handlers (`handlePointerDown`/`handlePointerMove`/`handlePointerUp`), kept fresh
+   * every render. `stableOnPointerDown`/`stableOnPointerMove`/`stableOnPointerUp` below proxy through this
+   * ref so `PlacedToken`/`TrayToken` always receive referentially-stable callback props — otherwise the
+   * handlers' own dependency churn (e.g. `instanceNumbers` recomputing on any `activeElements` change)
+   * would break token memoization on every SSE update.
+   */
+  const handlersRef = useRef({ handlePointerDown: null, handlePointerMove: null, handlePointerUp: null });
+  const stableOnPointerDown = useCallback((e, element, fromTray) => {
+    handlersRef.current.handlePointerDown?.(e, element, fromTray);
+  }, []);
+  const stableOnPointerMove = useCallback((e) => {
+    handlersRef.current.handlePointerMove?.(e);
+  }, []);
+  const stableOnPointerUp = useCallback((e) => {
+    handlersRef.current.handlePointerUp?.(e);
+  }, []);
   /** After shelf click switches map, center the viewport on that character once `activeMapIdResolved` matches. */
   const pendingShelfNavigateCenterInstanceIdRef = useRef(null);
   const mapPingTapRef = useRef(null);
@@ -1494,6 +1659,14 @@ export function BattleMap({
   const viewZoom = mapAiPreviewActive ? minZoom : mapZoom;
   const viewPanLeft = mapAiPreviewActive ? 0 : mapPanLeft;
   const viewPanTop = mapAiPreviewActive ? 0 : mapPanTop;
+
+  /**
+   * Snapshot of the current pan/zoom, read by `clientToFt`/`handlePointerDown`/`handlePointerUp` instead of
+   * closing over `viewZoom`/`viewPanLeft`/`viewPanTop` directly — keeps those callbacks referentially stable
+   * while panning/zooming (see `PlacedToken`/`TrayToken` memoization above).
+   */
+  const viewStateRef = useRef({ viewZoom, viewPanLeft, viewPanTop });
+  viewStateRef.current = { viewZoom, viewPanLeft, viewPanTop };
 
   /** Clips map to shared `mapViewVisibleNorm` rect (players / saved cameras); null for GM live view. */
   const [mapLetterboxClipPx, setMapLetterboxClipPx] = useState(null);
@@ -2426,11 +2599,12 @@ export function BattleMap({
   const clientToFt = useCallback((clientX, clientY) => {
     const container = scrollContainerRef.current;
     if (!container) return null;
+    const { viewZoom: vz, viewPanLeft: vpl, viewPanTop: vpt } = viewStateRef.current;
     const rect = container.getBoundingClientRect();
-    const mapX = (clientX - rect.left + viewPanLeft) / viewZoom;
-    const mapY = (clientY - rect.top + viewPanTop) / viewZoom;
+    const mapX = (clientX - rect.left + vpl) / vz;
+    const mapY = (clientY - rect.top + vpt) / vz;
     return { x: mapX / pxPerFt, y: mapY / pxPerFt };
-  }, [pxPerFt, viewZoom, viewPanLeft, viewPanTop]);
+  }, [pxPerFt]);
 
   const handleGmSetActiveView = useCallback(
     (viewId) => {
@@ -3611,9 +3785,10 @@ export function BattleMap({
     if (!fromTray && element.tokenX != null) {
       const container = scrollContainerRef.current;
       if (container) {
+        const { viewZoom: vz, viewPanLeft: vpl, viewPanTop: vpt } = viewStateRef.current;
         const rect = container.getBoundingClientRect();
-        const tokenClientX = element.tokenX * pxPerFt * viewZoom - viewPanLeft + rect.left;
-        const tokenClientY = element.tokenY * pxPerFt * viewZoom - viewPanTop + rect.top;
+        const tokenClientX = element.tokenX * pxPerFt * vz - vpl + rect.left;
+        const tokenClientY = element.tokenY * pxPerFt * vz - vpt + rect.top;
         grabOffsetX = Math.max(0, Math.min(tokenSize, e.clientX - tokenClientX));
         grabOffsetY = Math.max(0, Math.min(tokenSize, e.clientY - tokenClientY));
       }
@@ -3642,7 +3817,7 @@ export function BattleMap({
           ? { tokenX: element.tokenX, tokenY: element.tokenY }
           : null,
     };
-  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, trayTokenSizePx, tokenSizePx, pxPerFt, viewZoom, viewPanLeft, viewPanTop, parentByInstanceId]);
+  }, [canDrag, instanceNumbers, isMyCharacter, isPlayer, trayTokenSizePx, tokenSizePx, pxPerFt, parentByInstanceId]);
 
   const handlePointerMove = useCallback((e) => {
     const ds = dragRef.current;
@@ -3748,13 +3923,14 @@ export function BattleMap({
     // Dropped on map?
     const container = scrollContainerRef.current;
     if (container) {
+      const { viewZoom: vz, viewPanLeft: vpl, viewPanTop: vpt } = viewStateRef.current;
       const rect = container.getBoundingClientRect();
       // Subtract grab offset so the token's top-left lands where the ghost was,
       // not where the raw cursor was.
       const mapX =
-        (e.clientX - rect.left + viewPanLeft) / viewZoom - (ds.grabOffsetX ?? ds.tokenSize / 2);
+        (e.clientX - rect.left + vpl) / vz - (ds.grabOffsetX ?? ds.tokenSize / 2);
       const mapY =
-        (e.clientY - rect.top + viewPanTop) / viewZoom - (ds.grabOffsetY ?? ds.tokenSize / 2);
+        (e.clientY - rect.top + vpt) / vz - (ds.grabOffsetY ?? ds.tokenSize / 2);
       const ftX = mapX / pxPerFt;
       const ftY = mapY / pxPerFt;
 
@@ -3784,7 +3960,10 @@ export function BattleMap({
         });
       }
     }
-  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, viewZoom, viewPanLeft, viewPanTop, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap]);
+  }, [isPlayer, pxPerFt, mapWidthFt, mapHeightFt, updateActiveElement, pinnedToken, activeElements, onTokenDragEnd, canControlMapView, centerMapOnPlacedActor, activeMapIdResolved, navigateShelfToCharacterMap]);
+
+  /** Keep the stable proxy callbacks (declared earlier) pointed at the latest handler closures. */
+  handlersRef.current = { handlePointerDown, handlePointerMove, handlePointerUp };
 
   // Dismiss detail panel when clicking outside
   const handleMapClick = useCallback((e) => {
@@ -4342,9 +4521,9 @@ export function BattleMap({
                 trayRef={null}
                 tokenSizePx={trayTokenSizePx}
                 dragRef={dragRef}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
+                onPointerDown={stableOnPointerDown}
+                onPointerMove={stableOnPointerMove}
+                onPointerUp={stableOnPointerUp}
                 pinnedInstanceId={pinnedToken?.element.instanceId}
               />
             </div>
@@ -4874,36 +5053,22 @@ export function BattleMap({
               {charMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
-                const p = MAP_TOKEN_HIT_PADDING_PX;
                 return (
-                <div
-                  key={element.instanceId}
-                  className="absolute"
-                  style={{
-                    left: element.tokenX * pxPerFt - p,
-                    top: element.tokenY * pxPerFt - p,
-                    padding: p,
-                    width: tokenSizePx + 2 * p,
-                    height: tokenSizePx + 2 * p,
-                    boxSizing: 'border-box',
-                    touchAction: 'none',
-                    zIndex: 10 + stackIdx,
-                  }}
-                  onPointerDown={e => handlePointerDown(e, element, false)}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                >
-                  <TokenCircle
+                  <PlacedToken
+                    key={element.instanceId}
                     element={element}
-                    size={tokenSizePx}
-                    instanceNum={null}
                     isMyCharacter={myChar}
                     isPlayer={isPlayer}
                     isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
                     rangeBand={rangeBand}
+                    zIndex={10 + stackIdx}
+                    pxPerFt={pxPerFt}
+                    tokenSizePx={tokenSizePx}
+                    onPointerDown={stableOnPointerDown}
+                    onPointerMove={stableOnPointerMove}
+                    onPointerUp={stableOnPointerUp}
                   />
-                </div>
                 );
               })}
 
@@ -4911,36 +5076,22 @@ export function BattleMap({
               {boardMapTokens.map(({ element, isMyCharacter: myChar }, stackIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = bandIdx != null && bandIdx >= 0 ? RANGE_BANDS[bandIdx] : null;
-                const p = MAP_TOKEN_HIT_PADDING_PX;
                 return (
-                  <div
+                  <PlacedToken
                     key={element.instanceId}
-                    className="absolute"
-                    style={{
-                      left: element.tokenX * pxPerFt - p,
-                      top: element.tokenY * pxPerFt - p,
-                      padding: p,
-                      width: tokenSizePx + 2 * p,
-                      height: tokenSizePx + 2 * p,
-                      boxSizing: 'border-box',
-                      touchAction: 'none',
-                      zIndex: 10 + charMapTokens.length + stackIdx,
-                    }}
-                    onPointerDown={(e) => handlePointerDown(e, element, false)}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                  >
-                    <TokenCircle
-                      element={element}
-                      size={tokenSizePx}
-                      instanceNum={null}
-                      isMyCharacter={myChar}
-                      isPlayer={isPlayer}
-                      isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
-                      isPinned={pinnedToken?.element.instanceId === element.instanceId}
-                      rangeBand={rangeBand}
-                    />
-                  </div>
+                    element={element}
+                    isMyCharacter={myChar}
+                    isPlayer={isPlayer}
+                    isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
+                    isPinned={pinnedToken?.element.instanceId === element.instanceId}
+                    rangeBand={rangeBand}
+                    zIndex={10 + charMapTokens.length + stackIdx}
+                    pxPerFt={pxPerFt}
+                    tokenSizePx={tokenSizePx}
+                    onPointerDown={stableOnPointerDown}
+                    onPointerMove={stableOnPointerMove}
+                    onPointerUp={stableOnPointerUp}
+                  />
                 );
               })}
 
@@ -4948,36 +5099,23 @@ export function BattleMap({
               {advMapTokens.map(({ element, instanceNum }, advIdx) => {
                 const bandIdx = tokenRangeBands[element.instanceId];
                 const rangeBand = (bandIdx != null && bandIdx >= 0) ? RANGE_BANDS[bandIdx] : null;
-                const p = MAP_TOKEN_HIT_PADDING_PX;
                 return (
-                <div
-                  key={element.instanceId}
-                  className="absolute"
-                  style={{
-                    left: element.tokenX * pxPerFt - p,
-                    top: element.tokenY * pxPerFt - p,
-                    padding: p,
-                    width: tokenSizePx + 2 * p,
-                    height: tokenSizePx + 2 * p,
-                    boxSizing: 'border-box',
-                    touchAction: 'none',
-                    zIndex: 10 + charMapTokens.length + boardMapTokens.length + advIdx,
-                  }}
-                  onPointerDown={e => handlePointerDown(e, element, false)}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                >
-                  <TokenCircle
+                  <PlacedToken
+                    key={element.instanceId}
                     element={element}
-                    size={tokenSizePx}
-                    instanceNum={instanceNum}
                     isMyCharacter={false}
                     isPlayer={isPlayer}
                     isDragging={dragRef.current?.instanceId === element.instanceId && dragRef.current?.isDragging}
                     isPinned={pinnedToken?.element.instanceId === element.instanceId}
+                    instanceNum={instanceNum}
                     rangeBand={rangeBand}
+                    zIndex={10 + charMapTokens.length + boardMapTokens.length + advIdx}
+                    pxPerFt={pxPerFt}
+                    tokenSizePx={tokenSizePx}
+                    onPointerDown={stableOnPointerDown}
+                    onPointerMove={stableOnPointerMove}
+                    onPointerUp={stableOnPointerUp}
                   />
-                </div>
                 );
               })}
 
@@ -5093,9 +5231,9 @@ export function BattleMap({
             trayRef={rightTrayRef}
             tokenSizePx={trayTokenSizePx}
             dragRef={dragRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
+            onPointerDown={stableOnPointerDown}
+            onPointerMove={stableOnPointerMove}
+            onPointerUp={stableOnPointerUp}
             pinnedInstanceId={pinnedToken?.element.instanceId}
           />
         )}
