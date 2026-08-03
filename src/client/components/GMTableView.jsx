@@ -5729,6 +5729,9 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
             <span className="text-[11px] font-medium text-dh-muted">Support this table</span>
           </button>
 
+          {/* Bug report — visible to GM and all players, never interrupts play */}
+          <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} isPlayer={isPlayer} />
+
           {/* Table-not-live error — shown only when session start is blocked */}
           {tableNotLiveError && !isPlayer && (
             <div
@@ -6649,8 +6652,6 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
               return count > 0 ? <span className="text-[10px] text-dh-muted tabular-nums">{count}</span> : null;
             })()}
           </div>
-          {/* Bug report — GM only, never interrupts play */}
-          <BugReportButton tableId={tableId} actionLog={actionLog} activeElements={activeElements} />
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">

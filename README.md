@@ -92,7 +92,7 @@ DaggerheartGM/
 │   │   │   ├── AuthLanding.jsx        # Home: email/password, forgot password, Google; Firebase account linking when needed
 │   │   │   ├── DiceRoller.jsx         # 3D dice visualization overlay — parallel banner strip, serial dice animation, imperative API
 │   │   │   ├── SessionBlockedBanner.jsx # Prep / idle-pause hint — portaled from app.jsx when !sessionPlayAllowed
-│   │   │   ├── BugReportButton.jsx    # T13: GM-only, non-blocking "Report a problem" button in the Encounter panel; captures recent action log, active-element summary, current route, and console-error ring buffer; POSTs to POST /api/room/my/bug-report; shows a brief auto-dismiss toast (never a modal)
+│   │   │   ├── BugReportButton.jsx    # T13: non-blocking "Report a problem" button in the shared Characters panel (visible to GM and all invited players); clicking opens an inline optional-notes composer — Enter sends immediately (with or without text), Escape cancels; captures recent action log, active-element summary, current route, and console-error ring buffer; GM posts to POST /api/room/my/bug-report, players post to POST /api/room/:tableId/bug-report; shows a brief auto-dismiss toast (never a modal)
 │   │   │   ├── SupportTableModal.jsx  # T10: "Support this table" / Gift a Campaign Pass modal; shows billing status + 3/6/12-month picker; also anchors T14 expired banner and T11 session-start error UI
 │   │   │   ├── ActionLog.jsx            # Action/roll history strip above the BattleMap (no polling)
 │   │   │   ├── BattleMap.jsx          # Custom battle map with draggable tokens, trays, and click-to-pin detail panels

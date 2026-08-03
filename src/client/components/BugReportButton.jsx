@@ -1,12 +1,19 @@
 /**
- * BugReportButton — GM-only, non-interrupting in-session bug capture (T13).
+ * BugReportButton — non-blocking in-session bug capture (T13, extended).
  *
- * On click: captures a client-side state snapshot and POSTs it to
- * POST /api/room/my/bug-report. Shows a brief, auto-dismissing toast.
+ * Available to both GMs and invited players from the shared Characters panel.
+ * On click: opens an inline single-line notes input (optional). Pressing Enter
+ * (with or without text) or clicking the send button submits the report.
+ * Escape collapses the composer without sending.
+ *
+ * Posts to:
+ *   GM    → POST /api/room/my/bug-report   (body.tableId)
+ *   Player → POST /api/room/:tableId/bug-report
+ *
  * Never uses window.confirm or a blocking modal — play is never paused.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Bug } from 'lucide-react';
+import { Bug, Send, X } from 'lucide-react';
 import { getAuthToken } from '../lib/api.js';
 
 /** Ring buffer of recent console.error calls. Installed once globally. */
@@ -25,20 +32,45 @@ function installConsoleErrorInterceptor() {
   };
 }
 
-export function BugReportButton({ tableId, actionLog = [], activeElements = [] }) {
-  const [status, setStatus] = useState(null); // null | 'sending' | 'ok' | 'error'
+export function BugReportButton({ tableId, actionLog = [], activeElements = [], isPlayer = false }) {
+  const [status, setStatus] = useState(null); // null | 'composing' | 'sending' | 'ok' | 'error'
+  const [notes, setNotes] = useState('');
   const toastTimerRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     installConsoleErrorInterceptor();
   }, []);
 
-  const handleClick = useCallback(async () => {
+  // Auto-focus the input when the composer opens.
+  useEffect(() => {
+    if (status === 'composing') {
+      inputRef.current?.focus();
+    }
+  }, [status]);
+
+  const handleOpenComposer = useCallback(() => {
+    if (status === 'sending') return;
+    setStatus('composing');
+  }, [status]);
+
+  const handleCancel = useCallback(() => {
+    setStatus(null);
+    setNotes('');
+  }, []);
+
+  const handleSubmit = useCallback(async (e) => {
+    e?.preventDefault();
     if (status === 'sending') return;
     setStatus('sending');
 
+    const url = isPlayer
+      ? `/api/room/${tableId}/bug-report`
+      : '/api/room/my/bug-report';
+
     const payload = {
       tableId,
+      notes: notes.trim() || null,
       route: typeof window !== 'undefined' ? window.location.href : null,
       recentActionLog: (actionLog || []).slice(-20).map(r => ({
         timestamp: r.timestamp,
@@ -64,7 +96,7 @@ export function BugReportButton({ tableId, actionLog = [], activeElements = [] }
 
     try {
       const token = await getAuthToken();
-      const res = await fetch('/api/room/my/bug-report', {
+      const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -73,6 +105,7 @@ export function BugReportButton({ tableId, actionLog = [], activeElements = [] }
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setNotes('');
       setStatus('ok');
     } catch (err) {
       console.warn('[BugReportButton] submit failed:', err);
@@ -81,15 +114,50 @@ export function BugReportButton({ tableId, actionLog = [], activeElements = [] }
       clearTimeout(toastTimerRef.current);
       toastTimerRef.current = setTimeout(() => setStatus(null), 3000);
     }
-  }, [tableId, actionLog, activeElements, status]);
+  }, [tableId, isPlayer, actionLog, activeElements, notes, status]);
 
   useEffect(() => () => clearTimeout(toastTimerRef.current), []);
+
+  if (status === 'composing') {
+    return (
+      <form
+        onSubmit={handleSubmit}
+        className="flex items-center gap-1 rounded px-1 py-1"
+      >
+        <Bug size={11} className="shrink-0 text-dh-muted" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); handleCancel(); } }}
+          placeholder="Notes (optional) — Enter to send"
+          className="min-w-0 flex-1 rounded bg-dh-inset px-1.5 py-0.5 text-[10px] text-dh placeholder:text-dh-muted/60 outline-none border border-dh-border focus:border-dh-strong"
+        />
+        <button
+          type="submit"
+          title="Send report"
+          className="shrink-0 rounded p-0.5 text-dh-muted hover:text-emerald-400 hover:bg-dh-hover/60 transition-colors"
+        >
+          <Send size={10} />
+        </button>
+        <button
+          type="button"
+          title="Cancel"
+          onClick={handleCancel}
+          className="shrink-0 rounded p-0.5 text-dh-muted hover:text-red-400 hover:bg-dh-hover/60 transition-colors"
+        >
+          <X size={10} />
+        </button>
+      </form>
+    );
+  }
 
   return (
     <div className="relative">
       <button
         type="button"
-        onClick={handleClick}
+        onClick={handleOpenComposer}
         disabled={status === 'sending'}
         title="Report a problem — captures a snapshot of your current session for triage"
         className={`flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px] font-medium transition-colors w-full

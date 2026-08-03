@@ -2886,29 +2886,23 @@ app.post('/api/room/my/roll', requireAuth, async (req, res) => {
   res.json(rollData);
 });
 
-// POST /api/room/my/bug-report — GM-only, append-only. Captures a client-side state snapshot
-// (active elements, recent rolls, console errors, current route) for later triage. Never
-// interrupts play: fire-and-forget on the client, no modal or blocking UX required.
-app.post('/api/room/my/bug-report', requireAuth, async (req, res) => {
-  const { tableId: bodyTableId, ...payload } = req.body;
-  const tableId = bodyTableId || req.uid;
-
-  // Ownership check — only the table's GM can file a bug report against it.
+/** Shared helper: insert a bug report row (or log to stdout when no DB). */
+async function insertBugReport(res, { tableId, gmUid, reporterUid, reporterEmail, reporterRole, payload, userAgent }) {
+  const enriched = {
+    ...payload,
+    _reportedByUid: reporterUid,
+    _reportedByEmail: reporterEmail,
+    _reportedByRole: reporterRole,
+    _serverTimestamp: new Date().toISOString(),
+    _userAgent: userAgent,
+  };
   if (process.env.DATABASE_URL) {
-    const row = await getTableStateById(APP_ID, tableId);
-    if (!row || row.userId !== req.uid) {
-      return res.status(403).json({ error: 'Not your table' });
-    }
     try {
       const db = getPool();
       const { rows } = await db.query(
         `INSERT INTO bug_reports (app_id, gm_uid, table_id, payload)
          VALUES ($1, $2, $3, $4) RETURNING id`,
-        [APP_ID, req.uid, tableId, JSON.stringify({
-          ...payload,
-          _serverTimestamp: new Date().toISOString(),
-          _userAgent: req.headers['user-agent'],
-        })]
+        [APP_ID, gmUid, tableId, JSON.stringify(enriched)]
       );
       return res.json({ ok: true, id: rows[0].id });
     } catch (err) {
@@ -2916,10 +2910,49 @@ app.post('/api/room/my/bug-report', requireAuth, async (req, res) => {
       return res.status(500).json({ error: 'Failed to save bug report' });
     }
   }
+  console.info('[bug-report]', JSON.stringify({ gmUid, tableId, reporterRole, ...enriched }, null, 2));
+  return res.json({ ok: true, id: null });
+}
 
-  // When DATABASE_URL is not set (test / local dev without DB), log to server stdout.
-  console.info('[bug-report]', JSON.stringify({ gmUid: req.uid, tableId, ...payload }, null, 2));
-  res.json({ ok: true, id: null });
+// POST /api/room/my/bug-report — GM-owned table, append-only. Captures a client-side state
+// snapshot for later triage. Never interrupts play: fire-and-forget on the client.
+app.post('/api/room/my/bug-report', requireAuth, async (req, res) => {
+  const { tableId: bodyTableId, ...payload } = req.body;
+  const tableId = bodyTableId || req.uid;
+
+  if (process.env.DATABASE_URL) {
+    const row = await getTableStateById(APP_ID, tableId);
+    if (!row || row.userId !== req.uid) {
+      return res.status(403).json({ error: 'Not your table' });
+    }
+  }
+  return insertBugReport(res, {
+    tableId,
+    gmUid: req.uid,
+    reporterUid: req.uid,
+    reporterEmail: req.email,
+    reporterRole: 'gm',
+    payload,
+    userAgent: req.headers['user-agent'],
+  });
+});
+
+// POST /api/room/:tableId/bug-report — GM or invited player, append-only. Same purpose as the
+// GM route above; accessible via the shared Characters panel in both GM and player views.
+app.post('/api/room/:tableId/bug-report', requireAuth, async (req, res) => {
+  const ctx = await resolveTableAccess(APP_ID, req.params.tableId, req);
+  if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+  const { tableId, gmUid } = ctx;
+  const { tableId: _ignored, ...payload } = req.body;
+  return insertBugReport(res, {
+    tableId,
+    gmUid,
+    reporterUid: req.uid,
+    reporterEmail: req.email,
+    reporterRole: req.uid === gmUid ? 'gm' : 'player',
+    payload,
+    userAgent: req.headers['user-agent'],
+  });
 });
 
 // POST /api/room/my/action — GM persists an action notification; clients learn of it via the banners subscription.
