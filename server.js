@@ -2432,14 +2432,12 @@ app.get('/api/campaign-pass/status', requireAuth, async (req, res) => {
 
 // ── Stripe Checkout ────────────────────────────────────────────────────────────
 
-// POST /api/campaign-pass/checkout — Create a Stripe Checkout Session for a Campaign Pass.
+// POST /api/campaign-pass/checkout — Create a Stripe Checkout Session for a Campaign Pass,
+// or instantly grant one for free when the requester is in ADMIN_EMAILS.
 // Requires: { tableId, months } — months must be 3, 6, or 12.
 // Requester must be the table owner or an invited player (gift purchase allowed).
-// Returns: { checkoutUrl }
+// Returns: { checkoutUrl } for normal users, or { granted: true, isLive, paidThroughAt } for admins.
 app.post('/api/campaign-pass/checkout', requireAuth, async (req, res) => {
-  if (!isStripeConfigured()) {
-    return res.status(503).json({ error: 'Payment processing is not configured (STRIPE_SECRET_KEY missing)' });
-  }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ error: 'Database required' });
   }
@@ -2456,6 +2454,27 @@ app.post('/api/campaign-pass/checkout', requireAuth, async (req, res) => {
   // Validate requester has access to this table (owner or invited player — gifting allowed).
   const ctx = await resolveTableAccess(APP_ID, tableId, req);
   if (ctx.error) return res.status(ctx.error).json({ error: ctx.message });
+
+  // Admin bypass: skip Stripe entirely and grant the pass for free.
+  if (ADMIN_EMAILS.includes(req.email?.toLowerCase())) {
+    try {
+      const syntheticSessionId = `admin-grant-${randomUUID()}`;
+      const isNewPurchase = await recordCampaignPassPurchase(APP_ID, tableId, req.uid, syntheticSessionId, null, months, 0);
+      if (isNewPurchase) {
+        await extendTableCampaignPass(APP_ID, tableId, months, 0);
+        console.log(`[billing] Admin free grant: table=${tableId} +${months}mo by=${req.uid}`);
+      }
+      const liveness = await checkTableIsLive(APP_ID, tableId, ctx.gmUid || req.uid);
+      return res.json({ granted: true, isLive: liveness.live, paidThroughAt: liveness.paidThroughAt ?? null });
+    } catch (err) {
+      console.error('POST /api/campaign-pass/checkout (admin grant) error:', err);
+      return res.status(500).json({ error: err.message || 'Failed to grant pass' });
+    }
+  }
+
+  if (!isStripeConfigured()) {
+    return res.status(503).json({ error: 'Payment processing is not configured (STRIPE_SECRET_KEY missing)' });
+  }
 
   const priceId = getCampaignPassPriceId(months);
   if (!priceId) {

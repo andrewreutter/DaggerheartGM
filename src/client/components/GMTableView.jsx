@@ -546,6 +546,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   onMapFreeExplore,
   onForcePlayersToMapView,
   onBattleMapViewportAspectChange,
+  isAdmin = false,
 }) {
   const { hideAiUi } = useAiUiPreference();
   const showConceptAiUi = shouldShowConceptAiUi(conceptAiEnabled, hideAiUi);
@@ -7957,6 +7958,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
       tableId={tableId}
       tableName={tableName}
       gmDisplayName={gmDisplayName || (user?.displayName || user?.email || 'the GM')}
+      isAdmin={isAdmin}
     />
 
     {lightboxUrl && (

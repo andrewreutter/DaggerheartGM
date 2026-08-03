@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useId } from 'react';
-import { Heart, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Heart, CheckCircle, Clock, AlertCircle, ShieldCheck } from 'lucide-react';
 import { FullPageOverlay, FullPageOverlayHeader } from './FullPageOverlay.jsx';
 import { fetchTableBillingStatus, postCampaignPassCheckout } from '../lib/api.js';
 
@@ -98,8 +98,9 @@ function BillingStatusPill({ billing, loading }) {
  *   tableId         — which table to purchase for
  *   tableName       — display name of the table
  *   gmDisplayName   — display name of the GM
+ *   isAdmin         — when true, the Purchase button grants a free pass (admin bypass, no Stripe)
  */
-export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplayName }) {
+export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplayName, isAdmin = false }) {
   const titleId = useId();
 
   const [selectedMonths, setSelectedMonths] = useState(6);
@@ -107,6 +108,7 @@ export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplay
   const [billingLoading, setBillingLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState(null);
+  const [grantSuccess, setGrantSuccess] = useState(false);
 
   const loadBilling = useCallback(() => {
     if (!tableId) return;
@@ -118,16 +120,27 @@ export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplay
   }, [tableId]);
 
   useEffect(() => {
-    if (open && tableId) loadBilling();
+    if (open && tableId) {
+      loadBilling();
+      setGrantSuccess(false);
+    }
   }, [open, tableId, loadBilling]);
 
   const handleCheckout = async () => {
     if (!tableId || checkoutLoading) return;
     setCheckoutError(null);
+    setGrantSuccess(false);
     setCheckoutLoading(true);
     try {
-      const { checkoutUrl } = await postCampaignPassCheckout(tableId, selectedMonths);
-      window.location.href = checkoutUrl;
+      const result = await postCampaignPassCheckout(tableId, selectedMonths);
+      if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+        return;
+      }
+      // Admin free grant — no redirect; refresh billing status in place.
+      setCheckoutLoading(false);
+      setGrantSuccess(true);
+      loadBilling();
     } catch (err) {
       setCheckoutError(err.message || 'Something went wrong. Please try again.');
       setCheckoutLoading(false);
@@ -203,7 +216,17 @@ export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplay
           </div>
         )}
 
-        {/* Checkout button */}
+        {/* Admin grant success confirmation */}
+        {grantSuccess && (
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-700/50 bg-emerald-950/30 px-3 py-2" role="status">
+            <CheckCircle size={14} className="shrink-0 text-emerald-400" aria-hidden />
+            <p className="text-[12px] text-emerald-300">
+              Pass granted — {PASS_LABELS[selectedMonths]} added to this table.
+            </p>
+          </div>
+        )}
+
+        {/* Checkout / grant button */}
         <button
           type="button"
           onClick={handleCheckout}
@@ -211,12 +234,16 @@ export function SupportTableModal({ open, onClose, tableId, tableName, gmDisplay
           className="w-full rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {checkoutLoading
-            ? 'Redirecting to checkout…'
-            : `Purchase ${PASS_LABELS[selectedMonths]} — $${PASS_PRICES[selectedMonths]}`}
+            ? (isAdmin ? 'Granting pass…' : 'Redirecting to checkout…')
+            : isAdmin
+              ? `Grant ${PASS_LABELS[selectedMonths]} (Admin)`
+              : `Purchase ${PASS_LABELS[selectedMonths]} — $${PASS_PRICES[selectedMonths]}`}
         </button>
 
         <p className="text-center text-[11px] text-dh-muted">
-          Secure checkout via Stripe. One-time payment — never a subscription.
+          {isAdmin
+            ? <span className="flex items-center justify-center gap-1"><ShieldCheck size={11} aria-hidden />Admin grant — no payment required.</span>
+            : 'Secure checkout via Stripe. One-time payment — never a subscription.'}
         </p>
       </div>
     </FullPageOverlay>

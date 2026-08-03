@@ -2048,6 +2048,7 @@ function App() {
                 onSetMapOverlay={!effectiveIsPlayer ? sendSetMapOverlay : undefined}
                 onSetMapViewOverlay={!effectiveIsPlayer ? sendSetMapViewOverlay : undefined}
                 onBattleMapViewportAspectChange={setBattleMapViewportAspect}
+                isAdmin={isAdmin}
               />
             </div>
           </>

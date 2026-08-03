@@ -342,6 +342,66 @@ test('T18: full keyboard-only pass through the Support-this-table flow', async (
   await expect(trigger).toBeFocused();
 });
 
+test('Admin free grant: button shows admin copy and grants pass without redirect', async ({ page }) => {
+  await authenticate(page);
+  await mockMyTables(page);
+
+  // Override /api/me to report this user as an admin.
+  await page.route('/api/me', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ isAdmin: true, isQa: false }),
+    });
+  });
+
+  // The table starts with an expired billing status so the modal is accessible.
+  await mockBillingStatus(page, {
+    isLive: false,
+    reason: 'trial_expired',
+    trialEndsAt: new Date(Date.now() - 1000).toISOString(),
+    paidThroughAt: null,
+  });
+  await mockGmStream(page);
+  await page.goto('/table/test-user-uid');
+
+  // Mock the checkout endpoint to return the admin-grant shape (no checkoutUrl).
+  const paidThroughAt = new Date(Date.now() + 90 * 86400000).toISOString();
+  await page.route('/api/campaign-pass/checkout', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ granted: true, isLive: true, paidThroughAt }),
+    });
+  });
+
+  // After granting, billing status refreshes with the new pass.
+  await page.route('/api/campaign-pass/status*', (route) => {
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ isLive: true, reason: 'campaign_pass', paidThroughAt, trialEndsAt: null }),
+    });
+  });
+
+  // Open the Support this table modal.
+  await expect(page.locator('button', { hasText: 'Support this table' })).toBeVisible({ timeout: 10000 });
+  await page.locator('button', { hasText: 'Support this table' }).click();
+  await expect(page.locator('text=Gift a Campaign Pass')).toBeVisible({ timeout: 5000 });
+
+  // The purchase button should show admin copy (no dollar sign / "Purchase").
+  const grantButton = page.locator('button', { hasText: /Grant.*Admin/i });
+  await expect(grantButton).toBeVisible({ timeout: 3000 });
+  await expect(page.locator('text=Admin grant')).toBeVisible();
+
+  // Click the grant button — should NOT navigate away (no checkoutUrl redirect).
+  const initialUrl = page.url();
+  await grantButton.click();
+
+  // A success confirmation should appear.
+  await expect(page.locator('text=Pass granted')).toBeVisible({ timeout: 5000 });
+
+  // URL should be unchanged — no Stripe redirect.
+  expect(page.url()).toBe(initialUrl);
+});
+
 test('T15: ambient billing indicator shows in user menu trigger', async ({ page }) => {
   await authenticate(page);
   await mockMyTables(page);
