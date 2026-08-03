@@ -795,12 +795,16 @@ export function buildV2BannerGameState(opts) {
  *   tableFeatureState?: object,
  *   dedupeFeatureNames?: Set<string>,
  *   viewer?: { role: 'gm' | 'player', viewerCharacterInstanceId?: string | null },
+ *   preloaded?: { activeForLoader: object[], registry: object, features: object[] },
  * }} opts
  * When `viewer` is omitted, pass-1 chips are unfiltered (legacy tests) and cross-sheet runs for PC targets plus PC actor.
  * When `viewer.role === 'gm'`, cross-sheet is skipped (pass-1 lists all unwrapped chips for the GM).
  * When `viewer.role === 'player'`, pass-1 is owner-scoped; cross-sheet runs for `viewerCharacterInstanceId`
  * **and** for the pending roll’s PC `actorInstanceId` when that differs (e.g. preview-as-player vs ally actor)
  * so `showOnOtherSheets` **`reviewAction`** chips (Rally, Rune Ward, …) see the correct `table.me` context.
+ * `preloaded` lets a caller looping over many pending banners for the same
+ * `(activeElements, srdData, fearCount, mapConfig, tableFeatureState)` build `activeForLoader` /
+ * `registry` / `features` once instead of once per banner (they don't depend on `roll`).
  * @returns {object[]} chips from **intent**, **reviewAction**, and **reviewOutcome** (tagged with `_v2Phase`)
  */
 export function collectV2ReviewActionChips(opts) {
@@ -813,6 +817,7 @@ export function collectV2ReviewActionChips(opts) {
     tableFeatureState,
     dedupeFeatureNames = V2_REVIEW_ACTION_PHASE1_DEDUPE,
     viewer,
+    preloaded,
   } = opts || {};
 
   if (!roll || !Array.isArray(activeElements) || !srdData) {
@@ -838,11 +843,11 @@ export function collectV2ReviewActionChips(opts) {
     return [];
   }
 
-  const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+  const activeForLoader = preloaded?.activeForLoader ?? expandTableCharactersAncestryForV2Loader(activeElements, srdData);
 
-  const registry = buildV2RegistryWithSrdItems(srdData);
+  const registry = preloaded?.registry ?? buildV2RegistryWithSrdItems(srdData);
   const featureOpts = { fearCount, mapConfig, tableFeatureState };
-  const features = loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
+  const features = preloaded?.features ?? loadAllV2FeaturesForTable(activeForLoader, registry, featureOpts);
   if (!features.length) {
     return [];
   }

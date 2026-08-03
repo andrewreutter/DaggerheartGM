@@ -160,6 +160,7 @@ import {
   collectV2RestPlacementChipsForCharacter,
   activateV2RestPlacementChip,
   expandTableCharactersAncestryForV2Loader,
+  loadAllV2FeaturesForTable,
 } from '../lib/v2-action-loop-bridge.js';
 import { buildV2ChipViewer } from '../lib/v2-chip-session-view.js';
 import { buildWeaponRollText } from '../lib/weapon-roll-text.js';
@@ -4610,7 +4611,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
   const tableDiff = tableBP - adjustedBudget;
   const tableDiffColor = tableDiff > 0 ? 'text-red-400' : tableDiff < 0 ? 'text-emerald-400' : 'text-dh-muted';
   const activeAutoMods = Object.values(tableAutoMods).filter(m => m.active);
-  const tableCharacters = activeElements.filter(e => e.elementType === 'character');
+  const tableCharacters = useMemo(
+    () => activeElements.filter(e => e.elementType === 'character'),
+    [activeElements]
+  );
   /** Session role + assigned PC + `viewer` for {@link collectV2ReviewActionChips} (single source of truth). */
   const chipViewer = useMemo(
     () => buildV2ChipViewer({ isPlayer, user, playerEmail, previewAsPlayerEmail, tableCharacters }),
@@ -4813,11 +4817,21 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     ],
   );
 
-  /** V2 engine `reviewAction` chips for pending banners (Phase 2 — keyed by `_rollDbId`). */
+  /**
+   * V2 engine `reviewAction` chips for pending banners (Phase 2 — keyed by `_rollDbId`).
+   * `activeForLoader`/`features` don't depend on any individual `roll`, only on
+   * `(activeElements, srdData, fearCount, mapConfig, tableFeatureState)` — build them once here
+   * and pass as `preloaded` so N pending banners don't each reload declarative features for every
+   * character on the table (was O(banners x characters x features); now O(characters x features)
+   * plus O(banners) chip collection).
+   */
   const v2ReviewChipsByRollDbId = useMemo(() => {
     const m = new Map();
-    if (!srdData) return m;
+    if (!srdData || !v2Registry || (pendingBanners || []).length === 0) return m;
     const { viewer } = chipViewer;
+    const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+    const features = loadAllV2FeaturesForTable(activeForLoader, v2Registry, { fearCount, mapConfig, tableFeatureState });
+    const preloaded = { activeForLoader, registry: v2Registry, features };
     for (const roll of pendingBanners || []) {
       const id = roll._rollDbId;
       if (id == null) continue;
@@ -4829,6 +4843,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
         mapConfig,
         tableFeatureState,
         viewer,
+        preloaded,
       });
       const consumed = v2BannerConsumedOnUseByRollDbId.get(id);
       const annotated = annotateV2ReviewChipsBannerConsumed(chips, consumed);
@@ -4839,6 +4854,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     pendingBanners,
     activeElements,
     srdData,
+    v2Registry,
     fearCount,
     mapConfig,
     tableFeatureState,
@@ -7420,6 +7436,10 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           ? resolveV2LibraryItemSourcePath('characters', itemForTitleBadge)
           : null;
       const sync = characterDrawerChromeSync;
+      // Only reuse the sidebar's precomputed merge when the sheet shows the live saved character —
+      // editor level-preview / unsaved formData overlays need their own recompute of `titleBarEl`.
+      const precomputedSheetDisplayEl =
+        titleBarEl === liveEl ? characterDisplayByInstanceId.get(liveEl.instanceId) : undefined;
       return (
         <div
           ref={characterOverlay.overlayRef}
@@ -7512,6 +7532,7 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
                     characters={wrappedPartyCharacters}
                     tableFeatureState={tableFeatureState}
                     tableId={tableId}
+                    precomputedDisplayEl={precomputedSheetDisplayEl}
                   />
                 );
               })()}

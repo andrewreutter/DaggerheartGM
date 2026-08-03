@@ -93,6 +93,7 @@ import {
   pickFirstImageFileFromDataTransfer,
 } from '../lib/map-image-drop.js';
 import { useUnifiedImport } from '../lib/unified-import-context.jsx';
+import { buildMapStripTileTokenSignature } from '../lib/map-strip-tile-signature.js';
 
 const MIN_PX_PER_FT = 33 / 5; // 6.6 px/ft — 5' token ≥ 33px touch target
 const DRAG_THRESHOLD_PX = 8;
@@ -459,7 +460,44 @@ function MapViewThumbInterior({ mapRow, viewState, mapOverlayPng, cameraOverlayP
 }
 
 /** Thumbnail tile for the maps + saved views strip (map switch or apply saved zoom/pan). */
-function MapViewStripTile({
+const mapViewStripTilePropsAreEqual = (prev, next) => {
+  if (
+    prev.mapRow !== next.mapRow ||
+    prev.viewState !== next.viewState ||
+    prev.mapOverlayPng !== next.mapOverlayPng ||
+    prev.cameraOverlayPng !== next.cameraOverlayPng ||
+    prev.label !== next.label ||
+    prev.isActive !== next.isActive ||
+    prev.broadcastHighlight !== next.broadcastHighlight ||
+    prev.onClick !== next.onClick ||
+    prev.onDoubleClick !== next.onDoubleClick ||
+    prev.variant !== next.variant ||
+    prev.actions !== next.actions ||
+    prev.interactive !== next.interactive ||
+    prev.showMapBadge !== next.showMapBadge ||
+    prev.showCameraBadge !== next.showCameraBadge ||
+    prev.hideCaption !== next.hideCaption ||
+    prev.captionAbove !== next.captionAbove ||
+    prev.tooltipTitle !== next.tooltipTitle ||
+    prev.stripMapId !== next.stripMapId
+  ) {
+    return false;
+  }
+  // `activeElements` gets a new identity on every SSE tick; compare a per-map token signature
+  // instead so unrelated ops (other map, adversary-only change on a different tile, etc.) don't
+  // force this tile to re-render and re-scan `activeElements` in `getThumbViewportTokenProxies`.
+  if (prev.activeElements === next.activeElements) return true;
+  return (
+    buildMapStripTileTokenSignature(prev.activeElements, prev.stripMapId) ===
+    buildMapStripTileTokenSignature(next.activeElements, next.stripMapId)
+  );
+};
+
+/**
+ * Memoized so the (up to ~6, 2 maps x 2 views) map/view strip tiles don't all re-render and
+ * re-scan `activeElements` on every SSE tick when nothing relevant to a given tile changed.
+ */
+const MapViewStripTile = memo(function MapViewStripTileRaw({
   mapRow,
   viewState,
   /** Draw-layer PNG (data URL) aligned to the map image; shown under camera overlay in the thumb. */
@@ -571,7 +609,7 @@ function MapViewStripTile({
       ) : null}
     </div>
   );
-}
+}, mapViewStripTilePropsAreEqual);
 
 // ─── TokenDotRing ─────────────────────────────────────────────────────────────
 
@@ -887,34 +925,38 @@ function TokenCircle({
   );
   const instLabel = isAdv && instanceNum != null ? `#${instanceNum}` : null;
 
-  // Build dot groups for border ring indicator
+  // Build dot groups for border ring indicator. Skipped for dim tray proxies (`isProxy`) — the GM
+  // already sees live HP/Stress/Armor pips on the actual placed token, so building + rendering a
+  // second full `TokenDotRing` per proxy (up to ~15 adversaries when most are on-map) is wasted work.
   const dotGroups = [];
-  if (isBoard) {
-    // Stress lives on the parent character sheet — ring optional later
-  } else if (isChar) {
-    const hpMax = element.maxHp || 0;
-    const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
-    if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
-
-    const stressMax = element.maxStress || 0;
-    const stressMarked = Math.max(0, element.currentStress || 0);
-    if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
-
-    const armorMax = element.maxArmor || 0;
-    const armorMarked = Math.max(0, element.currentArmor || 0);
-    if (armorMax > 0) dotGroups.push({ color: '#06b6d4', total: armorMax, filled: Math.min(armorMarked, armorMax) });
-  } else if (isAdv) {
-    const hpMax = element.hp_max || 0;
-    const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
-    const stressMax = element.stress_max || 0;
-    const stressMarked = Math.max(0, element.currentStress || 0);
-    if (isPlayer) {
-      // Players see only filled (damage taken) dots — hides total pool
-      if (hpDamage > 0) dotGroups.push({ color: '#ef4444', total: hpDamage, filled: hpDamage });
-      if (stressMarked > 0) dotGroups.push({ color: '#f97316', total: stressMarked, filled: stressMarked });
-    } else {
+  if (!isProxy) {
+    if (isBoard) {
+      // Stress lives on the parent character sheet — ring optional later
+    } else if (isChar) {
+      const hpMax = element.maxHp || 0;
+      const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
       if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
+
+      const stressMax = element.maxStress || 0;
+      const stressMarked = Math.max(0, element.currentStress || 0);
       if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
+
+      const armorMax = element.maxArmor || 0;
+      const armorMarked = Math.max(0, element.currentArmor || 0);
+      if (armorMax > 0) dotGroups.push({ color: '#06b6d4', total: armorMax, filled: Math.min(armorMarked, armorMax) });
+    } else if (isAdv) {
+      const hpMax = element.hp_max || 0;
+      const hpDamage = Math.max(0, hpMax - (element.currentHp ?? hpMax));
+      const stressMax = element.stress_max || 0;
+      const stressMarked = Math.max(0, element.currentStress || 0);
+      if (isPlayer) {
+        // Players see only filled (damage taken) dots — hides total pool
+        if (hpDamage > 0) dotGroups.push({ color: '#ef4444', total: hpDamage, filled: hpDamage });
+        if (stressMarked > 0) dotGroups.push({ color: '#f97316', total: stressMarked, filled: stressMarked });
+      } else {
+        if (hpMax > 0) dotGroups.push({ color: '#ef4444', total: hpMax, filled: hpDamage });
+        if (stressMax > 0) dotGroups.push({ color: '#f97316', total: stressMax, filled: Math.min(stressMarked, stressMax) });
+      }
     }
   }
 
@@ -952,7 +994,7 @@ function TokenCircle({
       }}
       title={isBoard ? (element.label || element.name || 'Token') : element.name}
     >
-      <TokenDotRing size={size} groups={dotGroups} />
+      {!isProxy && <TokenDotRing size={size} groups={dotGroups} />}
       <div className="relative z-10 flex flex-col items-center justify-center leading-none pointer-events-none">
         <span
           className="text-white font-bold leading-none"
@@ -1473,6 +1515,25 @@ export function BattleMap({
   const [rightPanDragging, setRightPanDragging] = useState(false);
   const [pinnedToken, setPinnedToken] = useState(null); // { element, anchorX, anchorY }
   const [bullseyeFt, setBullseyeFt] = useState(null); // { x, y } in feet, null when off-map
+  /**
+   * `pointermove` fires far more often than the display can paint (especially with high-poll-rate
+   * mice/trackpads), and every `setBullseyeFt` call forces a full `BattleMap` re-render (bullseye
+   * SVG + `tokenRangeBands` recompute over every placed token). Batch to at most one commit per
+   * animation frame via a ref instead of committing state directly from the raw event handler.
+   */
+  const pendingBullseyeFtRef = useRef(undefined); // undefined = nothing pending this frame
+  const bullseyeRafRef = useRef(null);
+  const scheduleBullseyeFt = useCallback((value) => {
+    pendingBullseyeFtRef.current = value;
+    if (bullseyeRafRef.current != null) return;
+    bullseyeRafRef.current = requestAnimationFrame(() => {
+      bullseyeRafRef.current = null;
+      setBullseyeFt(pendingBullseyeFtRef.current);
+    });
+  }, []);
+  useEffect(() => () => {
+    if (bullseyeRafRef.current != null) cancelAnimationFrame(bullseyeRafRef.current);
+  }, []);
   const { openImport, enabled: unifiedImportEnabled } = useUnifiedImport();
   // Frozen bullseye position during drag (feet coords of dragged token's origin)
   const frozenBullseyeRef = useRef(null);
@@ -3650,23 +3711,22 @@ export function BattleMap({
     setHoveringTokenBlocksDraw(!!overToken);
     // During an active drag, the bullseye is frozen at the drag origin — don't update
     if (frozenBullseyeRef.current) {
-      setBullseyeFt(frozenBullseyeRef.current);
+      scheduleBullseyeFt(frozenBullseyeRef.current);
       return;
     }
-    // Snap to token center if hovering over a placed token
-    const snapTarget = findTokenAtClient(e.clientX, e.clientY);
-    if (snapTarget) {
-      setBullseyeFt({ x: snapTarget.tokenX + 2.5, y: snapTarget.tokenY + 2.5, excludeInstanceId: snapTarget.instanceId });
+    // Snap to token center if hovering over a placed token (reuse the lookup above — same point).
+    if (overToken) {
+      scheduleBullseyeFt({ x: overToken.tokenX + 2.5, y: overToken.tokenY + 2.5, excludeInstanceId: overToken.instanceId });
     } else {
       const ft = clientToFt(e.clientX, e.clientY);
-      if (ft) setBullseyeFt(ft);
+      if (ft) scheduleBullseyeFt(ft);
     }
-  }, [findTokenAtClient, clientToFt, drawTool]);
+  }, [findTokenAtClient, clientToFt, scheduleBullseyeFt]);
 
   const handleMapPointerLeave = useCallback(() => {
     setHoveringTokenBlocksDraw(false);
-    if (!frozenBullseyeRef.current) setBullseyeFt(null);
-  }, []);
+    if (!frozenBullseyeRef.current) scheduleBullseyeFt(null);
+  }, [scheduleBullseyeFt]);
 
   const handleMapPingPointerDown = useCallback((e) => {
     if (e.button !== 0) return;

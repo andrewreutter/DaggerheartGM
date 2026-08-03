@@ -26,7 +26,10 @@ import {
   collectV2WeaponIntentChips,
   buildV2BannerGameState,
   runV2RestHooksForTable,
+  expandTableCharactersAncestryForV2Loader,
+  loadAllV2FeaturesForTable,
 } from '../../src/client/lib/v2-action-loop-bridge.js';
+import { buildV2RegistryWithSrdItems } from '../../src/client/lib/v2-declarative-sheet.js';
 import { PENDING_EVASION_BONUS_STATE_KEY } from '../../src/game-constants.js';
 
 describe('v2-action-loop-bridge', () => {
@@ -474,6 +477,62 @@ describe('v2-action-loop-bridge', () => {
       dedupeFeatureNames: new Set(),
     });
     expect(chips.some((c) => c._featureName === 'Sneak Attack' && c.name === 'Sneak Attack')).toBe(true);
+  });
+
+  it('collectV2ReviewActionChips: `preloaded` (activeForLoader/registry/features) yields identical chips to rebuilding from scratch, and is actually used (perf — Phase 2 pending-banner loop)', async () => {
+    const { mockCharacter, mockAdversary } = await import('./features-v2/helpers.js');
+    const rogue = mockCharacter({
+      instanceId: 'rogue-1',
+      classId: 'srd-cls-rogue',
+      level: 5,
+      conditions: ['Cloaked'],
+    });
+    const adv = mockAdversary({ instanceId: 'adv-1', difficulty: 12 });
+    const roll = {
+      _attackerInstanceId: 'rogue-1',
+      _selectedTargetInstanceId: 'adv-1',
+      _traitKey: 'agility',
+      subItems: [
+        { pre: 'Hope ', input: 'd12', result: '9', post: '' },
+        { pre: 'Fear ', input: 'd12', result: '4', post: '' },
+        { pre: 'damage ', input: 'd8', result: '5', post: ' phy' },
+      ],
+      total: 18,
+      dominant: 'hope',
+    };
+    enrichV2RollIsSuccessFromTarget(roll, [rogue, adv]);
+    const srdData = {
+      weaponsById: {},
+      armorById: {},
+      ancestriesById: {},
+      communitiesById: {},
+      classesById: {},
+      subclassesById: {},
+    };
+    const activeElements = [rogue, adv];
+    const base = { roll, activeElements, srdData, dedupeFeatureNames: new Set() };
+
+    const withoutPreloaded = collectV2ReviewActionChips(base);
+    expect(withoutPreloaded.some((c) => c._featureName === 'Sneak Attack')).toBe(true);
+
+    const activeForLoader = expandTableCharactersAncestryForV2Loader(activeElements, srdData);
+    const registry = buildV2RegistryWithSrdItems(srdData);
+    const features = loadAllV2FeaturesForTable(activeForLoader, registry, {});
+    const withPreloaded = collectV2ReviewActionChips({
+      ...base,
+      preloaded: { activeForLoader, registry, features },
+    });
+    expect(withPreloaded.map((c) => c._chipKey ?? c.name).sort()).toEqual(
+      withoutPreloaded.map((c) => c._chipKey ?? c.name).sort()
+    );
+
+    // Prove `preloaded.features` is actually consumed (not silently rebuilt): an empty preloaded
+    // features list must short-circuit to no chips, matching the `!features.length` early return.
+    const withEmptyPreloadedFeatures = collectV2ReviewActionChips({
+      ...base,
+      preloaded: { activeForLoader, registry, features: [] },
+    });
+    expect(withEmptyPreloadedFeatures).toEqual([]);
   });
 
   describe('viewer: player primary', () => {

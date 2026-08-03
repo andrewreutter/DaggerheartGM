@@ -257,6 +257,13 @@ export function CharacterHoverCard({
   surfaceVariant = 'default',
   /** When true, identity header is omitted (Game Table shared title bar above sheet + editor). */
   omitHeader = false,
+  /**
+   * Pre-computed merged display character (e.g. GMTableView's `characterDisplayByInstanceId`,
+   * built once per character for the sidebar cards). When provided, this sheet reuses it instead
+   * of independently re-running `recomputeCharacter` + `mergeV2DeclarativeSheetOverlay` for `el`
+   * (same inputs, same result — avoids duplicating that work per open sheet).
+   */
+  precomputedDisplayEl,
 }) {
   /** Manual Hope/Stress/Armor/HP tracks — GM only on Game Table (players keep `updateFn` for rolls, features, etc.). */
   const gmResourceTrackCheckboxEdits = !isPlayer;
@@ -400,8 +407,10 @@ export function CharacterHoverCard({
     [srdData]
   );
 
-  // Recompute for display so experiences (and other derived fields) reflect ancestry bonus on game table
+  // Recompute for display so experiences (and other derived fields) reflect ancestry bonus on game table.
+  // Skipped entirely when the caller already computed this (see `precomputedDisplayEl` doc above).
   const displayEl = useMemo(() => {
+    if (precomputedDisplayEl) return precomputedDisplayEl;
     if (!srdData) return el;
     const base = recomputeCharacter(el, srdData);
     return mergeV2DeclarativeSheetOverlay(base, el, srdData, {
@@ -409,7 +418,7 @@ export function CharacterHoverCard({
       mapConfig,
       tableFeatureState,
     });
-  }, [el, srdData, fearCount, mapConfig, tableFeatureState]);
+  }, [precomputedDisplayEl, el, srdData, fearCount, mapConfig, tableFeatureState]);
 
   /** Same merge as Guide V2 snapshots — ensures this PC is in the actor map when SSE activeElements is stale/short. */
   const activeElementsForV2Snapshots = useMemo(

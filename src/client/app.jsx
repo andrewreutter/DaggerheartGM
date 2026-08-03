@@ -16,6 +16,7 @@ import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-
 import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
+import { reconcileElementsById } from './lib/reconcile-active-elements.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
@@ -795,7 +796,9 @@ function App() {
       es.addEventListener('table_state', (e) => {
         const state = JSON.parse(e.data);
         if (!state) return;
-        if (Array.isArray(state.elements)) setActiveElements(state.elements);
+        if (Array.isArray(state.elements)) {
+          setActiveElements(prev => reconcileElementsById(prev, state.elements));
+        }
         if (state.fearCount != null) setFearCount(state.fearCount);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);
@@ -900,7 +903,9 @@ function App() {
       es.addEventListener('table_state', (e) => {
         const state = JSON.parse(e.data);
         if (!state) return;
-        if (Array.isArray(state.elements)) setActiveElements(state.elements);
+        if (Array.isArray(state.elements)) {
+          setActiveElements(prev => reconcileElementsById(prev, state.elements));
+        }
         if (state.fearCount != null) setFearCount(state.fearCount);
         if (state.featureCountdowns != null) setFeatureCountdowns(state.featureCountdowns);
         if (Array.isArray(state.sessionCountdowns)) setSessionCountdowns(state.sessionCountdowns);

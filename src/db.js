@@ -398,15 +398,25 @@ export async function getItem(appId, userId, collection, id) {
   return { id: r.id, ...r.data, is_public: r.is_public };
 }
 
-export async function getItemsByIds(appId, collection, ids) {
+/**
+ * @param {{ withPopularity?: boolean }} [opts] — `withPopularity: false` skips the two
+ *   correlated `item_popularity` subqueries (clone_count/play_count) for call sites that
+ *   don't use them, e.g. character-element resolution on the Game Table hot path.
+ */
+export async function getItemsByIds(appId, collection, ids, opts = {}) {
   if (!ids || ids.length === 0) return [];
+  const withPopularity = opts.withPopularity !== false;
   const db = getPool();
   const { rows } = await db.query(
-    `SELECT i.id, i.user_id, i.data, i.is_public,
-       COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) AS clone_count,
-       COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS play_count
-     FROM items i
-     WHERE i.app_id = $1 AND i.collection = $2 AND i.id = ANY($3)`,
+    withPopularity
+      ? `SELECT i.id, i.user_id, i.data, i.is_public,
+           COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'clone'), 0) AS clone_count,
+           COALESCE((SELECT COUNT(*) FROM item_popularity ip WHERE ip.app_id = i.app_id AND ip.collection = i.collection AND ip.item_id = i.id AND ip.action = 'play'), 0) AS play_count
+         FROM items i
+         WHERE i.app_id = $1 AND i.collection = $2 AND i.id = ANY($3)`
+      : `SELECT i.id, i.user_id, i.data, i.is_public
+         FROM items i
+         WHERE i.app_id = $1 AND i.collection = $2 AND i.id = ANY($3)`,
     [appId, collection, ids]
   );
   return rows.map(r => {
@@ -417,8 +427,7 @@ export async function getItemsByIds(appId, collection, ids) {
       id: r.id,
       ...r.data,
       is_public: r.is_public,
-      clone_count: r.clone_count,
-      play_count: r.play_count,
+      ...(withPopularity ? { clone_count: r.clone_count, play_count: r.play_count } : {}),
       _source: source,
       ...(source === 'public' ? { _owner: r.user_id } : {}),
     };
@@ -435,6 +444,7 @@ export async function upsertItem(appId, userId, collection, id, data, isPublic =
      RETURNING id`,
     [id, appId, userId, collection, data, isPublic]
   );
+  if (collection === 'characters') invalidateCharacterLibraryCache(appId, id);
   return rows[0].id;
 }
 
@@ -445,6 +455,7 @@ export async function deleteItem(appId, userId, collection, id) {
      WHERE app_id = $1 AND user_id = $2 AND collection = $3 AND id = $4`,
     [appId, userId, collection, id]
   );
+  if (collection === 'characters') invalidateCharacterLibraryCache(appId, id);
 }
 
 // --- Admin: blocked Reddit posts ---
@@ -1079,18 +1090,53 @@ const CHARACTER_RUNTIME_KEYS_DB = new Set([
 const CHARACTER_PERSIST_KEYS_DB = new Set([...CHARACTER_RUNTIME_KEYS_DB, 'id', 'name']);
 
 /**
+ * In-memory cache of resolved `characters` library rows, keyed by `${appId}:${id}`.
+ * Table-state resolution (`resolveCharacterElements`) runs on every `table_state` op —
+ * including adversary/map/countdown-only ops that never touch character data — so caching
+ * the library row here avoids a DB round trip (`getItemsByIds`) on every one of those.
+ * Invalidated precisely on write (`upsertItem`/`deleteItem` for collection `'characters'`),
+ * so it can never serve stale data after a character save, regardless of which table(s)
+ * reference that character or what op triggered the resolve.
+ */
+const characterLibraryCache = new Map();
+
+function characterCacheKey(appId, id) {
+  return `${appId}:${id}`;
+}
+
+/** Drop a single character's cached library row (called on save/delete of that character). */
+export function invalidateCharacterLibraryCache(appId, id) {
+  characterLibraryCache.delete(characterCacheKey(appId, id));
+}
+
+/** Test-only: clear the entire cache. */
+export function clearCharacterLibraryCacheForTests() {
+  characterLibraryCache.clear();
+}
+
+/**
  * Resolve character elements against the live character library.
  * Non-character elements are returned unchanged. Characters not found
  * fall back to their stored data.
  */
 export async function resolveCharacterElements(appId, elements) {
   if (!elements?.length) return elements;
-  const charIds = elements
-    .filter(el => el.elementType === 'character' && el.id)
-    .map(el => el.id);
+  const charIds = [...new Set(
+    elements.filter(el => el.elementType === 'character' && el.id).map(el => el.id)
+  )];
   if (!charIds.length) return elements;
-  const charRows = await getItemsByIds(appId, 'characters', charIds);
-  const libMap = new Map(charRows.map(r => [r.id, r]));
+  const missingIds = charIds.filter(id => !characterLibraryCache.has(characterCacheKey(appId, id)));
+  if (missingIds.length) {
+    const fetched = await getItemsByIds(appId, 'characters', missingIds, { withPopularity: false });
+    for (const row of fetched) {
+      characterLibraryCache.set(characterCacheKey(appId, row.id), row);
+    }
+  }
+  const libMap = new Map(
+    charIds
+      .map(id => [id, characterLibraryCache.get(characterCacheKey(appId, id))])
+      .filter(([, row]) => row !== undefined)
+  );
   return elements.map(el => {
     if (el.elementType !== 'character' || !el.id) return el;
     const lib = libMap.get(el.id);
