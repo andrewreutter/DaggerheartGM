@@ -23,6 +23,7 @@ import { usePortalHoverTooltip, PortalHoverTooltipLayer } from '../lib/portal-ho
 import { FeatureResourceCostIcons } from './FeatureResourceCostIcons.jsx';
 import { ACTION_LOOP_PHASE_UI } from '../lib/action-loop-phase-ui-icons.js';
 import { shouldClearDiceCanvasOnBannerDismiss } from '../lib/dice-roller-clear-canvas.js';
+import { isReactionRoll as getIsReactionRoll, resolveDualityBannerSchemeKey } from '../lib/reaction-roll-display.js';
 import { BannerSheetDisplayNameLine } from '../lib/sheet-display-label-inline.jsx';
 import { getGmHelperBannerSuffix, getGmHelperBannerTooltip } from '../lib/v2-chip-session-view.js';
 import { sumPendingEvasionBonusFromFeatureState } from '../lib/v2-action-loop-bridge.js';
@@ -1332,6 +1333,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const selectedAddRollDie = roll._prayerAddRollDie ?? null;
   const selectedDmgReduceDie = roll._prayerDmgReduceDie ?? null;
 
+  // Reaction rolls (SRD: Reaction Rolls) don't generate Hope or Fear — suppress the Hope/Fear
+  // messaging and color scheme even though the underlying dice are still a Duality roll.
+  const isReactionRoll = getIsReactionRoll(roll);
+
   // Pre-ack display: features can set dominantForDisplay via chip.render (e.g. Fearless setWithHope()).
   const effectiveDominant = (displayOverridesByRollId && roll._rollDbId != null && displayOverridesByRollId[roll._rollDbId]?.dominantForDisplay) ?? dominant;
 
@@ -1424,11 +1429,10 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
 
   // Color schemes for DH (hope/fear) vs generic rolls. Use hope/fear only when resolved or when Hope/Fear dice were preset (e.g. augmented roll).
   const neutralScheme = { card: 'bg-dh-surface/90 border-2 border-sky-500/60 text-sky-100', detail: 'text-sky-200/60' };
-  const scheme = (!hasDuality || (!resolved && !dominantFromPreset))
-    ? neutralScheme
-    : isHope
-      ? { card: 'bg-dh-raised/95 border-2 border-dh-hope text-dh', detail: 'text-dh-hope-soft' }
-      : { card: 'bg-dh-raised/95 border-2 border-purple-500/70 text-dh', detail: 'text-dh-muted' };
+  const hopeScheme = { card: 'bg-dh-raised/95 border-2 border-dh-hope text-dh', detail: 'text-dh-hope-soft' };
+  const fearScheme = { card: 'bg-dh-raised/95 border-2 border-purple-500/70 text-dh', detail: 'text-dh-muted' };
+  const bannerSchemeKey = resolveDualityBannerSchemeKey({ isReaction: isReactionRoll, hasDuality, resolved, dominantFromPreset, isHope });
+  const scheme = bannerSchemeKey === 'hope' ? hopeScheme : bannerSchemeKey === 'fear' ? fearScheme : neutralScheme;
 
   // Character rolls target adversaries; adversary/other rolls target characters.
   // Use getTargetsForRoll for virtual weapon features, character attacks with weapon range, or adversary attacks with range.
@@ -1658,11 +1662,16 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
               {selectedAddRollDie && resolved && (
                 <span className="text-[10px] text-teal-400/80 ml-0.5">+{selectedAddRollDie.value} Prayer Die</span>
               )}
-              <span className="text-sm font-semibold opacity-80 ml-0.5">
-                {(resolved || dominantFromPreset)
-                  ? (isCritical ? '✦ Critical!' : isHope ? 'with Hope' : 'with Fear')
-                  : <Spinner lg />}
-              </span>
+              {!isReactionRoll && (
+                <span className="text-sm font-semibold opacity-80 ml-0.5">
+                  {(resolved || dominantFromPreset)
+                    ? (isCritical ? '✦ Critical!' : isHope ? 'with Hope' : 'with Fear')
+                    : <Spinner lg />}
+                </span>
+              )}
+              {isReactionRoll && isCritical && (resolved || dominantFromPreset) && (
+                <span className="text-sm font-semibold opacity-80 ml-0.5">✦ Critical!</span>
+              )}
               {resultLabel && (
                 <span className={`text-xs font-semibold ml-1 ${resultLabelClass}`}>
                   {resultLabel}

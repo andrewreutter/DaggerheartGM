@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dices, ChevronUp, ChevronDown } from 'lucide-react';
 import { MANUAL_DICE_SIZES, buildManualRollText } from '../lib/manual-dice-roll-text.js';
+import { isReactionRoll } from '../lib/reaction-roll-display.js';
 
 // Per-sub-item accent colors: Hope → amber, Fear → purple, damage → red, else sky/green
-function subItemColor(pre) {
+// Reaction rolls (SRD: Reaction Rolls) don't generate Hope or Fear, so their Hope/Fear dice
+// use the neutral scheme instead of the amber/purple Hope/Fear accents.
+function subItemColor(pre, isReaction) {
   const p = (pre || '').toLowerCase();
-  if (/hope/.test(p))       return { label: 'text-dh-hope-soft', bracket: 'text-dh-hope', expr: 'text-dh-hope', result: 'text-dh font-bold' };
-  if (/fear/.test(p))       return { label: 'text-purple-400', bracket: 'text-purple-500', expr: 'text-purple-300', result: 'text-purple-300 font-bold' };
+  if (!isReaction) {
+    if (/hope/.test(p)) return { label: 'text-dh-hope-soft', bracket: 'text-dh-hope', expr: 'text-dh-hope', result: 'text-dh font-bold' };
+    if (/fear/.test(p)) return { label: 'text-purple-400', bracket: 'text-purple-500', expr: 'text-purple-300', result: 'text-purple-300 font-bold' };
+  }
   if (/damage|dmg/.test(p)) return { label: 'text-red-400',    bracket: 'text-red-500',    expr: 'text-red-300',    result: 'text-red-300 font-bold' };
   return { label: 'text-dh', bracket: 'text-sky-400', expr: 'text-sky-300', result: 'text-green-400 font-bold' };
 }
@@ -29,7 +34,7 @@ function parseDaggerheartRoll(subItems) {
   return { total, hopeResult, fearResult, dominant };
 }
 
-function CompoundRoll({ subItems }) {
+function CompoundRoll({ subItems, isReaction }) {
   const dh = parseDaggerheartRoll(subItems);
   const actionItems = subItems.filter(s => !/damage/i.test(s.pre || ''));
   const damageItems = subItems.filter(s => /damage/i.test(s.pre || ''));
@@ -37,7 +42,7 @@ function CompoundRoll({ subItems }) {
   return (
     <span>
       {actionItems.map((sub, i) => {
-        const c = subItemColor(sub.pre);
+        const c = subItemColor(sub.pre, isReaction);
         return (
           <span key={i}>
             {sub.pre
@@ -63,14 +68,14 @@ function CompoundRoll({ subItems }) {
           <span className="text-white font-bold">{dh.total}</span>
           {dh.dominant === 'critical' ? (
             <span className="text-yellow-300 font-semibold"> Critical!</span>
-          ) : (
+          ) : !isReaction ? (
             <>
               <span className="text-dh-muted"> with </span>
               <span className={dh.dominant === 'hope' ? 'text-dh-hope font-semibold' : 'text-purple-400 font-semibold'}>
                 {dh.dominant === 'hope' ? 'Hope' : 'Fear'}
               </span>
             </>
-          )}
+          ) : null}
         </span>
       )}
       {damageItems.map((sub, i) => {
@@ -120,7 +125,7 @@ function LogEntry({ roll, compact }) {
             )}
           </span>
         )}
-        {!isAction && isCompound && <CompoundRoll subItems={roll.subItems} />}
+        {!isAction && isCompound && <CompoundRoll subItems={roll.subItems} isReaction={isReactionRoll(roll)} />}
         {!isAction && !isCompound && <span className="text-dh-muted italic">roll</span>}
       </div>
       {time && <span className="text-[10px] text-dh-muted shrink-0 tabular-nums">{time}</span>}

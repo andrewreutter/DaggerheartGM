@@ -1,9 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, Copy, RefreshCw, RotateCcw, ShieldOff } from 'lucide-react';
-import { fetchAdminBugReports, postAdminBugReportResolve } from '../lib/api.js';
+import { ArrowDown, ArrowUp, Bug, Check, Copy, Inbox, Lightbulb, RefreshCw, ShieldOff } from 'lucide-react';
+import { fetchAdminBugReports, postAdminBugReportStatus } from '../lib/api.js';
 import { buildBugReportDebugText } from '../lib/bug-report-debug-text.js';
 
 const PAGE_SIZE = 50;
+
+/** Ordered tabs on the admin Problem reports page; also the set of valid `bug_reports.status` values. */
+const STATUS_CONFIG = {
+  triage: { label: 'Triage', icon: Inbox, emptyText: 'No problem reports yet.' },
+  bug: { label: 'Bug', icon: Bug, emptyText: 'No bug reports yet.' },
+  feature: { label: 'Feature', icon: Lightbulb, emptyText: 'No feature requests yet.' },
+  completed: { label: 'Completed', icon: Check, emptyText: 'No completed reports yet.' },
+};
+const STATUS_ORDER = ['triage', 'bug', 'feature', 'completed'];
 
 function formatTimestamp(ts) {
   if (!ts) return '—';
@@ -73,6 +82,30 @@ function CopyButton({ row }) {
   );
 }
 
+function MoveButtons({ row, onMove, isPending }) {
+  const otherStatuses = STATUS_ORDER.filter(s => s !== row.status);
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {otherStatuses.map(status => {
+        const { label, icon: Icon } = STATUS_CONFIG[status];
+        return (
+          <button
+            key={status}
+            type="button"
+            onClick={() => onMove(row, status)}
+            disabled={isPending}
+            title={`Move to ${label}`}
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium bg-dh-raised border border-dh-border text-dh-muted hover:text-dh hover:border-dh-strong hover:bg-dh-hover disabled:opacity-50"
+          >
+            <Icon size={12} className={isPending ? 'animate-spin' : ''} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function SortableHeader({ label, columnKey, sortColumn, sortDir, onSort }) {
   const active = sortColumn === columnKey;
   return (
@@ -97,7 +130,7 @@ function SortableHeader({ label, columnKey, sortColumn, sortDir, onSort }) {
  * @param {{ navigate: (path: string, opts?: object) => void }} props
  */
 export function AdminBugReportsPage({ navigate }) {
-  const [tab, setTab] = useState('active'); // 'active' | 'completed'
+  const [tab, setTab] = useState('triage'); // one of STATUS_ORDER
   const [items, setItems] = useState([]);
   const [totalCount, setTotalCount] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -108,8 +141,6 @@ export function AdminBugReportsPage({ navigate }) {
   const [sortColumn, setSortColumn] = useState(null); // 'time' | 'reporter'
   const [sortDir, setSortDir] = useState('desc');
 
-  const resolvedFilter = tab === 'completed';
-
   const load = useCallback(async ({ replace = true, offset: offsetOverride, currentLength = 0 } = {}) => {
     if (replace) {
       setLoading(true);
@@ -119,7 +150,7 @@ export function AdminBugReportsPage({ navigate }) {
     }
     try {
       const offset = replace ? 0 : offsetOverride ?? currentLength;
-      const json = await fetchAdminBugReports({ limit: PAGE_SIZE, offset, resolved: resolvedFilter });
+      const json = await fetchAdminBugReports({ limit: PAGE_SIZE, offset, status: tab });
       setTotalCount(json.totalCount ?? null);
       setItems(prev => (replace ? json.items : [...prev, ...json.items]));
     } catch (e) {
@@ -128,12 +159,12 @@ export function AdminBugReportsPage({ navigate }) {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [resolvedFilter]);
+  }, [tab]);
 
   useEffect(() => {
     void load({ replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedFilter]);
+  }, [tab]);
 
   const canLoadMore = totalCount != null && items.length < totalCount;
 
@@ -179,10 +210,10 @@ export function AdminBugReportsPage({ navigate }) {
     });
   }, []);
 
-  const handleToggleResolved = useCallback(async (row, nextResolved) => {
+  const handleMove = useCallback(async (row, nextStatus) => {
     setPendingIds(prev => new Set(prev).add(row.id));
     try {
-      await postAdminBugReportResolve(row.id, nextResolved);
+      await postAdminBugReportStatus(row.id, nextStatus);
       setItems(prev => prev.filter(r => r.id !== row.id));
       setTotalCount(prev => (prev != null ? Math.max(0, prev - 1) : prev));
     } catch (e) {
@@ -232,23 +263,24 @@ export function AdminBugReportsPage({ navigate }) {
       <div className="p-4 max-w-7xl mx-auto w-full space-y-4">
         {/* Tabs */}
         <div className="flex items-center gap-1 border-b border-dh-border">
-          {[
-            { key: 'active', label: 'Active' },
-            { key: 'completed', label: 'Completed' },
-          ].map(t => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                tab === t.key
-                  ? 'border-red-500 text-dh'
-                  : 'border-transparent text-dh-muted hover:text-dh'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+          {STATUS_ORDER.map(key => {
+            const { label, icon: Icon } = STATUS_CONFIG[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTab(key)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  tab === key
+                    ? 'border-red-500 text-dh'
+                    : 'border-transparent text-dh-muted hover:text-dh'
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         {error && (
@@ -262,15 +294,13 @@ export function AdminBugReportsPage({ navigate }) {
         )}
 
         {!loading && !error && items.length === 0 && (
-          <p className="text-dh-muted text-sm">
-            {tab === 'completed' ? 'No completed reports yet.' : 'No problem reports yet.'}
-          </p>
+          <p className="text-dh-muted text-sm">{STATUS_CONFIG[tab].emptyText}</p>
         )}
 
         {items.length > 0 && (
           <>
             <p className="text-xs text-dh-muted">
-              Showing {items.length}{totalCount != null ? ` of ${totalCount}` : ''} {tab === 'completed' ? 'completed' : ''} reports
+              Showing {items.length}{totalCount != null ? ` of ${totalCount}` : ''} {STATUS_CONFIG[tab].label.toLowerCase()} reports
             </p>
             <div className="border border-dh-border rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
@@ -282,7 +312,7 @@ export function AdminBugReportsPage({ navigate }) {
                       <th className="px-3 py-2 font-medium whitespace-nowrap">Table ID</th>
                       <th className="px-3 py-2 font-medium">Notes</th>
                       <th className="px-3 py-2 font-medium whitespace-nowrap">Copy</th>
-                      <th className="px-3 py-2 font-medium whitespace-nowrap">{tab === 'completed' ? 'Restore' : 'Complete'}</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">Move to</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -326,30 +356,8 @@ export function AdminBugReportsPage({ navigate }) {
                           <td className="px-3 py-2 whitespace-nowrap">
                             <CopyButton row={row} />
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            {tab === 'completed' ? (
-                              <button
-                                type="button"
-                                onClick={() => handleToggleResolved(row, false)}
-                                disabled={isPending}
-                                title="Move back to Active"
-                                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium bg-dh-raised border border-dh-border text-dh-muted hover:text-dh hover:border-dh-strong hover:bg-dh-hover disabled:opacity-50"
-                              >
-                                <RotateCcw size={13} className={isPending ? 'animate-spin' : ''} />
-                                Restore
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleToggleResolved(row, true)}
-                                disabled={isPending}
-                                title="Mark complete"
-                                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium bg-emerald-900/40 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-800/50 disabled:opacity-50"
-                              >
-                                <Check size={13} className={isPending ? 'animate-spin' : ''} />
-                                Complete
-                              </button>
-                            )}
+                          <td className="px-3 py-2">
+                            <MoveButtons row={row} onMove={handleMove} isPending={isPending} />
                           </td>
                         </tr>
                       );

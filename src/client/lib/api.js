@@ -644,7 +644,7 @@ export const fetchAdminAiUsage = async (query = {}) => {
 
 /**
  * Admin: paginated list of bug reports (newest-first).
- * @param {{ limit?: number, offset?: number }} [query]
+ * @param {{ limit?: number, offset?: number, status?: 'triage'|'bug'|'feature'|'completed' }} [query]
  */
 export const fetchAdminBugReports = async (query = {}) => {
   const token = await getAuthToken();
@@ -652,8 +652,7 @@ export const fetchAdminBugReports = async (query = {}) => {
   const params = new URLSearchParams();
   if (query.limit != null) params.set('limit', String(query.limit));
   if (query.offset != null) params.set('offset', String(query.offset));
-  if (query.resolved === true) params.set('resolved', '1');
-  else if (query.resolved === false) params.set('resolved', '0');
+  if (query.status) params.set('status', query.status);
   const qs = params.toString();
   const res = await fetch(`/api/admin/bug-reports${qs ? `?${qs}` : ''}`, {
     headers: apiHeaders({ Authorization: `Bearer ${token}` }),
@@ -663,14 +662,14 @@ export const fetchAdminBugReports = async (query = {}) => {
   return body;
 };
 
-/** Marks a bug report resolved (Completed tab) or unresolved (back to Active). */
-export const postAdminBugReportResolve = async (id, resolved) => {
+/** Moves a bug report to a different status (Triage / Bug / Feature / Completed) — one click, any tab to any tab. */
+export const postAdminBugReportStatus = async (id, status) => {
   const token = await getAuthToken();
   if (!token) throw new Error('Not signed in');
   const res = await fetch(`/api/admin/bug-reports/${id}`, {
     method: 'PATCH',
     headers: apiHeaders({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ resolved }),
+    body: JSON.stringify({ status }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);

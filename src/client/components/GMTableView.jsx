@@ -25,6 +25,7 @@ import { handleAiConceptTextareaKeyDown } from '../lib/ai-concept-textarea.js';
 import { indexResolvedItemsByRequestId } from '../lib/resolve-items-index.js';
 import { buildSystemContext } from '../lib/feature-context.js';
 import { withActionBannerSuppression } from '../lib/action-notification-banner.js';
+import { isReactionRoll } from '../lib/reaction-roll-display.js';
 import {
   postRoll as postRollToServer,
   postTableOp,
@@ -2395,7 +2396,8 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
           updateActiveElement(attackerId, { hope: Math.min(current + 1, maxHope) });
         }
       }
-    } else {
+    } else if (!isReactionRoll(roll)) {
+      // Reaction rolls don't generate Hope or Fear (SRD: Reaction Rolls).
       applyRollSideEffects(roll.dominant, roll.rollUser);
     }
     const dmgPending = pendingDamageRef.current;

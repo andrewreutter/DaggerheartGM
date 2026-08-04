@@ -1723,17 +1723,21 @@ export async function queryAiUsageAggregates(appId, opts) {
   return { totals, byDay };
 }
 
+/** Valid `bug_reports.status` values (admin Problem reports page tabs). */
+export const BUG_REPORT_STATUSES = ['triage', 'bug', 'feature', 'completed'];
+
 /**
  * Returns the total number of bug reports for this app (across all GMs/tables).
  * @param {string} appId
- * @param {{ resolved?: boolean }} opts — when set, filters to resolved (true) or unresolved (false) reports only.
+ * @param {{ status?: string }} opts — when set (one of `BUG_REPORT_STATUSES`), filters to that status only.
  */
-export async function countBugReports(appId, { resolved } = {}) {
+export async function countBugReports(appId, { status } = {}) {
   const db = getPool();
-  const resolvedClause = resolved === true ? 'AND resolved_at IS NOT NULL' : resolved === false ? 'AND resolved_at IS NULL' : '';
+  const statusClause = status ? 'AND status = $2' : '';
+  const params = status ? [appId, status] : [appId];
   const { rows } = await db.query(
-    `SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1 ${resolvedClause}`,
-    [appId]
+    `SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1 ${statusClause}`,
+    params
   );
   return rows[0]?.total ?? 0;
 }
@@ -1741,18 +1745,19 @@ export async function countBugReports(appId, { resolved } = {}) {
 /**
  * Returns a page of bug reports for this app, newest-first.
  * @param {string} appId
- * @param {{ limit?: number, offset?: number, resolved?: boolean }} opts — `resolved` filters to resolved (true) or unresolved (false) reports only; omit for all.
+ * @param {{ limit?: number, offset?: number, status?: string }} opts — `status` filters to one of `BUG_REPORT_STATUSES`; omit for all.
  */
-export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, resolved } = {}) {
+export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, status } = {}) {
   const db = getPool();
-  const resolvedClause = resolved === true ? 'AND resolved_at IS NOT NULL' : resolved === false ? 'AND resolved_at IS NULL' : '';
+  const statusClause = status ? 'AND status = $4' : '';
+  const params = status ? [appId, limit, offset, status] : [appId, limit, offset];
   const { rows } = await db.query(
-    `SELECT id, gm_uid, table_id, payload, created_at, resolved_at, resolved_by
+    `SELECT id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by
      FROM bug_reports
-     WHERE app_id = $1 ${resolvedClause}
+     WHERE app_id = $1 ${statusClause}
      ORDER BY created_at DESC
      LIMIT $2 OFFSET $3`,
-    [appId, limit, offset]
+    params
   );
   return rows.map(r => ({
     id: r.id,
@@ -1760,25 +1765,30 @@ export async function getBugReportsPaginated(appId, { limit = 50, offset = 0, re
     tableId: r.table_id,
     payload: r.payload,
     createdAt: r.created_at,
-    resolvedAt: r.resolved_at,
-    resolvedBy: r.resolved_by,
+    status: r.status,
+    statusChangedAt: r.status_changed_at,
+    statusChangedBy: r.status_changed_by,
   }));
 }
 
 /**
- * Marks a bug report resolved (complete) or unresolved (moves it back to Active).
+ * Moves a bug report to a different status (Triage / Bug / Feature / Completed) — a single-click
+ * transition between any two tabs on the admin Problem reports page.
  * @param {string} appId
  * @param {number} id
- * @param {{ resolved: boolean, resolvedByEmail?: string }} opts
+ * @param {{ status: string, changedByEmail?: string }} opts
  */
-export async function setBugReportResolved(appId, id, { resolved, resolvedByEmail } = {}) {
+export async function setBugReportStatus(appId, id, { status, changedByEmail } = {}) {
+  if (!BUG_REPORT_STATUSES.includes(status)) {
+    throw new Error(`Invalid bug report status: ${status}`);
+  }
   const db = getPool();
   const { rows } = await db.query(
     `UPDATE bug_reports
-     SET resolved_at = ${resolved ? 'now()' : 'NULL'}, resolved_by = $3
+     SET status = $3, status_changed_at = now(), status_changed_by = $4
      WHERE app_id = $1 AND id = $2
-     RETURNING id, gm_uid, table_id, payload, created_at, resolved_at, resolved_by`,
-    [appId, id, resolved ? (resolvedByEmail ?? null) : null]
+     RETURNING id, gm_uid, table_id, payload, created_at, status, status_changed_at, status_changed_by`,
+    [appId, id, status, changedByEmail ?? null]
   );
   const r = rows[0];
   if (!r) return null;
@@ -1788,7 +1798,8 @@ export async function setBugReportResolved(appId, id, { resolved, resolvedByEmai
     tableId: r.table_id,
     payload: r.payload,
     createdAt: r.created_at,
-    resolvedAt: r.resolved_at,
-    resolvedBy: r.resolved_by,
+    status: r.status,
+    statusChangedAt: r.status_changed_at,
+    statusChangedBy: r.status_changed_by,
   };
 }
