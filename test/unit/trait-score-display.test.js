@@ -10,9 +10,7 @@ import {
 describe('traitScoreNumberColorClass', () => {
   it('uses softened red / green (between pale and saturated)', () => {
     expect(traitScoreNumberColorClass(-2)).toContain('text-red-200');
-    expect(traitScoreNumberColorClass(-2)).toContain('dh-light:text-red-800');
     expect(traitScoreNumberColorClass(1)).toContain('text-emerald-200');
-    expect(traitScoreNumberColorClass(1)).toContain('dh-light:text-emerald-800');
   });
 
   it('uses neutral for zero', () => {

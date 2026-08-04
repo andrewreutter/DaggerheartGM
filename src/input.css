@@ -11,12 +11,8 @@
   @apply transition-opacity duration-150 ease-out opacity-[0.12] saturate-50 pointer-events-none;
 }
 
-/* Descendants of html[data-theme="light"] — paired hues (e.g. amber-200) need dark text on light surfaces */
-@custom-variant dh-light (&:where([data-theme="light"] *));
-
-/* ── Theme chrome (neutral surfaces): RGB triplets for Tailwind alpha + markdown ──
-   Dark palette lives only under [data-theme="dark"]; html gets data-theme from the inline script in public/index.html before paint. */
-[data-theme="dark"] {
+/* ── Theme chrome (neutral surfaces): RGB triplets for Tailwind alpha + markdown ── */
+:root {
   --dh-canvas: 2 6 23;
   --dh-surface: 15 23 42;
   --dh-raised: 30 41 59;
@@ -91,81 +87,6 @@
   /* Hope / warm semantic — saturated but not pale yellow on dark surfaces */
   --dh-semantic-hope: 245 158 11;
   --dh-semantic-hope-soft: 217 119 6;
-}
-
-[data-theme="light"] {
-  --dh-canvas: 255 255 255;
-  --dh-surface: 248 250 252;
-  --dh-raised: 241 245 249;
-  --dh-hover: 226 232 240;
-  --dh-border: 226 232 240;
-  --dh-border-strong: 203 213 225;
-  --dh-text: 15 23 42;
-  --dh-text-muted: 100 116 139;
-  --dh-link: 2 132 199;
-  --dh-link-hover: 3 105 161;
-  --dh-md-blockquote-border: 203 213 225;
-  --dh-md-blockquote-text: 100 116 139;
-  --dh-md-code-bg: 241 245 249;
-  --dh-md-table-border: 203 213 225;
-  --dh-md-table-head: 241 245 249;
-  --dh-map-blank: 243 244 246;
-  --dh-inset: 226 232 240;
-  --dh-chip-bg: 241 245 249;
-  --dh-chip-border: 203 213 225;
-  --dh-badge-mine-bg: 226 232 240;
-  --dh-badge-mine-text: 51 65 85;
-  --dh-badge-mine-border: 203 213 225;
-  --dh-badge-srd-bg: 245 243 255;
-  --dh-badge-srd-text: 76 29 149;
-  --dh-badge-srd-border: 167 139 250;
-  --dh-badge-public-bg: 219 234 254;
-  --dh-badge-public-text: 30 64 175;
-  --dh-badge-public-border: 96 165 250;
-  --dh-badge-hod-bg: 255 228 230;
-  --dh-badge-hod-text: 159 18 57;
-  --dh-badge-hod-border: 251 113 133;
-  --dh-badge-fcg-bg: 220 252 231;
-  --dh-badge-fcg-text: 22 101 52;
-  --dh-badge-fcg-border: 74 222 128;
-  --dh-tier-shield-fill: 226 232 240;
-  --dh-tier-shield-stroke: 148 163 184;
-  --dh-tier-shield-text: 15 23 42;
-  --dh-level-badge-bg: 245 243 255;
-  --dh-level-badge-text: 76 29 149;
-  --dh-level-badge-border: 167 139 250;
-  --dh-tint-trait-pos-bg: 224 242 254;
-  --dh-tint-trait-pos-border: 56 189 248;
-  --dh-tint-trait-pos-text: 30 64 175;
-  --dh-tint-roll-flash-bg: 220 252 231;
-  --dh-tint-roll-flash-border: 34 197 94;
-  --dh-tint-magic-card-bg: 237 233 254;
-  --dh-tint-magic-card-border: 167 139 250;
-  --dh-tint-magic-strip-bg: 245 243 255;
-  --dh-tint-magic-strip-border: 167 139 250;
-  --dh-tint-magic-label-bg: 245 243 255;
-  --dh-tint-magic-label-border: 167 139 250;
-  --dh-tint-magic-label-text: 76 29 149;
-  --dh-magic-header-text: 76 29 149;
-  --dh-magic-header-text-sub: 91 33 182;
-  --dh-magic-icon-accent: 124 58 237;
-  --dh-tint-violet-card-bg: 237 233 254;
-  --dh-tint-violet-card-border: 167 139 250;
-  --dh-tint-amber-card-bg: 254 243 199;
-  --dh-tint-amber-card-border: 217 119 6;
-  --dh-tint-purple-row-bg: 243 232 255;
-  --dh-tint-purple-row-border: 192 132 252;
-  --dh-tint-sky-row-bg: 219 234 254;
-  --dh-tint-sky-row-border: 96 165 250;
-  --dh-tint-sky-row-text: 30 64 175;
-  --dh-tint-trait-chip-bg: 224 242 254;
-  --dh-tint-trait-chip-border: 56 189 248;
-  --dh-tint-trait-chip-text: 30 64 175;
-  --dh-tint-attack-trait-bg: 224 242 254;
-  --dh-tint-attack-trait-border: 56 189 248;
-  --dh-tint-attack-trait-text: 30 64 175;
-  --dh-semantic-hope: 120 53 15;
-  --dh-semantic-hope-soft: 146 64 14;
 }
 
 /* Use fixed alpha so compiled CSS is valid (literal <alpha-value> is not substituted in tw v4.2.1 output). */
@@ -326,19 +247,6 @@
 .dh-sheet-clickable-chip:focus-visible {
   outline: 2px solid rgb(56 189 248 / 0.45);
   outline-offset: 2px;
-}
-[data-theme="light"] .dh-sheet-clickable-chip {
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.65),
-    0 1px 2px rgb(0 0 0 / 0.1);
-}
-[data-theme="light"] .dh-sheet-clickable-chip:active:not(:disabled) {
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.45),
-    0 0 0 rgb(0 0 0 / 0.06);
-}
-[data-theme="light"] .dh-sheet-clickable-chip:focus-visible {
-  outline-color: rgb(2 132 199 / 0.55);
 }
 
 .dh-tint-attack-trait {

@@ -4,8 +4,8 @@
 
 /** Red / green / neutral text classes for the score digits only. */
 export function traitScoreNumberColorClass(score) {
-  if (score < 0) return 'text-red-200 dh-light:text-red-800';
-  if (score > 0) return 'text-emerald-200 dh-light:text-emerald-800';
+  if (score < 0) return 'text-red-200';
+  if (score > 0) return 'text-emerald-200';
   return 'text-dh';
 }
 

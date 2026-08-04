@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot, ShieldOff, Bug } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Bot, ShieldOff, Bug } from 'lucide-react';
 
 import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile } from './lib/api.js';
 import { dataUrlToFile } from './lib/map-image-data-url.js';
@@ -10,7 +10,6 @@ import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preferenc
 import { generateId } from './lib/helpers.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
 import { resetOnboardingState } from './lib/onboarding-storage.js';
-import { initThemeFromStorage, applyTheme, getStoredTheme } from './lib/theme-storage.js';
 import { isOwnItem, DEFAULT_CHARACTER_STARTING_HOPE } from './lib/constants.js';
 import { UPDATE_BASE_DATA_RUNTIME_KEYS, applyTableOp } from './lib/table-ops.js';
 import { isTablePlayAllowed, isPrepModeElementUpdateBlocked } from './lib/table-session-gate.js';
@@ -181,7 +180,6 @@ function App() {
   // GM preview-as-player mode: non-null email means the GM is previewing that player's view
   const [previewAsPlayerEmail, setPreviewAsPlayerEmail] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [uiTheme, setUiTheme] = useState(() => getStoredTheme());
   const [featureAuthoringGuideOpen, setFeatureAuthoringGuideOpen] = useState(false);
   const [libraryAssistantOpen, setLibraryAssistantOpen] = useState(false);
   const [importStatus, setImportStatus] = useState('');
@@ -192,11 +190,6 @@ function App() {
   const myTablesFetchedRef = useRef(false);
   /** Firebase uid of the table owner; set from GET table_state (ownerUid). Undefined until first load for this tableId. */
   const [tableOwnerUid, setTableOwnerUid] = useState(undefined);
-
-  useLayoutEffect(() => {
-    initThemeFromStorage();
-    setUiTheme(getStoredTheme());
-  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -1795,39 +1788,6 @@ function App() {
 
               {userMenuOpen && (
                 <div className="absolute right-0 top-full mt-1 w-56 bg-dh-raised border border-dh-strong rounded-lg shadow-xl z-50 py-1">
-                  <div className="px-3 py-2 border-b border-dh-border">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-dh-muted mb-2">Theme</div>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          applyTheme('dark');
-                          setUiTheme('dark');
-                        }}
-                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                          uiTheme === 'dark'
-                            ? 'bg-dh-hover text-dh ring-1 ring-sky-500/80'
-                            : 'bg-dh-canvas text-dh-muted hover:bg-dh-hover hover:text-dh'
-                        }`}
-                      >
-                        <Moon size={14} /> Dark
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          applyTheme('light');
-                          setUiTheme('light');
-                        }}
-                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                          uiTheme === 'light'
-                            ? 'bg-dh-hover text-dh ring-1 ring-sky-500/80'
-                            : 'bg-dh-canvas text-dh-muted hover:bg-dh-hover hover:text-dh'
-                        }`}
-                      >
-                        <Sun size={14} /> Light
-                      </button>
-                    </div>
-                  </div>
                   <UserMenuAiTurnOn onPicked={() => setUserMenuOpen(false)} />
                   <button
                     type="button"

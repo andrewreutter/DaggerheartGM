@@ -28,7 +28,7 @@ export const V2_INLINE_SEG_TARGET_BTN = V2_INLINE_SEG_BTN_BASE;
 export const V2_INLINE_SEG_OFF = 'text-dh hover:bg-dh-hover hover:border-dh-strong';
 /** Selected segment: stronger fill, border, and ring so the active option reads clearly (Actions strip, iconGrid, banners). */
 export const V2_INLINE_SEG_ON =
-  'bg-sky-500/65 text-white border-sky-300/85 ring-2 ring-sky-300/55 shadow-md z-[1] font-semibold dh-light:bg-sky-600/80 dh-light:text-sky-950 dh-light:border-sky-700/60 dh-light:ring-sky-600/45';
+  'bg-sky-500/65 text-white border-sky-300/85 ring-2 ring-sky-300/55 shadow-md z-[1] font-semibold';
 
 /** One flex row of options joined as a segmented control (use with {@link V2_SEGMENT_BTN_BASE}). */
 export const V2_SEGMENT_ROW_OUTER =

@@ -304,7 +304,7 @@ function TraitChip({ trait, label, score, onClick, mod, modSource }) {
         <span className={`font-bold tabular-nums leading-none tracking-tight ${numSizeCls} ${numColorCls}`}>{display}</span>
       </div>
       {showModLine && (
-        <span className={`text-[9px] font-semibold tabular-nums leading-none ${mod > 0 ? 'text-sky-400 dh-light:text-sky-800' : 'text-sky-500/90 dh-light:text-sky-800'}`}>
+        <span className={`text-[9px] font-semibold tabular-nums leading-none ${mod > 0 ? 'text-sky-400' : 'text-sky-500/90'}`}>
           {mod > 0 ? `+${mod}` : String(mod)}
         </span>
       )}
@@ -795,17 +795,17 @@ export function CharacterDefenseRow({ el }) {
             className="inline-flex items-center gap-1"
             placement="bottom-right"
           >
-            <Shield size={11} className="text-cyan-400 shrink-0 dh-light:text-dh" />
+            <Shield size={11} className="text-cyan-400 shrink-0" />
             <span className="text-dh-muted">Evasion</span>
-            <span className={`font-bold tabular-nums ${totalEvasionMod ? 'text-sky-300 dh-light:text-sky-900' : 'text-sky-200 dh-light:text-dh'}`}>{el.evasion}</span>
-            {totalEvasionMod ? <span className={`text-[10px] font-semibold tabular-nums text-sky-400 dh-light:text-sky-800`}>({totalEvasionMod > 0 ? '+' : ''}{totalEvasionMod})</span> : null}
+            <span className={`font-bold tabular-nums ${totalEvasionMod ? 'text-sky-300' : 'text-sky-200'}`}>{el.evasion}</span>
+            {totalEvasionMod ? <span className={`text-[10px] font-semibold tabular-nums text-sky-400`}>({totalEvasionMod > 0 ? '+' : ''}{totalEvasionMod})</span> : null}
           </Tooltip>
         )}
         {el.armorScore > 0 && (
           <div className="flex items-center gap-1" title={armorModTooltip || undefined}>
             <span className="text-dh-muted">Armor</span>
-            <span className={`font-bold tabular-nums ${wm.armorScore ? 'text-sky-300 dh-light:text-sky-900' : 'text-cyan-200 dh-light:text-dh'}`}>{el.armorScore}</span>
-            {wm.armorScore ? <span className={`text-[10px] font-semibold tabular-nums text-sky-400 dh-light:text-sky-800`}>({wm.armorScore > 0 ? '+' : ''}{wm.armorScore})</span> : null}
+            <span className={`font-bold tabular-nums ${wm.armorScore ? 'text-sky-300' : 'text-cyan-200'}`}>{el.armorScore}</span>
+            {wm.armorScore ? <span className={`text-[10px] font-semibold tabular-nums text-sky-400`}>({wm.armorScore > 0 ? '+' : ''}{wm.armorScore})</span> : null}
             {el.armorName && <span className="text-dh-muted">({el.armorName})</span>}
             {armorFeature && (
               <span
@@ -813,7 +813,7 @@ export function CharacterDefenseRow({ el }) {
                 className={`text-[9px] rounded px-1 py-0.5 border ${
                   isStatModFeature
                     ? 'bg-dh-raised/60 border-dh-border text-dh-muted'
-                    : 'bg-teal-900/40 border-teal-700/50 text-teal-300 dh-light:bg-teal-100/80 dh-light:border-teal-600/50 dh-light:text-dh'
+                    : 'bg-teal-900/40 border-teal-700/50 text-teal-300'
                 }`}
               >{armorFeature.name}</span>
             )}
@@ -832,16 +832,16 @@ export function CharacterDefenseRow({ el }) {
             ) : null}
             <span className="text-dh font-semibold">{thresholds.major}</span>
             <span className="text-dh-muted"> / </span>
-            <span className={`font-semibold ${wm.severeThreshold ? 'text-orange-400 dh-light:text-orange-900' : 'text-red-400 dh-light:text-red-900'}`} title={severeModTooltip || undefined}>
+            <span className={`font-semibold ${wm.severeThreshold ? 'text-orange-400' : 'text-red-400'}`} title={severeModTooltip || undefined}>
               {(earthBonus > 0 || ancestrySevereBonus > 0) ? (
                 <>
-                  <span className="opacity-50 dh-light:opacity-100 dh-light:text-dh-muted">{thresholds.severe - earthBonus - ancestrySevereBonus}</span>
+                  <span className="opacity-50">{thresholds.severe - earthBonus - ancestrySevereBonus}</span>
                   {ancestrySevereBonus > 0 && <span className="text-dh-muted font-normal"> +{ancestrySevereBonus}{ancestryBonusSource ? ` (${ancestryBonusSource})` : ''}</span>}
                   {earthBonus > 0 && <span className="text-dh-muted font-normal"> +{earthBonus} (Earth)</span>}
                   <span className="text-dh-muted font-normal"> = </span>
                 </>
               ) : null}
-              {thresholds.severe}{wm.severeThreshold ? <span className="text-[10px] text-orange-400 dh-light:text-orange-900"> ({wm.severeThreshold > 0 ? '+' : ''}{wm.severeThreshold})</span> : null}
+              {thresholds.severe}{wm.severeThreshold ? <span className="text-[10px] text-orange-400"> ({wm.severeThreshold > 0 ? '+' : ''}{wm.severeThreshold})</span> : null}
             </span>
           </div>
         )}

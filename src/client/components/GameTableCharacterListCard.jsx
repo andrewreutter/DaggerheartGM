@@ -171,7 +171,7 @@ export function GameTableCharacterListCard({
                       >
                         <span>EVA {displayChar.evasion}</span>
                         {evModTotal !== 0 ? (
-                          <span className={`text-[9px] font-semibold text-sky-400 dh-light:text-sky-800`}>
+                          <span className={`text-[9px] font-semibold text-sky-400`}>
                             ({evModTotal > 0 ? '+' : ''}
                             {evModTotal})
                           </span>

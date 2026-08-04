@@ -1,10 +1,10 @@
 # Visual language (DaggerheartGM)
 
-This document separates **semantic signals** (game meaning) from **theme chrome** (neutral UI surfaces). Chrome is implemented as CSS variables on `document.documentElement` under `data-theme="dark"` or `data-theme="light"`; see `src/input.css` for token names and values.
+This document separates **semantic signals** (game meaning) from **theme chrome** (neutral UI surfaces). Chrome is implemented as CSS custom properties on `:root` in `src/input.css`; see that file for token names and values. The app uses a fixed dark palette — there is no light mode.
 
 **Implementation note:** Tailwind `@theme` colors for `dh-*` must use a real alpha channel (e.g. `rgb(var(--dh-surface) / 1)`). A literal `<alpha-value>` placeholder in compiled CSS is invalid in browsers and will make `bg-dh-*` / `text-dh` appear transparent or missing.
 
-## Semantic signals (stable across themes)
+## Semantic signals
 
 These communicate **mechanics and provenance**. They intentionally use fixed Tailwind hues (amber, red, cyan, sky, violet, etc.) so switching light/dark does not change what “Hope” or “HP” means.
 
@@ -49,7 +49,7 @@ Single semantic family so spell buttons, domain picks, and domain UI read as one
 | **HoD** | `.dh-badge-hod` | — | Heart of Daggers |
 | **FCG** | `.dh-badge-fcg` | — | Fresh Cut Grass |
 
-`SOURCE_BADGE` in `src/client/lib/constants.js` applies `dh-badge` + per-source classes; contrast is tuned per `data-theme`.
+`SOURCE_BADGE` in `src/client/lib/constants.js` applies `dh-badge` + per-source classes.
 
 ### Character identity (sheet header chips)
 
@@ -84,7 +84,7 @@ Single-row chrome lives in `CharacterIdentityTitleRow` (used by `CharacterIdenti
 
 Optional tweaks later: if a badge fails contrast on a white panel, adjust only that badge’s shade—**do not** remap Hope/HP colors to “neutral” grays.
 
-## Theme chrome (swappable per `data-theme`)
+## Theme chrome
 
 | Token (Tailwind) | Role |
 |------------------|------|
@@ -104,23 +104,23 @@ Optional tweaks later: if a badge fails contrast on a white panel, adjust only t
 | `bg-dh-level-badge-*` / `text-dh-level-badge-text` / `border-dh-level-badge-border` | `LevelBadge` |
 | `.dh-tint-*` utilities | Character sheet semantic tints (trait positive, roll flash, spellcast strip, violet/amber weapon cards, sky row for experiences/tabs) — see `src/input.css` |
 
-Light theme uses airy whites and cool grays; dark theme values live **only** under `[data-theme="dark"]` in `src/input.css` (not `:root`), so the inline script in `public/index.html` is the single pre-paint source for default chrome. **Neutral is not identical contrast** in both themes: light mode uses darker body text and crisper borders; dark mode keeps lighter text on deep surfaces.
+Chrome variables are defined in `:root` in `src/input.css` and apply globally — there is no runtime switching. Dark surfaces use light text for all neutral content.
 
 **Convention:** use `bg-dh-*`, `text-dh`, `border-dh-*`, and the `.dh-badge-*` / `.dh-tint-*` classes for neutral surfaces and library chrome. Avoid raw Tailwind `slate-*` for theme-able UI (semantic hues like Hope/amber are unchanged).
 
 ## Markdown & code
 
-Rendered item text uses `.dh-md` and Reddit `.reddit-md`. Colors use chrome variables so descriptions stay readable in both themes. **Syntax highlighting** (highlight.js): dark theme uses `github-dark-dimmed`; light theme swaps to `github.min.css` via `src/client/lib/theme-storage.js`.
+Rendered item text uses `.dh-md` and Reddit `.reddit-md`. Colors use chrome variables. **Syntax highlighting** (highlight.js) uses `github-dark-dimmed`.
 
 ## Theming coverage (phased)
 
 - **Phase A (done):** App shell, nav, loading, sign-in hero, user menu (`app.jsx`, `NavBtn`, `public/index.html` bootstrap).
 - **Phase B (done):** `FullPageOverlay`, `ItemDetailModal`, `LibraryView` chrome.
 - **Phase C (done):** Game table stack — `GMTableView`, `BattleMap` (blank map uses `bg-dh-map-blank`), `DiceRoller`, `CharacterHoverCard`, plus `ActionLog` for the center column. The 3D dice canvas remains its own WebGL surface (not fully theme-tinted).
-- **Phase D (done):** Cards and chips end-to-end — `DetailCardContent`, `LibraryItemDisplayContent`, forms/modals/pickers, `SOURCE_BADGE` + `LevelBadge` + `TierShieldBadge`, and character sheet tints (`.dh-tint-*` + **magic** / spellcast header variables). Manual spot-check: Library card + item detail + character sheet in both themes.
+- **Phase D (done):** Cards and chips end-to-end — `DetailCardContent`, `LibraryItemDisplayContent`, forms/modals/pickers, `SOURCE_BADGE` + `LevelBadge` + `TierShieldBadge`, and character sheet tints (`.dh-tint-*` + **magic** / spellcast header variables). Manual spot-check: Library card + item detail + character sheet.
 
-Persistence: `localStorage` key `dh_theme`, values `dark` | `light`. A short inline script in `public/index.html` sets `data-theme` before first paint to limit flash.
+
 
 ## Non-color cues
 
-Elevation: borders and subtle shadows (light) vs. edge contrast (dark). Typography scale is shared across themes; nav and modal chrome follow the same spacing patterns.
+Elevation: edge contrast via `dh-border` / `dh-raised`. Typography scale and spacing patterns are consistent across the entire UI.

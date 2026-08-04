@@ -6,14 +6,6 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const inputCssPath = join(__dirname, '../../src/input.css');
 
-function extractDhVarNames(block) {
-  const names = new Set();
-  const re = /--(dh-[a-z0-9-]+)\s*:/g;
-  let m;
-  while ((m = re.exec(block)) !== null) names.add(m[1]);
-  return names;
-}
-
 describe('theme CSS tokens (input.css)', () => {
   it('does not leave Tailwind <alpha-value> placeholders in @theme dh colors (invalid in browsers)', () => {
     const src = readFileSync(inputCssPath, 'utf8');
@@ -24,22 +16,16 @@ describe('theme CSS tokens (input.css)', () => {
     expect(block).toMatch(/--color-dh:\s*rgb\(var\(--dh-text\)\s*\/\s*1\)/);
   });
 
-  it('declares the same --dh-* custom properties in dark and light theme blocks (parity)', () => {
+  it('declares --dh-* custom properties under :root', () => {
     const src = readFileSync(inputCssPath, 'utf8');
-    const darkM = src.match(/\[data-theme="dark"\]\s*\{([^}]+)\}/);
-    const lightM = src.match(/\[data-theme="light"\]\s*\{([^}]+)\}/);
-    expect(darkM, 'expected [data-theme="dark"] { ... }').toBeTruthy();
-    expect(lightM, 'expected [data-theme="light"] { ... }').toBeTruthy();
-    const darkNames = extractDhVarNames(darkM[1]);
-    const lightNames = extractDhVarNames(lightM[1]);
-    const onlyDark = [...darkNames].filter((n) => !lightNames.has(n));
-    const onlyLight = [...lightNames].filter((n) => !darkNames.has(n));
-    expect(onlyDark, `only in dark: ${onlyDark.join(', ')}`).toEqual([]);
-    expect(onlyLight, `only in light: ${onlyLight.join(', ')}`).toEqual([]);
+    const rootM = src.match(/:root\s*\{([^}]+)\}/);
+    expect(rootM, 'expected :root { ... } with --dh-* vars in input.css').toBeTruthy();
+    expect(rootM[1]).toMatch(/--dh-canvas/);
+    expect(rootM[1]).toMatch(/--dh-text/);
   });
 
-  it('does not use :root for theme chrome (dark palette is under data-theme only)', () => {
+  it('does not contain a [data-theme="light"] block', () => {
     const src = readFileSync(inputCssPath, 'utf8');
-    expect(src).not.toMatch(/:root\s*,\s*\n\[data-theme="dark"\]/);
+    expect(src).not.toMatch(/\[data-theme="light"\]/);
   });
 });

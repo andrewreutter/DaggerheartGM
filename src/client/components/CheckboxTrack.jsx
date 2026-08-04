@@ -7,32 +7,32 @@ import { Skull, Shield, Sparkles, Flame, AlertCircle } from 'lucide-react';
 
 /** Empty slots: slightly light gray icon only (no border). */
 export const CHECKBOX_TRACK_EMPTY_ICON =
-  'text-neutral-400/95 dh-light:text-neutral-500';
+  'text-neutral-400/95';
 
 /** Preset icons + icon color when marked (borders only for hover preview / pending overlays). */
 export const CHECKBOX_TRACK_PRESETS = {
   hope: {
     Icon: Sparkles,
-    icon: 'text-yellow-400 dh-light:text-yellow-600',
+    icon: 'text-yellow-400',
     /** Hope-only: solid yellow vs gray cell borders (character sheet header). */
-    borderFilled: 'border-2 border-yellow-400 dh-light:border-yellow-500',
-    borderEmpty: 'border-2 border-dh-muted dh-light:border-dh-muted',
+    borderFilled: 'border-2 border-yellow-400',
+    borderEmpty: 'border-2 border-dh-muted',
   },
   fear: {
     Icon: Flame,
-    icon: 'text-fuchsia-400 dh-light:text-fuchsia-600',
+    icon: 'text-fuchsia-400',
   },
   hp: {
     Icon: Skull,
-    icon: 'text-red-500 stroke-red-600 dh-light:stroke-red-600',
+    icon: 'text-red-500 stroke-red-600',
   },
   armor: {
     Icon: Shield,
-    icon: 'text-cyan-500 stroke-cyan-600 dh-light:stroke-cyan-700',
+    icon: 'text-cyan-500 stroke-cyan-600',
   },
   stress: {
     Icon: AlertCircle,
-    icon: 'text-orange-500 stroke-orange-600 dh-light:stroke-orange-700',
+    icon: 'text-orange-500 stroke-orange-600',
   },
   stressPurple: {
     Icon: AlertCircle,

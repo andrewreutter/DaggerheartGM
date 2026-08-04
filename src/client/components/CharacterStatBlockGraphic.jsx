@@ -160,26 +160,26 @@ function FlowSpanningArrowRight() {
 function ThresholdZones({ major, severe }) {
   /** Band label small; threshold range prominent; "N HP" de-emphasized */
   const rangeCls =
-    'text-[11px] font-bold tabular-nums text-dh leading-tight dh-light:text-dh';
+    'text-[11px] font-bold tabular-nums text-dh leading-tight';
   const hpCls = 'text-[8px] font-medium tabular-nums text-dh-muted mt-0.5';
   return (
     <div className="grid grid-cols-3 gap-0.5 rounded-lg overflow-hidden ring-1 ring-dh-border min-h-[2.25rem]">
-      <div className="bg-gradient-to-b from-red-950/45 via-red-950/25 to-red-950/15 dh-light:from-red-100/95 dh-light:via-red-50/50 dh-light:to-white px-1 py-1 flex flex-col justify-center items-center text-center border-r border-dh-border/60 ring-1 ring-red-900/25">
-        <span className="text-[9px] font-bold text-red-100/95 dh-light:text-red-950">Minor</span>
-        <span className={`${rangeCls} text-red-50/95 dh-light:text-red-950`}>
+      <div className="bg-gradient-to-b from-red-950/45 via-red-950/25 to-red-950/15 px-1 py-1 flex flex-col justify-center items-center text-center border-r border-dh-border/60 ring-1 ring-red-900/25">
+        <span className="text-[9px] font-bold text-red-100/95">Minor</span>
+        <span className={`${rangeCls} text-red-50/95`}>
           ≤ {Math.max(0, major - 1)}
         </span>
-        <span className={`${hpCls} text-red-100/80 dh-light:text-red-900/80`}>1 HP</span>
+        <span className={`${hpCls} text-red-100/80`}>1 HP</span>
       </div>
       {/* Midway blend between Minor and Severe column washes */}
-      <div className="bg-gradient-to-b from-red-950/60 via-red-900/40 to-red-950/30 dh-light:from-red-100/93 dh-light:via-rose-50/82 dh-light:to-red-50/78 px-1 py-1 flex flex-col justify-center items-center text-center border-r border-dh-border/60 ring-1 ring-red-900/28">
+      <div className="bg-gradient-to-b from-red-950/60 via-red-900/40 to-red-950/30 px-1 py-1 flex flex-col justify-center items-center text-center border-r border-dh-border/60 ring-1 ring-red-900/28">
         <span className="text-[9px] font-bold text-dh">Major</span>
         <span className={rangeCls}>
           {major}–{severe - 1}
         </span>
         <span className={hpCls}>2 HP</span>
       </div>
-      <div className="bg-gradient-to-b from-red-950/80 via-red-900/55 to-dh-raised/80 dh-light:from-red-100/90 dh-light:via-rose-50/90 dh-light:to-dh-raised px-1 py-1 flex flex-col justify-center items-center text-center ring-1 ring-red-900/35">
+      <div className="bg-gradient-to-b from-red-950/80 via-red-900/55 to-dh-raised/80 px-1 py-1 flex flex-col justify-center items-center text-center ring-1 ring-red-900/35">
         <span className="text-[9px] font-bold text-dh">Severe</span>
         <span className={rangeCls}>≥ {severe}</span>
         <span className={hpCls}>3 HP</span>
@@ -302,11 +302,11 @@ export function HopeHeroTrack({ el, hopeTrackInteraction = null }) {
 const STAT_CHIP_LABEL = 'text-[11px] font-semibold uppercase tracking-wide leading-tight';
 const EVASION_LABEL = 'text-[13px] font-semibold uppercase tracking-wide';
 /** Evasion shell matches Armor (cyan ring/labels); score uses sky (see evasionInner). */
-const EVASION_ICON = 'w-[13px] h-[13px] shrink-0 text-cyan-400 dh-light:text-dh';
+const EVASION_ICON = 'w-[13px] h-[13px] shrink-0 text-cyan-400';
 const HOPE_LABEL = 'text-[11px] font-semibold uppercase tracking-wide text-dh-muted shrink-0';
-export const HOPE_TRACK_FILL = 'bg-yellow-400 dh-light:bg-yellow-500';
+export const HOPE_TRACK_FILL = 'bg-yellow-400';
 /** Hope Sparkles / small icons — same accent as {@link HopeHeroTrack}. */
-export const HOPE_TRACK_ICON_CLASS = 'text-yellow-500 dh-light:text-yellow-700 shrink-0';
+export const HOPE_TRACK_ICON_CLASS = 'text-yellow-500 shrink-0';
 
 /** Hint under Armor / HP track titles (Daggerheart damage flow). */
 const DEFENSE_TRACK_SUBTITLE =
@@ -338,7 +338,7 @@ function ArmorStatChip({ el, compact, trackInteraction }) {
     if (armorScore != null && armorScore > 0) {
       return (
         <div
-          className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-cyan-100 dh-light:text-dh`}
+          className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-cyan-100`}
         >
           {armorScore}
         </div>
@@ -347,7 +347,7 @@ function ArmorStatChip({ el, compact, trackInteraction }) {
     if (hasSlots) {
       return (
         <div
-          className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-cyan-100 dh-light:text-dh`}
+          className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-cyan-100`}
         >
           {maxArmor}
         </div>
@@ -364,7 +364,7 @@ function ArmorStatChip({ el, compact, trackInteraction }) {
       className={`rounded-xl bg-dh-raised ring-1 ring-cyan-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
       <div className={CHIP_HEADER_BLOCK}>
-        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-cyan-300/90 dh-light:text-dh text-center`}>
+        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-cyan-300/90 text-center`}>
           Armor
         </div>
         <div className={DEFENSE_TRACK_SUBTITLE}>Mark 1?</div>
@@ -405,7 +405,7 @@ function StressStatChip({ el, compact, trackInteraction }) {
         className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/20 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
       >
         <div className={CHIP_HEADER_BLOCK}>
-          <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-orange-300/80 dh-light:text-dh text-center`}>
+          <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-orange-300/80 text-center`}>
             Stress
           </div>
           <div className={`${DEFENSE_TRACK_SUBTITLE} invisible`} aria-hidden>
@@ -428,7 +428,7 @@ function StressStatChip({ el, compact, trackInteraction }) {
       className={`rounded-xl bg-dh-raised ring-1 ring-orange-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
       <div className={CHIP_HEADER_BLOCK}>
-        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-orange-300/90 dh-light:text-dh text-center`}>
+        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-orange-300/90 text-center`}>
           Stress
         </div>
         <div className={`${DEFENSE_TRACK_SUBTITLE} invisible`} aria-hidden>
@@ -436,7 +436,7 @@ function StressStatChip({ el, compact, trackInteraction }) {
         </div>
       </div>
       <div className={CHIP_PRIMARY_BOX}>
-        <div className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-orange-100 dh-light:text-dh`}>
+        <div className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-orange-100`}>
           {maxStress}
         </div>
       </div>
@@ -470,7 +470,7 @@ function HpStatChip({ el, compact, trackInteraction }) {
         className={`rounded-xl bg-dh-raised ring-1 ring-red-500/20 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full text-dh-muted`}
       >
         <div className={CHIP_HEADER_BLOCK}>
-          <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-red-300/80 dh-light:text-dh text-center`}>
+          <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-red-300/80 text-center`}>
             HP
           </div>
           <div className={DEFENSE_TRACK_SUBTITLE}>Mark the rest</div>
@@ -491,13 +491,13 @@ function HpStatChip({ el, compact, trackInteraction }) {
       className={`rounded-xl bg-dh-raised ring-1 ring-red-500/25 flex flex-col items-stretch ${CHIP_INNER_GAP} ${shell} ${CHIP_COL_W} h-full`}
     >
       <div className={CHIP_HEADER_BLOCK}>
-        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-red-300/90 dh-light:text-dh text-center`}>
+        <div className={`flex items-center justify-center ${STAT_CHIP_LABEL} text-red-300/90 text-center`}>
           HP
         </div>
         <div className={DEFENSE_TRACK_SUBTITLE}>Mark the rest</div>
       </div>
       <div className={CHIP_PRIMARY_BOX}>
-        <div className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-red-100 dh-light:text-dh`}>
+        <div className={`font-bold tabular-nums leading-none ${compact ? 'text-lg' : 'text-xl'} text-red-100`}>
           {maxHp}
         </div>
       </div>
@@ -580,15 +580,15 @@ export function CharacterStatBlockGraphic({
       <div
         className={`rounded-xl bg-dh-raised ring-1 ring-cyan-500/25 flex flex-col items-center justify-center ${compact ? 'px-2 py-1.5 min-w-[4.5rem]' : 'px-3 py-2 min-w-[5.5rem]'}`}
       >
-        <div className={`flex items-center gap-1 ${EVASION_LABEL} text-cyan-300/90 dh-light:text-dh`}>
+        <div className={`flex items-center gap-1 ${EVASION_LABEL} text-cyan-300/90`}>
           <Shield className={EVASION_ICON} strokeWidth={2.25} />
           Evasion
         </div>
         <div
-          className={`font-bold tabular-nums leading-none ${compact ? 'text-xl' : 'text-2xl'} ${evMod ? 'text-sky-300 dh-light:text-sky-900' : 'text-sky-100 dh-light:text-dh'}`}
+          className={`font-bold tabular-nums leading-none ${compact ? 'text-xl' : 'text-2xl'} ${evMod ? 'text-sky-300' : 'text-sky-100'}`}
         >
           {evasion}
-          {evMod ? <span className="text-sm font-semibold text-sky-400 dh-light:text-sky-800"> ({evMod > 0 ? '+' : ''}{evMod})</span> : null}
+          {evMod ? <span className="text-sm font-semibold text-sky-400"> ({evMod > 0 ? '+' : ''}{evMod})</span> : null}
         </div>
       </div>
     );
