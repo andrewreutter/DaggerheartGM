@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dices, ChevronUp, ChevronDown } from 'lucide-react';
-import { MANUAL_DICE_SIZES, buildManualRollText } from '../lib/manual-dice-roll-text.js';
+import { ManualDiceBuilder } from './ManualDiceBuilder.jsx';
 import { isReactionRoll } from '../lib/reaction-roll-display.js';
 
 // Per-sub-item accent colors: Hope → amber, Fear → purple, damage → red, else sky/green
@@ -145,10 +145,6 @@ export function ActionLog({ rolls = [], rollBuilder }) {
   const scrollRef = useRef(null);
   const stripScrollRef = useRef(null);
   const overlayRef = useRef(null);
-  const [dualityOn, setDualityOn] = useState(true);
-  const [counts, setCounts] = useState(() =>
-    Object.fromEntries(MANUAL_DICE_SIZES.map((s) => [s, 0]))
-  );
 
   const stripRolls = rolls.slice(-STRIP_MAX_ROLLS);
 
@@ -184,7 +180,7 @@ export function ActionLog({ rolls = [], rollBuilder }) {
       {open && (
         <div
           className="absolute bottom-0 left-0 right-0 z-30 bg-dh-canvas border border-dh-strong border-b-0 rounded-t-lg shadow-2xl flex flex-col"
-          style={{ height: '400px' }}
+          style={{ height: 'min(680px, 85vh)' }}
         >
           <div
             role="button"
@@ -202,46 +198,7 @@ export function ActionLog({ rolls = [], rollBuilder }) {
           </div>
           {rollBuilder && (
             <div className="px-3 py-2 border-b border-dh-border bg-dh-surface/50 shrink-0">
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={dualityOn}
-                    onChange={(e) => setDualityOn(e.target.checked)}
-                    className="rounded border-dh-strong bg-dh-raised text-amber-500 focus:ring-amber-500"
-                  />
-                  <span className="text-[11px] text-dh">Duality Dice (d12)</span>
-                </label>
-                {MANUAL_DICE_SIZES.map((size) => (
-                  <label key={size} className="flex items-center gap-0.5 mr-1">
-                    <span className="text-[10px] text-dh-muted shrink-0">d{size}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={99}
-                      value={counts[size] || 0}
-                      onChange={(e) => {
-                        const v = Math.max(0, Math.min(99, parseInt(e.target.value, 10) || 0));
-                        setCounts((c) => ({ ...c, [size]: v }));
-                      }}
-                      className="w-10 rounded border border-dh-strong bg-dh-raised px-1 py-0.5 text-[11px] text-dh text-center tabular-nums"
-                    />
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  disabled={!dualityOn && MANUAL_DICE_SIZES.every((s) => !(counts[s] || 0))}
-                  onClick={() => {
-                    const rollText = buildManualRollText(dualityOn, counts);
-                    if (!rollText) return;
-                    rollBuilder.onRoll(rollText, rollBuilder.displayName);
-                    setOpen(false);
-                  }}
-                  className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-medium text-amber-950"
-                >
-                  Roll
-                </button>
-              </div>
+              <ManualDiceBuilder rollBuilder={rollBuilder} onRolled={() => setOpen(false)} />
             </div>
           )}
           <div

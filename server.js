@@ -571,16 +571,7 @@ function rollFromText(rollText) {
     const expr = m[1].trim();
     const rolled = rollDice(expr);
     if (rolled) {
-      let result = rolled.result;
-      let details = rolled.details;
-      // Damage with multiple dice: retain only the highest die in the total (Daggerheart rule).
-      if (/damage/i.test(pre) && rolled.values && rolled.values.length > 1 && !rolled.keep) {
-        const maxVal = Math.max(...rolled.values);
-        result = maxVal + (rolled.modifier || 0);
-        const others = rolled.values.filter(v => v !== maxVal);
-        details = others.length ? `(${others.join(',')}->${maxVal})` : `(${maxVal})`;
-      }
-      subItems.push({ pre, input: rolled.input, result: String(result), details, post: '' });
+      subItems.push({ pre, input: rolled.input, result: String(rolled.result), details: rolled.details, post: '' });
     } else {
       subItems.push({ pre, input: expr, result: expr, details: '', post: '' });
     }

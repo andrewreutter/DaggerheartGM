@@ -43,54 +43,9 @@ import {
   getInitialV2ReviewTargetSelection,
   primaryDamageTargetIsInPickList,
 } from '../lib/v2-review-chip-target-selection.js';
+import { renderColoredDiceGroups } from '../lib/dice-color-groups.js';
 
 const SUPPORTED_SIDES = new Set([4, 6, 8, 10, 12, 20]);
-
-// ── Daggerheart die color themes ────────────────────────────────────────────
-
-const HOPE_COLORSET = {
-  name: 'dh_hope',
-  foreground: '#451a03',
-  background: '#f59e0b',
-  outline: '#b45309',
-  texture: 'none',
-  material: 'glass',
-};
-
-const FEAR_COLORSET = {
-  name: 'dh_fear',
-  foreground: '#ffffff',
-  background: '#9333ea',
-  outline: '#6b21a8',
-  texture: 'none',
-  material: 'glass',
-};
-
-const DAMAGE_COLORSET = {
-  name: 'dh_damage',
-  foreground: '#ffffff',
-  background: '#dc2626',
-  outline: '#991b1b',
-  texture: 'none',
-  material: 'glass',
-};
-
-const DEFAULT_COLORSET = {
-  name: 'dh_default',
-  foreground: '#1e293b',
-  background: '#e2e8f0',
-  outline: '#94a3b8',
-  texture: 'none',
-  material: 'glass',
-};
-
-function getColorsetForLabel(label) {
-  const l = (label || '').toLowerCase();
-  if (/hope/i.test(l))       return HOPE_COLORSET;
-  if (/fear/i.test(l))       return FEAR_COLORSET;
-  if (/damage|dmg/i.test(l)) return DAMAGE_COLORSET;
-  return DEFAULT_COLORSET;
-}
 
 // ── Notation parsing helpers ────────────────────────────────────────────────
 
@@ -147,13 +102,6 @@ export function parseRollDice(subItems) {
     });
   }
   return groups;
-}
-
-// Build notation for a single group: "2d6@3,5" or "1d12@7"
-function groupNotation(g) {
-  const dice = `${g.qty}d${g.sides}`;
-  if (g.values) return `${dice}@${g.values.join(',')}`;
-  return dice;
 }
 
 const EXTRA_PRE_RE = /^\s*(Reload|Invigorate|Lifesteal)\s*$/i;
@@ -1415,6 +1363,11 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
   const genericAction = parseDiceSub(genericActionSub);
   const genericTotal  = total ?? computeActionTotal(roll.subItems);
   const genericDiceSubs = !hasDuality ? actionItems.filter(s => /d\d/i.test(s.input || '')) : [];
+  // Standalone flat-modifier sub-items alongside dice (e.g. manual dice builder "Modifier [N]") —
+  // separate bracket expressions rolled as plain integers, not a "+N" suffix on a dice notation.
+  const genericStaticModSubs = !hasDuality
+    ? actionItems.filter(s => s.input && isStaticDiceInput(s.input) && !/disadvantage/i.test(s.pre || ''))
+    : [];
   const genericDiceTotalKnown = resolved
     || (genericDiceSubs.length > 0 && genericDiceSubs.every(s => s._preset || isStaticDiceInput(s.input)));
   // Trailing " + N" from rollText (e.g. Know the Tide) — show in dice string; total already includes it.
@@ -1681,10 +1634,25 @@ function ResultBanner({ roll, resolved, onAcknowledge, onCancel, targets, getTar
           ) : genericAction ? (
             <>
               <span className={`text-[11px] ${scheme.detail}`}>
-                {genericAction.notation} {(resolved || genericActionSub?._preset) ? genericAction.dieValue : <Spinner />}
-                {genericAction.modifier !== 0 && (
-                  <> {genericAction.modifier > 0 ? '+' : '-'} {Math.abs(genericAction.modifier)}</>
-                )}
+                {genericDiceSubs.map((s, i) => {
+                  const gp = parseDiceSub(s);
+                  if (!gp) return null;
+                  return (
+                    <span key={i}>
+                      {i > 0 ? '  ' : ''}{gp.notation} {(resolved || s._preset) ? gp.dieValue : <Spinner />}
+                      {gp.modifier !== 0 && (
+                        <> {gp.modifier > 0 ? '+' : '-'} {Math.abs(gp.modifier)}</>
+                      )}
+                    </span>
+                  );
+                })}
+                {genericStaticModSubs.map((s, i) => {
+                  const val = parseInt(s.result, 10);
+                  if (isNaN(val) || val === 0) return null;
+                  return (
+                    <span key={`mod-${i}`}> {val > 0 ? '+' : '-'} {Math.abs(val)}</span>
+                  );
+                })}
                 {actionItems.some(s => /disadvantage/i.test(s.pre || '')) && (
                   <> {actionItems.filter(s => /disadvantage/i.test(s.pre || '')).map((s, i) => {
                     const val = parseInt(s.result, 10) || 0;
@@ -2839,66 +2807,7 @@ export const DiceRoller = forwardRef(function DiceRoller({
   // ── Dice animation ─────────────────────────────────────────────────────────
 
   async function animateGroups(groups) {
-    const db = diceBoxRef.current;
-    if (!db) return;
-
-    const colorSets = await Promise.all(
-      groups.map(g => db.DiceColors.makeColorSet(getColorsetForLabel(g.label)))
-    );
-
-    db.clearDice();
-
-    const allVectors = [];
-    const groupRanges = [];
-
-    for (let i = 0; i < groups.length; i++) {
-      db.DiceFactory.applyColorSet(colorSets[i]);
-      db.colorData = colorSets[i];
-
-      const startPos = {
-        x: (Math.random() * 2 - 0.5) * db.display.currentWidth,
-        y: -(Math.random() * 2 - 0.5) * db.display.currentHeight,
-      };
-      const dist = Math.sqrt(startPos.x ** 2 + startPos.y ** 2) + 100;
-      const force = (Math.random() + 3) * dist * db.strength;
-      const nv = db.getNotationVectors(groupNotation(groups[i]), startPos, force, dist);
-      if (!nv?.vectors?.length) continue;
-
-      const startIdx = db.diceList.length;
-      for (const vec of nv.vectors) {
-        db.spawnDice(vec);
-        allVectors.push(vec);
-      }
-      groupRanges.push({ nv, startIdx, count: nv.vectors.length });
-    }
-
-    if (!db.diceList.length) return;
-
-    db.simulateThrow();
-    db.steps = 0;
-    db.iteration = 0;
-
-    for (let i = 0; i < db.diceList.length; i++) {
-      if (db.diceList[i]) db.spawnDice(allVectors[i], db.diceList[i]);
-    }
-
-    for (const { nv, startIdx } of groupRanges) {
-      if (nv.result?.length) {
-        for (let j = 0; j < nv.result.length; j++) {
-          const die = db.diceList[startIdx + j];
-          if (die && die.getLastValue().value !== nv.result[j]) {
-            db.swapDiceFace(die, nv.result[j]);
-          }
-        }
-      }
-    }
-
-    return new Promise((resolve) => {
-      db.rolling = true;
-      db.running = Date.now();
-      db.last_time = 0;
-      db.animateThrow(db.running, () => resolve());
-    });
+    return renderColoredDiceGroups(diceBoxRef.current, groups);
   }
 
   function startAnimation(groups, bannerId) {
