@@ -86,7 +86,7 @@ function rectChanged(a, b) {
  * @param {object[]} [props.allImportSliceRows] — full import slice list (for attach targets + row lookup)
  * @param {(id: string, patch: object) => void} [props.updateSlice]
  * @param {boolean} [props.isGameTableGm]
- * @param {((img: object) => void) | undefined} [props.onAddMapWithImage]
+ * @param {((img: object) => void|Promise<void>) | undefined} [props.onAddMapWithImage]
  * @param {string[]} [props.textSliceCollectionOptions]
  */
 export function ImageRegionsEditor({

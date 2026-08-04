@@ -642,6 +642,25 @@ export const fetchAdminAiUsage = async (query = {}) => {
   return body;
 };
 
+/**
+ * Admin: paginated list of bug reports (newest-first).
+ * @param {{ limit?: number, offset?: number }} [query]
+ */
+export const fetchAdminBugReports = async (query = {}) => {
+  const token = await getAuthToken();
+  if (!token) throw new Error('Not signed in');
+  const params = new URLSearchParams();
+  if (query.limit != null) params.set('limit', String(query.limit));
+  if (query.offset != null) params.set('offset', String(query.offset));
+  const qs = params.toString();
+  const res = await fetch(`/api/admin/bug-reports${qs ? `?${qs}` : ''}`, {
+    headers: apiHeaders({ Authorization: `Bearer ${token}` }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+};
+
 /** Persist user preferences (server JSON merge). */
 export const putUserPreferences = async (body) => {
   const token = await getAuthToken();

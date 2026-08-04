@@ -1722,3 +1722,37 @@ export async function queryAiUsageAggregates(appId, opts) {
 
   return { totals, byDay };
 }
+
+/** Returns the total number of bug reports for this app (across all GMs/tables). */
+export async function countBugReports(appId) {
+  const db = getPool();
+  const { rows } = await db.query(
+    'SELECT COUNT(*)::int AS total FROM bug_reports WHERE app_id = $1',
+    [appId]
+  );
+  return rows[0]?.total ?? 0;
+}
+
+/**
+ * Returns a page of bug reports for this app, newest-first.
+ * @param {string} appId
+ * @param {{ limit?: number, offset?: number }} opts
+ */
+export async function getBugReportsPaginated(appId, { limit = 50, offset = 0 } = {}) {
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT id, gm_uid, table_id, payload, created_at
+     FROM bug_reports
+     WHERE app_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [appId, limit, offset]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    gmUid: r.gm_uid,
+    tableId: r.table_id,
+    payload: r.payload,
+    createdAt: r.created_at,
+  }));
+}

@@ -61,7 +61,7 @@ function UnifiedImportGlobalListeners() {
  * @param {boolean} props.enabled — GM with session; when false, provider is inert
  * @param {(col: string, item: object) => Promise<object|void>} props.saveItem
  * @param {(item: object, col: string, tableId?: string) => void|Promise} props.addToTable
- * @param {(img: { mapImageUrl: string, mapImageNaturalWidth: number, mapImageNaturalHeight: number, extraCameraVisibleNorms?: { x: number, y: number, w: number, h: number }[] }) => void} [props.onAddMapWithImage]
+ * @param {(img: { mapImageUrl: string, mapImageNaturalWidth: number, mapImageNaturalHeight: number, extraCameraVisibleNorms?: { x: number, y: number, w: number, h: number }[] }) => void|Promise<void>} [props.onAddMapWithImage] — may upload an inline `data:` `mapImageUrl` to Storage before posting the op; callers should `await`.
  * @param {(path: string, opts?: object) => void} props.navigate
  * @param {string|null} props.tableId — active table id for ops (primary uid when not on table route)
  * @param {boolean} props.isGameTableGm — true when GM viewing /table/:id

@@ -13,6 +13,23 @@ export function loadImageNaturalSizeFromUrl(src) {
 }
 
 /**
+ * Convert a `data:` URL into a `File` suitable for `postMapImageFile` (multipart upload).
+ * Used to get inline map/overlay images (pasted, dropped, or cropped from an import slice)
+ * into Supabase Storage instead of embedding them as base64 in `table_state` (see Fix 1 of
+ * the Game Table latency plan — inline blobs blow up every op's DB read/write/SSE push).
+ * @param {string} dataUrl
+ * @param {string} [baseName]
+ * @returns {Promise<File>}
+ */
+export async function dataUrlToFile(dataUrl, baseName = 'map-image') {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const mime = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/png';
+  const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : mime.includes('gif') ? 'gif' : 'png';
+  return new File([blob], `${baseName}.${ext}`, { type: mime });
+}
+
+/**
  * POST /api/edit-image requires a base64 data URL. Convert http(s) or blob URLs by fetching.
  * @param {string} src
  * @returns {Promise<string>}

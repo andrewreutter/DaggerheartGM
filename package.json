@@ -34,7 +34,8 @@
     "setup:v2-migration-labels": "node --env-file=.env scripts/setup-v2-migration-labels.mjs",
     "v2:sync-tracker-md": "node --env-file=.env scripts/v2-sync-tracker-snapshot.mjs",
     "seed:v2-browser-chars": "node --env-file=.env scripts/seed-v2-browser-test-characters.mjs",
-    "chunk:srd": "node scripts/chunk-srd-readme.mjs"
+    "chunk:srd": "node scripts/chunk-srd-readme.mjs",
+    "migrate:map-images": "node --env-file=.env scripts/migrate-map-images-to-storage.mjs"
   },
   "dependencies": {
     "@3d-dice/dice-box-threejs": "^0.0.12",

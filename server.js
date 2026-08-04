@@ -9,7 +9,7 @@ import { readFile } from 'fs/promises';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import cron from 'node-cron';
-import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth } from './src/db.js';
+import { runMigrations, getPool, getItems, getPublicItems, upsertItem, deleteItem, countItems, getItemsPaginated, countCommunityItems, getCommunityItemsPaginated, getItemsByIds, getItem, recordClone, recordPlay, upsertMirror, findAutoClone, getUnifiedItems, getUnifiedLibraryAll, getUnifiedLibraryAllBranchCounts, getExternalCacheByIds, getTableStatesByPlayerEmail, getTableStateById, listTableStates, appendDiceRoll, ackDiceRoll, getRecentDiceRolls, setBannerStatus, getPendingBanners, getDiceRollById, updateDiceRollData, resolveCharacterElements as resolveCharacterElementsDb, stripCharacterElementsForDb, getResolvedTableState, setTableStateNotifyHook, getUserPreferences, upsertUserPreferences, queryAiUsageAggregates, stampFreeTrialStart, checkTableIsLive, extendTableCampaignPass, recordCampaignPassPurchase, markStripeEventProcessed, recordCharacterTablePlacement, removeCharacterTablePlacementsForTable, countUserAiCallsThisMonth, getBugReportsPaginated, countBugReports } from './src/db.js';
 import { isStripeConfigured, getStripe, constructWebhookEvent, CAMPAIGN_PASS_PRICE_CENTS, getCampaignPassPriceId } from './src/stripe.js';
 import { srdRouter, warmCache, getItem as getSrdItem } from './src/srd/index.js';
 import { fetchHoDFoundryDetail } from './src/hod-search.js';
@@ -57,7 +57,13 @@ import subscriptionManager from './src/subscriptions.js';
 import { safeResolveUnderFeaturesRoot } from './src/sanitize-feature-source-path.js';
 import { registerDevAgentRoutes } from './src/server/dev-agent-routes.js';
 import { DEFAULT_CHARACTER_STARTING_HOPE, ROLES, ENV_TYPES } from './src/game-constants.js';
+import { shouldSkipActivityStamp } from './src/server/activity-stamp-throttle.js';
 import { parseHttpBooleanLoose } from './src/parse-http-bool.js';
+import {
+  MIME_TO_EXT,
+  uploadBufferToMapStorage as uploadBufferToMapStorageImpl,
+  uploadDataUrlToMapStorageIfNeeded as uploadDataUrlToMapStorageIfNeededImpl,
+} from './src/server/map-storage.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FEATURES_V2_ROOT = join(__dirname, 'src', 'features-v2');
@@ -94,6 +100,15 @@ function isQaEmail(email) {
 const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
   ? createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
   : null;
+
+// Map/overlay image storage helpers, bound to this process's `supabase` client. Shared by the
+// map-image upload route and the server-side blob guard in applyOpToTableState below (Fix 1,
+// game table latency plan: inline base64 `data:` URLs must never persist in table_state — they
+// get read/written/broadcast on every unrelated op for that table).
+const uploadBufferToMapStorage = (ownerUid, buffer, mimetype, folder) =>
+  uploadBufferToMapStorageImpl(supabase, ownerUid, buffer, mimetype, folder);
+const uploadDataUrlToMapStorageIfNeeded = (ownerUid, value, folder) =>
+  uploadDataUrlToMapStorageIfNeededImpl(supabase, ownerUid, value, folder);
 
 // --- Firebase Admin (token verification only; no service account key needed) ---
 if (!getApps().length) {
@@ -305,6 +320,30 @@ app.get('/api/admin/ai-usage', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('GET /api/admin/ai-usage:', err);
     res.status(500).json({ error: 'Failed to load AI usage' });
+  }
+});
+
+/** Admin: list all bug reports across all tables, newest-first, paginated. */
+app.get('/api/admin/bug-reports', requireAuth, requireAdmin, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ error: 'Database required for bug reports' });
+  }
+  try {
+    const rawLimit = parseInt(req.query?.limit, 10);
+    const rawOffset = parseInt(req.query?.offset, 10);
+    const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+    const [items, totalCount] = await Promise.all([
+      getBugReportsPaginated(APP_ID, { limit, offset }),
+      countBugReports(APP_ID),
+    ]);
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ items, totalCount });
+  } catch (err) {
+    console.error('GET /api/admin/bug-reports:', err);
+    res.status(500).json({ error: 'Failed to load bug reports' });
   }
 });
 
@@ -985,15 +1024,47 @@ const roomOpLocks = new Map();
 
 /**
  * Apply a table op to the DB state for the given tableId, write back, and notify subscribers.
- * Looks up table ownership by tableId; ops for the same table are serialized.
+ * Ops for the same table are serialized via roomOpLocks.
+ *
+ * @param {string} tableId
+ * @param {object} op
+ * @param {{ ownerUid?: string }} [opts]
+ *   ownerUid — when provided, the function performs an ownership check inside the lock
+ *   (throwing a 403-flavored error on mismatch) and auto-creates the primary table row
+ *   when the row is missing and tableId === ownerUid.
  */
-async function applyOpToTableState(tableId, op) {
+async function applyOpToTableState(tableId, op, opts = {}) {
+  const { ownerUid } = opts;
   const prev = roomOpLocks.get(tableId) ?? Promise.resolve();
   const next = prev.then(async () => {
-    const row = await getTableStateById(APP_ID, tableId);
+    let row = await getTableStateById(APP_ID, tableId);
+
+    // Auto-create the primary table row if it doesn't exist yet (e.g. fresh local DB).
+    // Only allowed when the caller passes its own uid as ownerUid and the tableId matches.
+    if (!row && ownerUid && tableId === ownerUid) {
+      const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0, top: { sessionStarted: false } };
+      await upsertItem(APP_ID, ownerUid, 'table_state', tableId, emptyState, false);
+      row = { userId: ownerUid, data: emptyState };
+    }
+
     if (!row) throw new Error(`Table not found: ${tableId}`);
     const { userId, data: rawState } = row;
+
+    // Ownership check — only when the caller requests it (GM-facing routes).
+    if (ownerUid && userId !== ownerUid) {
+      const err = new Error('Not your table');
+      err.statusCode = 403;
+      throw err;
+    }
+
     const state = rawState || {};
+
+    // Throttle touch-session-activity: the op's only effect is stamping lastPlayActivityAt.
+    // Skip the entire read-modify-write-notify cycle when the stamp is already fresh (<60 s).
+    if (op.op === 'touch-session-activity' && shouldSkipActivityStamp(state.top?.lastPlayActivityAt)) {
+      return state;
+    }
+
     const bypassPrepGate = op?.bypassPrepGate === true;
     const gated = gateTableOpForPrepMode(state, op);
     if (!gated.ok) {
@@ -1004,6 +1075,16 @@ async function applyOpToTableState(tableId, op) {
       throw err;
     }
     op = gated.op;
+    // Defense in depth: strip any inline `data:` blob before it ever reaches applyTableOp /
+    // the DB write, in case a client path reintroduces one (Fix 1, game table latency plan).
+    if ((op.op === 'add-map' || op.op === 'set-map') && op.mapImageUrl) {
+      op = { ...op, mapImageUrl: await uploadDataUrlToMapStorageIfNeeded(userId, op.mapImageUrl, 'map-images') };
+    } else if (op.op === 'set-map-overlay' || op.op === 'set-map-fog' || op.op === 'set-map-view-overlay' || op.op === 'set-map-view-fog') {
+      const pngField = op.overlayPng !== undefined ? 'overlayPng' : op.fogPng !== undefined ? 'fogPng' : null;
+      if (pngField) {
+        op = { ...op, [pngField]: await uploadDataUrlToMapStorageIfNeeded(userId, op[pngField], 'map-overlays') };
+      }
+    }
     // applyTableOp uses 'activeElements' key; DB uses 'elements'
     const stateForOp = { ...state, activeElements: state.elements || [] };
     const changes = applyTableOp(op, stateForOp);
@@ -1016,6 +1097,11 @@ async function applyOpToTableState(tableId, op) {
     if (newState.maps?.length) {
       delete newState.mapConfig;
     }
+    // Throttle lastPlayActivityAt stamp for all ops: if the existing timestamp is already
+    // fresh (<60 s), skip re-writing it. touch-session-activity is handled above (early
+    // return); for other ops the primary mutation still proceeds — only the side-effect
+    // timestamp update is suppressed.
+    const activityIsRecent = shouldSkipActivityStamp(state.top?.lastPlayActivityAt);
     const skipActivityStamp =
       op.op === 'set-gm-display-name' ||
       op.op === 'touch-session-activity' ||
@@ -1036,7 +1122,8 @@ async function applyOpToTableState(tableId, op) {
       op.op === 'set-map-fog' ||
       op.op === 'set-map-view-overlay' ||
       op.op === 'set-map-view-fog' ||
-      bypassPrepGate;
+      bypassPrepGate ||
+      activityIsRecent;
     if (!skipActivityStamp) {
       newState.top = {
         ...(newState.top || {}),
@@ -1843,12 +1930,8 @@ app.post('/api/encounter-ai-build', requireAuth, async (req, res) => {
 });
 
 // --- Map image upload (Supabase Storage) ---
-
-const MIME_TO_EXT = {
-  'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
-  'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/avif': 'avif',
-  'image/apng': 'apng',
-};
+// MIME_TO_EXT / uploadBufferToMapStorage are defined near the `supabase` client above (shared
+// with the applyOpToTableState blob guard).
 
 const mapImageUpload = multer({
   storage: multer.memoryStorage(),
@@ -1869,15 +1952,9 @@ app.post('/api/room/my/map-image', requireAuth, mapImageUpload.single('file'), a
     const dataUrl = `data:${req.file.mimetype};base64,${b64}`;
     return res.json({ url: dataUrl });
   }
-  const ext = MIME_TO_EXT[req.file.mimetype] || 'bin';
-  const storagePath = `map-images/${gmUid}/${crypto.randomUUID()}.${ext}`;
   try {
-    const { error } = await supabase.storage
-      .from('whiteboard-assets')
-      .upload(storagePath, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
-    if (error) throw error;
-    const { data } = supabase.storage.from('whiteboard-assets').getPublicUrl(storagePath);
-    res.json({ url: data.publicUrl });
+    const url = await uploadBufferToMapStorage(gmUid, req.file.buffer, req.file.mimetype, 'map-images');
+    res.json({ url });
   } catch (err) {
     console.error('POST /api/room/my/map-image error:', err);
     res.status(500).json({ error: err.message || 'Upload failed' });
@@ -3738,23 +3815,23 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
     return res.json({ ok: true });
   }
   const tableId = op.tableId || req.uid;
+  const { tableId: _t, ...opData } = op;
   try {
-    let row = await getTableStateById(APP_ID, tableId);
-    // Auto-create the primary table row if it doesn't exist yet (e.g. fresh local DB).
-    if (!row && tableId === req.uid) {
-      const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0, top: { sessionStarted: false } };
-      await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
-      row = { userId: req.uid, data: emptyState };
-    }
-    if (!row || row.userId !== req.uid) {
-      return res.status(403).json({ error: 'Not your table' });
-    }
-    const { tableId: _t, ...opData } = op;
-
-    // T21: session-start billing gate — fires only when sessionStarted transitions true→false→true,
-    // only when connected players are present, and never mid-session.
+    // T21: session-start billing gate — fires only when sessionStarted transitions false→true,
+    // only when connected players are present. Requires the current state to detect the
+    // transition, so we pre-read the row for this specific op only.
     if (opData.op === 'set-table-top' && opData.top?.sessionStarted === true) {
-      const currentState = row?.data || {};
+      let preRow = await getTableStateById(APP_ID, tableId);
+      // Auto-create the primary table row if missing (consistent with applyOpToTableState).
+      if (!preRow && tableId === req.uid) {
+        const emptyState = { elements: [], playerEmails: [], gmDisplayName: '', fearCount: 0, top: { sessionStarted: false } };
+        await upsertItem(APP_ID, req.uid, 'table_state', tableId, emptyState, false);
+        preRow = { userId: req.uid, data: emptyState };
+      }
+      if (!preRow || preRow.userId !== req.uid) {
+        return res.status(403).json({ error: 'Not your table' });
+      }
+      const currentState = preRow.data || {};
       const isTransition = !currentState.top?.sessionStarted; // false/undefined → true
       if (isTransition) {
         const room = rooms.get(tableId);
@@ -3786,7 +3863,9 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
       }
     }
 
-    await applyOpToTableState(tableId, opData);
+    // Ownership check + auto-create happen inside the op lock in applyOpToTableState
+    // (ownerUid param). For all non-billing-gate ops this eliminates the extra pre-read.
+    await applyOpToTableState(tableId, opData, { ownerUid: req.uid });
 
     // T19: Record character table placements (telemetry only — never gates anything).
     if (process.env.DATABASE_URL && opData.op === 'add-elements' && Array.isArray(opData.elements)) {
@@ -3810,6 +3889,9 @@ app.post('/api/room/my/op', requireAuth, async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    if (err?.statusCode === 403) {
+      return res.status(403).json({ error: err.message || 'Not your table' });
+    }
     if (err?.statusCode === 400) {
       return res.status(400).json({
         error: err.message || 'Bad request',

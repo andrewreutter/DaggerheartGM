@@ -20,11 +20,18 @@ vi.mock('../../src/db.js', () => ({
   getResolvedTableState: vi.fn(),
 }));
 
+// Mock session-countdowns so we can assert player-audience redaction without
+// depending on the real redaction implementation.
+vi.mock('../../src/client/lib/session-countdowns.js', () => ({
+  redactTableStateForPlayerAudience: vi.fn((snapshot) => ({ ...snapshot, _redactedForPlayer: true })),
+}));
+
 import { getPendingBanners, getResolvedTableState } from '../../src/db.js';
+import { redactTableStateForPlayerAudience } from '../../src/client/lib/session-countdowns.js';
 
 // Import the module. Because it's a singleton, import once and reset state
 // between tests manually.
-const { default: manager } = await import('../../src/subscriptions.js');
+const { default: manager, buildSseEventString } = await import('../../src/subscriptions.js');
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -47,9 +54,11 @@ describe('SubscriptionManager', () => {
     // Reset all subscriptions between tests
     manager._subs = new Map();
     manager._pending = new Map();
+    manager._lastSentPayload = new WeakMap();
     isFirstBannersSnapshotRef_reset();
     getPendingBanners.mockReset();
     getResolvedTableState.mockReset();
+    redactTableStateForPlayerAudience.mockClear();
   });
 
   afterEach(() => {
@@ -195,6 +204,192 @@ describe('SubscriptionManager', () => {
     expect(getResolvedTableState).toHaveBeenCalledTimes(1);
     expect(res.writes.length).toBe(2);
     expect(res.writes[1]).toContain(JSON.stringify(snapshot2));
+  });
+
+  // ── Dedupe tests ─────────────────────────────────────────────────────────────
+
+  it('dedupe: notifyChange with unchanged data does not write again to the same subscriber', async () => {
+    const snapshot = [{ _rollDbId: 1 }];
+    getPendingBanners.mockResolvedValue(snapshot);
+
+    const res = makeFakeRes();
+    manager.subscribe('banners', 'gm-dedup1', res);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    const writesAfterSubscribe = res.writes.length;
+    expect(writesAfterSubscribe).toBe(1); // initial push
+
+    // notifyChange returns the same snapshot → should NOT write again
+    manager.notifyChange('banners', 'gm-dedup1');
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(res.writes.length).toBe(writesAfterSubscribe); // no new write
+  });
+
+  it('dedupe: notifyChange with changed data always sends to the subscriber', async () => {
+    const snapshot1 = [{ _rollDbId: 1 }];
+    const snapshot2 = [{ _rollDbId: 2 }];
+    getPendingBanners.mockResolvedValueOnce(snapshot1);
+
+    const res = makeFakeRes();
+    manager.subscribe('banners', 'gm-dedup2', res);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(res.writes.length).toBe(1);
+
+    getPendingBanners.mockResolvedValue(snapshot2);
+    manager.notifyChange('banners', 'gm-dedup2');
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(res.writes.length).toBe(2);
+    expect(res.writes[1]).toContain(JSON.stringify(snapshot2));
+  });
+
+  it('dedupe: a brand-new subscriber always receives the first push even if payload matches cached state', async () => {
+    const snapshot = [{ _rollDbId: 10 }];
+    getPendingBanners.mockResolvedValue(snapshot);
+
+    // Subscribe res1 first — gets the payload cached in its WeakMap entry
+    const res1 = makeFakeRes();
+    manager.subscribe('banners', 'gm-dedup3', res1);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    expect(res1.writes.length).toBe(1);
+
+    // Subscribe res2 (brand-new, no WeakMap entry) to the same key with the same snapshot
+    const res2 = makeFakeRes();
+    manager.subscribe('banners', 'gm-dedup3', res2);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    // res2 should receive the push even though the payload equals what res1 received
+    expect(res2.writes.length).toBe(1);
+    expect(res2.writes[0]).toContain(JSON.stringify(snapshot));
+  });
+
+  it('dedupe: double-fire from direct notify + Postgres trigger results in only one write', async () => {
+    const snapshot = { elements: [], fearCount: 0 };
+    getResolvedTableState.mockResolvedValue(snapshot);
+
+    const res = makeFakeRes();
+    manager.subscribe('table_state', 'gm-dedup4', res);
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    expect(res.writes.length).toBe(1);
+
+    // Simulate the direct notifyChange + Postgres trigger double-fire pattern:
+    // both calls collapse to one debounced DB query, and the resulting identical
+    // snapshot should not produce a second write to the already-current subscriber.
+    manager.notifyChange('table_state', 'gm-dedup4');
+    manager.notifyChange('table_state', 'gm-dedup4'); // second fire (would be separate without debounce)
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    // Still only 1 write total — debounce collapses the two notifyChanges,
+    // and dedupe skips the write since the snapshot is identical.
+    expect(res.writes.length).toBe(1);
+  });
+
+  // ── Per-audience stringify tests ──────────────────────────────────────────────
+
+  it('table_state: GM subscriber receives non-redacted snapshot', async () => {
+    const snapshot = { elements: [], fearCount: 2, sessionCountdowns: [{ id: 'cd1' }] };
+    getResolvedTableState.mockResolvedValue(snapshot);
+
+    const res = makeFakeRes();
+    manager.subscribe('table_state', 'tbl-aud1', res, { tableStateAudience: 'gm' });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(res.writes.length).toBe(1);
+    expect(res.writes[0]).toContain(JSON.stringify(snapshot));
+    // GM gets raw snapshot — redact function should NOT have been called
+    expect(redactTableStateForPlayerAudience).not.toHaveBeenCalled();
+  });
+
+  it('table_state: player subscriber receives redacted snapshot', async () => {
+    const snapshot = { elements: [], fearCount: 2, sessionCountdowns: [{ id: 'cd1' }] };
+    getResolvedTableState.mockResolvedValue(snapshot);
+
+    const res = makeFakeRes();
+    manager.subscribe('table_state', 'tbl-aud2', res, { tableStateAudience: 'player' });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    expect(res.writes.length).toBe(1);
+    // The mock redact function adds _redactedForPlayer: true
+    const expectedRedacted = { ...snapshot, _redactedForPlayer: true };
+    expect(res.writes[0]).toContain(JSON.stringify(expectedRedacted));
+    expect(redactTableStateForPlayerAudience).toHaveBeenCalledWith(snapshot);
+  });
+
+  it('table_state: with one GM and one player subscriber, redact is called exactly once per push', async () => {
+    const snapshot = { elements: [], fearCount: 0 };
+    getResolvedTableState.mockResolvedValue(snapshot);
+
+    const gmRes = makeFakeRes();
+    const playerRes = makeFakeRes();
+
+    // Subscribe both to the same key, then trigger one notifyChange
+    manager.subscribe('table_state', 'tbl-aud3', gmRes, { tableStateAudience: 'gm' });
+    manager.subscribe('table_state', 'tbl-aud3', playerRes, { tableStateAudience: 'player' });
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+    await Promise.resolve();
+    redactTableStateForPlayerAudience.mockClear();
+
+    // Single notifyChange that delivers to both subscribers in one _pushSnapshot call
+    getResolvedTableState.mockResolvedValue({ ...snapshot, fearCount: 1 });
+    manager.notifyChange('table_state', 'tbl-aud3');
+    await vi.runAllTimersAsync();
+    await Promise.resolve();
+
+    // redact called exactly once per push, not once per client
+    expect(redactTableStateForPlayerAudience).toHaveBeenCalledTimes(1);
+    // GM gets the non-redacted payload
+    expect(gmRes.writes.some(w => w.includes('"_redactedForPlayer"'))).toBe(false);
+    // Player gets the redacted payload
+    expect(playerRes.writes.some(w => w.includes('"_redactedForPlayer":true'))).toBe(true);
+  });
+});
+
+// ── buildSseEventString pure helper tests ─────────────────────────────────────
+
+describe('buildSseEventString', () => {
+  beforeEach(() => {
+    redactTableStateForPlayerAudience.mockClear();
+  });
+
+  it('formats SSE event string correctly for a banners channel', () => {
+    const snapshot = [{ _rollDbId: 1 }];
+    const str = buildSseEventString('banners', snapshot, undefined);
+    expect(str).toBe(`event: banners\ndata: ${JSON.stringify(snapshot)}\n\n`);
+  });
+
+  it('for table_state GM audience, uses raw snapshot without calling redact', () => {
+    const snapshot = { elements: [], fearCount: 3 };
+    const str = buildSseEventString('table_state', snapshot, 'gm');
+    expect(str).toBe(`event: table_state\ndata: ${JSON.stringify(snapshot)}\n\n`);
+    expect(redactTableStateForPlayerAudience).not.toHaveBeenCalled();
+  });
+
+  it('for table_state player audience, calls redact and uses redacted data', () => {
+    const snapshot = { elements: [], fearCount: 3 };
+    const str = buildSseEventString('table_state', snapshot, 'player');
+    const expectedRedacted = { ...snapshot, _redactedForPlayer: true };
+    expect(str).toBe(`event: table_state\ndata: ${JSON.stringify(expectedRedacted)}\n\n`);
+    expect(redactTableStateForPlayerAudience).toHaveBeenCalledWith(snapshot);
+  });
+
+  it('produces the same string when called twice with identical args (pure/stable)', () => {
+    const snapshot = { elements: [{ instanceId: 'abc' }], fearCount: 0 };
+    const str1 = buildSseEventString('table_state', snapshot, 'gm');
+    const str2 = buildSseEventString('table_state', snapshot, 'gm');
+    expect(str1).toBe(str2);
   });
 });
 

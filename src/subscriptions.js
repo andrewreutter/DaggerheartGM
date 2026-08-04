@@ -40,12 +40,39 @@ const NOTIFY_TO_CHANNEL = {
   table_state_changed: 'table_state',
 };
 
+/**
+ * Build the complete SSE event string for a channel snapshot and optional audience.
+ * For the `table_state` channel, `audience === 'player'` applies redaction; all other
+ * channel/audience combinations use the snapshot as-is.
+ *
+ * Pure function — no side effects; exported for unit tests.
+ *
+ * @param {string} channelName
+ * @param {unknown} snapshot
+ * @param {'gm'|'player'|undefined} audience
+ * @returns {string}
+ */
+export function buildSseEventString(channelName, snapshot, audience) {
+  const data = (channelName === 'table_state' && audience === 'player')
+    ? redactTableStateForPlayerAudience(snapshot)
+    : snapshot;
+  return `event: ${channelName}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 class SubscriptionManager {
   constructor() {
     /** Map<channelName, Map<key, Set<res>>> */
     this._subs = new Map();
     /** Map<`${channel}:${key}`, timeoutId> — pending debounce timers */
     this._pending = new Map();
+    /**
+     * WeakMap<res, string> — last SSE event string written to each response.
+     * Used to skip re-writing an identical payload to a client that's already
+     * up to date (deduplicates the direct-notifyChange + Postgres-trigger
+     * double-fire that arrives after every op with >50ms DB round-trip).
+     * A brand-new subscriber has no entry and always receives its first push.
+     */
+    this._lastSentPayload = new WeakMap();
     this._client = null;
     this._appId = null;
     this._reconnectTimer = null;
@@ -203,16 +230,40 @@ class SubscriptionManager {
       return;
     }
 
+    // Compute serialized SSE strings lazily per audience (once per push, not once per client).
+    // For non-table_state channels there is only one audience; for table_state, GM and player
+    // can receive different payloads (player gets countdown/note redaction).
+    let gmSseStr = null;
+    let playerSseStr = null;
+
     for (const res of responses) {
       try {
         if (res.writableEnded) continue;
-        let data = snapshot;
-        if (channelName === 'table_state' && tableStateAudienceByResponse.get(res) === 'player') {
-          data = redactTableStateForPlayerAudience(snapshot);
+
+        let sseStr;
+        if (channelName === 'table_state') {
+          const audience = tableStateAudienceByResponse.get(res);
+          if (audience === 'player') {
+            if (playerSseStr === null) playerSseStr = buildSseEventString(channelName, snapshot, 'player');
+            sseStr = playerSseStr;
+          } else {
+            if (gmSseStr === null) gmSseStr = buildSseEventString(channelName, snapshot, 'gm');
+            sseStr = gmSseStr;
+          }
+        } else {
+          if (gmSseStr === null) gmSseStr = buildSseEventString(channelName, snapshot, undefined);
+          sseStr = gmSseStr;
         }
-        const payload = `event: ${channelName}\ndata: ${JSON.stringify(data)}\n\n`;
-        res.write(payload);
+
+        // Dedupe: skip writing if this client already received this exact payload.
+        // This absorbs the direct-notifyChange + Postgres-trigger double-fire pattern.
+        // Brand-new subscribers have no entry in the WeakMap and always get their first push.
+        const lastSent = this._lastSentPayload.get(res);
+        if (lastSent === sseStr) continue;
+
+        res.write(sseStr);
         res.flush?.();
+        this._lastSentPayload.set(res, sseStr);
       } catch {
         // Client already disconnected — will be cleaned up on 'close'
       }

@@ -2,9 +2,10 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMe
 import ReactDOM from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot, ShieldOff } from 'lucide-react';
+import { Swords, BookOpen, LayoutDashboard, ChevronDown, LogOut, Upload, Download, Trash2, Circle, Plus, ScrollText, Sparkles, Moon, Sun, Bot, ShieldOff, Bug } from 'lucide-react';
 
-import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus } from './lib/api.js';
+import { auth, getAuthToken, CLIENT_ID, loadCollection, loadTableState, resolveItems, saveItem as apiSaveItem, saveImage as apiSaveImage, deleteItem as apiDeleteItem, cloneItemToLibrary, recordPlay, fetchMe, fetchMyRooms, fetchMyTables, createTable, postCharacterUpdate, postAddCharacter, postTableOp, postLifeSupportSelect, postRestMoveSelect, normalizeRoll, conceptAiEnabled, imageGenEnabled, fetchTableBillingStatus, postMapImageFile } from './lib/api.js';
+import { dataUrlToFile } from './lib/map-image-data-url.js';
 import { AiUiPreferenceProvider, useAiUiPreference } from './lib/ai-ui-preference-context.jsx';
 import { generateId } from './lib/helpers.js';
 import { computeSessionCountdownUpdatesFromRoll } from './lib/session-countdowns.js';
@@ -17,6 +18,8 @@ import { shouldPersistMapViewToTable } from './lib/map-view-sync.js';
 import { DEFAULT_LEGACY_MAP_ID, deriveMapConfigForViewId, deriveMapConfigForMapId } from './lib/map-table-state.js';
 import { playerCanAccessMapViewSelection } from './lib/map-view-player-sync.js';
 import { reconcileElementsById } from './lib/reconcile-active-elements.js';
+import { reconcileMapsById, reconcileMapViewsById, reconcileMapConfig } from './lib/reconcile-map-state.js';
+import { shouldOptimisticallyPatch } from './lib/optimistic-update-fields.js';
 const NON_PAGINATED_COLLECTIONS = ['scenes', 'adventures', 'characters'];
 
 import { useRouter, legacyGmTableToCanonical, DEFAULT_LIBRARY_TAB } from './lib/router.js';
@@ -31,6 +34,7 @@ import { AppRoot } from './components/AppRoot.jsx';
 import { UnifiedImportProvider, useUnifiedImport } from './lib/unified-import-context.jsx';
 import { AuthLanding } from './components/AuthLanding.jsx';
 import { AdminAiUsagePage } from './components/AdminAiUsagePage.jsx';
+import { AdminBugReportsPage } from './components/AdminBugReportsPage.jsx';
 import { buildLibraryModalPath } from './lib/library-modal-path.js';
 
 function NavImportBtn() {
@@ -503,6 +507,13 @@ function App() {
     }
   }, [user, route.view, isAdmin, adminPrivilegesKnown, navigate]);
 
+  useEffect(() => {
+    if (!user || route.view !== 'adminBugReports' || !adminPrivilegesKnown) return;
+    if (!isAdmin) {
+      navigate(`/library/${DEFAULT_LIBRARY_TAB}`, { replace: true });
+    }
+  }, [user, route.view, isAdmin, adminPrivilegesKnown, navigate]);
+
   // GM can preview the table as a specific player (non-persisted; cleared on reload)
   const isPreviewMode = !isPlayer && !!previewAsPlayerEmail && route.view === 'table';
   const effectiveIsPlayer = isPlayer || isPreviewMode;
@@ -810,9 +821,10 @@ function App() {
         }
         if (state.gmDisplayName != null) setTableGmDisplayName(state.gmDisplayName);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
-          setMapConfig({ ...DEFAULT_MAP_CONFIG, ...state.mapConfig });
+          const merged = { ...DEFAULT_MAP_CONFIG, ...state.mapConfig };
+          setMapConfig(prev => reconcileMapConfig(prev, merged));
         }
-        if (Array.isArray(state.maps)) setMaps(state.maps);
+        if (Array.isArray(state.maps)) setMaps(prev => reconcileMapsById(prev, state.maps));
         else setMaps([]);
         if (state.activeMapId != null) setActiveMapId(state.activeMapId);
         else setActiveMapId(null);
@@ -821,7 +833,7 @@ function App() {
         } else {
           setGmMapView(null);
         }
-        if (Array.isArray(state.mapViews)) setMapViews(state.mapViews);
+        if (Array.isArray(state.mapViews)) setMapViews(prev => reconcileMapViewsById(prev, state.mapViews));
         else setMapViews([]);
         if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
         else setGmActiveViewId(null);
@@ -913,9 +925,10 @@ function App() {
         if (Array.isArray(state.playerEmails)) setPlayerEmails(state.playerEmails);
         if (state.tableName != null) setTableName(state.tableName);
         if (state.mapConfig != null && typeof state.mapConfig === 'object') {
-          setMapConfig({ ...DEFAULT_MAP_CONFIG, ...state.mapConfig });
+          const merged = { ...DEFAULT_MAP_CONFIG, ...state.mapConfig };
+          setMapConfig(prev => reconcileMapConfig(prev, merged));
         }
-        if (Array.isArray(state.maps)) setMaps(state.maps);
+        if (Array.isArray(state.maps)) setMaps(prev => reconcileMapsById(prev, state.maps));
         else setMaps([]);
         if (state.activeMapId != null) setActiveMapId(state.activeMapId);
         else setActiveMapId(null);
@@ -924,7 +937,7 @@ function App() {
         } else {
           setGmMapView(null);
         }
-        if (Array.isArray(state.mapViews)) setMapViews(state.mapViews);
+        if (Array.isArray(state.mapViews)) setMapViews(prev => reconcileMapViewsById(prev, state.mapViews));
         else setMapViews([]);
         if (state.gmActiveViewId != null) setGmActiveViewId(state.gmActiveViewId);
         else setGmActiveViewId(null);
@@ -1341,12 +1354,7 @@ function App() {
   }, [effectiveIsPlayer, sessionPaused, tableId]);
 
   const sendUpdateActiveElement = (instanceId, updates, options = {}) => {
-    if (
-      'tokenX' in updates ||
-      'tokenY' in updates ||
-      'mapId' in updates ||
-      'conditions' in updates
-    ) {
+    if (shouldOptimisticallyPatch(updates)) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     const op = { op: 'update-element', instanceId, updates };
@@ -1355,11 +1363,13 @@ function App() {
   };
 
   const sendRemoveActiveElement = (instanceId) => {
+    setActiveElements(prev => prev.filter(el => el.instanceId !== instanceId));
     postTableOp({ op: 'remove-element', instanceId }, tableId);
   };
 
   const sendSetFearCount = (valueOrFn) => {
     const resolved = typeof valueOrFn === 'function' ? valueOrFn(fearCount) : valueOrFn;
+    setFearCount(resolved);
     postTableOp({ op: 'set-fear', fearCount: resolved }, tableId);
   };
 
@@ -1522,12 +1532,23 @@ function App() {
     postTableOp({ op: 'add-map' }, tableId);
   }, [tableId]);
 
-  /** New map with image (paste / upload when current map already has art). */
-  const sendAddMapWithImage = useCallback((img) => {
+  /**
+   * New map with image (paste / drop / upload / unified import when current map already has art).
+   * `img.mapImageUrl` may be an inline `data:` URL (e.g. a client-side canvas crop) — upload it to
+   * Storage first so the table_state row never carries a base64 blob (Fix 1, game table latency plan).
+   */
+  const sendAddMapWithImage = useCallback(async (img) => {
+    let mapImageUrl = img.mapImageUrl;
+    if (typeof mapImageUrl === 'string' && mapImageUrl.startsWith('data:')) {
+      const file = await dataUrlToFile(mapImageUrl, 'map-image');
+      const uploaded = await postMapImageFile(file);
+      if (!uploaded?.url) throw new Error('Map image upload did not return a URL');
+      mapImageUrl = uploaded.url;
+    }
     postTableOp(
       {
         op: 'add-map',
-        mapImageUrl: img.mapImageUrl,
+        mapImageUrl,
         mapImageNaturalWidth: img.mapImageNaturalWidth,
         mapImageNaturalHeight: img.mapImageNaturalHeight,
         ...(Array.isArray(img.extraCameraVisibleNorms) && img.extraCameraVisibleNorms.length
@@ -1577,18 +1598,13 @@ function App() {
   };
 
   // Player callback — sends update to server; state arrives via table_state SSE snapshot.
-  // Token positions and conditions text are applied optimistically like the GM path.
+  // Token positions, conditions, and resource tracks are applied optimistically like the GM path.
   const handlePlayerCharacterUpdate = useCallback(async (instanceId, updates) => {
     if (!route.tableId) return;
     if (!sessionPlayAllowed && isPrepModeElementUpdateBlocked(updates)) {
       return;
     }
-    if (
-      'tokenX' in updates ||
-      'tokenY' in updates ||
-      'mapId' in updates ||
-      'conditions' in updates
-    ) {
+    if (shouldOptimisticallyPatch(updates)) {
       setActiveElements(prev => prev.map(el => el.instanceId === instanceId ? { ...el, ...updates } : el));
     }
     try {
@@ -1837,9 +1853,21 @@ function App() {
                         setUserMenuOpen(false);
                         navigate('/admin/ai-usage');
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm bg-red-900/80 hover:bg-red-800 text-red-200 border-y border-red-700 transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm bg-red-900/80 hover:bg-red-800 text-red-200 border-t border-red-700 transition-colors"
                     >
                       <ShieldOff size={15} /> AI usage metrics
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        navigate('/admin/bug-reports');
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm bg-red-900/80 hover:bg-red-800 text-red-200 border-y border-red-700 transition-colors"
+                    >
+                      <Bug size={15} /> Problem reports
                     </button>
                   )}
                   <button
@@ -1889,6 +1917,13 @@ function App() {
               aria-hidden={route.view !== 'adminAiUsage'}
             >
               {route.view === 'adminAiUsage' && isAdmin && <AdminAiUsagePage navigate={navigate} />}
+            </div>
+            <div
+              className="flex-1 overflow-hidden flex flex-col"
+              style={{ display: route.view === 'adminBugReports' ? 'flex' : 'none' }}
+              aria-hidden={route.view !== 'adminBugReports'}
+            >
+              {route.view === 'adminBugReports' && isAdmin && <AdminBugReportsPage navigate={navigate} />}
             </div>
             <div
               className="flex-1 overflow-hidden flex flex-col"

@@ -83,6 +83,7 @@ import { resolveGameTableCharacterEditMode } from '../lib/game-table-character-m
 import { computeBattlePoints, computeAutoModifiers, computeTotalBudgetMod, computeBudget } from '../lib/battle-points.js';
 import { getUnscaledAdversary, getBaselineStats } from '../lib/adversary-defaults.js';
 import { ensureEditorListIds } from '../lib/ensure-editor-list-ids.js';
+import { computeWithRefCache } from '../lib/memo-by-reference.js';
 import { coerceEnvironmentType, coerceEnvironmentTier } from '../lib/environment-coerce.js';
 import { CharacterHoverCard } from './CharacterHoverCard.jsx';
 import {
@@ -4628,22 +4629,29 @@ export function GMTableView({ tableId, activeElements, updateActiveElement: push
     return cls === 'wizard' && hope >= 3;
   });
 
+  // Persistent ref-based cache so unchanged PCs are not recomputed on adversary-only ops.
+  // `reconcileElementsById` preserves per-element object references for unchanged characters, so
+  // when `tableCharacters` has a new array identity (from `.filter`) but contains many of the same
+  // element refs, `computeWithRefCache` reuses cached results for those elements without calling
+  // `recomputeCharacter` again. Global deps (srdData, fearCount, mapConfig, tableFeatureState)
+  // invalidate the entire cache when they change.
+  const characterDisplayCacheRef = useRef({ globalDeps: null, byRef: null });
   // Recomputed character display (evasion, thresholds, etc.) so sidebar cards match sheet (e.g. Simiah Nimble +1).
   const characterDisplayByInstanceId = useMemo(() => {
     if (!srdData) return new Map();
-    const map = new Map();
-    for (const el of tableCharacters) {
-      const base = recomputeCharacter(el, srdData);
-      map.set(
-        el.instanceId,
-        mergeV2DeclarativeSheetOverlay(base, el, srdData, {
+    return computeWithRefCache(
+      characterDisplayCacheRef.current,
+      tableCharacters,
+      [srdData, fearCount, mapConfig, tableFeatureState],
+      (el) => {
+        const base = recomputeCharacter(el, srdData);
+        return mergeV2DeclarativeSheetOverlay(base, el, srdData, {
           fearCount,
           mapConfig,
           tableFeatureState,
-        })
-      );
-    }
-    return map;
+        });
+      }
+    );
   }, [srdData, tableCharacters, fearCount, mapConfig, tableFeatureState]);
 
   // Incomplete + editable: open the library editor drawer when the sheet opens (sidebar / map card click).

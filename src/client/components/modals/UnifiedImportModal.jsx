@@ -633,7 +633,7 @@ export function UnifiedImportModal({
         if (col === 'map') {
           if (!onAddMapWithImage) throw new Error('Map import requires the Game Table.');
           const extra = Array.isArray(d.mapCameraExtraNorms) ? d.mapCameraExtraNorms : [];
-          onAddMapWithImage({
+          await onAddMapWithImage({
             mapImageUrl: d.mapImageUrl,
             mapImageNaturalWidth: d.mapImageNaturalWidth,
             mapImageNaturalHeight: d.mapImageNaturalHeight,
